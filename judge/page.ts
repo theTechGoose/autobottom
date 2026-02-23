@@ -257,6 +257,37 @@ export function getJudgePage(): string {
   @keyframes toastIn { from { opacity: 0; transform: translateY(6px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
   @keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateY(-4px); } }
 
+  /* Confirmation modal */
+  #confirm-overlay {
+    display: none; position: fixed; inset: 0; z-index: 3000;
+    background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center;
+  }
+  #confirm-overlay.open { display: flex; }
+  #confirm-box {
+    background: #12161e; border: 1px solid #1e2736; border-radius: 16px;
+    padding: 32px 36px; width: 400px; box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    animation: confirmIn 0.15s ease;
+  }
+  @keyframes confirmIn { from { opacity: 0; transform: scale(0.95) translateY(8px); } to { opacity: 1; transform: none; } }
+  #confirm-box h3 { color: #e6edf3; font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+  #confirm-box p { color: #8b949e; font-size: 13px; line-height: 1.5; margin-bottom: 20px; }
+  #confirm-box .confirm-label { font-size: 11px; color: #6e7681; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; }
+  #confirm-input {
+    width: 100%; padding: 10px 14px; background: #0a0e14; border: 1px solid #1e2736;
+    border-radius: 10px; color: #c9d1d9; font-size: 16px; font-weight: 600;
+    text-align: center; letter-spacing: 2px; text-transform: uppercase;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  #confirm-input:focus { outline: none; border-color: #14b8a6; box-shadow: 0 0 0 3px rgba(20,184,166,0.15); }
+  #confirm-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+  #confirm-actions button { padding: 8px 20px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  #confirm-cancel-btn { background: transparent; border: 1px solid #1e2736; color: #6e7681; }
+  #confirm-cancel-btn:hover { background: #141820; border-color: #2d333b; }
+  #confirm-submit-btn { background: #14b8a6; border: none; color: #fff; opacity: 0.3; pointer-events: none; }
+  #confirm-submit-btn.enabled { opacity: 1; pointer-events: auto; }
+  #confirm-submit-btn.enabled:hover { background: #0d9488; }
+
 </style>
 </head>
 <body>
@@ -358,6 +389,20 @@ export function getJudgePage(): string {
 <!-- Toasts -->
 <div id="toast-container"></div>
 
+<!-- Confirmation modal for last audit question -->
+<div id="confirm-overlay">
+  <div id="confirm-box">
+    <h3>Final Question for This Appeal</h3>
+    <p>This is the last item for this appeal. Submitting will finalize the judgment. Type <strong>YES</strong> to proceed.</p>
+    <div class="confirm-label">Type YES to confirm</div>
+    <input type="text" id="confirm-input" autocomplete="off" spellcheck="false">
+    <div id="confirm-actions">
+      <button id="confirm-cancel-btn">Cancel</button>
+      <button id="confirm-submit-btn">Submit</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function() {
   const API = '/judge/api';
@@ -366,6 +411,8 @@ export function getJudgePage(): string {
   let currentTranscript = null;
   let reviewer = null;
   let busy = false;
+  let currentAuditRemaining = 0;
+  let pendingDecision = null;
   const transcriptCache = {};
 
   // Speed tracking
@@ -690,6 +737,7 @@ export function getJudgePage(): string {
       currentItem = data.current;
       peekItem = data.peek;
       currentTranscript = data.transcript;
+      currentAuditRemaining = data.auditRemaining ?? 0;
       if (currentTranscript && currentItem) {
         transcriptCache[currentItem.findingId] = currentTranscript;
       }
@@ -875,6 +923,19 @@ export function getJudgePage(): string {
   // -- Decide --
   async function decide(decision) {
     if (!currentItem || busy) return;
+
+    // Gate: if this is the last question for the audit, require typed confirmation
+    if (currentAuditRemaining === 1) {
+      pendingDecision = decision;
+      showConfirmModal();
+      return;
+    }
+
+    executeDecision(decision);
+  }
+
+  async function executeDecision(decision) {
+    if (!currentItem || busy) return;
     busy = true;
     var item = currentItem;
 
@@ -916,6 +977,7 @@ export function getJudgePage(): string {
       updateProgress(remaining);
 
       if (data.next?.current) {
+        currentAuditRemaining = data.next.auditRemaining ?? 0;
         if (currentItem && currentItem !== data.next.current) {
           peekItem = data.next.peek;
           if (data.next.transcript && data.next.current) {
@@ -943,6 +1005,52 @@ export function getJudgePage(): string {
     busy = false;
   }
 
+  // -- Confirmation modal --
+  function showConfirmModal() {
+    var overlay = document.getElementById('confirm-overlay');
+    var input = document.getElementById('confirm-input');
+    var submitBtn = document.getElementById('confirm-submit-btn');
+    overlay.classList.add('open');
+    input.value = '';
+    submitBtn.classList.remove('enabled');
+    setTimeout(function() { input.focus(); }, 50);
+  }
+
+  function hideConfirmModal() {
+    document.getElementById('confirm-overlay').classList.remove('open');
+    document.getElementById('confirm-input').value = '';
+    pendingDecision = null;
+  }
+
+  document.getElementById('confirm-input').addEventListener('input', function(e) {
+    var btn = document.getElementById('confirm-submit-btn');
+    if (e.target.value.trim().toUpperCase() === 'YES') {
+      btn.classList.add('enabled');
+    } else {
+      btn.classList.remove('enabled');
+    }
+  });
+
+  document.getElementById('confirm-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && e.target.value.trim().toUpperCase() === 'YES' && pendingDecision) {
+      e.preventDefault();
+      var decision = pendingDecision;
+      hideConfirmModal();
+      executeDecision(decision);
+    } else if (e.key === 'Escape') {
+      hideConfirmModal();
+    }
+  });
+
+  document.getElementById('confirm-cancel-btn').addEventListener('click', hideConfirmModal);
+
+  document.getElementById('confirm-submit-btn').addEventListener('click', function() {
+    if (!pendingDecision) return;
+    var decision = pendingDecision;
+    hideConfirmModal();
+    executeDecision(decision);
+  });
+
   // -- Back --
   async function goBack() {
     if (busy) return;
@@ -953,6 +1061,7 @@ export function getJudgePage(): string {
         currentItem = data.current;
         currentTranscript = data.transcript;
         peekItem = data.peek;
+        currentAuditRemaining = data.auditRemaining ?? 0;
         if (currentTranscript && currentItem) {
           transcriptCache[currentItem.findingId] = currentTranscript;
         }
@@ -973,6 +1082,7 @@ export function getJudgePage(): string {
   // -- Keyboard --
   document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (document.getElementById('confirm-overlay').classList.contains('open')) return;
 
     switch (e.key.toLowerCase()) {
       case 'y': decide('uphold'); break;

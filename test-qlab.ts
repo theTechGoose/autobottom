@@ -9,7 +9,7 @@ const SELF = Deno.env.get("SELF_URL") ?? "http://localhost:8000";
 const RIDS = ["444781", "444801", "444813", "444815", "444819", "444823"];
 const QLAB_CONFIG = "dooks";
 
-const SAMPLE_TRANSCRIPT = `[AGENT] Thank you for calling Monster Reservations Group, my name is Sarah. How can I help you today?
+const SAMPLE_TRANSCRIPT = `[AGENT] Thank you for calling Acme Travel Group, my name is Sarah. How can I help you today?
 [CUSTOMER] Hi Sarah, I'm calling about a reservation I made last week. My name is John Smith.
 [AGENT] Hi John! Let me pull up your account. Can you verify the email address on file?
 [CUSTOMER] Sure, it's john.smith@email.com.
@@ -21,7 +21,7 @@ const SAMPLE_TRANSCRIPT = `[AGENT] Thank you for calling Monster Reservations Gr
 [CUSTOMER] Perfect, thank you so much.
 [AGENT] You're welcome John! Is there anything else I can help you with today?
 [CUSTOMER] No that's all, thanks.
-[AGENT] Alright, thank you for calling Monster Reservations Group and have a wonderful day!
+[AGENT] Alright, thank you for calling Acme Travel Group and have a wonderful day!
 [CUSTOMER] You too, bye.`;
 
 async function post(path: string, body: unknown) {

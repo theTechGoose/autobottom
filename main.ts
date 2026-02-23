@@ -552,7 +552,7 @@ async function handleSeed(_req: Request): Promise<Response> {
   const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
   const DAY_MS = 24 * 60 * 60 * 1000;
   const now = Date.now();
-  const reviewers = ["maria", "carlos", "tanya"];
+  const reviewers = ["reviewer1", "reviewer2", "reviewer3"];
   let managerSeeded = 0;
 
   for (let i = 0; i < Math.min(12, findings.length); i++) {
@@ -635,7 +635,7 @@ async function handleSeed(_req: Request): Promise<Response> {
   console.log("[SEED] Created judge users judge1/judge1, judge2/judge2");
 
   const judges = ["judge1", "judge2"];
-  const auditors = ["maria", "carlos", "tanya", "alex", "robin"];
+  const auditors = ["auditor1", "auditor2", "auditor3", "auditor4", "auditor5"];
   let judgeSeeded = 0;
 
   // Pick a subset of findings for appeals (use indices 2-9 to avoid overlap issues)
@@ -682,7 +682,7 @@ async function handleSeed(_req: Request): Promise<Response> {
   // -- Question Lab seed data --
   const qlabKv = await import("./question-lab/kv.ts");
 
-  const config = await qlabKv.createConfig("MRG Verification Audit");
+  const config = await qlabKv.createConfig("Verification Audit");
 
   const questionsData: Array<{
     name: string;
@@ -696,11 +696,11 @@ async function handleSeed(_req: Request): Promise<Response> {
       autoYesExp: "",
       tests: [
         {
-          snippet: `[AGENT]: Hi, good afternoon. Is this Ms. Tricia Linscott?\n[CUSTOMER]: Yes.\n[AGENT]: Awesome. This is Marlon. I'm with Monster Reservations Group.`,
+          snippet: `[AGENT]: Hi, good afternoon. Is this Ms. Jane Doe?\n[CUSTOMER]: Yes.\n[AGENT]: Awesome. This is James. I'm with Acme Travel Group.`,
           expected: "yes",
         },
         {
-          snippet: `[AGENT]: Hello, I'm calling from Monster Reservations Group about your upcoming booking.\n[CUSTOMER]: Okay.\n[AGENT]: Let me just pull up your details here.`,
+          snippet: `[AGENT]: Hello, I'm calling from Acme Travel Group about your upcoming booking.\n[CUSTOMER]: Okay.\n[AGENT]: Let me just pull up your details here.`,
           expected: "no",
         },
       ],
@@ -711,7 +711,7 @@ async function handleSeed(_req: Request): Promise<Response> {
       autoYesExp: "",
       tests: [
         {
-          snippet: `[AGENT]: Are you at least 28 years old, Ms. Tricia?\n[CUSTOMER]: Oh, God, yes.`,
+          snippet: `[AGENT]: Are you at least 28 years old, Ms. Jane?\n[CUSTOMER]: Oh, God, yes.`,
           expected: "yes",
         },
         {
@@ -741,11 +741,11 @@ async function handleSeed(_req: Request): Promise<Response> {
     },
     {
       name: "MCC Recurring Charges",
-      text: "Did the agent disclose that the Monster Cruise Club membership will begin recurring charges after 6 months?",
+      text: "Did the agent disclose that the Cruise Club membership will begin recurring charges after 6 months?",
       autoYesExp: "",
       tests: [
         {
-          snippet: `[AGENT]: After your six month free trial of the Monster Cruise Club ends, you will be billed $14.99 per month unless you cancel.\n[CUSTOMER]: Okay, got it.`,
+          snippet: `[AGENT]: After your six month free trial of the Cruise Club ends, you will be billed $14.99 per month unless you cancel.\n[CUSTOMER]: Okay, got it.`,
           expected: "yes",
         },
         {

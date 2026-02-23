@@ -3,7 +3,7 @@ const SELF = Deno.env.get("SELF_URL") ?? "http://localhost:8000";
 const findingId = "test-report-fix";
 const db = await Deno.openKv();
 
-const TRANSCRIPT = `[AGENT] Thank you for calling Monster Reservations Group, my name is Sarah. How can I help you today?
+const TRANSCRIPT = `[AGENT] Thank you for calling Acme Travel Group, my name is Sarah. How can I help you today?
 [CUSTOMER] Hi Sarah, I'm calling about a reservation I made last week. My name is John Smith.
 [AGENT] Hi John! Let me pull up your account. Can you verify the email address on file?
 [CUSTOMER] Sure, it's john.smith@email.com.
@@ -15,7 +15,7 @@ const TRANSCRIPT = `[AGENT] Thank you for calling Monster Reservations Group, my
 [CUSTOMER] Perfect, thank you so much.
 [AGENT] You're welcome John! Is there anything else I can help you with today?
 [CUSTOMER] No that's all, thanks.
-[AGENT] Alright, thank you for calling Monster Reservations Group and have a wonderful day!
+[AGENT] Alright, thank you for calling Acme Travel Group and have a wonderful day!
 [CUSTOMER] You too, bye.`;
 
 const CHUNK_LIMIT = 55_000;

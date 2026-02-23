@@ -16,7 +16,7 @@ export const env = {
   get awsAccessKeyId() { return required("AWS_ACCESS_KEY_ID"); },
   get awsSecretAccessKey() { return required("AWS_SECRET_ACCESS_KEY"); },
   get awsRegion() { return Deno.env.get("AWS_REGION") ?? "us-east-1"; },
-  get s3Bucket() { return Deno.env.get("S3_BUCKET") ?? "dooks-recordings"; },
+  get s3Bucket() { return required("S3_BUCKET"); },
 
   // AssemblyAI
   get assemblyaiKey() { return required("ASSEMBLYAI_API_KEY"); },
@@ -29,7 +29,7 @@ export const env = {
 
   // Pinecone
   get pineconeKey() { return required("PINECONE_DB_KEY"); },
-  get pineconeIndex() { return Deno.env.get("PINECONE_INDEX") ?? "auto-bot"; },
+  get pineconeIndex() { return required("PINECONE_INDEX"); },
 
   // QuickBase
   get qbRealm() { return required("QB_REALM"); },
@@ -42,6 +42,8 @@ export const env = {
   get genieAuth() { return required("GENIE_AUTH"); },
   get genieAuthTwo() { return required("GENIE_AUTH_TWO"); },
   get genieBaseUrl() { return required("GENIE_BASE_URL"); },
+  get geniePrimaryAccount() { return required("GENIE_PRIMARY_ACCOUNT"); },
+  get genieSecondaryAccount() { return required("GENIE_SECONDARY_ACCOUNT"); },
 
   // App
   get selfUrl() { return required("SELF_URL"); },

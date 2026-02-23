@@ -12,19 +12,11 @@ export interface AlertConfig {
   exclusions?: ExclusionRule[];
 }
 
-export const OFFICE_NAMES: Record<number, string> = {
-  21: "JAY", 147: "JAY209O", 150: "JAY209N", 151: "JAY123", 152: "JAY187",
-  153: "JAY201", 154: "JAY301", 155: "JAY314", 156: "JAY315", 157: "JAY309",
-  158: "JAY401", 159: "JAY407", 160: "JAY484", 161: "JAY514", 162: "JAY702",
-  163: "JAY915", 164: "JAY954", 165: "JAY390", 201: "JAY111", 202: "JAY249",
-  203: "JAY250", 204: "JAY732", 205: "JAY754", 206: "JAY863", 221: "JAY777",
-  227: "JAY423", 228: "JAY532", 229: "JAY626", 230: "JAY676", 231: "JAY696",
-  233: "JAY778", 234: "JAY779", 1259: "JAY747", 1262: "JAY703", 1266: "JAY917",
-  1267: "JAY703", 1268: "JAY908", 1273: "JAY101", 1274: "JAY316", 1275: "JAY125",
-  1281: "JAY430", 1436: "JAY916", 1437: "JAY772", 1456: "JAY311", 1462: "JAY007",
-  1480: "JAY705", 1483: "JAY615", 1488: "JAY918", 1491: "JAY720", 1492: "JAY611",
-  1493: "JAY973",
-};
+/** Office ID -> name mapping loaded from OFFICE_NAMES_JSON env var. */
+export const OFFICE_NAMES: Record<number, string> = (() => {
+  try { return JSON.parse(Deno.env.get("OFFICE_NAMES_JSON") ?? "{}"); }
+  catch { return {}; }
+})();
 
 export const TARGET_OFFICES = Object.keys(OFFICE_NAMES).map(Number);
 
@@ -174,7 +166,7 @@ export async function checkFinding(finding: any): Promise<boolean> {
   const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] || c));
 
   const htmlBody = `<div style="font-family:Arial,sans-serif;padding:20px;background:#fff5f5;border:2px solid #e74c3c;">
-    <h1 style="color:#e74c3c;">Monster Verified AI Detection</h1>
+    <h1 style="color:#e74c3c;">Verified AI Detection Alert</h1>
     <p><strong>Trigger Keywords:</strong> ${esc(violations.join(", "))}</p>
     <p><strong>Timestamp:</strong> ${esc(timestamp)}</p>
     <p><strong>Office:</strong> ${esc(officeName)} (${officeId})</p>
@@ -187,7 +179,7 @@ export async function checkFinding(finding: any): Promise<boolean> {
 
   await sendEmail({
     to: DEFAULT_EMAILS,
-    subject: `Monster Verified AI Detection: ${violations.join(", ")} - ${timestamp}`,
+    subject: `Verified AI Detection Alert: ${violations.join(", ")} - ${timestamp}`,
     htmlBody,
   });
 

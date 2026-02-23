@@ -130,16 +130,9 @@ export function getSwaggerHtml(): string {
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>R U Mnstr?</title>
-  <link rel="icon" type="image/png" href="https://firebasestorage.googleapis.com/v0/b/monster-mono-repo.appspot.com/o/assets%2FCompany%20Assets%2Flogo.png?alt=media" />
+  <title>Auto-Bot API</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
   <style>
-#swagger-ui > section > div.topbar > div > div > a {
-   content: url('https://firebasestorage.googleapis.com/v0/b/monster-mono-repo.appspot.com/o/assets%2FCompany%20Assets%2Flogo.png?alt=media');
-   position: absolute;
-   height: 70px;
-   top: 5px;
-}
 #swagger-ui > section > div.topbar > div > div {
   display: flex;
 }

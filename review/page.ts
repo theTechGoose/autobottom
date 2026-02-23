@@ -320,6 +320,37 @@ export function getReviewPage(): string {
   .confetti-particle:nth-child(5n) { --drift: -25px; }
   .confetti-particle:nth-child(7n) { --drift: 30px; }
 
+  /* Confirmation modal */
+  #confirm-overlay {
+    display: none; position: fixed; inset: 0; z-index: 3000;
+    background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center;
+  }
+  #confirm-overlay.open { display: flex; }
+  #confirm-box {
+    background: #12161e; border: 1px solid #1e2736; border-radius: 16px;
+    padding: 32px 36px; width: 400px; box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    animation: confirmIn 0.15s ease;
+  }
+  @keyframes confirmIn { from { opacity: 0; transform: scale(0.95) translateY(8px); } to { opacity: 1; transform: none; } }
+  #confirm-box h3 { color: #e6edf3; font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+  #confirm-box p { color: #8b949e; font-size: 13px; line-height: 1.5; margin-bottom: 20px; }
+  #confirm-box .confirm-label { font-size: 11px; color: #6e7681; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; }
+  #confirm-input {
+    width: 100%; padding: 10px 14px; background: #0a0e14; border: 1px solid #1e2736;
+    border-radius: 10px; color: #c9d1d9; font-size: 16px; font-weight: 600;
+    text-align: center; letter-spacing: 2px; text-transform: uppercase;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  #confirm-input:focus { outline: none; border-color: #8b5cf6; box-shadow: 0 0 0 3px rgba(139,92,246,0.15); }
+  #confirm-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+  #confirm-actions button { padding: 8px 20px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  #confirm-cancel-btn { background: transparent; border: 1px solid #1e2736; color: #6e7681; }
+  #confirm-cancel-btn:hover { background: #141820; border-color: #2d333b; }
+  #confirm-submit-btn { background: #8b5cf6; border: none; color: #fff; opacity: 0.3; pointer-events: none; }
+  #confirm-submit-btn.enabled { opacity: 1; pointer-events: auto; }
+  #confirm-submit-btn.enabled:hover { background: #7c3aed; }
+
 </style>
 </head>
 <body>
@@ -429,6 +460,20 @@ export function getReviewPage(): string {
 <!-- Toasts -->
 <div id="toast-container"></div>
 
+<!-- Confirmation modal for last audit question -->
+<div id="confirm-overlay">
+  <div id="confirm-box">
+    <h3>Final Question for This Audit</h3>
+    <p>This is the last item for this audit. Submitting will finalize the review. Type <strong>YES</strong> to proceed.</p>
+    <div class="confirm-label">Type YES to confirm</div>
+    <input type="text" id="confirm-input" autocomplete="off" spellcheck="false">
+    <div id="confirm-actions">
+      <button id="confirm-cancel-btn">Cancel</button>
+      <button id="confirm-submit-btn">Submit</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function() {
   const API = '/review/api';
@@ -437,6 +482,8 @@ export function getReviewPage(): string {
   let currentTranscript = null;
   let reviewer = null;
   let busy = false;
+  let currentAuditRemaining = 0;
+  let pendingDecision = null;
   const transcriptCache = {};
 
   // Speed tracking
@@ -950,6 +997,7 @@ export function getReviewPage(): string {
       currentItem = data.current;
       peekItem = data.peek;
       currentTranscript = data.transcript;
+      currentAuditRemaining = data.auditRemaining ?? 0;
       if (currentTranscript && currentItem) {
         transcriptCache[currentItem.findingId] = currentTranscript;
       }
@@ -1130,6 +1178,19 @@ export function getReviewPage(): string {
   // -- Decide --
   async function decide(decision) {
     if (!currentItem || busy) return;
+
+    // Gate: if this is the last question for the audit, require typed confirmation
+    if (currentAuditRemaining === 1) {
+      pendingDecision = decision;
+      showConfirmModal();
+      return;
+    }
+
+    executeDecision(decision);
+  }
+
+  async function executeDecision(decision) {
+    if (!currentItem || busy) return;
     busy = true;
     const item = currentItem;
 
@@ -1179,6 +1240,7 @@ export function getReviewPage(): string {
       updateProgress(remaining);
 
       if (data.next?.current) {
+        currentAuditRemaining = data.next.auditRemaining ?? 0;
         if (didSwap) {
           // We already swapped to peek. Just update the next peek.
           peekItem = data.next.peek;
@@ -1210,6 +1272,52 @@ export function getReviewPage(): string {
     busy = false;
   }
 
+  // -- Confirmation modal --
+  function showConfirmModal() {
+    const overlay = document.getElementById('confirm-overlay');
+    const input = document.getElementById('confirm-input');
+    const submitBtn = document.getElementById('confirm-submit-btn');
+    overlay.classList.add('open');
+    input.value = '';
+    submitBtn.classList.remove('enabled');
+    setTimeout(() => input.focus(), 50);
+  }
+
+  function hideConfirmModal() {
+    document.getElementById('confirm-overlay').classList.remove('open');
+    document.getElementById('confirm-input').value = '';
+    pendingDecision = null;
+  }
+
+  document.getElementById('confirm-input').addEventListener('input', (e) => {
+    const btn = document.getElementById('confirm-submit-btn');
+    if (e.target.value.trim().toUpperCase() === 'YES') {
+      btn.classList.add('enabled');
+    } else {
+      btn.classList.remove('enabled');
+    }
+  });
+
+  document.getElementById('confirm-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.value.trim().toUpperCase() === 'YES' && pendingDecision) {
+      e.preventDefault();
+      const decision = pendingDecision;
+      hideConfirmModal();
+      executeDecision(decision);
+    } else if (e.key === 'Escape') {
+      hideConfirmModal();
+    }
+  });
+
+  document.getElementById('confirm-cancel-btn').addEventListener('click', hideConfirmModal);
+
+  document.getElementById('confirm-submit-btn').addEventListener('click', () => {
+    if (!pendingDecision) return;
+    const decision = pendingDecision;
+    hideConfirmModal();
+    executeDecision(decision);
+  });
+
   // -- Back --
   async function goBack() {
     if (busy) return;
@@ -1220,6 +1328,7 @@ export function getReviewPage(): string {
         currentItem = data.current;
         currentTranscript = data.transcript;
         peekItem = data.peek;
+        currentAuditRemaining = data.auditRemaining ?? 0;
         if (currentTranscript && currentItem) {
           transcriptCache[currentItem.findingId] = currentTranscript;
         }
@@ -1240,6 +1349,7 @@ export function getReviewPage(): string {
   // -- Keyboard --
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (document.getElementById('confirm-overlay').classList.contains('open')) return;
 
     switch (e.key.toLowerCase()) {
       case 'y': decide('confirm'); break;

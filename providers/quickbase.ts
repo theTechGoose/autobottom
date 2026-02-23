@@ -3,7 +3,7 @@
 function headers() {
   return {
     "QB-Realm-Hostname": `${Deno.env.get("QB_REALM")}.quickbase.com`,
-    "User-Agent": "auto-bot-serverless",
+    "User-Agent": "auto-bot",
     Authorization: `QB-USER-TOKEN ${Deno.env.get("QB_USER_TOKEN")}`,
     "Content-Type": "application/json",
   };
@@ -42,7 +42,7 @@ export async function queryRecords(opts: QBQueryOptions): Promise<any[]> {
 }
 
 // DATE_LEGS table
-const DATE_LEGS_TABLE = "bpb28qsnn";
+const DATE_LEGS_TABLE = Deno.env.get("QB_DATE_LEGS_TABLE") || "";
 const FIELD_RECORD_ID = 3;
 const FIELD_VO_GENIE = 145;
 const FIELD_RELATED_DESTINATION = 292;
@@ -66,7 +66,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
 }
 
 // VO Audit Questions table
-const QUESTIONS_TABLE = Deno.env.get("QB_AUDIT_QUESTIONS_TABLE") || "bu3e8x98x";
+const QUESTIONS_TABLE = Deno.env.get("QB_AUDIT_QUESTIONS_TABLE") || "";
 const FIELD_RELATED_DEST = Number(Deno.env.get("QB_AUDIT_QUESTIONS_DEST_FIELD") || "11");
 const FIELD_REPORT_LABEL = Number(Deno.env.get("QB_AUDIT_QUESTIONS_LABEL_FIELD") || "7");
 const FIELD_QUESTION = Number(Deno.env.get("QB_AUDIT_QUESTIONS_QUESTION_FIELD") || "6");

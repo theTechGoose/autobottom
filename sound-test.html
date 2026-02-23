@@ -81,9 +81,21 @@ function ensureCtxForFile() {
   return ctx;
 }
 
+function isExternal(url) {
+  return url.indexOf('http://') === 0 || url.indexOf('https://') === 0;
+}
+
 function playFile(url) {
+  // External URLs (CDN) can't use fetch due to CORS -- use Audio element
+  if (isExternal(url)) {
+    if (!audioCache[url]) audioCache[url] = new Audio(url);
+    var a = audioCache[url];
+    a.currentTime = 0;
+    a.play().catch(function(e) { console.error('playFile error:', e); });
+    return;
+  }
+  // Local files use Web Audio API (more reliable on Safari)
   var c = ensureCtxForFile();
-  // If already cached as decoded buffer, play immediately
   if (audioBufferCache[url]) {
     var src = c.createBufferSource();
     src.buffer = audioBufferCache[url];
@@ -91,7 +103,6 @@ function playFile(url) {
     src.start(0);
     return;
   }
-  // Fetch + decode + play
   fetch(url).then(function(r) { return r.arrayBuffer(); }).then(function(ab) {
     return c.decodeAudioData(ab);
   }).then(function(decoded) {
@@ -152,7 +163,47 @@ var packs = {
     { label: 'Godlike', fn: function() { var c=getCtx(),t=c.currentTime;var ob=c.createOscillator(),gb=c.createGain();ob.type='sine';ob.frequency.setValueAtTime(40,t);ob.frequency.exponentialRampToValueAtTime(30,t+0.6);gb.gain.setValueAtTime(0.35,t);gb.gain.exponentialRampToValueAtTime(0.001,t+0.6);ob.connect(gb);gb.connect(c.destination);ob.start(t);ob.stop(t+0.6);var os=c.createOscillator(),gs=c.createGain();os.type='sawtooth';os.frequency.setValueAtTime(100,t);os.frequency.exponentialRampToValueAtTime(3000,t+0.35);gs.gain.setValueAtTime(0.12,t);gs.gain.exponentialRampToValueAtTime(0.001,t+0.4);os.connect(gs);gs.connect(c.destination);os.start(t);os.stop(t+0.4);[261,329,392,523,659,784,1047,1319,1568].forEach(function(f){[-3,0,3].forEach(function(det){var o=c.createOscillator(),g=c.createGain();o.type='sine';o.frequency.value=f;o.detune.value=det;g.gain.setValueAtTime(0.04,t+0.3);g.gain.exponentialRampToValueAtTime(0.001,t+0.9);o.connect(g);g.connect(c.destination);o.start(t+0.3);o.stop(t+0.9);});}); }},
     { label: 'Level Up', fn: function() { var c=getCtx(),t=c.currentTime;var o=c.createOscillator(),g=c.createGain();o.type='triangle';o.frequency.setValueAtTime(523.25,t);o.frequency.exponentialRampToValueAtTime(1046.5,t+0.3);g.gain.setValueAtTime(0.22,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.4);o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+0.4); }},
   ],
-  'Mixkit - Game UI': [
+  'Mixkit - Punchy (clean hits)': [
+    { label: 'Retro Game Notification', fn: 'https://assets.mixkit.co/active_storage/sfx/212/212-preview.mp3' },
+    { label: 'Quick Win Notification', fn: 'https://assets.mixkit.co/active_storage/sfx/269/269-preview.mp3' },
+    { label: 'Arcade Jump Coin', fn: 'https://assets.mixkit.co/active_storage/sfx/216/216-preview.mp3' },
+    { label: 'Unlock Notification', fn: 'https://assets.mixkit.co/active_storage/sfx/253/253-preview.mp3' },
+    { label: 'Bonus Earned', fn: 'https://assets.mixkit.co/active_storage/sfx/2058/2058-preview.mp3' },
+    { label: 'Winning Notification', fn: 'https://assets.mixkit.co/active_storage/sfx/2018/2018-preview.mp3' },
+    { label: 'Arcade Score', fn: 'https://assets.mixkit.co/active_storage/sfx/217/217-preview.mp3' },
+    { label: 'Small Win', fn: 'https://assets.mixkit.co/active_storage/sfx/2020/2020-preview.mp3' },
+    { label: 'Instant Win', fn: 'https://assets.mixkit.co/active_storage/sfx/2021/2021-preview.mp3' },
+    { label: 'Space Coin Win', fn: 'https://assets.mixkit.co/active_storage/sfx/271/271-preview.mp3' },
+    { label: 'Winning Swoosh', fn: 'https://assets.mixkit.co/active_storage/sfx/2017/2017-preview.mp3' },
+    { label: 'Extra Bonus', fn: 'https://assets.mixkit.co/active_storage/sfx/2045/2045-preview.mp3' },
+    { label: 'Winning Coin', fn: 'https://assets.mixkit.co/active_storage/sfx/2069/2069-preview.mp3' },
+    { label: 'Video Game Retro Click', fn: 'https://assets.mixkit.co/active_storage/sfx/237/237-preview.mp3' },
+  ],
+  'Mixkit - Epic (escalating)': [
+    { label: 'Achievement Bell', fn: 'https://assets.mixkit.co/active_storage/sfx/600/600-preview.mp3' },
+    { label: 'Completion of a Level', fn: 'https://assets.mixkit.co/active_storage/sfx/2063/2063-preview.mp3' },
+    { label: 'Game Bonus Reached', fn: 'https://assets.mixkit.co/active_storage/sfx/2065/2065-preview.mp3' },
+    { label: 'Casino Bling Achievement', fn: 'https://assets.mixkit.co/active_storage/sfx/2067/2067-preview.mp3' },
+    { label: 'Fantasy Success', fn: 'https://assets.mixkit.co/active_storage/sfx/270/270-preview.mp3' },
+    { label: 'Arcade Bonus Alert', fn: 'https://assets.mixkit.co/active_storage/sfx/767/767-preview.mp3' },
+    { label: 'Magic Sweep Trophy', fn: 'https://assets.mixkit.co/active_storage/sfx/257/257-preview.mp3' },
+    { label: 'Video Game Treasure', fn: 'https://assets.mixkit.co/active_storage/sfx/2066/2066-preview.mp3' },
+    { label: 'Final Level Bonus', fn: 'https://assets.mixkit.co/active_storage/sfx/2061/2061-preview.mp3' },
+    { label: 'Arcade Mechanical Bling', fn: 'https://assets.mixkit.co/active_storage/sfx/210/210-preview.mp3' },
+    { label: 'Level Increased', fn: 'https://assets.mixkit.co/active_storage/sfx/2062/2062-preview.mp3' },
+    { label: 'Arcade Rising', fn: 'https://assets.mixkit.co/active_storage/sfx/231/231-preview.mp3' },
+    { label: 'Melodic Bonus Collect', fn: 'https://assets.mixkit.co/active_storage/sfx/1938/1938-preview.mp3' },
+    { label: 'Medieval Fanfare', fn: 'https://assets.mixkit.co/active_storage/sfx/226/226-preview.mp3' },
+    { label: 'Game Level Completed', fn: 'https://assets.mixkit.co/active_storage/sfx/2059/2059-preview.mp3' },
+    { label: 'Retro Casino Notification', fn: 'https://assets.mixkit.co/active_storage/sfx/211/211-preview.mp3' },
+    { label: 'Ethereal Fairy Win', fn: 'https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3' },
+    { label: 'Winning Chimes', fn: 'https://assets.mixkit.co/active_storage/sfx/2015/2015-preview.mp3' },
+    { label: 'Sci-Fi Positive', fn: 'https://assets.mixkit.co/active_storage/sfx/266/266-preview.mp3' },
+    { label: 'Unlock New Item', fn: 'https://assets.mixkit.co/active_storage/sfx/254/254-preview.mp3' },
+    { label: 'Video Game Win', fn: 'https://assets.mixkit.co/active_storage/sfx/2016/2016-preview.mp3' },
+    { label: 'Explainer Reveal', fn: 'https://assets.mixkit.co/active_storage/sfx/235/235-preview.mp3' },
+  ],
+  'Mixkit - Game UI (local)': [
     { label: 'Notification', fn: '/sounds/mixkit-notification.mp3' },
     { label: 'Achievement Bell', fn: '/sounds/mixkit-achievement-bell.mp3' },
     { label: 'Game Bonus', fn: '/sounds/mixkit-game-bonus.mp3' },

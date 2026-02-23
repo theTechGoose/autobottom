@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sound Test</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .container { text-align: center; width: 340px; }
+  h1 { font-size: 18px; margin-bottom: 24px; color: #8b949e; font-weight: 500; }
+  select { width: 100%; padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 14px; margin-bottom: 16px; cursor: pointer; outline: none; }
+  select:focus { border-color: #58a6ff; }
+  .sounds { display: flex; flex-direction: column; gap: 6px; }
+  button { padding: 12px 0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 14px; cursor: pointer; transition: all 0.1s; position: relative; }
+  button:hover { background: #1c2333; border-color: #58a6ff; }
+  button:active { transform: scale(0.97); background: #1a2740; }
+  button .key { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #484f58; font-size: 11px; font-family: monospace; }
+  .label { color: #484f58; font-size: 11px; margin-top: 12px; }
+  .sep { color: #30363d; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin: 12px 0 6px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Sound Test</h1>
+  <select id="pack"></select>
+  <div id="btn-area" class="sounds"></div>
+  <p class="label">Click a button or press the key shown</p>
+</div>
+<script>
+var audioCache = {};
+var audioBufferCache = {};
+var audioUnlocked = false;
+
+// Use Web Audio API to play files (much more reliable on Safari than Audio element)
+function ensureCtxForFile() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+
+function playFile(url) {
+  var c = ensureCtxForFile();
+  // If already cached as decoded buffer, play immediately
+  if (audioBufferCache[url]) {
+    var src = c.createBufferSource();
+    src.buffer = audioBufferCache[url];
+    src.connect(c.destination);
+    src.start(0);
+    return;
+  }
+  // Fetch + decode + play
+  fetch(url).then(function(r) { return r.arrayBuffer(); }).then(function(ab) {
+    return c.decodeAudioData(ab);
+  }).then(function(decoded) {
+    audioBufferCache[url] = decoded;
+    var src = c.createBufferSource();
+    src.buffer = decoded;
+    src.connect(c.destination);
+    src.start(0);
+  }).catch(function(e) { console.error('playFile error:', e); });
+}
+
+// ===== Synthesizer helpers =====
+var ctx;
+function getCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+function noiseBurst(c, t, dur, freq, vol) {
+  var buf = c.createBuffer(1, c.sampleRate * dur, c.sampleRate);
+  var d = buf.getChannelData(0);
+  for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  var src = c.createBufferSource(); src.buffer = buf;
+  var flt = c.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = freq; flt.Q.value = 2;
+  var g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  src.connect(flt); flt.connect(g); g.connect(c.destination); src.start(t); src.stop(t + dur);
+}
+function tone(c, t, type, freq, vol, atk, dec) {
+  var o = c.createOscillator(); var g = c.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.001, t); g.gain.linearRampToValueAtTime(vol, t + atk);
+  g.gain.exponentialRampToValueAtTime(0.001, t + atk + dec);
+  o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + atk + dec + 0.01);
+}
+
+// ===== Pack definitions =====
+// Each pack has an array of { label, fn }
+// fn is either a function (synthesized) or a string URL (file-based)
+
+var packs = {
+  'v2 - Synth (noise + filtered)': [
+    { label: 'Ping', fn: function() { var c=getCtx(),t=c.currentTime; noiseBurst(c,t,0.04,4000,0.15); tone(c,t,'sine',880,0.2,0.005,0.1); tone(c,t+0.01,'sine',1320,0.08,0.005,0.06); }},
+    { label: 'Double Kill', fn: function() { var c=getCtx(),t=c.currentTime; noiseBurst(c,t,0.03,5000,0.12); tone(c,t,'sine',784,0.2,0.005,0.1); noiseBurst(c,t+0.1,0.03,6000,0.14); tone(c,t+0.1,'sine',1047,0.22,0.005,0.12); }},
+    { label: 'Triple Kill', fn: function() { var c=getCtx(),t=c.currentTime; [784,988,1319].forEach(function(f,i){var o=i*0.09;noiseBurst(c,t+o,0.025,5000+i*1000,0.1);tone(c,t+o,'sine',f,0.2,0.005,0.15);tone(c,t+o,'sine',f*2.01,0.04,0.01,0.1);}); }},
+    { label: 'Mega Kill', fn: function() { var c=getCtx(),t=c.currentTime; var ob=c.createOscillator(),gb=c.createGain(); ob.type='sine';ob.frequency.setValueAtTime(150,t);ob.frequency.exponentialRampToValueAtTime(40,t+0.2);gb.gain.setValueAtTime(0.35,t);gb.gain.exponentialRampToValueAtTime(0.001,t+0.25);ob.connect(gb);gb.connect(c.destination);ob.start(t);ob.stop(t+0.25); noiseBurst(c,t,0.06,3000,0.25); [523,784,1047].forEach(function(f){tone(c,t+0.03,'triangle',f,0.12,0.01,0.25);}); }},
+    { label: 'Ultra Kill', fn: function() { var c=getCtx(),t=c.currentTime; var buf=c.createBuffer(1,c.sampleRate*0.4,c.sampleRate),d=buf.getChannelData(0);for(var i=0;i<d.length;i++)d[i]=Math.random()*2-1;var src=c.createBufferSource();src.buffer=buf;var flt=c.createBiquadFilter();flt.type='bandpass';flt.Q.value=3;flt.frequency.setValueAtTime(300,t);flt.frequency.exponentialRampToValueAtTime(4000,t+0.2);var gn=c.createGain();gn.gain.setValueAtTime(0.2,t);gn.gain.exponentialRampToValueAtTime(0.001,t+0.35);src.connect(flt);flt.connect(gn);gn.connect(c.destination);src.start(t);src.stop(t+0.4);[523,659,784,1047].forEach(function(f){tone(c,t+0.15,'sawtooth',f,0.08,0.01,0.3);tone(c,t+0.15,'sine',f,0.1,0.005,0.35);});var o2=c.createOscillator(),g2=c.createGain();o2.type='sine';o2.frequency.setValueAtTime(100,t+0.15);o2.frequency.exponentialRampToValueAtTime(50,t+0.35);g2.gain.setValueAtTime(0.3,t+0.15);g2.gain.exponentialRampToValueAtTime(0.001,t+0.4);o2.connect(g2);g2.connect(c.destination);o2.start(t+0.15);o2.stop(t+0.4); }},
+    { label: 'Rampage', fn: function() { var c=getCtx(),t=c.currentTime; noiseBurst(c,t,0.1,800,0.3);var od=c.createOscillator(),gd=c.createGain();od.type='sine';od.frequency.setValueAtTime(80,t);od.frequency.exponentialRampToValueAtTime(30,t+0.3);gd.gain.setValueAtTime(0.4,t);gd.gain.exponentialRampToValueAtTime(0.001,t+0.35);od.connect(gd);gd.connect(c.destination);od.start(t);od.stop(t+0.35);[392,523,659,784,1047].forEach(function(f,i){var o=0.06+i*0.05;tone(c,t+o,'square',f,0.06,0.01,0.25);tone(c,t+o,'sine',f,0.1,0.005,0.3);}); }},
+    { label: 'Godlike', fn: function() { var c=getCtx(),t=c.currentTime; var buf=c.createBuffer(1,c.sampleRate*0.6,c.sampleRate),d=buf.getChannelData(0);for(var i=0;i<d.length;i++)d[i]=Math.random()*2-1;var src=c.createBufferSource();src.buffer=buf;var flt=c.createBiquadFilter();flt.type='lowpass';flt.frequency.setValueAtTime(8000,t);flt.frequency.exponentialRampToValueAtTime(200,t+0.5);var gn=c.createGain();gn.gain.setValueAtTime(0.3,t);gn.gain.setValueAtTime(0.3,t+0.05);gn.gain.exponentialRampToValueAtTime(0.001,t+0.6);src.connect(flt);flt.connect(gn);gn.connect(c.destination);src.start(t);src.stop(t+0.6);var ob=c.createOscillator(),gb=c.createGain();ob.type='sine';ob.frequency.setValueAtTime(45,t);ob.frequency.exponentialRampToValueAtTime(25,t+0.8);gb.gain.setValueAtTime(0.35,t);gb.gain.exponentialRampToValueAtTime(0.001,t+0.8);ob.connect(gb);gb.connect(c.destination);ob.start(t);ob.stop(t+0.8);[262,330,392,523,659,784,1047,1319].forEach(function(f){[-4,0,4].forEach(function(det){var o=c.createOscillator(),g=c.createGain();o.type='sine';o.frequency.value=f;o.detune.value=det;g.gain.setValueAtTime(0.001,t+0.1);g.gain.linearRampToValueAtTime(0.04,t+0.2);g.gain.exponentialRampToValueAtTime(0.001,t+1.0);o.connect(g);g.connect(c.destination);o.start(t+0.1);o.stop(t+1.0);});}); }},
+    { label: 'Level Up', fn: function() { var c=getCtx(),t=c.currentTime; noiseBurst(c,t,0.05,6000,0.12);tone(c,t,'triangle',523,0.2,0.01,0.15);tone(c,t+0.1,'triangle',784,0.2,0.01,0.15);tone(c,t+0.2,'triangle',1047,0.22,0.01,0.2); }},
+  ],
+  'v1 - Synth (raw oscillators)': [
+    { label: 'Ping', fn: function() { var c=getCtx(),t=c.currentTime;var o1=c.createOscillator(),g1=c.createGain();o1.type='sine';o1.frequency.setValueAtTime(1400,t);o1.frequency.exponentialRampToValueAtTime(900,t+0.08);g1.gain.setValueAtTime(0.18,t);g1.gain.exponentialRampToValueAtTime(0.001,t+0.12);o1.connect(g1);g1.connect(c.destination);o1.start(t);o1.stop(t+0.12);var o2=c.createOscillator(),g2=c.createGain();o2.type='sine';o2.frequency.value=2800;g2.gain.setValueAtTime(0.06,t);g2.gain.exponentialRampToValueAtTime(0.001,t+0.06);o2.connect(g2);g2.connect(c.destination);o2.start(t);o2.stop(t+0.06); }},
+    { label: 'Double Kill', fn: function() { var c=getCtx(),t=c.currentTime;[1200,1600].forEach(function(f,i){var o=c.createOscillator(),g=c.createGain();o.type='sine';o.frequency.value=f;g.gain.setValueAtTime(0.2,t+i*0.08);g.gain.exponentialRampToValueAtTime(0.001,t+i*0.08+0.1);o.connect(g);g.connect(c.destination);o.start(t+i*0.08);o.stop(t+i*0.08+0.1);}); }},
+    { label: 'Triple Kill', fn: function() { var c=getCtx(),t=c.currentTime;[523,659,880].forEach(function(f,i){var o=c.createOscillator(),g=c.createGain();o.type='sine';o.frequency.value=f;g.gain.setValueAtTime(0.22,t+i*0.07);g.gain.exponentialRampToValueAtTime(0.001,t+i*0.07+0.12);o.connect(g);g.connect(c.destination);o.start(t+i*0.07);o.stop(t+i*0.07+0.12);}); }},
+    { label: 'Mega Kill', fn: function() { var c=getCtx(),t=c.currentTime;var ob=c.createOscillator(),gb=c.createGain();ob.type='sine';ob.frequency.setValueAtTime(120,t);ob.frequency.exponentialRampToValueAtTime(60,t+0.15);gb.gain.setValueAtTime(0.3,t);gb.gain.exponentialRampToValueAtTime(0.001,t+0.2);ob.connect(gb);gb.connect(c.destination);ob.start(t);ob.stop(t+0.2);[440,660,880,1100].forEach(function(f,i){var o=c.createOscillator(),g=c.createGain();o.type='sawtooth';o.frequency.value=f;g.gain.setValueAtTime(0.12,t+0.04+i*0.05);g.gain.exponentialRampToValueAtTime(0.001,t+0.04+i*0.05+0.15);o.connect(g);g.connect(c.destination);o.start(t+0.04+i*0.05);o.stop(t+0.04+i*0.05+0.15);}); }},
+    { label: 'Ultra Kill', fn: function() { var c=getCtx(),t=c.currentTime;var os=c.createOscillator(),gs=c.createGain();os.type='sawtooth';os.frequency.setValueAtTime(200,t);os.frequency.exponentialRampToValueAtTime(1600,t+0.25);gs.gain.setValueAtTime(0.15,t);gs.gain.exponentialRampToValueAtTime(0.001,t+0.3);os.connect(gs);gs.connect(c.destination);os.start(t);os.stop(t+0.3);[523,659,784,1047].forEach(function(f){var o=c.createOscillator(),g=c.createGain();o.type='sine';o.frequency.value=f;g.gain.setValueAtTime(0.18,t+0.2);g.gain.exponentialRampToValueAtTime(0.001,t+0.5);o.connect(g);g.connect(c.destination);o.start(t+0.2);o.stop(t+0.5);});var ob=c.createOscillator(),gb=c.createGain();ob.type='sine';ob.frequency.value=80;gb.gain.setValueAtTime(0.25,t+0.18);gb.gain.exponentialRampToValueAtTime(0.001,t+0.4);ob.connect(gb);gb.connect(c.destination);ob.start(t+0.18);ob.stop(t+0.4); }},
+    { label: 'Rampage', fn: function() { var c=getCtx(),t=c.currentTime;var ob=c.createOscillator(),gb=c.createGain();ob.type='sine';ob.frequency.value=55;gb.gain.setValueAtTime(0.3,t);gb.gain.exponentialRampToValueAtTime(0.001,t+0.5);ob.connect(gb);gb.connect(c.destination);ob.start(t);ob.stop(t+0.5);[523,659,784,1047,1319].forEach(function(f,i){var o=c.createOscillator(),g=c.createGain();o.type='square';o.frequency.value=f;g.gain.setValueAtTime(0.1,t+i*0.06);g.gain.exponentialRampToValueAtTime(0.001,t+i*0.06+0.2);o.connect(g);g.connect(c.destination);o.start(t+i*0.06);o.stop(t+i*0.06+0.2);var o2=c.createOscillator(),g2=c.createGain();o2.type='sine';o2.frequency.value=f*2;g2.gain.setValueAtTime(0.06,t+i*0.06);g2.gain.exponentialRampToValueAtTime(0.001,t+i*0.06+0.15);o2.connect(g2);g2.connect(c.destination);o2.start(t+i*0.06);o2.stop(t+i*0.06+0.15);}); }},
+    { label: 'Godlike', fn: function() { var c=getCtx(),t=c.currentTime;var ob=c.createOscillator(),gb=c.createGain();ob.type='sine';ob.frequency.setValueAtTime(40,t);ob.frequency.exponentialRampToValueAtTime(30,t+0.6);gb.gain.setValueAtTime(0.35,t);gb.gain.exponentialRampToValueAtTime(0.001,t+0.6);ob.connect(gb);gb.connect(c.destination);ob.start(t);ob.stop(t+0.6);var os=c.createOscillator(),gs=c.createGain();os.type='sawtooth';os.frequency.setValueAtTime(100,t);os.frequency.exponentialRampToValueAtTime(3000,t+0.35);gs.gain.setValueAtTime(0.12,t);gs.gain.exponentialRampToValueAtTime(0.001,t+0.4);os.connect(gs);gs.connect(c.destination);os.start(t);os.stop(t+0.4);[261,329,392,523,659,784,1047,1319,1568].forEach(function(f){[-3,0,3].forEach(function(det){var o=c.createOscillator(),g=c.createGain();o.type='sine';o.frequency.value=f;o.detune.value=det;g.gain.setValueAtTime(0.04,t+0.3);g.gain.exponentialRampToValueAtTime(0.001,t+0.9);o.connect(g);g.connect(c.destination);o.start(t+0.3);o.stop(t+0.9);});}); }},
+    { label: 'Level Up', fn: function() { var c=getCtx(),t=c.currentTime;var o=c.createOscillator(),g=c.createGain();o.type='triangle';o.frequency.setValueAtTime(523.25,t);o.frequency.exponentialRampToValueAtTime(1046.5,t+0.3);g.gain.setValueAtTime(0.22,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.4);o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+0.4); }},
+  ],
+  'Mixkit - Game UI': [
+    { label: 'Notification', fn: '/sounds/mixkit-notification.mp3' },
+    { label: 'Achievement Bell', fn: '/sounds/mixkit-achievement-bell.mp3' },
+    { label: 'Game Bonus', fn: '/sounds/mixkit-game-bonus.mp3' },
+    { label: 'Bonus Reached', fn: '/sounds/mixkit-bonus-reached.mp3' },
+    { label: 'Arcade Retro', fn: '/sounds/mixkit-arcade-retro.mp3' },
+    { label: 'Fairy Sparkle', fn: '/sounds/mixkit-fairy-sparkle.mp3' },
+    { label: 'Winning Coin', fn: '/sounds/mixkit-winning-coin.mp3' },
+    { label: 'Success Alert', fn: '/sounds/mixkit-success-alert.mp3' },
+    { label: 'Magic Notify', fn: '/sounds/mixkit-magic-notify.mp3' },
+    { label: 'Alert Ding', fn: '/sounds/mixkit-alert-ding.mp3' },
+  ],
+  'OpenGameArt - Level Up (CC0)': [
+    { label: 'Rise 01', fn: '/sounds/oga-Rise01.mp3' },
+    { label: 'Rise 02', fn: '/sounds/oga-Rise02.mp3' },
+    { label: 'Rise 03', fn: '/sounds/oga-Rise03.mp3' },
+    { label: 'Rise 04', fn: '/sounds/oga-Rise04.mp3' },
+    { label: 'Rise 05', fn: '/sounds/oga-Rise05.mp3' },
+    { label: 'Rise 06', fn: '/sounds/oga-Rise06.mp3' },
+    { label: 'Rise 07', fn: '/sounds/oga-Rise07.mp3' },
+    { label: 'Upper 01', fn: '/sounds/oga-Upper01.mp3' },
+    { label: 'Coin 01', fn: '/sounds/oga-Coin01.mp3' },
+    { label: 'FX 01', fn: '/sounds/oga-FX01.mp3' },
+    { label: 'FX 02', fn: '/sounds/oga-FX02.mp3' },
+    { label: 'Alarm', fn: '/sounds/oga-Alarm.mp3' },
+    { label: 'Downer 01', fn: '/sounds/oga-Downer01.mp3' },
+  ],
+};
+
+// Build dropdown
+var sel = document.getElementById('pack');
+Object.keys(packs).forEach(function(name) {
+  var opt = document.createElement('option');
+  opt.value = name; opt.textContent = name;
+  sel.appendChild(opt);
+});
+
+// Build buttons
+function buildButtons() {
+  var area = document.getElementById('btn-area');
+  area.innerHTML = '';
+  var pack = packs[sel.value];
+  pack.forEach(function(item, i) {
+    var btn = document.createElement('button');
+    var keyNum = i < 9 ? (i + 1) : null;
+    btn.innerHTML = (keyNum ? '<span class="key">' + keyNum + '</span>' : '') + item.label;
+    btn.onclick = function() {
+      if (typeof item.fn === 'function') item.fn();
+      else playFile(item.fn);
+    };
+    area.appendChild(btn);
+  });
+}
+sel.addEventListener('change', buildButtons);
+buildButtons();
+
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+  if (e.target.tagName === 'SELECT') return;
+  var n = parseInt(e.key);
+  if (n >= 1 && n <= 9) {
+    var pack = packs[sel.value];
+    var item = pack[n - 1];
+    if (item) {
+      if (typeof item.fn === 'function') item.fn();
+      else playFile(item.fn);
+    }
+  }
+});
+</script>
+</body>
+</html>

@@ -28,14 +28,10 @@ export const OFFICE_NAMES: Record<number, string> = {
 
 export const TARGET_OFFICES = Object.keys(OFFICE_NAMES).map(Number);
 
-const DEFAULT_EMAILS = [
-  "adamp@monsterrg.com", "ai@monsterrg.com", "alexandera@monsterrg.com",
-  "rafac@monsterrg.com", "emilyk@monsterrg.com", "tariqb@monsterrg.com",
-  "amcgill@monsterrg.com", "jeremyc@monsterrg.com", "support@monsterrg.com",
-  "kinow@monsterrg.com", "bmitch@monsterrg.com",
-];
+const DEFAULT_EMAILS = (Deno.env.get("BAD_WORD_ALERT_EMAILS") ?? "").split(",").map(e => e.trim()).filter(Boolean);
 
-const KV_URL = "https://real-dog-58.thetechgoose.deno.net";
+import { env } from "../env.ts";
+const KV_URL = env.badWordsKvUrl;
 
 export const DEFAULT_ALERT_CONFIGS: AlertConfig[] = [
   { word: "resort taxes included" }, { word: "resort taxes covered" },

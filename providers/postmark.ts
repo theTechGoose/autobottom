@@ -19,7 +19,7 @@ export async function sendEmail(opts: {
       "X-Postmark-Server-Token": token,
     },
     body: JSON.stringify({
-      From: opts.from ?? "notifications@monsterrg.com",
+      From: opts.from ?? (Deno.env.get("FROM_EMAIL") || "noreply@example.com"),
       To: to,
       Subject: opts.subject,
       HtmlBody: opts.htmlBody,

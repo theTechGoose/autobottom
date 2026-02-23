@@ -67,6 +67,7 @@ export async function claimNextItem(reviewer: string): Promise<{
   transcript: { raw: string; diarized: string } | null;
   peek: ReviewItem | null;
   remaining: number;
+  auditRemaining: number;
 }> {
   const db = await kv();
   const now = Date.now();
@@ -108,11 +109,14 @@ export async function claimNextItem(reviewer: string): Promise<{
   if (current) remaining--;
 
   let transcript = null;
+  let auditRemaining = 0;
   if (current) {
     transcript = await getTranscript(current.findingId);
+    const counterEntry = await db.get<number>(["review-audit-pending", current.findingId]);
+    auditRemaining = counterEntry.value ?? 0;
   }
 
-  return { current, transcript, peek, remaining };
+  return { current, transcript, peek, remaining, auditRemaining };
 }
 
 // -- Record Decision --
@@ -200,6 +204,7 @@ export async function undoDecision(
   transcript: { raw: string; diarized: string } | null;
   peek: ReviewItem | null;
   remaining: number;
+  auditRemaining: number;
 }> {
   const db = await kv();
 
@@ -223,7 +228,7 @@ export async function undoDecision(
   }
 
   if (!latestDecided) {
-    return { restored: null, transcript: null, peek: null, remaining: 0 };
+    return { restored: null, transcript: null, peek: null, remaining: 0, auditRemaining: 0 };
   }
 
   const decided = latestDecided.entry.value;
@@ -257,7 +262,7 @@ export async function undoDecision(
 
   const res = await atomic.commit();
   if (!res.ok) {
-    return { restored: null, transcript: null, peek: null, remaining: 0 };
+    return { restored: null, transcript: null, peek: null, remaining: 0, auditRemaining: 0 };
   }
 
   const transcript = await getTranscript(findingId);
@@ -277,7 +282,7 @@ export async function undoDecision(
     }
   }
 
-  return { restored: item, transcript, peek, remaining };
+  return { restored: item, transcript, peek, remaining, auditRemaining: newCount };
 }
 
 // -- Audit Completion POST --

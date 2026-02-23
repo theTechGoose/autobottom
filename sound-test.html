@@ -6,11 +6,11 @@
 <title>Sound Test</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 40px 16px; gap: 32px; }
   .container { text-align: center; width: 340px; }
   h1 { font-size: 18px; margin-bottom: 24px; color: #8b949e; font-weight: 500; }
-  select { width: 100%; padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 14px; margin-bottom: 16px; cursor: pointer; outline: none; }
-  select:focus { border-color: #58a6ff; }
+  .container select { width: 100%; padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 14px; margin-bottom: 16px; cursor: pointer; outline: none; }
+  .container select:focus { border-color: #58a6ff; }
   .sounds { display: flex; flex-direction: column; gap: 6px; }
   button { padding: 12px 0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 14px; cursor: pointer; transition: all 0.1s; position: relative; }
   button:hover { background: #1c2333; border-color: #58a6ff; }
@@ -18,6 +18,28 @@
   button .key { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #484f58; font-size: 11px; font-family: monospace; }
   .label { color: #484f58; font-size: 11px; margin-top: 12px; }
   .sep { color: #30363d; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin: 12px 0 6px; }
+
+  .builder { width: 480px; border-top: 1px solid #30363d; padding-top: 24px; }
+  .builder h2 { font-size: 16px; color: #8b949e; font-weight: 500; margin-bottom: 16px; text-align: center; }
+  .builder-controls { display: flex; gap: 8px; margin-bottom: 16px; }
+  .builder-controls input[type="text"] { flex: 1; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 13px; outline: none; }
+  .builder-controls input[type="text"]:focus { border-color: #58a6ff; }
+  .builder-controls select { flex: 1; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 13px; cursor: pointer; outline: none; }
+  .builder-controls select:focus { border-color: #58a6ff; }
+  .builder-actions { display: flex; gap: 6px; margin-bottom: 16px; }
+  .builder-actions button { flex: 1; padding: 8px 0; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 12px; cursor: pointer; transition: all 0.1s; }
+  .builder-actions button:hover { background: #1c2333; border-color: #58a6ff; }
+  .builder-actions button:active { transform: scale(0.97); }
+  .slot-rows { display: flex; flex-direction: column; gap: 6px; }
+  .slot-row { display: grid; grid-template-columns: 90px 1fr 36px; gap: 8px; align-items: center; }
+  .slot-row label { font-size: 13px; color: #8b949e; text-align: right; }
+  .slot-row select { padding: 8px 10px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 12px; cursor: pointer; outline: none; }
+  .slot-row select:focus { border-color: #58a6ff; }
+  .slot-row button { width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #8b949e; font-size: 16px; cursor: pointer; transition: all 0.1s; }
+  .slot-row button:hover { background: #1c2333; border-color: #58a6ff; color: #e6edf3; }
+  .slot-row button:active { transform: scale(0.93); }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #238636; color: #fff; padding: 8px 20px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -27,6 +49,26 @@
   <div id="btn-area" class="sounds"></div>
   <p class="label">Click a button or press the key shown</p>
 </div>
+
+<div class="builder">
+  <h2>Sound Config Builder</h2>
+  <div class="builder-controls">
+    <input type="text" id="config-name" placeholder="Config name...">
+    <select id="saved-configs">
+      <option value="">-- Saved configs --</option>
+    </select>
+  </div>
+  <div class="builder-actions">
+    <button id="btn-save">Save</button>
+    <button id="btn-load">Load</button>
+    <button id="btn-delete">Delete</button>
+    <button id="btn-export">Export</button>
+  </div>
+  <div id="slot-rows" class="slot-rows"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
 <script>
 var audioCache = {};
 var audioBufferCache = {};
@@ -168,7 +210,7 @@ buildButtons();
 
 // Keyboard shortcuts
 document.addEventListener('keydown', function(e) {
-  if (e.target.tagName === 'SELECT') return;
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
   var n = parseInt(e.key);
   if (n >= 1 && n <= 9) {
     var pack = packs[sel.value];
@@ -179,6 +221,184 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
+
+// ===== Sound Config Builder =====
+var SLOTS = [
+  { key: 'ping', label: 'Ping' },
+  { key: 'double', label: 'Double Kill' },
+  { key: 'triple', label: 'Triple Kill' },
+  { key: 'mega', label: 'Mega Kill' },
+  { key: 'ultra', label: 'Ultra Kill' },
+  { key: 'rampage', label: 'Rampage' },
+  { key: 'godlike', label: 'Godlike' },
+  { key: 'levelup', label: 'Level Up' },
+];
+
+// Short keys for synth packs in exports
+var PACK_SHORT_KEYS = {
+  'v2 - Synth (noise + filtered)': 'v2',
+  'v1 - Synth (raw oscillators)': 'v1',
+};
+
+var slotSelects = {};
+
+function buildSlotRows() {
+  var container = document.getElementById('slot-rows');
+  SLOTS.forEach(function(slot) {
+    var row = document.createElement('div');
+    row.className = 'slot-row';
+
+    var lbl = document.createElement('label');
+    lbl.textContent = slot.label;
+
+    var slotSel = document.createElement('select');
+    slotSel.id = 'slot-' + slot.key;
+    Object.keys(packs).forEach(function(packName) {
+      var group = document.createElement('optgroup');
+      group.label = packName;
+      packs[packName].forEach(function(sound, idx) {
+        var opt = document.createElement('option');
+        opt.value = packName + '|' + idx;
+        opt.textContent = sound.label;
+        group.appendChild(opt);
+      });
+      slotSel.appendChild(group);
+    });
+
+    var previewBtn = document.createElement('button');
+    previewBtn.innerHTML = '&#9654;';
+    previewBtn.title = 'Preview';
+    previewBtn.onclick = function() {
+      var val = slotSel.value;
+      if (!val) return;
+      var parts = val.split('|');
+      var packName = parts[0];
+      var idx = parseInt(parts[1]);
+      var sound = packs[packName][idx];
+      if (typeof sound.fn === 'function') sound.fn();
+      else playFile(sound.fn);
+    };
+
+    row.appendChild(lbl);
+    row.appendChild(slotSel);
+    row.appendChild(previewBtn);
+    container.appendChild(row);
+    slotSelects[slot.key] = slotSel;
+  });
+}
+buildSlotRows();
+
+// localStorage helpers
+function loadConfigs() {
+  try { return JSON.parse(localStorage.getItem('soundConfigs')) || []; }
+  catch(e) { return []; }
+}
+function saveConfigs(configs) {
+  localStorage.setItem('soundConfigs', JSON.stringify(configs));
+}
+function refreshSavedDropdown() {
+  var dd = document.getElementById('saved-configs');
+  var current = dd.value;
+  dd.innerHTML = '<option value="">-- Saved configs --</option>';
+  loadConfigs().forEach(function(cfg, i) {
+    var opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = cfg.name;
+    dd.appendChild(opt);
+  });
+  dd.value = current;
+}
+refreshSavedDropdown();
+
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function() { t.classList.remove('show'); }, 1500);
+}
+
+function getCurrentSlotValues() {
+  var slots = {};
+  SLOTS.forEach(function(slot) {
+    var val = slotSelects[slot.key].value;
+    var parts = val.split('|');
+    slots[slot.key] = { pack: parts[0], index: parseInt(parts[1]) };
+  });
+  return slots;
+}
+
+// Save
+document.getElementById('btn-save').onclick = function() {
+  var name = document.getElementById('config-name').value.trim();
+  if (!name) { showToast('Enter a config name'); return; }
+  var configs = loadConfigs();
+  var existing = -1;
+  configs.forEach(function(c, i) { if (c.name === name) existing = i; });
+  var cfg = { name: name, slots: getCurrentSlotValues() };
+  if (existing >= 0) configs[existing] = cfg;
+  else configs.push(cfg);
+  saveConfigs(configs);
+  refreshSavedDropdown();
+  // select the just-saved config
+  var dd = document.getElementById('saved-configs');
+  for (var i = 0; i < dd.options.length; i++) {
+    if (dd.options[i].textContent === name) { dd.value = dd.options[i].value; break; }
+  }
+  showToast('Saved!');
+};
+
+// Load
+document.getElementById('btn-load').onclick = function() {
+  var dd = document.getElementById('saved-configs');
+  var idx = dd.value;
+  if (idx === '') { showToast('Select a config to load'); return; }
+  var configs = loadConfigs();
+  var cfg = configs[parseInt(idx)];
+  if (!cfg) return;
+  document.getElementById('config-name').value = cfg.name;
+  SLOTS.forEach(function(slot) {
+    var mapping = cfg.slots[slot.key];
+    if (mapping) {
+      slotSelects[slot.key].value = mapping.pack + '|' + mapping.index;
+    }
+  });
+  showToast('Loaded!');
+};
+
+// Delete
+document.getElementById('btn-delete').onclick = function() {
+  var dd = document.getElementById('saved-configs');
+  var idx = dd.value;
+  if (idx === '') { showToast('Select a config to delete'); return; }
+  var configs = loadConfigs();
+  configs.splice(parseInt(idx), 1);
+  saveConfigs(configs);
+  refreshSavedDropdown();
+  document.getElementById('config-name').value = '';
+  showToast('Deleted!');
+};
+
+// Export
+document.getElementById('btn-export').onclick = function() {
+  var slotValues = getCurrentSlotValues();
+  var exported = {};
+  SLOTS.forEach(function(slot) {
+    var mapping = slotValues[slot.key];
+    var sound = packs[mapping.pack][mapping.index];
+    if (typeof sound.fn === 'string') {
+      exported[slot.key] = sound.fn;
+    } else {
+      var shortKey = PACK_SHORT_KEYS[mapping.pack] || mapping.pack;
+      exported[slot.key] = { pack: shortKey, index: mapping.index };
+    }
+  });
+  var json = JSON.stringify(exported, null, 2);
+  navigator.clipboard.writeText(json).then(function() {
+    showToast('Copied!');
+  }).catch(function() {
+    showToast('Copy failed');
+  });
+};
 </script>
 </body>
 </html>

@@ -87,7 +87,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
         finding.feedback = {
           heading: "Audit Feedback",
           text: feedbackText,
-          viewUrl: `https://ai-audits.thetechgoose.deno.net/get?id=${findingId}`,
+          viewUrl: `${env.denoKvUrl}/get?id=${findingId}`,
           disputeUrl: `${env.selfUrl}/audit/appeal?findingId=${findingId}`,
           recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
         };
@@ -179,7 +179,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
 }
 
 async function postToDeno(finding: Record<string, any>) {
-  const DENO_URL = "https://ai-audits.thetechgoose.deno.net";
+  const DENO_URL = env.denoKvUrl;
   const CHUNK_SIZE = 50_000;
 
   const controller = new AbortController();

@@ -980,7 +980,7 @@ function devResetFinding(id){document.getElementById('dev-status').textContent='
             console.error(`[${url.pathname}] Max retries (${pipelineCfg.maxRetries}) exhausted for findingId=${fid}`);
             trackCompleted(fid).catch(() => {});
             sendEmail({
-              to: "ai@monsterrg.com",
+              to: env.alertEmail,
               subject: `[Auto-Bot] Pipeline retries exhausted: ${stepName}`,
               htmlBody: `<h3>Pipeline Step Failed</h3>
 <p><b>Finding ID:</b> ${fid}</p>

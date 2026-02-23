@@ -41,9 +41,13 @@ export const env = {
   // Genie (dual account auth)
   get genieAuth() { return required("GENIE_AUTH"); },
   get genieAuthTwo() { return required("GENIE_AUTH_TWO"); },
+  get genieBaseUrl() { return required("GENIE_BASE_URL"); },
 
   // App
-  get selfUrl() { return Deno.env.get("SELF_URL") ?? "https://auto-bot-serverless.deno.dev"; },
-  get kvServiceUrl() { return Deno.env.get("KV_SERVICE_URL") ?? "https://google-sheets-kv.thetechgoose.deno.net"; },
-  get denoKvUrl() { return Deno.env.get("DENO_KV_URL") ?? "https://ai-audits.thetechgoose.deno.net"; },
+  get selfUrl() { return required("SELF_URL"); },
+  get kvServiceUrl() { return required("KV_SERVICE_URL"); },
+  get denoKvUrl() { return required("DENO_KV_URL"); },
+  get alertEmail() { return required("ALERT_EMAIL"); },
+  get fromEmail() { return required("FROM_EMAIL"); },
+  get badWordsKvUrl() { return required("BAD_WORDS_KV_URL"); },
 };

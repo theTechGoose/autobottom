@@ -17,7 +17,7 @@ function getHeaders(accountId: AccountId): Headers {
 
 async function tryAccountOnce(contract: number, accountId: AccountId): Promise<string | null> {
   try {
-    const url = `https://judge2.contractgenie.com/api/v1/${accountId}/judge_search.wr?filter_contract=${contract}`;
+    const url = `${env.genieBaseUrl}/api/v1/${accountId}/judge_search.wr?filter_contract=${contract}`;
     const res = await fetch(url, { headers: getHeaders(accountId) });
     if (!res.ok) return null;
     const json = await res.json();
@@ -25,7 +25,7 @@ async function tryAccountOnce(contract: number, accountId: AccountId): Promise<s
     const [record] = json.data;
     if (!record?.contract || record.contract === "") return null;
     const src = record?.src as string | undefined;
-    if (!src || src === "https://judge2.contractgenie.com/" || src.trim() === "") return null;
+    if (!src || src === `${env.genieBaseUrl}/` || src.trim() === "") return null;
     return src;
   } catch (err) {
     console.error(`[GENIE] tryAccountOnce error: accountId=${accountId} contract=${contract}`, err);

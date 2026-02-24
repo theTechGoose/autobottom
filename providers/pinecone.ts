@@ -76,7 +76,7 @@ export async function upload(findingId: string, text: string) {
         values,
         metadata: { text: chunk },
       };
-    })
+    }),
   );
 
   // Upsert in batches of 100
@@ -90,7 +90,11 @@ export async function upload(findingId: string, text: string) {
       },
       body: JSON.stringify({ vectors: batch, namespace: findingId }),
     });
-    if (!res.ok) throw new Error(`Pinecone upsert failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) {
+      throw new Error(
+        `Pinecone upsert failed: ${res.status} ${await res.text()}`,
+      );
+    }
     await res.json(); // consume body
   }
 
@@ -108,14 +112,23 @@ export async function upload(findingId: string, text: string) {
     }
     await sleep(1000);
   }
-  console.warn(`[PINECONE] records may not be fully indexed yet for ${findingId}`);
+  console.warn(
+    `[PINECONE] records may not be fully indexed yet for ${findingId}`,
+  );
 }
 
 /** Query Pinecone for relevant transcript chunks. */
-export async function query(findingId: string, question: string): Promise<string> {
+export async function query(
+  findingId: string,
+  question: string,
+): Promise<string> {
   const host = await getPineconeHost();
   const { key, index } = PINECONE_HOST();
-  console.log(`[PINECONE] query host=${host} index=${index} keyPrefix=${key.slice(0, 12)}`);
+  console.log(
+    `[PINECONE] query host=${host} index=${index} keyPrefix=${
+      key.slice(0, 12)
+    }`,
+  );
 
   const queryVector = await embed(question);
 
@@ -139,7 +152,9 @@ export async function query(findingId: string, question: string): Promise<string
   }
   const data = await res.json();
 
-  const matches = (data.matches ?? []) as Array<{ score: number; metadata?: { text?: string } }>;
+  const matches = (data.matches ?? []) as Array<
+    { score: number; metadata?: { text?: string } }
+  >;
   const topScore = matches[0]?.score ?? 0;
   const hits = matches
     .filter((m) => topScore - m.score < 0.2)

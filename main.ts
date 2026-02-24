@@ -218,6 +218,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/wipe-kv": handleWipeKv,
   "/admin/force-nos": handleForceNos,
   "/admin/seed": handleSeed,
+  "/admin/init-org": handleInitOrg,
   "/admin/queues": handleSetQueue,
   "/admin/pipeline-config": handleSetPipelineConfig,
   "/admin/settings/terminate": handleAdminSaveSettings,
@@ -1356,6 +1357,18 @@ async function handleForceNos(req: Request): Promise<Response> {
   await populateReviewQueue(auth.orgId, findingId, finding.answeredQuestions);
 
   return json({ ok: true, flipped, totalNos: finding.answeredQuestions.filter((q: any) => q.answer === "No").length });
+}
+
+// -- Admin: Init Org --
+
+async function handleInitOrg(req: Request): Promise<Response> {
+  const body = await req.json();
+  const { name } = body;
+  if (!name) return json({ error: "name required" }, 400);
+  const db = await Deno.openKv();
+  const orgId = await createOrg(name, name);
+  await db.set(["default-org"], orgId);
+  return json({ ok: true, orgId, name });
 }
 
 // -- Admin: Seed --

@@ -8,9 +8,9 @@ function getOpenAI() {
 }
 
 const PINECONE_HOST = () => {
-  const key = Deno.env.get("PINECONE_DB_KEY");
+  const key = Deno.env.get("ADAM_PINECONE") ?? Deno.env.get("PINECONE_DB_KEY");
   const index = Deno.env.get("PINECONE_INDEX") ?? "auto-bot";
-  if (!key) throw new Error("PINECONE_DB_KEY required");
+  if (!key) throw new Error("ADAM_PINECONE or PINECONE_DB_KEY required");
   // Pinecone serverless index host format
   return { key, index };
 };

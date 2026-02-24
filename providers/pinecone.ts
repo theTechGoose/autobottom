@@ -114,7 +114,8 @@ export async function upload(findingId: string, text: string) {
 /** Query Pinecone for relevant transcript chunks. */
 export async function query(findingId: string, question: string): Promise<string> {
   const host = await getPineconeHost();
-  const { key } = PINECONE_HOST();
+  const { key, index } = PINECONE_HOST();
+  console.log(`[PINECONE] query host=${host} index=${index} keyPrefix=${key.slice(0, 12)}`);
 
   const queryVector = await embed(question);
 
@@ -132,7 +133,10 @@ export async function query(findingId: string, question: string): Promise<string
     }),
   });
 
-  if (!res.ok) throw new Error(`Pinecone query failed: ${res.status}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Pinecone query failed: ${res.status} ${errText}`);
+  }
   const data = await res.json();
 
   const matches = (data.matches ?? []) as Array<{ score: number; metadata?: { text?: string } }>;

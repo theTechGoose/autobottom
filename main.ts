@@ -2300,7 +2300,7 @@ Deno.serve(async (req) => {
 <p><b>Step:</b> ${stepName}</p>
 <p><b>Retries:</b> ${attempt - 1}/${pipelineCfg.maxRetries}</p>
 <p><b>Error:</b></p><pre>${msg}</pre>
-<p><a href="${env.selfUrl}/audit/report?id=${fid}">View Report</a></p>`,
+<p><a href="${env.selfUrl}/audit/report?id=${fid}${retryOrgId ? `&org=${retryOrgId}` : ""}">View Report</a></p>`,
             }).catch((emailErr) => console.error(`[${url.pathname}] Failed to send alert email:`, emailErr));
           }
           return json({ error: msg, retried: attempt <= pipelineCfg.maxRetries, attempt }, 200);

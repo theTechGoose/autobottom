@@ -1,21 +1,19 @@
-/** HTTP handlers for review API routes. */
+/** HTTP handlers for review API routes. Uses unified auth. */
 
 import {
   claimNextItem,
   recordDecision,
   undoDecision,
-  createUser,
-  verifyUser,
-  hasAnyUsers,
-  createSession,
-  getSession,
-  deleteSession,
   getReviewStats,
   backfillFromFinished,
+  getReviewerDashboardData,
 } from "./kv.ts";
-import { getWebhookConfig, saveWebhookConfig } from "../lib/kv.ts";
-import type { WebhookConfig } from "../lib/kv.ts";
+import { getWebhookConfig, saveWebhookConfig, resolveGamificationSettings, listSoundPacks, emitEvent } from "../lib/kv.ts";
+import type { WebhookConfig, SoundSlot } from "../lib/kv.ts";
+import { resolveEffectiveAuth, getUser } from "../auth/kv.ts";
+import type { AuthContext } from "../auth/kv.ts";
 import { getReviewPage } from "./page.ts";
+import { getReviewDashboardPage } from "./dashboard.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {
@@ -30,94 +28,51 @@ function html(body: string): Response {
   });
 }
 
-function parseCookie(req: Request): string | null {
-  const cookie = req.headers.get("cookie") ?? "";
-  const match = cookie.match(/review_session=([^;]+)/);
-  return match?.[1] ?? null;
-}
-
-async function authenticate(req: Request): Promise<string | null> {
-  const token = parseCookie(req);
-  if (!token) return null;
-  return getSession(token);
-}
-
-function sessionCookie(token: string): string {
-  return `review_session=${token}; HttpOnly; Path=/review; SameSite=Strict; Max-Age=86400`;
-}
-
-function clearCookie(): string {
-  return `review_session=; HttpOnly; Path=/review; SameSite=Strict; Max-Age=0`;
+async function requireAuth(req: Request): Promise<AuthContext | Response> {
+  const auth = await resolveEffectiveAuth(req);
+  if (!auth) return json({ error: "unauthorized" }, 401);
+  return auth;
 }
 
 // -- Page --
 
-export async function handleReviewPage(_req: Request): Promise<Response> {
+export async function handleReviewPage(req: Request): Promise<Response> {
+  const auth = await resolveEffectiveAuth(req);
+  if (auth) {
+    const user = await getUser(auth.orgId, auth.email);
+    const gamification = await resolveGamificationSettings(auth.orgId, auth.email, auth.role, user?.supervisor);
+    const packs = await listSoundPacks(auth.orgId);
+    const SLOTS: SoundSlot[] = ["ping", "double", "triple", "mega", "ultra", "rampage", "godlike", "levelup"];
+    const packRegistry: Record<string, Record<string, string>> = {};
+    for (const p of packs) {
+      const slots: Record<string, string> = {};
+      for (const s of SLOTS) {
+        if (p.slots[s]) slots[s] = `/sounds/${auth.orgId}/${p.id}/${s}.mp3`;
+      }
+      packRegistry[p.id] = slots;
+    }
+    const config = { ...gamification, orgId: auth.orgId, packRegistry };
+    return html(getReviewPage(JSON.stringify(config)));
+  }
   return html(getReviewPage());
-}
-
-// -- Auth --
-
-export async function handleSetup(req: Request): Promise<Response> {
-  const exists = await hasAnyUsers();
-  if (exists) return json({ error: "Users already exist. Use /review/api/users to add more." }, 403);
-
-  const body = await req.json();
-  const { username, password } = body;
-  if (!username || !password) return json({ error: "username and password required" }, 400);
-
-  await createUser(username, password);
-  const token = await createSession(username);
-
-  return json({ ok: true, username }, 200, { "Set-Cookie": sessionCookie(token) });
-}
-
-export async function handleLogin(req: Request): Promise<Response> {
-  const body = await req.json();
-  const { username, password } = body;
-  if (!username || !password) return json({ error: "username and password required" }, 400);
-
-  const valid = await verifyUser(username, password);
-  if (!valid) return json({ error: "invalid credentials" }, 401);
-
-  const token = await createSession(username);
-  return json({ ok: true, username }, 200, { "Set-Cookie": sessionCookie(token) });
-}
-
-export async function handleLogout(req: Request): Promise<Response> {
-  const token = parseCookie(req);
-  if (token) await deleteSession(token);
-  return json({ ok: true }, 200, { "Set-Cookie": clearCookie() });
-}
-
-export async function handleAddUser(req: Request): Promise<Response> {
-  const reviewer = await authenticate(req);
-  if (!reviewer) return json({ error: "unauthorized" }, 401);
-
-  const body = await req.json();
-  const { username, password } = body;
-  if (!username || !password) return json({ error: "username and password required" }, 400);
-
-  await createUser(username, password);
-  return json({ ok: true, username });
 }
 
 // -- Review Actions --
 
 export async function handleNext(req: Request): Promise<Response> {
-  const reviewer = await authenticate(req);
-  if (!reviewer) return json({ error: "unauthorized" }, 401);
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
 
-  const result = await claimNextItem(reviewer);
+  const result = await claimNextItem(auth.orgId, auth.email);
   return json(result);
 }
 
 export async function handleDecide(req: Request): Promise<Response> {
-  const reviewer = await authenticate(req);
-  if (!reviewer) return json({ error: "unauthorized" }, 401);
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
 
   const body = await req.json();
-  const { findingId, questionIndex, decision } = body;
+  const { findingId, questionIndex, decision, combo, level, speedMs } = body;
 
   if (!findingId || questionIndex === undefined || !decision) {
     return json({ error: "findingId, questionIndex, and decision required" }, 400);
@@ -126,22 +81,35 @@ export async function handleDecide(req: Request): Promise<Response> {
     return json({ error: "decision must be 'confirm' or 'flip'" }, 400);
   }
 
-  const result = await recordDecision(findingId, questionIndex, decision, reviewer);
+  const result = await recordDecision(
+    auth.orgId, findingId, questionIndex, decision, auth.email,
+    combo ?? undefined, level ?? undefined, speedMs ?? undefined,
+  );
   if (!result.success) {
     return json({ error: "failed to record decision (lock expired or not owned)" }, 409);
   }
 
-  // Claim next item for the reviewer
-  const next = await claimNextItem(reviewer);
+  // Emit review-decided event when an audit's review is fully complete
+  if (result.auditComplete) {
+    emitEvent(auth.orgId, auth.email, "review-decided", {
+      findingId,
+      reviewer: auth.email,
+      decision,
+    }).catch(() => {});
+  }
 
-  return json({ decided: { findingId, questionIndex, decision }, auditComplete: result.auditComplete, next });
+  // Claim next item for the reviewer
+  const next = await claimNextItem(auth.orgId, auth.email);
+
+  const newBadges = result.newBadges.map(({ check: _, ...rest }) => rest);
+  return json({ decided: { findingId, questionIndex, decision }, auditComplete: result.auditComplete, next, newBadges });
 }
 
 export async function handleBack(req: Request): Promise<Response> {
-  const reviewer = await authenticate(req);
-  if (!reviewer) return json({ error: "unauthorized" }, 401);
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
 
-  const result = await undoDecision(reviewer);
+  const result = await undoDecision(auth.orgId, auth.email);
   if (!result.restored) {
     return json({ error: "nothing to undo" }, 404);
   }
@@ -151,22 +119,23 @@ export async function handleBack(req: Request): Promise<Response> {
     transcript: result.transcript,
     peek: result.peek,
     remaining: result.remaining,
+    auditRemaining: result.auditRemaining,
   });
 }
 
 // -- Settings --
 
 export async function handleGetSettings(req: Request): Promise<Response> {
-  const reviewer = await authenticate(req);
-  if (!reviewer) return json({ error: "unauthorized" }, 401);
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
 
-  const settings = await getWebhookConfig("terminate");
+  const settings = await getWebhookConfig(auth.orgId, "terminate");
   return json(settings ?? { postUrl: "", postHeaders: {} });
 }
 
 export async function handleSaveSettings(req: Request): Promise<Response> {
-  const reviewer = await authenticate(req);
-  if (!reviewer) return json({ error: "unauthorized" }, 401);
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
 
   const body = await req.json();
   const settings: WebhookConfig = {
@@ -174,26 +143,46 @@ export async function handleSaveSettings(req: Request): Promise<Response> {
     postHeaders: body.postHeaders ?? {},
   };
 
-  await saveWebhookConfig("terminate", settings);
+  await saveWebhookConfig(auth.orgId, "terminate", settings);
   return json({ ok: true });
 }
 
 // -- Stats --
 
 export async function handleStats(req: Request): Promise<Response> {
-  const reviewer = await authenticate(req);
-  if (!reviewer) return json({ error: "unauthorized" }, 401);
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
 
-  const stats = await getReviewStats();
+  const stats = await getReviewStats(auth.orgId);
   return json(stats);
 }
 
 // -- Backfill --
 
 export async function handleBackfill(req: Request): Promise<Response> {
-  const reviewer = await authenticate(req);
-  if (!reviewer) return json({ error: "unauthorized" }, 401);
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
 
-  const result = await backfillFromFinished();
+  const result = await backfillFromFinished(auth.orgId);
   return json(result);
+}
+
+// -- Reviewer Dashboard --
+
+export async function handleReviewDashboardPage(_req: Request): Promise<Response> {
+  return html(getReviewDashboardPage());
+}
+
+export async function handleReviewDashboardData(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const data = await getReviewerDashboardData(auth.orgId, auth.email);
+  return json(data);
+}
+
+export async function handleReviewMe(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  return json({ username: auth.email, role: auth.role });
 }

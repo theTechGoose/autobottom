@@ -23,10 +23,11 @@ function strToBool(s: string): boolean | null {
 
 async function askLlmOne(
   question: IQuestion,
+  orgId: string,
   findingId: string,
 ): Promise<IAnsweredQuestion> {
   // Check cache
-  const cached = await getCachedAnswer(findingId, question.populated);
+  const cached = await getCachedAnswer(orgId, findingId, question.populated);
   if (cached) return answerQuestion(question, cached);
 
   // Parse AST
@@ -37,7 +38,7 @@ async function askLlmOne(
   if (ast.length === 0 || (ast.length === 1 && ast[0].length === 1 && !ast[0][0].flip)) {
     const vectorContext = await vectorQuery(findingId, question.populated);
     const answer = await askQuestion(question.populated, vectorContext);
-    await cacheAnswer(findingId, question.populated, answer);
+    await cacheAnswer(orgId, findingId, question.populated, answer);
     const answered = answerQuestion(question, answer);
     answered.snippet = vectorContext;
     return answered;
@@ -58,7 +59,7 @@ async function askLlmOne(
         // Fallback: ask LLM with full question
         const fullContext = await vectorQuery(findingId, question.populated);
         const fallbackAnswer = await askQuestion(question.populated, fullContext);
-        await cacheAnswer(findingId, question.populated, fallbackAnswer);
+        await cacheAnswer(orgId, findingId, question.populated, fallbackAnswer);
         const answered = answerQuestion(question, fallbackAnswer);
         answered.snippet = fullContext;
         return answered;
@@ -86,7 +87,7 @@ async function askLlmOne(
     defense: allDefense.length === 1 ? allDefense[0] : allDefense.join("\n---\n"),
   };
 
-  await cacheAnswer(findingId, question.populated, finalAnswer);
+  await cacheAnswer(orgId, findingId, question.populated, finalAnswer);
   const answered = answerQuestion(question, finalAnswer);
   answered.snippet = allSnippets.length === 1 ? allSnippets[0] : allSnippets.join("\n---\n");
   return answered;
@@ -94,16 +95,16 @@ async function askLlmOne(
 
 export async function stepAskBatch(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, batchIndex, questionIndices, totalBatches } = body;
+  const { findingId, orgId, batchIndex, questionIndices, totalBatches } = body;
 
   console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex}/${totalBatches} (${questionIndices.length} questions)`);
-  trackActive(findingId, `ask-batch-${batchIndex}`).catch(() => {});
+  trackActive(orgId, findingId, `ask-batch-${batchIndex}`).catch(() => {});
 
-  const finding = await getFinding(findingId);
+  const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
 
   // Read from dedicated chunked KV key first (survives finding trim), fall back to finding
-  const allPopulated = await getPopulatedQuestions(findingId) ?? finding.populatedQuestions ?? [];
+  const allPopulated = await getPopulatedQuestions(orgId, findingId) ?? finding.populatedQuestions ?? [];
   const questions: IQuestion[] = allPopulated
     .filter((_: any, i: number) => questionIndices.includes(i));
 
@@ -111,7 +112,7 @@ export async function stepAskBatch(req: Request): Promise<Response> {
   const answers: IAnsweredQuestion[] = [];
   for (const q of questions) {
     try {
-      const answer = await askLlmOne(q, findingId);
+      const answer = await askLlmOne(q, orgId, findingId);
       answers.push(answer);
     } catch (err: any) {
       const msg = err.message || String(err);
@@ -126,16 +127,16 @@ export async function stepAskBatch(req: Request): Promise<Response> {
   }
 
   // Save batch answers
-  await saveBatchAnswers(findingId, batchIndex, answers);
+  await saveBatchAnswers(orgId, findingId, batchIndex, answers);
   console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex} done (${answers.length} answers)`);
 
   // Fan-in: decrement counter
-  const remaining = await decrementBatchCounter(findingId);
+  const remaining = await decrementBatchCounter(orgId, findingId);
   console.log(`[STEP-ASK] ${findingId}: ${remaining} batches remaining`);
 
   if (remaining <= 0) {
     // Last batch - trigger finalize
-    await enqueueStep("finalize", { findingId, totalBatches });
+    await enqueueStep("finalize", { findingId, orgId, totalBatches });
   }
 
   return json({ ok: true, answers: answers.length, remaining });

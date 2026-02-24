@@ -1,5 +1,7 @@
 /** Inline HTML/CSS/JS for the judge dashboard -- appeal & reviewer statistics. */
 
+import * as icons from "../shared/icons.ts";
+
 export function getJudgeDashboardPage(): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -17,29 +19,41 @@ export function getJudgeDashboardPage(): string {
     --green: #3fb950; --red: #f85149; --yellow: #d29922;
     --green-bg: rgba(63,185,80,0.10); --red-bg: rgba(248,81,73,0.10); --yellow-bg: rgba(210,153,34,0.10);
     --mono: 'SF Mono', 'Fira Code', monospace;
+    --sidebar-w: 280px;
   }
   body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
 
-  /* Header */
-  .header {
-    padding: 24px 32px 20px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between;
-    background: var(--bg-raised);
+  /* Layout */
+  .layout { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: var(--sidebar-w); min-width: var(--sidebar-w); background: var(--bg-raised);
+    border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 10;
+    overflow-y: auto; overflow-x: hidden;
   }
-  .header h1 { font-size: 18px; font-weight: 700; color: var(--text-bright); }
-  .header .subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-  .header-actions { display: flex; gap: 8px; }
-  .header-btn {
-    padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px;
-    background: var(--bg); color: var(--text-muted); font-size: 11px; font-weight: 600;
-    cursor: pointer; transition: all 0.15s; text-decoration: none;
-  }
-  .header-btn:hover { background: var(--bg-surface); color: var(--text); border-color: var(--border-hover); }
-  .header-btn.primary { background: var(--teal-dim); color: #fff; border-color: var(--teal-dim); }
-  .header-btn.primary:hover { background: var(--teal); }
-
-  /* Content */
-  .content { max-width: 1200px; margin: 0 auto; padding: 24px 32px; }
+  .sidebar::-webkit-scrollbar { width: 3px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .sb-brand { padding: 20px 18px 16px; border-bottom: 1px solid var(--border); }
+  .sb-brand h1 { font-size: 14px; font-weight: 700; color: var(--text-bright); letter-spacing: -0.3px; }
+  .sb-brand .sb-sub { font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+  .sb-section { padding: 14px 14px 6px; }
+  .sb-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 8px; padding: 0 4px; }
+  .sb-link { display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; user-select: none; border-radius: 8px; margin-bottom: 8px; background: var(--bg); border: 1px solid var(--border); transition: border-color 0.15s; text-decoration: none; color: inherit; }
+  .sb-link:hover { border-color: var(--border-hover); }
+  .sb-link.active { border-color: var(--teal-dim); background: var(--teal-bg); }
+  .sb-link .icon { width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; }
+  .sb-link .icon.teal { background: var(--teal-bg); color: var(--teal); }
+  .sb-link .icon.green { background: var(--green-bg); color: var(--green); }
+  .sb-link .icon.yellow { background: var(--yellow-bg); color: var(--yellow); }
+  .sb-link .title { font-size: 12px; font-weight: 600; color: var(--text-bright); flex: 1; }
+  .sb-link .arrow { font-size: 10px; color: var(--text-dim); }
+  .sb-footer { margin-top: auto; border-top: 1px solid var(--border); }
+  .sb-footer .sb-user { padding: 14px 18px 8px; display: flex; align-items: center; gap: 8px; }
+  .sb-footer .sb-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--teal-bg); color: var(--teal); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+  .sb-footer .sb-email { font-size: 11px; color: var(--text-bright); font-weight: 600; word-break: break-all; line-height: 1.3; }
+  .sb-footer .sb-role { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .sb-footer .sb-settings { padding: 6px 14px 14px; }
+  .main { margin-left: var(--sidebar-w); flex: 1; padding: 24px 32px; }
 
   /* Stat cards row */
   .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 24px; }
@@ -97,24 +111,110 @@ export function getJudgeDashboardPage(): string {
   .loading-wrap { display: flex; align-items: center; justify-content: center; padding: 60px; color: var(--text-dim); font-size: 13px; }
   .error-msg { padding: 12px 16px; background: var(--red-bg); color: var(--red); border-radius: 8px; font-size: 13px; display: none; margin-bottom: 16px; }
 
+  /* Badge showcase */
+  .badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .badge-item {
+    background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 12px; text-align: center; transition: border-color 0.15s;
+  }
+  .badge-item:hover { border-color: var(--border-hover); }
+  .badge-item.earned { border-color: var(--teal-dim); }
+  .badge-item.locked { opacity: 0.4; }
+  .badge-icon { font-size: 28px; margin-bottom: 6px; }
+  .badge-name { font-size: 11px; font-weight: 700; color: var(--text-bright); margin-bottom: 2px; }
+  .badge-tier { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .badge-desc { font-size: 9px; color: var(--text-dim); margin-top: 4px; line-height: 1.3; }
+
   /* Empty table state */
   .empty-row td { color: var(--text-dim); font-style: italic; text-align: center; padding: 20px; }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: none; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 12px; width: 380px; max-width: 90vw; padding: 24px; }
+  .modal-title { font-size: 14px; font-weight: 700; color: var(--text-bright); margin-bottom: 14px; }
+  .modal .sf { margin-bottom: 12px; }
+  .modal .sf-label { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); margin-bottom: 4px; }
+  .modal .sf-input { width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; }
+  .modal .sf-input:focus { outline: none; border-color: var(--teal); }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .sf-btn { padding: 6px 16px; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  .sf-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .sf-btn.primary { background: var(--teal-dim); color: #fff; }
+  .sf-btn.primary:hover:not(:disabled) { background: var(--teal); }
+  .sf-btn.ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+  .sf-btn.ghost:hover:not(:disabled) { background: var(--bg-surface); }
+  .sf-btn.danger { background: transparent; color: var(--red); border: 1px solid rgba(248,81,73,0.2); font-size: 10px; padding: 3px 10px; }
+  .sf-btn.danger:hover:not(:disabled) { background: var(--red-bg); }
+  .reviewer-actions { display: flex; gap: 8px; align-items: center; }
+
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; }
+  }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div>
-    <h1>Judge Dashboard</h1>
-    <div class="subtitle">Appeal statistics and reviewer performance</div>
-  </div>
-  <div class="header-actions">
-    <a href="/judge" class="header-btn primary">Review Queue</a>
-    <a href="/admin/dashboard" class="header-btn">Admin Dashboard</a>
-  </div>
-</div>
-
-<div class="content">
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sb-brand">
+      <h1>Auto-Bot</h1>
+      <div class="sb-sub">Judge Panel</div>
+    </div>
+    <div class="sb-section">
+      <div class="sb-label">Navigation</div>
+      <a href="/judge" class="sb-link">
+        <div class="icon teal">${icons.playCircle}</div>
+        <span class="title">Judge Queue</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+      <a href="/judge/dashboard" class="sb-link active">
+        <div class="icon teal">${icons.layoutDashboard}</div>
+        <span class="title">Dashboard</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+      <a href="/chat" class="sb-link">
+        <div class="icon" style="background:rgba(57,208,216,0.10);color:#39d0d8;">${icons.messageCircle24}</div>
+        <span class="title">Chat</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+    </div>
+    <div class="sb-section">
+      <div class="sb-label">Management</div>
+      <div class="sb-link" onclick="document.getElementById('add-reviewer-modal').classList.add('open')">
+        <div class="icon green">${icons.users}</div>
+        <span class="title">My Reviewers</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+      <a href="/gamification" class="sb-link">
+        <div class="icon" style="background:rgba(63,185,80,0.10);color:#3fb950;">${icons.trophy}</div>
+        <span class="title">Gamification</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+      <a href="/store" class="sb-link">
+        <div class="icon" style="background:rgba(236,72,153,0.10);color:#ec4899;">${icons.shoppingBag}</div>
+        <span class="title">Store</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+    </div>
+    <div class="sb-footer">
+      <div class="sb-user">
+        <div class="sb-avatar" id="user-avatar"></div>
+        <div>
+          <div class="sb-email" id="user-email"></div>
+          <div class="sb-role">Judge</div>
+        </div>
+      </div>
+      <div class="sb-settings">
+        <div class="sb-link" onclick="fetch('/logout',{method:'POST'}).then(function(){window.location.href='/login'})">
+          <div class="icon" style="background:var(--red-bg);color:var(--red);">${icons.logIn}</div>
+          <span class="title">Logout</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+  <main class="main">
   <div id="error-msg" class="error-msg"></div>
   <div id="loading" class="loading-wrap">Loading dashboard data...</div>
 
@@ -220,12 +320,79 @@ export function getJudgeDashboardPage(): string {
       </table>
     </div>
 
+    <!-- My Reviewers -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">My Reviewers</div>
+        <div class="reviewer-actions">
+          <div class="section-badge" id="reviewer-count">0</div>
+          <button class="sf-btn primary" onclick="document.getElementById('add-reviewer-modal').classList.add('open')">+ Add</button>
+        </div>
+      </div>
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="reviewer-tbody">
+          <tr class="empty-row"><td colspan="3">No reviewers assigned</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Badge Showcase -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">Badges</div>
+        <div class="section-badge" id="badge-counter">0 / 0</div>
+      </div>
+      <div class="badge-grid" id="badge-grid"></div>
+    </div>
+
+    <!-- Gamification (standalone page) -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">Gamification</div>
+      </div>
+      <a href="/gamification" style="display:flex;align-items:center;gap:10px;padding:14px 20px;background:var(--bg-raised);border:1px solid var(--border);border-radius:10px;color:var(--text);text-decoration:none;transition:border-color 0.15s;">
+        <span style="font-size:13px;">Sound packs, streaks, and combo settings</span>
+        <span style="margin-left:auto;color:var(--text-dim);font-size:16px;">&rsaquo;</span>
+      </a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<!-- Add Reviewer Modal -->
+<div class="modal-overlay" id="add-reviewer-modal">
+  <div class="modal">
+    <div class="modal-title">Add Reviewer</div>
+    <div class="sf">
+      <label class="sf-label">Email</label>
+      <input type="email" class="sf-input" id="rev-email" placeholder="reviewer@example.com">
+    </div>
+    <div class="sf">
+      <label class="sf-label">Password</label>
+      <input type="password" class="sf-input" id="rev-password" placeholder="Password">
+    </div>
+    <div class="modal-actions">
+      <button class="sf-btn ghost" onclick="document.getElementById('add-reviewer-modal').classList.remove('open')">Cancel</button>
+      <button class="sf-btn primary" id="rev-add-btn">Add Reviewer</button>
+    </div>
   </div>
 </div>
 
 <script>
 (function() {
   async function load() {
+    try {
+      var me = await fetch('/judge/api/me');
+      if (me.ok) { var meData = await me.json(); document.getElementById('user-email').textContent = meData.username; document.getElementById('user-avatar').textContent = (meData.username || '?')[0].toUpperCase(); }
+    } catch(e) {}
     try {
       var res = await fetch('/judge/api/dashboard');
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -328,7 +495,108 @@ export function getJudgeDashboardPage(): string {
     return d.innerHTML;
   }
 
+  // Reviewer management
+  async function loadReviewers() {
+    try {
+      var res = await fetch('/judge/api/reviewers');
+      if (!res.ok) return;
+      var reviewers = await res.json();
+      var tbody = document.getElementById('reviewer-tbody');
+      document.getElementById('reviewer-count').textContent = reviewers.length;
+      if (reviewers.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="3">No reviewers assigned</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      for (var i = 0; i < reviewers.length; i++) {
+        var r = reviewers[i];
+        var dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '--';
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td><strong>' + esc(r.username) + '</strong></td><td>' + dateStr + '</td><td><button class="sf-btn danger" data-email="' + esc(r.username) + '">Remove</button></td>';
+        tbody.appendChild(tr);
+      }
+      tbody.querySelectorAll('.sf-btn.danger').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var email = this.getAttribute('data-email');
+          if (!confirm('Remove reviewer ' + email + '?')) return;
+          fetch('/judge/api/reviewers', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email }) })
+          .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
+          .then(function() { loadReviewers(); })
+          .catch(function(err) { alert(err.message); });
+        });
+      });
+    } catch(e) {}
+  }
+
+  document.getElementById('rev-add-btn').addEventListener('click', async function() {
+    var email = document.getElementById('rev-email').value.trim();
+    var password = document.getElementById('rev-password').value;
+    if (!email || !password) { alert('Email and password required'); return; }
+    this.disabled = true;
+    this.textContent = 'Adding...';
+    try {
+      var res = await fetch('/judge/api/reviewers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email, password: password }) });
+      if (!res.ok) { var d = await res.json(); throw new Error(d.error || 'Failed'); }
+      document.getElementById('rev-email').value = '';
+      document.getElementById('rev-password').value = '';
+      document.getElementById('add-reviewer-modal').classList.remove('open');
+      loadReviewers();
+    } catch(err) { alert(err.message); }
+    this.disabled = false;
+    this.textContent = 'Add Reviewer';
+  });
+
+  // Modal backdrop close
+  document.getElementById('add-reviewer-modal').addEventListener('click', function(e) {
+    if (e.target === this) this.classList.remove('open');
+  });
+
+  // Badge showcase
+  var JDG_BADGES = [
+    { id:'jdg_first_verdict', name:'First Verdict', tier:'common', icon:'\\u{2696}', description:'Judge your first question' },
+    { id:'jdg_arbiter', name:'The Arbiter', tier:'uncommon', icon:'\\u{1F3DB}', description:'Judge 100 questions' },
+    { id:'jdg_supreme', name:'Supreme Court', tier:'rare', icon:'\\u{1F451}', description:'Judge 1,000 questions' },
+    { id:'jdg_overturn_10', name:'Objection!', tier:'uncommon', icon:'\\u{270B}', description:'Overturn 10 decisions' },
+    { id:'jdg_overturn_50', name:'Court of Appeals', tier:'rare', icon:'\\u{1F4DC}', description:'Overturn 50 decisions' },
+    { id:'jdg_uphold_20', name:'Stamp of Approval', tier:'uncommon', icon:'\\u{2705}', description:'Uphold 20 in a row' },
+    { id:'jdg_combo_10', name:'Swift Justice', tier:'uncommon', icon:'\\u{26A1}', description:'Reach a 10x combo' },
+    { id:'jdg_streak_14', name:'Fortnight Judge', tier:'rare', icon:'\\u{1F525}', description:'14-day judging streak' },
+    { id:'jdg_level_10', name:'Grand Magistrate', tier:'legendary', icon:'\\u{1F48E}', description:'Reach level 10' }
+  ];
+  var TIER_COLORS = { common:'#6b7280', uncommon:'#22c55e', rare:'#3b82f6', epic:'#a855f7', legendary:'#f59e0b' };
+
+  function renderBadgeShowcase(earnedIds) {
+    var grid = document.getElementById('badge-grid');
+    var earned = earnedIds || [];
+    var count = 0;
+    grid.innerHTML = '';
+    JDG_BADGES.forEach(function(b) {
+      var has = earned.indexOf(b.id) !== -1;
+      if (has) count++;
+      var div = document.createElement('div');
+      div.className = 'badge-item ' + (has ? 'earned' : 'locked');
+      div.innerHTML =
+        '<div class="badge-icon">' + (has ? b.icon : '\\u{1F512}') + '</div>' +
+        '<div class="badge-name">' + esc(b.name) + '</div>' +
+        '<div class="badge-tier" style="color:' + (TIER_COLORS[b.tier] || '#888') + '">' + b.tier + '</div>' +
+        '<div class="badge-desc">' + esc(b.description) + '</div>';
+      grid.appendChild(div);
+    });
+    document.getElementById('badge-counter').textContent = count + ' / ' + JDG_BADGES.length;
+  }
+
+  async function loadBadges() {
+    try {
+      var res = await fetch('/api/badges');
+      if (!res.ok) return;
+      var data = await res.json();
+      renderBadgeShowcase(data.earned || []);
+    } catch(e) {}
+  }
+
   load();
+  loadReviewers();
+  loadBadges();
   setInterval(load, 15000);
 })();
 </script>

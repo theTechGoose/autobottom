@@ -1,7 +1,11 @@
-/** Review-specific KV operations: queue, locks, auth, settings, completion. */
+/** Review-specific KV operations: queue, locks, settings, completion. All keys are org-scoped. */
 
-import { getFinding, getAllAnswersForFinding, getTranscript, fireWebhook } from "../lib/kv.ts";
+import { orgKey } from "../lib/org.ts";
+import type { OrgId } from "../lib/org.ts";
+import { getFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
 import { populateManagerQueue } from "../manager/kv.ts";
+import { checkBadges, BADGE_CATALOG } from "../shared/badges.ts";
+import type { BadgeDef } from "../shared/badges.ts";
 
 let _kv: Deno.Kv | undefined;
 
@@ -28,9 +32,30 @@ export interface ReviewDecision extends ReviewItem {
   decidedAt: number;
 }
 
+export interface ReviewerLeaderboardEntry {
+  reviewer: string;
+  decisions: number;
+  confirms: number;
+  flips: number;
+  flipRate: string;
+}
+
+export interface ReviewerDashboardData {
+  queue: { pending: number; decided: number };
+  personal: {
+    totalDecisions: number;
+    confirmCount: number;
+    flipCount: number;
+    avgDecisionSpeedMs: number;
+  };
+  byReviewer: ReviewerLeaderboardEntry[];
+  recentDecisions: ReviewDecision[];
+}
+
 // -- Queue Population --
 
 export async function populateReviewQueue(
+  orgId: OrgId,
   findingId: string,
   answeredQuestions: Array<{ answer: string; header: string; populated: string; thinking: string; defense: string }>,
 ) {
@@ -52,9 +77,9 @@ export async function populateReviewQueue(
       defense: q.defense,
       answer: q.answer,
     };
-    atomic.set(["review-pending", findingId, q.index], item);
+    atomic.set(orgKey(orgId, "review-pending", findingId, q.index), item);
   }
-  atomic.set(["review-audit-pending", findingId], noAnswers.length);
+  atomic.set(orgKey(orgId, "review-audit-pending", findingId), noAnswers.length);
   await atomic.commit();
 
   console.log(`[REVIEW] ${findingId}: Queued ${noAnswers.length} items for review`);
@@ -62,7 +87,7 @@ export async function populateReviewQueue(
 
 // -- Claim Next Item --
 
-export async function claimNextItem(reviewer: string): Promise<{
+export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
   current: ReviewItem | null;
   transcript: { raw: string; diarized: string } | null;
   peek: ReviewItem | null;
@@ -77,11 +102,11 @@ export async function claimNextItem(reviewer: string): Promise<{
   let peek: ReviewItem | null = null;
   let remaining = 0;
 
-  const iter = db.list<ReviewItem>({ prefix: ["review-pending"] });
+  const iter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
   for await (const entry of iter) {
     remaining++;
     const item = entry.value;
-    const lockKey = ["review-lock", item.findingId, item.questionIndex];
+    const lockKey = orgKey(orgId, "review-lock", item.findingId, item.questionIndex);
 
     if (!current) {
       // Try to claim this item
@@ -102,7 +127,7 @@ export async function claimNextItem(reviewer: string): Promise<{
         peek = item;
       }
     }
-    // Don't break early — continue iterating to get accurate remaining count
+    // Don't break early -- continue iterating to get accurate remaining count
   }
 
   // Adjust remaining: don't count the one we just claimed
@@ -111,8 +136,8 @@ export async function claimNextItem(reviewer: string): Promise<{
   let transcript = null;
   let auditRemaining = 0;
   if (current) {
-    transcript = await getTranscript(current.findingId);
-    const counterEntry = await db.get<number>(["review-audit-pending", current.findingId]);
+    transcript = await getTranscript(orgId, current.findingId);
+    const counterEntry = await db.get<number>(orgKey(orgId, "review-audit-pending", current.findingId));
     auditRemaining = counterEntry.value ?? 0;
   }
 
@@ -122,27 +147,31 @@ export async function claimNextItem(reviewer: string): Promise<{
 // -- Record Decision --
 
 export async function recordDecision(
+  orgId: OrgId,
   findingId: string,
   questionIndex: number,
   decision: "confirm" | "flip",
   reviewer: string,
-): Promise<{ success: boolean; auditComplete: boolean }> {
+  clientCombo?: number,
+  clientLevel?: number,
+  decisionSpeedMs?: number,
+): Promise<{ success: boolean; auditComplete: boolean; newBadges: BadgeDef[] }> {
   const db = await kv();
 
-  // Check lock — if owned by another reviewer, reject. Otherwise proceed.
-  const lockKey = ["review-lock", findingId, questionIndex];
+  // Check lock -- if owned by another reviewer, reject. Otherwise proceed.
+  const lockKey = orgKey(orgId, "review-lock", findingId, questionIndex);
   const lockEntry = await db.get<{ claimedBy: string }>(lockKey);
   if (lockEntry.value && lockEntry.value.claimedBy !== reviewer) {
     console.log(`[REVIEW] recordDecision REJECTED: lock owned by ${lockEntry.value.claimedBy}, not ${reviewer}`);
-    return { success: false, auditComplete: false };
+    return { success: false, auditComplete: false, newBadges: [] };
   }
 
   // Load pending item
-  const pendingKey = ["review-pending", findingId, questionIndex];
+  const pendingKey = orgKey(orgId, "review-pending", findingId, questionIndex);
   const pendingEntry = await db.get<ReviewItem>(pendingKey);
   if (!pendingEntry.value) {
     console.log(`[REVIEW] recordDecision REJECTED: no pending entry for ${findingId}/${questionIndex}`);
-    return { success: false, auditComplete: false };
+    return { success: false, auditComplete: false, newBadges: [] };
   }
 
   const decided: ReviewDecision = {
@@ -153,7 +182,7 @@ export async function recordDecision(
   };
 
   // Load current counter
-  const counterKey = ["review-audit-pending", findingId];
+  const counterKey = orgKey(orgId, "review-audit-pending", findingId);
   const counterEntry = await db.get<number>(counterKey);
   const currentCount = counterEntry.value ?? 1;
   const newCount = currentCount - 1;
@@ -164,7 +193,7 @@ export async function recordDecision(
     .check(pendingEntry)
     .delete(lockKey)
     .delete(pendingKey)
-    .set(["review-decided", findingId, questionIndex], decided);
+    .set(orgKey(orgId, "review-decided", findingId, questionIndex), decided);
 
   if (newCount <= 0) {
     atomic.delete(counterKey);
@@ -175,7 +204,7 @@ export async function recordDecision(
   const res = await atomic.commit();
   if (!res.ok) {
     console.log(`[REVIEW] recordDecision REJECTED: atomic commit failed for ${findingId}/${questionIndex}`);
-    return { success: false, auditComplete: false };
+    return { success: false, auditComplete: false, newBadges: [] };
   }
 
   console.log(`[REVIEW] recordDecision OK: ${findingId}/${questionIndex} = ${decision}`);
@@ -184,20 +213,56 @@ export async function recordDecision(
 
   // Fire completion POST and populate manager queue in background if audit is complete
   if (auditComplete) {
-    postCorrectedAudit(findingId).catch((err) =>
+    postCorrectedAudit(orgId, findingId).catch((err) =>
       console.error(`[REVIEW] ${findingId}: Completion POST failed:`, err)
     );
-    populateManagerQueue(findingId).catch((err) =>
+    populateManagerQueue(orgId, findingId).catch((err) =>
       console.error(`[REVIEW] ${findingId}: Manager queue population failed:`, err)
     );
   }
 
-  return { success: true, auditComplete };
+  // -- Badge checking (fire-and-forget style, but we await for newBadges) --
+  let newBadges: BadgeDef[] = [];
+  try {
+    const stats = await getBadgeStats(orgId, reviewer);
+    stats.totalDecisions++;
+    if (clientCombo != null && clientCombo > stats.bestCombo) stats.bestCombo = clientCombo;
+    if (clientLevel != null && clientLevel > stats.level) stats.level = clientLevel;
+    if (decisionSpeedMs != null && decisionSpeedMs > 0) {
+      const total = stats.avgSpeedMs * stats.decisionsForAvg + decisionSpeedMs;
+      stats.decisionsForAvg++;
+      stats.avgSpeedMs = Math.round(total / stats.decisionsForAvg);
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    if (stats.lastActiveDate !== today) {
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      stats.dayStreak = stats.lastActiveDate === yesterday ? stats.dayStreak + 1 : 1;
+      stats.lastActiveDate = today;
+    }
+    await updateBadgeStats(orgId, reviewer, stats);
+
+    const earned = await getEarnedBadges(orgId, reviewer);
+    const earnedSet = new Set(earned.map((b) => b.badgeId));
+    newBadges = checkBadges("reviewer", stats, earnedSet);
+
+    let badgeXp = 0;
+    for (const badge of newBadges) {
+      await awardBadge(orgId, reviewer, badge);
+      badgeXp += badge.xpReward;
+    }
+    // Award base XP (10 per decision) + badge bonus XP
+    await awardXp(orgId, reviewer, 10 + badgeXp, "reviewer");
+  } catch (err) {
+    console.error(`[REVIEW] Badge check error for ${reviewer}:`, err);
+  }
+
+  return { success: true, auditComplete, newBadges };
 }
 
 // -- Go Back (Undo) --
 
 export async function undoDecision(
+  orgId: OrgId,
   reviewer: string,
 ): Promise<{
   restored: ReviewItem | null;
@@ -209,7 +274,7 @@ export async function undoDecision(
   const db = await kv();
 
   // First, release any current lock held by this reviewer
-  const lockIter = db.list<{ claimedBy: string }>({ prefix: ["review-lock"] });
+  const lockIter = db.list<{ claimedBy: string }>({ prefix: orgKey(orgId, "review-lock") });
   for await (const entry of lockIter) {
     if (entry.value.claimedBy === reviewer) {
       await db.delete(entry.key);
@@ -218,7 +283,7 @@ export async function undoDecision(
 
   // Find the most recent decision by this reviewer
   let latestDecided: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number } | null = null;
-  const decidedIter = db.list<ReviewDecision>({ prefix: ["review-decided"] });
+  const decidedIter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") });
   for await (const entry of decidedIter) {
     if (entry.value.reviewer === reviewer) {
       if (!latestDecided || entry.value.decidedAt > latestDecided.decidedAt) {
@@ -244,7 +309,7 @@ export async function undoDecision(
   };
 
   // Move back: delete decided, restore to pending, increment counter
-  const counterKey = ["review-audit-pending", findingId];
+  const counterKey = orgKey(orgId, "review-audit-pending", findingId);
   const counterEntry = await db.get<number>(counterKey);
   const newCount = (counterEntry.value ?? 0) + 1;
 
@@ -252,10 +317,10 @@ export async function undoDecision(
     .check(latestDecided.entry)
     .check(counterEntry)
     .delete(latestDecided.entry.key)
-    .set(["review-pending", findingId, questionIndex], item)
+    .set(orgKey(orgId, "review-pending", findingId, questionIndex), item)
     .set(counterKey, newCount)
     .set(
-      ["review-lock", findingId, questionIndex],
+      orgKey(orgId, "review-lock", findingId, questionIndex),
       { claimedBy: reviewer, claimedAt: Date.now() },
       { expireIn: 30 * 60 * 1000 },
     );
@@ -265,16 +330,16 @@ export async function undoDecision(
     return { restored: null, transcript: null, peek: null, remaining: 0, auditRemaining: 0 };
   }
 
-  const transcript = await getTranscript(findingId);
+  const transcript = await getTranscript(orgId, findingId);
 
   // Find peek
   let peek: ReviewItem | null = null;
   let remaining = 0;
-  const pendingIter = db.list<ReviewItem>({ prefix: ["review-pending"] });
+  const pendingIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
   for await (const entry of pendingIter) {
     remaining++;
     if (!peek && !(entry.value.findingId === findingId && entry.value.questionIndex === questionIndex)) {
-      const lk = ["review-lock", entry.value.findingId, entry.value.questionIndex];
+      const lk = orgKey(orgId, "review-lock", entry.value.findingId, entry.value.questionIndex);
       const lkEntry = await db.get(lk);
       if (lkEntry.value === null) {
         peek = entry.value;
@@ -287,20 +352,20 @@ export async function undoDecision(
 
 // -- Audit Completion POST --
 
-async function postCorrectedAudit(findingId: string) {
+async function postCorrectedAudit(orgId: OrgId, findingId: string) {
   const db = await kv();
 
-  const finding = await getFinding(findingId);
+  const finding = await getFinding(orgId, findingId);
   if (!finding) {
     console.error(`[REVIEW] ${findingId}: Finding not found for completion POST`);
     return;
   }
 
-  const allAnswers = await getAllAnswersForFinding(findingId);
+  const allAnswers = await getAllAnswersForFinding(orgId, findingId);
 
   // Load all decided items for this finding
   const decisions: ReviewDecision[] = [];
-  const iter = db.list<ReviewDecision>({ prefix: ["review-decided", findingId] });
+  const iter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided", findingId) });
   for await (const entry of iter) {
     decisions.push(entry.value);
   }
@@ -317,7 +382,7 @@ async function postCorrectedAudit(findingId: string) {
     return a;
   });
 
-  await fireWebhook("terminate", {
+  await fireWebhook(orgId, "terminate", {
     findingId,
     finding: { ...finding, answeredQuestions: correctedAnswers },
     correctedAnswers,
@@ -325,111 +390,120 @@ async function postCorrectedAudit(findingId: string) {
   });
 }
 
-// -- Auth --
-
-async function hashPassword(password: string): Promise<string> {
-  const data = new TextEncoder().encode(password);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-export async function createUser(username: string, password: string, role: string = "reviewer", supervisor?: string) {
-  const db = await kv();
-  const passwordHash = await hashPassword(password);
-  await db.set(["review-user", username], { passwordHash, role, supervisor: supervisor || null });
-}
-
-export async function listUsers(): Promise<Array<{ username: string; role: string; supervisor: string | null }>> {
-  const db = await kv();
-  const users: Array<{ username: string; role: string; supervisor: string | null }> = [];
-  const iter = db.list<{ passwordHash: string; role: string; supervisor?: string | null }>({ prefix: ["review-user"] });
-  for await (const entry of iter) {
-    const username = entry.key[1] as string;
-    users.push({ username, role: entry.value.role, supervisor: entry.value.supervisor ?? null });
-  }
-  return users;
-}
-
-export async function verifyUser(username: string, password: string): Promise<boolean> {
-  const db = await kv();
-  const entry = await db.get<{ passwordHash: string }>(["review-user", username]);
-  if (!entry.value) return false;
-  const hash = await hashPassword(password);
-  return hash === entry.value.passwordHash;
-}
-
-export async function hasAnyUsers(): Promise<boolean> {
-  const db = await kv();
-  const iter = db.list({ prefix: ["review-user"] });
-  for await (const _ of iter) {
-    return true;
-  }
-  return false;
-}
-
-export async function createSession(username: string): Promise<string> {
-  const db = await kv();
-  const token = crypto.randomUUID();
-  await db.set(["review-session", token], { username, createdAt: Date.now() }, { expireIn: 24 * 60 * 60 * 1000 });
-  return token;
-}
-
-export async function getSession(token: string): Promise<string | null> {
-  const db = await kv();
-  const entry = await db.get<{ username: string }>(["review-session", token]);
-  return entry.value?.username ?? null;
-}
-
-export async function deleteSession(token: string) {
-  const db = await kv();
-  await db.delete(["review-session", token]);
-}
-
 // -- Stats --
 
-export async function getReviewStats(): Promise<{ pending: number; decided: number }> {
+export async function getReviewStats(orgId: OrgId): Promise<{ pending: number; decided: number }> {
   const db = await kv();
   let pending = 0;
   let decided = 0;
 
-  for await (const _ of db.list({ prefix: ["review-pending"] })) pending++;
-  for await (const _ of db.list({ prefix: ["review-decided"] })) decided++;
+  for await (const _ of db.list({ prefix: orgKey(orgId, "review-pending") })) pending++;
+  for await (const _ of db.list({ prefix: orgKey(orgId, "review-decided") })) decided++;
 
   return { pending, decided };
 }
 
+// -- Reviewer Dashboard --
+
+export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): Promise<ReviewerDashboardData> {
+  const db = await kv();
+
+  // Count pending items
+  let pending = 0;
+  for await (const _ of db.list({ prefix: orgKey(orgId, "review-pending") })) pending++;
+
+  // Scan all decided items -- build personal list + per-reviewer map
+  const myDecisions: ReviewDecision[] = [];
+  const byReviewerMap = new Map<string, { confirms: number; flips: number }>();
+  let decided = 0;
+
+  const iter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") });
+  for await (const entry of iter) {
+    decided++;
+    const d = entry.value;
+
+    // Per-reviewer aggregation
+    let stats = byReviewerMap.get(d.reviewer);
+    if (!stats) { stats = { confirms: 0, flips: 0 }; byReviewerMap.set(d.reviewer, stats); }
+    if (d.decision === "confirm") stats.confirms++;
+    else stats.flips++;
+
+    // Personal decisions
+    if (d.reviewer === reviewer) {
+      myDecisions.push(d);
+    }
+  }
+
+  // Personal stats
+  myDecisions.sort((a, b) => a.decidedAt - b.decidedAt);
+  const totalDecisions = myDecisions.length;
+  const confirmCount = myDecisions.filter((d) => d.decision === "confirm").length;
+  const flipCount = myDecisions.filter((d) => d.decision === "flip").length;
+
+  let avgDecisionSpeedMs = 0;
+  if (myDecisions.length >= 2) {
+    let totalGap = 0;
+    for (let i = 1; i < myDecisions.length; i++) {
+      totalGap += myDecisions[i].decidedAt - myDecisions[i - 1].decidedAt;
+    }
+    avgDecisionSpeedMs = Math.round(totalGap / (myDecisions.length - 1));
+  }
+
+  // Leaderboard sorted by total decisions desc
+  const byReviewer: ReviewerLeaderboardEntry[] = [];
+  for (const [name, stats] of byReviewerMap) {
+    const total = stats.confirms + stats.flips;
+    byReviewer.push({
+      reviewer: name,
+      decisions: total,
+      confirms: stats.confirms,
+      flips: stats.flips,
+      flipRate: total > 0 ? ((stats.flips / total) * 100).toFixed(1) + "%" : "0.0%",
+    });
+  }
+  byReviewer.sort((a, b) => b.decisions - a.decisions);
+
+  // Recent 50 personal decisions (most recent first)
+  const recentDecisions = myDecisions.slice().reverse().slice(0, 50);
+
+  return {
+    queue: { pending, decided },
+    personal: { totalDecisions, confirmCount, flipCount, avgDecisionSpeedMs },
+    byReviewer,
+    recentDecisions,
+  };
+}
+
 // -- Backfill --
 
-export async function backfillFromFinished() {
+export async function backfillFromFinished(orgId: OrgId) {
   const db = await kv();
   let queued = 0;
 
-  // Collect unique finding IDs from chunked KV keys (pattern: ["audit-finding", id, chunkIndex])
+  // Collect unique finding IDs from chunked KV keys (pattern: orgKey(orgId, "audit-finding", id, chunkIndex))
   const findingIds = new Set<string>();
-  const iter = db.list({ prefix: ["audit-finding"] });
+  const iter = db.list({ prefix: orgKey(orgId, "audit-finding") });
   for await (const entry of iter) {
     const key = entry.key as Deno.KvKey;
-    // key shape: ["audit-finding", findingId, chunkIndexOrMeta]
-    if (key.length >= 2 && typeof key[1] === "string") {
-      findingIds.add(key[1]);
+    // key shape: [orgId, "audit-finding", findingId, chunkIndexOrMeta]
+    if (key.length >= 3 && typeof key[2] === "string") {
+      findingIds.add(key[2] as string);
     }
   }
 
   for (const findingId of findingIds) {
-    const finding = await getFinding(findingId);
+    const finding = await getFinding(orgId, findingId);
     if (!finding) continue;
     if (finding.findingStatus !== "finished") continue;
     if (!finding.answeredQuestions?.length) continue;
 
     // Skip if already has review items
-    const existingCheck = await db.get(["review-audit-pending", findingId]);
+    const existingCheck = await db.get(orgKey(orgId, "review-audit-pending", findingId));
     if (existingCheck.value !== null) continue;
 
     // Also check if any decided items exist
     let hasDecided = false;
-    const decidedIter = db.list({ prefix: ["review-decided", findingId] });
+    const decidedIter = db.list({ prefix: orgKey(orgId, "review-decided", findingId) });
     for await (const _ of decidedIter) {
       hasDecided = true;
       break;
@@ -453,9 +527,9 @@ export async function backfillFromFinished() {
         defense: q.defense ?? "",
         answer: q.answer,
       };
-      atomic.set(["review-pending", findingId, q.index], item);
+      atomic.set(orgKey(orgId, "review-pending", findingId, q.index), item);
     }
-    atomic.set(["review-audit-pending", findingId], noAnswers.length);
+    atomic.set(orgKey(orgId, "review-audit-pending", findingId), noAnswers.length);
     await atomic.commit();
     queued += noAnswers.length;
   }

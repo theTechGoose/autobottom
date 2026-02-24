@@ -1,11 +1,13 @@
-/** STEP 5: Finalize - collect answers, bad words, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook } from "../lib/kv.ts";
+/** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab } from "../lib/kv.ts";
 import { enqueueCleanup } from "../lib/queue.ts";
-import { checkFinding } from "../providers/bad-words.ts";
+
 import { generateFeedback } from "../providers/groq.ts";
 import { answerQuestion } from "../types/mod.ts";
 import type { IAnsweredQuestion } from "../types/mod.ts";
 import { populateReviewQueue } from "../review/kv.ts";
+import { populateJudgeQueue, saveAppeal } from "../judge/kv.ts";
+import { checkBadges } from "../shared/badges.ts";
 import { env } from "../env.ts";
 
 function json(data: unknown, status = 200) {
@@ -29,16 +31,18 @@ async function safeFetch(url: string, options: RequestInit) {
 
 export async function stepFinalize(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, totalBatches } = body;
+  const { findingId, orgId, totalBatches } = body;
 
   console.log(`[STEP-FINALIZE] ${findingId}: Starting finalization...`);
 
-  const finding = await getFinding(findingId);
+  const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
+
+  const isAppealReAudit = !!(finding as Record<string, any>).appealSourceFindingId;
 
   // Collect batch answers if we have them
   if (totalBatches && totalBatches > 0) {
-    const allAnswers = await getAllBatchAnswers(findingId, totalBatches);
+    const allAnswers = await getAllBatchAnswers(orgId, findingId, totalBatches);
     finding.answeredQuestions = allAnswers;
   }
 
@@ -65,15 +69,6 @@ export async function stepFinalize(req: Request): Promise<Response> {
     };
   }
 
-  // Bad word detection (only for valid recordings from Genie)
-  if (finding.recordingIdField === "Genie" && finding.rawTranscript && !isInvalid) {
-    try {
-      await checkFinding(finding);
-    } catch (err) {
-      console.error(`[STEP-FINALIZE] ${findingId}: Bad word check failed:`, err);
-    }
-  }
-
   // Generate feedback if not already set
   if (!finding.feedback?.text && finding.answeredQuestions?.length) {
     try {
@@ -98,15 +93,114 @@ export async function stepFinalize(req: Request): Promise<Response> {
   }
 
   finding.findingStatus = "finished";
-  await saveFinding(finding);
-  await trackCompleted(findingId);
+  await saveFinding(orgId, finding);
+  await trackCompleted(orgId, findingId);
 
-  // Populate review queue with "No" answers
+  // Route to appropriate queue
   if (finding.answeredQuestions?.length) {
     try {
-      await populateReviewQueue(findingId, finding.answeredQuestions as any[]);
+      if (isAppealReAudit) {
+        // Appeal re-audits go to judge queue (ALL questions, not just "No")
+        const f = finding as Record<string, any>;
+        await populateJudgeQueue(orgId, findingId, finding.answeredQuestions as any[], f.appealType);
+        await saveAppeal(orgId, {
+          findingId,
+          appealedAt: Date.now(),
+          status: "pending",
+          auditor: finding.owner,
+          comment: f.appealComment,
+        });
+        console.log(`[STEP-FINALIZE] ${findingId}: Appeal re-audit routed to judge queue`);
+      } else {
+        // Normal audits go to review queue with "No" answers
+        await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[]);
+      }
     } catch (err) {
-      console.error(`[STEP-FINALIZE] ${findingId}: Review queue population failed:`, err);
+      console.error(`[STEP-FINALIZE] ${findingId}: Queue population failed:`, err);
+    }
+  }
+
+  // Emit audit-completed event for the agent
+  if (finding.owner) {
+    const score = finding.answeredQuestions?.length
+      ? Math.round((finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length) * 100)
+      : 0;
+    emitEvent(orgId, finding.owner, "audit-completed", {
+      findingId,
+      score,
+      recordingId: finding.recordingId,
+    }).catch((err) => console.error(`[STEP-FINALIZE] ${findingId}: emitEvent failed:`, err));
+  }
+
+  // Award agent XP + check badges
+  if (finding.owner && finding.answeredQuestions?.length) {
+    try {
+      const qs = finding.answeredQuestions as any[];
+      const totalQ = qs.length;
+      const passedQ = qs.filter((q: any) => q.answer === "Yes").length;
+      const score = totalQ > 0 ? Math.round((passedQ / totalQ) * 100) : 0;
+
+      // XP formula: floor(score * 0.3) + bonuses
+      let xp = Math.floor(score * 0.3);
+      if (score === 100) xp += 50;       // perfect bonus
+      else if (score >= 90) xp += 20;    // high bonus
+
+      // Update badge stats
+      const stats = await getBadgeStats(orgId, finding.owner);
+      stats.totalAudits++;
+      if (score === 100) stats.perfectScoreCount++;
+
+      // Running average score
+      const prevTotal = stats.avgScore * stats.auditsForAvg;
+      stats.auditsForAvg++;
+      stats.avgScore = Math.round((prevTotal + score) / stats.auditsForAvg * 100) / 100;
+
+      // Update streak
+      const today = new Date().toISOString().slice(0, 10);
+      if (stats.lastActiveDate !== today) {
+        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        stats.dayStreak = stats.lastActiveDate === yesterday ? stats.dayStreak + 1 : 1;
+        stats.lastActiveDate = today;
+      }
+
+      await updateBadgeStats(orgId, finding.owner, stats);
+
+      const earned = await getEarnedBadges(orgId, finding.owner);
+      const earnedSet = new Set(earned.map((b) => b.badgeId));
+      const newBadges = checkBadges("agent", stats, earnedSet);
+
+      let badgeXp = 0;
+      for (const badge of newBadges) {
+        await awardBadge(orgId, finding.owner, badge);
+        badgeXp += badge.xpReward;
+      }
+
+      const awardResult = await awardXp(orgId, finding.owner, xp + badgeXp, "agent");
+      if (newBadges.length) {
+        console.log(`[STEP-FINALIZE] ${findingId}: Agent ${finding.owner} earned ${newBadges.length} badge(s)`);
+        for (const badge of newBadges) {
+          checkAndEmitPrefab(orgId, "badge_earned", finding.owner, `${finding.owner.split("@")[0]} earned ${badge.name}!`)
+            .catch(() => {});
+        }
+      }
+
+      // Broadcast: sale_completed
+      checkAndEmitPrefab(orgId, "sale_completed", finding.owner, `${finding.owner.split("@")[0]} completed an audit!`)
+        .catch(() => {});
+
+      // Broadcast: perfect_score
+      if (score === 100) {
+        checkAndEmitPrefab(orgId, "perfect_score", finding.owner, `${finding.owner.split("@")[0]} got a perfect score!`)
+          .catch(() => {});
+      }
+
+      // Broadcast: streak milestones
+      if (awardResult.state.dayStreak === 7 || awardResult.state.dayStreak === 14 || awardResult.state.dayStreak === 30) {
+        checkAndEmitPrefab(orgId, "streak_milestone", finding.owner, `${finding.owner.split("@")[0]} hit a ${awardResult.state.dayStreak}-day streak!`)
+          .catch(() => {});
+      }
+    } catch (err) {
+      console.error(`[STEP-FINALIZE] ${findingId}: Agent XP/badge error:`, err);
     }
   }
 
@@ -139,7 +233,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
   // Update job status
   if (finding.auditJobId) {
     try {
-      const job = await getJob(finding.auditJobId);
+      const job = await getJob(orgId, finding.auditJobId);
       if (job) {
         const recordId = finding.record?.RecordId ?? finding.recordingId ?? findingId;
         if (!job.doneAuditIds) job.doneAuditIds = [];
@@ -149,7 +243,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
         if (job.doneAuditIds.length >= (job.recordsToAudit?.length ?? 0)) {
           job.status = "finished";
         }
-        await saveJob(job);
+        await saveJob(orgId, job);
       }
     } catch (err) {
       console.error(`[STEP-FINALIZE] ${findingId}: Job update failed:`, err);
@@ -160,9 +254,9 @@ export async function stepFinalize(req: Request): Promise<Response> {
   const yeses = (finding.answeredQuestions as any[])?.filter((q: any) => q.answer === "Yes").length ?? 0;
   console.log(`[STEP-FINALIZE] ${findingId}: Complete - ${yeses} Yes, ${nos} No`);
 
-  // 100% first pass -- audit is terminated, no review needed
-  if (nos === 0 && yeses > 0) {
-    fireWebhook("terminate", {
+  // 100% first pass -- audit is terminated, no review needed (but appeal re-audits always go to judge)
+  if (nos === 0 && yeses > 0 && !isAppealReAudit) {
+    fireWebhook(orgId, "terminate", {
       findingId,
       finding,
       answeredQuestions: finding.answeredQuestions,
@@ -173,7 +267,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
   }
 
   // Enqueue cleanup in 24 hours
-  await enqueueCleanup({ findingId, pineconeNamespace: findingId }, 86400);
+  await enqueueCleanup({ findingId, orgId, pineconeNamespace: findingId }, 86400);
 
   return json({ ok: true, yeses, nos });
 }

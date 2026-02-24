@@ -1,6 +1,10 @@
-/** Judge-specific KV operations: queue, locks, auth, decisions, appeal stats. */
+/** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, getTranscript, fireWebhook } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
+import { orgKey } from "../lib/org.ts";
+import type { OrgId } from "../lib/org.ts";
+import { checkBadges } from "../shared/badges.ts";
+import type { BadgeDef } from "../shared/badges.ts";
 
 let _kv: Deno.Kv | undefined;
 
@@ -19,10 +23,12 @@ export interface JudgeItem {
   thinking: string;
   defense: string;
   answer: string; // current answer (Yes or No) so the judge sees what was decided
+  appealType?: string;
 }
 
 export interface JudgeDecision extends JudgeItem {
   decision: "uphold" | "overturn";
+  reason?: "error" | "logic" | "fragment" | "transcript";
   judge: string;
   decidedAt: number;
 }
@@ -33,6 +39,7 @@ export interface AppealRecord {
   status: "pending" | "complete";
   judgedBy?: string;
   auditor?: string;
+  comment?: string;
 }
 
 export interface AppealStats {
@@ -54,8 +61,10 @@ export interface AppealHistory {
 // -- Queue Population --
 
 export async function populateJudgeQueue(
+  orgId: OrgId,
   findingId: string,
   answeredQuestions: Array<{ answer: string; header: string; populated: string; thinking: string; defense: string }>,
+  appealType?: string,
 ) {
   const db = await kv();
 
@@ -73,10 +82,11 @@ export async function populateJudgeQueue(
       thinking: q.thinking,
       defense: q.defense,
       answer: q.answer,
+      ...(appealType ? { appealType } : {}),
     };
-    atomic.set(["judge-pending", findingId, q.index], item);
+    atomic.set(orgKey(orgId, "judge-pending", findingId, q.index), item);
   }
-  atomic.set(["judge-audit-pending", findingId], items.length);
+  atomic.set(orgKey(orgId, "judge-audit-pending", findingId), items.length);
   await atomic.commit();
 
   console.log(`[JUDGE] ${findingId}: Queued ${items.length} items for judge review`);
@@ -84,8 +94,8 @@ export async function populateJudgeQueue(
 
 // -- Claim Next Item --
 
-export async function claimNextItem(judge: string): Promise<{
-  current: JudgeItem | null;
+export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
+  current: (JudgeItem & { appealComment?: string }) | null;
   transcript: { raw: string; diarized: string } | null;
   peek: JudgeItem | null;
   remaining: number;
@@ -99,11 +109,11 @@ export async function claimNextItem(judge: string): Promise<{
   let peek: JudgeItem | null = null;
   let remaining = 0;
 
-  const iter = db.list<JudgeItem>({ prefix: ["judge-pending"] });
+  const iter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
   for await (const entry of iter) {
     remaining++;
     const item = entry.value;
-    const lockKey = ["judge-lock", item.findingId, item.questionIndex];
+    const lockKey = orgKey(orgId, "judge-lock", item.findingId, item.questionIndex);
 
     if (!current) {
       const lockEntry = await db.get(lockKey);
@@ -123,52 +133,81 @@ export async function claimNextItem(judge: string): Promise<{
       }
     }
 
-    // Don't break early — continue iterating to get accurate remaining count
+    // Don't break early -- continue iterating to get accurate remaining count
   }
 
   if (current) remaining--;
 
   let transcript = null;
   let auditRemaining = 0;
+  let enrichedCurrent: (JudgeItem & { appealComment?: string }) | null = current;
   if (current) {
-    transcript = await getTranscript(current.findingId);
-    const counterEntry = await db.get<number>(["judge-audit-pending", current.findingId]);
+    transcript = await getTranscript(orgId, current.findingId);
+    const counterEntry = await db.get<number>(orgKey(orgId, "judge-audit-pending", current.findingId));
     auditRemaining = counterEntry.value ?? 0;
+
+    // Enrich with appeal metadata from finding if not already on the item
+    if (!current.appealType) {
+      const finding = await getFinding(orgId, current.findingId);
+      if (finding) {
+        const f = finding as Record<string, any>;
+        if (f.appealType) {
+          enrichedCurrent = { ...current, appealType: f.appealType };
+        }
+        if (f.appealComment) {
+          enrichedCurrent = { ...(enrichedCurrent ?? current), appealComment: f.appealComment };
+        }
+      }
+    } else {
+      // appealType is on the item, but we still need appealComment from finding
+      const finding = await getFinding(orgId, current.findingId);
+      if (finding) {
+        const f = finding as Record<string, any>;
+        if (f.appealComment) {
+          enrichedCurrent = { ...current, appealComment: f.appealComment };
+        }
+      }
+    }
   }
 
-  return { current, transcript, peek, remaining, auditRemaining };
+  return { current: enrichedCurrent, transcript, peek, remaining, auditRemaining };
 }
 
 // -- Record Decision --
 
 export async function recordDecision(
+  orgId: OrgId,
   findingId: string,
   questionIndex: number,
   decision: "uphold" | "overturn",
   judge: string,
-): Promise<{ success: boolean; auditComplete: boolean }> {
+  reason?: "error" | "logic" | "fragment" | "transcript",
+  clientCombo?: number,
+  clientLevel?: number,
+): Promise<{ success: boolean; auditComplete: boolean; newBadges: BadgeDef[] }> {
   const db = await kv();
 
-  const lockKey = ["judge-lock", findingId, questionIndex];
+  const lockKey = orgKey(orgId, "judge-lock", findingId, questionIndex);
   const lockEntry = await db.get<{ claimedBy: string }>(lockKey);
   if (lockEntry.value && lockEntry.value.claimedBy !== judge) {
-    return { success: false, auditComplete: false };
+    return { success: false, auditComplete: false, newBadges: [] };
   }
 
-  const pendingKey = ["judge-pending", findingId, questionIndex];
+  const pendingKey = orgKey(orgId, "judge-pending", findingId, questionIndex);
   const pendingEntry = await db.get<JudgeItem>(pendingKey);
   if (!pendingEntry.value) {
-    return { success: false, auditComplete: false };
+    return { success: false, auditComplete: false, newBadges: [] };
   }
 
   const decided: JudgeDecision = {
     ...pendingEntry.value,
     decision,
+    ...(reason ? { reason } : {}),
     judge,
     decidedAt: Date.now(),
   };
 
-  const counterKey = ["judge-audit-pending", findingId];
+  const counterKey = orgKey(orgId, "judge-audit-pending", findingId);
   const counterEntry = await db.get<number>(counterKey);
   const currentCount = counterEntry.value ?? 1;
   const newCount = currentCount - 1;
@@ -176,7 +215,7 @@ export async function recordDecision(
   const atomic = db.atomic()
     .delete(lockKey)
     .delete(pendingKey)
-    .set(["judge-decided", findingId, questionIndex], decided);
+    .set(orgKey(orgId, "judge-decided", findingId, questionIndex), decided);
 
   if (newCount <= 0) {
     atomic.delete(counterKey);
@@ -186,7 +225,7 @@ export async function recordDecision(
 
   const res = await atomic.commit();
   if (!res.ok) {
-    return { success: false, auditComplete: false };
+    return { success: false, auditComplete: false, newBadges: [] };
   }
 
   console.log(`[JUDGE] recordDecision OK: ${findingId}/${questionIndex} = ${decision}`);
@@ -194,17 +233,53 @@ export async function recordDecision(
   const auditComplete = newCount <= 0;
 
   if (auditComplete) {
-    postJudgedAudit(findingId, judge).catch((err) =>
+    postJudgedAudit(orgId, findingId, judge).catch((err) =>
       console.error(`[JUDGE] ${findingId}: Completion failed:`, err)
     );
   }
 
-  return { success: true, auditComplete };
+  // -- Badge checking --
+  let newBadges: BadgeDef[] = [];
+  try {
+    const stats = await getBadgeStats(orgId, judge);
+    stats.totalDecisions++;
+    if (decision === "overturn") {
+      stats.totalOverturns++;
+      stats.consecutiveUpholds = 0;
+    } else {
+      stats.consecutiveUpholds++;
+    }
+    if (clientCombo != null && clientCombo > stats.bestCombo) stats.bestCombo = clientCombo;
+    if (clientLevel != null && clientLevel > stats.level) stats.level = clientLevel;
+    const today = new Date().toISOString().slice(0, 10);
+    if (stats.lastActiveDate !== today) {
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      stats.dayStreak = stats.lastActiveDate === yesterday ? stats.dayStreak + 1 : 1;
+      stats.lastActiveDate = today;
+    }
+    await updateBadgeStats(orgId, judge, stats);
+
+    const earned = await getEarnedBadges(orgId, judge);
+    const earnedSet = new Set(earned.map((b) => b.badgeId));
+    newBadges = checkBadges("judge", stats, earnedSet);
+
+    let badgeXp = 0;
+    for (const badge of newBadges) {
+      await awardBadge(orgId, judge, badge);
+      badgeXp += badge.xpReward;
+    }
+    await awardXp(orgId, judge, 10 + badgeXp, "judge");
+  } catch (err) {
+    console.error(`[JUDGE] Badge check error for ${judge}:`, err);
+  }
+
+  return { success: true, auditComplete, newBadges };
 }
 
 // -- Go Back (Undo) --
 
 export async function undoDecision(
+  orgId: OrgId,
   judge: string,
 ): Promise<{
   restored: JudgeItem | null;
@@ -216,7 +291,7 @@ export async function undoDecision(
   const db = await kv();
 
   // Release any current lock held by this judge
-  const lockIter = db.list<{ claimedBy: string }>({ prefix: ["judge-lock"] });
+  const lockIter = db.list<{ claimedBy: string }>({ prefix: orgKey(orgId, "judge-lock") });
   for await (const entry of lockIter) {
     if (entry.value.claimedBy === judge) {
       await db.delete(entry.key);
@@ -225,7 +300,7 @@ export async function undoDecision(
 
   // Find the most recent decision by this judge
   let latestDecided: { entry: Deno.KvEntry<JudgeDecision>; decidedAt: number } | null = null;
-  const decidedIter = db.list<JudgeDecision>({ prefix: ["judge-decided"] });
+  const decidedIter = db.list<JudgeDecision>({ prefix: orgKey(orgId, "judge-decided") });
   for await (const entry of decidedIter) {
     if (entry.value.judge === judge) {
       if (!latestDecided || entry.value.decidedAt > latestDecided.decidedAt) {
@@ -250,7 +325,7 @@ export async function undoDecision(
     answer: decided.answer,
   };
 
-  const counterKey = ["judge-audit-pending", findingId];
+  const counterKey = orgKey(orgId, "judge-audit-pending", findingId);
   const counterEntry = await db.get<number>(counterKey);
   const newCount = (counterEntry.value ?? 0) + 1;
 
@@ -258,10 +333,10 @@ export async function undoDecision(
     .check(latestDecided.entry)
     .check(counterEntry)
     .delete(latestDecided.entry.key)
-    .set(["judge-pending", findingId, questionIndex], item)
+    .set(orgKey(orgId, "judge-pending", findingId, questionIndex), item)
     .set(counterKey, newCount)
     .set(
-      ["judge-lock", findingId, questionIndex],
+      orgKey(orgId, "judge-lock", findingId, questionIndex),
       { claimedBy: judge, claimedAt: Date.now() },
       { expireIn: 30 * 60 * 1000 },
     );
@@ -271,15 +346,15 @@ export async function undoDecision(
     return { restored: null, transcript: null, peek: null, remaining: 0, auditRemaining: 0 };
   }
 
-  const transcript = await getTranscript(findingId);
+  const transcript = await getTranscript(orgId, findingId);
 
   let peek: JudgeItem | null = null;
   let remaining = 0;
-  const pendingIter = db.list<JudgeItem>({ prefix: ["judge-pending"] });
+  const pendingIter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
   for await (const entry of pendingIter) {
     remaining++;
     if (!peek && !(entry.value.findingId === findingId && entry.value.questionIndex === questionIndex)) {
-      const lk = ["judge-lock", entry.value.findingId, entry.value.questionIndex];
+      const lk = orgKey(orgId, "judge-lock", entry.value.findingId, entry.value.questionIndex);
       const lkEntry = await db.get(lk);
       if (lkEntry.value === null) {
         peek = entry.value;
@@ -292,21 +367,21 @@ export async function undoDecision(
 
 // -- Audit Completion --
 
-async function postJudgedAudit(findingId: string, judgedBy: string) {
+async function postJudgedAudit(orgId: OrgId, findingId: string, judgedBy: string) {
   const db = await kv();
 
-  const finding = await getFinding(findingId);
+  const finding = await getFinding(orgId, findingId);
   if (!finding) {
     console.error(`[JUDGE] ${findingId}: Finding not found for completion`);
     return;
   }
 
-  const allAnswers = await getAllAnswersForFinding(findingId);
+  const allAnswers = await getAllAnswersForFinding(orgId, findingId);
   const answers = allAnswers.length > 0 ? allAnswers : (finding.answeredQuestions ?? []);
 
   // Load all decided items for this finding
   const decisions: JudgeDecision[] = [];
-  const iter = db.list<JudgeDecision>({ prefix: ["judge-decided", findingId] });
+  const iter = db.list<JudgeDecision>({ prefix: orgKey(orgId, "judge-decided", findingId) });
   for await (const entry of iter) {
     decisions.push(entry.value);
   }
@@ -324,7 +399,7 @@ async function postJudgedAudit(findingId: string, judgedBy: string) {
     if (decision?.decision === "overturn") {
       overturns++;
       const flippedAnswer = isYes(a.answer) ? "No" : "Yes";
-      return { ...a, answer: flippedAnswer, judgedBy: decision.judge, judgeAction: "overturn" };
+      return { ...a, answer: flippedAnswer, judgedBy: decision.judge, judgeAction: "overturn", judgeReason: decision.reason ?? null };
     }
     if (decision?.decision === "uphold") {
       return { ...a, judgedBy: decision.judge, judgeAction: "uphold" };
@@ -340,12 +415,12 @@ async function postJudgedAudit(findingId: string, judgedBy: string) {
 
   // Update finding with corrected answers
   finding.answeredQuestions = correctedAnswers;
-  await saveFinding(finding);
+  await saveFinding(orgId, finding);
 
   // Update appeal record
-  const appealEntry = await db.get<AppealRecord>(["appeal", findingId]);
+  const appealEntry = await db.get<AppealRecord>(orgKey(orgId, "appeal", findingId));
   if (appealEntry.value) {
-    await db.set(["appeal", findingId], {
+    await db.set(orgKey(orgId, "appeal", findingId), {
       ...appealEntry.value,
       status: "complete",
       judgedBy,
@@ -354,7 +429,7 @@ async function postJudgedAudit(findingId: string, judgedBy: string) {
 
   // Update auditor stats -- use the finding owner as the auditor
   const auditor = finding.owner ?? "unknown";
-  const statsKey = ["appeal-stats", auditor];
+  const statsKey = orgKey(orgId, "appeal-stats", auditor);
   const statsEntry = await db.get<AppealStats>(statsKey);
   const currentStats = statsEntry.value ?? { totalAppeals: 0, overturned: 0, upheld: 0 };
   await db.set(statsKey, {
@@ -373,11 +448,11 @@ async function postJudgedAudit(findingId: string, judgedBy: string) {
     overturns,
     timestamp: Date.now(),
   };
-  await db.set(["appeal-history", findingId], history);
+  await db.set(orgKey(orgId, "appeal-history", findingId), history);
 
   console.log(`[JUDGE] ${findingId}: Appeal complete - ${overturns} overturns, score ${originalScore}% -> ${finalScore}%`);
 
-  fireWebhook("judge", {
+  fireWebhook(orgId, "judge", {
     findingId,
     judgedBy,
     auditor,
@@ -388,78 +463,28 @@ async function postJudgedAudit(findingId: string, judgedBy: string) {
     decisions: decisions.map((d) => ({
       questionIndex: d.questionIndex,
       decision: d.decision,
+      reason: d.reason ?? null,
       header: d.header,
     })),
   });
 }
 
-// -- Auth --
-
-async function hashPassword(password: string): Promise<string> {
-  const data = new TextEncoder().encode(password);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-export async function createUser(username: string, password: string) {
-  const db = await kv();
-  const passwordHash = await hashPassword(password);
-  await db.set(["judge-user", username], { passwordHash });
-}
-
-export async function verifyUser(username: string, password: string): Promise<boolean> {
-  const db = await kv();
-  const entry = await db.get<{ passwordHash: string }>(["judge-user", username]);
-  if (!entry.value) return false;
-  const hash = await hashPassword(password);
-  return hash === entry.value.passwordHash;
-}
-
-export async function hasAnyUsers(): Promise<boolean> {
-  const db = await kv();
-  const iter = db.list({ prefix: ["judge-user"] });
-  for await (const _ of iter) {
-    return true;
-  }
-  return false;
-}
-
-export async function createSession(username: string): Promise<string> {
-  const db = await kv();
-  const token = crypto.randomUUID();
-  await db.set(["judge-session", token], { username, createdAt: Date.now() }, { expireIn: 24 * 60 * 60 * 1000 });
-  return token;
-}
-
-export async function getSession(token: string): Promise<string | null> {
-  const db = await kv();
-  const entry = await db.get<{ username: string }>(["judge-session", token]);
-  return entry.value?.username ?? null;
-}
-
-export async function deleteSession(token: string) {
-  const db = await kv();
-  await db.delete(["judge-session", token]);
-}
-
 // -- Stats --
 
-export async function getJudgeStats(): Promise<{ pending: number; decided: number }> {
+export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; decided: number }> {
   const db = await kv();
   let pending = 0;
   let decided = 0;
 
-  for await (const _ of db.list({ prefix: ["judge-pending"] })) pending++;
-  for await (const _ of db.list({ prefix: ["judge-decided"] })) decided++;
+  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-pending") })) pending++;
+  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-decided") })) decided++;
 
   return { pending, decided };
 }
 
 // -- Appeal Stats --
 
-export async function getAppealStats(): Promise<{
+export async function getAppealStats(orgId: OrgId): Promise<{
   totalAppeals: number;
   completed: number;
   pending: number;
@@ -473,7 +498,7 @@ export async function getAppealStats(): Promise<{
   let completed = 0;
   let pending = 0;
 
-  const appealIter = db.list<AppealRecord>({ prefix: ["appeal"] });
+  const appealIter = db.list<AppealRecord>({ prefix: orgKey(orgId, "appeal") });
   for await (const entry of appealIter) {
     totalAppeals++;
     if (entry.value.status === "complete") completed++;
@@ -484,9 +509,10 @@ export async function getAppealStats(): Promise<{
   let upheld = 0;
   const byAuditor: Array<{ auditor: string; totalAppeals: number; overturned: number; upheld: number }> = [];
 
-  const statsIter = db.list<AppealStats>({ prefix: ["appeal-stats"] });
+  const statsIter = db.list<AppealStats>({ prefix: orgKey(orgId, "appeal-stats") });
   for await (const entry of statsIter) {
-    const auditor = String(entry.key[1]);
+    // key is [orgId, "appeal-stats", auditor] so auditor is at index 2
+    const auditor = String(entry.key[2]);
     const stats = entry.value;
     overturns += stats.overturned;
     upheld += stats.upheld;
@@ -503,7 +529,7 @@ export async function getAppealStats(): Promise<{
 
 // -- Judge Dashboard Data --
 
-export async function getJudgeDashboardData(): Promise<{
+export async function getJudgeDashboardData(orgId: OrgId): Promise<{
   queue: { pending: number; decided: number };
   appeals: {
     total: number; completed: number; pending: number;
@@ -519,14 +545,14 @@ export async function getJudgeDashboardData(): Promise<{
   // Queue stats
   let pending = 0;
   let decided = 0;
-  for await (const _ of db.list({ prefix: ["judge-pending"] })) pending++;
-  for await (const _ of db.list({ prefix: ["judge-decided"] })) decided++;
+  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-pending") })) pending++;
+  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-decided") })) decided++;
 
   // Appeal records
   let totalAppeals = 0;
   let completedAppeals = 0;
   let pendingAppeals = 0;
-  const appealIter = db.list<AppealRecord>({ prefix: ["appeal"] });
+  const appealIter = db.list<AppealRecord>({ prefix: orgKey(orgId, "appeal") });
   for await (const entry of appealIter) {
     totalAppeals++;
     if (entry.value.status === "complete") completedAppeals++;
@@ -537,9 +563,10 @@ export async function getJudgeDashboardData(): Promise<{
   let overturns = 0;
   let upheld = 0;
   const byAuditor: Array<{ auditor: string; totalAppeals: number; overturned: number; upheld: number; overturnRate: string }> = [];
-  const statsIter = db.list<AppealStats>({ prefix: ["appeal-stats"] });
+  const statsIter = db.list<AppealStats>({ prefix: orgKey(orgId, "appeal-stats") });
   for await (const entry of statsIter) {
-    const auditor = String(entry.key[1]);
+    // key is [orgId, "appeal-stats", auditor] so auditor is at index 2
+    const auditor = String(entry.key[2]);
     const stats = entry.value;
     overturns += stats.overturned;
     upheld += stats.upheld;
@@ -558,7 +585,7 @@ export async function getJudgeDashboardData(): Promise<{
 
   // Recent appeal history
   const recentAppeals: AppealHistory[] = [];
-  const historyIter = db.list<AppealHistory>({ prefix: ["appeal-history"] });
+  const historyIter = db.list<AppealHistory>({ prefix: orgKey(orgId, "appeal-history") });
   for await (const entry of historyIter) {
     recentAppeals.push(entry.value);
   }
@@ -566,7 +593,7 @@ export async function getJudgeDashboardData(): Promise<{
 
   // Per-judge stats (from decided entries)
   const judgeMap = new Map<string, { decisions: number; overturns: number; upholds: number }>();
-  const decidedIter = db.list<JudgeDecision>({ prefix: ["judge-decided"] });
+  const decidedIter = db.list<JudgeDecision>({ prefix: orgKey(orgId, "judge-decided") });
   for await (const entry of decidedIter) {
     const j = entry.value.judge;
     const existing = judgeMap.get(j) ?? { decisions: 0, overturns: 0, upholds: 0 };
@@ -588,13 +615,13 @@ export async function getJudgeDashboardData(): Promise<{
 
 // -- Appeal Record --
 
-export async function getAppeal(findingId: string): Promise<AppealRecord | null> {
+export async function getAppeal(orgId: OrgId, findingId: string): Promise<AppealRecord | null> {
   const db = await kv();
-  const entry = await db.get<AppealRecord>(["appeal", findingId]);
+  const entry = await db.get<AppealRecord>(orgKey(orgId, "appeal", findingId));
   return entry.value;
 }
 
-export async function saveAppeal(record: AppealRecord) {
+export async function saveAppeal(orgId: OrgId, record: AppealRecord) {
   const db = await kv();
-  await db.set(["appeal", record.findingId], record);
+  await db.set(orgKey(orgId, "appeal", record.findingId), record);
 }

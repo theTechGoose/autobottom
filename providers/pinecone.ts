@@ -8,9 +8,9 @@ function getOpenAI() {
 }
 
 const PINECONE_HOST = () => {
-  const key = Deno.env.get("ADAM_PINECONE") ?? Deno.env.get("PINECONE_DB_KEY");
+  const key = Deno.env.get("PINECONE_DB_KEY");
   const index = Deno.env.get("PINECONE_INDEX") ?? "auto-bot";
-  if (!key) throw new Error("ADAM_PINECONE or PINECONE_DB_KEY required");
+  if (!key) throw new Error("PINECONE_DB_KEY required");
   // Pinecone serverless index host format
   return { key, index };
 };
@@ -114,8 +114,7 @@ export async function upload(findingId: string, text: string) {
 /** Query Pinecone for relevant transcript chunks. */
 export async function query(findingId: string, question: string): Promise<string> {
   const host = await getPineconeHost();
-  const { key, index } = PINECONE_HOST();
-  console.log(`[PINECONE] query host=${host} index=${index} keyPrefix=${key.slice(0, 12)}`);
+  const { key } = PINECONE_HOST();
 
   const queryVector = await embed(question);
 
@@ -133,10 +132,7 @@ export async function query(findingId: string, question: string): Promise<string
     }),
   });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Pinecone query failed: ${res.status} ${errText}`);
-  }
+  if (!res.ok) throw new Error(`Pinecone query failed: ${res.status}`);
   const data = await res.json();
 
   const matches = (data.matches ?? []) as Array<{ score: number; metadata?: { text?: string } }>;

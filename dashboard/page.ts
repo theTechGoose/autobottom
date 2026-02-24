@@ -1,4 +1,5 @@
 /** Inline HTML/CSS/JS for the admin dashboard. */
+import * as icons from "../shared/icons.ts";
 
 export function getDashboardPage(): string {
   return `<!DOCTYPE html>
@@ -13,9 +14,9 @@ export function getDashboardPage(): string {
     --bg: #0b0f15; --bg-raised: #111620; --bg-surface: #161c28;
     --border: #1c2333; --border-hover: #2a3346;
     --text: #c9d1d9; --text-muted: #6e7681; --text-dim: #484f58; --text-bright: #e6edf3;
-    --blue: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
+    --blue: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff; --cyan: #39d0d8;
     --blue-bg: rgba(31,111,235,0.10); --green-bg: rgba(63,185,80,0.10);
-    --red-bg: rgba(248,81,73,0.10); --yellow-bg: rgba(210,153,34,0.10); --purple-bg: rgba(139,92,246,0.10);
+    --red-bg: rgba(248,81,73,0.10); --yellow-bg: rgba(210,153,34,0.10); --purple-bg: rgba(139,92,246,0.10); --cyan-bg: rgba(57,208,216,0.10);
     --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
     --sidebar-w: 280px;
   }
@@ -43,6 +44,16 @@ export function getDashboardPage(): string {
 
   .sb-section { padding: 14px 14px 6px; }
   .sb-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 8px; padding: 0 4px; }
+  .sb-rv-wrap { position: relative; }
+  .sb-rv-btn .icon.rv { background: linear-gradient(135deg, var(--purple-bg), var(--blue-bg)); color: var(--purple); }
+  .sb-rv-flyout { position: fixed; opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; transform: translateY(-50%) translateX(-8px); z-index: 9999; }
+  .sb-rv-flyout.open { opacity: 1; pointer-events: auto; }
+  .sb-rv-panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 8px; min-width: 200px; box-shadow: 0 12px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03); backdrop-filter: blur(12px); }
+  .sb-rv-panel .rv-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); padding: 4px 8px 8px; }
+  .sb-rv-panel a { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; text-decoration: none; color: var(--text); font-size: 12px; font-weight: 500; transition: all 0.15s ease; }
+  .sb-rv-panel a:hover { background: var(--hover); color: var(--text-bright); transform: translateX(2px); }
+  .sb-rv-panel .rm-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .sb-rv-panel .rm-icon svg { width: 15px; height: 15px; }
 
   .sb-link .icon.users { background: var(--purple-bg); color: var(--purple); }
   .sb-link .icon.pipeline { background: var(--yellow-bg); color: var(--yellow); }
@@ -83,26 +94,33 @@ export function getDashboardPage(): string {
   .sb-link .title { font-size: 12px; font-weight: 600; color: var(--text-bright); flex: 1; }
   .sb-link .arrow { font-size: 10px; color: var(--text-dim); }
 
+  .sb-footer { margin-top: auto; border-top: 1px solid var(--border); }
+  .sb-footer .sb-user { padding: 14px 18px 8px; display: flex; align-items: center; gap: 8px; }
+  .sb-footer .sb-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--blue-bg); color: var(--blue); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+  .sb-footer .sb-email { font-size: 11px; color: var(--text-bright); font-weight: 600; word-break: break-all; line-height: 1.3; }
+  .sb-footer .sb-role { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .sb-footer .sb-settings { padding: 6px 14px 14px; }
+
   /* ===== Modal ===== */
-  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: none; align-items: center; justify-content: center; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(8px); z-index: 100; display: none; align-items: center; justify-content: center; }
   .modal-overlay.open { display: flex; }
-  .modal { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 12px; width: 440px; max-width: 90vw; padding: 24px; animation: modalIn 0.15s ease; }
+  .modal { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 16px; width: 500px; max-width: 92vw; padding: 28px 32px 24px; animation: modalIn 0.18s ease; box-shadow: 0 16px 48px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03) inset; }
   @keyframes modalIn { from { opacity: 0; transform: scale(0.96) translateY(8px); } to { opacity: 1; transform: none; } }
-  .modal-title { font-size: 15px; font-weight: 700; color: var(--text-bright); margin-bottom: 4px; }
-  .modal-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 16px; }
-  .modal .sf-input { font-size: 12px; padding: 8px 11px; }
-  .modal textarea.sf-input { height: 72px; }
-  .modal .sf { margin-bottom: 12px; }
-  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
-  .modal-actions .sf-btn { padding: 8px 20px; font-size: 12px; border-radius: 8px; }
+  .modal-title { font-size: 17px; font-weight: 700; color: var(--text-bright); margin-bottom: 4px; letter-spacing: -0.2px; }
+  .modal-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 20px; line-height: 1.4; }
+  .modal .sf-input { font-size: 13px; padding: 10px 14px; }
+  .modal textarea.sf-input { height: 88px; }
+  .modal .sf { margin-bottom: 16px; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
+  .modal-actions .sf-btn { padding: 10px 24px; font-size: 13px; border-radius: 8px; }
 
   /* Modal form overrides */
-  .modal .sf { margin-bottom: 14px; }
-  .modal .sf-label { font-size: 10px; margin-bottom: 5px; letter-spacing: 1px; }
-  .modal .sf-input { padding: 10px 12px; font-size: 12px; border-radius: 8px; background: var(--bg); }
+  .modal .sf-label { font-size: 11px; margin-bottom: 6px; letter-spacing: 0.8px; }
+  .modal .sf-input { padding: 11px 14px; font-size: 13px; border-radius: 8px; background: var(--bg); }
+  .modal .sf-input:hover { border-color: var(--border-hover); }
   .modal .sf-input.num { width: 90px; padding: 10px 12px; font-size: 14px; font-weight: 700; }
   .modal .sf-row { margin-bottom: 12px; gap: 12px; }
-  .modal .sf-row .sf-label { font-size: 10px; min-width: 72px; }
+  .modal .sf-row .sf-label { font-size: 11px; min-width: 72px; }
   .modal .sf-unit { font-size: 11px; }
   .modal .sf-sep { margin: 16px 0; }
   .modal .role-pills { gap: 6px; }
@@ -110,6 +128,66 @@ export function getDashboardPage(): string {
 
   .modal-group { margin-bottom: 16px; }
   .modal-group-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-bottom: 10px; }
+
+  /* ===== Pipeline Modal ===== */
+  .pipeline-modal { width: 480px; padding: 0; overflow: hidden; }
+  .pm-header { display: flex; align-items: center; gap: 14px; padding: 24px 28px 20px; }
+  .pm-icon { width: 40px; height: 40px; border-radius: 10px; background: var(--yellow-bg); color: var(--yellow); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .pm-header .modal-title { margin-bottom: 2px; }
+  .pm-header .modal-sub { margin-bottom: 0; }
+
+  .pm-section { padding: 0 28px; }
+  .pm-section-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-bottom: 14px; }
+  .pm-divider { height: 1px; background: var(--border); margin: 20px 28px; }
+
+  .pm-field { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; transition: border-color 0.15s; }
+  .pm-field:hover { border-color: var(--border-hover); }
+  .pm-field-info { flex: 1; min-width: 0; }
+  .pm-field-name { font-size: 13px; font-weight: 600; color: var(--text-bright); margin-bottom: 2px; }
+  .pm-field-desc { font-size: 11px; color: var(--text-muted); }
+
+  .pm-stepper { display: flex; align-items: center; gap: 0; flex-shrink: 0; margin-left: 16px; }
+  .pm-step-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); background: var(--bg-raised); color: var(--text-muted); font-size: 16px; cursor: pointer; transition: all 0.12s; line-height: 1; user-select: none; }
+  .pm-step-btn:first-child { border-radius: 8px 0 0 8px; border-right: none; }
+  .pm-step-btn:last-of-type { border-radius: 0 8px 8px 0; border-left: none; }
+  .pm-step-btn:hover { background: var(--bg-surface); color: var(--text-bright); border-color: var(--border-hover); }
+  .pm-step-btn:hover + .pm-step-value { border-color: var(--border-hover); }
+  .pm-step-btn:active { background: var(--blue-bg); color: var(--blue); }
+
+  .pm-step-value { width: 52px; height: 32px; text-align: center; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-bright); font-size: 14px; font-weight: 700; font-family: var(--mono); transition: border-color 0.15s; -moz-appearance: textfield; }
+  .pm-step-value::-webkit-inner-spin-button, .pm-step-value::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .pm-step-value:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px rgba(88,166,255,0.15); }
+  .pm-step-value::placeholder { color: var(--text-dim); font-weight: 400; }
+
+  .pm-unit { font-size: 11px; color: var(--text-muted); margin-left: 8px; font-weight: 500; }
+
+  .pipeline-modal .modal-actions { padding: 16px 28px 24px; margin-top: 20px; border-top: 1px solid var(--border); }
+
+  /* User management */
+  .um-tab.active { background: var(--bg-surface); color: var(--text-bright); border-color: var(--border-hover); }
+  .um-role { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: all 0.12s; text-align: left; color: var(--text); }
+  .um-role:hover { border-color: var(--border-hover); background: var(--bg-surface); }
+  .um-role.active { border-color: rgba(88,166,255,0.4); background: var(--blue-bg); }
+  .um-role-icon { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+  .um-role-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .um-role-name { font-size: 11px; font-weight: 700; color: var(--text-bright); }
+  .um-role-desc { font-size: 9px; color: var(--text-dim); line-height: 1.3; }
+  .um-user-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; transition: background 0.1s; }
+  .um-user-row:hover { background: var(--bg-surface); }
+  .um-user-row + .um-user-row { border-top: 1px solid var(--border); }
+  .um-user-avatar { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+  .um-user-info { flex: 1; min-width: 0; }
+  .um-user-email { font-size: 11px; font-weight: 600; color: var(--text-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .um-user-meta { font-size: 9px; color: var(--text-dim); }
+  .um-badge { font-size: 9px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0; }
+  .um-badge.admin { background: var(--blue-bg); color: var(--blue); }
+  .um-badge.judge { background: var(--purple-bg); color: var(--purple); }
+  .um-badge.manager { background: var(--yellow-bg); color: var(--yellow); }
+  .um-badge.reviewer { background: var(--green-bg); color: var(--green); }
+  .um-badge.user { background: var(--cyan-bg); color: var(--cyan); }
+  .um-empty { text-align: center; padding: 32px 16px; }
+  .um-empty-icon { font-size: 24px; margin-bottom: 8px; opacity: 0.3; }
+  .um-empty-text { font-size: 11px; color: var(--text-dim); }
 
   .dt-action { padding: 16px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; display: flex; align-items: center; gap: 14px; transition: border-color 0.15s; }
   .dt-action:hover { border-color: var(--border-hover); }
@@ -120,12 +198,12 @@ export function getDashboardPage(): string {
   .dt-action .sf-btn { flex-shrink: 0; padding: 7px 18px; font-size: 11px; border-radius: 8px; }
   .dt-action.seed .dt-icon { background: var(--blue-bg); color: var(--blue); }
   .dt-action.wipe .dt-icon { background: var(--red-bg); color: var(--red); }
-  .wh-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
-  .wh-tab { padding: 4px 12px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text-dim); font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.12s; }
-  .wh-tab:hover { border-color: var(--border-hover); color: var(--text-muted); }
-  .wh-tab.active { background: var(--blue-bg); border-color: rgba(88,166,255,0.3); color: var(--blue); }
-  .sf-btn.secondary { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
-  .sf-btn.secondary:hover { background: var(--bg-surface); }
+  .wh-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .wh-tab { padding: 7px 16px; border: 1px solid var(--border); border-radius: 20px; background: transparent; color: var(--text-dim); font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  .wh-tab:hover { border-color: var(--border-hover); color: var(--text); background: var(--bg-surface); }
+  .wh-tab.active { background: var(--blue-bg); border-color: rgba(88,166,255,0.35); color: var(--blue); }
+  .sf-btn.secondary { background: transparent; color: var(--text-muted); border: 1px solid var(--border); transition: all 0.15s; }
+  .sf-btn.secondary:hover { background: var(--bg-surface); color: var(--text); border-color: var(--border-hover); }
 
   /* ===== Email Reports Modal ===== */
   .er-modal { width: 540px; }
@@ -152,6 +230,17 @@ export function getDashboardPage(): string {
   .er-pill:hover { border-color: var(--border-hover); color: var(--text-muted); }
   .er-pill.active { background: var(--blue-bg); border-color: rgba(88,166,255,0.3); color: var(--blue); }
   .er-pill.disabled { opacity: 0.3; pointer-events: none; }
+  .er-cadence { display: flex; gap: 3px; margin-top: 4px; }
+  .er-cadence-pill { padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text-dim); font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.12s; }
+  .er-cadence-pill:hover { border-color: var(--border-hover); color: var(--text-muted); }
+  .er-cadence-pill.active { background: var(--blue-bg); border-color: rgba(88,166,255,0.3); color: var(--blue); }
+  .er-cadence-day { display: flex; gap: 3px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+  .er-cadence-day-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); margin-right: 4px; }
+  .er-day-pill { padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text-dim); font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.12s; min-width: 28px; text-align: center; }
+  .er-day-pill:hover { border-color: var(--border-hover); color: var(--text-muted); }
+  .er-day-pill.active { background: var(--blue-bg); border-color: rgba(88,166,255,0.3); color: var(--blue); }
+  .er-day-input { width: 56px; padding: 3px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 11px; font-weight: 600; text-align: center; }
+  .er-day-input:focus { outline: none; border-color: var(--blue); }
 
   /* ===== Main Content ===== */
   .main { flex: 1; margin-left: var(--sidebar-w); padding: 22px 24px; }
@@ -253,43 +342,119 @@ export function getDashboardPage(): string {
     </div>
 
     <div class="sb-section">
+      <div class="sb-label">Navigation</div>
+      <a href="/chat" class="sb-link">
+        <div class="icon" style="background:rgba(57,208,216,0.10);color:#39d0d8;">${icons.messageCircle24}</div>
+        <span class="title">Chat</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+    </div>
+
+    <div class="sb-section">
       <div class="sb-label">Configuration</div>
 
       <!-- Webhook (opens modal) -->
       <div class="sb-link" id="webhook-open">
-        <div class="icon">&#9889;</div>
+        <div class="icon">${icons.webhook}</div>
         <span class="title">Webhook</span>
-        <span class="arrow">&#8250;</span>
+        <span class="arrow">${icons.chevronRight}</span>
       </div>
 
       <!-- Email Reports (opens modal) -->
       <div class="sb-link" id="email-reports-open">
-        <div class="icon">&#9993;</div>
+        <div class="icon">${icons.mail}</div>
         <span class="title">Email Reports</span>
-        <span class="arrow">&#8250;</span>
+        <span class="arrow">${icons.chevronRight}</span>
       </div>
 
       <!-- Users (opens modal) -->
       <div class="sb-link" id="users-open">
-        <div class="icon users">&#9679;</div>
+        <div class="icon users">${icons.users}</div>
         <span class="title">Users</span>
-        <span class="arrow">&#8250;</span>
+        <span class="arrow">${icons.chevronRight}</span>
       </div>
 
       <!-- Pipeline (opens modal) -->
       <div class="sb-link" id="pipeline-open">
-        <div class="icon pipeline">&#9881;</div>
+        <div class="icon pipeline">${icons.settings}</div>
         <span class="title">Pipeline</span>
-        <span class="arrow">&#8250;</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
+      <!-- Gamification (standalone page) -->
+      <a class="sb-link" href="/gamification" style="text-decoration:none;color:inherit;">
+        <div class="icon" style="background:var(--green-bg);color:var(--green);">${icons.trophy}</div>
+        <span class="title">Gamification</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+
+      <!-- Badge Editor (standalone page) -->
+      <a class="sb-link" href="/admin/badge-editor" style="text-decoration:none;color:inherit;">
+        <div class="icon" style="background:var(--cyan-bg);color:var(--cyan);">${icons.shoppingBag}</div>
+        <span class="title">Badge Editor</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+    </div>
+
+    <div class="sb-section">
+      <div class="sb-label">Impersonate</div>
+      <div class="sb-rv-wrap" id="rv-wrap">
+        <div class="sb-link">
+          <div class="icon rv">${icons.users}</div>
+          <span class="title">Role Views</span>
+          <span class="arrow">${icons.chevronRight}</span>
+        </div>
+        <div class="sb-rv-flyout" id="rv-flyout">
+          <div class="sb-rv-panel">
+            <div class="rv-title">View as role</div>
+            <a href="/judge/dashboard">
+              <div class="rm-icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.scale}</div>
+              Judge Dashboard
+            </a>
+            <a href="/review/dashboard">
+              <div class="rm-icon" style="background:var(--purple-bg);color:var(--purple);">${icons.playCircle}</div>
+              Review Dashboard
+            </a>
+            <a href="/manager">
+              <div class="rm-icon" style="background:var(--cyan-bg);color:var(--cyan);">${icons.clipboardList}</div>
+              Manager Portal
+            </a>
+            <a href="/agent">
+              <div class="rm-icon" style="background:rgba(249,115,22,0.10);color:#f97316;">${icons.barChart}</div>
+              Agent Dashboard
+            </a>
+          </div>
+        </div>
       </div>
     </div>
 
     <div class="sb-section">
-      <!-- Dev Tools (opens modal, conditionally shown) -->
+      <!-- Dev Tools (opens modal, shown when ?local) -->
       <div class="sb-link" id="devtools-open" style="display:none">
-        <div class="icon dev">&#9888;</div>
+        <div class="icon dev">${icons.alertTriangle}</div>
         <span class="title">Dev Tools</span>
-        <span class="arrow">&#8250;</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+      <a class="sb-link" id="super-admin-link" href="/super-admin" style="display:none;text-decoration:none;color:inherit;">
+        <div class="icon" style="background:rgba(248,81,73,0.1);color:#f85149;">${icons.shield}</div>
+        <span class="title">Super Admin</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+    </div>
+
+    <div class="sb-footer">
+      <div class="sb-user">
+        <div class="sb-avatar" id="user-avatar"></div>
+        <div>
+          <div class="sb-email" id="user-email"></div>
+          <div class="sb-role">Admin</div>
+        </div>
+      </div>
+      <div class="sb-settings">
+        <div class="sb-link" onclick="fetch('/logout',{method:'POST'}).then(function(){window.location.href='/login'})">
+          <div class="icon" style="background:var(--red-bg);color:var(--red);">${icons.logIn}</div>
+          <span class="title">Logout</span>
+        </div>
       </div>
     </div>
   </aside>
@@ -394,68 +559,156 @@ export function getDashboardPage(): string {
 
 <!-- Users Modal -->
 <div class="modal-overlay" id="users-modal">
-  <div class="modal">
-    <div class="modal-title">Add User</div>
-    <div class="modal-sub">Create a new account with a specific role</div>
-    <div class="modal-group">
-      <div class="modal-group-title">Credentials</div>
-      <div class="sf">
-        <label class="sf-label">Email</label>
-        <input type="email" class="sf-input" id="a-username" placeholder="jsmith@example.com">
-      </div>
-      <div class="sf">
-        <label class="sf-label">Password</label>
-        <input type="password" class="sf-input" id="a-password" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;">
+  <div class="modal" style="width:560px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div class="modal-title" style="margin-bottom:0;">Team</div>
+      <div style="display:flex;gap:4px;" id="um-tabs">
+        <button class="sf-btn ghost um-tab active" data-tab="list" style="font-size:10px;padding:4px 10px;">Members</button>
+        <button class="sf-btn ghost um-tab" data-tab="add" style="font-size:10px;padding:4px 10px;">+ Add</button>
       </div>
     </div>
-    <div class="modal-group">
-      <div class="modal-group-title">Role</div>
-      <div class="role-pills" id="a-role-group">
-        <button class="role-pill active" data-role="reviewer">Reviewer</button>
-        <button class="role-pill" data-role="judge">Judge</button>
-        <button class="role-pill" data-role="manager">Manager</button>
+    <div class="modal-sub">Manage your organization's users and roles</div>
+
+    <!-- Members List Tab -->
+    <div id="um-list-tab">
+      <div id="um-user-list" style="max-height:340px;overflow-y:auto;margin-bottom:12px;">
+        <div style="text-align:center;padding:24px;color:var(--text-dim);font-size:11px;">Loading...</div>
       </div>
     </div>
-    <div class="modal-group" id="supervisor-group">
-      <div class="modal-group-title" id="supervisor-label">Assign to Judge</div>
-      <div class="sf">
-        <select class="sf-input" id="a-supervisor">
+
+    <!-- Add User Tab -->
+    <div id="um-add-tab" style="display:none;">
+      <!-- Role Selection -->
+      <div class="modal-group">
+        <div class="modal-group-title">1. Choose Role</div>
+        <div id="a-role-group" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <button class="um-role active" data-role="admin">
+            <span class="um-role-icon" style="background:var(--blue-bg);color:var(--blue);">${icons.shield}</span>
+            <span class="um-role-info">
+              <span class="um-role-name">Admin</span>
+              <span class="um-role-desc">Full access. Manages judges & managers.</span>
+            </span>
+          </button>
+          <button class="um-role" data-role="judge">
+            <span class="um-role-icon" style="background:var(--purple-bg);color:var(--purple);">${icons.scale}</span>
+            <span class="um-role-info">
+              <span class="um-role-name">Judge</span>
+              <span class="um-role-desc">Reviews appeals. Owns reviewers.</span>
+            </span>
+          </button>
+          <button class="um-role" data-role="manager">
+            <span class="um-role-icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.clipboardList}</span>
+            <span class="um-role-info">
+              <span class="um-role-name">Manager</span>
+              <span class="um-role-desc">Remediates failures. Owns reviewers.</span>
+            </span>
+          </button>
+          <button class="um-role" data-role="reviewer">
+            <span class="um-role-icon" style="background:var(--green-bg);color:var(--green);">${icons.pencil}</span>
+            <span class="um-role-info">
+              <span class="um-role-name">Reviewer</span>
+              <span class="um-role-desc">Verifies audit findings.</span>
+            </span>
+          </button>
+          <button class="um-role" data-role="user">
+            <span class="um-role-icon" style="background:var(--cyan-bg);color:var(--cyan);">${icons.headset}</span>
+            <span class="um-role-info">
+              <span class="um-role-name">Agent</span>
+              <span class="um-role-desc">Call center agent. Scoped to manager.</span>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Supervisor -->
+      <div class="modal-group" id="supervisor-group" style="display:none;">
+        <div class="modal-group-title">2. Assign To <span id="supervisor-label" style="color:var(--blue);"></span></div>
+        <select class="sf-input" id="a-supervisor" style="width:100%;">
           <option value="">-- Select --</option>
         </select>
       </div>
+
+      <!-- Credentials -->
+      <div class="modal-group">
+        <div class="modal-group-title" id="um-cred-step">2. Credentials</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div class="sf">
+            <label class="sf-label">Email</label>
+            <input type="email" class="sf-input" id="a-username" placeholder="jsmith@example.com">
+          </div>
+          <div class="sf">
+            <label class="sf-label">Password</label>
+            <input type="password" class="sf-input" id="a-password" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;">
+          </div>
+        </div>
+      </div>
+
+      <button class="sf-btn primary" id="a-adduser" style="width:100%;padding:10px;font-size:12px;border-radius:8px;">Create&nbsp;<span id="um-btn-role">Admin</span></button>
     </div>
-    <div class="modal-actions">
-      <button class="sf-btn secondary" id="users-cancel">Cancel</button>
-      <button class="sf-btn primary" id="a-adduser">Add User</button>
+
+    <div class="modal-actions" style="margin-top:12px;">
+      <button class="sf-btn secondary" id="users-cancel">Close</button>
     </div>
   </div>
 </div>
 
 <!-- Pipeline Modal -->
 <div class="modal-overlay" id="pipeline-modal">
-  <div class="modal">
-    <div class="modal-title">Pipeline Settings</div>
-    <div class="modal-sub">Control concurrency and failure recovery</div>
-    <div class="modal-group">
-      <div class="modal-group-title">Concurrency</div>
-      <div class="sf-row">
-        <label class="sf-label">Parallelism</label>
-        <input type="number" class="sf-input num" id="a-parallelism" min="1" max="100" placeholder="--">
+  <div class="modal pipeline-modal">
+    <div class="pm-header">
+      <div class="pm-icon">${icons.settings20}</div>
+      <div>
+        <div class="modal-title">Pipeline Settings</div>
+        <div class="modal-sub">Control concurrency and failure recovery</div>
       </div>
     </div>
-    <div class="sf-sep"></div>
-    <div class="modal-group">
-      <div class="modal-group-title">Retry Policy</div>
-      <div class="sf-row">
-        <label class="sf-label">Max Retries</label>
-        <input type="number" class="sf-input num" id="a-retries" min="0" max="50" placeholder="--">
-      </div>
-      <div class="sf-row">
-        <label class="sf-label">Delay</label>
-        <input type="number" class="sf-input num" id="a-retry-delay" min="0" max="300" placeholder="--">
-        <span class="sf-unit">sec</span>
+
+    <div class="pm-section">
+      <div class="pm-section-label">Concurrency</div>
+      <div class="pm-field">
+        <div class="pm-field-info">
+          <div class="pm-field-name">Parallelism</div>
+          <div class="pm-field-desc">Max concurrent audit operations</div>
+        </div>
+        <div class="pm-stepper">
+          <button class="pm-step-btn" data-target="a-parallelism" data-dir="-1" type="button">&minus;</button>
+          <input type="number" class="pm-step-value" id="a-parallelism" min="1" max="100" placeholder="--">
+          <button class="pm-step-btn" data-target="a-parallelism" data-dir="1" type="button">+</button>
+          <span class="pm-unit" style="visibility:hidden;">sec</span>
+        </div>
       </div>
     </div>
+
+    <div class="pm-divider"></div>
+
+    <div class="pm-section">
+      <div class="pm-section-label">Retry Policy</div>
+      <div class="pm-field">
+        <div class="pm-field-info">
+          <div class="pm-field-name">Max Retries</div>
+          <div class="pm-field-desc">Attempts before marking failed</div>
+        </div>
+        <div class="pm-stepper">
+          <button class="pm-step-btn" data-target="a-retries" data-dir="-1" type="button">&minus;</button>
+          <input type="number" class="pm-step-value" id="a-retries" min="0" max="50" placeholder="--">
+          <button class="pm-step-btn" data-target="a-retries" data-dir="1" type="button">+</button>
+          <span class="pm-unit" style="visibility:hidden;">sec</span>
+        </div>
+      </div>
+      <div class="pm-field">
+        <div class="pm-field-info">
+          <div class="pm-field-name">Delay</div>
+          <div class="pm-field-desc">Seconds between retry attempts</div>
+        </div>
+        <div class="pm-stepper">
+          <button class="pm-step-btn" data-target="a-retry-delay" data-dir="-1" type="button">&minus;</button>
+          <input type="number" class="pm-step-value" id="a-retry-delay" min="0" max="300" placeholder="--">
+          <button class="pm-step-btn" data-target="a-retry-delay" data-dir="1" type="button">+</button>
+          <span class="pm-unit">sec</span>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-actions">
       <button class="sf-btn secondary" id="pipeline-cancel">Cancel</button>
       <button class="sf-btn primary" id="a-pipeline-save">Save</button>
@@ -464,12 +717,13 @@ export function getDashboardPage(): string {
 </div>
 
 <!-- Dev Tools Modal -->
+
 <div class="modal-overlay" id="devtools-modal">
   <div class="modal">
     <div class="modal-title">Dev Tools</div>
     <div class="modal-sub">Local development utilities</div>
     <div class="dt-action seed">
-      <div class="dt-icon">&#9881;</div>
+      <div class="dt-icon">${icons.database}</div>
       <div class="dt-info">
         <div class="dt-name">Seed Test Data</div>
         <div class="dt-desc">Populate KV with sample findings for testing</div>
@@ -477,7 +731,7 @@ export function getDashboardPage(): string {
       <button class="sf-btn primary" id="a-seed-btn">Seed</button>
     </div>
     <div class="dt-action wipe">
-      <div class="dt-icon">&#9888;</div>
+      <div class="dt-icon">${icons.alertTriangle}</div>
       <div class="dt-info">
         <div class="dt-name">Wipe All KV Data</div>
         <div class="dt-desc">Permanently delete every entry -- cannot be undone</div>
@@ -814,34 +1068,113 @@ export function getDashboardPage(): string {
 
   // ===== Users Modal =====
   var allUsers = [];
+  var currentAdminEmail = '';
+  fetch('/admin/api/me').then(function(r){return r.json()}).then(function(d){currentAdminEmail=d.username||''; document.getElementById('user-email').textContent=currentAdminEmail; document.getElementById('user-avatar').textContent=(currentAdminEmail||'?')[0].toUpperCase(); if(currentAdminEmail==='ai@monsterrg.com'){document.getElementById('super-admin-link').style.display='';}}).catch(function(){});
+  var roleColors = { admin: 'blue', judge: 'purple', manager: 'yellow', reviewer: 'green', user: 'cyan' };
+  var roleInitials = { admin: 'A', judge: 'J', manager: 'M', reviewer: 'R', user: 'U' };
+
   function fetchUsers() {
     return fetch('/admin/users').then(function(r){return r.json()}).then(function(d) {
       allUsers = Array.isArray(d) ? d : [];
     }).catch(function(){ allUsers = []; });
   }
+
+  function renderUserList() {
+    var el = document.getElementById('um-user-list');
+    if (!allUsers.length) {
+      el.innerHTML = '<div class="um-empty"><div class="um-empty-icon">${icons.userCog}</div><div class="um-empty-text">No users yet. Click "+ Add" to create one.</div></div>';
+      return;
+    }
+    var order = ['admin','judge','manager','reviewer','user'];
+    var sorted = allUsers.slice().sort(function(a,b) { return order.indexOf(a.role) - order.indexOf(b.role); });
+    var html = '';
+    for (var i = 0; i < sorted.length; i++) {
+      var u = sorted[i], c = roleColors[u.role] || 'blue';
+      html += '<div class="um-user-row">'
+        + '<div class="um-user-avatar" style="background:var(--' + c + '-bg);color:var(--' + c + ');">' + (roleInitials[u.role] || '?') + '</div>'
+        + '<div class="um-user-info"><div class="um-user-email">' + esc(u.username) + '</div>'
+        + '<div class="um-user-meta">' + (u.supervisor ? 'reports to ' + esc(u.supervisor) : 'no supervisor') + '</div></div>'
+        + '<span class="um-badge ' + u.role + '">' + (u.role === 'user' ? 'agent' : u.role) + '</span>'
+        + '</div>';
+    }
+    el.innerHTML = html;
+  }
+
   function updateSupervisorDropdown() {
     var group = document.getElementById('supervisor-group');
     var label = document.getElementById('supervisor-label');
     var sel = document.getElementById('a-supervisor');
-    if (selectedRole === 'manager') {
+    var credStep = document.getElementById('um-cred-step');
+    var btnRole = document.getElementById('um-btn-role');
+    btnRole.textContent = selectedRole === 'user' ? 'Agent' : selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1);
+
+    if (selectedRole === 'admin') {
       group.style.display = 'none';
-      sel.value = '';
+      sel.innerHTML = '<option value="">-- Select --</option>';
+      credStep.textContent = '2. Credentials';
       return;
     }
     group.style.display = '';
-    var filterRole = selectedRole === 'reviewer' ? 'judge' : 'manager';
-    label.textContent = selectedRole === 'reviewer' ? 'Assign to Judge' : 'Assign to Manager';
+    credStep.textContent = '3. Credentials';
+    var labelText, filterFn;
+    if (selectedRole === 'judge' || selectedRole === 'manager') {
+      labelText = 'an Admin';
+      filterFn = function(u) { return u.role === 'admin'; };
+    } else {
+      labelText = 'a Judge or Manager';
+      filterFn = function(u) { return u.role === 'judge' || u.role === 'manager'; };
+    }
+    label.textContent = labelText;
     var opts = '<option value="">-- Select --</option>';
+    var others = '';
     for (var i = 0; i < allUsers.length; i++) {
-      if (allUsers[i].role === filterRole) {
-        opts += '<option value="' + esc(allUsers[i].username) + '">' + esc(allUsers[i].username) + '</option>';
+      if (filterFn(allUsers[i])) {
+        if (currentAdminEmail && allUsers[i].username === currentAdminEmail) {
+          opts += '<option value="' + esc(currentAdminEmail) + '">Self (' + esc(currentAdminEmail) + ')</option>';
+        } else {
+          others += '<option value="' + esc(allUsers[i].username) + '">' + esc(allUsers[i].username) + '</option>';
+        }
       }
     }
-    sel.innerHTML = opts;
+    sel.innerHTML = opts + others;
   }
+
+  // Tab switching
+  document.getElementById('um-tabs').addEventListener('click', function(e) {
+    var tab = e.target.closest('.um-tab');
+    if (!tab) return;
+    this.querySelectorAll('.um-tab').forEach(function(t){t.classList.remove('active')});
+    tab.classList.add('active');
+    var which = tab.getAttribute('data-tab');
+    document.getElementById('um-list-tab').style.display = which === 'list' ? '' : 'none';
+    document.getElementById('um-add-tab').style.display = which === 'add' ? '' : 'none';
+  });
+
+  // ===== Role Views Flyout =====
+  (function() {
+    var wrap = document.getElementById('rv-wrap');
+    var flyout = document.getElementById('rv-flyout');
+    var hideTimer = null;
+    function show() {
+      clearTimeout(hideTimer);
+      var rect = wrap.getBoundingClientRect();
+      flyout.style.left = (rect.right + 8) + 'px';
+      flyout.style.top = (rect.top + rect.height / 2) + 'px';
+      flyout.style.transform = 'translateY(-50%) translateX(0)';
+      flyout.classList.add('open');
+    }
+    function scheduleHide() {
+      hideTimer = setTimeout(function() { flyout.classList.remove('open'); }, 150);
+    }
+    wrap.addEventListener('mouseenter', show);
+    wrap.addEventListener('mouseleave', scheduleHide);
+    flyout.addEventListener('mouseenter', function() { clearTimeout(hideTimer); });
+    flyout.addEventListener('mouseleave', function() { flyout.classList.remove('open'); });
+  })();
+
   document.getElementById('users-open').addEventListener('click', function() {
     openModal('users-modal');
-    fetchUsers().then(function() { updateSupervisorDropdown(); });
+    fetchUsers().then(function() { renderUserList(); updateSupervisorDropdown(); });
   });
   document.getElementById('users-cancel').addEventListener('click', function() { closeModal('users-modal'); });
   backdropClose('users-modal');
@@ -853,6 +1186,23 @@ export function getDashboardPage(): string {
   });
   document.getElementById('pipeline-cancel').addEventListener('click', function() { closeModal('pipeline-modal'); });
   backdropClose('pipeline-modal');
+
+  // Stepper buttons
+  document.querySelectorAll('.pm-step-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var input = document.getElementById(this.getAttribute('data-target'));
+      var dir = parseInt(this.getAttribute('data-dir'));
+      var min = parseInt(input.min) || 0;
+      var max = parseInt(input.max) || 999;
+      var cur = parseInt(input.value);
+      if (isNaN(cur)) cur = min;
+      var next = cur + dir;
+      if (next < min) next = min;
+      if (next > max) next = max;
+      input.value = next;
+      input.dispatchEvent(new Event('change'));
+    });
+  });
 
   // ===== Dev Tools Modal =====
   document.getElementById('devtools-open').addEventListener('click', function() { openModal('devtools-modal'); });
@@ -922,13 +1272,13 @@ export function getDashboardPage(): string {
   });
 
   // ===== Users =====
-  var selectedRole = 'reviewer';
+  var selectedRole = 'admin';
   document.getElementById('a-role-group').addEventListener('click', function(e) {
-    var pill = e.target.closest('.role-pill');
-    if (!pill) return;
-    this.querySelectorAll('.role-pill').forEach(function(p){p.classList.remove('active')});
-    pill.classList.add('active');
-    selectedRole = pill.getAttribute('data-role');
+    var card = e.target.closest('.um-role');
+    if (!card) return;
+    this.querySelectorAll('.um-role').forEach(function(p){p.classList.remove('active')});
+    card.classList.add('active');
+    selectedRole = card.getAttribute('data-role');
     updateSupervisorDropdown();
   });
   document.getElementById('a-adduser').addEventListener('click', function() {
@@ -936,11 +1286,18 @@ export function getDashboardPage(): string {
     if (!u || !p) { toast('Enter email & password','error'); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(u)) { toast('Enter a valid email address','error'); return; }
     var sup = document.getElementById('a-supervisor').value;
-    btnLoad(btn,'Adding...');
+    if (selectedRole !== 'admin' && !sup) { toast('Select a supervisor','error'); return; }
+    btnLoad(btn,'Creating...');
     fetch('/admin/users', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u,password:p,role:selectedRole,supervisor:sup||null}) })
     .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
-    .then(function(d){ toast(d.role+' "'+u+'" created','success'); document.getElementById('a-username').value=''; document.getElementById('a-password').value=''; btnDone(btn,'Add User'); })
-    .catch(function(e){toast(e.message,'error');btnDone(btn,'Add User')});
+    .then(function(d){
+      toast(d.role+' "'+u+'" created','success');
+      document.getElementById('a-username').value='';
+      document.getElementById('a-password').value='';
+      btnDone(btn,'Create ' + selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1));
+      fetchUsers().then(function() { renderUserList(); updateSupervisorDropdown(); });
+    })
+    .catch(function(e){toast(e.message,'error');btnDone(btn,'Create ' + selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1))});
   });
 
   // ===== Pipeline =====
@@ -984,6 +1341,9 @@ export function getDashboardPage(): string {
   var emailConfigs = [];
   var SECTIONS = ['pipeline','review','appeals','manager','tokens'];
   var SECTION_LABELS = {pipeline:'Pipeline',review:'Review',appeals:'Appeals',manager:'Manager',tokens:'Tokens'};
+  var CADENCES = ['daily','weekly','biweekly','monthly'];
+  var CADENCE_LABELS = {daily:'Daily',weekly:'Weekly',biweekly:'Biweekly',monthly:'Monthly'};
+  var WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
   function loadEmailConfigs() {
     return fetch('/admin/email-reports').then(function(r){return r.json()}).then(function(d) {
@@ -1011,12 +1371,17 @@ export function getDashboardPage(): string {
     if (!emailConfigs.length) {
       html += '<div class="er-empty">No report configs yet</div>';
     } else {
-      html += '<table class="er-table"><thead><tr><th>Name</th><th>Recipients</th><th>Sections</th><th></th></tr></thead><tbody>';
+      html += '<table class="er-table"><thead><tr><th>Name</th><th>Cadence</th><th>Recipients</th><th>Sections</th><th></th></tr></thead><tbody>';
       for (var i = 0; i < emailConfigs.length; i++) {
         var c = emailConfigs[i];
         var enabledCount = 0;
         for (var k = 0; k < SECTIONS.length; k++) { if (c.sections[SECTIONS[k]] && c.sections[SECTIONS[k]].enabled) enabledCount++; }
-        html += '<tr data-idx="'+i+'"><td>'+esc(c.name)+'</td><td>'+c.recipients.length+'</td><td>'+enabledCount+'/'+SECTIONS.length+'</td><td><button class="er-trash" data-id="'+c.id+'" title="Delete">&#128465;</button></td></tr>';
+        var cadenceLabel = CADENCE_LABELS[c.cadence] || 'Weekly';
+        if (c.cadenceDay != null && c.cadence !== 'daily') {
+          if (c.cadence === 'monthly') { cadenceLabel += ' (day ' + c.cadenceDay + ')'; }
+          else { cadenceLabel += ' (' + WEEKDAYS[c.cadenceDay] + ')'; }
+        }
+        html += '<tr data-idx="'+i+'"><td>'+esc(c.name)+'</td><td>'+cadenceLabel+'</td><td>'+c.recipients.length+'</td><td>'+enabledCount+'/'+SECTIONS.length+'</td><td><button class="er-trash" data-id="'+c.id+'" title="Delete">${icons.trash}</button></td></tr>';
       }
       html += '</tbody></table>';
     }
@@ -1052,9 +1417,15 @@ export function getDashboardPage(): string {
   function renderEmailEdit(config) {
     var isNew = !config;
     var c = config || { name: '', recipients: [], sections: defaultSections() };
-    var html = '<div class="er-header"><div style="display:flex;align-items:center;gap:8px"><button class="er-back" id="er-back-btn">&#8592;</button><div class="modal-title">'+(isNew?'New Report Config':'Edit Report Config')+'</div></div></div>';
+    var html = '<div class="er-header"><div style="display:flex;align-items:center;gap:8px"><button class="er-back" id="er-back-btn">${icons.arrowLeft}</button><div class="modal-title">'+(isNew?'New Report Config':'Edit Report Config')+'</div></div></div>';
     html += '<div class="sf"><label class="sf-label">Name</label><input type="text" class="sf-input" id="er-name" value="'+esc(c.name)+'" placeholder="Weekly Executive Summary"></div>';
     html += '<div class="sf"><label class="sf-label">Recipients (one per line)</label><textarea class="sf-input" id="er-recipients" placeholder="ceo@example.com">'+(c.recipients||[]).join('\\n')+'</textarea></div>';
+    var currentCadence = c.cadence || 'weekly';
+    html += '<div class="sf"><label class="sf-label">Cadence</label><div class="er-cadence" id="er-cadence">';
+    for (var ci = 0; ci < CADENCES.length; ci++) {
+      html += '<button class="er-cadence-pill'+(currentCadence===CADENCES[ci]?' active':'')+'" data-cadence="'+CADENCES[ci]+'">'+CADENCE_LABELS[CADENCES[ci]]+'</button>';
+    }
+    html += '</div><div class="er-cadence-day" id="er-cadence-day"></div></div>';
     html += '<div class="sf"><label class="sf-label">Sections</label><table class="er-sections-table"><tbody>';
     for (var i = 0; i < SECTIONS.length; i++) {
       var key = SECTIONS[i];
@@ -1097,6 +1468,42 @@ export function getDashboardPage(): string {
       });
     });
 
+    // Cadence day picker helper
+    function renderCadenceDay(cadence, selectedDay) {
+      var container = document.getElementById('er-cadence-day');
+      if (cadence === 'daily') { container.innerHTML = ''; return; }
+      var h = '<span class="er-cadence-day-label">';
+      if (cadence === 'monthly') {
+        h += 'Day of month</span>';
+        h += '<input type="number" class="er-day-input" id="er-day-num" min="1" max="30" value="'+(selectedDay || 1)+'">';
+      } else {
+        h += 'Day of week</span>';
+        for (var w = 0; w < 7; w++) {
+          h += '<button class="er-day-pill'+(w === (selectedDay != null ? selectedDay : 1) ? ' active' : '')+'" data-day="'+w+'">'+WEEKDAYS[w]+'</button>';
+        }
+      }
+      container.innerHTML = h;
+      if (cadence !== 'monthly') {
+        container.addEventListener('click', function(e) {
+          var dp = e.target.closest('.er-day-pill');
+          if (!dp) return;
+          container.querySelectorAll('.er-day-pill').forEach(function(p){p.classList.remove('active')});
+          dp.classList.add('active');
+        });
+      }
+    }
+
+    renderCadenceDay(currentCadence, c.cadenceDay);
+
+    // Cadence pills
+    document.getElementById('er-cadence').addEventListener('click', function(e) {
+      var pill = e.target.closest('.er-cadence-pill');
+      if (!pill) return;
+      this.querySelectorAll('.er-cadence-pill').forEach(function(p){p.classList.remove('active')});
+      pill.classList.add('active');
+      renderCadenceDay(pill.getAttribute('data-cadence'), null);
+    });
+
     // Save
     document.getElementById('er-save').addEventListener('click', function() {
       var btn = this;
@@ -1112,7 +1519,17 @@ export function getDashboardPage(): string {
         var detail = activePill ? activePill.getAttribute('data-level') : 'medium';
         sections[key] = { enabled: enabled, detail: detail };
       }
-      var payload = { name: name, recipients: recips, sections: sections };
+      var activeCadence = erContent.querySelector('.er-cadence-pill.active');
+      var cadence = activeCadence ? activeCadence.getAttribute('data-cadence') : 'weekly';
+      var cadenceDay = null;
+      if (cadence === 'monthly') {
+        var dayInput = document.getElementById('er-day-num');
+        cadenceDay = dayInput ? Math.max(1, Math.min(30, parseInt(dayInput.value) || 1)) : 1;
+      } else if (cadence === 'weekly' || cadence === 'biweekly') {
+        var activeDayPill = erContent.querySelector('.er-day-pill.active');
+        cadenceDay = activeDayPill ? parseInt(activeDayPill.getAttribute('data-day')) : 1;
+      }
+      var payload = { name: name, recipients: recips, cadence: cadence, cadenceDay: cadenceDay, sections: sections };
       if (c.id) { payload.id = c.id; payload.createdAt = c.createdAt; }
       btnLoad(btn);
       saveEmailConfig(payload).then(function(saved) {

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "productName": "Auto-Bot Overlay",
+  "version": "0.1.0",
+  "identifier": "dev.autobot.overlay",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "http://localhost:8000",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Auto-Bot",
+        "url": "https://auto-bot-serverless.deno.dev",
+        "width": 1100,
+        "height": 750,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "transparent": false,
+        "visible": true,
+        "resizable": true,
+        "minWidth": 600,
+        "minHeight": 400
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "global-shortcut": {
+      "shortcuts": ["CmdOrCtrl+."]
+    },
+    "notification": {
+      "all": true
+    }
+  }
+}

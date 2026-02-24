@@ -1,6 +1,10 @@
-/** Manager-specific KV operations: auth, queue, remediation, stats, backfill. */
+/** Manager-specific KV operations: queue, remediation, stats, backfill. Org-scoped. */
 
-import { getFinding, getAllAnswersForFinding, getTranscript, fireWebhook } from "../lib/kv.ts";
+import { getFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, checkAndEmitPrefab } from "../lib/kv.ts";
+import { orgKey } from "../lib/org.ts";
+import type { OrgId } from "../lib/org.ts";
+import { checkBadges } from "../shared/badges.ts";
+import type { BadgeDef } from "../shared/badges.ts";
 
 let _kv: Deno.Kv | undefined;
 
@@ -43,67 +47,18 @@ interface ReviewDecision {
   decidedAt: number;
 }
 
-// -- Auth --
-
-async function hashPassword(password: string): Promise<string> {
-  const data = new TextEncoder().encode(password);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-export async function createManagerUser(username: string, password: string) {
-  const db = await kv();
-  const passwordHash = await hashPassword(password);
-  await db.set(["manager-user", username], { passwordHash });
-}
-
-export async function verifyManagerUser(username: string, password: string): Promise<boolean> {
-  const db = await kv();
-  const entry = await db.get<{ passwordHash: string }>(["manager-user", username]);
-  if (!entry.value) return false;
-  const hash = await hashPassword(password);
-  return hash === entry.value.passwordHash;
-}
-
-export async function hasAnyManagerUsers(): Promise<boolean> {
-  const db = await kv();
-  const iter = db.list({ prefix: ["manager-user"] });
-  for await (const _ of iter) return true;
-  return false;
-}
-
-export async function createManagerSession(username: string): Promise<string> {
-  const db = await kv();
-  const token = crypto.randomUUID();
-  await db.set(["manager-session", token], { username, createdAt: Date.now() }, { expireIn: 24 * 60 * 60 * 1000 });
-  return token;
-}
-
-export async function getManagerSession(token: string): Promise<string | null> {
-  const db = await kv();
-  const entry = await db.get<{ username: string }>(["manager-session", token]);
-  return entry.value?.username ?? null;
-}
-
-export async function deleteManagerSession(token: string) {
-  const db = await kv();
-  await db.delete(["manager-session", token]);
-}
-
 // -- Queue Population --
 
-export async function populateManagerQueue(findingId: string) {
+export async function populateManagerQueue(orgId: OrgId, findingId: string) {
   const db = await kv();
 
   // Skip if already in queue
-  const existing = await db.get(["manager-queue", findingId]);
+  const existing = await db.get(orgKey(orgId, "manager-queue", findingId));
   if (existing.value) return;
 
   // Scan all decided items for this finding
   const decisions: ReviewDecision[] = [];
-  const iter = db.list<ReviewDecision>({ prefix: ["review-decided", findingId] });
+  const iter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided", findingId) });
   for await (const entry of iter) {
     decisions.push(entry.value);
   }
@@ -113,7 +68,7 @@ export async function populateManagerQueue(findingId: string) {
   if (confirmedFailures.length === 0) return;
 
   // Load finding for metadata
-  const finding = await getFinding(findingId);
+  const finding = await getFinding(orgId, findingId);
   if (!finding) {
     console.error(`[MANAGER] ${findingId}: Finding not found for queue population`);
     return;
@@ -133,16 +88,16 @@ export async function populateManagerQueue(findingId: string) {
     status: "pending",
   };
 
-  await db.set(["manager-queue", findingId], queueItem);
+  await db.set(orgKey(orgId, "manager-queue", findingId), queueItem);
   console.log(`[MANAGER] ${findingId}: Added to manager queue (${confirmedFailures.length} confirmed failures)`);
 }
 
 // -- Queue CRUD --
 
-export async function getManagerQueue(): Promise<ManagerQueueItem[]> {
+export async function getManagerQueue(orgId: OrgId): Promise<ManagerQueueItem[]> {
   const db = await kv();
   const items: ManagerQueueItem[] = [];
-  const iter = db.list<ManagerQueueItem>({ prefix: ["manager-queue"] });
+  const iter = db.list<ManagerQueueItem>({ prefix: orgKey(orgId, "manager-queue") });
   for await (const entry of iter) {
     items.push(entry.value);
   }
@@ -151,24 +106,24 @@ export async function getManagerQueue(): Promise<ManagerQueueItem[]> {
 
 // -- Finding Detail --
 
-export async function getManagerFindingDetail(findingId: string) {
+export async function getManagerFindingDetail(orgId: OrgId, findingId: string) {
   const [finding, allAnswers, transcript] = await Promise.all([
-    getFinding(findingId),
-    getAllAnswersForFinding(findingId),
-    getTranscript(findingId),
+    getFinding(orgId, findingId),
+    getAllAnswersForFinding(orgId, findingId),
+    getTranscript(orgId, findingId),
   ]);
 
   if (!finding) return null;
 
   const db = await kv();
   const [queueEntry, remediationEntry] = await Promise.all([
-    db.get<ManagerQueueItem>(["manager-queue", findingId]),
-    db.get<ManagerRemediation>(["manager-remediation", findingId]),
+    db.get<ManagerQueueItem>(orgKey(orgId, "manager-queue", findingId)),
+    db.get<ManagerRemediation>(orgKey(orgId, "manager-remediation", findingId)),
   ]);
 
   // Load decisions
   const decisions: ReviewDecision[] = [];
-  const decidedIter = db.list<ReviewDecision>({ prefix: ["review-decided", findingId] });
+  const decidedIter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided", findingId) });
   for await (const entry of decidedIter) {
     decisions.push(entry.value);
   }
@@ -203,50 +158,123 @@ export async function getManagerFindingDetail(findingId: string) {
 
 // -- Remediation --
 
-export async function submitRemediation(findingId: string, notes: string, username: string): Promise<boolean> {
+export interface RemediationResult {
+  success: boolean;
+  xpGained: number;
+  level: number;
+  newBadges: BadgeDef[];
+}
+
+export async function submitRemediation(orgId: OrgId, findingId: string, notes: string, username: string): Promise<RemediationResult> {
   const db = await kv();
 
-  const queueEntry = await db.get<ManagerQueueItem>(["manager-queue", findingId]);
-  if (!queueEntry.value) return false;
+  const queueEntry = await db.get<ManagerQueueItem>(orgKey(orgId, "manager-queue", findingId));
+  if (!queueEntry.value) return { success: false, xpGained: 0, level: 0, newBadges: [] };
 
+  const now = Date.now();
   const remediation: ManagerRemediation = {
     findingId,
     notes,
     addressedBy: username,
-    addressedAt: Date.now(),
+    addressedAt: now,
   };
 
   const updated: ManagerQueueItem = { ...queueEntry.value, status: "addressed" };
   await db.atomic()
-    .set(["manager-remediation", findingId], remediation)
-    .set(["manager-queue", findingId], updated)
+    .set(orgKey(orgId, "manager-remediation", findingId), remediation)
+    .set(orgKey(orgId, "manager-queue", findingId), updated)
     .commit();
 
   console.log(`[MANAGER] ${findingId}: Remediated by ${username}`);
 
-  const finding = await getFinding(findingId);
-  fireWebhook("manager", {
+  const finding = await getFinding(orgId, findingId);
+  fireWebhook(orgId, "manager", {
     findingId,
-    remediation: { notes, addressedBy: username, addressedAt: Date.now() },
+    remediation: { notes, addressedBy: username, addressedAt: now },
     finding,
     remediatedAt: new Date().toISOString(),
   }).catch((err) => console.error(`[MANAGER] ${findingId}: Webhook failed:`, err));
 
-  return true;
+  // -- Badge checking + XP --
+  let newBadges: BadgeDef[] = [];
+  let xpGained = 0;
+  let level = 0;
+  try {
+    const stats = await getBadgeStats(orgId, username);
+    stats.totalRemediations++;
+
+    // Track speed: time from queue arrival to remediation
+    const arrivalTime = queueEntry.value.completedAt;
+    const elapsedMs = now - arrivalTime;
+    if (elapsedMs < 24 * 60 * 60 * 1000) stats.fastRemediations24h++;
+    if (elapsedMs < 60 * 60 * 1000) stats.fastRemediations1h++;
+
+    // Update streak
+    const today = new Date().toISOString().slice(0, 10);
+    if (stats.lastActiveDate !== today) {
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      stats.dayStreak = stats.lastActiveDate === yesterday ? stats.dayStreak + 1 : 1;
+      stats.lastActiveDate = today;
+    }
+
+    // Check if queue is now cleared
+    const pending = await getManagerQueue(orgId);
+    if (pending.filter((i) => i.status === "pending").length === 0) {
+      stats.queueCleared = true;
+      checkAndEmitPrefab(orgId, "queue_cleared", username, `${username.split("@")[0]} cleared the queue!`)
+        .catch(() => {});
+    }
+
+    await updateBadgeStats(orgId, username, stats);
+
+    const earned = await getEarnedBadges(orgId, username);
+    const earnedSet = new Set(earned.map((b) => b.badgeId));
+    newBadges = checkBadges("manager", stats, earnedSet);
+
+    let badgeXp = 0;
+    for (const badge of newBadges) {
+      await awardBadge(orgId, username, badge);
+      badgeXp += badge.xpReward;
+    }
+
+    // XP formula: 25 base + speed bonus + daily-first bonus
+    let baseXp = 25;
+    if (elapsedMs < 60 * 60 * 1000) baseXp += 30;       // within 1h
+    else if (elapsedMs < 24 * 60 * 60 * 1000) baseXp += 15; // within 24h
+
+    // daily-first bonus: check if this is the first remediation today
+    const allRems: ManagerRemediation[] = [];
+    const rIter = db.list<ManagerRemediation>({ prefix: orgKey(orgId, "manager-remediation") });
+    for await (const entry of rIter) {
+      if (entry.value.addressedBy === username) allRems.push(entry.value);
+    }
+    const todayStart = new Date(today + "T00:00:00Z").getTime();
+    const todayRems = allRems.filter((r) => r.addressedAt >= todayStart && r.addressedAt < now);
+    if (todayRems.length === 0) baseXp += 10; // daily-first bonus
+
+    const totalXp = baseXp + badgeXp;
+    const result = await awardXp(orgId, username, totalXp, "manager");
+    xpGained = totalXp;
+    level = result.state.level;
+  } catch (err) {
+    console.error(`[MANAGER] Badge check error for ${username}:`, err);
+  }
+
+  return { success: true, xpGained, level, newBadges };
 }
 
 // -- Stats --
 
-export async function getManagerStats() {
+export async function getManagerStats(orgId: OrgId) {
   const db = await kv();
 
   const items: ManagerQueueItem[] = [];
   const remediations: ManagerRemediation[] = [];
 
-  const qIter = db.list<ManagerQueueItem>({ prefix: ["manager-queue"] });
+  const qIter = db.list<ManagerQueueItem>({ prefix: orgKey(orgId, "manager-queue") });
   for await (const entry of qIter) items.push(entry.value);
 
-  const rIter = db.list<ManagerRemediation>({ prefix: ["manager-remediation"] });
+  const rIter = db.list<ManagerRemediation>({ prefix: orgKey(orgId, "manager-remediation") });
   for await (const entry of rIter) remediations.push(entry.value);
 
   const now = Date.now();
@@ -279,7 +307,7 @@ export async function getManagerStats() {
   // Most commonly failed questions
   const questionFailCounts: Record<string, number> = {};
   for (const item of items) {
-    const dIter = db.list<ReviewDecision>({ prefix: ["review-decided", item.findingId] });
+    const dIter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided", item.findingId) });
     for await (const entry of dIter) {
       if (entry.value.decision === "confirm") {
         const header = entry.value.header || "Unknown";
@@ -332,13 +360,13 @@ export async function getManagerStats() {
 
 // -- Backfill --
 
-export async function backfillManagerQueue() {
+export async function backfillManagerQueue(orgId: OrgId) {
   const db = await kv();
   let added = 0;
 
   // Scan all review-decided entries, group by findingId
   const decidedByFinding: Record<string, ReviewDecision[]> = {};
-  const decidedIter = db.list<ReviewDecision>({ prefix: ["review-decided"] });
+  const decidedIter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") });
   for await (const entry of decidedIter) {
     const fid = entry.value.findingId;
     if (!decidedByFinding[fid]) decidedByFinding[fid] = [];
@@ -347,7 +375,7 @@ export async function backfillManagerQueue() {
 
   for (const [findingId, decisions] of Object.entries(decidedByFinding)) {
     // Skip if still has pending review items
-    const pendingIter = db.list({ prefix: ["review-pending", findingId] });
+    const pendingIter = db.list({ prefix: orgKey(orgId, "review-pending", findingId) });
     let hasPending = false;
     for await (const _ of pendingIter) {
       hasPending = true;
@@ -356,7 +384,7 @@ export async function backfillManagerQueue() {
     if (hasPending) continue;
 
     // Skip if already in manager queue
-    const existing = await db.get(["manager-queue", findingId]);
+    const existing = await db.get(orgKey(orgId, "manager-queue", findingId));
     if (existing.value) continue;
 
     // Check for confirmed failures
@@ -364,7 +392,7 @@ export async function backfillManagerQueue() {
     if (confirmedFailures.length === 0) continue;
 
     // Load finding metadata
-    const finding = await getFinding(findingId);
+    const finding = await getFinding(orgId, findingId);
     if (!finding) continue;
 
     const totalQuestions = finding.answeredQuestions?.length ?? 0;
@@ -381,7 +409,7 @@ export async function backfillManagerQueue() {
       status: "pending",
     };
 
-    await db.set(["manager-queue", findingId], queueItem);
+    await db.set(orgKey(orgId, "manager-queue", findingId), queueItem);
     added++;
   }
 

@@ -1,4 +1,5 @@
 /** API controller - creates audit jobs and kicks off the QStash pipeline. */
+import * as icons from "./shared/icons.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook } from "./lib/kv.ts";
 import { enqueueStep } from "./lib/queue.ts";
@@ -8,6 +9,7 @@ import { env } from "./env.ts";
 import { populateJudgeQueue, saveAppeal, getAppeal } from "./judge/kv.ts";
 import type { AuditFinding, AuditJob } from "./types/mod.ts";
 import { createJob } from "./types/mod.ts";
+import type { OrgId } from "./lib/org.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -21,7 +23,7 @@ function json(data: unknown, status = 200): Response {
  * Creates an audit job for a standard date leg record.
  * Pass qlab_config to use Question Lab questions instead of QuickBase.
  */
-export async function handleAuditByRid(req: Request): Promise<Response> {
+export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Response> {
   const url = new URL(req.url);
   const rid = url.searchParams.get("rid");
   const callbackUrl = url.searchParams.get("callback_url") ?? "none";
@@ -56,7 +58,7 @@ export async function handleAuditByRid(req: Request): Promise<Response> {
     updateEndpoint: callbackUrl,
     recordsToAudit: [rid],
   };
-  await saveJob(job);
+  await saveJob(orgId, job);
 
   // Create finding
   const findingId = nanoid();
@@ -78,7 +80,7 @@ export async function handleAuditByRid(req: Request): Promise<Response> {
     finding.recordingId = override;
   }
 
-  await saveFinding(finding);
+  await saveFinding(orgId, finding);
 
   // Kick off pipeline
   await enqueueStep("init", { findingId });
@@ -91,7 +93,7 @@ export async function handleAuditByRid(req: Request): Promise<Response> {
  * POST /audit/package-by-rid?rid=X&callback_url=Y
  * Creates an audit job for a package record.
  */
-export async function handlePackageByRid(req: Request): Promise<Response> {
+export async function handlePackageByRid(orgId: OrgId, req: Request): Promise<Response> {
   const url = new URL(req.url);
   const rid = url.searchParams.get("rid");
   const callbackUrl = url.searchParams.get("callback_url") ?? "none";
@@ -119,7 +121,7 @@ export async function handlePackageByRid(req: Request): Promise<Response> {
     updateEndpoint: callbackUrl,
     recordsToAudit: [rid],
   };
-  await saveJob(job);
+  await saveJob(orgId, job);
 
   const findingId = nanoid();
   const finding: AuditFinding = {
@@ -136,7 +138,7 @@ export async function handlePackageByRid(req: Request): Promise<Response> {
     qlabConfig: qlabConfig ?? body.qlabConfig,
   };
 
-  await saveFinding(finding);
+  await saveFinding(orgId, finding);
   await enqueueStep("init", { findingId });
 
   console.log(`[CONTROLLER] Package audit started: job=${jobId} finding=${findingId} rid=${rid}`);
@@ -147,12 +149,12 @@ export async function handlePackageByRid(req: Request): Promise<Response> {
  * GET /audit/finding?id=X
  * Retrieve a finding by ID.
  */
-export async function handleGetFinding(req: Request): Promise<Response> {
+export async function handleGetFinding(orgId: OrgId, req: Request): Promise<Response> {
   const url = new URL(req.url);
   const id = url.searchParams.get("id");
   if (!id) return json({ error: "id parameter required" }, 400);
 
-  const finding = await getFinding(id);
+  const finding = await getFinding(orgId, id);
   if (!finding) return json({ error: "not found" }, 404);
 
   return json(finding);
@@ -162,8 +164,8 @@ export async function handleGetFinding(req: Request): Promise<Response> {
  * GET /audit/stats
  * Real-time pipeline stats (JSON).
  */
-export async function handleGetStats(_req: Request): Promise<Response> {
-  const stats = await getStats();
+export async function handleGetStats(orgId: OrgId, _req: Request): Promise<Response> {
+  const stats = await getStats(orgId);
 
   return json({
     inPipe: stats.active.length,
@@ -180,12 +182,12 @@ export async function handleGetStats(_req: Request): Promise<Response> {
  * GET /audit/recording?id=X
  * Streams the recording audio from S3 as audio/mpeg.
  */
-export async function handleGetRecording(req: Request): Promise<Response> {
+export async function handleGetRecording(orgId: OrgId, req: Request): Promise<Response> {
   const url = new URL(req.url);
   const id = url.searchParams.get("id");
   if (!id) return json({ error: "id parameter required" }, 400);
 
-  const finding = await getFinding(id);
+  const finding = await getFinding(orgId, id);
   if (!finding) return json({ error: "finding not found" }, 404);
 
   const recordingPath = (finding as Record<string, any>).recordingPath;
@@ -208,7 +210,7 @@ export async function handleGetRecording(req: Request): Promise<Response> {
  * POST /audit/appeal
  * File an appeal for a finding - queues ALL questions for judge review.
  */
-export async function handleFileAppeal(req: Request): Promise<Response> {
+export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Response> {
   let body: Record<string, any> = {};
   try {
     body = await req.json();
@@ -217,17 +219,18 @@ export async function handleFileAppeal(req: Request): Promise<Response> {
   }
 
   const findingId = body.findingId;
+  const comment = body.comment;
   if (!findingId) return json({ error: "findingId required" }, 400);
 
   // Check if appeal already exists
-  const existing = await getAppeal(findingId);
+  const existing = await getAppeal(orgId, findingId);
   if (existing) return json({ error: "appeal already filed", status: existing.status }, 409);
 
-  const finding = await getFinding(findingId);
+  const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
 
   const f = finding as Record<string, any>;
-  const allAnswers = await getAllAnswersForFinding(findingId);
+  const allAnswers = await getAllAnswersForFinding(orgId, findingId);
   const questions = allAnswers.length > 0 ? allAnswers : (f.answeredQuestions ?? []);
 
   if (questions.length === 0) {
@@ -235,18 +238,19 @@ export async function handleFileAppeal(req: Request): Promise<Response> {
   }
 
   // Populate judge queue with ALL questions
-  await populateJudgeQueue(findingId, questions);
+  await populateJudgeQueue(orgId, findingId, questions, "redo");
 
   // Save appeal record
   const appealedAt = Date.now();
-  await saveAppeal({
+  await saveAppeal(orgId, {
     findingId,
     appealedAt,
     status: "pending",
     auditor: f.owner,
+    ...(comment ? { comment: String(comment) } : {}),
   });
 
-  fireWebhook("appeal", {
+  fireWebhook(orgId, "appeal", {
     findingId,
     finding: f,
     auditor: f.owner,
@@ -258,10 +262,11 @@ export async function handleFileAppeal(req: Request): Promise<Response> {
 }
 
 /**
- * POST /audit/appeal/different-genie
- * Re-audit with different/additional genie IDs. Nukes old finding, creates new one.
+ * POST /audit/appeal/different-recording
+ * Re-audit with different/additional recording IDs. Nukes old finding, creates new one.
+ * Auto-detects appeal type: if original recordingId is in submitted list -> "additional-recording", else -> "different-recording".
  */
-export async function handleAppealDifferentGenie(req: Request): Promise<Response> {
+export async function handleAppealDifferentRecording(orgId: OrgId, req: Request): Promise<Response> {
   let body: Record<string, any> = {};
   try {
     body = await req.json();
@@ -269,25 +274,30 @@ export async function handleAppealDifferentGenie(req: Request): Promise<Response
     return json({ error: "invalid JSON body" }, 400);
   }
 
-  const { findingId, genieIds } = body;
+  const { findingId, recordingIds, comment } = body;
   if (!findingId) return json({ error: "findingId required" }, 400);
-  if (!Array.isArray(genieIds) || genieIds.length === 0) {
-    return json({ error: "genieIds must be a non-empty array" }, 400);
+  if (!Array.isArray(recordingIds) || recordingIds.length === 0) {
+    return json({ error: "recordingIds must be a non-empty array" }, 400);
   }
 
   // Validate all IDs are numeric
-  for (const gid of genieIds) {
-    if (!/^\d+$/.test(String(gid).trim())) {
-      return json({ error: `invalid genie ID: ${gid}` }, 400);
+  for (const rid of recordingIds) {
+    if (!/^\d+$/.test(String(rid).trim())) {
+      return json({ error: `invalid recording ID: ${rid}` }, 400);
     }
   }
 
-  const oldFinding = await getFinding(findingId);
+  const oldFinding = await getFinding(orgId, findingId);
   if (!oldFinding) return json({ error: "finding not found" }, 404);
+
+  // Auto-detect appeal type
+  const normalizedIds = recordingIds.map((r: any) => String(r).trim());
+  const originalId = oldFinding.recordingId ? String(oldFinding.recordingId) : undefined;
+  const appealType = originalId && normalizedIds.includes(originalId) ? "additional-recording" : "different-recording";
 
   // Mark old finding as re-audited
   (oldFinding as Record<string, any>).reAuditedAt = Date.now();
-  await saveFinding(oldFinding as Record<string, any>);
+  await saveFinding(orgId, oldFinding as Record<string, any>);
 
   // Create new job + finding with same record data
   const newJobId = nanoid();
@@ -298,7 +308,7 @@ export async function handleAppealDifferentGenie(req: Request): Promise<Response
     newJobId,
   );
   newJob.status = "running";
-  await saveJob(newJob);
+  await saveJob(orgId, newJob);
 
   const newFindingId = nanoid();
   const newFinding: AuditFinding = {
@@ -309,20 +319,21 @@ export async function handleAppealDifferentGenie(req: Request): Promise<Response
     job: newJob,
     record: oldFinding.record,
     recordingIdField: oldFinding.recordingIdField,
-    recordingId: genieIds[0],
+    recordingId: normalizedIds[0],
     owner: oldFinding.owner,
     updateEndpoint: oldFinding.updateEndpoint,
     qlabConfig: oldFinding.qlabConfig,
-    genieIds: genieIds.map((g: any) => String(g).trim()),
+    genieIds: normalizedIds,
     appealSourceFindingId: findingId,
-    appealType: "different-genie",
+    appealType,
+    ...(comment ? { appealComment: String(comment) } : {}),
   };
 
-  await saveFinding(newFinding as Record<string, any>);
+  await saveFinding(orgId, newFinding as Record<string, any>);
   await enqueueStep("init", { findingId: newFindingId });
 
   const reportUrl = `${env.selfUrl}/audit/report?id=${newFindingId}`;
-  console.log(`[APPEAL] Different-genie: old=${findingId} new=${newFindingId} genies=${genieIds.join(",")}`);
+  console.log(`[APPEAL] ${appealType}: old=${findingId} new=${newFindingId} recordings=${normalizedIds.join(",")}`);
   return json({ ok: true, newFindingId, reportUrl });
 }
 
@@ -330,7 +341,7 @@ export async function handleAppealDifferentGenie(req: Request): Promise<Response
  * POST /audit/appeal/upload-recording
  * Re-audit with an uploaded MP3 file and optional snip markers.
  */
-export async function handleAppealUploadRecording(req: Request): Promise<Response> {
+export async function handleAppealUploadRecording(orgId: OrgId, req: Request): Promise<Response> {
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -348,13 +359,14 @@ export async function handleAppealUploadRecording(req: Request): Promise<Respons
   const snipEndRaw = formData.get("snipEnd") as string | null;
   const snipStart = snipStartRaw ? Number(snipStartRaw) : undefined;
   const snipEnd = snipEndRaw ? Number(snipEndRaw) : undefined;
+  const comment = formData.get("comment") as string | null;
 
-  const oldFinding = await getFinding(findingId);
+  const oldFinding = await getFinding(orgId, findingId);
   if (!oldFinding) return json({ error: "finding not found" }, 404);
 
   // Mark old finding as re-audited
   (oldFinding as Record<string, any>).reAuditedAt = Date.now();
-  await saveFinding(oldFinding as Record<string, any>);
+  await saveFinding(orgId, oldFinding as Record<string, any>);
 
   // Upload file to S3
   const fileBytes = new Uint8Array(await file.arrayBuffer());
@@ -371,7 +383,7 @@ export async function handleAppealUploadRecording(req: Request): Promise<Respons
     newJobId,
   );
   newJob.status = "running";
-  await saveJob(newJob);
+  await saveJob(orgId, newJob);
 
   const newFindingId = nanoid();
   const newFinding: AuditFinding = {
@@ -391,9 +403,10 @@ export async function handleAppealUploadRecording(req: Request): Promise<Respons
     snipEnd,
     appealSourceFindingId: findingId,
     appealType: "upload-recording",
+    ...(comment ? { appealComment: String(comment) } : {}),
   };
 
-  await saveFinding(newFinding as Record<string, any>);
+  await saveFinding(orgId, newFinding as Record<string, any>);
 
   // Skip init (recording already in S3), go straight to transcribe
   await enqueueStep("transcribe", { findingId: newFindingId });
@@ -407,11 +420,11 @@ export async function handleAppealUploadRecording(req: Request): Promise<Respons
  * GET /audit/appeal/status?findingId=X
  * Check if an appeal exists for a finding (no side effects).
  */
-export async function handleAppealStatus(req: Request): Promise<Response> {
+export async function handleAppealStatus(orgId: OrgId, req: Request): Promise<Response> {
   const url = new URL(req.url);
   const findingId = url.searchParams.get("findingId");
   if (!findingId) return json({ error: "findingId required" }, 400);
-  const existing = await getAppeal(findingId);
+  const existing = await getAppeal(orgId, findingId);
   return json({ exists: !!existing, status: existing?.status ?? null });
 }
 
@@ -419,20 +432,20 @@ export async function handleAppealStatus(req: Request): Promise<Response> {
  * GET /audit/report?id=X
  * HTML report for a completed audit finding.
  */
-export async function handleGetReport(req: Request): Promise<Response> {
+export async function handleGetReport(orgId: OrgId, req: Request): Promise<Response> {
   const url = new URL(req.url);
   const id = url.searchParams.get("id");
   if (!id) {
     return new Response("Missing id parameter", { status: 400 });
   }
 
-  const f = await getFinding(id);
+  const f = await getFinding(orgId, id);
   if (!f) {
     return new Response("Finding not found", { status: 404 });
   }
 
   // Fetch full (untrimmed) answers from batch KV keys
-  const fullAnswers = await getAllAnswersForFinding(id);
+  const fullAnswers = await getAllAnswersForFinding(orgId, id);
   const questions: any[] = fullAnswers.length > 0 ? fullAnswers : (f.answeredQuestions ?? []);
 
   const record = f.record ?? {};
@@ -453,7 +466,7 @@ export async function handleGetReport(req: Request): Promise<Response> {
     : `<span class="badge pending"><span class="badge-dot"></span>${esc(f.findingStatus?.toUpperCase() ?? "UNKNOWN")}</span>`;
 
   // Fetch full transcript from dedicated KV key (not subject to 64KB trim)
-  const storedTranscript = await getTranscript(id);
+  const storedTranscript = await getTranscript(orgId, id);
   const transcriptText = storedTranscript?.diarized || storedTranscript?.raw || f.diarizedTranscript || f.rawTranscript || "";
   const transcriptHtml = transcriptText
     ? esc(transcriptText).replace(/\.\.\.\[KV_TRIM\]/g, "...").replace(/\[AGENT\]/g, '<span class="speaker agent">[AGENT]</span>')
@@ -510,9 +523,7 @@ export async function handleGetReport(req: Request): Promise<Response> {
 
     const verdictClass = isYes ? "verdict-yes" : "verdict-no";
     const verdictLabel = isYes ? "Compliant" : "Non-Compliant";
-    const verdictIcon = isYes
-      ? `<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-      : `<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+    const verdictIcon = isYes ? icons.check : icons.x;
 
     return `<div class="q-card ${isYes ? "q-card--yes" : "q-card--no"}">
       <div class="q-card-top" onclick="toggleCard(${i})">
@@ -520,7 +531,7 @@ export async function handleGetReport(req: Request): Promise<Response> {
         <div class="q-card-title">${esc(q.header ?? "")}</div>
         <div class="q-card-answer ${isYes ? "answer-yes" : "answer-no"}">${isYes ? "Yes" : "No"}</div>
         <button class="q-card-toggle" id="toggle-${i}" aria-label="Expand details">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          ${icons.chevronDown}
         </button>
       </div>
       <div class="q-card-body" id="body-${i}">
@@ -813,19 +824,19 @@ export async function handleGetReport(req: Request): Promise<Response> {
     .appeal-tab.active { color: var(--teal); border-bottom-color: var(--teal); }
     .appeal-fork { padding: 16px 20px; }
     .fork-label { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
-    .genie-inputs { display: flex; flex-direction: column; gap: 6px; }
-    .genie-row { display: flex; gap: 6px; align-items: center; }
-    .genie-input {
+    .recording-inputs { display: flex; flex-direction: column; gap: 6px; }
+    .recording-row { display: flex; gap: 6px; align-items: center; }
+    .recording-input {
       flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
       color: var(--text-bright); padding: 8px 12px; font-size: 13px; font-family: var(--mono);
       outline: none; transition: border-color 0.15s;
     }
-    .genie-input:focus { border-color: var(--teal); }
-    .genie-remove {
+    .recording-input:focus { border-color: var(--teal); }
+    .recording-remove {
       background: none; border: none; color: var(--red); cursor: pointer; font-size: 16px;
       padding: 4px 8px; border-radius: 4px; transition: background 0.15s;
     }
-    .genie-remove:hover { background: var(--red-bg); }
+    .recording-remove:hover { background: var(--red-bg); }
     .fork-add-btn {
       background: none; border: 1px dashed var(--border); color: var(--text-muted);
       padding: 6px 14px; border-radius: 6px; font-size: 11px; font-weight: 600;
@@ -839,6 +850,14 @@ export async function handleGetReport(req: Request): Promise<Response> {
     }
     .fork-submit:hover { background: var(--teal); box-shadow: 0 0 16px var(--teal-bg); }
     .fork-submit:disabled { opacity: 0.4; cursor: default; box-shadow: none; }
+    .appeal-comment {
+      width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text-bright); padding: 8px 12px; font-size: 12px; font-family: inherit;
+      outline: none; resize: vertical; min-height: 50px; max-height: 120px;
+      transition: border-color 0.15s; margin-top: 10px;
+    }
+    .appeal-comment:focus { border-color: var(--teal); }
+    .appeal-comment::placeholder { color: var(--text-dim); }
     /* Upload: initial drop zone */
     .upload-area {
       border: 2px dashed var(--border); border-radius: 8px; padding: 28px 16px;
@@ -967,8 +986,8 @@ export async function handleGetReport(req: Request): Promise<Response> {
       <div class="ap" id="audio-player">
         <audio id="recording-audio" class="audio-native" preload="none" src="/audit/recording?id=${esc(id)}"></audio>
         <button class="ap-play" id="ap-play" title="Play recording">
-          <svg id="ap-icon-play" viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg>
-          <svg id="ap-icon-pause" viewBox="0 0 16 16" style="display:none"><path d="M3 1h3v14H3zM10 1h3v14h-3z"/></svg>
+          <span id="ap-icon-play">${icons.play16}</span>
+          <span id="ap-icon-pause" style="display:none">${icons.pause16}</span>
         </button>
         <div class="ap-track" id="ap-track"><div class="ap-fill" id="ap-fill"></div></div>
         <span class="ap-time" id="ap-time">0:00 / 0:00</span>
@@ -990,27 +1009,28 @@ export async function handleGetReport(req: Request): Promise<Response> {
       </div>
       <div class="appeal-panel" id="appeal-panel">
         <div class="appeal-tabs">
-          <button class="appeal-tab active" id="tab-genie" onclick="switchFork('genie')">Different Genie</button>
+          <button class="appeal-tab active" id="tab-recording" onclick="switchFork('recording')">Different Recording</button>
           <button class="appeal-tab" id="tab-upload" onclick="switchFork('upload')">Upload Recording</button>
         </div>
-        <div class="appeal-fork" id="fork-genie">
-          <div class="fork-label">Provide corrected or additional Genie IDs</div>
-          <div class="genie-inputs" id="genie-inputs">
-            <div class="genie-row">
-              <input type="text" class="genie-input" value="${esc(String(f.recordingId ?? ""))}" placeholder="Genie ID" />
+        <div class="appeal-fork" id="fork-recording">
+          <div class="fork-label">Provide corrected or additional Recording IDs</div>
+          <div class="recording-inputs" id="recording-inputs">
+            <div class="recording-row">
+              <input type="text" class="recording-input" value="${esc(String(f.recordingId ?? ""))}" placeholder="Recording ID" />
             </div>
           </div>
-          <button class="fork-add-btn" onclick="addGenieInput()">+ Add Another</button>
-          <button class="fork-submit" onclick="submitDifferentGenie()">Submit Re-Audit</button>
+          <button class="fork-add-btn" onclick="addRecordingInput()">+ Add Another</button>
+          <textarea class="appeal-comment" id="recording-comment" placeholder="Optional comment for the judge..."></textarea>
+          <button class="fork-submit" onclick="submitDifferentRecording()">Submit Re-Audit</button>
         </div>
         <div class="appeal-fork" id="fork-upload" style="display:none">
           <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
-            <div class="upload-icon">&#8679;</div>
+            <div class="upload-icon">${icons.upload}</div>
             <div class="upload-text">Click to select an audio file</div>
             <input type="file" id="file-input" accept="audio/mpeg,audio/*" style="display:none" onchange="handleFileSelect(this)" />
           </div>
           <div class="file-info" id="file-info">
-            <div class="file-info-icon">&#9835;</div>
+            <div class="file-info-icon">${icons.music}</div>
             <span class="file-info-name" id="file-info-name"></span>
             <span class="file-info-size" id="file-info-size"></span>
             <button class="file-info-change" onclick="document.getElementById('file-input').click()">Change</button>
@@ -1019,7 +1039,7 @@ export async function handleGetReport(req: Request): Promise<Response> {
             <audio id="snip-audio" preload="auto"></audio>
             <div class="snip-editor-label">Trim recording (optional)</div>
             <div class="snip-row">
-              <button class="snip-play-btn" id="snip-play-btn" onclick="toggleSnipPlay()">&#9654;</button>
+              <button class="snip-play-btn" id="snip-play-btn" onclick="toggleSnipPlay()">${icons.playSmall}</button>
               <div class="snip-track-wrap">
                 <div class="snip-track" id="snip-track" onclick="seekSnip(event)">
                   <div class="snip-fill" id="snip-fill"></div>
@@ -1040,12 +1060,13 @@ export async function handleGetReport(req: Request): Promise<Response> {
               <button class="snip-btn snip-btn--clear" onclick="clearSnip()">Clear</button>
               <div class="snip-window" id="snip-window">
                 <span class="snip-window-val snip-window-val--start" id="snip-val-start">--:--</span>
-                <span class="snip-window-sep">&#8594;</span>
+                <span class="snip-window-sep">${icons.arrowRight}</span>
                 <span class="snip-window-val snip-window-val--end" id="snip-val-end">--:--</span>
               </div>
             </div>
             <div class="snip-hint">Seek to a position then click Set Start / Set End to define the window.</div>
           </div>
+          <textarea class="appeal-comment" id="upload-comment" placeholder="Optional comment for the judge..."></textarea>
           <button class="fork-submit" id="upload-submit" onclick="submitUploadRecording()" disabled>Submit Re-Audit</button>
         </div>
       </div>
@@ -1161,34 +1182,38 @@ export async function handleGetReport(req: Request): Promise<Response> {
     }
 
     function switchFork(name) {
-      document.getElementById('fork-genie').style.display = name === 'genie' ? 'block' : 'none';
+      document.getElementById('fork-recording').style.display = name === 'recording' ? 'block' : 'none';
       document.getElementById('fork-upload').style.display = name === 'upload' ? 'block' : 'none';
-      document.getElementById('tab-genie').classList.toggle('active', name === 'genie');
+      document.getElementById('tab-recording').classList.toggle('active', name === 'recording');
       document.getElementById('tab-upload').classList.toggle('active', name === 'upload');
     }
 
-    function addGenieInput() {
-      var container = document.getElementById('genie-inputs');
+    function addRecordingInput() {
+      var container = document.getElementById('recording-inputs');
       var row = document.createElement('div');
-      row.className = 'genie-row';
-      row.innerHTML = '<input type="text" class="genie-input" placeholder="Genie ID" /><button class="genie-remove" onclick="this.parentElement.remove()">&times;</button>';
+      row.className = 'recording-row';
+      row.innerHTML = '<input type="text" class="recording-input" placeholder="Recording ID" /><button class="recording-remove" onclick="this.parentElement.remove()">&times;</button>';
       container.appendChild(row);
     }
 
-    function submitDifferentGenie() {
-      var inputs = document.querySelectorAll('#genie-inputs .genie-input');
+    function submitDifferentRecording() {
+      var inputs = document.querySelectorAll('#recording-inputs .recording-input');
       var ids = [];
       inputs.forEach(function(inp) { var v = inp.value.trim(); if (v) ids.push(v); });
-      if (ids.length === 0) { alert('Enter at least one Genie ID'); return; }
+      if (ids.length === 0) { alert('Enter at least one Recording ID'); return; }
 
-      var btn = document.querySelector('#fork-genie .fork-submit');
+      var comment = (document.getElementById('recording-comment').value || '').trim();
+      var btn = document.querySelector('#fork-recording .fork-submit');
       btn.disabled = true;
       btn.textContent = 'Submitting...';
 
-      fetch('/audit/appeal/different-genie', {
+      var payload = { findingId: '${esc(id)}', recordingIds: ids };
+      if (comment) payload.comment = comment;
+
+      fetch('/audit/appeal/different-recording', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ findingId: '${esc(id)}', genieIds: ids }),
+        body: JSON.stringify(payload),
       }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) {
           btn.textContent = d.error;
@@ -1242,8 +1267,8 @@ export async function handleGetReport(req: Request): Promise<Response> {
     function toggleSnipPlay() {
       var audio = document.getElementById('snip-audio');
       var btn = document.getElementById('snip-play-btn');
-      if (audio.paused) { audio.play(); btn.innerHTML = '&#9646;&#9646;'; }
-      else { audio.pause(); btn.innerHTML = '&#9654;'; }
+      if (audio.paused) { audio.play(); btn.innerHTML = '${icons.pauseSmall.replace(/'/g, "\\'")}'; }
+      else { audio.pause(); btn.innerHTML = '${icons.playSmall.replace(/'/g, "\\'")}'; }
     }
 
     // Snip audio event listeners
@@ -1264,7 +1289,7 @@ export async function handleGetReport(req: Request): Promise<Response> {
         document.getElementById('snip-time-dur').textContent = fmtMs(audio.duration * 1000);
       });
       audio.addEventListener('ended', function() {
-        document.getElementById('snip-play-btn').innerHTML = '&#9654;';
+        document.getElementById('snip-play-btn').innerHTML = '${icons.playSmall.replace(/'/g, "\\'")}';
       });
     })();
 
@@ -1335,11 +1360,13 @@ export async function handleGetReport(req: Request): Promise<Response> {
       btn.disabled = true;
       btn.textContent = 'Uploading...';
 
+      var uploadComment = (document.getElementById('upload-comment').value || '').trim();
       var fd = new FormData();
       fd.append('findingId', '${esc(id)}');
       fd.append('file', _uploadFile);
       if (_snipStartMs != null) fd.append('snipStart', String(_snipStartMs));
       if (_snipEndMs != null) fd.append('snipEnd', String(_snipEndMs));
+      if (uploadComment) fd.append('comment', uploadComment);
 
       fetch('/audit/appeal/upload-recording', { method: 'POST', body: fd })
         .then(function(r) { return r.json(); })

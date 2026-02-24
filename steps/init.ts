@@ -14,16 +14,16 @@ function json(data: unknown, status = 200) {
 
 export async function stepInit(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId } = body;
+  const { findingId, orgId } = body;
 
   console.log(`[STEP-INIT] ${findingId}: Starting...`);
-  await trackActive(findingId, "init");
+  await trackActive(orgId, findingId, "init");
 
-  const finding = await getFinding(findingId);
+  const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
 
   finding.findingStatus = "getting-recording";
-  await saveFinding(finding);
+  await saveFinding(orgId, finding);
 
   // Multi-genie path: download each genie separately
   if (finding.genieIds && finding.genieIds.length > 0) {
@@ -49,18 +49,18 @@ export async function stepInit(req: Request): Promise<Response> {
     if (keys.length === 0) {
       finding.rawTranscript = "Invalid Genie";
       finding.findingStatus = "finished";
-      await saveFinding(finding);
-      await enqueueStep("finalize", { findingId });
+      await saveFinding(orgId, finding);
+      await enqueueStep("finalize", { findingId, orgId });
       return json({ ok: true, skipped: true, reason: "no valid genies" });
     }
 
     finding.s3RecordingKeys = keys;
     finding.s3RecordingKey = keys[0];
     finding.recordingPath = keys[0];
-    await saveFinding(finding);
+    await saveFinding(orgId, finding);
 
     console.log(`[STEP-INIT] ${findingId}: Multi-genie: ${keys.length} recordings saved`);
-    await enqueueStep("transcribe", { findingId });
+    await enqueueStep("transcribe", { findingId, orgId });
     return json({ ok: true, s3Keys: keys });
   }
 
@@ -70,9 +70,9 @@ export async function stepInit(req: Request): Promise<Response> {
     console.warn(`[STEP-INIT] ${findingId}: Invalid Genie ID: "${rid}"`);
     finding.rawTranscript = "Invalid Genie";
     finding.findingStatus = "finished";
-    await saveFinding(finding);
+    await saveFinding(orgId, finding);
     // Skip to finalize (will fail all questions)
-    await enqueueStep("finalize", { findingId });
+    await enqueueStep("finalize", { findingId, orgId });
     return json({ ok: true, skipped: true, reason: "invalid genie" });
   }
 
@@ -82,8 +82,8 @@ export async function stepInit(req: Request): Promise<Response> {
     console.warn(`[STEP-INIT] ${findingId}: No recording found for Genie ${rid}`);
     finding.rawTranscript = "Invalid Genie";
     finding.findingStatus = "finished";
-    await saveFinding(finding);
-    await enqueueStep("finalize", { findingId });
+    await saveFinding(orgId, finding);
+    await enqueueStep("finalize", { findingId, orgId });
     return json({ ok: true, skipped: true, reason: "no recording" });
   }
 
@@ -94,11 +94,11 @@ export async function stepInit(req: Request): Promise<Response> {
 
   finding.s3RecordingKey = s3Key;
   finding.recordingPath = s3Key;
-  await saveFinding(finding);
+  await saveFinding(orgId, finding);
 
   console.log(`[STEP-INIT] ${findingId}: Recording saved to S3 (${bytes.byteLength} bytes)`);
 
   // Enqueue transcription
-  await enqueueStep("transcribe", { findingId });
+  await enqueueStep("transcribe", { findingId, orgId });
   return json({ ok: true, s3Key });
 }

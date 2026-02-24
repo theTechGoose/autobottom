@@ -10,7 +10,7 @@ function json(data: unknown, status = 200) {
 
 export async function stepCleanup(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, pineconeNamespace } = body;
+  const { findingId, orgId, pineconeNamespace } = body;
 
   console.log(`[STEP-CLEANUP] ${findingId}: Cleaning up...`);
 

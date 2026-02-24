@@ -14,22 +14,22 @@ function json(data: unknown, status = 200) {
 
 export async function stepTranscribe(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId } = body;
+  const { findingId, orgId } = body;
 
   console.log(`[STEP-TRANSCRIBE] ${findingId}: Starting...`);
-  trackActive(findingId, "transcribe").catch(() => {});
+  trackActive(orgId, findingId, "transcribe").catch(() => {});
 
-  const finding = await getFinding(findingId);
+  const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
 
   if (finding.rawTranscript) {
     console.log(`[STEP-TRANSCRIBE] ${findingId}: Already has transcript, skipping`);
-    await enqueueStep("transcribe-complete", { findingId });
+    await enqueueStep("transcribe-complete", { findingId, orgId });
     return json({ ok: true, skipped: true });
   }
 
   finding.findingStatus = "transcribing";
-  await saveFinding(finding);
+  await saveFinding(orgId, finding);
 
   // Multi-genie path: transcribe each recording separately and concatenate
   const multiKeys = finding.s3RecordingKeys;
@@ -57,8 +57,8 @@ export async function stepTranscribe(req: Request): Promise<Response> {
       finding.rawTranscript = texts.join("\n");
     }
 
-    await saveFinding(finding);
-    await enqueueStep("transcribe-complete", { findingId });
+    await saveFinding(orgId, finding);
+    await enqueueStep("transcribe-complete", { findingId, orgId });
     return json({ ok: true, multiGenie: true, transcribed: texts.length });
   }
 
@@ -67,8 +67,8 @@ export async function stepTranscribe(req: Request): Promise<Response> {
   if (!s3Key) {
     finding.rawTranscript = "Invalid Genie";
     finding.findingStatus = "finished";
-    await saveFinding(finding);
-    await enqueueStep("finalize", { findingId });
+    await saveFinding(orgId, finding);
+    await enqueueStep("finalize", { findingId, orgId });
     return json({ ok: true, skipped: true, reason: "no s3 key" });
   }
 
@@ -77,8 +77,8 @@ export async function stepTranscribe(req: Request): Promise<Response> {
   if (!bytes) {
     finding.rawTranscript = "Invalid Genie";
     finding.findingStatus = "finished";
-    await saveFinding(finding);
-    await enqueueStep("finalize", { findingId });
+    await saveFinding(orgId, finding);
+    await enqueueStep("finalize", { findingId, orgId });
     return json({ ok: true, skipped: true, reason: "s3 file missing" });
   }
 
@@ -105,8 +105,8 @@ export async function stepTranscribe(req: Request): Promise<Response> {
       finding.findingStatus = "finished";
     }
 
-    await saveFinding(finding);
-    await enqueueStep("transcribe-complete", { findingId });
+    await saveFinding(orgId, finding);
+    await enqueueStep("transcribe-complete", { findingId, orgId });
     return json({ ok: true, snip: true });
   }
 
@@ -124,9 +124,9 @@ export async function stepTranscribe(req: Request): Promise<Response> {
     finding.findingStatus = "finished";
   }
 
-  await saveFinding(finding);
+  await saveFinding(orgId, finding);
 
   // Move to diarization step
-  await enqueueStep("transcribe-complete", { findingId });
+  await enqueueStep("transcribe-complete", { findingId, orgId });
   return json({ ok: true });
 }

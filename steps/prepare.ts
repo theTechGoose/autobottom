@@ -16,22 +16,22 @@ function json(data: unknown, status = 200) {
 
 export async function stepPrepare(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId } = body;
+  const { findingId, orgId } = body;
 
   console.log(`[STEP-PREPARE] ${findingId}: Starting preparation...`);
-  trackActive(findingId, "prepare").catch(() => {});
+  trackActive(orgId, findingId, "prepare").catch(() => {});
 
-  const finding = await getFinding(findingId);
+  const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
 
   // If transcript is invalid, skip to finalize
   if (finding.rawTranscript?.includes("Invalid Genie") || finding.rawTranscript?.includes("Genie Invalid")) {
-    await enqueueStep("finalize", { findingId });
+    await enqueueStep("finalize", { findingId, orgId });
     return json({ ok: true, skipped: true });
   }
 
   finding.findingStatus = "populating-questions";
-  await saveFinding(finding);
+  await saveFinding(orgId, finding);
 
   // 1. Fetch questions from Question Lab config or QuickBase
   const qlabConfig = finding.qlabConfig;
@@ -40,7 +40,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
   if (qlabConfig) {
     // Use Question Lab config
     console.log(`[STEP-PREPARE] ${findingId}: Using Question Lab config "${qlabConfig}"`);
-    const qlabSeeds = await serveConfig(qlabConfig);
+    const qlabSeeds = await serveConfig(orgId, qlabConfig);
     if (qlabSeeds.length === 0) {
       console.warn(`[STEP-PREPARE] ${findingId}: Question Lab config "${qlabConfig}" returned 0 questions, falling back to QuickBase`);
     }
@@ -48,7 +48,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
   } else {
     // Default: fetch from QuickBase
     const destinationId = String(finding.record?.RelatedDestinationId ?? "");
-    const cached = await getCachedQuestions(destinationId);
+    const cached = await getCachedQuestions(orgId, destinationId);
     if (cached && cached.length > 0) {
       console.log(`[STEP-PREPARE] ${findingId}: Using ${cached.length} cached questions`);
       questionSeeds = cached;
@@ -62,7 +62,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
         autoYesExp: q.autoYes,
       }));
       if (questionSeeds.length > 0) {
-        await cacheQuestions(destinationId, questionSeeds);
+        await cacheQuestions(orgId, destinationId, questionSeeds);
       }
     }
   }
@@ -88,8 +88,8 @@ export async function stepPrepare(req: Request): Promise<Response> {
   finding.unpopulatedQuestions = questionSeeds;
   finding.populatedQuestions = populated;
   // Save populated questions to a separate KV key so they survive finding trim
-  await savePopulatedQuestions(findingId, populated);
-  await saveFinding(finding);
+  await savePopulatedQuestions(orgId, findingId, populated);
+  await saveFinding(orgId, finding);
 
   // 3. Embed transcript in Pinecone for RAG
   if (finding.rawTranscript) {
@@ -114,21 +114,22 @@ export async function stepPrepare(req: Request): Promise<Response> {
   if (batches.length === 0) {
     // No questions - go straight to finalize
     finding.answeredQuestions = [];
-    await saveFinding(finding);
-    await enqueueStep("finalize", { findingId });
+    await saveFinding(orgId, finding);
+    await enqueueStep("finalize", { findingId, orgId });
     return json({ ok: true, batches: 0 });
   }
 
   // Set counter for fan-in
-  await setBatchCounter(findingId, batches.length);
+  await setBatchCounter(orgId, findingId, batches.length);
 
   // Enqueue all batches
   finding.findingStatus = "asking-questions";
-  await saveFinding(finding);
+  await saveFinding(orgId, finding);
 
   const promises = batches.map((batch) =>
     enqueueStep("ask-batch", {
       findingId,
+      orgId,
       batchIndex: batch.batchIndex,
       questionIndices: batch.questionIndices,
       totalBatches: batches.length,

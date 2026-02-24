@@ -93,7 +93,8 @@ export interface AuditFinding {
   snipStart?: number;
   snipEnd?: number;
   appealSourceFindingId?: string;
-  appealType?: "different-genie" | "upload-recording";
+  appealType?: "redo" | "different-recording" | "additional-recording" | "upload-recording";
+  appealComment?: string;
   reAuditedAt?: number;
 }
 

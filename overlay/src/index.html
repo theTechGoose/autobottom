@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Auto-Bot Overlay</title>
+  <style>
+    body { margin: 0; background: #0a0e14; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .msg { text-align: center; }
+    .msg h2 { color: #e6edf3; margin-bottom: 8px; }
+    .msg p { color: #484f58; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="msg">
+    <h2>Auto-Bot Overlay</h2>
+    <p>Redirecting to Auto-Bot...</p>
+  </div>
+  <script>
+    // In production, the webview loads the remote URL directly via tauri.conf.json.
+    // This page is a fallback for the frontendDist build requirement.
+    window.location.href = 'https://auto-bot-serverless.deno.dev';
+  </script>
+  <script src="bridge.js"></script>
+</body>
+</html>

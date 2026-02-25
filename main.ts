@@ -364,6 +364,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/dashboard": requireRolePageAuth(["admin"], handleDashboardPage),
   "/admin/dashboard/data": handleDashboardData,
   "/admin/api/me": handleAdminMe,
+  "/admin/retry-finding": handleRetryFinding,
 
   // Agent (role-guarded)
   "/agent": requireRolePageAuth(["user"], handleAgentPage),
@@ -1374,12 +1375,29 @@ async function handleRetryFinding(req: Request): Promise<Response> {
 
   const { getFinding: getF } = await import("./lib/kv.ts");
   const finding = await getF(auth.orgId, findingId);
-  if (!finding) return json({ error: "finding not found" }, 404);
+
+  if (!finding) {
+    // Finding not yet in KV — still initializing, re-enqueue init
+    await enqueueStep("init", { findingId, orgId: auth.orgId });
+    console.log(`[RETRY-FINDING] Admin ${auth.email} re-enqueued init (not found) for ${findingId}`);
+    return json({ ok: true, findingId, step: "init" });
+  }
   if (finding.findingStatus === "finished") return json({ error: "already finished" }, 400);
 
-  await enqueueStep("finalize", { findingId, orgId: auth.orgId, totalBatches: finding.totalBatches ?? 0 });
-  console.log(`[RETRY-FINDING] Admin ${auth.email} re-enqueued finalize for ${findingId}`);
-  return json({ ok: true, findingId });
+  // Pick the right step based on how far it got
+  let step = "finalize";
+  if (!finding.rawTranscript) {
+    step = "transcribe";
+  } else if (!finding.answeredQuestions?.length) {
+    step = "prepare";
+  }
+
+  const body: Record<string, unknown> = { findingId, orgId: auth.orgId };
+  if (step === "finalize") body.totalBatches = finding.totalBatches ?? 0;
+
+  await enqueueStep(step, body);
+  console.log(`[RETRY-FINDING] Admin ${auth.email} re-enqueued ${step} for ${findingId}`);
+  return json({ ok: true, findingId, step });
 }
 
 // -- Admin: Init Org --

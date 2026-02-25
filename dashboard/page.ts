@@ -1046,7 +1046,7 @@ export function getDashboardPage(): string {
         fetch('/admin/retry-finding?id=' + encodeURIComponent(id))
           .then(function(r) { return r.json(); })
           .then(function(d) {
-            if (d.ok) { b.textContent = 'Queued'; toast('Re-queued finalize for ' + id, 'success'); }
+            if (d.ok) { b.textContent = 'Queued'; toast('Re-queued ' + (d.step || 'step') + ' for ' + id, 'success'); }
             else { b.disabled = false; b.textContent = 'Retry'; toast(d.error || 'Failed', 'error'); }
           })
           .catch(function() { b.disabled = false; b.textContent = 'Retry'; toast('Request failed', 'error'); });

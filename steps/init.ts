@@ -22,6 +22,13 @@ export async function stepInit(req: Request): Promise<Response> {
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
 
+  // Update active entry with QB record metadata now that we have the finding
+  const qbRecordId = String(finding.record?.RecordId ?? "");
+  trackActive(orgId, findingId, "init", {
+    recordId: qbRecordId || undefined,
+    isPackage: finding.recordingIdField === "GenieNumber",
+  }).catch(() => {});
+
   finding.findingStatus = "getting-recording";
   await saveFinding(orgId, finding);
 

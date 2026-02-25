@@ -1032,22 +1032,41 @@ export function getDashboardPage(): string {
     var tb = document.getElementById('tb-active');
     if (!active.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="4">No active audits</td></tr>'; return; }
     tb.innerHTML = '';
+    // Derive Deno Deploy logs URL from hostname: {project}.{org}.deno.net
+    var logsBase = null;
+    var hm = window.location.hostname.match(/^([^.]+)\.([^.]+)\.deno\.net$/);
+    if (hm) logsBase = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/logs';
+    var qbDateUrl = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=';
+    var qbPkgUrl  = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=';
     for (var i = 0; i < active.length; i++) {
       var a = active[i], tr = document.createElement('tr');
       var fid = a.findingId || '--';
-      tr.innerHTML = '<td class="mono">' + fid + '</td><td><span class="step-badge">' + (a.step||'--') + '</span></td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
+      var fidHtml = logsBase
+        ? '<a href="' + logsBase + '" target="_blank" class="tbl-link" style="font-size:10px;font-family:var(--mono)">' + fid + '</a>'
+        : '<span class="mono">' + fid + '</span>';
+      var ridHtml = '';
+      if (a.recordId) {
+        var qbUrl = (a.isPackage ? qbPkgUrl : qbDateUrl) + encodeURIComponent(a.recordId);
+        ridHtml = '<br><a href="' + qbUrl + '" target="_blank" class="tbl-link" style="font-size:9px">QB:' + a.recordId + '</a>';
+      }
+      tr.innerHTML = '<td>' + fidHtml + ridHtml + '</td><td><span class="step-badge">' + (a.step||'--') + '</span></td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
       tb.appendChild(tr);
     }
     tb.querySelectorAll('.retry-btn').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var id = this.getAttribute('data-id');
+        var idx = parseInt(this.getAttribute('data-idx'));
         var b = this;
         b.disabled = true; b.textContent = '...';
         fetch('/admin/retry-finding?id=' + encodeURIComponent(id))
           .then(function(r) { return r.json(); })
           .then(function(d) {
-            if (d.ok) { b.textContent = 'Queued'; toast('Re-queued ' + (d.step || 'step') + ' for ' + id, 'success'); }
-            else { b.disabled = false; b.textContent = 'Retry'; toast(d.error || 'Failed', 'error'); }
+            if (d.ok) {
+              toast('Re-queued ' + (d.step || 'step') + ' for ' + id, 'success');
+              // Reset duration + step for this row so the timer restarts from now
+              if (active[idx]) { active[idx].ts = Date.now(); active[idx].step = d.step || active[idx].step; }
+              renderActive(active);
+            } else { b.disabled = false; b.textContent = 'Retry'; toast(d.error || 'Failed', 'error'); }
           })
           .catch(function() { b.disabled = false; b.textContent = 'Retry'; toast('Request failed', 'error'); });
       });

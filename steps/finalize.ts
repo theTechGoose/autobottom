@@ -94,7 +94,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
 
   finding.findingStatus = "finished";
   await saveFinding(orgId, finding);
-  await trackCompleted(orgId, findingId);
+  await trackCompleted(orgId, findingId, {
+    recordId: String(finding.record?.RecordId ?? "") || undefined,
+    isPackage: finding.recordingIdField === "GenieNumber",
+  });
 
   // Route to appropriate queue
   if (finding.answeredQuestions?.length) {

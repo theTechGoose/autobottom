@@ -535,7 +535,7 @@ export function getDashboardPage(): string {
 
     <div class="tbl">
       <div class="tbl-title">Recently Completed (24h)</div>
-      <table><thead><tr><th>Finding ID</th><th>Completed</th><th></th></tr></thead>
+      <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Completed</th></tr></thead>
       <tbody id="tb-recent"><tr class="empty-row"><td colspan="3">No completed audits</td></tr></tbody></table>
     </div>
   </main>
@@ -1009,7 +1009,7 @@ export function getDashboardPage(): string {
 
     renderActive(p.active || []);
     renderErrors(p.errors || []);
-    renderRecent(d.recentCompleted || []);
+    renderRecent(data.recentCompleted || []);
 
     // Charts
     drawActivityChart(p.completedTs, p.errorsTs, p.retriesTs);
@@ -1019,11 +1019,18 @@ export function getDashboardPage(): string {
   function renderRecent(items) {
     var tb = document.getElementById('tb-recent');
     if (!items.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="3">No completed audits</td></tr>'; return; }
+    var qbDateUrl = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=';
+    var qbPkgUrl  = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=';
     tb.innerHTML = '';
     for (var i = 0; i < items.length; i++) {
       var c = items[i], tr = document.createElement('tr');
       var fid = c.findingId || '--';
-      tr.innerHTML = '<td class="mono">' + fid + '</td><td class="time-ago">' + timeAgo(c.ts) + '</td><td style="text-align:right"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">Report &rarr;</a></td>';
+      var ridHtml = '--';
+      if (c.recordId) {
+        var qbUrl = (c.isPackage ? qbPkgUrl : qbDateUrl) + encodeURIComponent(c.recordId);
+        ridHtml = '<a href="' + qbUrl + '" target="_blank" class="tbl-link">' + c.recordId + '</a>';
+      }
+      tr.innerHTML = '<td class="mono"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">' + fid + '</a></td><td>' + ridHtml + '</td><td class="time-ago">' + timeAgo(c.ts) + '</td>';
       tb.appendChild(tr);
     }
   }

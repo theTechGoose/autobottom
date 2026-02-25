@@ -1363,11 +1363,15 @@ async function handleForceNos(req: Request): Promise<Response> {
 
 async function handleInitOrg(req: Request): Promise<Response> {
   const body = await req.json();
-  const { name } = body;
+  const { name, email, password } = body;
   if (!name) return json({ error: "name required" }, 400);
   const db = await Deno.openKv();
-  const orgId = await createOrg(name, name);
+  const existingDefault = await db.get<string>(["default-org"]);
+  const orgId = existingDefault.value ?? await createOrg(name, name);
   await db.set(["default-org"], orgId);
+  if (email && password) {
+    try { await createUser(orgId, email, password, "admin"); } catch { /* already exists */ }
+  }
   return json({ ok: true, orgId, name });
 }
 

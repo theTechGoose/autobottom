@@ -43,7 +43,7 @@ export async function stepTranscribe(req: Request): Promise<Response> {
         continue;
       }
       try {
-        const text = await transcribe(bytes);
+        const text = await transcribe(bytes, 3, 1500, findingId);
         if (text && text.trim().length > 0) texts.push(text);
       } catch (err) {
         console.error(`[STEP-TRANSCRIBE] ${findingId}: Failed to transcribe ${key}:`, err);
@@ -85,7 +85,7 @@ export async function stepTranscribe(req: Request): Promise<Response> {
   // Snip path: transcribe with utterances and filter by time window
   if (finding.snipStart != null) {
     try {
-      const result = await transcribeWithUtterances(bytes);
+      const result = await transcribeWithUtterances(bytes, 3, 1500, findingId);
       const filtered = result.utterances.filter(
         (u) => u.start >= finding.snipStart! && (finding.snipEnd == null || u.end <= finding.snipEnd),
       );
@@ -111,7 +111,7 @@ export async function stepTranscribe(req: Request): Promise<Response> {
   }
 
   try {
-    const text = await transcribe(bytes);
+    const text = await transcribe(bytes, 3, 1500, findingId);
     if (!text || text.trim().length === 0) {
       finding.rawTranscript = "Genie Invalid";
       finding.findingStatus = "finished";

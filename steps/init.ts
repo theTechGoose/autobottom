@@ -41,7 +41,7 @@ export async function stepInit(req: Request): Promise<Response> {
         console.warn(`[STEP-INIT] ${findingId}: Skipping invalid genie ID "${trimmed}"`);
         continue;
       }
-      const bytes = await downloadRecording(Number(trimmed));
+      const bytes = await downloadRecording(Number(trimmed), findingId);
       if (!bytes) {
         console.warn(`[STEP-INIT] ${findingId}: No recording for genie ${trimmed}, skipping`);
         continue;
@@ -84,7 +84,7 @@ export async function stepInit(req: Request): Promise<Response> {
   }
 
   // Download recording from Genie
-  const bytes = await downloadRecording(Number(rid));
+  const bytes = await downloadRecording(Number(rid), findingId);
   if (!bytes) {
     console.warn(`[STEP-INIT] ${findingId}: No recording found for Genie ${rid}`);
     finding.rawTranscript = "Invalid Genie";

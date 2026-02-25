@@ -20,8 +20,9 @@ async function uploadAudio(bytes: Uint8Array): Promise<string> {
 }
 
 /** Transcribe raw audio bytes. Returns speaker-labeled transcript text. */
-export async function transcribe(audioBytes: Uint8Array, maxAttempts = 3, delayMs = 1500): Promise<string> {
+export async function transcribe(audioBytes: Uint8Array, maxAttempts = 3, delayMs = 1500, findingId?: string): Promise<string> {
   let lastError: unknown;
+  const tag = findingId ? `${findingId}: ` : "";
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -54,10 +55,9 @@ export async function transcribe(audioBytes: Uint8Array, maxAttempts = 3, delayM
           const pollRes = await fetch(`${BASE}/transcript/${transcript.id}`, {
             headers: authHeaders(),
           });
-          if (!pollRes.ok) { console.warn("[ASSEMBLYAI] poll retry"); continue; }
+          if (!pollRes.ok) continue;
           transcript = await pollRes.json();
-        } catch (err) {
-          console.warn("[ASSEMBLYAI] polling retry:", err);
+        } catch {
           continue;
         }
         if (transcript.status === "error") {
@@ -74,7 +74,7 @@ export async function transcribe(audioBytes: Uint8Array, maxAttempts = 3, delayM
         const labeled = identifyRoles(transcript.utterances);
         const text = labeled.map((u: LabeledUtterance) => `${u.role}: ${u.text}`).join("\n");
         if (text.trim().length > 0) {
-          console.log(`[ASSEMBLYAI] transcription success on attempt ${attempt}`);
+          console.log(`[ASSEMBLYAI] ${tag}transcription done (attempt ${attempt})`);
           return text;
         }
       }
@@ -82,7 +82,7 @@ export async function transcribe(audioBytes: Uint8Array, maxAttempts = 3, delayM
       return transcript.text || "";
     } catch (err) {
       lastError = err;
-      console.error(`[ASSEMBLYAI] attempt ${attempt} failed:`, err);
+      console.error(`[ASSEMBLYAI] ${tag}attempt ${attempt} failed:`, err);
       if (attempt < maxAttempts) await sleep(delayMs);
     }
   }
@@ -103,8 +103,9 @@ export interface TranscriptResult {
 }
 
 /** Transcribe raw audio bytes. Returns structured result with text and utterances. */
-export async function transcribeWithUtterances(audioBytes: Uint8Array, maxAttempts = 3, delayMs = 1500): Promise<TranscriptResult> {
+export async function transcribeWithUtterances(audioBytes: Uint8Array, maxAttempts = 3, delayMs = 1500, findingId?: string): Promise<TranscriptResult> {
   let lastError: unknown;
+  const tag = findingId ? `${findingId}: ` : "";
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -134,10 +135,9 @@ export async function transcribeWithUtterances(audioBytes: Uint8Array, maxAttemp
           const pollRes = await fetch(`${BASE}/transcript/${transcript.id}`, {
             headers: authHeaders(),
           });
-          if (!pollRes.ok) { console.warn("[ASSEMBLYAI] poll retry"); continue; }
+          if (!pollRes.ok) continue;
           transcript = await pollRes.json();
-        } catch (err) {
-          console.warn("[ASSEMBLYAI] polling retry:", err);
+        } catch {
           continue;
         }
         if (transcript.status === "error") {
@@ -156,11 +156,11 @@ export async function transcribeWithUtterances(audioBytes: Uint8Array, maxAttemp
         ? labeled.map((u: LabeledUtterance) => `${u.role}: ${u.text}`).join("\n")
         : (transcript.text || "");
 
-      console.log(`[ASSEMBLYAI] transcription (with utterances) success on attempt ${attempt}`);
+      console.log(`[ASSEMBLYAI] ${tag}transcription done (attempt ${attempt})`);
       return { text, utterances: labeled };
     } catch (err) {
       lastError = err;
-      console.error(`[ASSEMBLYAI] attempt ${attempt} failed:`, err);
+      console.error(`[ASSEMBLYAI] ${tag}attempt ${attempt} failed:`, err);
       if (attempt < maxAttempts) await sleep(delayMs);
     }
   }

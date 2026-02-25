@@ -61,19 +61,20 @@ async function downloadRecordingData(src: string, accountId: AccountId, contract
 }
 
 /** Find recording URL and download bytes. Returns bytes or null if not found. */
-export async function downloadRecording(genieId: number): Promise<Uint8Array | null> {
+export async function downloadRecording(genieId: number, findingId?: string): Promise<Uint8Array | null> {
   const primary = Number(env.geniePrimaryAccount);
   const secondary = Number(env.genieSecondaryAccount);
+  const tag = findingId ? `${findingId} ` : "";
 
   // Strategy 1: Primary account
   const primarySrc = await tryWithRetry(genieId, primary);
   if (primarySrc) {
     try {
       const bytes = await downloadRecordingData(primarySrc, primary, genieId);
-      console.log(`[GENIE] download ok: contract=${genieId} account=primary`);
+      console.log(`[GENIE] ${tag}download ok: contract=${genieId} account=primary`);
       return bytes;
     } catch (err) {
-      console.warn(`[GENIE] primary download failed, trying secondary: contract=${genieId}`, err);
+      console.warn(`[GENIE] ${tag}primary download failed, trying secondary: contract=${genieId}`, err);
     }
   }
 
@@ -82,10 +83,10 @@ export async function downloadRecording(genieId: number): Promise<Uint8Array | n
   if (secondarySrc) {
     try {
       const bytes = await downloadRecordingData(secondarySrc, secondary, genieId);
-      console.log(`[GENIE] download ok: contract=${genieId} account=secondary`);
+      console.log(`[GENIE] ${tag}download ok: contract=${genieId} account=secondary`);
       return bytes;
     } catch (err) {
-      console.error(`[GENIE] secondary download failed: contract=${genieId}`, err);
+      console.error(`[GENIE] ${tag}secondary download failed: contract=${genieId}`, err);
     }
   }
 

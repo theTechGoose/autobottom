@@ -123,12 +123,7 @@ export async function query(
   question: string,
 ): Promise<string> {
   const host = await getPineconeHost();
-  const { key, index } = PINECONE_HOST();
-  console.log(
-    `[PINECONE] query host=${host} index=${index} keyPrefix=${
-      key.slice(0, 12)
-    }`,
-  );
+  const { key } = PINECONE_HOST();
 
   const queryVector = await embed(question);
 

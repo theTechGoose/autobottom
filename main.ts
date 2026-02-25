@@ -13,7 +13,7 @@ import {
 } from "./controller.ts";
 import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
-import { enqueueStep } from "./lib/queue.ts";
+import { enqueueStep, publishStep } from "./lib/queue.ts";
 import {
   trackActive, trackError, trackRetry, trackCompleted, getStats, getRecentCompleted, getPipelineConfig, setPipelineConfig,
   saveFinding, saveTranscript, saveBatchAnswers,
@@ -1377,9 +1377,9 @@ async function handleRetryFinding(req: Request): Promise<Response> {
   const finding = await getF(auth.orgId, findingId);
 
   if (!finding) {
-    // Finding not yet in KV — still initializing, re-enqueue init
-    await enqueueStep("init", { findingId, orgId: auth.orgId });
-    console.log(`[RETRY-FINDING] Admin ${auth.email} re-enqueued init (not found) for ${findingId}`);
+    // Finding not yet in KV — still initializing, publish directly to bypass queue backlog
+    await publishStep("init", { findingId, orgId: auth.orgId });
+    console.log(`[RETRY-FINDING] Admin ${auth.email} published init (not found) for ${findingId}`);
     return json({ ok: true, findingId, step: "init" });
   }
   if (finding.findingStatus === "finished") return json({ error: "already finished" }, 400);
@@ -1402,8 +1402,9 @@ async function handleRetryFinding(req: Request): Promise<Response> {
   const body: Record<string, unknown> = { findingId, orgId: auth.orgId };
   if (step === "finalize") body.totalBatches = finding.totalBatches ?? 0;
 
-  await enqueueStep(step, body);
-  console.log(`[RETRY-FINDING] Admin ${auth.email} re-enqueued ${step} for ${findingId}`);
+  // Publish directly (bypass queue backlog) so the retry runs immediately
+  await publishStep(step, body);
+  console.log(`[RETRY-FINDING] Admin ${auth.email} published ${step} for ${findingId}`);
   return json({ ok: true, findingId, step });
 }
 

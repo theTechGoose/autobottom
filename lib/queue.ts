@@ -67,6 +67,27 @@ export function enqueueStep(step: string, body: unknown, delaySeconds?: number) 
   return enqueue(QUEUE_NAME, url, body, delaySeconds);
 }
 
+/** Bypass the queue and deliver immediately via QStash publish. Use for admin retries to skip the backlog. */
+export async function publishStep(step: string, body: unknown) {
+  const url = `${env.selfUrl}/audit/step/${step}`;
+  if (LOCAL_MODE) return localEnqueue(url, body);
+  const res = await fetch(`${env.qstashUrl}/v2/publish/${url}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.qstashToken}`,
+      "Content-Type": "application/json",
+      "Upstash-Retries": "0",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`QStash publish failed: ${res.status} ${text}`);
+  }
+  const data = await res.json();
+  return data.messageId;
+}
+
 export function enqueueCleanup(body: unknown, delaySeconds: number) {
   const url = `${env.selfUrl}/audit/step/cleanup`;
   return enqueue(CLEANUP_QUEUE, url, body, delaySeconds);

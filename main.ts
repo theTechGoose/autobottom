@@ -205,9 +205,9 @@ const postRoutes: Record<string, Handler> = {
   "/audit/step/finalize": stepFinalize,
   "/audit/step/cleanup": stepCleanup,
 
-  // API endpoints (orgId in body)
-  "/audit/test-by-rid": withBodyOrg(handleAuditByRid),
-  "/audit/package-by-rid": withBodyOrg(handlePackageByRid),
+  // API endpoints (orgId from auth/query/default-org)
+  "/audit/test-by-rid": withOrgId(handleAuditByRid),
+  "/audit/package-by-rid": withOrgId(handlePackageByRid),
 
   // Auth
   "/register": handleRegisterPost,

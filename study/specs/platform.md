@@ -201,44 +201,45 @@ cost effective.
 >>>>>>
 >>>>>>>Kai
 >>>>>>>
->>>>>>>Loki is **backend only** -- it stores and
->>>>>>>queries logs. No UI. Grafana is the
->>>>>>>separate UI that talks to Loki. They're
->>>>>>>from the same company (Grafana Labs) but
->>>>>>>are two different services you deploy.
+>>>>>>>**Loki is the backend.** It ingests logs,
+>>>>>>>stores them (in S3 in our case), and runs
+>>>>>>>queries against them. It has no UI of its
+>>>>>>>own. **Grafana is the UI** -- it talks to
+>>>>>>>Loki's query API and renders dashboards,
+>>>>>>>log search, filters, etc. Two separate
+>>>>>>>pieces: Loki = database, Grafana = front
+>>>>>>>end.
 >>>>>>>
->>>>>>>**Managed options:**
+>>>>>>>**Managed service: yes.** Grafana Cloud
+>>>>>>>runs both Loki and Grafana for you. No
+>>>>>>>containers, no infra, no upgrades. You
+>>>>>>>point your app's log output at their
+>>>>>>>endpoint, they handle the rest. Pricing is
+>>>>>>>per GB ingested -- starts free up to 50 GB
+>>>>>>>/month, then pay-as-you-go after that.
 >>>>>>>
->>>>>>>- **Grafana Cloud** -- Grafana Labs hosts
->>>>>>>both Loki and Grafana for you. Free tier
->>>>>>>covers 50GB/month of logs. Pay-as-you-go
->>>>>>>after that. No containers, no S3 config,
->>>>>>>nothing to manage. You just send logs to
->>>>>>>their endpoint. This is the path of least
->>>>>>>resistance.
->>>>>>>- **AWS has no managed Loki.** If you want
->>>>>>>AWS-native, the equivalent is CloudWatch
->>>>>>>Logs, but it's expensive at scale and the
->>>>>>>query language is worse.
+>>>>>>>For this platform that's the move. You
+>>>>>>>configure a Grafana Cloud endpoint as the
+>>>>>>>platform-level logging backend, ship logs
+>>>>>>>over HTTPS, and use their hosted Grafana
+>>>>>>>for the UI. The label-based scoping we
+>>>>>>>discussed (teamId, orgId, level, service)
+>>>>>>>works the same whether Loki is self-hosted
+>>>>>>>or managed -- it's the same query language
+>>>>>>>(LogQL) either way.
 >>>>>>>
->>>>>>>**Suggestion:** Start with Grafana Cloud.
->>>>>>>You get Loki + Grafana UI + alerting with
->>>>>>>zero ops burden. The free tier is enough
->>>>>>>for development and early production. If
->>>>>>>costs spike later because ingestion volume
->>>>>>>grows, you can migrate to self-hosted Loki
->>>>>>>on S3 -- the log format is the same, just
->>>>>>>point the config at your own bucket. But
->>>>>>>don't start there. Self-hosting Loki means
->>>>>>>running ingesters, queriers, compactors --
->>>>>>>exactly the container management you want
->>>>>>>to avoid.
+>>>>>>>If Grafana Cloud ever becomes a problem
+>>>>>>>(cost, compliance, whatever), you can
+>>>>>>>migrate to self-hosted Loki later since
+>>>>>>>the API is identical. But start managed.
+>>>>>>>No reason to run containers for logging
+>>>>>>>when someone else will do it for $2/GB.
 
-## ~~3. Providers
+## ~~3. Providers [ ]
 
-Infrastructure integrations. The developer defines
-what a provider looks like (its config schema). Admins
-fill in credentials for their org.
+Infrastructure integrations. The developer defines what
+a provider looks like (its config schema). Admins fill
+in credentials for their org.
 
 ### Provider (defined by developer)
 
@@ -258,6 +259,13 @@ fill in credentials for their org.
 | config       | filled-in values matching configSchema |
 | delegateTo[] | child team IDs allowed to override     |
 
+Multiple ProviderConfigs of the same type are allowed
+per team. Uniqueness is on the ProviderConfig ID, not
+on (teamId, type). This enables quality tiers and
+fallback chains -- e.g. a cheap LLM config and a
+premium LLM config on the same team, referenced by
+ID from ServiceBindings.
+
 ### Cascading Resolution
 
 Walk up the team tree until you find a ProviderConfig
@@ -269,22 +277,12 @@ if the parent's `delegateTo[]` includes their teamId.
 Stored encrypted at rest. Encryption key scoped at the
 developer level.
 
-### Multiple Configs per Type
-
-Multiple ProviderConfigs of the same type are allowed
-on the same team. Uniqueness is on the ProviderConfig
-ID, not on (teamId, type). This enables quality tiers
-and fallback chains -- e.g., a cheap LLM config and a
-premium LLM config on the same team, each referenced
-by different ServiceBindings.
-
-### Engineering Simplicity
-
-Two rules keep the subsystem simple:
+### Simplicity Rules
 
 1. ProviderConfig is a flat bag of values. No logic,
-   no hooks. Validation is FieldDef's job.
-2. Resolution is one function: given teamId + type,
+   no hooks. Filled-in fields matching configSchema.
+   Validation is FieldDef's job.
+2. Resolution is one function. Given teamId + type,
    walk up the tree, return first match. No caching,
    no inheritance merging, no overrides beyond
    delegateTo[].
@@ -294,26 +292,34 @@ resolution. ServiceBindings own wiring and fallback.
 They communicate through ProviderConfig IDs only.
 Each subsystem fits in one file.
 
-### Schema Evolution
+### Schema Changes
 
 When a developer updates configSchema, existing
 ProviderConfigs are validated against the new schema
 using FieldDef rules. New fields with defaults work
-silently. New required fields without defaults show a
-warning in the admin UI until updated.
+transparently. If a developer adds a required field
+without a default, the UI warns them with the count
+of affected configs before saving.
 
-If a developer adds a breaking change (required field
-without default, field removed, or field type changed),
-the system warns: "this will invalidate X existing
-configs" before saving.
+No schema versioning system. FieldDef defaults are
+the migration mechanism.
 
-Event trigger: `configSchema.error.breakingChange`.
-Payload: provider ID, before/after schema diff, count
-of affected configs, list of affected team IDs. This
-is a new value in the existing EventTrigger enum --
-no new event system needed.
+### Breaking Change Event
 
-## ~~4. Services & Service Bindings
+A breaking change is: required field added without
+default, field removed, or field type changed. On
+breaking change, fire
+`configSchema.error.breakingChange` as a new
+EventTrigger value in the existing EventConfig system.
+
+Event payload: provider ID, before/after schema diff,
+count of affected configs, list of affected team IDs.
+
+This reuses the existing EventConfig infrastructure
+(triggers, conditions, HTTP dispatch). No new event
+system needed -- just a new EventTrigger enum value.
+
+## ~~4. Services & Service Bindings [ ]
 
 A service is a named app function that needs a
 provider. ServiceBindings wire services to providers
@@ -341,20 +347,19 @@ with ordered fallback.
 
 ### Cascading Resolution
 
-Same pattern as ProviderConfig. Walk up the tree, find
-the binding, use index 0. If it fails, try index 1,
-etc.
+Same pattern as ProviderConfig. Walk up the tree,
+find the binding, use index 0. If it fails, try
+index 1, etc.
 
 ### Fallback & Health
 
-- Fallback is automatic on error, but must verify the
-  error is real (not a false positive from a bad
-  request). Network errors and 5xx = fallback. 4xx =
-  don't fallback, it's a caller problem.
-- Health checks / circuit breakers: if a provider fails
-  N times in a window, mark it degraded and skip to the
-  next in the chain without waiting for a timeout.
-  Reset after a cooldown.
+- Fallback is automatic on error. Network errors and
+  5xx trigger fallback. 4xx does not -- it is a
+  caller problem.
+- Circuit breakers: if a provider fails N times in a
+  window, mark it degraded and skip to the next in
+  the chain without waiting for a timeout. Reset
+  after a cooldown.
 - Services are discovered from a registry, not
   hardcoded.
 
@@ -362,53 +367,52 @@ etc.
 
 All marketplace functions share the existing
 "expression-eval" service binding. One binding, all
-plugins use it. If granularity becomes a real need once
-the marketplace has real plugins, per-plugin service
-declarations can be added later.
+plugins use it. Per-plugin service declarations can
+be added later if granularity becomes a real need.
 
 ### Cross-Level Provider References
 
 A ServiceBinding's providers[] can reference
 ProviderConfigs from its own team or any ancestor
-team. This allows natural fallback chains like: "use
-our team's provider, fall back to the org's, fall back
+team. This allows fallback chains like: "use our
+team's provider, fall back to the org's, fall back
 to the platform's."
 
-### Dead References
+### Dead Reference Handling
 
-When a parent removes or deactivates a ProviderConfig,
-it is set to isActive=false (existing field from the
-data model). Child ServiceBindings that reference an
-inactive config skip it at resolution time and fall
-through to the next provider in the chain.
+When a parent removes a ProviderConfig, it is set to
+isActive=false (not deleted). Child bindings that
+reference it skip the inactive ref at resolution
+time and fall through to the next provider in the
+chain.
 
-At deactivation time, the system scans child
-ServiceBindings for references to the affected config
-and emits `serviceBindings.warning.referenceOrphaned`
-for each affected binding. Payload: orphaned
-ProviderConfig ID, affected ServiceBinding ID,
-affected team ID, remaining providers count in the
-chain. This is a new EventTrigger value in the
-existing EventConfig system -- no new infrastructure.
+On deactivation, the system scans child
+ServiceBindings for references to the config and
+fires `serviceBindings.warning.referenceOrphaned`
+for each affected binding. This is a new
+EventTrigger value in the existing EventConfig
+system -- no new infrastructure.
 
-### Frontend Indication
+Event payload: orphaned ProviderConfig ID, affected
+ServiceBinding ID, affected team ID, remaining
+providers count in the chain.
 
-ServiceBinding entries referencing an inactive
-ProviderConfig render with a visual indicator (color
-and icon). The check is isActive on the referenced
-config. No new fields needed.
+Frontend renders inactive ProviderConfig references
+with a visual indicator (red + icon) by checking
+isActive on the referenced config. No new fields
+needed.
 
-### Notification Packs (Marketplace)
+### Notification Packs
 
-A notification pack is a bundle of pre-built
-EventConfig templates. Installing a pack creates
-EventConfigs in the org with sensible defaults (e.g.,
-email admin on referenceOrphaned, Slack alert on
-breakingChange). Admins customize conditions, URL,
-and body template from there.
+Notification packs are marketplace items -- bundles
+of pre-built EventConfig templates. Installing a
+pack creates EventConfigs in the org with sensible
+defaults (e.g. email admin on referenceOrphaned,
+Slack alert on breakingChange). Admins customize
+conditions, URL, and body template from there.
 
 The platform ships zero notification logic. All
-notification behavior lives in EventConfig -- the
-same system that handles audit-completed and
+notification behavior lives in EventConfig, the same
+system that handles audit-completed and
 record-modified today. Marketplace packs are config
 bundles, not code.

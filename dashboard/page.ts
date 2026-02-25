@@ -1032,17 +1032,17 @@ export function getDashboardPage(): string {
     var tb = document.getElementById('tb-active');
     if (!active.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="4">No active audits</td></tr>'; return; }
     tb.innerHTML = '';
-    // Derive Deno Deploy logs URL from hostname: {project}.{org}.deno.net
-    var logsBase = null;
+    // Derive Deno Deploy observability logs URL from hostname: {project}.{org}.deno.net
+    var logsOrgProject = null;
     var hm = window.location.hostname.match(/^([^.]+)\.([^.]+)\.deno\.net$/);
-    if (hm) logsBase = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/logs';
+    if (hm) logsOrgProject = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/observability/logs?query=';
     var qbDateUrl = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=';
     var qbPkgUrl  = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=';
     for (var i = 0; i < active.length; i++) {
       var a = active[i], tr = document.createElement('tr');
       var fid = a.findingId || '--';
-      var fidHtml = logsBase
-        ? '<a href="' + logsBase + '" target="_blank" class="tbl-link" style="font-size:10px;font-family:var(--mono)">' + fid + '</a>'
+      var fidHtml = logsOrgProject
+        ? '<a href="' + logsOrgProject + encodeURIComponent(fid) + '" target="_blank" class="tbl-link" style="font-size:10px;font-family:var(--mono)">' + fid + '</a>'
         : '<span class="mono">' + fid + '</span>';
       var ridHtml = '';
       if (a.recordId) {

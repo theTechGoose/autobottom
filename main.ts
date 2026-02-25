@@ -15,7 +15,7 @@ import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
 import { enqueueStep } from "./lib/queue.ts";
 import {
-  trackError, trackRetry, trackCompleted, getStats, getRecentCompleted, getPipelineConfig, setPipelineConfig,
+  trackActive, trackError, trackRetry, trackCompleted, getStats, getRecentCompleted, getPipelineConfig, setPipelineConfig,
   saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
   getAllAnswersForFinding,
@@ -1391,6 +1391,13 @@ async function handleRetryFinding(req: Request): Promise<Response> {
   } else if (!finding.answeredQuestions?.length) {
     step = "prepare";
   }
+
+  // Reset the active entry server-side: fresh ts, updated step, record metadata
+  const qbRecordId = String(finding.record?.RecordId ?? "");
+  await trackActive(auth.orgId, findingId, step, {
+    recordId: qbRecordId || undefined,
+    isPackage: finding.recordingIdField === "GenieNumber",
+  });
 
   const body: Record<string, unknown> = { findingId, orgId: auth.orgId };
   if (step === "finalize") body.totalBatches = finding.totalBatches ?? 0;

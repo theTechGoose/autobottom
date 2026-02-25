@@ -208,10 +208,13 @@ export async function getAllAnswersForFinding(orgId: OrgId, findingId: string) {
 
 const DAY_MS = 86_400_000;
 
-/** Mark a finding as actively processing. */
+/** Mark a finding as actively processing. Merges with existing entry to preserve recordId/isPackage across step transitions. */
 export async function trackActive(orgId: OrgId, findingId: string, step: string, meta?: { recordId?: string; isPackage?: boolean }) {
   const db = await kv();
-  await db.set(orgKey(orgId, "stats-active", findingId), { step, ts: Date.now(), ...(meta ?? {}) });
+  const key = orgKey(orgId, "stats-active", findingId);
+  const existing = await db.get<Record<string, unknown>>(key);
+  const prev = (existing.value ?? {}) as Record<string, unknown>;
+  await db.set(key, { ...prev, step, ts: Date.now(), ...(meta ?? {}) });
 }
 
 /** Remove a finding from active tracking (finished or cleaned up). */

@@ -33,384 +33,75 @@ Developer-level observability across the entire app.
 Full text search, log levels, structured data -- but
 cost effective.
 
-> Kai
->
-> **Pros:** GCP-style logging is the gold standard for
-> observability. Scoping it to the developer level
-> (sees all orgs) and cascading down (admins see their
-> org, users see their team) fits the existing
-> permission model perfectly.
->
-> **Cons:** Cloud logging services charge per ingestion
-> volume. Multi-tenant app with many orgs = expensive
-> fast. Full text search on every log line is the
-> biggest cost driver.
->
-> **Suggestion:** Two things to consider:
->
-> 1. **Logging could be a provider itself.** The
->    developer configures a "logging" provider
->    (ClickHouse, Loki, CloudWatch, whatever). The app
->    writes logs through it. You'd be dog-fooding the
->    provider system. This means different orgs could
->    even use different logging backends if delegated.
->
-> The log scoping follows the same team tree visibility
-> -- developer sees all, admin sees their org down,
-> users see their team down. No new capability needed,
-> just the existing permission model applied to logs.
->
-> What's the log shape look like? Something like:
-> timestamp, level (debug/info/warn/error), service,
-> teamId, userId, message, structured data
-> (Record<string, unknown>)?
->
->>Rafa
->>
->>okay how would we then have unified logging for
->>developers? lets say im a user with the developer
->>capability and i am in charge of 3 different admins
->>who have 3 different logging providers. and i need
->>to debug an issue, how? what is dog-fooding? would
->>it be possible for me to use some sort of logger
->>that can shard logs i can pick a date range it
->>pulls the shard and then allows me to do full text
->>search on it? cold storage on s3 is cheap, is
->>there something that could work off that and have
->>a nice ui?
->>
->>>Kai
->>>
->>>First -- **dog-fooding** means using your own
->>>product to do its own job. Here it meant: "the
->>>platform's logging system would itself be wired
->>>through the provider system the platform already
->>>offers." But your question exposes why that's the
->>>wrong move for logging specifically.
->>>
->>>**The problem you're describing:** You're the
->>>developer. Admin A uses CloudWatch, Admin B uses
->>>Loki, Admin C uses ClickHouse. You need to debug
->>>something that crosses all three orgs. Where do
->>>you look? There's no single pane of glass.
->>>
->>>Two ways to solve it:
->>>
->>>1.  **Query federation** -- a thin API fans out
->>>your search to all three backends. Problem:
->>>each has different query languages, different
->>>latency, and you're building a translator.
->>>Fragile and slow.
->>>2.  **One unified backend at the platform level**
->>>-- all logs ship to one place. Orgs don't
->>>choose their own logging backend. The developer
->>>chooses it once for the whole platform.
->>>
->>>**Your S3 instinct is right.** The pattern:
->>>
->>>- All logs ship to S3, partitioned by date:
->>>`s3://logs/2026/02/25/team-abc/*.jsonl.gz`
->>>- For search: pull the date-range shards,
->>>decompress, full-text search
->>>- **Grafana Loki** does exactly this -- S3 as the
->>>storage backend, minimal indexing (just labels
->>>like teamId, level, service), full-text search
->>>on demand, and Grafana as the UI. Storage cost
->>>is basically just S3 pricing.
->>>
->>>**Pros:** One place to look. Cheap (S3 cold
->>>storage). Loki is battle-tested. Grafana UI is
->>>good. Visibility scoping is just label filtering
->>>-- developer sees all labels, admin filters to
->>>their org's teamIds, users filter to their team.
->>>
->>>**Cons:** Logging is no longer delegatable to
->>>orgs. If an admin wants their own separate logging
->>>system, they'd need to set that up outside the
->>>platform. Full-text search on large date ranges
->>>can be slow since Loki only indexes labels, not
->>>log content.
->>>
->>>**Suggestion:** Don't make logging a per-org
->>>provider. The developer configures ONE logging
->>>backend at the platform level (Loki + S3). All
->>>orgs write to it. Visibility scoping is label
->>>filtering on teamId, not separate backends. If an
->>>admin also wants to forward logs to their own
->>>external system, that can be an optional
->>>webhook/export later -- but the platform's source
->>>of truth is unified.
->>>
->>>>rafa
->>>>okay wonderful, so at the end of the day, we have a hot-logs for the day
->>>>at the end of the day 11:59:59 a new hotlog is started, old logs are then
->>>>moved to s3, happens in that order for no interuption, new pointer to todays
->>>>hotlogs, old hotlogs stay exactly the same, a cleanup process then saves them
->>>>to s3, on loading the logs hotlogs are displayed first, if a timeframe outside
->>>>of the hotlogs is chosen, then it will pull cold storage into a tmp hotlog
->>>>and query against the tmp:hotlog:<create-datetime>:<start-datetime>-<end-datetime>, is that how it will work?
->>>>tmp:hotlog is cached for 30 days. before creating a new hotlog when someone requests one
->>>>it checks to see if it already exists. does that work?
->>>>
->>>>>Kai
->>>>>
->>>>>You're describing the exact pattern Loki
->>>>>uses internally -- you don't have to build
->>>>>this.
->>>>>
->>>>>**How Loki already works:**
->>>>>
->>>>>- **Ingesters** = your hot logs. Recent
->>>>>data in memory, queryable instantly.
->>>>>- **Flush** = your midnight cutoff. Loki
->>>>>flushes ingester data to S3 as compressed
->>>>>chunks on a configurable interval -- not
->>>>>tied to wall clock time.
->>>>>- **Querier** = your tmp:hotlog. Queries
->>>>>that span hot + cold data pull S3 chunks,
->>>>>merge with ingester data, and cache
->>>>>results locally.
->>>>>
->>>>>**What you'd configure (not build):**
->>>>>
->>>>>- `retention_period` -- how long S3 chunks
->>>>>live before deletion.
->>>>>- `ingester.chunk_idle_period` -- flush
->>>>>cadence for inactive streams.
->>>>>- Query result caching -- maps directly to
->>>>>your 30-day tmp:hotlog TTL.
->>>>>
->>>>>**One concern:** the midnight cutoff has a
->>>>>timezone problem. Orgs in different zones
->>>>>disagree on when "end of day" is. Loki
->>>>>avoids this by flushing based on chunk age
->>>>>and size, not wall clock. Let Loki handle
->>>>>rotation rather than pinning to 11:59:59.
->>>>>
->>>>>**Suggestion:** Don't build the hot/cold
->>>>>split. Deploy Loki with S3 backend. Your
->>>>>mental model is correct -- the
->>>>>implementation is Loki config, not custom
->>>>>code. The dedup check ("does this
->>>>>tmp:hotlog exist?") is built into Loki's
->>>>>query cache.
->>>>>
->>>>>>rafa
->>>>>>is loki a backend or a ui?
->>>>>>is there a managed service it sucks to have to manage containers and shit
->>>>>>
->>>>>>>Kai
->>>>>>>
->>>>>>>**Loki is the backend.** It ingests logs,
->>>>>>>stores them (in S3 in our case), and runs
->>>>>>>queries against them. It has no UI of its
->>>>>>>own. **Grafana is the UI** -- it talks to
->>>>>>>Loki's query API and renders dashboards,
->>>>>>>log search, filters, etc. Two separate
->>>>>>>pieces: Loki = database, Grafana = front
->>>>>>>end.
->>>>>>>
->>>>>>>**Managed service: yes.** Grafana Cloud
->>>>>>>runs both Loki and Grafana for you. No
->>>>>>>containers, no infra, no upgrades. You
->>>>>>>point your app's log output at their
->>>>>>>endpoint, they handle the rest. Pricing is
->>>>>>>per GB ingested -- starts free up to 50 GB
->>>>>>>/month, then pay-as-you-go after that.
->>>>>>>
->>>>>>>For this platform that's the move. You
->>>>>>>configure a Grafana Cloud endpoint as the
->>>>>>>platform-level logging backend, ship logs
->>>>>>>over HTTPS, and use their hosted Grafana
->>>>>>>for the UI. The label-based scoping we
->>>>>>>discussed (teamId, orgId, level, service)
->>>>>>>works the same whether Loki is self-hosted
->>>>>>>or managed -- it's the same query language
->>>>>>>(LogQL) either way.
->>>>>>>
->>>>>>>If Grafana Cloud ever becomes a problem
->>>>>>>(cost, compliance, whatever), you can
->>>>>>>migrate to self-hosted Loki later since
->>>>>>>the API is identical. But start managed.
->>>>>>>No reason to run containers for logging
->>>>>>>when someone else will do it for $2/GB.
->>>>>>>
->>>>>>>rafa
->>>>>>>let me ask you this how would i set this up? wont it block if i await it?
->>>>>>>this is going on serverless.
->>>>>>>
->>>>>>>>Kai
->>>>>>>>
->>>>>>>>**It doesn't block because your code
->>>>>>>>never calls Loki.** The pattern on
->>>>>>>>serverless:
->>>>>>>>
->>>>>>>>1. Your app writes structured JSON to
->>>>>>>>stdout --
->>>>>>>>`console.log(JSON.stringify({ level,
-service, teamId, message, data }))`.
->>>>>>>>2. The serverless platform captures stdout
->>>>>>>>automatically (Lambda -> CloudWatch,
->>>>>>>>Vercel -> log drain, etc.).
->>>>>>>>3. A **log forwarder** ships those captured
->>>>>>>>logs to Grafana Cloud's Loki endpoint.
->>>>>>>>Grafana provides Alloy (their forwarder)
->>>>>>>>or you use a Lambda log subscription
->>>>>>>>filter. Either way it runs outside your
->>>>>>>>function.
->>>>>>>>
->>>>>>>>Your function never makes an HTTP call to
->>>>>>>>Loki. It writes to stdout and returns.
->>>>>>>>Zero latency added, nothing to await.
->>>>>>>>
->>>>>>>>**Setup:**
->>>>>>>>
->>>>>>>>1. Create a Grafana Cloud account -- gives
->>>>>>>>you a Loki push endpoint URL and an API
->>>>>>>>key.
->>>>>>>>2. Add a thin `log()` wrapper in your app
->>>>>>>>that writes structured JSON to stdout
->>>>>>>>with the fields we defined (timestamp,
->>>>>>>>level, service, teamId, userId, message,
->>>>>>>>data).
->>>>>>>>3. Configure a forwarder. On Lambda: a
->>>>>>>>CloudWatch Logs subscription filter that
->>>>>>>>pushes to Grafana Cloud. On Vercel: a
->>>>>>>>log drain pointed at the Loki endpoint.
->>>>>>>>Grafana Cloud docs walk through both.
->>>>>>>>4. In Grafana, set up label extraction rules
->>>>>>>>so teamId, level, service become
->>>>>>>>queryable labels.
->>>>>>>>
->>>>>>>>That's it. No SDK, no HTTP client, no
->>>>>>>>blocking. The forwarder is managed infra,
->>>>>>>>not your code.
->>>>>>>>
->>>>>>>>rafa
->>>>>>>>how would i set this up on deno deploy?
->>>>>>>>
->>>>>>>>>Kai
->>>>>>>>>
->>>>>>>>>**Deno Deploy is different** -- no
->>>>>>>>>CloudWatch, no native log drain. Two
->>>>>>>>>options:
->>>>>>>>>
->>>>>>>>>1.  **Deno's built-in OTel.** Deno 2 has
->>>>>>>>>native OpenTelemetry support. Set
->>>>>>>>>`OTEL_EXPORTER_OTLP_ENDPOINT` to your
->>>>>>>>>Grafana Cloud OTLP endpoint and enable
->>>>>>>>>the unstable OTel flag. Logs, traces,
->>>>>>>>>and metrics all flow through one pipe.
->>>>>>>>>No code changes beyond the
->>>>>>>>>`console.log` you already have -- Deno
->>>>>>>>>instruments it automatically.
->>>>>>>>>2.  **`waitUntil()` push.** After you
->>>>>>>>>send the response, `waitUntil` lets you
->>>>>>>>>fire a `fetch()` to Grafana Cloud's
->>>>>>>>>Loki push API without blocking the
->>>>>>>>>user. Buffer log lines during the
->>>>>>>>>request, flush in `waitUntil` at the
->>>>>>>>>end. ~20 lines of code.
->>>>>>>>>
->>>>>>>>>**Suggestion:** Option 1. It's zero
->>>>>>>>>application code -- just env vars and a
->>>>>>>>>runtime flag. Grafana Cloud accepts OTLP
->>>>>>>>>natively. You keep writing structured
->>>>>>>>>JSON to `console.log` and Deno ships it.
->>>>>>>>>If Deno Deploy doesn't support the OTel
->>>>>>>>>flag yet (still rolling out), fall back
->>>>>>>>>to option 2 -- `waitUntil` + direct Loki
->>>>>>>>>push.
->>>>>>>>>
->>>>>>>>>rafa
->>>>>>>>>so i can use otel on deno deploy and the new deno deploy
->>>>>>>>>to execute on the log with managed loki + grafana?
->>>>>>>>>
->>>>>>>>>>Kai
->>>>>>>>>>
->>>>>>>>>>**Almost.** Deno Deploy's built-in OTel
->>>>>>>>>>support sends **traces and metrics** to
->>>>>>>>>>any OTLP endpoint, including Grafana
->>>>>>>>>>Cloud. But **logs via OTel on Deno Deploy
->>>>>>>>>>are not confirmed stable yet** -- Deno 2
->>>>>>>>>>added the OTel hooks, but Deploy's
->>>>>>>>>>edge runtime may not forward
->>>>>>>>>>`console.log` through the OTel pipeline
->>>>>>>>>>the same way local Deno does. You'd need
->>>>>>>>>>to test this on an actual Deploy
->>>>>>>>>>deployment, not just `deno run`.
->>>>>>>>>>
->>>>>>>>>>If OTel log forwarding works on Deploy:
->>>>>>>>>>done. Set the env vars, Grafana Cloud
->>>>>>>>>>receives everything, Loki indexes it.
->>>>>>>>>>
->>>>>>>>>>If it doesn't (likely today): use the
->>>>>>>>>>`waitUntil()` approach. Buffer structured
->>>>>>>>>>log lines during the request, push them
->>>>>>>>>>to Grafana Cloud's Loki HTTP API in a
->>>>>>>>>>`waitUntil(fetch(...))` call after the
->>>>>>>>>>response. This is ~20 lines, doesn't
->>>>>>>>>>block the user, and works today on Deploy
->>>>>>>>>>without any runtime flags.
->>>>>>>>>>
->>>>>>>>>>Either way yes -- managed Loki + Grafana
->>>>>>>>>>on Grafana Cloud is the backend, Deno
->>>>>>>>>>Deploy is the runtime. The wiring is
->>>>>>>>>>either OTel env vars or a small
->>>>>>>>>>`waitUntil` flush. Don't build anything
->>>>>>>>>>more than that.
->>>>>>>>>>
->>>>>>>>>>**One thing to flag:** `waitUntil` has a
->>>>>>>>>>execution time limit on Deploy (typically
->>>>>>>>>>30s after response). If you're batching
->>>>>>>>>>hundreds of log lines per request,
->>>>>>>>>>measure whether the push completes in
->>>>>>>>>>time. For normal request volumes it's
->>>>>>>>>>fine.
->>>>>>>>>>
->>>>>>>>>>rafa
->>>>>>>>>>okay confirm this is something people have already done,
->>>>>>>>>>then collapse this with the wait until method
->>>>>>>>>>
->>>>>>>>>>>Kai
->>>>>>>>>>>
->>>>>>>>>>>**Confirmed -- with a nuance.**
->>>>>>>>>>>
->>>>>>>>>>>Deno **runtime** (local `deno run`) +
->>>>>>>>>>>OTel + Grafana Cloud is officially
->>>>>>>>>>>documented by both Deno and Grafana.
->>>>>>>>>>>Set `OTEL_DENO=true`, point the OTLP
->>>>>>>>>>>endpoint at Grafana Cloud, and
->>>>>>>>>>>`console.log` becomes OTel log signals
->>>>>>>>>>>automatically. Grafana even published
->>>>>>>>>>>a walkthrough for this exact setup.
->>>>>>>>>>>
->>>>>>>>>>>Deno **Deploy** is different. Deploy
->>>>>>>>>>>has built-in OTel observability -- logs,
->>>>>>>>>>>traces, metrics -- but it feeds into the
->>>>>>>>>>>**Deploy dashboard**, not an external
->>>>>>>>>>>endpoint you control. The docs don't
->>>>>>>>>>>confirm you can set
->>>>>>>>>>>`OTEL_EXPORTER_OTLP_ENDPOINT` on Deploy
->>>>>>>>>>>to point at Grafana Cloud. The OTel
->>>>>>>>>>>export tutorials all target local Deno,
->>>>>>>>>>>not Deploy's edge runtime.
->>>>>>>>>>>
->>>>>>>>>>>So on Deploy today, `waitUntil()` is the
->>>>>>>>>>>proven path. Buffer log lines during the
->>>>>>>>>>>request, `waitUntil(fetch(...))` to
->>>>>>>>>>>Grafana Cloud's Loki push API after the
->>>>>>>>>>>response. Works now, no runtime flags,
->>>>>>>>>>>no ambiguity about what Deploy supports.
->>>>>>>>>>>
->>>>>>>>>>>If Deploy adds external OTel export
->>>>>>>>>>>later, you swap out the `waitUntil`
->>>>>>>>>>>flush for env vars. The log shape stays
->>>>>>>>>>>the same either way.
->>>>>>>>>>>
->>>>>>>>>>>**Re: collapsing** -- can't collapse in
->>>>>>>>>>>a short-revise pass. Flag it for the
->>>>>>>>>>>next full revision.
+### Backend
+
+Grafana Cloud (managed Loki + Grafana). One
+platform-level logging backend configured by the
+developer. Logging is NOT a per-org provider -- all
+orgs write to the same backend. Single pane of glass
+for debugging across orgs.
+
+- Loki = log storage and query engine (S3-backed,
+  label-indexed, full-text search on demand).
+- Grafana = UI (dashboards, log search, filters).
+- Pricing: per GB ingested, free up to 50 GB/month.
+- If Grafana Cloud becomes a problem (cost,
+  compliance), migrate to self-hosted Loki later --
+  same API, same query language (LogQL).
+
+### Log Shape
+
+```
+{
+  timestamp, level (debug/info/warn/error),
+  service, teamId, orgId, userId,
+  message, data (Record<string, unknown>)
+}
+```
+
+### Visibility Scoping
+
+Label filtering on the existing team tree. No new
+capability needed.
+
+- Developer: sees all labels (all orgs).
+- Admin: filters to their org's teamIds.
+- User: filters to their team.
+
+### Ingestion on Deno Deploy
+
+App writes structured JSON to stdout via a thin
+`log()` wrapper. Logs are shipped to Grafana Cloud's
+Loki push API using `waitUntil()`:
+
+1. Buffer structured log lines during the request.
+2. After the response is sent, call
+   `waitUntil(fetch(...))` to push the batch to
+   Loki's HTTP push endpoint. Non-blocking -- the
+   user's response is already sent.
+3. ~20 lines of code. No SDK, no external forwarder.
+
+Deno Deploy has a "custom OTel endpoint" setting on
+Pro/Enterprise plans (coming soon). When it ships,
+swap the `waitUntil` flush for the built-in OTel
+pipe -- set the endpoint in the Deploy console and
+`console.log` flows to Grafana Cloud automatically.
+The log shape stays the same either way.
+
+### Hot/Cold Storage
+
+Loki handles this internally. No custom hot/cold
+split to build.
+
+- Ingesters hold recent data in memory (hot).
+- Loki flushes to S3 as compressed chunks based on
+  chunk age and size (not wall clock time).
+- Queries that span hot + cold merge both sources
+  transparently. Result caching is built in.
+
+Configure `retention_period`,
+`ingester.chunk_idle_period`, and query cache TTL.
+No custom code.
 
 ## ~~3. Providers [ ]~~
 

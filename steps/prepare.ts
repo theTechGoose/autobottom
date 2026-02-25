@@ -1,6 +1,6 @@
 /** STEP 3: Fetch questions from QuickBase (or Question Lab), embed transcript in Pinecone, fan-out question batches. */
 import { getFinding, saveFinding, setBatchCounter, getCachedQuestions, cacheQuestions, trackActive, savePopulatedQuestions } from "../lib/kv.ts";
-import { enqueueStep } from "../lib/queue.ts";
+import { enqueueStep, publishStep } from "../lib/queue.ts";
 import { getQuestionsForDestination } from "../providers/quickbase.ts";
 import { upload } from "../providers/pinecone.ts";
 import { populateQuestions } from "../providers/question-expr.ts";
@@ -16,7 +16,7 @@ function json(data: unknown, status = 200) {
 
 export async function stepPrepare(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId } = body;
+  const { findingId, orgId, adminRetry } = body;
 
   console.log(`[STEP-PREPARE] ${findingId}: Starting preparation...`);
   trackActive(orgId, findingId, "prepare").catch(() => {});
@@ -26,7 +26,8 @@ export async function stepPrepare(req: Request): Promise<Response> {
 
   // If transcript is invalid, skip to finalize
   if (finding.rawTranscript?.includes("Invalid Genie") || finding.rawTranscript?.includes("Genie Invalid")) {
-    await enqueueStep("finalize", { findingId, orgId });
+    const dispatch = adminRetry ? publishStep : enqueueStep;
+    await dispatch("finalize", { findingId, orgId });
     return json({ ok: true, skipped: true });
   }
 
@@ -115,7 +116,8 @@ export async function stepPrepare(req: Request): Promise<Response> {
     // No questions - go straight to finalize
     finding.answeredQuestions = [];
     await saveFinding(orgId, finding);
-    await enqueueStep("finalize", { findingId, orgId });
+    const dispatch = adminRetry ? publishStep : enqueueStep;
+    await dispatch("finalize", { findingId, orgId });
     return json({ ok: true, batches: 0 });
   }
 
@@ -126,10 +128,12 @@ export async function stepPrepare(req: Request): Promise<Response> {
   finding.findingStatus = "asking-questions";
   await saveFinding(orgId, finding);
 
+  const dispatch = adminRetry ? publishStep : enqueueStep;
   const promises = batches.map((batch) =>
-    enqueueStep("ask-batch", {
+    dispatch("ask-batch", {
       findingId,
       orgId,
+      adminRetry,
       batchIndex: batch.batchIndex,
       questionIndices: batch.questionIndices,
       totalBatches: batches.length,

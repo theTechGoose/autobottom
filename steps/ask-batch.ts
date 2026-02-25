@@ -1,6 +1,6 @@
 /** STEP 4: Answer a batch of questions via RAG + Groq LLM. */
 import { getFinding, saveFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, decrementBatchCounter, trackActive, getPopulatedQuestions } from "../lib/kv.ts";
-import { enqueueStep } from "../lib/queue.ts";
+import { enqueueStep, publishStep } from "../lib/queue.ts";
 import { askQuestion } from "../providers/groq.ts";
 import { query as vectorQuery } from "../providers/pinecone.ts";
 import { parseAst } from "../providers/question-expr.ts";
@@ -95,7 +95,7 @@ async function askLlmOne(
 
 export async function stepAskBatch(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId, batchIndex, questionIndices, totalBatches } = body;
+  const { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches } = body;
 
   console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex}/${totalBatches} (${questionIndices.length} questions)`);
   trackActive(orgId, findingId, `ask-batch-${batchIndex}`).catch(() => {});
@@ -136,7 +136,8 @@ export async function stepAskBatch(req: Request): Promise<Response> {
 
   if (remaining <= 0) {
     // Last batch - trigger finalize
-    await enqueueStep("finalize", { findingId, orgId, totalBatches });
+    const dispatch = adminRetry ? publishStep : enqueueStep;
+    await dispatch("finalize", { findingId, orgId, totalBatches });
   }
 
   return json({ ok: true, answers: answers.length, remaining });

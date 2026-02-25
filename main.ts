@@ -1399,7 +1399,7 @@ async function handleRetryFinding(req: Request): Promise<Response> {
     isPackage: finding.recordingIdField === "GenieNumber",
   });
 
-  const body: Record<string, unknown> = { findingId, orgId: auth.orgId };
+  const body: Record<string, unknown> = { findingId, orgId: auth.orgId, adminRetry: true };
   if (step === "finalize") body.totalBatches = finding.totalBatches ?? 0;
 
   // Publish directly (bypass queue backlog) so the retry runs immediately

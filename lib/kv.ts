@@ -246,6 +246,23 @@ export async function getStats(orgId: OrgId) {
     active.push({ findingId: (e.key as any[])[2], ...(e.value as any) });
   }
 
+  // Lazy-enrich active entries missing recordId: read finding and backfill.
+  // Once written back to KV, future polls skip this work.
+  await Promise.all(active.map(async (entry) => {
+    if (entry.recordId) return;
+    try {
+      const finding = await getFinding(orgId, entry.findingId);
+      if (!finding) return;
+      const recordId = String(finding.record?.RecordId ?? "");
+      if (!recordId) return;
+      entry.recordId = recordId;
+      entry.isPackage = finding.recordingIdField === "GenieNumber";
+      await db.set(orgKey(orgId, "stats-active", entry.findingId), {
+        step: entry.step, ts: entry.ts, recordId: entry.recordId, isPackage: entry.isPackage,
+      });
+    } catch { /* best-effort */ }
+  }));
+
   // Completed (24h) - collect timestamps for charting
   const completed: any[] = [];
   for await (const e of db.list({ prefix: orgKey(orgId, "stats-completed") })) {

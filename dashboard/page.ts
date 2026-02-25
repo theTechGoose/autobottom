@@ -523,8 +523,8 @@ export function getDashboardPage(): string {
 
     <div class="tbl">
       <div class="tbl-title">Active Audits</div>
-      <table><thead><tr><th>Finding ID</th><th>Step</th><th>Duration</th><th></th></tr></thead>
-      <tbody id="tb-active"><tr class="empty-row"><td colspan="4">No active audits</td></tr></tbody></table>
+      <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Step</th><th>Duration</th><th></th></tr></thead>
+      <tbody id="tb-active"><tr class="empty-row"><td colspan="5">No active audits</td></tr></tbody></table>
     </div>
 
     <div class="tbl">
@@ -1030,26 +1030,27 @@ export function getDashboardPage(): string {
 
   function renderActive(active) {
     var tb = document.getElementById('tb-active');
-    if (!active.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="4">No active audits</td></tr>'; return; }
+    if (!active.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="5">No active audits</td></tr>'; return; }
     tb.innerHTML = '';
     // Derive Deno Deploy observability logs URL from hostname: {project}.{org}.deno.net
     var logsOrgProject = null;
     var hm = window.location.hostname.match(/^([^.]+)\.([^.]+)\.deno\.net$/);
     if (hm) logsOrgProject = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/observability/logs?query=';
+    var logsSuffix = '&start=now%2Fy&end=now';
     var qbDateUrl = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=';
     var qbPkgUrl  = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=';
     for (var i = 0; i < active.length; i++) {
       var a = active[i], tr = document.createElement('tr');
       var fid = a.findingId || '--';
       var fidHtml = logsOrgProject
-        ? '<a href="' + logsOrgProject + encodeURIComponent(fid) + '" target="_blank" class="tbl-link" style="font-size:10px;font-family:var(--mono)">' + fid + '</a>'
+        ? '<a href="' + logsOrgProject + encodeURIComponent(fid) + logsSuffix + '" target="_blank" class="tbl-link" style="font-size:10px;font-family:var(--mono)">' + fid + '</a>'
         : '<span class="mono">' + fid + '</span>';
-      var ridHtml = '';
+      var ridHtml = '--';
       if (a.recordId) {
         var qbUrl = (a.isPackage ? qbPkgUrl : qbDateUrl) + encodeURIComponent(a.recordId);
-        ridHtml = '<br><a href="' + qbUrl + '" target="_blank" class="tbl-link" style="font-size:9px">QB:' + a.recordId + '</a>';
+        ridHtml = '<a href="' + qbUrl + '" target="_blank" class="tbl-link">' + a.recordId + '</a>';
       }
-      tr.innerHTML = '<td>' + fidHtml + ridHtml + '</td><td><span class="step-badge">' + (a.step||'--') + '</span></td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
+      tr.innerHTML = '<td>' + fidHtml + '</td><td>' + ridHtml + '</td><td><span class="step-badge">' + (a.step||'--') + '</span></td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
       tb.appendChild(tr);
     }
     tb.querySelectorAll('.retry-btn').forEach(function(btn) {

@@ -27,12 +27,12 @@ class ChunkedKv {
       return;
     }
     const n = Math.ceil(raw.length / CHUNK_LIMIT);
-    const ops = this.#db.atomic();
+    // Write chunks sequentially — atomic batch would exceed Deno KV's 800KB per-commit limit for large findings.
+    // _n is written last so readers only see complete data.
     for (let i = 0; i < n; i++) {
-      ops.set([...prefix, i], raw.slice(i * CHUNK_LIMIT, (i + 1) * CHUNK_LIMIT), options ?? {});
+      await this.#db.set([...prefix, i], raw.slice(i * CHUNK_LIMIT, (i + 1) * CHUNK_LIMIT), options ?? {});
     }
-    ops.set([...prefix, "_n"], n, options ?? {});
-    await ops.commit();
+    await this.#db.set([...prefix, "_n"], n, options ?? {});
   }
 
   /** Read a chunked value back. Returns null if not found. */
@@ -56,12 +56,11 @@ class ChunkedKv {
   async delete(prefix: Deno.KvKey) {
     const meta = await this.#db.get<number>([...prefix, "_n"]);
     if (meta.value == null) return;
-    const ops = this.#db.atomic();
+    // Delete _n first so readers see the key as gone immediately
+    await this.#db.delete([...prefix, "_n"]);
     for (let i = 0; i < meta.value; i++) {
-      ops.delete([...prefix, i]);
+      await this.#db.delete([...prefix, i]);
     }
-    ops.delete([...prefix, "_n"]);
-    await ops.commit();
   }
 }
 

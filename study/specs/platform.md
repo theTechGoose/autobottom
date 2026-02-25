@@ -295,7 +295,7 @@ service, teamId, message, data }))`.
 >>>>>>>>>CloudWatch, no native log drain. Two
 >>>>>>>>>options:
 >>>>>>>>>
->>>>>>>>>1. **Deno's built-in OTel.** Deno 2 has
+>>>>>>>>>1.  **Deno's built-in OTel.** Deno 2 has
 >>>>>>>>>native OpenTelemetry support. Set
 >>>>>>>>>`OTEL_EXPORTER_OTLP_ENDPOINT` to your
 >>>>>>>>>Grafana Cloud OTLP endpoint and enable
@@ -304,8 +304,7 @@ service, teamId, message, data }))`.
 >>>>>>>>>No code changes beyond the
 >>>>>>>>>`console.log` you already have -- Deno
 >>>>>>>>>instruments it automatically.
->>>>>>>>>
->>>>>>>>>2. **`waitUntil()` push.** After you
+>>>>>>>>>2.  **`waitUntil()` push.** After you
 >>>>>>>>>send the response, `waitUntil` lets you
 >>>>>>>>>fire a `fetch()` to Grafana Cloud's
 >>>>>>>>>Loki push API without blocking the
@@ -322,6 +321,52 @@ service, teamId, message, data }))`.
 >>>>>>>>>flag yet (still rolling out), fall back
 >>>>>>>>>to option 2 -- `waitUntil` + direct Loki
 >>>>>>>>>push.
+>>>>>>>>>
+>>>>>>>>>rafa
+>>>>>>>>>so i can use otel on deno deploy and the new deno deploy
+>>>>>>>>>to execute on the log with managed loki + grafana?
+>>>>>>>>>
+>>>>>>>>>>Kai
+>>>>>>>>>>
+>>>>>>>>>>**Almost.** Deno Deploy's built-in OTel
+>>>>>>>>>>support sends **traces and metrics** to
+>>>>>>>>>>any OTLP endpoint, including Grafana
+>>>>>>>>>>Cloud. But **logs via OTel on Deno Deploy
+>>>>>>>>>>are not confirmed stable yet** -- Deno 2
+>>>>>>>>>>added the OTel hooks, but Deploy's
+>>>>>>>>>>edge runtime may not forward
+>>>>>>>>>>`console.log` through the OTel pipeline
+>>>>>>>>>>the same way local Deno does. You'd need
+>>>>>>>>>>to test this on an actual Deploy
+>>>>>>>>>>deployment, not just `deno run`.
+>>>>>>>>>>
+>>>>>>>>>>If OTel log forwarding works on Deploy:
+>>>>>>>>>>done. Set the env vars, Grafana Cloud
+>>>>>>>>>>receives everything, Loki indexes it.
+>>>>>>>>>>
+>>>>>>>>>>If it doesn't (likely today): use the
+>>>>>>>>>>`waitUntil()` approach. Buffer structured
+>>>>>>>>>>log lines during the request, push them
+>>>>>>>>>>to Grafana Cloud's Loki HTTP API in a
+>>>>>>>>>>`waitUntil(fetch(...))` call after the
+>>>>>>>>>>response. This is ~20 lines, doesn't
+>>>>>>>>>>block the user, and works today on Deploy
+>>>>>>>>>>without any runtime flags.
+>>>>>>>>>>
+>>>>>>>>>>Either way yes -- managed Loki + Grafana
+>>>>>>>>>>on Grafana Cloud is the backend, Deno
+>>>>>>>>>>Deploy is the runtime. The wiring is
+>>>>>>>>>>either OTel env vars or a small
+>>>>>>>>>>`waitUntil` flush. Don't build anything
+>>>>>>>>>>more than that.
+>>>>>>>>>>
+>>>>>>>>>>**One thing to flag:** `waitUntil` has a
+>>>>>>>>>>execution time limit on Deploy (typically
+>>>>>>>>>>30s after response). If you're batching
+>>>>>>>>>>hundreds of log lines per request,
+>>>>>>>>>>measure whether the push completes in
+>>>>>>>>>>time. For normal request volumes it's
+>>>>>>>>>>fine.
 
 ## ~~3. Providers [ ]~~
 

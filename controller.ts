@@ -83,7 +83,7 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
   await saveFinding(orgId, finding);
 
   // Kick off pipeline
-  await enqueueStep("init", { findingId });
+  await enqueueStep("init", { findingId, orgId });
 
   console.log(`[CONTROLLER] Audit started: job=${jobId} finding=${findingId} rid=${rid}`);
   return json({ jobId, findingId, status: "queued" });
@@ -139,7 +139,7 @@ export async function handlePackageByRid(orgId: OrgId, req: Request): Promise<Re
   };
 
   await saveFinding(orgId, finding);
-  await enqueueStep("init", { findingId });
+  await enqueueStep("init", { findingId, orgId });
 
   console.log(`[CONTROLLER] Package audit started: job=${jobId} finding=${findingId} rid=${rid}`);
   return json({ jobId, findingId, status: "queued" });

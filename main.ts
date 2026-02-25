@@ -219,6 +219,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/force-nos": handleForceNos,
   "/admin/seed": handleSeed,
   "/admin/init-org": handleInitOrg,
+  "/admin/retry-finding": handleRetryFinding,
   "/admin/queues": handleSetQueue,
   "/admin/pipeline-config": handleSetPipelineConfig,
   "/admin/settings/terminate": handleAdminSaveSettings,
@@ -1359,6 +1360,26 @@ async function handleForceNos(req: Request): Promise<Response> {
   await populateReviewQueue(auth.orgId, findingId, finding.answeredQuestions);
 
   return json({ ok: true, flipped, totalNos: finding.answeredQuestions.filter((q: any) => q.answer === "No").length });
+}
+
+// -- Admin: Retry Finding --
+
+async function handleRetryFinding(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const url = new URL(req.url);
+  const findingId = url.searchParams.get("id");
+  if (!findingId) return json({ error: "id required" }, 400);
+
+  const { getFinding: getF } = await import("./lib/kv.ts");
+  const finding = await getF(auth.orgId, findingId);
+  if (!finding) return json({ error: "finding not found" }, 404);
+  if (finding.findingStatus === "finished") return json({ error: "already finished" }, 400);
+
+  await enqueueStep("finalize", { findingId, orgId: auth.orgId, totalBatches: finding.totalBatches ?? 0 });
+  console.log(`[RETRY-FINDING] Admin ${auth.email} re-enqueued finalize for ${findingId}`);
+  return json({ ok: true, findingId });
 }
 
 // -- Admin: Init Org --

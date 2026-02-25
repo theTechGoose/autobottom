@@ -523,8 +523,8 @@ export function getDashboardPage(): string {
 
     <div class="tbl">
       <div class="tbl-title">Active Audits</div>
-      <table><thead><tr><th>Finding ID</th><th>Step</th><th>Duration</th></tr></thead>
-      <tbody id="tb-active"><tr class="empty-row"><td colspan="3">No active audits</td></tr></tbody></table>
+      <table><thead><tr><th>Finding ID</th><th>Step</th><th>Duration</th><th></th></tr></thead>
+      <tbody id="tb-active"><tr class="empty-row"><td colspan="4">No active audits</td></tr></tbody></table>
     </div>
 
     <div class="tbl">
@@ -1030,13 +1030,28 @@ export function getDashboardPage(): string {
 
   function renderActive(active) {
     var tb = document.getElementById('tb-active');
-    if (!active.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="3">No active audits</td></tr>'; return; }
+    if (!active.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="4">No active audits</td></tr>'; return; }
     tb.innerHTML = '';
     for (var i = 0; i < active.length; i++) {
       var a = active[i], tr = document.createElement('tr');
-      tr.innerHTML = '<td class="mono">' + (a.findingId||'--') + '</td><td><span class="step-badge">' + (a.step||'--') + '</span></td><td class="duration">' + dur(a.ts) + '</td>';
+      var fid = a.findingId || '--';
+      tr.innerHTML = '<td class="mono">' + fid + '</td><td><span class="step-badge">' + (a.step||'--') + '</span></td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
       tb.appendChild(tr);
     }
+    tb.querySelectorAll('.retry-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var id = this.getAttribute('data-id');
+        var b = this;
+        b.disabled = true; b.textContent = '...';
+        fetch('/admin/retry-finding?id=' + encodeURIComponent(id))
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.ok) { b.textContent = 'Queued'; toast('Re-queued finalize for ' + id, 'success'); }
+            else { b.disabled = false; b.textContent = 'Retry'; toast(d.error || 'Failed', 'error'); }
+          })
+          .catch(function() { b.disabled = false; b.textContent = 'Retry'; toast('Request failed', 'error'); });
+      });
+    });
   }
 
   function renderErrors(errors) {

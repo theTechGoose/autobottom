@@ -367,6 +367,50 @@ service, teamId, message, data }))`.
 >>>>>>>>>>measure whether the push completes in
 >>>>>>>>>>time. For normal request volumes it's
 >>>>>>>>>>fine.
+>>>>>>>>>>
+>>>>>>>>>>rafa
+>>>>>>>>>>okay confirm this is something people have already done,
+>>>>>>>>>>then collapse this with the wait until method
+>>>>>>>>>>
+>>>>>>>>>>>Kai
+>>>>>>>>>>>
+>>>>>>>>>>>**Confirmed -- with a nuance.**
+>>>>>>>>>>>
+>>>>>>>>>>>Deno **runtime** (local `deno run`) +
+>>>>>>>>>>>OTel + Grafana Cloud is officially
+>>>>>>>>>>>documented by both Deno and Grafana.
+>>>>>>>>>>>Set `OTEL_DENO=true`, point the OTLP
+>>>>>>>>>>>endpoint at Grafana Cloud, and
+>>>>>>>>>>>`console.log` becomes OTel log signals
+>>>>>>>>>>>automatically. Grafana even published
+>>>>>>>>>>>a walkthrough for this exact setup.
+>>>>>>>>>>>
+>>>>>>>>>>>Deno **Deploy** is different. Deploy
+>>>>>>>>>>>has built-in OTel observability -- logs,
+>>>>>>>>>>>traces, metrics -- but it feeds into the
+>>>>>>>>>>>**Deploy dashboard**, not an external
+>>>>>>>>>>>endpoint you control. The docs don't
+>>>>>>>>>>>confirm you can set
+>>>>>>>>>>>`OTEL_EXPORTER_OTLP_ENDPOINT` on Deploy
+>>>>>>>>>>>to point at Grafana Cloud. The OTel
+>>>>>>>>>>>export tutorials all target local Deno,
+>>>>>>>>>>>not Deploy's edge runtime.
+>>>>>>>>>>>
+>>>>>>>>>>>So on Deploy today, `waitUntil()` is the
+>>>>>>>>>>>proven path. Buffer log lines during the
+>>>>>>>>>>>request, `waitUntil(fetch(...))` to
+>>>>>>>>>>>Grafana Cloud's Loki push API after the
+>>>>>>>>>>>response. Works now, no runtime flags,
+>>>>>>>>>>>no ambiguity about what Deploy supports.
+>>>>>>>>>>>
+>>>>>>>>>>>If Deploy adds external OTel export
+>>>>>>>>>>>later, you swap out the `waitUntil`
+>>>>>>>>>>>flush for env vars. The log shape stays
+>>>>>>>>>>>the same either way.
+>>>>>>>>>>>
+>>>>>>>>>>>**Re: collapsing** -- can't collapse in
+>>>>>>>>>>>a short-revise pass. Flag it for the
+>>>>>>>>>>>next full revision.
 
 ## ~~3. Providers [ ]~~
 

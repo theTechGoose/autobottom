@@ -303,6 +303,8 @@ export function getDashboardPage(): string {
   .error-msg { color: var(--red); font-size: 10px; max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .time-ago { color: var(--text-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
   .duration { color: var(--yellow); font-variant-numeric: tabular-nums; }
+  .tbl-link { color: var(--blue); font-size: 10px; text-decoration: none; font-weight: 600; }
+  .tbl-link:hover { text-decoration: underline; }
   .empty-row td { text-align: center; color: var(--text-dim); font-style: italic; padding: 14px; font-size: 11px; }
 
   /* Toast */
@@ -510,6 +512,15 @@ export function getDashboardPage(): string {
       </div>
     </div>
 
+    <!-- Search -->
+    <div class="tbl" style="margin-bottom:16px;">
+      <div class="tbl-title">Find Audit</div>
+      <div style="display:flex;gap:8px;padding:0 0 2px;">
+        <input id="search-input" class="sf-input" type="text" placeholder="Finding ID..." style="flex:1;font-family:var(--mono);font-size:12px;">
+        <button class="sf-btn primary" id="search-btn" style="padding:6px 16px;font-size:11px;">View Report</button>
+      </div>
+    </div>
+
     <div class="tbl">
       <div class="tbl-title">Active Audits</div>
       <table><thead><tr><th>Finding ID</th><th>Step</th><th>Duration</th></tr></thead>
@@ -520,6 +531,12 @@ export function getDashboardPage(): string {
       <div class="tbl-title">Recent Errors (24h)</div>
       <table><thead><tr><th>Finding ID</th><th>Step</th><th>Error</th><th>When</th></tr></thead>
       <tbody id="tb-errors"><tr class="empty-row"><td colspan="4">No errors</td></tr></tbody></table>
+    </div>
+
+    <div class="tbl">
+      <div class="tbl-title">Recently Completed (24h)</div>
+      <table><thead><tr><th>Finding ID</th><th>Completed</th><th></th></tr></thead>
+      <tbody id="tb-recent"><tr class="empty-row"><td colspan="3">No completed audits</td></tr></tbody></table>
     </div>
   </main>
 </div>
@@ -992,10 +1009,23 @@ export function getDashboardPage(): string {
 
     renderActive(p.active || []);
     renderErrors(p.errors || []);
+    renderRecent(d.recentCompleted || []);
 
     // Charts
     drawActivityChart(p.completedTs, p.errorsTs, p.retriesTs);
     drawDonut(r.pending || 0, r.decided || 0);
+  }
+
+  function renderRecent(items) {
+    var tb = document.getElementById('tb-recent');
+    if (!items.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="3">No completed audits</td></tr>'; return; }
+    tb.innerHTML = '';
+    for (var i = 0; i < items.length; i++) {
+      var c = items[i], tr = document.createElement('tr');
+      var fid = c.findingId || '--';
+      tr.innerHTML = '<td class="mono">' + fid + '</td><td class="time-ago">' + timeAgo(c.ts) + '</td><td style="text-align:right"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">Report &rarr;</a></td>';
+      tb.appendChild(tr);
+    }
   }
 
   function renderActive(active) {
@@ -1045,6 +1075,15 @@ export function getDashboardPage(): string {
   fetchData();
   setInterval(function() { countdown--; if (countdown <= 0) { fetchData(); countdown = 30; } document.getElementById('countdown').textContent = String(countdown); }, 1000);
   setInterval(tickLive, 1000);
+
+  // Search
+  function doSearch() {
+    var q = document.getElementById('search-input').value.trim();
+    if (!q) return;
+    window.open('/audit/report?id=' + encodeURIComponent(q), '_blank');
+  }
+  document.getElementById('search-btn').addEventListener('click', doSearch);
+  document.getElementById('search-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doSearch(); });
 
   // Redraw charts on resize
   var resizeTimer;

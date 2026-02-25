@@ -15,7 +15,7 @@ import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
 import { enqueueStep } from "./lib/queue.ts";
 import {
-  trackError, trackRetry, trackCompleted, getStats, getPipelineConfig, setPipelineConfig,
+  trackError, trackRetry, trackCompleted, getStats, getRecentCompleted, getPipelineConfig, setPipelineConfig,
   saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
   getAllAnswersForFinding,
@@ -564,11 +564,12 @@ async function handleDashboardData(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
-  const [pipelineStats, tokens, review, appeals] = await Promise.all([
+  const [pipelineStats, tokens, review, appeals, recentCompleted] = await Promise.all([
     getStats(auth.orgId),
     getTokenUsage(1),
     getReviewStats(auth.orgId),
     getAppealStats(auth.orgId),
+    getRecentCompleted(auth.orgId, 25),
   ]);
 
   return json({
@@ -586,6 +587,7 @@ async function handleDashboardData(req: Request): Promise<Response> {
     review,
     tokens,
     appeals,
+    recentCompleted,
   });
 }
 

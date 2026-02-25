@@ -180,6 +180,16 @@ export async function getAllBatchAnswers(orgId: OrgId, findingId: string, totalB
   return all;
 }
 
+/** Get recently completed findings, sorted newest-first (24h window, limit default 25). */
+export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<Array<{ findingId: string; ts: number }>> {
+  const db = await kv();
+  const items: Array<{ findingId: string; ts: number }> = [];
+  for await (const e of db.list<{ findingId: string; ts: number }>({ prefix: orgKey(orgId, "stats-completed") })) {
+    if (e.value) items.push(e.value);
+  }
+  return items.sort((a, b) => b.ts - a.ts).slice(0, limit);
+}
+
 /** Scan all batch answer keys for a finding (no totalBatches needed). */
 export async function getAllAnswersForFinding(orgId: OrgId, findingId: string) {
   const store = await chunked();

@@ -234,8 +234,59 @@ cost effective.
 >>>>>>>the API is identical. But start managed.
 >>>>>>>No reason to run containers for logging
 >>>>>>>when someone else will do it for $2/GB.
+>>>>>>>
+>>>>>>>rafa
+>>>>>>>let me ask you this how would i set this up? wont it block if i await it?
+>>>>>>>this is going on serverless.
+>>>>>>>
+>>>>>>>>Kai
+>>>>>>>>
+>>>>>>>>**It doesn't block because your code
+>>>>>>>>never calls Loki.** The pattern on
+>>>>>>>>serverless:
+>>>>>>>>
+>>>>>>>>1. Your app writes structured JSON to
+>>>>>>>>   stdout --
+>>>>>>>>   `console.log(JSON.stringify({ level,
+>>>>>>>>   service, teamId, message, data }))`.
+>>>>>>>>2. The serverless platform captures stdout
+>>>>>>>>   automatically (Lambda -> CloudWatch,
+>>>>>>>>   Vercel -> log drain, etc.).
+>>>>>>>>3. A **log forwarder** ships those captured
+>>>>>>>>   logs to Grafana Cloud's Loki endpoint.
+>>>>>>>>   Grafana provides Alloy (their forwarder)
+>>>>>>>>   or you use a Lambda log subscription
+>>>>>>>>   filter. Either way it runs outside your
+>>>>>>>>   function.
+>>>>>>>>
+>>>>>>>>Your function never makes an HTTP call to
+>>>>>>>>Loki. It writes to stdout and returns.
+>>>>>>>>Zero latency added, nothing to await.
+>>>>>>>>
+>>>>>>>>**Setup:**
+>>>>>>>>
+>>>>>>>>1. Create a Grafana Cloud account -- gives
+>>>>>>>>   you a Loki push endpoint URL and an API
+>>>>>>>>   key.
+>>>>>>>>2. Add a thin `log()` wrapper in your app
+>>>>>>>>   that writes structured JSON to stdout
+>>>>>>>>   with the fields we defined (timestamp,
+>>>>>>>>   level, service, teamId, userId, message,
+>>>>>>>>   data).
+>>>>>>>>3. Configure a forwarder. On Lambda: a
+>>>>>>>>   CloudWatch Logs subscription filter that
+>>>>>>>>   pushes to Grafana Cloud. On Vercel: a
+>>>>>>>>   log drain pointed at the Loki endpoint.
+>>>>>>>>   Grafana Cloud docs walk through both.
+>>>>>>>>4. In Grafana, set up label extraction rules
+>>>>>>>>   so teamId, level, service become
+>>>>>>>>   queryable labels.
+>>>>>>>>
+>>>>>>>>That's it. No SDK, no HTTP client, no
+>>>>>>>>blocking. The forwarder is managed infra,
+>>>>>>>>not your code.
 
-## ~~3. Providers [ ]
+## ~~3. Providers [ ]~~
 
 Infrastructure integrations. The developer defines what
 a provider looks like (its config schema). Admins fill
@@ -319,7 +370,7 @@ This reuses the existing EventConfig infrastructure
 (triggers, conditions, HTTP dispatch). No new event
 system needed -- just a new EventTrigger enum value.
 
-## ~~4. Services & Service Bindings [ ]
+## ~~4. Services & Service Bindings [ ]~~
 
 A service is a named app function that needs a
 provider. ServiceBindings wire services to providers

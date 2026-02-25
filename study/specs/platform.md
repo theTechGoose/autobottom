@@ -246,18 +246,18 @@ cost effective.
 >>>>>>>>serverless:
 >>>>>>>>
 >>>>>>>>1. Your app writes structured JSON to
->>>>>>>>   stdout --
->>>>>>>>   `console.log(JSON.stringify({ level,
->>>>>>>>   service, teamId, message, data }))`.
+>>>>>>>>stdout --
+>>>>>>>>`console.log(JSON.stringify({ level,
+service, teamId, message, data }))`.
 >>>>>>>>2. The serverless platform captures stdout
->>>>>>>>   automatically (Lambda -> CloudWatch,
->>>>>>>>   Vercel -> log drain, etc.).
+>>>>>>>>automatically (Lambda -> CloudWatch,
+>>>>>>>>Vercel -> log drain, etc.).
 >>>>>>>>3. A **log forwarder** ships those captured
->>>>>>>>   logs to Grafana Cloud's Loki endpoint.
->>>>>>>>   Grafana provides Alloy (their forwarder)
->>>>>>>>   or you use a Lambda log subscription
->>>>>>>>   filter. Either way it runs outside your
->>>>>>>>   function.
+>>>>>>>>logs to Grafana Cloud's Loki endpoint.
+>>>>>>>>Grafana provides Alloy (their forwarder)
+>>>>>>>>or you use a Lambda log subscription
+>>>>>>>>filter. Either way it runs outside your
+>>>>>>>>function.
 >>>>>>>>
 >>>>>>>>Your function never makes an HTTP call to
 >>>>>>>>Loki. It writes to stdout and returns.
@@ -266,25 +266,62 @@ cost effective.
 >>>>>>>>**Setup:**
 >>>>>>>>
 >>>>>>>>1. Create a Grafana Cloud account -- gives
->>>>>>>>   you a Loki push endpoint URL and an API
->>>>>>>>   key.
+>>>>>>>>you a Loki push endpoint URL and an API
+>>>>>>>>key.
 >>>>>>>>2. Add a thin `log()` wrapper in your app
->>>>>>>>   that writes structured JSON to stdout
->>>>>>>>   with the fields we defined (timestamp,
->>>>>>>>   level, service, teamId, userId, message,
->>>>>>>>   data).
+>>>>>>>>that writes structured JSON to stdout
+>>>>>>>>with the fields we defined (timestamp,
+>>>>>>>>level, service, teamId, userId, message,
+>>>>>>>>data).
 >>>>>>>>3. Configure a forwarder. On Lambda: a
->>>>>>>>   CloudWatch Logs subscription filter that
->>>>>>>>   pushes to Grafana Cloud. On Vercel: a
->>>>>>>>   log drain pointed at the Loki endpoint.
->>>>>>>>   Grafana Cloud docs walk through both.
+>>>>>>>>CloudWatch Logs subscription filter that
+>>>>>>>>pushes to Grafana Cloud. On Vercel: a
+>>>>>>>>log drain pointed at the Loki endpoint.
+>>>>>>>>Grafana Cloud docs walk through both.
 >>>>>>>>4. In Grafana, set up label extraction rules
->>>>>>>>   so teamId, level, service become
->>>>>>>>   queryable labels.
+>>>>>>>>so teamId, level, service become
+>>>>>>>>queryable labels.
 >>>>>>>>
 >>>>>>>>That's it. No SDK, no HTTP client, no
 >>>>>>>>blocking. The forwarder is managed infra,
 >>>>>>>>not your code.
+>>>>>>>>
+>>>>>>>>rafa
+>>>>>>>>how would i set this up on deno deploy?
+>>>>>>>>
+>>>>>>>>>Kai
+>>>>>>>>>
+>>>>>>>>>**Deno Deploy is different** -- no
+>>>>>>>>>CloudWatch, no native log drain. Two
+>>>>>>>>>options:
+>>>>>>>>>
+>>>>>>>>>1. **Deno's built-in OTel.** Deno 2 has
+>>>>>>>>>native OpenTelemetry support. Set
+>>>>>>>>>`OTEL_EXPORTER_OTLP_ENDPOINT` to your
+>>>>>>>>>Grafana Cloud OTLP endpoint and enable
+>>>>>>>>>the unstable OTel flag. Logs, traces,
+>>>>>>>>>and metrics all flow through one pipe.
+>>>>>>>>>No code changes beyond the
+>>>>>>>>>`console.log` you already have -- Deno
+>>>>>>>>>instruments it automatically.
+>>>>>>>>>
+>>>>>>>>>2. **`waitUntil()` push.** After you
+>>>>>>>>>send the response, `waitUntil` lets you
+>>>>>>>>>fire a `fetch()` to Grafana Cloud's
+>>>>>>>>>Loki push API without blocking the
+>>>>>>>>>user. Buffer log lines during the
+>>>>>>>>>request, flush in `waitUntil` at the
+>>>>>>>>>end. ~20 lines of code.
+>>>>>>>>>
+>>>>>>>>>**Suggestion:** Option 1. It's zero
+>>>>>>>>>application code -- just env vars and a
+>>>>>>>>>runtime flag. Grafana Cloud accepts OTLP
+>>>>>>>>>natively. You keep writing structured
+>>>>>>>>>JSON to `console.log` and Deno ships it.
+>>>>>>>>>If Deno Deploy doesn't support the OTel
+>>>>>>>>>flag yet (still rolling out), fall back
+>>>>>>>>>to option 2 -- `waitUntil` + direct Loki
+>>>>>>>>>push.
 
 ## ~~3. Providers [ ]~~
 

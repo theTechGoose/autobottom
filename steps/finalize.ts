@@ -274,7 +274,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
 
 async function postToDeno(finding: Record<string, any>) {
   const DENO_URL = env.denoKvUrl;
-  const CHUNK_SIZE = 50_000;
+  const CHUNK_SIZE = 25_000; // Deno KV 64KB limit; UTF-16 strings cost 2 bytes/char
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000);

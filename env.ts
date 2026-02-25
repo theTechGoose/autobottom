@@ -48,7 +48,7 @@ export const env = {
   // App
   get selfUrl() { return required("SELF_URL"); },
   get kvServiceUrl() { return required("KV_SERVICE_URL"); },
-  get denoKvUrl() { return required("DENO_KV_URL"); },
+  get denoKvUrl() { return required("KV_REPORT_URL"); },
   get alertEmail() { return required("ALERT_EMAIL"); },
   get fromEmail() { return required("FROM_EMAIL"); },
 };

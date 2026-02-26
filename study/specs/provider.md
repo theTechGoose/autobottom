@@ -120,12 +120,51 @@ resource limits) are out of scope for this spec.
 
 ---
 
-## 6. Open Questions
+## 6. Open Questions (resolved)
 
 - Does `mark` belong on the Idempoter public API
   or is it internal to the provider?
+
+> kai
+> Resolved: `mark` is public API on Idempoter.
+> This means the Idempoter spec needs updating --
+> it currently only has `execute` as the public
+> verb. `mark(key, receipt?)` becomes the second
+> public method. Two verbs: `execute` (run with
+> idempotency) and `mark` (externally update
+> state).
+
 - Should `guaranteeSend` retry if reconcile says
   "not delivered", or just throw immediately?
+
+> kai
+> Resolved: no retry, just throw. Retry logic is
+> out of scope for the provider. The caller or a
+> higher-level orchestrator decides whether to
+> retry. This keeps the provider dumb.
+
 - How does the provider generate the idempotency
   key? Does it use `defineScope` internally or
   build keys differently?
+
+> kai
+> Resolved: key = hash(implementation + payload).
+> The code string IS the scope -- it uniquely
+> identifies the operation. Combined with the
+> payload, that's a deterministic key. No need
+> for `defineScope` internally.
+>
+> This actually simplifies the provider a lot.
+> The constructor has the code string, `send`
+> has the payload. Key generation is:
+>
+> ```
+> sha256(code + canonicalize(payload))
+> ```
+>
+> One question: does this mean the provider
+> bypasses `defineScope` entirely and just calls
+> `idempoter.execute(key, fn)` with a raw key?
+> If so, the provider uses Idempoter at a lower
+> level than external callers do -- it builds
+> its own keys rather than using the scope chain.

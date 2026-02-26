@@ -73,25 +73,49 @@ interface IdempotencyRecord {
 > rafa
 > i dont like the nullable reciept field is thre anything we can do here?
 
->> kai
->> Discriminated union on state. Split the record
->> into two shapes:
+>>kai
+>>Discriminated union on state. Split the record
+>>into two shapes:
 >>
->> ```ts
->> type IdempotencyRecord =
->>   | { key: string; state: "locked" | "unknown"
->>       lockedUntil: number; attempts: number;
->>       updatedAt: number }
->>   | { key: string; state: "succeeded";
->>       receipt: unknown; attempts: number;
->>       updatedAt: number };
->> ```
+>>```ts
+>>type IdempotencyRecord =
+>>| {
+>>key: string;
+>>state: "locked" | "unknown";
+>>lockedUntil: number;
+>>attempts: number;
+>>updatedAt: number;
+>>}
+>>| {
+>>key: string;
+>>state: "succeeded";
+>>receipt: unknown;
+>>attempts: number;
+>>updatedAt: number;
+>>};
+>>```
 >>
->> `receipt` only exists when `state === "succeeded"`
->> so there's no nullable field and the narrowing
->> is enforced by the compiler. You could also drop
->> `lockedUntil` from the succeeded variant since
->> the lease is irrelevant once it's done.
+>>`receipt` only exists when `state === "succeeded"`
+>>so there's no nullable field and the narrowing
+>>is enforced by the compiler. You could also drop
+>>`lockedUntil` from the succeeded variant since
+>>the lease is irrelevant once it's done.
+>>
+>>rafa
+>>
+>>>this is just a nullable key in a different shape
+
+>>>> kai
+>>>> You're right, it's structural nullability with
+>>>> extra syntax. But here's the thing: does it
+>>>> matter? The only public API is `execute()`
+>>>> which returns `Promise<T>`. The caller never
+>>>> sees the record. If the nullable receipt
+>>>> bothers you at the storage level, store
+>>>> receipts in a separate `Map<string, unknown>`
+>>>> keyed by idempotency key. Then the record has
+>>>> no receipt field at all -- it's just state +
+>>>> lease metadata. Receipt lives next door.
 
 ### 1.3 Key Design
 
@@ -105,52 +129,119 @@ Requirements:
 
 - Payload must be validated and normalized before if caller does not control
   the object.
+
   > rafa
   > how can we enfore this?
 
-  >> kai
-  >> You can't fully enforce normalization at the
-  >> type level. But you can make it hard to skip:
-  >> require the constructor to take a
-  >> `normalize: (obj: T) => T` function. The
-  >> key-builder calls it before hashing. Callers
-  >> who pass `identity` are opting out explicitly.
-  >> Alternatively, accept only `string` keys and
-  >> push normalization entirely to the caller --
-  >> simpler kernel, but less safety. Given your
-  >> `(obj, ...keys)` idea below, I'd lean toward
-  >> the normalize callback since the kernel is
-  >> already touching the object.
+>>kai
+>>You can't fully enforce normalization at the
+>>type level. But you can make it hard to skip:
+>>require the constructor to take a
+>>`normalize: (obj: T) => T` function. The
+>>key-builder calls it before hashing. Callers
+>>who pass `identity` are opting out explicitly.
+>>Alternatively, accept only `string` keys and
+>>push normalization entirely to the caller --
+>>simpler kernel, but less safety. Given your
+>>`(obj, ...keys)` idea below, I'd lean toward
+>>the normalize callback since the kernel is
+>>already touching the object.
+>>
+>>>rafa
+>>>i dont understand
+
+>>>> kai
+>>>> Simpler: before the kernel hashes an object
+>>>> to make a key, it runs a cleanup function on
+>>>> it first. You give that function to the
+>>>> constructor. Example:
+>>>>
+>>>> ```ts
+>>>> const idem = new Idempoter({
+>>>>   normalize: (obj) => sortKeys(stripUndefined(obj)),
+>>>>   reconcile: myReconciler,
+>>>> });
+>>>> ```
+>>>>
+>>>> Now every call to `execute` automatically
+>>>> normalizes before hashing. `{ b: 1, a: 2 }`
+>>>> and `{ a: 2, b: 1 }` produce the same key.
+>>>> If the caller doesn't care, they pass
+>>>> `(x) => x`. The point is the kernel does
+>>>> the normalizing, not the caller at each
+>>>> call site.
+
 - Scope must include:
+
   - tenant/user
   - operation/endpoint
   - destination (if applicable)
   - version prefix
+
     > rafa
     > hate all this shit, can it not just be (obj, ...keys)
 
-    >> kai
-    >> Yeah, `(obj, ...keys)` is cleaner. The kernel
-    >> picks the listed keys from the object, sorts
-    >> them deterministically, hashes. Tenant and
-    >> version become instance-level config baked
-    >> into the Idempoter at construction -- not
-    >> per-call noise.
-    >>
-    >> One pushback: you lose the forced
-    >> `destination` scope. If someone forgets to
-    >> include the target endpoint in their keys,
-    >> two different API calls with the same payload
-    >> body collide. Maybe the static factory could
-    >> require a `scope: string` alongside the
-    >> object keys? Something like:
-    >>
-    >> ```ts
-    >> Idempoter.from(scope, obj, ...keys)
-    >> ```
-    >>
-    >> That way scope is always explicit and the
-    >> key extraction stays flexible.
+>>kai
+>>Yeah, `(obj, ...keys)` is cleaner. The kernel
+>>picks the listed keys from the object, sorts
+>>them deterministically, hashes. Tenant and
+>>version become instance-level config baked
+>>into the Idempoter at construction -- not
+>>per-call noise.
+>>
+>>One pushback: you lose the forced
+>>`destination` scope. If someone forgets to
+>>include the target endpoint in their keys,
+>>two different API calls with the same payload
+>>body collide. Maybe the static factory could
+>>require a `scope: string` alongside the
+>>object keys? Something like:
+>>
+>>```ts
+>>Idempoter.from(scope, obj, ...keys);
+>>```
+>>
+>>That way scope is always explicit and the
+>>key extraction stays flexible.
+>>
+>>>rafa
+>>>what about this? i like this api better
+>>>
+>>>```ts
+>>>Idempoter.from(xyz).defineScope(scope, ...keys);
+>>>```
+
+>>>> kai
+>>>> I like the separation but I'd flip the
+>>>> mental model. `from(xyz)` creates a reusable
+>>>> instance (bound to a store + reconciler).
+>>>> `defineScope` generates the key for one call.
+>>>> So the usage would be:
+>>>>
+>>>> ```ts
+>>>> const idem = Idempoter.from({
+>>>>   store, reconcile
+>>>> });
+>>>>
+>>>> // per-call:
+>>>> const key = idem.key("send-email", obj,
+>>>>   "to", "subject", "body");
+>>>> await idem.execute(key, () => sendEmail(obj));
+>>>> ```
+>>>>
+>>>> But `defineScope` as a chainable that returns
+>>>> a scoped executor could be cleaner:
+>>>>
+>>>> ```ts
+>>>> const sendScope = idem.scope("send-email");
+>>>> await sendScope.execute(obj, ["to", "subject"],
+>>>>   () => sendEmail(obj));
+>>>> ```
+>>>>
+>>>> The scope is bound once, keys are extracted
+>>>> per call. Keeps `execute` as the single verb.
+>>>> What's `xyz` in your version -- the store
+>>>> config? The reconciler? Both?
 
 ---
 
@@ -172,43 +263,75 @@ new Provider(
 > providers are out of scope here lets talk about idempoency then we can
 > deal with providers
 
->> kai
->> Agreed. The provider abstraction is a separate
->> concern. Get the kernel right first -- the
->> provider layer is just a consumer of `execute`.
->> Parking sections 3, 4, and the dump/ingest
->> stuff until the kernel is solid.
+>>kai
+>>Agreed. The provider abstraction is a separate
+>>concern. Get the kernel right first -- the
+>>provider layer is just a consumer of `execute`.
+>>Parking sections 3, 4, and the dump/ingest
+>>stuff until the kernel is solid.
 
 ### Rules
 
 - `reconcile` is mandatory.
+
   > rafa
   > callback function given to idempoter on newing up
   > this way the caller does not leak implementation
   > details to idempoter
 
-  >> kai
-  >> This is the right call. Reconcile as a
-  >> constructor-injected callback keeps the kernel
-  >> ignorant of vendor specifics. The signature
-  >> would be something like:
-  >>
-  >> ```ts
-  >> type Reconciler = (key: string) =>
-  >>   Promise<unknown | null>;
-  >> ```
-  >>
-  >> Returns the receipt if the effect happened,
-  >> null if it didn't. This matches your earlier
-  >> note about `receipt(truthy)` vs `null`.
-  >>
-  >> One thing to nail down: what happens when
-  >> reconcile itself throws? That's different from
-  >> returning null (confirmed no-op). A throw
-  >> means "I don't know" -- the record should stay
-  >> `unknown` and the caller gets the error. Don't
-  >> conflate "confirmed didn't happen" with "can't
-  >> reach the vendor to check."
+>>kai
+>>This is the right call. Reconcile as a
+>>constructor-injected callback keeps the kernel
+>>ignorant of vendor specifics. The signature
+>>would be something like:
+>>
+>>```ts
+>>type Reconciler = (key: string) => Promise<unknown | null>;
+>>```
+>>
+>>Returns the receipt if the effect happened,
+>>null if it didn't. This matches your earlier
+>>note about `receipt(truthy)` vs `null`.
+>>
+>>One thing to nail down: what happens when
+>>reconcile itself throws? That's different from
+>>returning null (confirmed no-op). A throw
+>>means "I don't know" -- the record should stay
+>>`unknown` and the caller gets the error. Don't
+>>conflate "confirmed didn't happen" with "can't
+>>reach the vendor to check."
+>>
+>>>rafa
+>>>hmm i dont know i also dont want to explode this constuctor signature
+>>>what would the api look like?
+
+>>>> kai
+>>>> The constructor doesn't change at all. The
+>>>> three outcomes are already in the reconciler's
+>>>> natural behavior:
+>>>>
+>>>> ```ts
+>>>> reconcile: (key) => Promise<unknown | null>
+>>>> ```
+>>>>
+>>>> - Returns receipt -> succeeded
+>>>> - Returns null -> confirmed didn't happen
+>>>> - Throws -> vendor unreachable, stay unknown
+>>>>
+>>>> The Idempoter just wraps the call in
+>>>> try/catch internally. If reconcile throws,
+>>>> the record stays `unknown` and the error
+>>>> propagates to the caller. Zero API surface
+>>>> added. The contract is: "return a value or
+>>>> null if you know, throw if you don't."
+>>>>
+>>>> That said -- if you genuinely don't want to
+>>>> distinguish "didn't happen" from "can't check,"
+>>>> you can collapse both into null and accept that
+>>>> unknown records might get marked failed when
+>>>> the vendor was just temporarily down. That's a
+>>>> real trade-off though, not just an API choice.
+
 - Must deterministically answer:
   - `reciept(truthy)` -> side effect happened
   - `null` -> did not happen

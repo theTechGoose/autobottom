@@ -469,6 +469,27 @@ export function getDashboardPage(): string {
     </div>
   </aside>
 
+  <!-- Loading overlay -->
+  <div id="init-overlay" style="position:fixed;inset:0;z-index:9999;background:#0d1117;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;transition:opacity 0.4s;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" style="width:52px;height:52px;animation:bot-pulse 1.4s ease-in-out infinite;">
+      <rect x="4" y="9" width="24" height="19" rx="4" fill="#0d1117"/>
+      <rect x="4" y="9" width="24" height="19" rx="4" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+      <rect x="14.5" y="4" width="3" height="6" rx="1" fill="#3fb950"/>
+      <circle cx="16" cy="3.5" r="2.5" fill="#3fb950"/>
+      <rect x="7.5" y="14" width="6" height="5" rx="1.5" fill="#3fb950"/>
+      <rect x="9" y="15" width="2" height="1.5" rx="0.5" fill="#7ee787" opacity="0.7"/>
+      <rect x="18.5" y="14" width="6" height="5" rx="1.5" fill="#3fb950"/>
+      <rect x="20" y="15" width="2" height="1.5" rx="0.5" fill="#7ee787" opacity="0.7"/>
+      <rect x="9" y="23" width="3.5" height="2" rx="1" fill="#3fb950" opacity="0.65"/>
+      <rect x="14.25" y="23" width="3.5" height="2" rx="1" fill="#3fb950" opacity="0.65"/>
+      <rect x="19.5" y="23" width="3.5" height="2" rx="1" fill="#3fb950" opacity="0.65"/>
+      <circle cx="3.5" cy="17.5" r="1.5" fill="#3fb950" opacity="0.55"/>
+      <circle cx="28.5" cy="17.5" r="1.5" fill="#3fb950" opacity="0.55"/>
+    </svg>
+    <div style="color:#3fb950;font-size:13px;font-weight:600;letter-spacing:0.5px;">Loading dashboard...</div>
+  </div>
+  <style>@keyframes bot-pulse { 0%,100%{opacity:0.5;transform:scale(0.95)} 50%{opacity:1;transform:scale(1.05)} }</style>
+
   <main class="main">
     <div class="stat-row">
       <div class="stat-card blue">
@@ -1221,7 +1242,10 @@ export function getDashboardPage(): string {
     } catch(e) { console.error('fetch:', e); dot.className = 'dot error'; }
   }
 
-  fetchData();
+  fetchData().finally(function() {
+    var ov = document.getElementById('init-overlay');
+    if (ov) { ov.style.opacity = '0'; setTimeout(function() { ov.remove(); }, 420); }
+  });
   setInterval(function() { countdown--; if (countdown <= 0) { fetchData(); countdown = 30; } document.getElementById('countdown').textContent = String(countdown); }, 1000);
   setInterval(tickLive, 1000);
 
@@ -1792,6 +1816,7 @@ export function getDashboardPage(): string {
   erModal.addEventListener('click', function(e) { if (e.target === erModal) erModal.classList.remove('open'); });
 
   // ===== Email Templates =====
+  console.log('[ET] init — openModal:', typeof openModal, '| backdropClose:', typeof backdropClose, '| closeModal:', typeof closeModal);
   var etTemplates = [];
   var etCurrentId = null;
 
@@ -1869,17 +1894,37 @@ export function getDashboardPage(): string {
   }
 
   function etFetch() {
+    console.log('[ET] fetching templates...');
     return fetch('/admin/email-templates')
-      .then(function(r) { return r.json(); })
-      .then(function(d) { etTemplates = Array.isArray(d) ? d : []; etRenderList(); });
+      .then(function(r) {
+        console.log('[ET] fetch status:', r.status);
+        return r.json();
+      })
+      .then(function(d) {
+        console.log('[ET] fetch result:', d);
+        etTemplates = Array.isArray(d) ? d : [];
+        etRenderList();
+      })
+      .catch(function(e) { console.error('[ET] fetch error:', e); });
   }
 
-  document.getElementById('email-templates-open').addEventListener('click', function() {
-    openModal('email-templates-modal');
-    etFetch();
-  });
-  document.getElementById('email-templates-cancel').addEventListener('click', function() { closeModal('email-templates-modal'); });
-  backdropClose('email-templates-modal');
+  var etOpenBtn = document.getElementById('email-templates-open');
+  console.log('[ET] open button element:', etOpenBtn);
+  if (etOpenBtn) {
+    etOpenBtn.addEventListener('click', function() {
+      console.log('[ET] open clicked — openModal type:', typeof openModal);
+      try {
+        openModal('email-templates-modal');
+        console.log('[ET] openModal succeeded');
+      } catch(e) { console.error('[ET] openModal failed:', e); }
+      etFetch();
+    });
+  } else {
+    console.error('[ET] email-templates-open element NOT FOUND in DOM');
+  }
+  var etCancelBtn = document.getElementById('email-templates-cancel');
+  if (etCancelBtn) etCancelBtn.addEventListener('click', function() { closeModal('email-templates-modal'); });
+  try { backdropClose('email-templates-modal'); } catch(e) { console.error('[ET] backdropClose failed:', e); }
   document.getElementById('et-new-btn').addEventListener('click', etNewTemplate);
   document.getElementById('et-html').addEventListener('input', etUpdatePreview);
 

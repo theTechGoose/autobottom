@@ -435,6 +435,9 @@
             </div>
             <div class="sub-objects">
               <div class="sub-object">
+                <span class="name">email</span> identifier (from memberEmails[])
+              </div>
+              <div class="sub-object">
                 <span class="name">passwordHash</span> hashed password
               </div>
               <div class="sub-object">
@@ -563,6 +566,9 @@
               WidgetSlot <span class="tag tag-embedded">embedded</span>
             </div>
             <div class="sub-objects">
+              <div class="sub-object">
+                <span class="name">id</span> unique within the dashboard
+              </div>
               <div class="sub-object">
                 <span class="name">type</span> one of
                 <span style="color: var(--orange)">WidgetType</span> names
@@ -1144,6 +1150,12 @@
                 <span class="name">properties</span>
                 <span style="color: var(--orange)">ReportProperties</span>
               </div>
+              <div class="sub-object">
+                <span class="name">folderId</span> references ReportFolder
+              </div>
+              <div class="sub-object">
+                <span class="name">ownerId</span> creator email
+              </div>
             </div>
             <div class="relation">belongs to ReportFolder (folderId)</div>
             <div class="relation">owned by User (ownerId)</div>
@@ -1178,6 +1190,22 @@
               <div class="sub-object">
                 <span class="name">formulaFields[]</span>
                 <span style="color: var(--orange)">FormulaField</span>
+              </div>
+            </div>
+          </div>
+          <div class="entity">
+            <div class="entity-name">
+              FormulaField <span class="tag tag-embedded">embedded</span>
+            </div>
+            <div class="sub-objects">
+              <div class="sub-object">
+                <span class="name">key</span> unique identifier within the report
+              </div>
+              <div class="sub-object">
+                <span class="name">label</span> display name
+              </div>
+              <div class="sub-object">
+                <span class="name">expression</span> expression language string
               </div>
             </div>
           </div>

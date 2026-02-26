@@ -120,10 +120,10 @@ interface IdempotencyRecord {
 >>>>rafa
 >>>>this is the right call. collapse this one
 
->>>>> kai
->>>>> Noted -- will collapse. Decision: receipts
->>>>> in a separate map, record is just state +
->>>>> lease metadata.
+>>>>>kai
+>>>>>Noted -- will collapse. Decision: receipts
+>>>>>in a separate map, record is just state +
+>>>>>lease metadata.
 
 ### 1.3 Key Design
 
@@ -186,32 +186,67 @@ Requirements:
 >>>>Idempoter.fromxyz(schema, obj).defineScope(...)
 >>>>```
 
->>>>> kai
->>>>> This is sharp. The schema IS the normalizer
->>>>> -- a zod/valibot schema validates and
->>>>> canonicalizes in one pass. No separate
->>>>> `normalize` callback needed.
+>>>>>kai
+>>>>>This is sharp. The schema IS the normalizer
+>>>>>-- a zod/valibot schema validates and
+>>>>>canonicalizes in one pass. No separate
+>>>>>`normalize` callback needed.
 >>>>>
->>>>> One detail: passing `obj` here binds the
->>>>> payload at construction, making each chain
->>>>> single-use. Is that intentional? Or should
->>>>> the object go into `execute()`?
+>>>>>One detail: passing `obj` here binds the
+>>>>>payload at construction, making each chain
+>>>>>single-use. Is that intentional? Or should
+>>>>>the object go into `execute()`?
 >>>>>
->>>>> ```ts
->>>>> // A: obj bound at construction (single-use)
->>>>> Idempoter.from(schema, obj)
->>>>>   .defineScope("send-email", "to", "body")
->>>>>   .execute(fn);
+>>>>>```ts
+>>>>>// A: obj bound at construction (single-use)
+>>>>>Idempoter.from(schema, obj)
+>>>>>.defineScope("send-email", "to", "body")
+>>>>>.execute(fn);
 >>>>>
->>>>> // B: obj at execute-time (reusable)
->>>>> const send = Idempoter.from(schema)
->>>>>   .defineScope("send-email", "to", "body");
->>>>> await send.execute(obj, fn);
->>>>> ```
+>>>>>// B: obj at execute-time (reusable)
+>>>>>const send = Idempoter.from(schema).defineScope(
+>>>>>"send-email",
+>>>>>"to",
+>>>>>"body",
+>>>>>);
+>>>>>await send.execute(obj, fn);
+>>>>>```
 >>>>>
->>>>> B lets you define the pipeline once and
->>>>> reuse across requests. A is more
->>>>> declarative but new chain per call.
+>>>>>B lets you define the pipeline once and
+>>>>>reuse across requests. A is more
+>>>>>declarative but new chain per call.
+>>>>>
+>>>>>rafa
+>>>>>essentially what we are doing by building a class is scoping state
+>>>>>if we want to run the function again we build another throwaway scope
+>>>>>this prevents reusing the same state accedentally. this has nothing to do
+>>>>>with archetecture and more to do with my preferences as a programmer
+>>>>>early on in my career i got bit by modifying global state
+>>>>>because its not thread safe, so i figure that from now on im going
+>>>>>to encapsulate my code in a function that always returns an object
+>>>>>well what is that? a class, boom everything is a class was born.
+
+>>>>>> kai
+>>>>>> I get the philosophy and it's
+>>>>>> battle-tested. But there's a tension:
+>>>>>> the Idempoter NEEDS persistent state to
+>>>>>> work. The idempotency records and receipts
+>>>>>> must survive across calls -- that's the
+>>>>>> whole point. If the instance is throwaway,
+>>>>>> where do the records live?
+>>>>>>
+>>>>>> Answer: the store is external. The
+>>>>>> throwaway instance is a transaction scope
+>>>>>> -- it holds the config and key identity
+>>>>>> for one execution, but delegates
+>>>>>> persistence to the injected store. The
+>>>>>> instance is disposable, the data isn't.
+>>>>>>
+>>>>>> So the class is a closure with a name.
+>>>>>> Which is exactly what you said: a function
+>>>>>> that returns an object. That tracks. The
+>>>>>> store is the only thing that persists
+>>>>>> across throwaway instances.
 
 - Scope must include:
 
@@ -290,32 +325,34 @@ Requirements:
 >>>>pattern that nothing happens until you subscribe. here nothing
 >>>>happens until you define a scope.
 
->>>>> kai
->>>>> You're right, I was wrong to push back.
->>>>> The cold-until-scope pattern is clean and
->>>>> it actually gives you reuse too:
+>>>>>kai
+>>>>>You're right, I was wrong to push back.
+>>>>>The cold-until-scope pattern is clean and
+>>>>>it actually gives you reuse too:
 >>>>>
->>>>> ```ts
->>>>> // define once (cold -- just config)
->>>>> const sendEmail = Idempoter
->>>>>   .from(schema, store, reconcile)
->>>>>   .defineScope("send-email", "to", "body");
+>>>>>```ts
+>>>>>// define once (cold -- just config)
+>>>>>const sendEmail = Idempoter.from(
+>>>>>schema,
+>>>>>store,
+>>>>>reconcile,
+>>>>>).defineScope("send-email", "to", "body");
 >>>>>
->>>>> // execute many times (hot)
->>>>> await sendEmail.execute(obj1, fn1);
->>>>> await sendEmail.execute(obj2, fn2);
->>>>> ```
+>>>>>// execute many times (hot)
+>>>>>await sendEmail.execute(obj1, fn1);
+>>>>>await sendEmail.execute(obj2, fn2);
+>>>>>```
 >>>>>
->>>>> `defineScope` returns a reusable scoped
->>>>> executor. Construction describes, execute
->>>>> subscribes. You get both the rxjs semantics
->>>>> and reuse without my two-step split.
+>>>>>`defineScope` returns a reusable scoped
+>>>>>executor. Construction describes, execute
+>>>>>subscribes. You get both the rxjs semantics
+>>>>>and reuse without my two-step split.
 >>>>>
->>>>> Only thing: does `execute` here take the
->>>>> obj + fn, or just fn? If the scope already
->>>>> knows which keys to extract, it needs the
->>>>> obj at execute-time to hash them. So it's
->>>>> `execute(obj, fn)` not `execute(fn)`.
+>>>>>Only thing: does `execute` here take the
+>>>>>obj + fn, or just fn? If the scope already
+>>>>>knows which keys to extract, it needs the
+>>>>>obj at execute-time to hash them. So it's
+>>>>>`execute(obj, fn)` not `execute(fn)`.
 
 ---
 
@@ -347,10 +384,10 @@ new Provider(
 >>>rafa
 >>>collapse this section(remove)
 
->>>> kai
->>>> Noted -- will remove section 2 on collapse.
->>>> Reconcile discussion below migrates to
->>>> section 1 since it's kernel config.
+>>>>kai
+>>>>Noted -- will remove section 2 on collapse.
+>>>>Reconcile discussion below migrates to
+>>>>section 1 since it's kernel config.
 
 ### Rules
 
@@ -416,57 +453,119 @@ new Provider(
 >>>>
 >>>>>rafa
 >>>>>okay, look at this entire document, what does the final signature look like?
+>>>>>
+>>>>>>kai
+>>>>>>Synthesizing everything agreed so far:
+>>>>>>
+>>>>>>```ts
+>>>>>>type Schema<T> = { parse: (raw: unknown) => T };
+>>>>>>type Reconciler = (key: string) => Promise<unknown | null>;
+>>>>>>
+>>>>>>// construction (cold -- just config)
+>>>>>>const idem = Idempoter.from(
+>>>>>>schema, // validates + canonicalizes
+>>>>>>store, // KV backend (Deno KV, etc.)
+>>>>>>reconcile, // (key) => receipt | null | throw
+>>>>>>);
+>>>>>>
+>>>>>>// scope definition (still cold)
+>>>>>>const sendEmail = idem.defineScope(
+>>>>>>"send-email", // scope name
+>>>>>>"to",
+>>>>>>"body", // ...keys to extract
+>>>>>>);
+>>>>>>
+>>>>>>// execution (hot)
+>>>>>>const receipt = await sendEmail.execute(
+>>>>>>obj, // payload
+>>>>>>() => emailApi.send(obj), // side effect
+>>>>>>);
+>>>>>>```
+>>>>>>
+>>>>>>Internal state:
+>>>>>>
+>>>>>>- Record: `{ key, state, lockedUntil,
+attempts, updatedAt }`
+>>>>>>- Receipts: separate `Map<string, unknown>`
+>>>>>>
+>>>>>>State transitions:
+>>>>>>
+>>>>>>- `locked -> succeeded` (fn returns)
+>>>>>>- `locked -> unknown` (fn throws)
+>>>>>>- `unknown -> succeeded` (reconcile returns
+>>>>>>receipt)
+>>>>>>- `unknown -> failed` (reconcile returns null)
+>>>>>>- `unknown -> unknown` (reconcile throws)
+>>>>>>
+>>>>>>Open questions for you:
+>>>>>>
+>>>>>>1.  What is `store`? Just a KV interface
+>>>>>>like `{ get, set, delete }`? Or does it
+>>>>>>need atomic CAS for lease safety?
+>>>>>>2.  Does `defineScope` take the schema or
+>>>>>>does `from`? If `from`, all scopes on
+>>>>>>that instance share one schema.
+>>>>>>3.  `execute` returns the receipt -- is that
+>>>>>>the raw return of `fn()`, or wrapped?
+>>>>>>
+>>>>>>rafa
+>>>>>>this api is trash. can we think through this step by step and
+>>>>>>come up with something better? its just too hard to use, too many
+>>>>>>things to remember.
 
->>>>>> kai
->>>>>> Synthesizing everything agreed so far:
->>>>>>
->>>>>> ```ts
->>>>>> type Schema<T> = { parse: (raw: unknown) => T };
->>>>>> type Reconciler = (key: string) =>
->>>>>>   Promise<unknown | null>;
->>>>>>
->>>>>> // construction (cold -- just config)
->>>>>> const idem = Idempoter.from(
->>>>>>   schema,     // validates + canonicalizes
->>>>>>   store,      // KV backend (Deno KV, etc.)
->>>>>>   reconcile   // (key) => receipt | null | throw
->>>>>> );
->>>>>>
->>>>>> // scope definition (still cold)
->>>>>> const sendEmail = idem.defineScope(
->>>>>>   "send-email",  // scope name
->>>>>>   "to", "body"   // ...keys to extract
->>>>>> );
->>>>>>
->>>>>> // execution (hot)
->>>>>> const receipt = await sendEmail.execute(
->>>>>>   obj,                    // payload
->>>>>>   () => emailApi.send(obj) // side effect
->>>>>> );
->>>>>> ```
->>>>>>
->>>>>> Internal state:
->>>>>> - Record: `{ key, state, lockedUntil,
->>>>>>   attempts, updatedAt }`
->>>>>> - Receipts: separate `Map<string, unknown>`
->>>>>>
->>>>>> State transitions:
->>>>>> - `locked -> succeeded` (fn returns)
->>>>>> - `locked -> unknown` (fn throws)
->>>>>> - `unknown -> succeeded` (reconcile returns
->>>>>>   receipt)
->>>>>> - `unknown -> failed` (reconcile returns null)
->>>>>> - `unknown -> unknown` (reconcile throws)
->>>>>>
->>>>>> Open questions for you:
->>>>>> 1. What is `store`? Just a KV interface
->>>>>>    like `{ get, set, delete }`? Or does it
->>>>>>    need atomic CAS for lease safety?
->>>>>> 2. Does `defineScope` take the schema or
->>>>>>    does `from`? If `from`, all scopes on
->>>>>>    that instance share one schema.
->>>>>> 3. `execute` returns the receipt -- is that
->>>>>>    the raw return of `fn()`, or wrapped?
+>>>>>>> kai
+>>>>>>> Fair. The three-step chain was
+>>>>>>> over-engineered. Let me start from what
+>>>>>>> the caller actually needs to provide:
+>>>>>>>
+>>>>>>> **Per app (once):** store
+>>>>>>> **Per operation (once):** scope, keys,
+>>>>>>> reconcile
+>>>>>>> **Per call:** payload, side-effect fn
+>>>>>>>
+>>>>>>> So there are really two setup moments,
+>>>>>>> not three. Collapse it:
+>>>>>>>
+>>>>>>> ```ts
+>>>>>>> // setup (once per operation type)
+>>>>>>> const sendEmail = Idempoter.for({
+>>>>>>>   store,
+>>>>>>>   scope: "send-email",
+>>>>>>>   keys: ["to", "body"],
+>>>>>>>   reconcile: (key) => checkEmail(key),
+>>>>>>> });
+>>>>>>>
+>>>>>>> // use (per call -- this is the hot path)
+>>>>>>> await sendEmail.run(obj, () => send(obj));
+>>>>>>> ```
+>>>>>>>
+>>>>>>> One static factory, one options bag, one
+>>>>>>> execution method. Two things to remember:
+>>>>>>> `Idempoter.for(config)` and `.run(obj, fn)`.
+>>>>>>>
+>>>>>>> Schema is gone. If you need normalization,
+>>>>>>> sort your own keys before calling. The
+>>>>>>> kernel just picks the keys you listed
+>>>>>>> and hashes them deterministically. Less
+>>>>>>> magic, less to remember.
+>>>>>>>
+>>>>>>> If you want the throwaway pattern, that
+>>>>>>> works too:
+>>>>>>>
+>>>>>>> ```ts
+>>>>>>> await Idempoter.for({
+>>>>>>>   store,
+>>>>>>>   scope: "send-email",
+>>>>>>>   keys: ["to", "body"],
+>>>>>>>   reconcile: checkEmail,
+>>>>>>> }).run(obj, () => send(obj));
+>>>>>>> ```
+>>>>>>>
+>>>>>>> One expression. Build and execute inline.
+>>>>>>> Instance is garbage collected immediately.
+>>>>>>>
+>>>>>>> Does this feel closer? Or still too much
+>>>>>>> ceremony?
 
 - Must deterministically answer:
   - `reciept(truthy)` -> side effect happened

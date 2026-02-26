@@ -2026,7 +2026,7 @@
               font-weight: 400;
               margin-left: auto;
             "
-            >platform-level infra wiring</span
+            >infra wiring + execution kernel</span
           >
         </div>
         <div class="domain-body">
@@ -2050,8 +2050,48 @@
                 <span style="color: var(--orange)">FieldDef[]</span> - fields
                 admin fills in
               </div>
+              <div class="sub-object">
+                <span class="name">code</span> implementation string, executed in
+                sandbox
+              </div>
+              <div class="sub-object">
+                <span class="name">send(payload)</span> fire-and-forget via
+                sandboxed worker
+              </div>
+              <div class="sub-object">
+                <span class="name">guaranteeSend(payload)</span> pessimistic:
+                send + reconcile, returns receipt
+              </div>
+            </div>
+            <div class="relation">owns internal Idempoter instance</div>
+          </div>
+          <div class="entity">
+            <div class="entity-name">
+              IdempotencyRecord <span class="tag tag-stored">stored</span>
+              <span style="font-size: 10px; color: var(--muted)"
+                >Deno KV, per idempotency key</span
+              >
+            </div>
+            <div class="sub-objects">
+              <div class="sub-object">
+                <span class="name">key</span> sha256(code + canonicalize(payload))
+              </div>
+              <div class="sub-object">
+                <span class="name">state</span> locked | succeeded | unknown |
+                failed
+              </div>
+              <div class="sub-object">
+                <span class="name">lockedUntil</span> lease expiry timestamp
+              </div>
+              <div class="sub-object">
+                <span class="name">attempts</span> execution count
+              </div>
+              <div class="sub-object">
+                <span class="name">updatedAt</span> last state change
+              </div>
             </div>
           </div>
+          <div class="separator"></div>
           <div class="entity">
             <div class="entity-name">
               ProviderConfig <span class="tag tag-stored">stored</span>

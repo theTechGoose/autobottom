@@ -18,7 +18,7 @@ type Reconciler = (key: string) => Promise<unknown | null>;
 
 interface IdempoterOptions<T> {
   schema: Schema<T>;
-  timeout: number;        // lease duration in ms
+  timeout: number; // lease duration in ms
   reconcile: Reconciler;
 }
 
@@ -50,8 +50,8 @@ const receipt = await idm.execute(obj, fn);
 ### External state update
 
 ```ts
-idm.mark(key, receipt);  // -> succeeded
-idm.mark(key);           // -> retryable
+idm.mark(key, receipt); // -> succeeded
+idm.mark(key); // -> retryable
 ```
 
 - `mark(key, receipt?)` -- externally update

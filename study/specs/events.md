@@ -1,75 +1,296 @@
-# Events & Notification Channels Spec
+# Events Spec
 
-## 1. Events (base primitive)
-
-Events are the foundation. Something happened in
-the app, conditions were met.
-
-- Dot-scoped naming: `audit.resolved`,
-  `audit.error.retrying`, `appeal.pending`, etc.
-- Wildcard subscription: `audit.*`,
-  `audit.error.*`
-- Implementation: eventemitter2
-- Every status transition in the app is an event
-
-### Scopes
-
-- `audit.pending`, `audit.transcribing`,
-  `audit.questions.populating`,
-  `audit.questions.asking`
-- `audit.resolved`, `audit.appeal.pending`,
-  `audit.error.retrying`, `audit.error.failed`
-- `appeal.pending`, `appeal.resolved`
-- `coaching.pending`, `coaching.completed`
-- `result.llm`, `result.reviewer`, `result.judge`
-
-### EventConfig
-
-- name
-- active
-- trigger (dot-scoped pattern string, supports
-  wildcards)
-- fieldFilter[] (field keys that must change,
-  empty = any)
-- conditions (FilterGroup -- reuses Reports model)
-- subject (event title with expression
-  interpolation)
-- owner
+Three kinds of events flow through the system:
+AppEvent (personal), BroadcastEvent (org-wide),
+and Message (direct). EventConfig reacts to any
+event in the catalog and delivers via a unified
+CommunicationProvider interface.
 
 ---
 
-## 2. Notification Channels
+## 1. AppEvent (stored, TTL 24h, per user)
 
-Webhooks, emails, and chat are delivery channels
-built on top of events. An event can have zero,
-one, or many channels attached.
+Ephemeral personal event. Delivered to the user
+who triggered or is affected by the action.
+Expires after 24 hours.
 
-### WebhookChannel
+- type -- any event from the event catalog
+- payload -- Record<string, unknown>
 
-- eventConfigId
-- url
-- method (POST | GET | PUT | PATCH | DELETE)
-- format (JSON | XML | RAW)
-- headers (key-value pairs)
-- bodyTemplate (payload with expression
-  interpolation)
+Use case: real-time UI updates, toast
+notifications, badge progress ticks, combo
+triggers.
 
-### EmailChannel
+---
 
-- eventConfigId
-- recipients[] (static, conditional per-user,
-  or dynamic from field)
-- body (rich HTML with expression interpolation
-  + llm())
-- fromAddress
-- format (HTML | plain text)
+## 2. BroadcastEvent (stored, TTL 24h, org-wide)
 
-### ChatChannel
+Org-wide announcement visible to everyone in the
+organization. Expires after 24 hours.
 
-- eventConfigId
-- to (recipient email or dynamic from field)
+- type -- any event from the event catalog
+- triggerEmail -- who triggered the event
+- displayName -- shown name
+- message -- display text
+- animationId -- animation to play
 
-Subject comes from the event -- email uses it as
-subject line, chat uses it as message title,
-webhooks can reference it via interpolation in
-bodyTemplate.
+Use case: sale completed banners, perfect score
+celebrations, level-up announcements. These drive
+the gamification feed -- visible on dashboards and
+in the activity stream.
+
+---
+
+## 3. Message (stored)
+
+Direct message between two users. Persistent
+(no TTL).
+
+- from -- sender email
+- to -- recipient email
+- body -- message content
+- ts -- sent timestamp
+- read -- read flag
+
+---
+
+## 4. EventConfig (stored)
+
+Reactive automation. When an event fires and
+conditions are met, deliver a notification via
+the configured communication type.
+
+- name -- display name
+- active -- on/off toggle
+- trigger -- any event from the catalog (dot-scoped
+  pattern string, supports wildcards like
+  `audit.instance.*`)
+- fieldFilter[] -- field keys that must change
+  (empty = any change fires)
+- conditions -- FilterGroup (reuses the
+  Reports filter model: FilterGroup >
+  FilterCondition with conjunction AND/OR)
+- communicationType -- webhook | email | chat
+- receivers[] -- URLs, emails, or channel IDs
+  depending on communicationType
+- payloadTemplate -- expression-interpolated
+  template that renders into the provider's
+  payload shape (see expressions.md)
+- owner -- user who configured this
+
+### Flow
+
+```
+event emitted via emit()
+  -> match against EventConfig.trigger
+  -> check fieldFilter (if non-empty, only fire
+     if one of the listed fields changed)
+  -> evaluate conditions (FilterGroup)
+  -> render payloadTemplate with expression engine
+  -> dispatch via CommunicationProvider.send()
+```
+
+Dispatch happens in waitUntil() -- non-blocking,
+does not delay the response.
+
+---
+
+## 5. CommunicationProvider (interface, runtime)
+
+Not stored. Runtime abstraction that sends the
+rendered payload to receivers.
+
+- type -- webhook | email | chat
+- send(receivers, payload) -- Promise<void>
+
+EventConfig.communicationType selects which
+provider implementation handles delivery.
+
+### WebhookCommunicationProvider
+
+- receivers -- URLs
+- payload -- { url, method, headers, body }
+  (RequestInit shape, passed directly to fetch)
+
+### EmailCommunicationProvider
+
+- receivers -- email addresses
+- payload -- { subject, body, from }
+- Resolves credentials from the email
+  ProviderConfig via ServiceBinding (see
+  services.md). Walk up the team tree to find
+  the email provider for the owner's team.
+
+### ChatCommunicationProvider
+
+- receivers -- channel IDs
+- payload -- { message, threadId? }
+- Resolves bot tokens from the chat ProviderConfig
+  via ServiceBinding.
+
+---
+
+## 6. Event Catalog
+
+All emit() calls in the app. These are the valid
+values for AppEvent.type, BroadcastEvent.type,
+and EventConfig.trigger. Dispatched via
+waitUntil(), matched by EventConfig.
+
+### AuditConfig
+
+- audit.config.created
+- audit.config.modified
+- audit.config.deleted
+- audit.config.versionPublished
+- audit.config.schemaBreakingChange
+
+### AuditQuestion
+
+- audit.question.created
+- audit.question.modified
+- audit.question.deleted
+- audit.question.testPassed
+- audit.question.testFailed
+
+### AuditInstance
+
+- audit.instance.created
+- audit.instance.transcribing
+- audit.instance.transcribed
+- audit.instance.transcriptionFailed
+- audit.instance.asking
+- audit.instance.completed
+- audit.instance.failed
+- audit.instance.retrying
+- audit.instance.resolved
+
+### AuditResult
+
+- audit.result.appended.llm
+- audit.result.appended.reviewer
+- audit.result.appended.judge
+
+### Appeal
+
+- appeal.filed
+- appeal.assigned
+- appeal.decided
+
+### Coaching
+
+- coaching.pending
+- coaching.completed
+
+### Team
+
+- team.created
+- team.modified
+- team.deleted
+- team.memberAdded
+- team.memberRemoved
+- team.leaderChanged
+
+### RoleDef
+
+- role.created
+- role.modified
+- role.deleted
+
+### User
+
+- user.created
+- user.modified
+- user.deactivated
+- user.reactivated
+- user.passwordChanged
+- user.login
+- user.loginFailed
+
+### Session
+
+- session.created
+- session.expired
+
+### Dashboard
+
+- dashboard.created
+- dashboard.modified
+- dashboard.shared
+- dashboard.deleted
+
+### Report
+
+- report.created
+- report.modified
+- report.deleted
+
+### Player
+
+- player.xpEarned
+- player.xpSpent
+- player.levelUp
+- player.streakIncremented
+- player.streakBroken
+
+### Badge
+
+- badge.earned
+- badge.progressUpdated
+
+### Store
+
+- store.itemPurchased
+- store.themeEquipped
+- store.comboPackEquipped
+
+### Message
+
+- message.sent
+- message.read
+
+### Broadcast
+
+- broadcast.saleCompleted
+- broadcast.perfectScore
+- broadcast.levelUp
+
+### EventConfig
+
+- eventConfig.created
+- eventConfig.modified
+- eventConfig.deleted
+- eventConfig.triggered
+- eventConfig.deliveryFailed
+
+### Schedule
+
+- schedule.report
+
+### Provider
+
+- provider.created
+- provider.modified
+- provider.deleted
+
+### ProviderConfig
+
+- providerConfig.created
+- providerConfig.modified
+- providerConfig.deactivated
+- providerConfig.reactivated
+
+### ServiceBinding
+
+- serviceBinding.created
+- serviceBinding.modified
+- serviceBinding.deleted
+- serviceBinding.fallbackTriggered
+- serviceBinding.circuitBreakerOpened
+- serviceBinding.circuitBreakerClosed
+
+### Generic CRUD
+
+- record.created
+- record.modified
+- record.deleted

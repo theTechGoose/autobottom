@@ -72,7 +72,7 @@ interface IdempotencyRecord {
 
 > rafa
 > i dont like the nullable reciept field is thre anything we can do here?
-
+>
 >>kai
 >>Discriminated union on state. Split the record
 >>into two shapes:
@@ -104,7 +104,7 @@ interface IdempotencyRecord {
 >>rafa
 >>
 >>>this is just a nullable key in a different shape
-
+>>>
 >>>>kai
 >>>>You're right, it's structural nullability with
 >>>>extra syntax. But here's the thing: does it
@@ -119,7 +119,7 @@ interface IdempotencyRecord {
 >>>>
 >>>>rafa
 >>>>this is the right call. collapse this one
-
+>>>>
 >>>>>kai
 >>>>>Noted -- will collapse. Decision: receipts
 >>>>>in a separate map, record is just state +
@@ -138,9 +138,9 @@ Requirements:
 - Payload must be validated and normalized before if caller does not control
   the object.
 
-  > rafa
-  > how can we enfore this?
-
+> rafa
+> how can we enfore this?
+>
 >>kai
 >>You can't fully enforce normalization at the
 >>type level. But you can make it hard to skip:
@@ -157,7 +157,7 @@ Requirements:
 >>
 >>>rafa
 >>>i dont understand
-
+>>>
 >>>>kai
 >>>>Simpler: before the kernel hashes an object
 >>>>to make a key, it runs a cleanup function on
@@ -185,7 +185,7 @@ Requirements:
 >>>>```typescript
 >>>>Idempoter.fromxyz(schema, obj).defineScope(...)
 >>>>```
-
+>>>>
 >>>>>kai
 >>>>>This is sharp. The schema IS the normalizer
 >>>>>-- a zod/valibot schema validates and
@@ -225,28 +225,55 @@ Requirements:
 >>>>>because its not thread safe, so i figure that from now on im going
 >>>>>to encapsulate my code in a function that always returns an object
 >>>>>well what is that? a class, boom everything is a class was born.
+>>>>>
+>>>>>>kai
+>>>>>>I get the philosophy and it's
+>>>>>>battle-tested. But there's a tension:
+>>>>>>the Idempoter NEEDS persistent state to
+>>>>>>work. The idempotency records and receipts
+>>>>>>must survive across calls -- that's the
+>>>>>>whole point. If the instance is throwaway,
+>>>>>>where do the records live?
+>>>>>>
+>>>>>>Answer: the store is external. The
+>>>>>>throwaway instance is a transaction scope
+>>>>>>-- it holds the config and key identity
+>>>>>>for one execution, but delegates
+>>>>>>persistence to the injected store. The
+>>>>>>instance is disposable, the data isn't.
+>>>>>>
+>>>>>>So the class is a closure with a name.
+>>>>>>Which is exactly what you said: a function
+>>>>>>that returns an object. That tracks. The
+>>>>>>store is the only thing that persists
+>>>>>>across throwaway instances.
+>>>>>>
+>>>>>>>rafa
+>>>>>>>what if we assume we always have access to all of the deno
+>>>>>>>deploy primitives? This would make it so we dont have to pass
+>>>>>>>the store on construct
 
->>>>>> kai
->>>>>> I get the philosophy and it's
->>>>>> battle-tested. But there's a tension:
->>>>>> the Idempoter NEEDS persistent state to
->>>>>> work. The idempotency records and receipts
->>>>>> must survive across calls -- that's the
->>>>>> whole point. If the instance is throwaway,
->>>>>> where do the records live?
->>>>>>
->>>>>> Answer: the store is external. The
->>>>>> throwaway instance is a transaction scope
->>>>>> -- it holds the config and key identity
->>>>>> for one execution, but delegates
->>>>>> persistence to the injected store. The
->>>>>> instance is disposable, the data isn't.
->>>>>>
->>>>>> So the class is a closure with a name.
->>>>>> Which is exactly what you said: a function
->>>>>> that returns an object. That tracks. The
->>>>>> store is the only thing that persists
->>>>>> across throwaway instances.
+>>>>>>>> kai
+>>>>>>>> This kills a whole category of API
+>>>>>>>> complexity. If the kernel owns the store
+>>>>>>>> internally via `Deno.openKv()`, the
+>>>>>>>> caller never thinks about persistence.
+>>>>>>>> One less arg, one less thing to wrong.
+>>>>>>>>
+>>>>>>>> Trade-off: the kernel is now coupled to
+>>>>>>>> Deno runtime. Not portable to Node/Bun.
+>>>>>>>> Tests need `--unstable-kv` locally. But
+>>>>>>>> if this is a Deno Deploy framework and
+>>>>>>>> you're not pretending otherwise, that's
+>>>>>>>> fine. Portability is YAGNI until it isn't.
+>>>>>>>>
+>>>>>>>> Real upside: Deno KV gives you atomic
+>>>>>>>> ops (`kv.atomic().check().set().commit()`)
+>>>>>>>> That's the CAS primitive you need for
+>>>>>>>> lease safety. The kernel can guarantee
+>>>>>>>> lease atomicity internally without
+>>>>>>>> exposing it to callers. That was an open
+>>>>>>>> question -- now answered by the runtime.
 
 - Scope must include:
 
@@ -353,6 +380,50 @@ Requirements:
 >>>>>knows which keys to extract, it needs the
 >>>>>obj at execute-time to hash them. So it's
 >>>>>`execute(obj, fn)` not `execute(fn)`.
+>>>>>
+>>>>>rafa
+>>>>>we made a change above that would make this viable
+>>>>>
+>>>>>```ts
+>>>>>// define once (cold -- just config)
+>>>>>const scope = ["send-email", "to", "body"];
+>>>>>const idm = Idempoter.from(schema, reconcile).defineScope(scope);
+>>>>>
+>>>>>// execute many times (hot)
+>>>>>await idm.execute(obj1, fn1);
+>>>>>await idm.execute(obj2, fn2);
+>>>>>```
+
+>>>>>> kai
+>>>>>> This is clean. Store is gone (Deno KV
+>>>>>> internal), two args to `from`, one to
+>>>>>> `defineScope`. The chain reads well.
+>>>>>>
+>>>>>> Clarifying `scope` -- you have
+>>>>>> `["send-email", "to", "body"]` as one
+>>>>>> array. Is the first element the scope
+>>>>>> name and the rest are object keys to
+>>>>>> extract? If so, I'd separate them:
+>>>>>>
+>>>>>> ```ts
+>>>>>> .defineScope("send-email", ["to", "body"])
+>>>>>> ```
+>>>>>>
+>>>>>> Mixing the scope name with the key list
+>>>>>> in one flat array is ambiguous. The first
+>>>>>> element has different semantics from the
+>>>>>> rest -- it's a namespace, not a field to
+>>>>>> hash. Separating them makes the contract
+>>>>>> explicit.
+>>>>>>
+>>>>>> Also: `schema` is back. This means the
+>>>>>> kernel validates + canonicalizes via
+>>>>>> `schema.parse()` before key extraction.
+>>>>>> That's the normalize callback from earlier
+>>>>>> but formalized. Good -- it means the
+>>>>>> caller can't accidentally hash a
+>>>>>> non-canonical object. The schema enforces
+>>>>>> it.
 
 ---
 
@@ -513,59 +584,87 @@ attempts, updatedAt }`
 >>>>>>come up with something better? its just too hard to use, too many
 >>>>>>things to remember.
 
->>>>>>> kai
->>>>>>> Fair. The three-step chain was
->>>>>>> over-engineered. Let me start from what
->>>>>>> the caller actually needs to provide:
+>>>>>>>kai
+>>>>>>>Fair. The three-step chain was
+>>>>>>>over-engineered. Let me start from what
+>>>>>>>the caller actually needs to provide:
 >>>>>>>
->>>>>>> **Per app (once):** store
->>>>>>> **Per operation (once):** scope, keys,
->>>>>>> reconcile
->>>>>>> **Per call:** payload, side-effect fn
+>>>>>>>**Per app (once):** store
+>>>>>>>**Per operation (once):** scope, keys,
+>>>>>>>reconcile
+>>>>>>>**Per call:** payload, side-effect fn
 >>>>>>>
->>>>>>> So there are really two setup moments,
->>>>>>> not three. Collapse it:
+>>>>>>>So there are really two setup moments,
+>>>>>>>not three. Collapse it:
 >>>>>>>
->>>>>>> ```ts
->>>>>>> // setup (once per operation type)
->>>>>>> const sendEmail = Idempoter.for({
->>>>>>>   store,
->>>>>>>   scope: "send-email",
->>>>>>>   keys: ["to", "body"],
->>>>>>>   reconcile: (key) => checkEmail(key),
->>>>>>> });
+>>>>>>>```ts
+>>>>>>>// setup (once per operation type)
+>>>>>>>const sendEmail = Idempoter.for({
+>>>>>>>store,
+>>>>>>>scope: "send-email",
+>>>>>>>keys: ["to", "body"],
+>>>>>>>reconcile: (key) => checkEmail(key),
+>>>>>>>});
 >>>>>>>
->>>>>>> // use (per call -- this is the hot path)
->>>>>>> await sendEmail.run(obj, () => send(obj));
->>>>>>> ```
+>>>>>>>// use (per call -- this is the hot path)
+>>>>>>>await sendEmail.run(obj, () => send(obj));
+>>>>>>>```
 >>>>>>>
->>>>>>> One static factory, one options bag, one
->>>>>>> execution method. Two things to remember:
->>>>>>> `Idempoter.for(config)` and `.run(obj, fn)`.
+>>>>>>>One static factory, one options bag, one
+>>>>>>>execution method. Two things to remember:
+>>>>>>>`Idempoter.for(config)` and `.run(obj, fn)`.
 >>>>>>>
->>>>>>> Schema is gone. If you need normalization,
->>>>>>> sort your own keys before calling. The
->>>>>>> kernel just picks the keys you listed
->>>>>>> and hashes them deterministically. Less
->>>>>>> magic, less to remember.
+>>>>>>>Schema is gone. If you need normalization,
+>>>>>>>sort your own keys before calling. The
+>>>>>>>kernel just picks the keys you listed
+>>>>>>>and hashes them deterministically. Less
+>>>>>>>magic, less to remember.
 >>>>>>>
->>>>>>> If you want the throwaway pattern, that
->>>>>>> works too:
+>>>>>>>If you want the throwaway pattern, that
+>>>>>>>works too:
 >>>>>>>
->>>>>>> ```ts
->>>>>>> await Idempoter.for({
->>>>>>>   store,
->>>>>>>   scope: "send-email",
->>>>>>>   keys: ["to", "body"],
->>>>>>>   reconcile: checkEmail,
->>>>>>> }).run(obj, () => send(obj));
->>>>>>> ```
+>>>>>>>```ts
+>>>>>>>await Idempoter.for({
+>>>>>>>store,
+>>>>>>>scope: "send-email",
+>>>>>>>keys: ["to", "body"],
+>>>>>>>reconcile: checkEmail,
+>>>>>>>}).run(obj, () => send(obj));
+>>>>>>>```
 >>>>>>>
->>>>>>> One expression. Build and execute inline.
->>>>>>> Instance is garbage collected immediately.
+>>>>>>>One expression. Build and execute inline.
+>>>>>>>Instance is garbage collected immediately.
 >>>>>>>
->>>>>>> Does this feel closer? Or still too much
->>>>>>> ceremony?
+>>>>>>>Does this feel closer? Or still too much
+>>>>>>>ceremony?
+>>>>>>>
+>>>>>>>rafa
+>>>>>>>above we made some changes which affects this
+
+>>>>>>>> kai
+>>>>>>>> Right. With the Deno KV decision and the
+>>>>>>>> updated chain, `Idempoter.for` with the
+>>>>>>>> options bag is dead. The current API is:
+>>>>>>>>
+>>>>>>>> ```ts
+>>>>>>>> // cold
+>>>>>>>> const idm = Idempoter
+>>>>>>>>   .from(schema, reconcile)
+>>>>>>>>   .defineScope("send-email", ["to", "body"]);
+>>>>>>>>
+>>>>>>>> // hot
+>>>>>>>> await idm.execute(obj, fn);
+>>>>>>>> ```
+>>>>>>>>
+>>>>>>>> Store is internal (Deno KV). Schema
+>>>>>>>> validates + canonicalizes. Reconcile is
+>>>>>>>> the only callback. Two things to
+>>>>>>>> remember: `from(schema, reconcile)` and
+>>>>>>>> `execute(obj, fn)`. `defineScope` is the
+>>>>>>>> bridge between config and execution.
+>>>>>>>>
+>>>>>>>> This supersedes the `Idempoter.for`
+>>>>>>>> proposal. That thread can collapse.
 
 - Must deterministically answer:
   - `reciept(truthy)` -> side effect happened

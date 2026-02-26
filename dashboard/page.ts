@@ -8,6 +8,7 @@ export function getDashboardPage(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Auto-Bot Dashboard</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
@@ -1832,15 +1833,13 @@ export function getDashboardPage(): string {
     }).catch(function() { toast('Copy failed', 'error'); });
   }
 
-  document.getElementById('et-copy-id').addEventListener('click', function() {
-    etCopyText(document.getElementById('et-id-display').textContent, this);
-  });
-  document.getElementById('et-copy-live').addEventListener('click', function() {
-    etCopyText(document.getElementById('et-url-live').textContent, this);
-  });
-  document.getElementById('et-copy-test').addEventListener('click', function() {
-    etCopyText(document.getElementById('et-url-test').textContent, this);
-  });
+  // Register copy button handlers (null-guarded)
+  var elCopyId = document.getElementById('et-copy-id');
+  var elCopyLive = document.getElementById('et-copy-live');
+  var elCopyTest = document.getElementById('et-copy-test');
+  if (elCopyId) elCopyId.addEventListener('click', function() { etCopyText(document.getElementById('et-id-display').textContent, this); });
+  if (elCopyLive) elCopyLive.addEventListener('click', function() { etCopyText(document.getElementById('et-url-live').textContent, this); });
+  if (elCopyTest) elCopyTest.addEventListener('click', function() { etCopyText(document.getElementById('et-url-test').textContent, this); });
 
   function etLoadTemplate(id) {
     var t = etTemplates.find(function(x) { return x.id === id; });

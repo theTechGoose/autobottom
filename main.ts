@@ -2347,6 +2347,14 @@ Deno.serve(async (req) => {
     return json({ ok: true, ts: Date.now() });
   }
 
+  // Favicon
+  if (url.pathname === "/favicon.svg") {
+    try {
+      const svg = await Deno.readTextFile(new URL("./favicon.svg", import.meta.url));
+      return new Response(svg, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" } });
+    } catch { return new Response("", { status: 404 }); }
+  }
+
   // Serve sound files from S3: /sounds/{orgId}/{packId}/{slot}.mp3
   if (req.method === "GET" && url.pathname.startsWith("/sounds/")) {
     const parts = url.pathname.replace("/sounds/", "").split("/");

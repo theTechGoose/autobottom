@@ -369,6 +369,13 @@ export function getDashboardPage(): string {
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
+      <!-- Email Templates (opens modal) -->
+      <div class="sb-link" id="email-templates-open">
+        <div class="icon" style="background:var(--cyan-bg);color:var(--cyan);">${icons.mail}</div>
+        <span class="title">Email Templates</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
       <!-- Users (opens modal) -->
       <div class="sb-link" id="users-open">
         <div class="icon users">${icons.users}</div>
@@ -588,6 +595,73 @@ export function getDashboardPage(): string {
 <div class="modal-overlay" id="email-reports-modal">
   <div class="modal er-modal">
     <div id="er-content"></div>
+  </div>
+</div>
+
+<!-- Email Templates Modal -->
+<div class="modal-overlay" id="email-templates-modal">
+  <div class="modal" style="width:90vw;max-width:90vw;height:85vh;display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:14px;">
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div>
+        <div class="modal-title" style="margin-bottom:2px;">Email Templates</div>
+        <div class="modal-sub" style="margin-bottom:0;">Build and preview audit notification emails</div>
+      </div>
+      <button class="sf-btn ghost" id="email-templates-cancel" style="font-size:11px;">Close</button>
+    </div>
+    <!-- Body -->
+    <div style="display:flex;flex:1;overflow:hidden;min-height:0;">
+      <!-- Template list sidebar -->
+      <div style="width:190px;min-width:190px;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;">
+        <div style="padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0;">
+          <button class="sf-btn primary" id="et-new-btn" style="width:100%;font-size:11px;">+ New Template</button>
+        </div>
+        <div id="et-list" style="flex:1;overflow-y:auto;padding:6px;"></div>
+      </div>
+      <!-- HTML Editor -->
+      <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border);min-width:0;">
+        <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-shrink:0;">
+          <input id="et-name" class="sf-input" type="text" placeholder="Template name..." style="width:160px;flex-shrink:0;">
+          <input id="et-subject" class="sf-input" type="text" placeholder="Email subject line..." style="flex:1;">
+          <button class="sf-btn primary" id="et-save-btn" style="font-size:11px;white-space:nowrap;flex-shrink:0;">Save</button>
+          <button class="sf-btn danger" id="et-delete-btn" style="font-size:11px;flex-shrink:0;" disabled>Delete</button>
+        </div>
+        <div style="padding:5px 12px;background:var(--bg);border-bottom:1px solid var(--border);font-size:10px;color:var(--text-dim);flex-shrink:0;line-height:1.8;">
+          <span style="color:var(--text-muted);font-weight:600;">Variables:</span>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{agentName}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{score}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{reportUrl}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{recordingUrl}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{appealUrl}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{feedbackText}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{recordId}}</code>
+        </div>
+        <!-- Template ID + Webhook URLs panel (shown after save/load) -->
+        <div id="et-webhook-info" style="display:none;padding:8px 12px;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);white-space:nowrap;">Template ID</span>
+            <code id="et-id-display" style="font-size:10px;color:var(--cyan);background:var(--cyan-bg);padding:2px 7px;border-radius:4px;font-family:var(--mono);word-break:break-all;flex:1;"></code>
+            <button id="et-copy-id" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap;">Copy ID</button>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;">
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--green);white-space:nowrap;line-height:1.8;">Live URL</span>
+            <code id="et-url-live" style="font-size:9px;color:var(--text-muted);word-break:break-all;flex:1;line-height:1.6;"></code>
+            <button id="et-copy-live" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap;">Copy</button>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:6px;">
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--yellow);white-space:nowrap;line-height:1.8;">Test URL</span>
+            <code id="et-url-test" style="font-size:9px;color:var(--text-muted);word-break:break-all;flex:1;line-height:1.6;"></code>
+            <button id="et-copy-test" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap;">Copy</button>
+          </div>
+        </div>
+        <textarea id="et-html" style="flex:1;resize:none;background:var(--bg);color:var(--text);border:none;outline:none;padding:14px 16px;font-family:var(--mono);font-size:12px;line-height:1.6;" placeholder="Paste or type HTML here..."></textarea>
+      </div>
+      <!-- Live Preview -->
+      <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;">
+        <div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);flex-shrink:0;">Live Preview</div>
+        <iframe id="et-preview" style="flex:1;border:none;background:#fff;" sandbox="allow-same-origin"></iframe>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1182,7 +1256,8 @@ export function getDashboardPage(): string {
   // ===== Users Modal =====
   var allUsers = [];
   var currentAdminEmail = '';
-  fetch('/admin/api/me').then(function(r){return r.json()}).then(function(d){currentAdminEmail=d.username||''; document.getElementById('user-email').textContent=currentAdminEmail; document.getElementById('user-avatar').textContent=(currentAdminEmail||'?')[0].toUpperCase(); if(currentAdminEmail==='ai@monsterrg.com'){document.getElementById('super-admin-link').style.display='';}}).catch(function(){});
+  var currentOrgId = '';
+  fetch('/admin/api/me').then(function(r){return r.json()}).then(function(d){currentAdminEmail=d.username||''; currentOrgId=d.orgId||''; document.getElementById('user-email').textContent=currentAdminEmail; document.getElementById('user-avatar').textContent=(currentAdminEmail||'?')[0].toUpperCase(); if(currentAdminEmail==='ai@monsterrg.com'){document.getElementById('super-admin-link').style.display='';}}).catch(function(){});
   var roleColors = { admin: 'blue', judge: 'purple', manager: 'yellow', reviewer: 'green', user: 'cyan' };
   var roleInitials = { admin: 'A', judge: 'J', manager: 'M', reviewer: 'R', user: 'U' };
 
@@ -1715,6 +1790,130 @@ export function getDashboardPage(): string {
   });
   erModal.addEventListener('click', function(e) { if (e.target === erModal) erModal.classList.remove('open'); });
 })();
+
+  // ===== Email Templates =====
+  var etTemplates = [];
+  var etCurrentId = null;
+
+  function etRenderList() {
+    var list = document.getElementById('et-list');
+    if (!etTemplates.length) {
+      list.innerHTML = '<div style="color:var(--text-dim);font-size:10px;padding:8px 4px;">No templates yet</div>';
+      return;
+    }
+    list.innerHTML = etTemplates.map(function(t) {
+      var active = t.id === etCurrentId;
+      return '<div class="et-item" data-id="' + t.id + '" style="padding:8px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;color:' + (active ? 'var(--text-bright)' : 'var(--text-muted)') + ';background:' + (active ? 'var(--bg-surface)' : 'transparent') + ';margin-bottom:2px;transition:all 0.1s;">' + esc(t.name) + '</div>';
+    }).join('');
+    list.querySelectorAll('.et-item').forEach(function(el) {
+      el.addEventListener('click', function() { etLoadTemplate(this.getAttribute('data-id')); });
+    });
+  }
+
+  function etShowWebhookInfo(id) {
+    var info = document.getElementById('et-webhook-info');
+    if (!id) { info.style.display = 'none'; return; }
+    var orgId = currentOrgId || 'YOUR_ORG_ID';
+    var base = window.location.origin + '/webhooks/audit-complete?org=' + encodeURIComponent(orgId) + '&template=' + encodeURIComponent(id);
+    var liveUrl = base;
+    var testUrl = base + '&test=YOUR_EMAIL';
+    document.getElementById('et-id-display').textContent = id;
+    document.getElementById('et-url-live').textContent = liveUrl;
+    document.getElementById('et-url-test').textContent = testUrl;
+    info.style.display = '';
+  }
+
+  function etCopyText(text, btn) {
+    navigator.clipboard.writeText(text).then(function() {
+      var orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      btn.style.color = 'var(--green)';
+      setTimeout(function() { btn.textContent = orig; btn.style.color = ''; }, 1500);
+    }).catch(function() { toast('Copy failed', 'error'); });
+  }
+
+  document.getElementById('et-copy-id').addEventListener('click', function() {
+    etCopyText(document.getElementById('et-id-display').textContent, this);
+  });
+  document.getElementById('et-copy-live').addEventListener('click', function() {
+    etCopyText(document.getElementById('et-url-live').textContent, this);
+  });
+  document.getElementById('et-copy-test').addEventListener('click', function() {
+    etCopyText(document.getElementById('et-url-test').textContent, this);
+  });
+
+  function etLoadTemplate(id) {
+    var t = etTemplates.find(function(x) { return x.id === id; });
+    if (!t) return;
+    etCurrentId = id;
+    document.getElementById('et-name').value = t.name;
+    document.getElementById('et-subject').value = t.subject;
+    document.getElementById('et-html').value = t.html;
+    document.getElementById('et-delete-btn').disabled = false;
+    etUpdatePreview();
+    etShowWebhookInfo(id);
+    etRenderList();
+  }
+
+  function etUpdatePreview() {
+    document.getElementById('et-preview').srcdoc = document.getElementById('et-html').value;
+  }
+
+  function etNewTemplate() {
+    etCurrentId = null;
+    document.getElementById('et-name').value = '';
+    document.getElementById('et-subject').value = '';
+    document.getElementById('et-html').value = '';
+    document.getElementById('et-delete-btn').disabled = true;
+    document.getElementById('et-preview').srcdoc = '';
+    etShowWebhookInfo(null);
+    etRenderList();
+  }
+
+  function etFetch() {
+    return fetch('/admin/email-templates')
+      .then(function(r) { return r.json(); })
+      .then(function(d) { etTemplates = Array.isArray(d) ? d : []; etRenderList(); });
+  }
+
+  document.getElementById('email-templates-open').addEventListener('click', function() {
+    openModal('email-templates-modal');
+    etFetch();
+  });
+  document.getElementById('email-templates-cancel').addEventListener('click', function() { closeModal('email-templates-modal'); });
+  backdropClose('email-templates-modal');
+  document.getElementById('et-new-btn').addEventListener('click', etNewTemplate);
+  document.getElementById('et-html').addEventListener('input', etUpdatePreview);
+
+  document.getElementById('et-save-btn').addEventListener('click', function() {
+    var btn = this;
+    var name = document.getElementById('et-name').value.trim();
+    var subject = document.getElementById('et-subject').value.trim();
+    var html = document.getElementById('et-html').value;
+    if (!name || !subject || !html) { toast('Name, subject, and HTML are required', 'error'); return; }
+    btn.disabled = true; btn.textContent = 'Saving...';
+    var payload = { name: name, subject: subject, html: html };
+    if (etCurrentId) payload.id = etCurrentId;
+    fetch('/admin/email-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) { toast(d.error, 'error'); }
+        else { etCurrentId = d.id; etShowWebhookInfo(d.id); toast('Template saved', 'success'); etFetch().then(function() { etRenderList(); }); }
+      })
+      .catch(function() { toast('Save failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Save'; });
+  });
+
+  document.getElementById('et-delete-btn').addEventListener('click', function() {
+    if (!etCurrentId || !confirm('Delete this template? This cannot be undone.')) return;
+    var btn = this;
+    btn.disabled = true;
+    fetch('/admin/email-templates/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: etCurrentId }) })
+      .then(function(r) { return r.json(); })
+      .then(function() { etNewTemplate(); return etFetch(); })
+      .then(function() { toast('Template deleted', 'success'); })
+      .catch(function() { toast('Delete failed', 'error'); btn.disabled = false; });
+  });
 </script>
 </body>
 </html>`;

@@ -18,6 +18,7 @@ import {
   trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getPipelineConfig, setPipelineConfig,
   saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
+  listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
   getAllAnswersForFinding,
   getGamificationSettings, saveGamificationSettings,
   getJudgeGamificationOverride, saveJudgeGamificationOverride,
@@ -233,6 +234,9 @@ const postRoutes: Record<string, Handler> = {
   "/admin/parallelism": handleSetParallelism,
   "/admin/email-reports": handleSaveEmailReport,
   "/admin/email-reports/delete": handleDeleteEmailReport,
+  "/admin/email-templates": handleSaveEmailTemplate,
+  "/admin/email-templates/delete": handleDeleteEmailTemplate,
+  "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/admin/reset-finding": handleResetFinding,
 
   // Appeal (orgId in body)
@@ -326,6 +330,8 @@ const getRoutes: Record<string, Handler> = {
   "/admin/parallelism": handleGetParallelism,
   "/admin/users": handleAdminListUsers,
   "/admin/email-reports": handleListEmailReports,
+  "/admin/email-templates": handleListEmailTemplates,
+  "/admin/email-templates/get": handleGetEmailTemplate,
   "/docs/index": () => Promise.resolve(html(getDocsIndexHtml())),
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
   "/api/openapi.json": () => Promise.resolve(json(getOpenApiSpec())),
@@ -597,7 +603,7 @@ async function handleDashboardData(req: Request): Promise<Response> {
 async function handleAdminMe(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
-  return json({ username: auth.email, role: auth.role });
+  return json({ username: auth.email, role: auth.role, orgId: auth.orgId });
 }
 
 // -- Badge Editor --
@@ -1324,6 +1330,90 @@ async function handleDeleteEmailReport(req: Request): Promise<Response> {
   if (!body.id) return json({ error: "id required" }, 400);
   await deleteEmailReportConfig(auth.orgId, body.id);
   return json({ ok: true });
+}
+
+// -- Admin: Email Templates --
+
+async function handleListEmailTemplates(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  return json(await listEmailTemplates(auth.orgId));
+}
+
+async function handleGetEmailTemplate(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id) return json({ error: "id required" }, 400);
+  const t = await getEmailTemplate(auth.orgId, id);
+  return t ? json(t) : json({ error: "not found" }, 404);
+}
+
+async function handleSaveEmailTemplate(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  if (!body.name || !body.subject || !body.html) return json({ error: "name, subject, html required" }, 400);
+  return json(await saveEmailTemplate(auth.orgId, body));
+}
+
+async function handleDeleteEmailTemplate(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  if (!body.id) return json({ error: "id required" }, 400);
+  await deleteEmailTemplate(auth.orgId, body.id);
+  return json({ ok: true });
+}
+
+// -- Webhooks: Audit Complete Email --
+
+async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const templateId = url.searchParams.get("template");
+  const testEmail = url.searchParams.get("test");
+  const orgId = url.searchParams.get("org") as OrgId;
+
+  if (!orgId) return json({ error: "org required" }, 400);
+
+  const body = await req.json();
+  const { finding, score } = body;
+  if (!finding) return json({ error: "finding required" }, 400);
+
+  const template = templateId
+    ? await getEmailTemplate(orgId, templateId)
+    : (await listEmailTemplates(orgId))[0];
+  if (!template) return json({ error: "no template found" }, 404);
+
+  const agentEmail = finding.owner ?? "";
+  const agentName = agentEmail.split("@")[0] ?? agentEmail;
+  const scoreVal = score ?? (Array.isArray(finding.answeredQuestions)
+    ? Math.round(finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length * 100)
+    : 0);
+  const findingId = finding.id ?? "";
+
+  const vars: Record<string, string> = {
+    agentName,
+    agentEmail,
+    score: scoreVal + "%",
+    findingId,
+    recordId: String(finding.record?.RecordId ?? ""),
+    reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
+    recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
+    appealUrl: `${env.selfUrl}/audit/appeal?findingId=${findingId}`,
+    feedbackText: finding.feedback?.text ?? "",
+  };
+
+  const render = (str: string) => str.replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => vars[k] ?? "");
+  const htmlBody = render(template.html);
+  const subject = render(template.subject);
+
+  const to = testEmail || agentEmail;
+  if (!to) return json({ error: "no recipient email" }, 400);
+
+  await sendEmail({ to, subject, htmlBody });
+  console.log(`[EMAIL] Audit complete email → ${to} (finding: ${findingId})`);
+  return json({ ok: true, to });
 }
 
 // -- Admin: Token Usage --

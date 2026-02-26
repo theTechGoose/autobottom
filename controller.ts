@@ -1005,8 +1005,20 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         <span class="hero-stat"><span class="dot" style="background:var(--text-dim)"></span>${total} total</span>
       </div>
       <div class="hero-actions">
-        <button class="appeal-btn" id="appeal-btn" onclick="toggleAppealPanel()">File Appeal</button>
+        <button class="appeal-btn" id="appeal-btn" onclick="confirmAppeal()">File Appeal</button>
       </div>
+      <!-- Appeal Confirmation -->
+      <div id="appeal-confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);z-index:200;align-items:center;justify-content:center;">
+        <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:28px 32px 22px;max-width:380px;width:90vw;animation:appealIn 0.16s ease;">
+          <div style="font-size:16px;font-weight:700;color:#e6edf3;margin-bottom:6px;">File an Appeal?</div>
+          <div style="font-size:12px;color:#6e7681;margin-bottom:20px;line-height:1.5;">This will allow you to submit a different or additional recording for re-audit. Only one appeal can be filed per record.</div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;">
+            <button onclick="document.getElementById('appeal-confirm-overlay').style.display='none'" style="padding:8px 18px;border-radius:7px;border:1px solid #1c2333;background:transparent;color:#6e7681;font-size:12px;font-weight:600;cursor:pointer;">Cancel</button>
+            <button onclick="document.getElementById('appeal-confirm-overlay').style.display='none';toggleAppealPanel()" style="padding:8px 18px;border-radius:7px;border:none;background:#58a6ff;color:#fff;font-size:12px;font-weight:600;cursor:pointer;">Continue</button>
+          </div>
+        </div>
+      </div>
+      <style>@keyframes appealIn { from { opacity:0;transform:scale(0.95) translateY(6px); } to { opacity:1;transform:none; } }</style>
       <div class="appeal-panel" id="appeal-panel">
         <div class="appeal-tabs">
           <button class="appeal-tab active" id="tab-recording" onclick="switchFork('recording')">Different Recording</button>
@@ -1166,6 +1178,20 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     var _snipEndMs = null;
     var _uploadFile = null;
 
+    function confirmAppeal() {
+      var btn = document.getElementById('appeal-btn');
+      if (btn.disabled || btn.classList.contains('filed')) return;
+      document.getElementById('appeal-confirm-overlay').style.display = 'flex';
+    }
+
+    function lockAppealBtn() {
+      var btn = document.getElementById('appeal-btn');
+      btn.textContent = 'Appeal Filed';
+      btn.classList.add('filed');
+      btn.disabled = true;
+      btn.onclick = null;
+    }
+
     function toggleAppealPanel() {
       var panel = document.getElementById('appeal-panel');
       var btn = document.getElementById('appeal-btn');
@@ -1219,6 +1245,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           btn.textContent = d.error;
           setTimeout(function() { btn.textContent = 'Submit Re-Audit'; btn.disabled = false; }, 2500);
         } else {
+          lockAppealBtn();
           btn.textContent = 'Redirecting...';
           window.location.href = '/audit/report?id=' + d.newFindingId;
         }
@@ -1375,6 +1402,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
             btn.textContent = d.error;
             setTimeout(function() { btn.textContent = 'Submit Re-Audit'; btn.disabled = false; }, 2500);
           } else {
+            lockAppealBtn();
             btn.textContent = 'Redirecting...';
             window.location.href = '/audit/report?id=' + d.newFindingId;
           }

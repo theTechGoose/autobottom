@@ -460,6 +460,52 @@ export async function deleteEmailReportConfig(orgId: OrgId, id: string): Promise
   await db.delete(orgKey(orgId, "email-report-config", id));
 }
 
+// -- Email Templates --
+
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  subject: string;
+  html: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export async function listEmailTemplates(orgId: OrgId): Promise<EmailTemplate[]> {
+  const db = await kv();
+  const templates: EmailTemplate[] = [];
+  for await (const entry of db.list<EmailTemplate>({ prefix: orgKey(orgId, "email-template") })) {
+    if (entry.value) templates.push(entry.value);
+  }
+  return templates;
+}
+
+export async function getEmailTemplate(orgId: OrgId, id: string): Promise<EmailTemplate | null> {
+  const db = await kv();
+  const entry = await db.get<EmailTemplate>(orgKey(orgId, "email-template", id));
+  return entry.value ?? null;
+}
+
+export async function saveEmailTemplate(orgId: OrgId, template: Partial<EmailTemplate> & { name: string; subject: string; html: string }): Promise<EmailTemplate> {
+  const db = await kv();
+  const now = Date.now();
+  const full: EmailTemplate = {
+    id: template.id || crypto.randomUUID(),
+    name: template.name,
+    subject: template.subject,
+    html: template.html,
+    createdAt: template.createdAt || now,
+    updatedAt: now,
+  };
+  await db.set(orgKey(orgId, "email-template", full.id), full);
+  return full;
+}
+
+export async function deleteEmailTemplate(orgId: OrgId, id: string): Promise<void> {
+  const db = await kv();
+  await db.delete(orgKey(orgId, "email-template", id));
+}
+
 // -- Sound Pack Metadata (S3-backed) --
 
 export type SoundSlot = "ping" | "double" | "triple" | "mega" | "ultra" | "rampage" | "godlike" | "levelup" | "shutdown";

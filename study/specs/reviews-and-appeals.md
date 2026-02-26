@@ -43,7 +43,7 @@ audit does NOT auto-resolve. Instead:
 
 ### Who is a reviewer
 
-Any user with the `reviewer` capability in their
+Any user with the `audit-review` capability in their
 role. Reviewers see audits scoped to their team
 permissions. They cannot see peer reviewers' work
 (visibility rule: see self + higher level numbers).
@@ -107,7 +107,7 @@ Standard KV entity with isActive soft-delete.
 
 ### Who is a judge
 
-Any user with the `judge` capability in their role.
+Any user with the `appeals` capability in their role.
 Judges must be at a higher authority level than the
 reviewer whose result is being appealed. Judges
 cannot appeal their own decisions.

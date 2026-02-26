@@ -14,19 +14,23 @@ Runs on Deno Deploy. Uses Deno KV internally.
 ### Construction (cold -- just config)
 
 ```ts
-type Schema<T> = (raw: unknown) => T;
-type Reconciler = (key: string) =>
-  Promise<unknown | null>;
+type Reconciler = (key: string) => Promise<unknown | null>;
 
-const idm = Idempoter
-  .from(schema, reconcile)
-  .defineScope("send-email", ["to", "body"]);
+interface IdempoterOptions<T> {
+  schema: Schema<T>;
+  timeout: number;        // lease duration in ms
+  reconcile: Reconciler;
+}
+
+const idm = Idempoter.from({ schema, timeout: 5000, reconcile }).defineScope(
+  "send-email",
+  ["to", "body"],
+);
 ```
 
-- `from(schema, reconcile)` -- binds a type
-  stripper and a reconciliation callback.
-  Constructor is private; `from` is the only
-  entry point.
+- `from(opts)` -- binds schema, lease timeout, and
+  reconciliation callback. Constructor is private;
+  `from` is the only entry point.
 - `defineScope(scope, keys)` -- binds a scope
   name and the object keys used for hashing.
   Returns a scoped executor. Nothing executes
@@ -38,16 +42,29 @@ const idm = Idempoter
 const receipt = await idm.execute(obj, fn);
 ```
 
-- `execute(obj, fn)` -- the single public verb.
-  Strips the object via schema, extracts keys,
-  hashes deterministically, then runs the state
-  machine.
+- `execute(obj, fn)` -- run a side-effecting
+  function with idempotency. Strips the object
+  via schema, extracts keys, hashes
+  deterministically, then runs the state machine.
+
+### External state update
+
+```ts
+idm.mark(key, receipt);  // -> succeeded
+idm.mark(key);           // -> retryable
+```
+
+- `mark(key, receipt?)` -- externally update
+  the state of an idempotency record. Used by
+  providers after reconciliation to tell the
+  kernel what actually happened. If receipt is
+  provided, marks succeeded and stores the
+  receipt. If omitted, marks retryable.
 
 ### Throwaway usage
 
 ```ts
-await Idempoter
-  .from(schema, reconcile)
+await Idempoter.from({ schema, timeout: 5000, reconcile })
   .defineScope("send-email", ["to", "body"])
   .execute(obj, () => emailApi.send(obj));
 ```
@@ -58,16 +75,32 @@ Instance is garbage collected immediately.
 
 ## 2. Schema
 
-The schema is a plain function: `(raw: unknown) => T`.
-No validation library. It picks the keys you expect
-and strips everything else. The kernel calls it before
-key extraction to guarantee canonical input.
+The schema is a plain json schema No validation library. the idemptr picks
+the keys you expect and strips everything else. coerces the types into what
+is expected the kernel then call calls the schema handler before key
+extraction to guarantee canonical input.
 
-```ts
-const emailSchema = (raw: unknown) => {
-  const obj = raw as Record<string, unknown>;
-  return { to: String(obj.to), body: String(obj.body) };
-};
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "age": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "email": {
+      "type": "string",
+      "format": "email"
+    }
+  },
+  "required": ["name", "email"],
+  "additionalProperties": false
+}
 ```
 
 ---
@@ -77,8 +110,9 @@ const emailSchema = (raw: unknown) => {
 Keys are deterministic. The kernel:
 
 1. Runs the schema stripper on the object.
-2. Picks the fields listed in `defineScope`.
-3. Sorts them deterministically.
+2. Picks the fields listed in schema.
+3. Sorts them deterministically (does this recursively for all objects
+   inside the object) even the ones in arrays
 4. Hashes: `sha256(scope + sorted key-value pairs)`.
 
 The scope name is mandatory and prevents collisions
@@ -93,8 +127,7 @@ between operations that share payload shapes.
 ```ts
 interface IdempotencyRecord {
   key: string;
-  state: "locked" | "succeeded" | "unknown"
-    | "failed";
+  state: "locked" | "succeeded" | "unknown" | "failed";
   lockedUntil: number;
   attempts: number;
   updatedAt: number;
@@ -122,8 +155,7 @@ Reconcile is a callback injected at construction.
 The kernel is ignorant of vendor specifics.
 
 ```ts
-type Reconciler = (key: string) =>
-  Promise<unknown | null>;
+type Reconciler = (key: string) => Promise<unknown | null>;
 ```
 
 Three outcomes:
@@ -178,7 +210,7 @@ primitives. No external store configuration needed.
 ## 8. Design Constraints
 
 - Idempoter < ~300 LOC
-- Single public verb: `execute`
+- Two public methods: `execute` and `mark`
 - Constructor is private; `from` static factory only
 - State machine fully encapsulated
 - No DSL, no decorators, no magic

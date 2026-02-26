@@ -143,7 +143,6 @@ waitUntil(), matched by EventConfig.
 - audit.config.modified
 - audit.config.deleted
 - audit.config.versionPublished
-- audit.config.schemaBreakingChange
 
 ### AuditQuestion
 
@@ -288,9 +287,14 @@ waitUntil(), matched by EventConfig.
 - serviceBinding.fallbackTriggered
 - serviceBinding.circuitBreakerOpened
 - serviceBinding.circuitBreakerClosed
+- serviceBinding.referenceOrphaned
 
 ### Generic CRUD
 
 - record.created
 - record.modified
 - record.deleted
+
+### Unscoped
+
+- breakingChange

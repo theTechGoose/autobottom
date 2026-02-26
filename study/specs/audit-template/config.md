@@ -106,7 +106,7 @@ the audit config version.
 - audit.config.modified
 - audit.config.deleted
 - audit.config.versionPublished
-- audit.config.schemaBreakingChange
+- breakingChange
 
 A breaking change is: required FieldDef added
 without default, FieldDef removed, or FieldDef

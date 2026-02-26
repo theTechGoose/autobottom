@@ -176,16 +176,15 @@ the migration mechanism.
 
 A breaking change is: required field added without
 default, field removed, or field type changed. On
-breaking change, fire
-`configSchema.error.breakingChange` as a new
-EventTrigger value in the existing EventConfig system.
+breaking change, fire `breakingChange` event (unscoped
+-- not tied to a specific domain prefix).
 
 Event payload: provider ID, before/after schema diff,
 count of affected configs, list of affected team IDs.
 
 This reuses the existing EventConfig infrastructure
 (triggers, conditions, HTTP dispatch). No new event
-system needed -- just a new EventTrigger enum value.
+system needed -- just a new event catalog entry.
 
 ## ~~4. Services & Service Bindings [ ]~~
 
@@ -256,10 +255,10 @@ chain.
 
 On deactivation, the system scans child
 ServiceBindings for references to the config and
-fires `serviceBindings.warning.referenceOrphaned`
-for each affected binding. This is a new
-EventTrigger value in the existing EventConfig
-system -- no new infrastructure.
+fires `serviceBinding.referenceOrphaned`
+for each affected binding. This is a standard event
+in the existing EventConfig system -- no new
+infrastructure.
 
 Event payload: orphaned ProviderConfig ID, affected
 ServiceBinding ID, affected team ID, remaining

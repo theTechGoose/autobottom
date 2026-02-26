@@ -4,10 +4,11 @@ Infrastructure integrations defined by developers,
 configured by admins. Services bind named app
 functions to specific providers.
 
-Note: this is the platform-level provider concept
-(which infrastructure to use), not the execution-
-level provider (code sandbox + idempoter). See
-provider.md for the execution kernel.
+Note: Provider is a single concept that combines
+infrastructure config (type, name, configSchema)
+with an execution kernel (code sandbox + idempoter).
+See provider.md for the execution methods and
+idempoter.md for the reliability kernel.
 
 ---
 

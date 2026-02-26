@@ -4,13 +4,11 @@
 
 Build a small reliability kernel that guarantees:
 
-* Exactly-once execution per key
-* Memoized receipts
-* Lease-based concurrency control
-* Backoff support
-* Mandatory reconciliation
-* Hot-swappable providers
-* Serverless-safe state export/import
+- Exactly-once execution per key
+- Memoized receipts
+- Lease-based concurrency control
+- Backoff support
+- Mandatory reconciliation
 
 This framework centralizes reliability instead of
 scattering it across providers and endpoints.
@@ -28,10 +26,7 @@ side-effecting function.
 
 ```ts
 interface Idempoter {
-  execute<T>(
-    key: string,
-    fn: () => Promise<T>
-  ): Promise<T>;
+  execute<T>(key: string, fn: () => Promise<T>): Promise<T>;
 }
 ```
 
@@ -40,15 +35,17 @@ interface Idempoter {
 `execute(key, fn)` must:
 
 1. Atomically claim the key (with lease).
-2. If state === succeeded -> return stored receipt.
-3. If executable:
-   * run `fn()`
-   * persist receipt
-   * return receipt
-4. If `fn()` throws:
-   * mark unknown or retryable
-   * trigger reconcile process
-5. Ensure eventual convergence via reconcile.
+1. If state === succeeded -> return stored receipt.
+1. If executable:
+   - run `fn()`
+   - persist receipt
+   - return receipt
+1. If `fn()` throws:
+   - mark unknown
+1. if called again with the same idempotency key and unknown trigger reconcile
+   - reconcile returns either a reciept or null
+   - if reconcile result === null mark as failed
+   - if reconcile result is truthy mark as succeeded
 
 No state inspection required at call sites.
 
@@ -57,11 +54,7 @@ No state inspection required at call sites.
 Minimal internal states:
 
 ```ts
-type State =
-  | "started"
-  | "succeeded"
-  | "unknown"
-  | "retryable";
+type State = "locked" | "succeeded" | "unknown" | "retryable";
 ```
 
 Stored record:
@@ -70,13 +63,35 @@ Stored record:
 interface IdempotencyRecord {
   key: string;
   state: State;
-  leaseUntil: number;
-  nextAttemptAt?: number;
-  receipt?: unknown;
+  lockedUntil: number;
   attempts: number;
   updatedAt: number;
+  receipt: unknown;
 }
 ```
+
+> rafa
+> i dont like the nullable reciept field is thre anything we can do here?
+
+>> kai
+>> Discriminated union on state. Split the record
+>> into two shapes:
+>>
+>> ```ts
+>> type IdempotencyRecord =
+>>   | { key: string; state: "locked" | "unknown"
+>>       lockedUntil: number; attempts: number;
+>>       updatedAt: number }
+>>   | { key: string; state: "succeeded";
+>>       receipt: unknown; attempts: number;
+>>       updatedAt: number };
+>> ```
+>>
+>> `receipt` only exists when `state === "succeeded"`
+>> so there's no nullable field and the narrowing
+>> is enforced by the compiler. You could also drop
+>> `lockedUntil` from the succeeded variant since
+>> the lease is irrelevant once it's done.
 
 ### 1.3 Key Design
 
@@ -88,14 +103,54 @@ v1:tenant:endpoint:destination:sha256(canonical)
 
 Requirements:
 
-* Payload must be validated and normalized before
-  hashing.
-* Scope must include:
-  * tenant/user
-  * operation/endpoint
-  * destination (if applicable)
-  * version prefix
-* Optional override key allowed.
+- Payload must be validated and normalized before if caller does not control
+  the object.
+  > rafa
+  > how can we enfore this?
+
+  >> kai
+  >> You can't fully enforce normalization at the
+  >> type level. But you can make it hard to skip:
+  >> require the constructor to take a
+  >> `normalize: (obj: T) => T` function. The
+  >> key-builder calls it before hashing. Callers
+  >> who pass `identity` are opting out explicitly.
+  >> Alternatively, accept only `string` keys and
+  >> push normalization entirely to the caller --
+  >> simpler kernel, but less safety. Given your
+  >> `(obj, ...keys)` idea below, I'd lean toward
+  >> the normalize callback since the kernel is
+  >> already touching the object.
+- Scope must include:
+  - tenant/user
+  - operation/endpoint
+  - destination (if applicable)
+  - version prefix
+    > rafa
+    > hate all this shit, can it not just be (obj, ...keys)
+
+    >> kai
+    >> Yeah, `(obj, ...keys)` is cleaner. The kernel
+    >> picks the listed keys from the object, sorts
+    >> them deterministically, hashes. Tenant and
+    >> version become instance-level config baked
+    >> into the Idempoter at construction -- not
+    >> per-call noise.
+    >>
+    >> One pushback: you lose the forced
+    >> `destination` scope. If someone forgets to
+    >> include the target endpoint in their keys,
+    >> two different API calls with the same payload
+    >> body collide. Maybe the static factory could
+    >> require a `scope: string` alongside the
+    >> object keys? Something like:
+    >>
+    >> ```ts
+    >> Idempoter.from(scope, obj, ...keys)
+    >> ```
+    >>
+    >> That way scope is always explicit and the
+    >> key extraction stays flexible.
 
 ---
 
@@ -113,127 +168,59 @@ new Provider(
 )
 ```
 
+> rafa
+> providers are out of scope here lets talk about idempoency then we can
+> deal with providers
+
+>> kai
+>> Agreed. The provider abstraction is a separate
+>> concern. Get the kernel right first -- the
+>> provider layer is just a consumer of `execute`.
+>> Parking sections 3, 4, and the dump/ingest
+>> stuff until the kernel is solid.
+
 ### Rules
 
-* `reconcile` is mandatory.
-* Must deterministically answer:
-  * `true` -> side effect happened
-  * `false` -> did not happen
-* If vendor cannot be queried:
-  * Reconcile against internal ledger.
-  * Embed idempotency key into payload where
-    possible.
+- `reconcile` is mandatory.
+  > rafa
+  > callback function given to idempoter on newing up
+  > this way the caller does not leak implementation
+  > details to idempoter
 
-Provider never handles leases, retries, or
-memoization.
-
----
-
-## 3. Stateful Provider
-
-Used when provider houses durable data (Firebase,
-S3, etc.).
-
-```ts
-new StatefulProvider(
-  send,
-  reconcile,
-  dump,
-  ingest
-)
-```
-
-### 3.1 dump(destination)
-
-Exports canonical domain state.
-
-Requirements:
-
-* Must stream or chunk.
-* Must not buffer entire dataset in memory.
-* Must be resumable.
-* Must be idempotent per chunk.
-* Must export canonical DTO format (not
-  vendor-specific shape).
-
-```ts
-dump(target: DumpTarget): Promise<DumpReceipt>
-```
-
-### 3.2 ingest(source)
-
-Imports canonical data.
-
-Requirements:
-
-* Must be resumable.
-* Must support chunk-based ingestion.
-* Must tolerate retries safely.
-
-```ts
-ingest(source: string): Promise<void>
-```
-
----
-
-## 4. Serverless-Safe Dump Strategy
-
-Long-running exports must be job-based.
-
-Pattern:
-
-1. startDump()
-2. dumpStep(cursor)
-3. upload chunk
-4. persist cursor
-5. repeat until done
-6. write manifest
-
-Each step must:
-
-* Complete within serverless limits
-* Be independently idempotent
-* Persist progress
-
----
-
-## 5. Reconciliation Model
-
-Reconcile is mandatory.
-
-```ts
-reconcile(key): Promise<boolean>
-```
-
-Rules:
-
-* Must converge unknown -> true or false.
-* Must use:
-  * Vendor query if available
-  * Internal ledger otherwise
-* Unknown must never be permanent.
+  >> kai
+  >> This is the right call. Reconcile as a
+  >> constructor-injected callback keeps the kernel
+  >> ignorant of vendor specifics. The signature
+  >> would be something like:
+  >>
+  >> ```ts
+  >> type Reconciler = (key: string) =>
+  >>   Promise<unknown | null>;
+  >> ```
+  >>
+  >> Returns the receipt if the effect happened,
+  >> null if it didn't. This matches your earlier
+  >> note about `receipt(truthy)` vs `null`.
+  >>
+  >> One thing to nail down: what happens when
+  >> reconcile itself throws? That's different from
+  >> returning null (confirmed no-op). A throw
+  >> means "I don't know" -- the record should stay
+  >> `unknown` and the caller gets the error. Don't
+  >> conflate "confirmed didn't happen" with "can't
+  >> reach the vendor to check."
+- Must deterministically answer:
+  - `reciept(truthy)` -> side effect happened
+  - `null` -> did not happen
 
 ---
 
 ## 6. Execution Flow
 
-Inbound:
-
 ```
 Idempoter.execute(key, handler)
 ```
 
-Outbound:
-
-```
-Idempoter.execute(key, provider.send)
-```
-
-Stateful migration:
-
-```
-source.dump(target)
-target.ingest(source)
 ```
 
 ---
@@ -245,7 +232,6 @@ This framework guarantees:
 * No duplicate side effects
 * Safe retries
 * Memoized responses
-* Deterministic provider swapping
 * Canonical portable state
 * Serverless-safe operation
 * Convergent reconciliation
@@ -255,20 +241,8 @@ This framework guarantees:
 ## 8. Design Constraints
 
 * Idempoter < ~300 LOC
-* Single public verb: `execute`
-* No DSL
-* No decorators
-* No magic
+* Single public verb: `execute` on instance
+* constructor is private, has static methods to make an idempoter from
+* different objects. follows constructor(deterministicKeySortedObject, ...scopes)
 * State machine fully encapsulated
-
----
-
-## 9. Architectural Principle
-
-Providers are dumb adapters.
-
-Idempoter owns correctness.
-
-State must be canonical and exportable.
-
-Reliability must be centralized.
+```

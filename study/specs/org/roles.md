@@ -52,14 +52,22 @@ sidebar tabs and routes. The sidebar shows
 "Dashboard" (always present) + whatever is in
 capabilities[].
 
-Capabilities are the "what can you do" axis.
+Capabilities are the "what can you do" axis. A role
+is just a bundle of capabilities -- there are no
+hard-coded role-to-function mappings. This allows
+hybrid roles (e.g. a supervisor who also reviews
+appeals) and lets admins extend roles as needed.
+New capabilities can be added and assigned to any
+role at the admin's discretion.
+
 Examples: audit-review, coaching, reports,
 dashboards, teams, users, roles, providers,
 marketplace, appeals, gamification, event-configs,
 logging, impersonation.
 
-See capabilities/ directory for what each default
-role gets.
+See capabilities/ directory for default capability
+sets per role. These are starting points -- admins
+can customize freely.
 
 ---
 

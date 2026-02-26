@@ -19,6 +19,7 @@ export async function stepTranscribeCb(req: Request): Promise<Response> {
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
+  if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
   // If invalid transcript, skip to finalize
   if (finding.rawTranscript?.includes("Invalid Genie") || finding.rawTranscript?.includes("Genie Invalid")) {

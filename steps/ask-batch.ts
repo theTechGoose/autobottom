@@ -102,6 +102,7 @@ export async function stepAskBatch(req: Request): Promise<Response> {
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
+  if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
   // Read from dedicated chunked KV key first (survives finding trim), fall back to finding
   const allPopulated = await getPopulatedQuestions(orgId, findingId) ?? finding.populatedQuestions ?? [];

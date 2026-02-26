@@ -224,6 +224,27 @@ export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { r
   await db.set(orgKey(orgId, "stats-completed", `${Date.now()}-${findingId}`), { findingId, ts: Date.now(), ...(meta ?? {}) }, { expireIn: DAY_MS });
 }
 
+/** Terminate all active audits: mark each finding as terminated and remove from active tracking. */
+export async function terminateAllActive(orgId: OrgId): Promise<number> {
+  const db = await kv();
+  const entries: Array<{ key: Deno.KvKey; findingId: string }> = [];
+  for await (const e of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "stats-active") })) {
+    const fid = (e.value?.findingId ?? String(e.key[e.key.length - 1])) as string;
+    entries.push({ key: e.key, findingId: fid });
+  }
+  await Promise.all(entries.map(async ({ key, findingId }) => {
+    try {
+      const finding = await getFinding(orgId, findingId);
+      if (finding && finding.findingStatus !== "finished") {
+        finding.findingStatus = "terminated";
+        await saveFinding(orgId, finding);
+      }
+    } catch { /* best-effort */ }
+    await db.delete(key);
+  }));
+  return entries.length;
+}
+
 /** Log a step error event. */
 export async function trackError(orgId: OrgId, findingId: string, step: string, error: string) {
   const db = await kv();

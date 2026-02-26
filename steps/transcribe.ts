@@ -21,6 +21,7 @@ export async function stepTranscribe(req: Request): Promise<Response> {
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
+  if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
   if (finding.rawTranscript) {
     console.log(`[STEP-TRANSCRIBE] ${findingId}: Already has transcript, skipping`);

@@ -521,8 +521,25 @@ export function getDashboardPage(): string {
       </div>
     </div>
 
+    <!-- Test by RID -->
+    <div class="tbl" style="margin-bottom:16px;">
+      <div class="tbl-title">Test Audit by RID</div>
+      <div style="display:flex;gap:8px;padding:0 0 2px;align-items:center;">
+        <input id="rid-input" class="sf-input" type="text" placeholder="Record ID..." style="flex:1;font-family:var(--mono);font-size:12px;">
+        <select id="rid-type" class="sf-input" style="width:130px;font-size:12px;padding:6px 8px;">
+          <option value="dateleg">Date Leg</option>
+          <option value="package">Package</option>
+        </select>
+        <button class="sf-btn primary" id="rid-btn" style="padding:6px 16px;font-size:11px;white-space:nowrap;">Start Audit</button>
+      </div>
+      <div id="rid-result" style="font-size:10px;margin-top:6px;min-height:14px;"></div>
+    </div>
+
     <div class="tbl">
-      <div class="tbl-title">Active Audits</div>
+      <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>Active Audits</span>
+        <button class="sf-btn danger" id="terminate-all-btn" style="font-size:9px;padding:3px 10px;">Terminate All</button>
+      </div>
       <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Step</th><th>Duration</th><th></th></tr></thead>
       <tbody id="tb-active"><tr class="empty-row"><td colspan="5">No active audits</td></tr></tbody></table>
     </div>
@@ -757,6 +774,21 @@ export function getDashboardPage(): string {
     </div>
     <div class="modal-actions">
       <button class="sf-btn secondary" id="devtools-cancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Terminate All Confirmation Modal -->
+<div class="modal-overlay" id="terminate-modal">
+  <div class="modal" style="width:420px;">
+    <div class="modal-title" style="color:var(--red);">Terminate All Active Audits</div>
+    <div class="modal-sub">This will mark every currently active audit as <strong>terminated</strong>. In-flight pipeline steps will bail out when they check in. This cannot be undone.</div>
+    <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
+      Are you sure you want to terminate all active audits?
+    </div>
+    <div class="modal-actions">
+      <button class="sf-btn ghost" id="terminate-cancel">Cancel</button>
+      <button class="sf-btn danger" id="terminate-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Yes, Terminate All</button>
     </div>
   </div>
 </div>
@@ -1289,6 +1321,59 @@ export function getDashboardPage(): string {
   document.getElementById('devtools-open').addEventListener('click', function() { openModal('devtools-modal'); });
   document.getElementById('devtools-cancel').addEventListener('click', function() { closeModal('devtools-modal'); });
   backdropClose('devtools-modal');
+
+  // ===== Terminate All =====
+  document.getElementById('terminate-all-btn').addEventListener('click', function() {
+    openModal('terminate-modal');
+  });
+  document.getElementById('terminate-cancel').addEventListener('click', function() { closeModal('terminate-modal'); });
+  backdropClose('terminate-modal');
+  document.getElementById('terminate-confirm').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Terminating...';
+    fetch('/admin/terminate-all', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        closeModal('terminate-modal');
+        if (d.ok) {
+          toast('Terminated ' + (d.terminated || 0) + ' active audit(s)', 'success');
+          fetchData();
+        } else {
+          toast(d.error || 'Failed', 'error');
+        }
+      })
+      .catch(function() { toast('Request failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Yes, Terminate All'; });
+  });
+
+  // ===== Test by RID =====
+  function doRidAudit() {
+    var rid = document.getElementById('rid-input').value.trim();
+    var type = document.getElementById('rid-type').value;
+    var resultEl = document.getElementById('rid-result');
+    if (!rid) { resultEl.style.color = 'var(--red)'; resultEl.textContent = 'Enter a Record ID.'; return; }
+    var btn = document.getElementById('rid-btn');
+    btn.disabled = true; btn.textContent = 'Starting...';
+    resultEl.style.color = 'var(--text-muted)'; resultEl.textContent = 'Submitting...';
+    var endpoint = type === 'package' ? '/audit/package-by-rid' : '/audit/test-by-rid';
+    fetch(endpoint + '?rid=' + encodeURIComponent(rid))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok || d.findingId) {
+          resultEl.style.color = 'var(--green)';
+          resultEl.textContent = 'Started: ' + (d.findingId || 'queued');
+          toast('Audit started for RID ' + rid, 'success');
+          document.getElementById('rid-input').value = '';
+        } else {
+          resultEl.style.color = 'var(--red)';
+          resultEl.textContent = d.error || 'Failed to start audit';
+        }
+      })
+      .catch(function() { resultEl.style.color = 'var(--red)'; resultEl.textContent = 'Request failed'; })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Start Audit'; });
+  }
+  document.getElementById('rid-btn').addEventListener('click', doRidAudit);
+  document.getElementById('rid-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doRidAudit(); });
 
   // ===== Webhook Modal =====
   var modal = document.getElementById('webhook-modal');

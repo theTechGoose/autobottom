@@ -15,7 +15,7 @@ import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
 import { enqueueStep, publishStep } from "./lib/queue.ts";
 import {
-  trackActive, trackError, trackRetry, trackCompleted, getStats, getRecentCompleted, getPipelineConfig, setPipelineConfig,
+  trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getPipelineConfig, setPipelineConfig,
   saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
   getAllAnswersForFinding,
@@ -220,6 +220,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/seed": handleSeed,
   "/admin/init-org": handleInitOrg,
   "/admin/retry-finding": handleRetryFinding,
+  "/admin/terminate-all": handleTerminateAll,
   "/admin/queues": handleSetQueue,
   "/admin/pipeline-config": handleSetPipelineConfig,
   "/admin/settings/terminate": handleAdminSaveSettings,
@@ -1406,6 +1407,17 @@ async function handleRetryFinding(req: Request): Promise<Response> {
   await publishStep(step, body);
   console.log(`[RETRY-FINDING] Admin ${auth.email} published ${step} for ${findingId}`);
   return json({ ok: true, findingId, step });
+}
+
+// -- Admin: Terminate All Active --
+
+async function handleTerminateAll(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const terminated = await terminateAllActive(auth.orgId);
+  console.log(`[ADMIN] ${auth.email} terminated ${terminated} active audits`);
+  return json({ ok: true, terminated });
 }
 
 // -- Admin: Init Org --

@@ -1790,7 +1790,6 @@ export function getDashboardPage(): string {
     loadEmailConfigs().then(function() { renderEmailList(); }).catch(function() { renderEmailList(); });
   });
   erModal.addEventListener('click', function(e) { if (e.target === erModal) erModal.classList.remove('open'); });
-})();
 
   // ===== Email Templates =====
   var etTemplates = [];
@@ -1913,6 +1912,7 @@ export function getDashboardPage(): string {
       .then(function() { toast('Template deleted', 'success'); })
       .catch(function() { toast('Delete failed', 'error'); btn.disabled = false; });
   });
+})();
 </script>
 </body>
 </html>`;

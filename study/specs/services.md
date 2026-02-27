@@ -44,10 +44,25 @@ providers -- no hunting rabbits with cannons.
 Examples:
 
 - audit-questions (bulk yes/no) -> cheap fast LLM
-- transcription -> Whisper
+- transcription -> Whisper / AssemblyAI
 - expression-eval / llm() -> powerful LLM
-- email-sending -> SES / SendGrid
+- email-sending -> SES / SendGrid / Postmark
 - file-storage -> S3 / GCS
+- recordings -> Genie / direct upload / any
+  recording provider
+- queue -> QStash / SQS / any async queue
+  provider for pipeline step orchestration
+- messaging -> in-app message delivery,
+  resolves to a messaging provider (Slack,
+  Teams, in-app chat, etc.)
+- notification-delivery -> outbound delivery
+  for EventConfig actions. Receives rendered
+  payloads from the event system and dispatches
+  via the bound provider (webhook, email,
+  chat). This is the execution layer for
+  EventConfig -- events fire, conditions are
+  checked, payloads are rendered, then
+  notification-delivery sends them out.
 
 ---
 

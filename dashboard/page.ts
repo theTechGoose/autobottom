@@ -1456,7 +1456,7 @@ export function getDashboardPage(): string {
     btn.disabled = true; btn.textContent = 'Starting...';
     resultEl.style.color = 'var(--text-muted)'; resultEl.textContent = 'Submitting...';
     var endpoint = type === 'package' ? '/audit/package-by-rid' : '/audit/test-by-rid';
-    fetch(endpoint + '?rid=' + encodeURIComponent(rid))
+    fetch(endpoint + '?rid=' + encodeURIComponent(rid), { method: 'POST' })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok || d.findingId) {

@@ -1389,13 +1389,13 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   console.log(`[WEBHOOK] finding.record values:`, JSON.stringify(finding.record ?? {}));
 
   const agentEmail = finding.owner ?? "";
-  // Parse team member name from VoGenie field: "VO MB - Harmony Eason" → "Harmony Eason"
-  const voGenie = String(finding.record?.VoGenie ?? "");
-  const teamMemberFull = voGenie.includes(" - ")
-    ? voGenie.split(" - ").slice(1).join(" - ").trim()
-    : voGenie.trim();
+  // TODO: replace with correct QB field once ID is identified — see [WEBHOOK] log below
+  const teamMemberRaw = String(finding.record?.TeamMember ?? "");
+  const teamMemberFull = teamMemberRaw.includes(" - ")
+    ? teamMemberRaw.split(" - ").slice(1).join(" - ").trim()
+    : teamMemberRaw.trim();
   const teamMemberFirst = teamMemberFull.split(" ")[0] || teamMemberFull;
-  // Fall back to email prefix if VoGenie not available
+  // Fall back to email prefix until correct QB field is wired up
   const agentName = teamMemberFull ||
     (agentEmail.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || agentEmail);
   const scoreVal = score ?? (Array.isArray(finding.answeredQuestions)

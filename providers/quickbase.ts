@@ -59,6 +59,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
   if (records.length === 0) return null;
 
   const r = records[0];
+  console.log(`[QB] raw record fields for rid=${rid}:`, JSON.stringify(Object.entries(r).map(([k, v]: [string, any]) => ({ field: k, value: v?.value }))));
   return {
     RecordId: r[FIELD_RECORD_ID]?.value ?? rid,
     VoGenie: r[FIELD_VO_GENIE]?.value ?? "",

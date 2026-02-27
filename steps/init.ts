@@ -21,6 +21,7 @@ export async function stepInit(req: Request): Promise<Response> {
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
+  console.log(`[STEP-INIT] ${findingId}: record keys=${JSON.stringify(Object.keys(finding.record ?? {}))} values=${JSON.stringify(finding.record ?? {})}`);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
   // Update active entry with QB record metadata now that we have the finding

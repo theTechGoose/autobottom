@@ -3,7 +3,7 @@
 This document details every meaningful change made on Adam's development track (commits by `adamp@monsterrg.com`) relative to Rafa's base codebase. Use this as a merge guide when reconciling the two tracks.
 
 Rafa's base commits: `51b89f8`, `cf11273`, `961e61d`, `4258169`, `613858a`, `abd3638`
-Adam's commits (oldest → newest): `6a3fd0c` through `52af9be`
+Adam's commits (oldest → newest): `6a3fd0c` through `9eeb73c`
 
 ---
 
@@ -274,6 +274,58 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 
 ### Changes
 - Added same pulsing robot SVG loading overlay; fades out after `/me` auth check resolves.
+
+---
+
+## 15. Review Queue — Sticky Decision Buttons (`e7d726b`)
+
+### Files
+- `shared/queue-page.ts`
+
+### Changes
+- Restructured `#verdict-panel` HTML: `#verdict-content` is now wrapped in a `#verdict-scroll` div (the scrollable area), with `#decision-btns` as a direct sibling **after** `#verdict-scroll` — making the buttons a sticky footer that is always visible regardless of scroll position.
+- CSS: `#verdict-panel` uses `overflow: hidden`; `#verdict-scroll` is `flex:1; overflow-y:auto`; `#decision-btns` is `flex-shrink:0` with a top border and fixed background.
+- `meta-row` (audit ID / question index / remaining count) moved inside `#verdict-scroll` above the scroll boundary.
+
+---
+
+## 16. Loading Overlay — Review, Judge, Manager (`e7d726b`)
+
+### Files
+- `shared/queue-page.ts`
+- `manager/page.ts`
+
+### Changes
+- **`shared/queue-page.ts`** (covers both review and judge): added animated pulsing robot SVG overlay (`#init-overlay`) that fades out after the initial `/next` API call resolves (success or redirect to `/login`).
+- **`manager/page.ts`**: same overlay added; fades out after `/me` auth check resolves.
+- `@keyframes bot-pulse` animation added inline in both files.
+
+---
+
+## 17. Favicon — All Pages (`9eeb73c`)
+
+### Files
+- `shared/queue-page.ts` (review + judge)
+- `controller.ts` (audit report page)
+- `manager/page.ts`
+- `agent/page.ts`
+- `auth/page.ts`
+- `chat/page.ts`
+- `question-lab/page.ts`
+
+### Changes
+- Added `<link rel="icon" href="/favicon.svg" type="image/svg+xml">` to the `<head>` of every page. Previously only the admin dashboard had the favicon.
+
+---
+
+## 18. Decide Buttons — Global Scope Fix (`9eeb73c`)
+
+### Files
+- `shared/queue-page.ts`
+
+### Changes
+- `decide()` function is defined inside the main IIFE so `onclick="decide(...)"` HTML attributes couldn't reach it.
+- Added `window.decide = function(decision, reason) { decide(decision, reason); }` immediately before the function definition, exposing it to global scope so the Confirm No / Flip to Yes button `onclick` attributes work correctly.
 
 ---
 

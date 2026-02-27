@@ -32,11 +32,12 @@ export function getImpersonateSnippet(targetRole: string, currentAsEmail: string
   var sel = document.getElementById('impersonate-select');
   var exitLink = document.getElementById('impersonate-exit');
 
-  exitLink.href = (function(){
-    var u = new URL(location.href);
-    u.searchParams.delete('as');
-    return u.href;
-  })();
+  exitLink.href = '/admin/dashboard';
+  exitLink.addEventListener('click', function(e) {
+    e.preventDefault();
+    console.log('[IMPERSONATE] Exiting impersonation — currentAs:', currentAs, '| redirecting to /admin/dashboard');
+    window.location.href = '/admin/dashboard';
+  });
 
   fetch('/admin/users').then(function(r){return r.json()}).then(function(users){
     var filtered = users.filter(function(u){return u.role === targetRole});

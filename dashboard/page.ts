@@ -658,6 +658,9 @@ export function getDashboardPage(): string {
           <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{feedbackText}}</code>
           <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{recordId}}</code>
           <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{guestName}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{missedQuestions}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{missedCount}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{totalQuestions}}</code>
         </div>
         <!-- Template ID + Webhook URLs panel (shown after save/load) -->
         <div id="et-webhook-info" style="display:none;padding:8px 12px;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0;">
@@ -1534,7 +1537,7 @@ export function getDashboardPage(): string {
     var saved = { postUrl: url, postHeaders: headers };
     fetch('/admin/settings/' + whKind, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(saved) })
     .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
-    .then(function(){whCache[whKind]=saved;toast(whKind+' webhook saved','success');btnDone(btn,'Save')})
+    .then(function(){whCache[whKind]=saved;toast(whKind+' webhook saved','success');btnDone(btn,'Save');closeModal('webhook-modal');})
     .catch(function(e){toast(e.message,'error');btnDone(btn,'Save')});
   });
 

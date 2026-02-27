@@ -1395,6 +1395,15 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     : 0);
   const findingId = finding.id ?? "";
 
+  const missedQs = Array.isArray(finding.answeredQuestions)
+    ? finding.answeredQuestions.filter((q: any) => q.answer === "No")
+    : [];
+  const missedQuestionsHtml = missedQs.length
+    ? missedQs.map((q: any) =>
+        `<tr><td style="padding:8px 12px;border-bottom:1px solid #1e2736;color:#f0f6fc;font-size:13px;">${q.header ?? q.question ?? "Unknown"}</td></tr>`
+      ).join("")
+    : `<tr><td style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions</td></tr>`;
+
   const vars: Record<string, string> = {
     agentName,
     agentEmail,
@@ -1406,6 +1415,9 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
     appealUrl: `${env.selfUrl}/audit/appeal?findingId=${findingId}`,
     feedbackText: finding.feedback?.text ?? "",
+    missedQuestions: missedQuestionsHtml,
+    missedCount: String(missedQs.length),
+    totalQuestions: String(Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions.length : 0),
   };
 
   const render = (str: string) => str.replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => vars[k] ?? "");

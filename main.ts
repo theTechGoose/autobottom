@@ -1389,11 +1389,32 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   console.log(`[WEBHOOK] finding.record values:`, JSON.stringify(finding.record ?? {}));
 
   const agentEmail = finding.owner ?? "";
-  const agentName = agentEmail.split("@")[0] ?? agentEmail;
+  // Parse team member name from VoGenie field: "VO MB - Harmony Eason" → "Harmony Eason"
+  const voGenie = String(finding.record?.VoGenie ?? "");
+  const teamMemberFull = voGenie.includes(" - ")
+    ? voGenie.split(" - ").slice(1).join(" - ").trim()
+    : voGenie.trim();
+  const teamMemberFirst = teamMemberFull.split(" ")[0] || teamMemberFull;
+  // Fall back to email prefix if VoGenie not available
+  const agentName = teamMemberFull ||
+    (agentEmail.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || agentEmail);
   const scoreVal = score ?? (Array.isArray(finding.answeredQuestions)
     ? Math.round(finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length * 100)
     : 0);
   const findingId = finding.id ?? "";
+  const recordId = String(finding.record?.RecordId ?? "");
+  const isPackage = !!finding.isPackage;
+  const qbTableId = isPackage ? "bu3e8x98x" : "bpb28qsnn";
+  const crmUrl = recordId ? `https://${env.qbRealm}.quickbase.com/db/${qbTableId}?a=dr&rid=${recordId}` : "";
+
+  // Dynamic score verbiage
+  const scoreVerbiage = scoreVal === 100
+    ? "Perfect score — great call! Review your audit below."
+    : scoreVal >= 80
+    ? "Strong performance overall. Check the missed questions below."
+    : scoreVal >= 60
+    ? "A few areas to work on. Review your missed questions below."
+    : "There's room to improve here. Take a look at what was missed.";
 
   const missedQs = Array.isArray(finding.answeredQuestions)
     ? finding.answeredQuestions.filter((q: any) => q.answer === "No")
@@ -1402,14 +1423,19 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     ? missedQs.map((q: any) =>
         `<tr><td style="padding:8px 12px;border-bottom:1px solid #1e2736;color:#f0f6fc;font-size:13px;">${q.header ?? q.question ?? "Unknown"}</td></tr>`
       ).join("")
-    : `<tr><td style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions</td></tr>`;
+    : `<tr><td style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions — perfect score!</td></tr>`;
+
+  console.log(`[WEBHOOK] agentName="${agentName}" teamMemberFull="${teamMemberFull}" voGenie="${voGenie}" crmUrl="${crmUrl}"`);
 
   const vars: Record<string, string> = {
     agentName,
     agentEmail,
+    teamMember: teamMemberFull,
+    teamMemberFirst,
     score: scoreVal + "%",
+    scoreVerbiage,
     findingId,
-    recordId: String(finding.record?.RecordId ?? ""),
+    recordId,
     guestName: String(finding.record?.GuestName ?? ""),
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
     recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
@@ -1418,6 +1444,7 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     missedQuestions: missedQuestionsHtml,
     missedCount: String(missedQs.length),
     totalQuestions: String(Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions.length : 0),
+    crmUrl,
   };
 
   const render = (str: string) => str.replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => vars[k] ?? "");

@@ -3,7 +3,7 @@
 This document details every meaningful change made on Adam's development track (commits by `adamp@monsterrg.com`) relative to Rafa's base codebase. Use this as a merge guide when reconciling the two tracks.
 
 Rafa's base commits: `51b89f8`, `cf11273`, `961e61d`, `4258169`, `613858a`, `abd3638`
-Adam's commits (oldest → newest): `6a3fd0c` through `9eeb73c`
+Adam's commits (oldest → newest): `6a3fd0c` through `1555c3d`
 
 ---
 
@@ -326,6 +326,32 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 ### Changes
 - `decide()` function is defined inside the main IIFE so `onclick="decide(...)"` HTML attributes couldn't reach it.
 - Added `window.decide = function(decision, reason) { decide(decision, reason); }` immediately before the function definition, exposing it to global scope so the Confirm No / Flip to Yes button `onclick` attributes work correctly.
+
+---
+
+## 19. Impersonation Fixes (`1555c3d`)
+
+### Files
+- `shared/impersonate-bar.ts`
+- `dashboard/page.ts`
+- `main.ts`
+
+### Changes
+
+#### Exit impersonation redirect
+- Previously "Exit Impersonation" removed `?as=` from the current URL and stayed on the same role page (e.g. `/review`). Since `requireRolePageAuth` passes admins through, the page reloaded and re-injected the bar — making exit appear broken.
+- Fixed: exit link now always redirects to `/admin/dashboard` via `window.location.href`.
+- Added `console.log('[IMPERSONATE] Exiting...')` on click for diagnostics.
+
+#### Webhook modal auto-close
+- After successfully saving a webhook config, `closeModal('webhook-modal')` is now called so the modal dismisses automatically. Previously the modal stayed open after save (only a toast was shown).
+
+#### Email template variables — missed questions
+- Added three new variables to the `POST /webhooks/audit-complete` render context:
+  - `{{missedQuestions}}` — pre-rendered HTML `<tr>` rows (one per question answered "No"), drop directly inside a `<table>` tag in the template
+  - `{{missedCount}}` — integer count of missed questions as a string
+  - `{{totalQuestions}}` — total question count as a string
+- Variable hint bar in the email template editor updated to show all three new variables.
 
 ---
 

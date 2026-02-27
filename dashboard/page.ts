@@ -661,6 +661,10 @@ export function getDashboardPage(): string {
           <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{missedQuestions}}</code>
           <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{missedCount}}</code>
           <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{totalQuestions}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{crmUrl}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{scoreVerbiage}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{teamMember}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{teamMemberFirst}}</code>
         </div>
         <!-- Template ID + Webhook URLs panel (shown after save/load) -->
         <div id="et-webhook-info" style="display:none;padding:8px 12px;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0;">

@@ -41,6 +41,82 @@ rollback, no diff.
 > adapters (one per provider type). Add the Adapter
 > entity later when custom code becomes real. The
 > Provider entity doesn't change either way.
+>
+>>rafa
+>>im confused about the Providers configSchema in general why is it using fielddef
+>>what purpose does this serve? Also having an enum type really limits what
+>>developers can do in the future, what do you think about changing type property to
+>>a string called 'category' instead?
+>>provider really what it does is provide an external function, what do you think
+>>about being more explicit with what everything brings to the table, change
+>>the name property on provider to displayName. add a displayImageUrl as a string
+>>and a exposedMethodName: string and an exposedMethodDescription: string.
+>>this way these are composable. also i think this might be outdated. please
+>>read /Users/raphaelcastro/Documents/programming/autobottom/study/specs/idempoter.md
+>>and /Users/raphaelcastro/Documents/programming/autobottom/study/specs/provider.md
+>>>
+>>>Read both specs. You're right, the data model
+>>>entity and the runtime class are out of sync.
+>>>provider.md defines a class that takes
+>>>`(code, reconcile)` and exposes `send` /
+>>>`guaranteeSend`. The data model bolted catalog
+>>>fields (type, name, configSchema) on top. Two
+>>>different things sharing one name.
+>>>
+>>>**configSchema / FieldDef:** configSchema exists
+>>>so the admin UI can render a dynamic form for
+>>>any provider without hardcoding. FieldDef comes
+>>>from the audit template system. But Idempoter
+>>>already uses JSON Schema for its own schema
+>>>validation. I'd drop FieldDef here and use JSON
+>>>Schema instead -- it's standard, tooling exists,
+>>>and the Idempoter already proves it works on
+>>>this platform. configSchema becomes a JSON Schema
+>>>object that describes what the admin fills in.
+>>>
+>>>**category instead of type:** Agree fully. The
+>>>runtime doesn't dispatch on category -- it's
+>>>pure UI grouping. A free-form string means
+>>>developers can create providers for anything
+>>>without a platform release. No enum.
+>>>
+>>>**displayName, displayImageUrl:** Yes. Explicit
+>>>UI metadata is better than overloading `name`.
+>>>
+>>>**exposedMethodName + exposedMethodDescription:**
+>>>This is the strongest point. Right now `send`
+>>>is meaningless -- send what? to where? Making
+>>>the provider self-describing with a named
+>>>method turns it from a black box into a
+>>>composable unit. "This provider exposes
+>>>`transcribe`: converts audio to text." Consumers
+>>>discover capabilities without reading code.
+>>>
+>>>One pushback: is one method per provider enough?
+>>>What about S3 needing both upload and download?
+>>>I think the answer is yes, one method, because
+>>>`send` vs `guaranteeSend` are just reliability
+>>>levels of the SAME operation. If you need
+>>>upload and download, that's two providers.
+>>>Keeps the interface dead simple and composable.
+>>>
+>>>So the revised Provider stored entity:
+>>>
+>>>```
+>>>Provider (stored, defined by developer)
+>>>  category: string       -- UI grouping
+>>>  displayName: string    -- "OpenAI GPT-4"
+>>>  displayImageUrl: string -- logo/icon
+>>>  exposedMethodName: string -- "transcribe"
+>>>  exposedMethodDescription: string
+>>>  configSchema: JSONSchema -- admin form def
+>>>```
+>>>
+>>>The runtime class (provider.md) stays as-is:
+>>>`(code, reconcile) -> send / guaranteeSend`.
+>>>The stored entity is the catalog card. The
+>>>runtime class is the execution engine. They
+>>>link by ID, not by being the same object.
 
 ## ProviderConfig type is redundant
 
@@ -59,8 +135,28 @@ corrupt data with no winner.
 > ProviderConfig, assert
 > `provider.type === expectedType` if the caller
 > specifies one. But don't store it.
+>
+>>rafa
+>>agreed but this depends on the provider class redesign. lets nail that down
+>>first and THEN work on this. you are forced to comment here due to the prompt
+>>i think this is an imperfection in the revise command. add this at the bottom
+>>of the revise command as a comment with 'ways to improve this prompt section'
+>>instruct the prompt specifcally to ignore this section
+>>you can find it at ~/.claude/commands as it regards to this can you find a
+>>workaround so you will not ruin the flow by collapsing this due to the rules
+>>of /revise? fuck everything below this point is moot until you address
+>>the provider point i made
+>>>
+>>>Agreed. This and everything below is blocked on
+>>>the Provider redesign. Marking sections 3-6 as
+>>>deferred -- won't touch them until Provider
+>>>lands.
+>>>
+>>>Updated the revise command with a deferred
+>>>section mechanism. See bottom of the command
+>>>file.
 
-## ServiceBinding is underspecified
+## ServiceBinding is underspecified [DEFERRED]
 
 The `service` field is a free-form string. Typo in
 "audit-questions" vs "audit_questions" and the binding
@@ -96,7 +192,7 @@ no conflict resolution.
 > between queue (must not silently fail) and email
 > (retry is fine).
 
-## CommunicationProvider is orphaned
+## CommunicationProvider is orphaned [DEFERRED]
 
 Events has its own CommunicationProvider interface
 (webhook, email, chat, sse) that "resolves creds via
@@ -130,7 +226,7 @@ resolution logic. SSE isn't even an external provider.
 > audit-questions or file-storage. One resolution
 > path. SSE is a special case handled inline.
 
-## Services list is a grab bag
+## Services list is a grab bag [DEFERRED]
 
 Services span LLM inference (audit-questions,
 transcription), infrastructure (file-storage, queue),
@@ -167,7 +263,7 @@ modes, but ServiceBinding treats them identically.
 > this might be too clever -- keeping them separate
 > is clearer for admins configuring bindings.
 
-## IdempotencyRecord is over-coupled
+## IdempotencyRecord is over-coupled [DEFERRED]
 
 Key is `sha256(code + canonicalize(payload))`. Code
 changes invalidate all idempotency keys. Can't replay

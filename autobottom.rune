@@ -1,0 +1,2327 @@
+// ============================================
+// Auto-Bot V2 -- audit automation platform
+// ============================================
+
+
+// --- Auth ---
+
+[REQ] login(LoginDto): SessionDto
+    auth::lookupUser(email): UserRecordDto
+      not-found
+    auth::verifyPassword(password, passwordHash): void
+      invalid-credentials
+    session::build(UserRecordDto): SessionDto
+    db:session::save(SessionDto): SessionDto
+      timeout
+    [RET] SessionDto
+
+
+[REQ] impersonate(ImpersonateDto): SessionDto
+    auth::lookupUser(email): UserRecordDto
+      not-found
+    auth::checkImpersonate(ImpersonateDto, UserRecordDto): void
+      forbidden
+    session::buildImpersonated(ImpersonateDto, UserRecordDto): SessionDto
+    db:session::save(SessionDto): SessionDto
+      timeout
+    [RET] SessionDto
+
+
+// --- Team Management ---
+
+[REQ] createTeam(CreateTeamDto): TeamDto
+    team::validate(CreateTeamDto): void
+      invalid
+    db:team::create(CreateTeamDto): TeamDto
+      timeout
+    [RET] TeamDto
+
+
+[REQ] updateTeam(UpdateTeamDto): TeamDto
+    db:team::load(teamId): TeamDto
+      not-found
+    team::applyChanges(TeamDto, UpdateTeamDto): TeamDto
+    db:team::update(TeamDto): TeamDto
+      timeout
+    [RET] TeamDto
+
+
+[REQ] addTeamMember(AddMemberDto): TeamDto
+    db:team::load(teamId): TeamDto
+      not-found
+    team::addMember(TeamDto, memberEmail): TeamDto
+      already-exists
+    db:team::update(TeamDto): TeamDto
+      timeout
+    [RET] TeamDto
+
+
+[REQ] removeTeamMember(
+    RemoveMemberDto): TeamDto
+    db:team::load(teamId): TeamDto
+      not-found
+    team::removeMember(TeamDto, memberEmail): TeamDto
+      not-found
+    db:team::update(TeamDto): TeamDto
+      timeout
+    [RET] TeamDto
+
+
+[REQ] changeTeamLeader(
+    ChangeLeaderDto): TeamDto
+    db:team::load(teamId): TeamDto
+      not-found
+    team::setLeader(TeamDto, leaderId): TeamDto
+    db:team::update(TeamDto): TeamDto
+      timeout
+    [RET] TeamDto
+
+
+// --- Role Management ---
+
+[REQ] createRole(CreateRoleDto): RoleDefDto
+    role::validate(CreateRoleDto): void
+      invalid
+    db:role::create(CreateRoleDto): RoleDefDto
+      timeout
+    [RET] RoleDefDto
+
+
+[REQ] updateRole(UpdateRoleDto): RoleDefDto
+    db:role::load(roleId): RoleDefDto
+      not-found
+    role::applyChanges(RoleDefDto, UpdateRoleDto): RoleDefDto
+    db:role::update(RoleDefDto): RoleDefDto
+      timeout
+    db:user::fanOutRoleUpdate(RoleDefDto): void
+      timeout
+    [RET] RoleDefDto
+
+
+// --- User Management ---
+
+[REQ] createUser(CreateUserDto): UserRecordDto
+    auth::hashPassword(password): passwordHash
+    user::build(CreateUserDto, passwordHash): UserRecordDto
+    db:user::save(UserRecordDto): UserRecordDto
+      timeout
+    [RET] UserRecordDto
+
+
+[REQ] deactivateUser(
+    DeactivateUserDto): UserRecordDto
+    db:user::load(email): UserRecordDto
+      not-found
+    user::deactivate(UserRecordDto): UserRecordDto
+    db:user::save(UserRecordDto): UserRecordDto
+      timeout
+    [RET] UserRecordDto
+
+
+[REQ] changePassword(
+    ChangePasswordDto): SuccessDto
+    db:user::load(email): UserRecordDto
+      not-found
+    auth::verifyPassword(password, passwordHash): void
+      invalid-credentials
+    auth::hashNewPassword(newPassword): newHash
+    user::setHash(UserRecordDto, newHash): UserRecordDto
+    db:user::save(UserRecordDto): UserRecordDto
+      timeout
+    success::ok(): SuccessDto
+
+
+// --- Audit Config ---
+
+[REQ] createAuditConfig(
+    CreateAuditConfigDto): AuditConfigDto
+    auditConfig::build(CreateAuditConfigDto): AuditConfigDto
+    db:auditConfig::save(AuditConfigDto): AuditConfigDto
+      timeout
+    [RET] AuditConfigDto
+
+
+[REQ] updateAuditConfig(
+    UpdateAuditConfigDto): AuditConfigDto
+    db:auditConfig::load(configId): AuditConfigDto
+      not-found
+    auditConfig::apply(AuditConfigDto, UpdateAuditConfigDto): AuditConfigDto
+    db:auditConfig::save(AuditConfigDto): AuditConfigDto
+      timeout
+    [RET] AuditConfigDto
+
+
+// --- Audit Pipeline ---
+
+[REQ] submitBatch(SubmitBatchDto): AuditBatchDto
+    auditBatch::create(SubmitBatchDto): AuditBatchDto
+    db:auditBatch::save(AuditBatchDto): AuditBatchDto
+      timeout
+    auditBatch::fanOut(AuditBatchDto): InstanceListDto
+    db:inst::saveAll(InstanceListDto): InstanceListDto
+      timeout
+    mq:pipeline::enqueueAll(InstanceListDto): void
+      timeout
+    [RET] AuditBatchDto
+
+
+[REQ] initAudit(InitAuditDto): InstDto
+    db:inst::load(instanceId): InstDto
+      not-found
+    inst::markCreating(InstDto): InstDto
+    db:inst::save(InstDto): InstDto
+      timeout
+    ex:recording::download(recordingUrl): recordingData
+      not-found timeout
+    mq:pipeline::enqueueTranscribe(instanceId): void
+      timeout
+    [RET] InstDto
+
+
+[REQ] transcribeAudit(TranscribeDto): InstDto
+    db:inst::load(instanceId): InstDto
+      not-found
+    inst::markTranscribing(InstDto): InstDto
+    ex:transcription::transcribe(recordingData): RawTranscriptDto
+      timeout
+    ex:llm::diarize(RawTranscriptDto): TranscriptDto
+      timeout
+    inst::addTranscript(InstDto, TranscriptDto): InstDto
+    db:inst::save(InstDto): InstDto
+      timeout
+    mq:pipeline::enqueuePrepare(instanceId): void
+      timeout
+    [RET] InstDto
+
+
+[REQ] prepareQuestions(PrepareDto): PreparedDto
+    db:inst::load(instanceId): InstDto
+      not-found
+    db:auditConfig::load(configId): AuditConfigDto
+      not-found
+    skipRule::evaluate(AuditConfigDto, fieldMap): SkipResultDto
+    question::populate(AuditConfigDto, fieldMap): QuestionListDto
+    question::filterSkipped(QuestionListDto, SkipResultDto): PreparedDto
+    mq:pipeline::enqueueBatches(instanceId, PreparedDto): void
+      timeout
+    [RET] PreparedDto
+
+
+[REQ] askQuestionBatch(
+    AskBatchDto): AskBatchResultDto
+    db:inst::load(instanceId): InstDto
+      not-found
+    ex:rag::retrieveForAudit(AskBatchDto, TranscriptDto): RagResultDto
+      timeout
+    ex:llm::askBatch(AskBatchDto, RagResultDto, TranscriptDto): AnswerListDto
+      timeout
+    question::evaluate(AnswerListDto, AskBatchDto): EvalListDto
+    pipeline::decrementCounter(instanceId): remaining
+    pipeline::checkComplete(remaining): fanInReady
+    pipeline::buildResult(EvalListDto, remaining, fanInReady): AskBatchResultDto
+
+
+[REQ] finalizeAudit(FinalizeDto): InstDto
+    db:inst::load(instanceId): InstDto
+      not-found
+    auditResult::build(InstDto): AuditResultDto
+    inst::appendResult(InstDto, AuditResultDto): InstDto
+    ex:llm::generateFeedback(AuditResultDto, TranscriptDto): FeedbackDto
+      timeout
+    inst::setFeedback(InstDto, FeedbackDto): InstDto
+    inst::resolve(InstDto): InstDto
+    db:inst::save(InstDto): InstDto
+      timeout
+    [RET] InstDto
+
+
+// --- Review ---
+
+[REQ] createReviewChecklist(
+    CreateChecklistDto): ReviewChecklistDto
+    db:inst::load(instanceId): InstDto
+      not-found
+    review::buildChecklist(InstDto): ReviewChecklistDto
+    db:reviewChecklist::save(ReviewChecklistDto): ReviewChecklistDto
+      timeout
+    [RET] ReviewChecklistDto
+
+
+[REQ] claimReviewItem(
+    ClaimReviewDto): ReviewItemDto
+    db:reviewChecklist::load(instanceId): ReviewChecklistDto
+      not-found
+    review::claimNext(ReviewChecklistDto, reviewerEmail): ReviewItemDto
+      none-available
+    db:reviewChecklist::save(ReviewChecklistDto): ReviewChecklistDto
+      timeout conflict
+    [RET] ReviewItemDto
+
+
+[REQ] submitReviewDecision(
+    ReviewDecisionDto): ReviewChecklistDto
+    db:reviewChecklist::load(instanceId): ReviewChecklistDto
+      not-found
+    review::decide(ReviewChecklistDto, ReviewDecisionDto): ReviewChecklistDto
+    db:reviewChecklist::save(ReviewChecklistDto): ReviewChecklistDto
+      timeout
+    [RET] ReviewChecklistDto
+
+
+[REQ] consolidateReview(
+    ConsolidateReviewDto): InstDto
+    db:reviewChecklist::load(instanceId): ReviewChecklistDto
+      not-found
+    review::consolidate(ReviewChecklistDto): AuditResultDto
+    db:inst::load(instanceId): InstDto
+      not-found
+    inst::appendResult(InstDto, AuditResultDto): InstDto
+    inst::resolve(InstDto): InstDto
+    db:inst::save(InstDto): InstDto
+      timeout
+    db:reviewChecklist::archive(instanceId): void
+      timeout
+    [RET] InstDto
+
+
+// --- Appeals ---
+
+[REQ] fileAppeal(FileAppealDto): AppealRecordDto
+    db:inst::load(instanceId): InstDto
+      not-found
+    appeal::validate(InstDto, findingId): void
+      invalid already-appealed
+    appeal::createRecord(FileAppealDto): AppealRecordDto
+    db:appealRecord::save(AppealRecordDto): AppealRecordDto
+      timeout
+    inst::markAppealPending(InstDto): InstDto
+    db:inst::save(InstDto): InstDto
+      timeout
+    appeal::buildChecklist(AppealRecordDto, InstDto): AppealChecklistDto
+    db:appealChecklist::save(AppealChecklistDto): AppealChecklistDto
+      timeout
+    [RET] AppealRecordDto
+
+
+[REQ] assignAppeal(
+    AssignAppealDto): AppealRecordDto
+    db:appealRecord::load(appealId): AppealRecordDto
+      not-found
+    appeal::assign(AppealRecordDto, judgeEmail): AppealRecordDto
+    db:appealRecord::save(AppealRecordDto): AppealRecordDto
+      timeout
+    [RET] AppealRecordDto
+
+
+[REQ] submitAppealDecision(
+    AppealDecisionDto): AppealChecklistDto
+    db:appealChecklist::load(appealId): AppealChecklistDto
+      not-found
+    appeal::decide(AppealChecklistDto, AppealDecisionDto): AppealChecklistDto
+    db:appealChecklist::save(AppealChecklistDto): AppealChecklistDto
+      timeout
+    [RET] AppealChecklistDto
+
+
+[REQ] consolidateAppeal(
+    ConsolidateAppealDto): InstDto
+    db:appealChecklist::load(appealId): AppealChecklistDto
+      not-found
+    appeal::consolidate(AppealChecklistDto): AuditResultDto
+    db:inst::load(instanceId): InstDto
+      not-found
+    inst::appendResult(InstDto, AuditResultDto): InstDto
+    inst::resolve(InstDto): InstDto
+    db:inst::save(InstDto): InstDto
+      timeout
+    db:appealRecord::load(appealId): AppealRecordDto
+      not-found
+    appeal::resolveRecord(AppealRecordDto): AppealRecordDto
+    db:appealRecord::save(AppealRecordDto): AppealRecordDto
+      timeout
+    db:appealChecklist::archive(appealId): void
+      timeout
+    [RET] InstDto
+
+
+// --- Coaching ---
+
+[REQ] queueCoaching(
+    QueueCoachingDto): CoachingRecordDto
+    db:coaching::load(agentEmail): CoachingRecordDto
+      not-found
+    coaching::addPending(CoachingRecordDto, instanceId): CoachingRecordDto
+    db:coaching::save(CoachingRecordDto): CoachingRecordDto
+      timeout
+    [RET] CoachingRecordDto
+
+
+[REQ] addressCoaching(
+    AddressCoachingDto): CoachingRecordDto
+    db:coaching::load(agentEmail): CoachingRecordDto
+      not-found
+    coaching::address(CoachingRecordDto, AddressCoachingDto): CoachingRecordDto
+    db:coaching::save(CoachingRecordDto): CoachingRecordDto
+      timeout
+    [RET] CoachingRecordDto
+
+
+// --- Gamification ---
+
+[REQ] earnXp(EarnXpDto): PlayerDto
+    db:gameCfg::resolve(teamId): GameCfgDto
+      not-found
+    gameCfg::checkThreshold(score, threshold): qualifies
+    db:player::load(playerEmail): PlayerDto
+      not-found
+    player::awardXp(PlayerDto, amount): PlayerDto
+    player::checkLevelUp(PlayerDto): leveledUp
+    player::updateStreak(PlayerDto): PlayerDto
+    db:player::save(PlayerDto): PlayerDto
+      timeout
+    [RET] PlayerDto
+
+
+[REQ] purchaseItem(PurchaseItemDto): PlayerDto
+    db:storeItem::load(itemId): StoreItemDto
+      not-found
+    db:player::load(playerEmail): PlayerDto
+      not-found
+    player::checkBalance(PlayerDto, price): void
+      insufficient-balance
+    player::checkOwnership(PlayerDto, itemId): void
+      already-owned
+    player::deductTokens(PlayerDto, price): PlayerDto
+    player::addToInventory(PlayerDto, itemId): PlayerDto
+    db:player::save(PlayerDto): PlayerDto
+      timeout
+    [RET] PlayerDto
+
+
+[REQ] equipItem(EquipItemDto): PlayerDto
+    db:player::load(playerEmail): PlayerDto
+      not-found
+    player::checkInventory(PlayerDto, itemId): void
+      not-owned
+    player::equip(PlayerDto, itemId, slot): PlayerDto
+    db:player::save(PlayerDto): PlayerDto
+      timeout
+    [RET] PlayerDto
+
+
+[REQ] evaluateBadge(
+    EvaluateBadgeDto): PlayerDto
+    db:badgeDef::loadActive(badgeRole): BadgeListDto
+    db:player::load(playerEmail): PlayerDto
+      not-found
+    badge::filterCriteria(BadgeListDto, eventPayload): MatchListDto
+    badge::computeIncrements(MatchListDto, eventPayload): IncrementListDto
+    player::updateBadgeProgress(PlayerDto, IncrementListDto): PlayerDto
+    player::checkBadgeThresholds(PlayerDto): EarnedListDto
+    player::awardBadgeXp(PlayerDto, EarnedListDto): PlayerDto
+    db:player::save(PlayerDto): PlayerDto
+      timeout
+    [RET] PlayerDto
+
+
+[REQ] purchaseTheme(
+    PurchaseThemeDto): PlayerDto
+    db:themeDef::load(themeId): ThemeDefDto
+      not-found
+    db:player::load(playerEmail): PlayerDto
+      not-found
+    player::checkBalance(PlayerDto, price): void
+      insufficient-balance
+    player::deductTokens(PlayerDto, price): PlayerDto
+    player::addThemeToInventory(PlayerDto, themeId): PlayerDto
+    db:player::save(PlayerDto): PlayerDto
+      timeout
+    [RET] PlayerDto
+
+
+[REQ] equipTheme(EquipThemeDto): PlayerDto
+    db:player::load(playerEmail): PlayerDto
+      not-found
+    player::checkThemeOwned(PlayerDto, themeId): void
+      not-owned
+    player::setTheme(PlayerDto, themeId): PlayerDto
+    db:player::save(PlayerDto): PlayerDto
+      timeout
+    [RET] PlayerDto
+
+
+[REQ] purchaseComboPack(
+    PurchaseComboDto): PlayerDto
+    db:comboPack::load(comboPackId): ComboPackDto
+      not-found
+    db:player::load(playerEmail): PlayerDto
+      not-found
+    player::checkBalance(PlayerDto, price): void
+      insufficient-balance
+    player::deductTokens(PlayerDto, price): PlayerDto
+    player::addComboToInventory(PlayerDto, comboPackId): PlayerDto
+    db:player::save(PlayerDto): PlayerDto
+      timeout
+    [RET] PlayerDto
+
+
+[REQ] equipComboPack(
+    EquipComboDto): PlayerDto
+    db:player::load(playerEmail): PlayerDto
+      not-found
+    player::checkComboOwned(PlayerDto, comboPackId): void
+      not-owned
+    player::setComboPack(PlayerDto, comboPackId): PlayerDto
+    db:player::save(PlayerDto): PlayerDto
+      timeout
+    [RET] PlayerDto
+
+
+[REQ] updateGameSettings(
+    UpdateGameCfgDto): GameCfgDto
+    db:gameCfg::load(teamId): GameCfgDto
+      not-found
+    gameCfg::apply(GameCfgDto, UpdateGameCfgDto): GameCfgDto
+    db:gameCfg::save(GameCfgDto): GameCfgDto
+      timeout
+    [RET] GameCfgDto
+
+
+// --- Events ---
+
+[REQ] emitEvent(EmitEventDto): EmitResultDto
+    db:evtCfg::matchTrigger(eventType): CfgListDto
+    evtCfg::filterFields(CfgListDto, eventPayload): CfgListDto
+    evtCfg::evalConditions(CfgListDto, eventPayload): CfgListDto
+    evtCfg::renderPayloads(CfgListDto, eventPayload): PayloadListDto
+    mq:notifier::enqueueAll(PayloadListDto): void
+      timeout
+    evtCfg::buildResult(PayloadListDto): EmitResultDto
+
+
+[REQ] deliverNotification(
+    DeliverNotificationDto): SuccessDto
+    comms::resolve(communicationType): comms
+    [PLY] comms.deliver(RenderedPayloadDto): void
+        [CSE] webhook
+        ex:comms.sendWebhook(RenderedPayloadDto): void
+          timeout network-error
+        [CSE] email
+        ex:comms.sendEmail(RenderedPayloadDto): void
+          timeout network-error
+        [CSE] chat
+        ex:comms.sendChat(RenderedPayloadDto): void
+          timeout network-error
+        [CSE] sse
+        ex:comms.sendSse(RenderedPayloadDto): void
+          timeout
+    success::ok(): SuccessDto
+
+
+[REQ] createEventConfig(
+    CreateEvtCfgDto): EventConfigDto
+    evtCfg::build(CreateEvtCfgDto): EventConfigDto
+    db:evtCfg::save(EventConfigDto): EventConfigDto
+      timeout
+    [RET] EventConfigDto
+
+
+// --- Messages ---
+
+[REQ] sendMessage(SendMessageDto): MessageDto
+    message::create(SendMessageDto): MessageDto
+    db:message::save(MessageDto): MessageDto
+      timeout
+    [RET] MessageDto
+
+
+// --- Reports ---
+
+[REQ] createReport(CreateReportDto): ReportDto
+    report::build(CreateReportDto): ReportDto
+    db:report::save(ReportDto): ReportDto
+      timeout
+    [RET] ReportDto
+
+
+[REQ] runReport(RunReportDto): ReportResultDto
+    db:report::load(reportId): ReportDto
+      not-found
+    query::evalFormulas(ReportDto): FormulaResultListDto
+    query::applyFilter(ReportDto, FormulaResultListDto): FilteredListDto
+    query::applySort(FilteredListDto): SortedListDto
+    query::applyGroup(SortedListDto): ReportResultDto
+
+
+[REQ] createReportFolder(
+    CreateFolderDto): ReportFolderDto
+    reportFolder::build(CreateFolderDto): ReportFolderDto
+    db:reportFolder::save(ReportFolderDto): ReportFolderDto
+      timeout
+    [RET] ReportFolderDto
+
+
+// --- Dashboard ---
+
+[REQ] createDashboard(
+    CreateDashboardDto): DashboardPageDto
+    dashboard::build(CreateDashboardDto): DashboardPageDto
+    db:dashboard::save(DashboardPageDto): DashboardPageDto
+      timeout
+    [RET] DashboardPageDto
+
+
+[REQ] cloneDashboard(
+    CloneDashboardDto): DashboardPageDto
+    db:dashboard::load(sourceId): DashboardPageDto
+      not-found
+    dashboard::clone(DashboardPageDto, ownerEmail): DashboardPageDto
+    db:dashboard::save(DashboardPageDto): DashboardPageDto
+      timeout
+    [RET] DashboardPageDto
+
+
+[REQ] updateDashboard(
+    UpdateDashboardDto): DashboardPageDto
+    db:dashboard::loadById(dashboardId): DashboardPageDto
+      not-found
+    dashboard::apply(DashboardPageDto, UpdateDashboardDto): DashboardPageDto
+    db:dashboard::save(DashboardPageDto): DashboardPageDto
+      timeout
+    [RET] DashboardPageDto
+
+
+[REQ] shareDashboard(
+    ShareDashboardDto): DashboardPageDto
+    db:dashboard::loadById(dashboardId): DashboardPageDto
+      not-found
+    dashboard::addSharedWith(DashboardPageDto, sharedEmails): DashboardPageDto
+    db:dashboard::save(DashboardPageDto): DashboardPageDto
+      timeout
+    [RET] DashboardPageDto
+
+
+// --- Provider Resolution ---
+
+[REQ] resolveProvider(
+    ResolveProviderDto): ProviderConfigDto
+    db:team::loadAncestors(teamId): AncestorListDto
+    provider::walkTree(AncestorListDto, providerType): ProviderConfigDto
+      not-found
+    [RET] ProviderConfigDto
+
+
+[REQ] resolveBinding(
+    ResolveBindingDto): ServiceBindingDto
+    db:team::loadAncestors(teamId): AncestorListDto
+    binding::walkTree(AncestorListDto, serviceName): ServiceBindingDto
+      not-found
+    [RET] ServiceBindingDto
+
+
+[REQ] executeWithFallback(
+    ExecuteFallbackDto): ExecutionResultDto
+    db:binding::load(bindingId): ServiceBindingDto
+    binding::getChain(ServiceBindingDto): ChainListDto
+    circuit::filterHealthy(ChainListDto): ChainListDto
+      all-degraded
+    provider::tryChain(ChainListDto, execPayload): ExecutionResultDto
+      all-failed
+    [RET] ExecutionResultDto
+
+
+[REQ] providerSend(
+    ProviderSendDto): CodeReturnDto
+    provider::hashKey(code, execPayload): idempotencyKey
+    idempoter::execute(idempotencyKey, code, execPayload): CodeReturnDto
+      sandbox-error
+    [RET] CodeReturnDto
+
+
+[REQ] providerGuaranteeSend(
+    GuaranteeSendDto): GuaranteeResultDto
+    provider::hashKey(code, execPayload): idempotencyKey
+    idempoter::execute(idempotencyKey, code, execPayload): CodeReturnDto
+      sandbox-error
+    ex:reconciler::reconcile(idempotencyKey): ReceiptDto
+      timeout not-confirmed
+    idempoter::mark(idempotencyKey, ReceiptDto): void
+    provider::buildGuarantee(ReceiptDto, CodeReturnDto): GuaranteeResultDto
+
+
+// --- Provider Management ---
+
+[REQ] createProvider(
+    CreateProviderDto): ProviderDto
+    provDef::build(CreateProviderDto): ProviderDto
+    db:provDef::save(ProviderDto): ProviderDto
+      timeout
+    [RET] ProviderDto
+
+
+[REQ] createProviderConfig(
+    CreateProviderConfigDto): ProviderConfigDto
+    db:provDef::load(providerId): ProviderDto
+      not-found
+    provDef::validateConfig(ProviderDto, configMap): void
+      invalid
+    provCfg::build(CreateProviderConfigDto): ProviderConfigDto
+    db:provCfg::save(ProviderConfigDto): ProviderConfigDto
+      timeout
+    [RET] ProviderConfigDto
+
+
+[REQ] createServiceBinding(
+    CreateBindingDto): ServiceBindingDto
+    binding::build(CreateBindingDto): ServiceBindingDto
+    db:binding::save(ServiceBindingDto): ServiceBindingDto
+      timeout
+    [RET] ServiceBindingDto
+
+
+// --- Question Lab ---
+
+[REQ] createQLConfig(
+    CreateQLConfigDto): QLConfigDto
+    qlConfig::build(CreateQLConfigDto): QLConfigDto
+    db:qlConfig::save(QLConfigDto): QLConfigDto
+      timeout
+    [RET] QLConfigDto
+
+
+[REQ] createQLQuestion(
+    CreateQLQuestionDto): QLQuestionDto
+    qlQuestion::build(CreateQLQuestionDto): QLQuestionDto
+    db:qlQuestion::save(QLQuestionDto): QLQuestionDto
+      timeout
+    [RET] QLQuestionDto
+
+
+[REQ] promoteQLConfig(
+    PromoteQLConfigDto): AuditConfigDto
+    db:qlConfig::load(qlConfigId): QLConfigDto
+      not-found
+    qlConfig::toAuditConfig(QLConfigDto): AuditConfigDto
+    db:auditConfig::save(AuditConfigDto): AuditConfigDto
+      timeout
+    [RET] AuditConfigDto
+
+
+[REQ] runQuestionTest(RunTestDto): TestResultDto
+    db:qlQuestion::load(questionId): QLQuestionDto
+      not-found
+    ex:rag::retrieveForTest(QLQuestionDto, snippet): RagResultDto
+      timeout
+    ex:llm::askQuestion(QLQuestionDto, RagResultDto, snippet): TestAnswerDto
+      timeout
+    qTest::compare(TestAnswerDto, expected): TestResultDto
+    db:qlTest::saveResult(TestResultDto): TestResultDto
+      timeout
+    [RET] TestResultDto
+
+
+// --- Marketplace ---
+
+[REQ] publishMarketplaceItem(
+    PublishItemDto): MktItemDto
+    mktItem::validate(PublishItemDto): void
+      invalid
+    mktItem::build(PublishItemDto): MktItemDto
+    db:mktItem::save(MktItemDto): MktItemDto
+      timeout
+    [RET] MktItemDto
+
+
+[REQ] installMarketplaceItem(
+    InstallItemDto): SuccessDto
+    db:mktItem::load(mktItemId): MktItemDto
+      not-found
+    mktItem::install(MktItemDto, teamId): void
+      invalid
+    db:mktItem::recordInstall(mktItemId, teamId): void
+      timeout
+    success::ok(): SuccessDto
+
+
+// --- Logging ---
+
+[REQ] flushLogs(FlushLogsDto): SuccessDto
+    logger::formatBatch(FlushLogsDto): FormattedLogDto
+    ex:loki::pushBatch(FormattedLogDto): void
+      timeout network-error
+    success::ok(): SuccessDto
+
+
+[NON] auth
+    authentication service handling user
+    lookup and password verification
+[NON] session
+    stored auth state snapshot with ttl
+[NON] team
+    nestable organizational unit forming
+    the scope hierarchy
+[NON] role
+    configurable role definition with
+    capabilities and permissions
+[NON] user
+    stored user identity with cached role
+    fields
+[NON] auditConfig
+    versioned audit template defining
+    questions fields and skip rules
+[NON] auditBatch
+    batch container grouping multiple audit
+    instances into a single submission
+[NON] inst
+    single audit execution against one
+    recording tracking status and results
+[NON] auditResult
+    scoring pass appended to audit results
+    array with origin llm reviewer or judge
+[NON] pipeline
+    queue-driven orchestrator for audit
+    pipeline steps
+[NON] recording
+    external recording download service
+[NON] transcription
+    speech-to-text transcription service
+[NON] llm
+    large language model service for
+    diarization and question answering
+[NON] rag
+    retrieval augmented generation service
+    for document retrieval
+[NON] skipRule
+    conditional logic removing questions
+    based on field values
+[NON] question
+    audit question with text expected answer
+    type and rag params
+[NON] review
+    reviewer workflow managing claim-lock
+    checklist for audit review
+[NON] reviewChecklist
+    transient per-audit checklist tracking
+    per-question claim and decision state
+[NON] appeal
+    appeal workflow managing filing
+    assignment and judge decision
+[NON] appealRecord
+    stored appeal entity linking audit
+    finding agent and judge
+[NON] appealChecklist
+    transient per-appeal checklist tracking
+    per-question claim and decision state
+[NON] coaching
+    post-audit follow-up tracking pending
+    and completed coaching per agent
+[NON] gameCfg
+    per-team gamification toggle threshold
+    and combo timeout with cascade
+[NON] player
+    per-user gamification profile with xp
+    tokens avatar inventory and badges
+[NON] badge
+    badge evaluation engine filtering
+    criteria and checking thresholds
+[NON] badgeDef
+    stored badge definition with criteria
+    threshold and xp reward
+[NON] storeItem
+    purchasable cosmetic item in the
+    gamification store
+[NON] evtCfg
+    stored reactive automation triggered by
+    events with conditions and delivery
+[NON] comms
+    polymorphic notification dispatcher
+    selecting webhook email chat or sse
+[NON] notifier
+    notification delivery queue for rendered
+    event payloads
+[NON] message
+    direct message between two users
+[NON] report
+    saved data view combining query type
+    and display options
+[NON] query
+    report query engine for filter sort
+    group and formula evaluation
+[NON] dashboard
+    dashboard persistence service
+[NON] provider
+    adapter turning code string into
+    sandboxed execution with idempotency
+[NON] provDef
+    developer-defined provider with type
+    name and config schema
+[NON] provCfg
+    admin-configured provider credentials
+    per team with cascade delegation
+[NON] binding
+    per-team wiring of named services to
+    ordered provider fallback chains
+[NON] circuit
+    health tracker marking degraded
+    providers and skipping them in chain
+[NON] idempoter
+    reliability kernel for effectively-once
+    execution via lease-based locking
+[NON] reconciler
+    callback confirming whether a side
+    effect actually happened
+[NON] qlQuestion
+    question lab question under development
+    with version history
+[NON] qlTest
+    question lab test case with snippet
+    expected answer and last result
+[NON] qTest
+    test comparator checking llm answer
+    against expected result
+[NON] logger
+    structured log formatter for loki
+    ingestion
+[NON] loki
+    grafana cloud loki push api for log
+    storage
+[NON] success
+    simple success result builder
+[NON] qlConfig
+    question lab configuration grouping
+    questions under development
+[NON] avatar
+    embedded player visual identity with
+    letter flair and equipped slot ids
+[NON] inventory
+    flat list of all purchased store item
+    ids owned by the player
+[NON] eventBinding
+    player-chosen celebration gif for a
+    specific event type
+[NON] badgeProgress
+    tracking counter toward earning a
+    specific badge definition
+[NON] earnedBadge
+    completed badge record with timestamp
+    on player profile
+[NON] effect
+    visual effect primitive with sandboxed
+    css and js knob functions
+[NON] appliedEffect
+    effect instance with knob values
+    filled in for a store item or combo
+[NON] themeDef
+    full app color scheme with twelve hex
+    values purchasable from the store
+[NON] comboPack
+    combo effect bundle with tiered
+    consumers for queue processing
+[NON] comboConsumer
+    independent effect pipeline running on
+    floating letter elements during combos
+[NON] comboTier
+    single tier pairing an applied effect
+    with optional sound
+[NON] filterGroup
+    recursive and-or filter structure
+    reused by reports and event configs
+[NON] filterCondition
+    single filter predicate with field
+    key operator and value
+[NON] sortCriterion
+    sort column with ascending or
+    descending order
+[NON] groupCriterion
+    grouping column with bucketing method
+    for report aggregation
+[NON] formulaField
+    user-defined computed column evaluated
+    per row at query time
+[NON] reportFolder
+    organizational container for saved
+    reports with default flag
+[NON] reportOptions
+    shared display settings for all report
+    types including row height and color
+[NON] reportProperties
+    type-specific visualization config
+    varying by report type
+[NON] widgetSlot
+    positioned widget in a dashboard grid
+    with column order and span
+[NON] widgetType
+    widget kind enum selecting the
+    renderer and config shape
+[NON] fieldDef
+    input field schema defining required
+    data per audit instance
+[NON] ragParams
+    per-question rag retrieval settings
+    controlling vector search behavior
+[NON] questionType
+    answer validation type with regex
+    parser and json schema
+[NON] pipelineConfig
+    operational tuning for retry limit
+    and delay between pipeline retries
+[NON] appEvent
+    ephemeral per-user event with 24h ttl
+    delivered via sse stream
+[NON] broadcastEvent
+    org-wide announcement event with 24h
+    ttl displayed on gamification feed
+[NON] prefabEventDef
+    pre-defined broadcast event type with
+    default message template
+[NON] mktItem
+    marketplace item published by
+    developers and installed per org
+[NON] idempotencyRecord
+    lease-based execution record tracking
+    state attempts and expiry
+[NON] sidebar
+    computed navigation surface derived
+    from session capabilities at login
+[NON] leaderboard
+    computed ranking of users by review
+    speed decisions or flip rate
+
+
+[TYP] email: string
+    user email address used as identifier
+[TYP] password: string
+    plaintext password submitted at login
+[TYP] passwordHash: string
+    bcrypt-hashed password on user record
+[TYP] newPassword: string
+    new plaintext password for change
+[TYP] newHash: string
+    bcrypt hash of the new password
+[TYP] callerEmail: string
+    developer email during impersonation
+[TYP] memberEmail: string
+    email of team member being changed
+[TYP] playerEmail: string
+    email of the gamification player
+[TYP] reviewerEmail: string
+    reviewer claiming an item
+[TYP] judgeEmail: string
+    judge assigned to an appeal
+[TYP] agentEmail: string
+    email of the agent being coached
+[TYP] ownerEmail: string
+    dashboard or report owner email
+[TYP] managerEmail: string
+    supervisor who addressed coaching
+[TYP] managerNotes: string
+    coaching feedback from supervisor
+[TYP] fromEmail: string
+    sender email for direct messages
+[TYP] toEmail: string
+    recipient email for direct messages
+[TYP] teamId: string
+    unique team identifier
+[TYP] rootTeamId: string
+    org-level root team identifier
+[TYP] parentId: string
+    parent team id or null for root teams
+[TYP] leaderId: string
+    user id of the team leader
+[TYP] roleId: string
+    role definition identifier
+[TYP] name: string
+    display name for teams roles configs
+[TYP] slug: string
+    url-safe identifier for teams
+[TYP] role: string
+    cached role name from roledef
+[TYP] level: number
+    access level lower means more access
+[TYP] configId: string
+    composite key uuid-version for config
+[TYP] uuid: string
+    stable audit config identifier
+[TYP] version: number
+    audit config version number
+[TYP] instanceId: string
+    unique audit instance identifier
+[TYP] batchId: string
+    audit batch identifier
+[TYP] questionId: string
+    audit question identifier
+[TYP] findingId: string
+    disputed question id in an appeal
+[TYP] appealId: string
+    appeal record identifier
+[TYP] reportId: string
+    saved report identifier
+[TYP] sourceId: string
+    dashboard id to clone from
+[TYP] itemId: string
+    store item identifier
+[TYP] bindingId: string
+    service binding identifier
+[TYP] providerId: string
+    provider definition identifier
+[TYP] dashboardId: string
+    dashboard page identifier
+[TYP] badgeDefId: string
+    badge definition identifier
+[TYP] providerConfigId: string
+    provider config instance identifier
+[TYP] receiptId: string
+    reconciliation receipt identifier
+[TYP] idempotencyKey: string
+    sha256 hash of code plus payload
+[TYP] recordingUrl: string
+    url to the original call recording
+[TYP] recordingData: Uint8Array
+    binary recording data from provider
+[TYP] questionText: string
+    question prompt for llm and reviewers
+[TYP] expectedAnswer: string
+    correct answer for scoring
+[TYP] snippet: string
+    transcript excerpt used as test input
+[TYP] expected: string
+    expected test result for comparison
+[TYP] score: number
+    numeric audit score
+[TYP] threshold: number
+    minimum score for xp or badge award
+[TYP] amount: number
+    xp or token amount to award or deduct
+[TYP] price: number
+    token cost of a store item
+[TYP] totalXp: number
+    lifetime xp monotonically increasing
+[TYP] tokenBalance: number
+    spendable token balance
+[TYP] dayStreak: number
+    consecutive active day count
+[TYP] remaining: number
+    fan-in counter for parallel batches
+[TYP] fanInReady: boolean
+    whether all parallel batches completed
+[TYP] leveledUp: boolean
+    whether xp caused a level increase
+[TYP] qualifies: boolean
+    whether score meets the threshold
+[TYP] decision: string
+    confirm flip uphold or overturn
+[TYP] decidedBy: string
+    email of the reviewer or judge
+[TYP] slot: string
+    avatar equip slot name
+[TYP] fieldMap: string
+    field values keyed by fielddef key
+[TYP] eventPayload: string
+    event payload as key-value pairs
+[TYP] execPayload: string
+    payload for provider execution
+[TYP] configMap: string
+    filled-in provider config values
+[TYP] payloadMap: string
+    generic payload for notifications
+[TYP] batchStatus: string
+    audit batch lifecycle status
+[TYP] resultOrigin: string
+    which pass produced the audit result
+[TYP] appealType: string
+    type of appeal determining re-audit
+[TYP] appealStatus: string
+    appeal record lifecycle status
+[TYP] reportType: string
+    visualization type for reports
+[TYP] storeItemType: string
+    cosmetic item category
+[TYP] rarity: string
+    visual rarity tier for store items
+[TYP] communicationType: string
+    notification delivery channel type
+[TYP] eventType: string
+    dot-scoped event name from catalog
+[TYP] code: string
+    provider implementation for sandbox
+[TYP] configSchema: string
+    json schema for provider config
+[TYP] providerType: string
+    db llm storage email or auth
+[TYP] serviceName: string
+    named app function
+[TYP] raw: string
+    plain text from transcription service
+[TYP] diarized: string
+    speaker-labeled transcript
+[TYP] answer: string
+    response value from llm or reviewer
+[TYP] notes: string
+    free text reasoning
+[TYP] author: string
+    email of result author
+[TYP] heading: string
+    feedback title
+[TYP] text: string
+    feedback or document content
+[TYP] viewUrl: string
+    link to full audit view
+[TYP] ragDocId: string
+    retrieved document identifier
+[TYP] body: string
+    message content
+[TYP] timestamp: number
+    unix timestamp
+[TYP] read: boolean
+    message read flag
+[TYP] result: string
+    sandboxed code return value
+[TYP] key: string
+    unique field or formula identifier
+[TYP] value: string
+    spoken word or comparison value
+[TYP] folderId: string
+    report folder identifier
+[TYP] trigger: string
+    dot-scoped event pattern for matching
+[TYP] payloadTemplate: string
+    expression template for rendering
+[TYP] enabled: boolean
+    gamification feature toggle
+[TYP] comboTimeoutMs: number
+    combo window in milliseconds
+[TYP] badgeRole: string
+    which role can earn this badge
+[TYP] xpReward: number
+    xp granted when badge earned
+[TYP] increment: string
+    expression evaluated per badge event
+[TYP] earnedAt: number
+    timestamp when badge was earned
+[TYP] logLevel: string
+    structured log severity level
+[TYP] logPayload: string
+    formatted log batch for loki
+[TYP] serviceName2: string
+    service field in log entry
+[TYP] thinking: string
+    llm reasoning during test
+[TYP] defense: string
+    llm defense of its answer
+[TYP] passed: boolean
+    whether test passed
+[TYP] filedByEmail: string
+    email of person filing the appeal
+[TYP] claimedBy: string
+    email of reviewer or judge who claimed
+[TYP] message: string
+    reason text for skipped questions
+[TYP] capability: string
+    sidebar tab or route permission name
+[TYP] questionTypeName: string
+    question type identifier like yes-no
+[TYP] regex: string
+    validation pattern for question input
+[TYP] parserType: string
+    answer coercion method
+[TYP] conjunction: string
+    filter group combinator and or or
+[TYP] filterOperator: string
+    comparison operation for filter
+[TYP] groupingMethod: string
+    bucketing method for report groups
+[TYP] sortOrder: string
+    ascending or descending sort
+[TYP] widgetTypeName: string
+    dashboard widget kind
+[TYP] chartType: string
+    chart visualization variant
+[TYP] groupDisplay: string
+    how groups render visually
+[TYP] colorMethod: string
+    cell coloring strategy for reports
+[TYP] badgeCategory: string
+    badge grouping in the ui
+[TYP] criteriaSource: string
+    badge criteria data origin
+[TYP] criteriaOperator: string
+    badge criteria comparison operation
+[TYP] criteriaChain: string
+    badge criteria conjunction
+[TYP] weight: string
+    store item visual weight tier
+[TYP] idempotencyState: string
+    lease record lifecycle state
+[TYP] lockedUntil: number
+    lease expiry timestamp
+[TYP] attempts: number
+    execution attempt count
+[TYP] topK: number
+    max rag retrieval results
+[TYP] keep: number
+    min rag relevance score threshold
+[TYP] mmrLambda: number
+    diversity weight for rag retrieval
+[TYP] hybridAlpha: number
+    keyword vs semantic search balance
+[TYP] rerank: boolean
+    whether to apply rag re-ranking
+[TYP] maxRetries: number
+    pipeline retry limit
+[TYP] retryDelaySeconds: number
+    delay between pipeline retries
+[TYP] label: string
+    display name for fields or formulas
+[TYP] expression: string
+    expression language string
+[TYP] required: boolean
+    mandatory field flag
+[TYP] icon: string
+    display icon identifier
+[TYP] description: string
+    human-readable description text
+[TYP] css: string
+    css style string for effects
+[TYP] js: string
+    sandboxed javascript for effects
+[TYP] effectId: string
+    visual effect definition identifier
+[TYP] soundUrl: string
+    audio url for combo tier playback
+[TYP] themeId: string
+    theme definition identifier
+[TYP] comboPackId: string
+    combo pack identifier
+[TYP] qlConfigId: string
+    question lab config identifier
+[TYP] mktItemId: string
+    marketplace item identifier
+[TYP] mktItemType: string
+    marketplace item category
+[TYP] isDefault: boolean
+    system default flag for folders
+[TYP] createdBy: string
+    email of entity creator
+[TYP] widgetId: string
+    unique widget slot identifier
+[TYP] column: number
+    grid column for widget placement
+[TYP] order: number
+    sort position within column
+[TYP] span: number
+    columns wide for widget sizing
+[TYP] sharedEmails: string
+    emails to share a dashboard with
+[TYP] letter: string
+    single character in avatar bubble
+[TYP] flair: string
+    character shown after email
+[TYP] letterId: string
+    equipped letter store item id
+[TYP] frameId: string
+    equipped frame store item id
+[TYP] titleId: string
+    equipped title store item id
+[TYP] emailId: string
+    equipped email store item id
+[TYP] flairId: string
+    equipped flair store item id
+[TYP] equippedBadgeId: string
+    visible badge on player profile
+[TYP] equippedThemeId: string
+    active theme for app colors
+[TYP] equippedComboPackId: string
+    active combo pack for queue
+[TYP] gifUrl: string
+    celebration gif url
+[TYP] count: number
+    accumulated badge increment value
+[TYP] color: string
+    css color or gradient value
+[TYP] fieldKey: string
+    column identifier for filters
+[TYP] fieldType: string
+    input type for field definitions
+[TYP] auditId: string
+    audit instance reference in coaching
+[TYP] addressedAt: number
+    timestamp when coaching addressed
+[TYP] animationId: string
+    animation identifier for broadcasts
+[TYP] triggerEmail: string
+    who triggered a broadcast event
+[TYP] displayName: string
+    shown name in broadcast events
+[TYP] defaultMessage: string
+    template function for prefab events
+[TYP] hex: string
+    hexadecimal color value
+[TYP] rowHeight: number
+    row pixel height in report display
+[TYP] title: string
+    display label for widgets
+[TYP] aggregate: string
+    aggregation function for charts
+
+
+[DTO] LoginDto: email, password
+    credentials submitted for auth
+[DTO] SessionDto: email, rootTeamId, teamId, role, level
+    auth state snapshot created on login
+[DTO] ImpersonateDto: email, callerEmail, level
+    impersonation request from developer
+[DTO] UserRecordDto: email, passwordHash, teamId, roleId, role, level
+    stored user identity with role fields
+[DTO] CreateTeamDto: name, slug, parentId, leaderId
+    input for creating a new team
+[DTO] UpdateTeamDto: teamId, name?, slug?, leaderId?
+    input for updating team fields
+[DTO] TeamDto: teamId, name, slug, parentId, leaderId
+    stored team entity with member list
+[DTO] AddMemberDto: teamId, memberEmail
+    input for adding a team member
+[DTO] RemoveMemberDto: teamId, memberEmail
+    input for removing a team member
+[DTO] ChangeLeaderDto: teamId, leaderId
+    input for changing a team leader
+[DTO] CreateRoleDto: name, level
+    input for creating a role definition
+[DTO] UpdateRoleDto: roleId, name?, level?
+    input for updating role fields
+[DTO] RoleDefDto: roleId, name, level
+    stored role definition entity
+[DTO] CreateUserDto: email, password, teamId, roleId
+    input for creating a new user
+[DTO] DeactivateUserDto: email
+    input for soft-deleting a user
+[DTO] ChangePasswordDto: email, password, newPassword
+    input for changing a user password
+[DTO] SuccessDto: result
+    simple success acknowledgement
+[DTO] CreateAuditConfigDto: name, configId
+    input for creating an audit config
+[DTO] UpdateAuditConfigDto: configId, name?
+    input for updating an audit config
+[DTO] AuditConfigDto: configId, uuid, version, name
+    stored audit config with version
+[DTO] SubmitBatchDto: configId
+    input for submitting an audit batch
+[DTO] AuditBatchDto: batchId, batchStatus
+    stored batch tracking progress
+[DTO] InstanceListDto: InstDto(s)
+    list of audit instances in a batch
+[DTO] InitAuditDto: instanceId
+    input for pipeline init step
+[DTO] TranscribeDto: instanceId, recordingData
+    input for pipeline transcribe step
+[DTO] PrepareDto: instanceId, configId, fieldMap
+    input for pipeline prepare step
+[DTO] InstDto: instanceId, configId, recordingUrl, fieldMap, TranscriptDto?
+    stored audit execution entity
+[DTO] RawTranscriptDto: raw
+    plain text from transcription
+[DTO] TranscriptDto: raw, diarized
+    three forms of the transcript
+[DTO] AuditResultDto: resultOrigin, author
+    single scoring pass in results array
+[DTO] FeedbackDto: heading, text, viewUrl
+    llm-generated feedback summary
+[DTO] SkipResultDto: SkippedEntryDto(s)
+    collected skip decisions
+[DTO] SkippedEntryDto: questionId, message
+    skipped question with reason
+[DTO] QuestionListDto: PopulatedQuestionDto(s)
+    list of populated questions
+[DTO] PopulatedQuestionDto: questionId, questionText, expectedAnswer
+    question with interpolated fields
+[DTO] PreparedDto: QuestionListDto, SkipResultDto
+    questions ready with skip info
+[DTO] RagResultDto: RagDocDto(s)
+    collection of retrieved documents
+[DTO] RagDocDto: ragDocId, score, text
+    retrieved document with relevance
+[DTO] AnswerListDto: AnswerEntryDto(s)
+    list of llm answers
+[DTO] AnswerEntryDto: questionId, answer, notes
+    non-skipped question answer
+[DTO] EvalListDto: EvaluatedAnswerDto(s)
+    list of evaluated answers
+[DTO] EvaluatedAnswerDto: questionId, answer
+    answer with evaluation attached
+[DTO] AskBatchDto: instanceId
+    input for parallel question asking
+[DTO] AskBatchResultDto: instanceId, EvalListDto, remaining, fanInReady
+    result of a question-asking batch
+[DTO] FinalizeDto: instanceId
+    input for pipeline finalize step
+[DTO] CreateChecklistDto: instanceId
+    input for creating review checklist
+[DTO] ReviewChecklistDto: instanceId, ReviewItemDto(s)
+    stored checklist for review
+[DTO] ReviewItemDto: questionId, claimedBy?, decision?, decidedBy?
+    single review checklist item
+[DTO] ClaimReviewDto: instanceId, reviewerEmail
+    input for claiming a review item
+[DTO] ReviewDecisionDto: instanceId, questionId, decision, decidedBy
+    input for submitting review decision
+[DTO] ConsolidateReviewDto: instanceId
+    input for consolidating review
+[DTO] FileAppealDto: instanceId, findingId, filedByEmail, notes, appealType
+    input for filing an appeal
+[DTO] AppealRecordDto: appealId, instanceId, findingId, appealType, appealStatus
+    stored appeal entity
+[DTO] AssignAppealDto: appealId, judgeEmail
+    input for assigning a judge
+[DTO] AppealChecklistDto: appealId, instanceId, AppealItemDto(s)
+    stored checklist for appeal
+[DTO] AppealItemDto: questionId, claimedBy?, decision?, decidedBy?
+    single appeal checklist item
+[DTO] AppealDecisionDto: appealId, questionId, decision, decidedBy
+    input for submitting appeal decision
+[DTO] ConsolidateAppealDto: appealId, instanceId
+    input for consolidating appeal
+[DTO] QueueCoachingDto: agentEmail, instanceId
+    input for adding to coaching queue
+[DTO] AddressCoachingDto: agentEmail, instanceId, managerEmail, managerNotes
+    input for addressing coaching
+[DTO] CoachingRecordDto: agentEmail
+    stored per-agent coaching record
+[DTO] EarnXpDto: playerEmail, teamId, score, amount
+    input for awarding xp
+[DTO] GameCfgDto: teamId, enabled, threshold, comboTimeoutMs
+    per-team gamification config
+[DTO] PlayerDto: playerEmail, totalXp, tokenBalance, dayStreak
+    stored per-user gamification profile
+[DTO] PurchaseItemDto: playerEmail, itemId
+    input for buying a store item
+[DTO] StoreItemDto: itemId, name, price, storeItemType, rarity
+    stored purchasable cosmetic
+[DTO] EquipItemDto: playerEmail, itemId, slot
+    input for equipping a store item
+[DTO] EvaluateBadgeDto: playerEmail, badgeRole, eventPayload
+    input for evaluating badge progress
+[DTO] BadgeListDto: BadgeDefDto(s)
+    list of active badge definitions
+[DTO] BadgeDefDto: badgeDefId, name, badgeRole, threshold, xpReward
+    stored badge definition
+[DTO] MatchListDto: MatchingBadgeDto(s)
+    badges matching event criteria
+[DTO] MatchingBadgeDto: badgeDefId
+    badge whose criteria matched
+[DTO] IncrementListDto: BadgeIncrementDto(s)
+    computed increments for badges
+[DTO] BadgeIncrementDto: badgeDefId, increment
+    increment value for one badge
+[DTO] EarnedListDto: EarnedBadgeDto(s)
+    newly earned badges
+[DTO] EarnedBadgeDto: badgeDefId, earnedAt
+    completed badge with timestamp
+[DTO] EmitEventDto: eventType, eventPayload
+    input for emitting an event
+[DTO] EmitResultDto: PayloadListDto
+    result of event emission
+[DTO] CfgListDto: EventConfigDto(s)
+    list of matching event configs
+[DTO] EventConfigDto: name, trigger, communicationType, payloadTemplate
+    stored notification rule
+[DTO] PayloadListDto: RenderedPayloadDto(s)
+    list of rendered payloads
+[DTO] RenderedPayloadDto: communicationType, payloadMap
+    notification payload for dispatch
+[DTO] DeliverNotificationDto: communicationType, RenderedPayloadDto
+    input for delivering notification
+[DTO] SendMessageDto: fromEmail, toEmail, body
+    input for sending a direct message
+[DTO] MessageDto: fromEmail, toEmail, body, timestamp, read
+    stored direct message
+[DTO] CreateReportDto: reportType, ownerEmail, folderId?
+    input for creating a report
+[DTO] ReportDto: reportId, reportType, ownerEmail, folderId
+    stored report entity
+[DTO] RunReportDto: reportId
+    input for running a report
+[DTO] FormulaResultListDto: FormulaResultDto(s)
+    list of evaluated formula results
+[DTO] FormulaResultDto: key, value
+    evaluated formula field result
+[DTO] FilteredListDto: FilteredRowDto(s)
+    rows after filter application
+[DTO] FilteredRowDto: fieldMap
+    single row after filtering
+[DTO] SortedListDto: SortedRowDto(s)
+    rows after sort application
+[DTO] SortedRowDto: fieldMap
+    single row after sorting
+[DTO] ReportResultDto: SortedRowDto(s)
+    final report output
+[DTO] CreateDashboardDto: ownerEmail, role, name
+    input for creating a dashboard
+[DTO] CloneDashboardDto: sourceId, ownerEmail
+    input for cloning a dashboard
+[DTO] DashboardPageDto: dashboardId, ownerEmail, role, name
+    stored dashboard page
+[DTO] ResolveProviderDto: teamId, providerType
+    input for provider resolution
+[DTO] ResolveBindingDto: teamId, serviceName
+    input for binding resolution
+[DTO] AncestorListDto: TeamDto(s)
+    team ancestor chain for cascade
+[DTO] ProviderConfigDto: providerConfigId, teamId, providerType, configMap
+    stored provider credentials
+[DTO] ServiceBindingDto: bindingId, teamId, serviceName
+    stored service-to-provider wiring
+[DTO] ExecuteFallbackDto: bindingId, execPayload
+    input for fallback execution
+[DTO] ExecutionResultDto: result, providerConfigId
+    successful execution result
+[DTO] ChainListDto: ProviderChainDto(s)
+    ordered provider fallback chain
+[DTO] ProviderChainDto: providerConfigId, configMap, code
+    single provider in fallback chain
+[DTO] ProviderSendDto: code, execPayload
+    input for fire-and-forget execution
+[DTO] CodeReturnDto: result
+    return value from sandbox
+[DTO] GuaranteeSendDto: code, execPayload
+    input for pessimistic execution
+[DTO] GuaranteeResultDto: ReceiptDto, CodeReturnDto
+    combined receipt and code return
+[DTO] ReceiptDto: receiptId, idempotencyKey
+    confirmation of side effect
+[DTO] CreateProviderDto: providerType, name, configSchema, code
+    input for defining a provider
+[DTO] ProviderDto: providerId, providerType, name, configSchema, code
+    stored provider definition
+[DTO] CreateProviderConfigDto: teamId, providerType, providerId, configMap
+    input for provider credentials
+[DTO] CreateBindingDto: teamId, serviceName
+    input for service binding
+[DTO] QLQuestionDto: questionId, name, text
+    question lab question
+[DTO] RunTestDto: questionId, snippet, expected
+    input for running a question test
+[DTO] TestAnswerDto: answer, thinking, defense
+    llm answer with reasoning
+[DTO] TestResultDto: questionId, passed, expected, TestAnswerDto
+    test comparison result
+[DTO] FlushLogsDto: LogEntryDto(s)
+    batch of log entries to push
+[DTO] LogEntryDto: timestamp, logLevel, serviceName2, teamId
+    single structured log entry
+[DTO] FormattedLogDto: logPayload
+    loki-formatted log batch
+[DTO] PurchaseThemeDto: playerEmail, themeId
+    input for buying a theme
+[DTO] EquipThemeDto: playerEmail, themeId
+    input for equipping a theme
+[DTO] ThemeDefDto: themeId, name, price
+    stored theme color scheme
+[DTO] PurchaseComboDto: playerEmail, comboPackId
+    input for buying a combo pack
+[DTO] EquipComboDto: playerEmail, comboPackId
+    input for equipping a combo pack
+[DTO] ComboPackDto: comboPackId, name, price, rarity
+    stored combo effect bundle
+[DTO] EffectDto: effectId, name, css, js
+    stored visual effect primitive
+[DTO] AppliedEffectDto: effectId
+    effect instance with filled-in knobs
+[DTO] ComboTierDto: AppliedEffectDto, soundUrl?
+    single combo tier with effect and sound
+[DTO] AvatarDto: letter?, flair?, letterId?, frameId?, titleId?, emailId?
+    embedded player visual identity
+[DTO] InventoryDto: itemId(s)
+    flat list of owned store item ids
+[DTO] EventBindingDto: eventType, gifUrl
+    player celebration gif binding
+[DTO] BadgeProgressDto: badgeDefId, count
+    tracking counter toward badge
+[DTO] BCritDto: criteriaSource, fieldKey, criteriaOperator, value, criteriaChain
+    single badge filter predicate
+[DTO] CoachingActionDto: auditId, managerEmail, managerNotes, addressedAt
+    resolved coaching interaction
+[DTO] FilterGroupDto: conjunction
+    recursive and-or filter node
+[DTO] FilterConditionDto: fieldKey, filterOperator, value
+    single filter predicate
+[DTO] SortCriterionDto: fieldKey, sortOrder
+    single sort column specification
+[DTO] GroupCriterionDto: fieldKey, groupingMethod
+    single group column specification
+[DTO] FormulaFieldDto: key, label, expression
+    user-defined computed column
+[DTO] ReportQueryDto: FilterGroupDto?, FormulaFieldDto(s)?
+    embedded query structure
+[DTO] ReportOptionsDto: rowHeight?, colorMethod?
+    shared report display settings
+[DTO] ReportFolderDto: folderId, name, isDefault
+    stored report folder
+[DTO] CreateFolderDto: name, createdBy
+    input for creating a report folder
+[DTO] WidgetSlotDto: widgetId, widgetTypeName, title, column, order, span
+    positioned widget in dashboard grid
+[DTO] QLConfigDto: qlConfigId, name
+    stored question lab configuration
+[DTO] CreateQLConfigDto: name
+    input for creating a ql config
+[DTO] CreateQLQuestionDto: qlConfigId, name, text
+    input for creating a ql question
+[DTO] PromoteQLConfigDto: qlConfigId
+    input for promoting ql to production
+[DTO] QLTestDto: questionId, snippet, expected
+    stored question lab test case
+[DTO] QuestionTypeDto: questionTypeName, regex, parserType
+    stored question answer validation type
+[DTO] FieldDefDto: key, label, fieldType, required
+    embedded input field schema
+[DTO] SkipRuleDto: questionId, expression, message
+    embedded conditional skip logic
+[DTO] RagParamsDto: topK, keep, rerank
+    embedded per-question rag settings
+[DTO] PipelineConfigDto: maxRetries, retryDelaySeconds
+    stored pipeline retry settings
+[DTO] IdempotencyRecordDto: idempotencyKey, idempotencyState, attempts
+    stored lease-based execution record
+[DTO] CreateEvtCfgDto: name, trigger, communicationType
+    input for creating an event config
+[DTO] UpdateGameCfgDto: teamId, enabled?, threshold?, comboTimeoutMs?
+    input for updating game settings
+[DTO] AppEventDto: eventType, eventPayload
+    stored ephemeral per-user event
+[DTO] BroadcastEventDto: eventType, triggerEmail, displayName, message?
+    stored org-wide announcement event
+[DTO] PrefabEventDefDto: eventType, label, description, icon
+    pre-defined broadcast event type
+[DTO] LeaderboardEntryDto: email, score
+    computed ranking entry
+[DTO] PublishItemDto: mktItemType, name, code
+    input for publishing to marketplace
+[DTO] MktItemDto: mktItemId, mktItemType, name
+    stored marketplace item
+[DTO] InstallItemDto: mktItemId, teamId
+    input for installing marketplace item
+[DTO] UpdateDashboardDto: dashboardId, WidgetSlotDto(s)?
+    input for updating dashboard widgets
+[DTO] ShareDashboardDto: dashboardId, sharedEmails
+    input for sharing a dashboard
+
+# Auto-Bot V2
+
+Auto-Bot is a call-center audit automation platform
+that ingests call recordings, transcribes them,
+scores them against configurable question sets using
+LLMs with RAG retrieval, and routes results through
+human review and appeals. It includes gamification
+to engage agents and flexible reporting for
+supervisors, analysts, and admins.
+
+## Business Context
+
+Contact centers need quality assurance on agent
+calls. Auto-Bot automates the bulk: an LLM listens
+to every call, answers compliance and quality
+questions, and flags issues. Humans review only
+flagged calls, reducing manual audit workload.
+Agents appeal decisions they disagree with, and
+judges provide independent arbitration.
+
+The platform is multi-tenant. Each organization is
+a root team in a nestable hierarchy. A developer
+team sits above all orgs for platform admin. Roles
+are data-driven (RoleDef), not code enums. Admins
+create custom roles with any capability combination.
+
+All entities use Deno KV with soft-delete via
+isActive. Sessions and events expire at 24h TTL.
+Logging flows to Grafana Cloud Loki via
+waitUntil(fetch()).
+
+## Audit Pipeline
+
+Queue-driven with fan-out on Deno Deploy:
+
+1. Batch submitted with config ID and field values.
+2. Each record becomes an audit instance.
+3. Recording downloaded from recordings service.
+4. Transcription produces raw text via speech API.
+5. LLM diarization labels speakers.
+6. Skip rules evaluated against field values.
+7. Questions populated with interpolated fields.
+8. Questions fanned out into parallel batches.
+   Each batch: RAG retrieval then LLM answering.
+9. Atomic counter tracks remaining batches.
+10. Finalize aggregates answers, generates feedback,
+    appends result with origin: llm.
+
+Retry: maxRetries 5, retryDelaySeconds 10.
+Recording failure -> no-recording terminal state.
+LLM errors re-enqueued with exponential backoff.
+
+Events are emitted asynchronously via waitUntil()
+after each pipeline step completes. The emitEvent
+REQ handles matching triggers, evaluating conditions,
+rendering payloads, and dispatching notifications.
+
+## Review and Appeals
+
+LLM "No" answers create a ReviewChecklist. Reviewers
+claim items with 30-min atomic locks (CAS on
+Deno KV). Claim-lock TTL is 30 minutes. If a
+reviewer does not decide within the window, the
+claim expires and the item returns to the pool.
+Decisions: confirm or flip. All decided ->
+consolidate into results.push(origin: reviewer).
+
+Agents file appeals on resolved audits. One appeal
+per finding per audit. Appeal types: redo,
+different-recording, additional-recording, and
+upload-recording. AppealChecklist created for judge.
+Same claim-lock mechanics with 30-min TTL.
+Decisions: uphold or overturn. Judge result is final.
+
+Both paths produce coaching items when final result
+has failed questions.
+
+## Provider System
+
+Providers are code-sandbox adapters with built-in
+idempotency. send (fire-and-forget) and
+guaranteeSend (pessimistic with reconciliation).
+Idempoter uses Deno KV atomic ops for lease-based
+locking with sha256(code + payload) as key.
+
+ProviderConfigs cascade up the team tree. Service
+Bindings wire services to provider fallback chains.
+Circuit breakers mark degraded providers. 5xx and
+network errors trigger fallback; 4xx does not.
+
+## Gamification
+
+### Dual Currency
+
+totalXp is monotonic and drives level. Earning XP
+adds the same amount to both totalXp and
+tokenBalance. Spending deducts from tokenBalance
+only so level progression is permanent. Levels
+are computed from totalXp, not stored.
+
+### Store Items
+
+Nine item types: letter, frame, title, email,
+flair, name_color, font, animation, theme. Each
+has a price in tokens, an icon, a color, a weight,
+a rarity, and an effects array of AppliedEffects.
+
+### Rarity
+
+Seven tiers: common, normal, rare, epic, legendary,
+limited, unique. Rarity is cosmetic metadata driving
+store presentation. Limited means time-gated and
+unique means one-of-a-kind.
+
+### Weight Mapping
+
+Weight maps to border width and font weight. light
+= 3px border + 300 font. regular = 4px + 400.
+medium = 5px + 500. bold = 6px + 700.
+
+### Effects
+
+Effect is the visual primitive. css and js fields
+are sandboxed strings. Knob functions parameterize
+effects via knobs.number, knobs.color, knobs.string,
+knobs.url. JS runs via Proxy on the real DOM
+element with no document or window access. The
+create helper builds child elements.
+
+AppliedEffect pairs an effectId with filled-in knob
+values. StoreItems embed an effects array of
+AppliedEffects.
+
+### ThemeDefs
+
+Full app color scheme with twelve hex properties:
+primary, secondary, accent, success, warning, error,
+info, background, surface, foreground, muted,
+border. Purchased from the store. Equipped via
+equippedThemeId on Player. Overrides CSS custom
+properties for that user.
+
+### ComboPacks
+
+Combo effect bundles for queue processing. A
+ComboPack has consumers, each with tiers and an
+onDrop. Each consumer is an independent effect
+pipeline running on floating letter elements.
+
+Tiers are indexed by combo count. Combo 1 uses
+tiers[0], combo 2 uses tiers[1], and so on. When
+count exceeds tiers.length, it clamps to the last
+tier. Each ComboTier pairs an AppliedEffect with an
+optional soundUrl.
+
+onDrop fires when comboTimeoutMs expires without a
+new audit. comboTimeoutMs is set in GameCfgDto per
+team. Combos escalate as the agent resolves audits
+in succession.
+
+### Badges
+
+Seven categories: milestone, speed, streak, combo,
+level, quality, special. BadgeDef has filter
+criteria, an increment expression, and a threshold.
+Criteria use source (field or result), key, operator
+(=== !== >= <= > <), value, and chain (and or).
+Evaluation is left-to-right. And groups must all
+pass; or starts a new group.
+
+Increment expression defaults to 1 per event.
+Custom increments allow cumulative tracking like
+fields.wgsRevenue. When BadgeProgress.count reaches
+threshold, the badge moves to earnedBadges with
+timestamp and xpReward is granted.
+
+Evaluation triggers: audit.instance.resolved,
+audit.result.appended.reviewer,
+audit.result.appended.judge, coaching.completed,
+player.levelUp.
+
+### Avatar
+
+Five equip slots: letterId (letter), frameId
+(frame), titleId (title), emailId (email), flairId
+(flair). Each slot references a StoreItem ID from
+inventory. The letter and flair fields hold the
+display values derived from equipped items.
+
+### Event Bindings
+
+Players choose celebration GIFs per event type.
+When the event fires and matches a binding, the
+client plays the GIF as an overlay.
+
+### Day Streaks
+
+Consecutive active days. An active day is any day
+with at least one audit resolved. Missed day resets
+dayStreak to 0. Fires player.streakIncremented and
+player.streakBroken respectively.
+
+### Leaderboards
+
+Computed rankings of users by metric: decisions,
+flipRate, speed, xp, streak. Scoped by role
+(reviewer, judge, agent) and team permissions.
+Displayed via leaderboard dashboard widgets.
+
+## Events and Notifications
+
+### AppEvent
+
+Per-user ephemeral event with 24h TTL. Delivered
+via SSE stream. Used for real-time UI updates,
+toast notifications, badge ticks, combo triggers.
+
+### BroadcastEvent
+
+Org-wide announcement with 24h TTL. Carries
+triggerEmail, displayName, message, and animationId.
+Drives the gamification feed on dashboards.
+PrefabEventDef provides pre-defined broadcast types
+with label, description, icon, and defaultMessage
+template. Supervisors subscribe to prefab events
+per team.
+
+### Message
+
+Persistent direct message between two users. No
+TTL. Carries fromEmail, toEmail, body, timestamp,
+and read flag.
+
+### EventConfig
+
+Reactive automation. trigger is a dot-scoped pattern
+string supporting wildcards like audit.instance.*.
+fieldFilter lists field keys that must change; empty
+means any change fires. conditions is a FilterGroup
+(reuses the reports filter model) evaluating
+eventPayload. payloadTemplate renders via the
+expression engine. Delivery goes through the
+CommunicationProvider interface selecting webhook,
+email, chat, or sse.
+
+Flow: event emitted via emit() -> match trigger ->
+check fieldFilter -> evaluate conditions -> render
+payloadTemplate -> dispatch via communication
+provider. Dispatch happens in waitUntil() and does
+not block the response.
+
+### Event Catalog
+
+AuditConfig: audit.config.created, modified,
+deleted, versionPublished. AuditQuestion:
+audit.question.created, modified, deleted,
+testPassed, testFailed. AuditInstance:
+audit.instance.created, transcribing, transcribed,
+transcriptionFailed, asking, completed, failed,
+retrying, resolved. AuditResult:
+audit.result.appended.llm, .reviewer, .judge.
+Appeal: appeal.filed, assigned, decided.
+Coaching: coaching.pending, completed. Team:
+team.created, modified, deleted, memberAdded,
+memberRemoved, leaderChanged. RoleDef:
+role.created, modified, deleted. User:
+user.created, modified, deactivated, reactivated,
+passwordChanged, login, loginFailed. Session:
+session.created, expired. Dashboard:
+dashboard.created, modified, shared, deleted.
+Report: report.created, modified, deleted. Player:
+player.xpEarned, xpSpent, levelUp,
+streakIncremented, streakBroken. Badge:
+badge.earned, progressUpdated. Store:
+store.itemPurchased, themeEquipped,
+comboPackEquipped. Message: message.sent, read.
+Broadcast: broadcast.saleCompleted, perfectScore,
+levelUp. EventConfig: eventConfig.created, modified,
+deleted, triggered, deliveryFailed. Schedule:
+schedule.report. Provider: provider.created,
+modified, deleted. ProviderConfig:
+providerConfig.created, modified, deactivated,
+reactivated. ServiceBinding:
+serviceBinding.created, modified, deleted,
+fallbackTriggered, circuitBreakerOpened,
+circuitBreakerClosed, referenceOrphaned. Generic:
+record.created, modified, deleted. Unscoped:
+breakingChange.
+
+## Reports
+
+### Report Types
+
+Five types: table (rows and columns), chart (bar,
+line, or pie), calendar (date-based event view),
+summary (aggregated metrics with optional pivots),
+timeline (horizontal time-based track view).
+
+### ReportQuery
+
+Embedded in Report. Contains filter (FilterGroup),
+sortBy (SortCriterion array), groupBy
+(GroupCriterion array), and formulaFields
+(FormulaField array). All optional.
+
+### FilterGroup
+
+Recursive AND/OR structure. conjunction selects how
+conditions combine. Conditions can contain nested
+FilterGroups for arbitrary depth. Reused by
+EventConfig.conditions with same evaluation logic.
+
+### Filter Operators
+
+14 operators: equals, notEquals, contains,
+notContains, startsWith, endsWith, greaterThan,
+lessThan, greaterOrEqual, lessOrEqual, in, notIn,
+isEmpty, isNotEmpty.
+
+### Grouping Methods
+
+Five methods: exact (one group per unique value),
+date-day (by calendar day), date-week (by week),
+date-month (by month), range (numeric ranges).
+
+### Evaluation Order
+
+1. Fetch data within viewer permission scope.
+2. Evaluate FormulaFields per row.
+3. Apply FilterGroup including formula filters.
+4. Apply SortCriteria.
+5. Apply GroupCriteria.
+6. Pass to type-specific renderer.
+
+FormulaFields are available to all downstream
+operations. Filters apply before grouping.
+
+### Scheduled Reports
+
+Reports can be triggered on a schedule via
+EventConfig listening to schedule.report. The
+event system renders the report and delivers it
+through the configured communication provider.
+
+## Dashboard
+
+### DashboardPage
+
+Per-user per-role dashboard. ownerId null means
+system default. Copy-on-first-access: when a user
+first visits Dashboard with no personal page for
+their role, the system default is deep-cloned with
+ownerId set to their email. After that, changes to
+the system default do not propagate.
+
+### WidgetSlot
+
+Column-based grid layout. Each widget has column
+(horizontal placement), order (vertical position),
+and span (columns wide). Default is 3 columns on
+desktop. Narrow viewports stack vertically.
+
+### Widget Types
+
+Eight types: report (embedded report), text (static
+or dynamic with expression interpolation),
+button-bar (action buttons), link-bar (navigation
+links), search (scoped search input), reports-list
+(browsable saved reports), leaderboard (ranked user
+list), embed (sandboxed iframe).
+
+### Sharing
+
+Users share dashboards by adding emails to
+sharedWith. Recipients get read-only views. If a
+recipient wants to customize, they clone it via
+copy-on-first-access and own their copy. Removing
+an email from sharedWith revokes access immediately
+but cloned copies remain.
+
+### Sidebar
+
+Computed from session capabilities at login. Not
+stored. Collapsed state is a thin accent line
+(3-4px) from the user's ThemeDef accent color.
+Expanded state overlays from the left edge showing
+tabs. Dashboard tab is always first. Remaining tabs
+derive from capabilities array order.
+
+## Question Lab
+
+### Workflow
+
+QLConfig groups QLQuestions under development.
+Each QLQuestion has a text with variable
+placeholders, an optional autoYesExp for auto-yes
+expressions, and version history tracking every
+edit. QLTests provide snippet and expected pairs
+for validation.
+
+### Testing
+
+Run a test: RAG retrieval plus LLM answering
+against the snippet. Compare result to expected.
+Pass/fail and LLM reasoning stored on the test.
+Tests are quality tools, not deployment gates.
+
+### Promotion
+
+When satisfied, promote QLConfig to a production
+AuditConfig version. The promoteQLConfig REQ loads
+the QLConfig, converts it to an AuditConfigDto, and
+saves the new config version.
+
+## Audit Template
+
+### AuditConfig Versioning
+
+uuid is stable across edits. version increments on
+each edit. configId is the composite key
+uuid:-:version used as the KV key. Old versions are
+never deleted so AuditInstances can resolve the
+exact config they ran against.
+
+### AuditQuestion
+
+Fields: questionText (LLM prompt with expression
+interpolation), header (UI display template),
+expectedAnswer (correct answer for scoring),
+questionType (references QuestionType by name),
+ragParams (embedded RagRetrieveParams).
+
+### QuestionType
+
+Defines answer parsing. Fields: name (e.g. yes-no),
+regex (validation pattern), parser (bool, int,
+float, or string coercion), schema (JSON Schema
+for downstream validation). Flow: raw answer ->
+regex check -> parser coercion -> schema validation.
+
+### FieldDef
+
+Input field schema. Fields: key (identifier), label
+(display name), fieldType (input type), required
+(mandatory flag). Can include default and options.
+Embedded in AuditConfig.fieldDefs array.
+
+### SkipRule
+
+Expression-driven conditional question removal.
+Fields: questionId (which question to skip),
+expression (evaluated against fieldMap), message
+(reason text). Embedded in AuditConfig.skip array.
+
+### RagRetrieveParams
+
+Per-question RAG settings. Fields: topK (max
+results), keep (min relevance score), mmrLambda
+(diversity weight, 0=diverse, 1=relevant),
+hybridAlpha (keyword vs semantic balance), rerank
+(whether to re-rank after retrieval). Different
+questions need different retrieval strategies.
+
+### PipelineConfig
+
+Operational tuning separate from audit definition.
+Fields: maxRetries (retry limit), retryDelaySeconds
+(delay between retries). Changing pipeline settings
+does not bump the audit config version.
+
+## Roles and Capabilities
+
+### RoleDef
+
+Fields: name, level, capabilities array, permissions
+array, isActive. Belongs to the org root team. One
+set of RoleDefs per org.
+
+### Level Hierarchy
+
+Level 0 is developer (platform-level, above all
+orgs). Level 1 is admin (org-level). Level 2 and
+above are team-level roles. Lower number means more
+access. You see yourself plus anyone with a higher
+level number. Peers cannot see each other.
+
+### Default Roles
+
+Six defaults: developer (level 0, full platform
+access), admin (level 1, org management), supervisor
+(level 2, team audits coaching reports), judge
+(level 2, appeals queue), analyst (level 2, reports
+and configs), agent (level 3, audit queue store
+appeals profile).
+
+### Custom Roles
+
+Admins create RoleDefs with custom names, chosen
+levels, and specific capability and permission sets.
+The system treats them identically to defaults.
+Capabilities are strings mapping to sidebar tabs
+and routes. No hard-coded role-to-function mappings.
+
+### Caching
+
+RoleDef fields are cached on UserRecord (roleId,
+role, level, capabilities, permissions) and
+snapshotted to Session at login. A RoleDef change
+triggers fan-out write to all referencing
+UserRecords. Existing sessions see old capabilities
+until 24h TTL expires or re-login.
+
+## Marketplace
+
+### Item Types
+
+Eleven types: effects, functions, themes, widgets,
+report types, store items, badge definitions, email
+templates, calculated fields, validators, condition
+functions.
+
+### Sandbox Model
+
+All marketplace items are sandboxed string functions
+using the same Proxy-based model as Effects. No
+document, no window, no DOM access. Query utility
+available scoped to user permissions. Timeout on
+execution for slow code.
+
+### Publish and Install
+
+Developers build JSON packages and publish to the
+marketplace. Admins install items per org. Open
+publishing is safe because the sandbox is airtight.
+
+## Idempotency
+
+### Idempoter API
+
+from(options) binds schema, lease timeout, and
+reconciliation callback. defineScope(scope, keys)
+binds the scope and key fields for hashing.
+execute(obj, fn) runs the side-effecting function.
+mark(key, receipt?) updates record state externally.
+
+### IdempotencyRecord
+
+Fields: key (sha256 of scope + sorted key-value
+pairs), state (locked, succeeded, unknown, failed),
+lockedUntil (lease expiry timestamp), attempts
+(execution attempt count).
+
+### State Machine
+
+locked -> succeeded (fn returns). locked -> unknown
+(fn throws). unknown -> succeeded (reconcile returns
+receipt). unknown -> failed (reconcile returns null).
+unknown -> unknown (reconcile throws). Lease
+atomicity guaranteed by Deno KV CAS primitives.
+
+### Reconciliation
+
+Callback injected at construction. Returns receipt
+means side effect happened, record moves to
+succeeded. Returns null means did not happen, moves
+to failed. Throws means vendor unreachable, stays
+unknown. Triggered on re-execute of unknown keys.
+
+## Expression Language
+
+### Syntax
+
+Variables: {{currentUser}}, {{record.fieldName}}.
+Functions: functionName(arg1, arg2). Nesting
+supported: llm('prompt', extractFailedQuestions(
+audits({{currentUser}}), 10)). Literals: strings
+and numbers.
+
+### Context
+
+Depends on use-site. Email/webhook/chat: event,
+currentUser, record, field values. Badge increment:
+fields.*, result. Skip rules: fields.*.
+
+### Function Types
+
+Data fetchers: audits(user), appeals(user),
+scores(user, configId). Transformers:
+extractFailedQuestions(audits, limit), average(),
+count(), latest(). AI: llm(prompt, ...context).
+Helpers: string, math, and date utilities.
+
+## Services
+
+Named app functions bound to providers via
+ServiceBinding:
+
+- audit-questions: bulk yes/no via cheap fast LLM.
+- transcription: speech-to-text via Whisper or
+  AssemblyAI.
+- expression-eval: expression engine via powerful
+  LLM.
+- email-sending: outbound email via SES, SendGrid,
+  or Postmark.
+- file-storage: binary storage via S3 or GCS.
+- recordings: call recording download from Genie,
+  direct upload, or any recording provider.
+- queue: async pipeline step orchestration via
+  QStash, SQS, or any queue provider.
+- messaging: in-app message delivery resolving to
+  Slack, Teams, or in-app chat.
+- notification-delivery: outbound dispatch for
+  EventConfig actions receiving rendered payloads
+  and sending via the bound provider.
+
+## Storage
+
+Deno KV for all entities. Soft-delete via isActive.
+Sessions 24h TTL. Events 24h TTL. Logging to
+Grafana Cloud Loki via waitUntil(fetch()).

@@ -336,9 +336,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   #transcript-body {
     column-gap: 24px; column-rule: 1px solid #141820;
     column-fill: auto; height: 100%; overflow-x: scroll; overflow-y: hidden;
-    scrollbar-width: none;
+    scrollbar-width: thin; scrollbar-color: #2d333b transparent;
   }
-  #transcript-body::-webkit-scrollbar { display: none; }
+  #transcript-body::-webkit-scrollbar { height: 6px; }
+  #transcript-body::-webkit-scrollbar-thumb { background: #2d333b; border-radius: 3px; }
+  #transcript-body::-webkit-scrollbar-track { background: transparent; }
   #col-indicator { position: fixed; bottom: 56px; right: 24px; font-size: 11px; color: #3d4452; z-index: 10; }
 
   .t-line {
@@ -780,6 +782,20 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       <div id="thinking-content">
         <div id="thinking-text"></div>
       </div>
+
+      ${R ? `
+      <div id="decision-btns" style="display:flex;gap:10px;margin:18px 0 6px;">
+        <button id="btn-confirm" onclick="decide('confirm')" title="Confirm bot was right — keep as No (Y)"
+          style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;border:1px solid rgba(139,92,246,0.35);background:rgba(139,92,246,0.1);color:#bc8cff;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
+          <kbd style="background:#1a1427;border:1px solid rgba(139,92,246,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#8b5cf6;font-family:monospace;">Y</kbd>
+          Confirm No
+        </button>
+        <button id="btn-flip" onclick="decide('flip')" title="Flip — bot was wrong, change to Yes (N)"
+          style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;border:1px solid rgba(34,197,94,0.35);background:rgba(34,197,94,0.08);color:#4ade80;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
+          <kbd style="background:#0f1a14;border:1px solid rgba(34,197,94,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#22c55e;font-family:monospace;">N</kbd>
+          Flip to Yes
+        </button>
+      </div>` : ''}
 
       <div id="meta-row">
         <div class="meta-chip">Audit <strong id="m-finding"></strong></div>

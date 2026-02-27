@@ -527,7 +527,10 @@ export function getDashboardPage(): string {
 
     <div class="panels">
       <div class="panel">
-        <div class="panel-title">Review Queue</div>
+        <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Review Queue</span>
+          <button class="sf-btn danger" id="clear-review-btn" style="font-size:9px;padding:3px 10px;">Clear Queue</button>
+        </div>
         <div class="rq-row">
           <div class="rq-stat pending"><div class="rv" id="r-pending">--</div><div class="rl">Pending</div></div>
           <div class="rq-div"></div>
@@ -893,6 +896,21 @@ export function getDashboardPage(): string {
     <div class="modal-actions">
       <button class="sf-btn ghost" id="terminate-cancel">Cancel</button>
       <button class="sf-btn danger" id="terminate-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Yes, Terminate All</button>
+    </div>
+  </div>
+</div>
+
+<!-- Clear Review Queue Confirmation Modal -->
+<div class="modal-overlay" id="clear-review-modal">
+  <div class="modal" style="width:420px;">
+    <div class="modal-title" style="color:var(--red);">Clear Review Queue</div>
+    <div class="modal-sub">This will delete all <strong>pending</strong> review items and their locks. Decided items are kept. This cannot be undone.</div>
+    <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
+      Are you sure you want to clear the review queue?
+    </div>
+    <div class="modal-actions">
+      <button class="sf-btn ghost" id="clear-review-cancel">Cancel</button>
+      <button class="sf-btn danger" id="clear-review-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Yes, Clear Queue</button>
     </div>
   </div>
 </div>
@@ -1452,6 +1470,30 @@ export function getDashboardPage(): string {
       })
       .catch(function() { toast('Request failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Yes, Terminate All'; });
+  });
+
+  // ===== Clear Review Queue =====
+  document.getElementById('clear-review-btn').addEventListener('click', function() {
+    openModal('clear-review-modal');
+  });
+  document.getElementById('clear-review-cancel').addEventListener('click', function() { closeModal('clear-review-modal'); });
+  backdropClose('clear-review-modal');
+  document.getElementById('clear-review-confirm').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Clearing...';
+    fetch('/admin/clear-review-queue', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        closeModal('clear-review-modal');
+        if (d.ok) {
+          toast('Review queue cleared (' + (d.cleared || 0) + ' entries removed)', 'success');
+          fetchData();
+        } else {
+          toast(d.error || 'Failed', 'error');
+        }
+      })
+      .catch(function() { toast('Request failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Yes, Clear Queue'; });
   });
 
   // ===== Test by RID =====

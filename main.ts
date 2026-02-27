@@ -57,7 +57,7 @@ import {
   handleGetSettings, handleSaveSettings, handleStats, handleBackfill,
   handleReviewDashboardPage, handleReviewDashboardData, handleReviewMe,
 } from "./review/handlers.ts";
-import { getReviewStats, populateReviewQueue } from "./review/kv.ts";
+import { getReviewStats, populateReviewQueue, clearReviewQueue } from "./review/kv.ts";
 
 // Judge (unified auth)
 import {
@@ -222,6 +222,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/init-org": handleInitOrg,
   "/admin/retry-finding": handleRetryFinding,
   "/admin/terminate-all": handleTerminateAll,
+  "/admin/clear-review-queue": handleClearReviewQueue,
   "/admin/queues": handleSetQueue,
   "/admin/pipeline-config": handleSetPipelineConfig,
   "/admin/settings/terminate": handleAdminSaveSettings,
@@ -1389,15 +1390,17 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   console.log(`[WEBHOOK] finding.record values:`, JSON.stringify(finding.record ?? {}));
 
   const agentEmail = finding.owner ?? "";
-  // TODO: replace with correct QB field once ID is identified — see [WEBHOOK] log below
-  const teamMemberRaw = String(finding.record?.TeamMember ?? "");
-  const teamMemberFull = teamMemberRaw.includes(" - ")
-    ? teamMemberRaw.split(" - ").slice(1).join(" - ").trim()
-    : teamMemberRaw.trim();
+  // Parse VO name from QB field 144: "VO MB - Harmony Eason" → "Harmony Eason"
+  const voNameRaw = String(finding.record?.VoName ?? "");
+  const teamMemberFull = voNameRaw.includes(" - ")
+    ? voNameRaw.split(" - ").slice(1).join(" - ").trim()
+    : voNameRaw.trim();
   const teamMemberFirst = teamMemberFull.split(" ")[0] || teamMemberFull;
-  // Fall back to email prefix until correct QB field is wired up
   const agentName = teamMemberFull ||
     (agentEmail.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || agentEmail);
+  // QB email fields
+  const voEmail = String(finding.record?.VoEmail ?? "");
+  const supervisorEmail = String(finding.record?.SupervisorEmail ?? "");
   const scoreVal = score ?? (Array.isArray(finding.answeredQuestions)
     ? Math.round(finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length * 100)
     : 0);
@@ -1425,13 +1428,14 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
       ).join("")
     : `<tr><td style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions — perfect score!</td></tr>`;
 
-  console.log(`[WEBHOOK] agentName="${agentName}" teamMemberFull="${teamMemberFull}" voGenie="${voGenie}" crmUrl="${crmUrl}"`);
+  console.log(`[WEBHOOK] agentName="${agentName}" voEmail="${voEmail}" supervisorEmail="${supervisorEmail}" crmUrl="${crmUrl}"`);
 
   const vars: Record<string, string> = {
     agentName,
-    agentEmail,
+    agentEmail: voEmail || agentEmail,
     teamMember: teamMemberFull,
     teamMemberFirst,
+    supervisorEmail,
     score: scoreVal + "%",
     scoreVerbiage,
     findingId,
@@ -1551,6 +1555,17 @@ async function handleTerminateAll(req: Request): Promise<Response> {
   const terminated = await terminateAllActive(auth.orgId);
   console.log(`[ADMIN] ${auth.email} terminated ${terminated} active audits`);
   return json({ ok: true, terminated });
+}
+
+// -- Admin: Clear Review Queue --
+
+async function handleClearReviewQueue(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const { cleared } = await clearReviewQueue(auth.orgId);
+  console.log(`[ADMIN] ${auth.email} cleared review queue (${cleared} KV entries deleted)`);
+  return json({ ok: true, cleared });
 }
 
 // -- Admin: Init Org --

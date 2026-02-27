@@ -473,6 +473,30 @@ export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): 
   };
 }
 
+// -- Clear Queue --
+
+export async function clearReviewQueue(orgId: OrgId): Promise<{ cleared: number }> {
+  const db = await kv();
+  let cleared = 0;
+
+  const prefixes = [
+    orgKey(orgId, "review-pending"),
+    orgKey(orgId, "review-audit-pending"),
+    orgKey(orgId, "review-lock"),
+  ];
+
+  for (const prefix of prefixes) {
+    const iter = db.list({ prefix });
+    for await (const entry of iter) {
+      await db.delete(entry.key);
+      cleared++;
+    }
+  }
+
+  console.log(`[REVIEW] clearReviewQueue: deleted ${cleared} KV entries for org ${orgId}`);
+  return { cleared };
+}
+
 // -- Backfill --
 
 export async function backfillFromFinished(orgId: OrgId) {

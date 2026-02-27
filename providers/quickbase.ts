@@ -47,24 +47,29 @@ const FIELD_RECORD_ID = 3;
 const FIELD_VO_GENIE = 145;
 const FIELD_RELATED_DESTINATION = 292;
 const FIELD_GUEST_NAME = 32;
+const FIELD_VO_NAME = 144;
+const FIELD_VO_EMAIL = 839;
+const FIELD_SUPERVISOR_EMAIL = 851;
 
 /** Fetch a date leg record by RID, returning human-readable field map. */
 export async function getDateLegByRid(rid: string): Promise<Record<string, any> | null> {
   const records = await queryRecords({
     tableId: DATE_LEGS_TABLE,
     where: `{${FIELD_RECORD_ID}.EX.'${rid}'}`,
-    select: [FIELD_RECORD_ID, FIELD_VO_GENIE, FIELD_RELATED_DESTINATION, FIELD_GUEST_NAME],
+    select: [FIELD_RECORD_ID, FIELD_VO_GENIE, FIELD_RELATED_DESTINATION, FIELD_GUEST_NAME, FIELD_VO_NAME, FIELD_VO_EMAIL, FIELD_SUPERVISOR_EMAIL],
   });
 
   if (records.length === 0) return null;
 
   const r = records[0];
-  console.log(`[QB] raw record fields for rid=${rid}:`, JSON.stringify(Object.entries(r).map(([k, v]: [string, any]) => ({ field: k, value: v?.value }))));
   return {
     RecordId: r[FIELD_RECORD_ID]?.value ?? rid,
     VoGenie: r[FIELD_VO_GENIE]?.value ?? "",
     RelatedDestinationId: r[FIELD_RELATED_DESTINATION]?.value ?? "",
     GuestName: r[FIELD_GUEST_NAME]?.value ?? "",
+    VoName: r[FIELD_VO_NAME]?.value ?? "",
+    VoEmail: r[FIELD_VO_EMAIL]?.value ?? "",
+    SupervisorEmail: r[FIELD_SUPERVISOR_EMAIL]?.value ?? "",
   };
 }
 

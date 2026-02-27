@@ -1385,6 +1385,9 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     : (await listEmailTemplates(orgId))[0];
   if (!template) return json({ error: "no template found" }, 404);
 
+  console.log(`[WEBHOOK] finding.record keys:`, JSON.stringify(Object.keys(finding.record ?? {})));
+  console.log(`[WEBHOOK] finding.record values:`, JSON.stringify(finding.record ?? {}));
+
   const agentEmail = finding.owner ?? "";
   const agentName = agentEmail.split("@")[0] ?? agentEmail;
   const scoreVal = score ?? (Array.isArray(finding.answeredQuestions)

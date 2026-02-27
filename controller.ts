@@ -561,7 +561,6 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     </div>`;
   }).join("\n");
 
-  const shortId = id.length > 16 ? id.slice(0, 16) + "..." : id;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -980,7 +979,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     <div class="hero-top">
       <div class="hero-top-left">
         <span class="hero-label">Audit Report</span>
-        <span class="hero-id" title="${esc(id)}">${esc(shortId)}</span>
+        <span class="hero-id">${esc(id)}</span>
         ${statusBadge}
       </div>
       <div class="ap" id="audio-player">
@@ -1151,10 +1150,13 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       var el = document.getElementById(id);
       if (!el) return;
       el.classList.toggle('open');
+      var summary = el.previousElementSibling;
       if (el.classList.contains('open')) {
         btn.textContent = 'Hide';
+        if (summary && summary.classList.contains('sec-summary')) summary.style.display = 'none';
       } else {
         btn.textContent = btn.getAttribute('data-label') || 'Show more';
+        if (summary && summary.classList.contains('sec-summary')) summary.style.display = '';
       }
     }
     // Store original label on sec-toggle buttons

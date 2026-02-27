@@ -485,12 +485,22 @@ export async function clearReviewQueue(orgId: OrgId): Promise<{ cleared: number 
     orgKey(orgId, "review-lock"),
   ];
 
+  // Collect all keys first, then batch-delete in groups of 10 (Deno KV atomic limit)
+  const keys: Deno.KvKey[] = [];
   for (const prefix of prefixes) {
     const iter = db.list({ prefix });
     for await (const entry of iter) {
-      await db.delete(entry.key);
-      cleared++;
+      keys.push(entry.key);
     }
+  }
+
+  const BATCH = 10;
+  for (let i = 0; i < keys.length; i += BATCH) {
+    const batch = keys.slice(i, i + BATCH);
+    const atomic = db.atomic();
+    for (const key of batch) atomic.delete(key);
+    await atomic.commit();
+    cleared += batch.length;
   }
 
   console.log(`[REVIEW] clearReviewQueue: deleted ${cleared} KV entries for org ${orgId}`);

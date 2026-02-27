@@ -657,6 +657,7 @@ export function getDashboardPage(): string {
           <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{appealUrl}}</code>
           <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{feedbackText}}</code>
           <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{recordId}}</code>
+          <code style="margin:0 3px;padding:1px 4px;background:var(--bg-surface);border-radius:3px;">{{guestName}}</code>
         </div>
         <!-- Template ID + Webhook URLs panel (shown after save/load) -->
         <div id="et-webhook-info" style="display:none;padding:8px 12px;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0;">

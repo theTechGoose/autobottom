@@ -1401,6 +1401,7 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     score: scoreVal + "%",
     findingId,
     recordId: String(finding.record?.RecordId ?? ""),
+    guestName: String(finding.record?.GuestName ?? ""),
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
     recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
     appealUrl: `${env.selfUrl}/audit/appeal?findingId=${findingId}`,

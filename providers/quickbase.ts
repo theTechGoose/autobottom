@@ -46,13 +46,14 @@ const DATE_LEGS_TABLE = "bpb28qsnn";
 const FIELD_RECORD_ID = 3;
 const FIELD_VO_GENIE = 145;
 const FIELD_RELATED_DESTINATION = 292;
+const FIELD_GUEST_NAME = 32;
 
 /** Fetch a date leg record by RID, returning human-readable field map. */
 export async function getDateLegByRid(rid: string): Promise<Record<string, any> | null> {
   const records = await queryRecords({
     tableId: DATE_LEGS_TABLE,
     where: `{${FIELD_RECORD_ID}.EX.'${rid}'}`,
-    select: [FIELD_RECORD_ID, FIELD_VO_GENIE, FIELD_RELATED_DESTINATION],
+    select: [FIELD_RECORD_ID, FIELD_VO_GENIE, FIELD_RELATED_DESTINATION, FIELD_GUEST_NAME],
   });
 
   if (records.length === 0) return null;
@@ -62,6 +63,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     RecordId: r[FIELD_RECORD_ID]?.value ?? rid,
     VoGenie: r[FIELD_VO_GENIE]?.value ?? "",
     RelatedDestinationId: r[FIELD_RELATED_DESTINATION]?.value ?? "",
+    GuestName: r[FIELD_GUEST_NAME]?.value ?? "",
   };
 }
 

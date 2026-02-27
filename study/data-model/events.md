@@ -48,7 +48,7 @@ Configurable reactions that fire when events match certain conditions.
 | `trigger` | any event from the event catalog |
 | `fieldFilter[]` | field keys that must change (empty = any) |
 | `conditions` | FilterGroup -- post-change filter (reuses FilterGroup/FilterCondition from Reports) |
-| `communicationType` | webhook \| email \| chat |
+| `communicationType` | webhook \| email \| chat \| sse |
 | `receivers[]` | URLs \| emails \| channel IDs (by type) |
 | `payloadTemplate` | renders into the provider's payload shape |
 | `owner` | user who configured |
@@ -59,7 +59,7 @@ Configurable reactions that fire when events match certain conditions.
 
 | Field | Description |
 | ----- | ----------- |
-| `type` | webhook \| email \| chat |
+| `type` | webhook \| email \| chat \| sse |
 | `send(receivers, payload)` | `Promise<void>` |
 
 ---
@@ -92,3 +92,14 @@ Resolves creds from email ProviderConfig via ServiceBinding.
 | `payload` | `{ message, threadId? }` |
 
 Resolves bot tokens from chat ProviderConfig via ServiceBinding.
+
+---
+
+## SseCommunicationProvider `runtime`
+
+| Field | Description |
+| ----- | ----------- |
+| `receivers` | user emails (empty = broadcast to team scope) |
+| `payload` | rendered payloadTemplate, delivered as JSON on SSE stream |
+
+Pushes to connected clients on the same `GET /api/events` SSE stream used by AppEvent/BroadcastEvent.

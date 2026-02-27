@@ -21,6 +21,18 @@ Use case: real-time UI updates, toast
 notifications, badge progress ticks, combo
 triggers.
 
+### Client Transport: Server-Sent Events (SSE)
+
+AppEvents and BroadcastEvents are delivered to
+connected clients via SSE. The client opens a
+persistent connection to the events endpoint.
+New events are pushed as they occur.
+
+- Endpoint: `GET /api/events` (SSE stream)
+- Reconnection handled by browser EventSource API
+- Events delivered as JSON payloads with type field
+- Events consumed (deleted) after delivery
+
 ---
 
 ## 2. BroadcastEvent (stored, TTL 24h, org-wide)
@@ -38,6 +50,26 @@ Use case: sale completed banners, perfect score
 celebrations, level-up announcements. These drive
 the gamification feed -- visible on dashboards and
 in the activity stream.
+
+### Prefab Event Definitions
+
+System ships with pre-defined broadcast event
+types. Each PrefabEventDef provides:
+
+- type -- event identifier
+- label -- display name
+- description -- what triggers it
+- icon -- display icon
+- defaultMessage -- template function for the
+  broadcast message
+
+### Prefab Subscriptions
+
+Supervisors/managers subscribe to prefab events
+for their team. Subscription is a per-user
+Record<eventType, boolean> toggle. When a prefab
+event fires and the user is subscribed, a
+BroadcastEvent is created for them.
 
 ---
 
@@ -70,7 +102,7 @@ the configured communication type.
 - conditions -- FilterGroup (reuses the
   Reports filter model: FilterGroup >
   FilterCondition with conjunction AND/OR)
-- communicationType -- webhook | email | chat
+- communicationType -- webhook | email | chat | sse
 - receivers[] -- URLs, emails, or channel IDs
   depending on communicationType
 - payloadTemplate -- expression-interpolated
@@ -100,7 +132,7 @@ does not delay the response.
 Not stored. Runtime abstraction that sends the
 rendered payload to receivers.
 
-- type -- webhook | email | chat
+- type -- webhook | email | chat | sse
 - send(receivers, payload) -- Promise<void>
 
 EventConfig.communicationType selects which
@@ -127,6 +159,18 @@ provider implementation handles delivery.
 - payload -- { message, threadId? }
 - Resolves bot tokens from the chat ProviderConfig
   via ServiceBinding.
+
+### SseCommunicationProvider
+
+- receivers -- user emails (connected SSE clients)
+- payload -- the rendered payloadTemplate, delivered
+  as a JSON event on the user's SSE stream
+- If receivers is empty, the event is broadcast to
+  all connected clients in the team scope.
+- Uses the same `GET /api/events` SSE connection
+  that AppEvent/BroadcastEvent use. EventConfig-
+  triggered SSE events appear alongside system
+  events on the same stream.
 
 ---
 

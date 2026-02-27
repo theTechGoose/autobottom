@@ -33,7 +33,10 @@ Level 0 in the RoleDef hierarchy.
 - Logging (full Grafana access, all orgs, all
   labels)
 - Teams (view/manage the full org tree)
-- Impersonation (enter any admin context below)
+- Impersonation (enter any admin context below,
+  see impersonation details in section 5)
+- Token Usage (LLM token metering dashboard,
+  per-function cost attribution)
 
 ---
 
@@ -57,3 +60,46 @@ Level 0 in the RoleDef hierarchy.
 - Manage encryption keys for credential storage
 - Handle platform-level service bindings and
   fallback configuration
+- Monitor LLM token usage and cost attribution
+  per function (audit-questions, feedback,
+  diarization, summarization)
+
+---
+
+## 5. Impersonation
+
+Developers can assume the identity of any admin
+user below them in the hierarchy.
+
+### Impersonation Bar (UI Component)
+
+A visual control bar at the top of the viewport
+indicating active impersonation. Shows:
+
+- Current impersonated user (email + role)
+- "Exit impersonation" button to return to
+  developer context
+- Nested support: developer -> admin -> (navigate
+  normally as admin). "Go back" returns to the
+  developer view.
+
+### resolveEffectiveAuth
+
+Server-side mechanism that resolves the effective
+authentication context. When impersonation is
+active, the session carries both the real identity
+(developer) and the effective identity (admin).
+All permission checks use the effective identity.
+
+---
+
+## 6. API Documentation
+
+The platform exposes an OpenAPI/Swagger spec:
+
+- `GET /api/openapi.json` -- machine-readable spec
+- `GET /docs` -- Swagger UI for interactive
+  exploration
+- Covers all public endpoints with request/response
+  schemas
+- Auto-generated from route definitions

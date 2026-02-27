@@ -24,8 +24,12 @@ admin in the hierarchy.
   origin: reviewer)
 - Coaching (view pending coaching queue, address
   failed audits, leave coaching notes)
+- Agents (create, list, delete agent accounts
+  under their supervision)
 - Reports (create/view within permission scope)
 - Dashboards (create/customize within scope)
+- Gamification (personal override of gamification
+  settings, prefab event subscriptions)
 
 ---
 
@@ -52,6 +56,10 @@ admin in the hierarchy.
   leave notes, mark coaching completed
 - Monitor team performance through reports and
   dashboards
+- Manage agent accounts (create, list, remove)
+  for users under their supervision
+- Subscribe to prefab event notifications for
+  their team
 
 ---
 

@@ -21,8 +21,12 @@ audit finding.
 - Dashboard (appeal metrics, customizable)
 - Appeals (view pending appeals, review disputed
   findings, submit judge decisions)
+- Reviewers (create, list, delete reviewer
+  accounts under their supervision)
 - Reports (create/view within permission scope)
 - Dashboards (create/customize within scope)
+- Gamification (personal override of gamification
+  settings)
 
 ---
 
@@ -49,6 +53,8 @@ audit finding.
   resolved)
 - Audit re-resolves after judge decision; coaching
   item created if agent still has failed questions
+- Manage reviewer accounts (create, list, remove)
+  for reviewers under their supervision
 
 ---
 

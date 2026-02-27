@@ -100,38 +100,37 @@ export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
 
   let current: ReviewItem | null = null;
   let peek: ReviewItem | null = null;
-  let remaining = 0;
+  let scanned = 0;
 
   const iter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
   for await (const entry of iter) {
-    remaining++;
+    scanned++;
     const item = entry.value;
     const lockKey = orgKey(orgId, "review-lock", item.findingId, item.questionIndex);
 
     if (!current) {
-      // Try to claim this item
+      // Try to claim this item atomically — prevents two reviewers grabbing same question
       const lockEntry = await db.get(lockKey);
       const res = await db.atomic()
         .check(lockEntry)
         .set(lockKey, { claimedBy: reviewer, claimedAt: now }, { expireIn: LOCK_TTL })
         .commit();
-
       if (res.ok) {
         current = item;
         continue;
       }
-    } else if (!peek) {
-      // Try to find a peekable (unlocked) item
+    } else {
+      // Peek: find next unlocked item to pre-load transcript, but stop after 20 candidates
+      if (scanned > 20) break;
       const lockEntry = await db.get(lockKey);
       if (lockEntry.value === null) {
         peek = item;
+        break;
       }
     }
-    // Don't break early -- continue iterating to get accurate remaining count
   }
 
-  // Adjust remaining: don't count the one we just claimed
-  if (current) remaining--;
+  const remaining = 0; // no longer scanning full queue — progress bar uses /stats baseline
 
   let transcript = null;
   let auditRemaining = 0;

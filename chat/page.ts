@@ -7,6 +7,7 @@ export function getChatPage(): string {
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Chat - Auto-Bot</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{

@@ -7,6 +7,7 @@ export function getRegisterPage(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Auto-Bot - Register</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   :root{--bg:#0a0e14;--bg-raised:#111820;--border:#1a2030;--text:#c9d1d9;--text-muted:#6e7681;--text-dim:#484f58;--text-bright:#e6edf3;--blue:#58a6ff;--blue-bg:rgba(31,111,235,0.10);--green:#3fb950;--red:#f85149;--mono:'SF Mono','Fira Code',monospace}

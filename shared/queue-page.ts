@@ -232,6 +232,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <script src="/js/sound-engine.js"><\/script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1619,6 +1620,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   }
 
   // -- Decide --
+  window.decide = function(decision, reason) { decide(decision, reason); };
   function decide(decision, reason) {
     if (!currentItem || busy) return;
 

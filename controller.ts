@@ -568,6 +568,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Audit Report - ${esc(id)}</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     :root {

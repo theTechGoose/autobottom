@@ -66,6 +66,7 @@ function shell(title: string, body: string): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title} - Question Lab</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>${STYLES}</style>
 </head>
 <body>

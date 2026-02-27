@@ -10,6 +10,7 @@ export function getManagerPage(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Auto-Bot Manager</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {

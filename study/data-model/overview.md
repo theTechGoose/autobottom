@@ -20,17 +20,19 @@ All stored entities have an `isActive` field (default true, false = soft-deleted
 ```
                       Root Team
                           |
-     +--------+--------+--------+--------+--------+--------+--------+--------+
-     |        |        |        |        |        |        |        |        |
-   Teams    Users    Audit    Review  Coaching Reports  Gamify  Events  Providers
-     |        |     /     \              |                 |        |
-  (nest)   RoleDef Template Execution  CoachingRecord   Player  EventConfig
-                    |        |                                  /    |    \
-              AuditConfig  AuditInstance                   webhook email chat
-                    |        |
-             AuditQuestion  AuditResult[]
-                    |        (append-only)
-              QuestionTest
+     +--------+--------+--------+--------+--------+--------+--------+--------+--------+
+     |        |        |        |        |        |        |        |        |        |
+   Teams    Users    Audit    Review  Coaching Reports  Gamify  Events  Providers  Logging
+     |        |     /  |  \              |                 |        |              |
+  (nest)   RoleDef  Tmpl Exec Batch  CoachingRecord   Player  EventConfig   Token Usage
+                    |    |     |                          |    /    |    \
+              AuditConfig | AuditBatch               Leaderboard  |     |
+                    |    AuditInstance                        webhook email chat
+             AuditQuestion  |
+                    |    AuditResult[]
+              QuestionTest  (append-only)
+                    |
+               Question Lab
 ```
 
 ## Section Index
@@ -40,14 +42,14 @@ All stored entities have an `isActive` field (default true, false = soft-deleted
 | [teams-roles-auth.md](./teams-roles-auth.md) | Teams, Roles & Auth | Team, RoleDef, UserRecord, Session, Visibility Rule |
 | [dashboards-navigation.md](./dashboards-navigation.md) | Dashboards & Navigation | Sidebar, DashboardPage, WidgetSlot, WidgetType |
 | [audit-template.md](./audit-template.md) | Audit Template | AuditConfig, AuditQuestion, QuestionType, QuestionTest, FieldDef, SkipRule, RagRetrieveParams, PipelineConfig |
-| [audit-execution.md](./audit-execution.md) | Audit Execution | AuditInstance, AuditResult, AnswerEntry, SkippedEntry, TranscriptData, AstResults, RagDoc |
-| [review-appeals.md](./review-appeals.md) | Review & Appeals | AppealRecord, AppealStatus |
+| [audit-execution.md](./audit-execution.md) | Audit Execution | AuditBatch, AuditInstance, AuditResult, AnswerEntry, SkippedEntry, TranscriptData, FeedbackData, AstResults, RagDoc |
+| [review-appeals.md](./review-appeals.md) | Review & Appeals | ReviewChecklist, AppealChecklist, AppealRecord, AppealType, AppealStatus |
 | [coaching.md](./coaching.md) | Coaching | CoachingRecord, CoachingAction |
 | [reports.md](./reports.md) | Reports | Report, ReportQuery, ReportOptions, ReportProperties, ReportFolder |
-| [gamification.md](./gamification.md) | Gamification | Player, Avatar, Inventory, Effect, StoreItem, ThemeDef, ComboPack, BadgeDef, GamificationSettings |
+| [gamification.md](./gamification.md) | Gamification | Player (totalXp + tokenBalance), Avatar, Inventory, Effect, StoreItem, ThemeDef, ComboPack, BadgeDef, LeaderboardEntry, GamificationSettings |
 | [events.md](./events.md) | Events | AppEvent, BroadcastEvent, Message, EventConfig, CommunicationProvider |
 | [providers-services.md](./providers-services.md) | Providers & Services | Provider, ProviderConfig, ServiceBinding, IdempotencyRecord |
-| [logging.md](./logging.md) | Logging | Log Entry (Grafana Cloud) |
+| [logging.md](./logging.md) | Logging | Log Entry (Grafana Cloud), Pipeline Statistics, LLM Token Usage |
 | [event-catalog.md](./event-catalog.md) | Event Catalog | All emit() calls grouped by domain |
 | [audit-lifecycle.md](./audit-lifecycle.md) | Audit Lifecycle | Pipeline flow, status transitions, post-audit branching |
 
@@ -68,13 +70,22 @@ Team (root, parentId: null) ---- (*) Team (children, nestable)
     |              |                         |
     |              |                    QuestionType (stored)
     |              |
+    |              +---- (*) AuditBatch ---- (*) AuditInstance
+    |              |
     |              +---- (*) AuditInstance (via configId)
     |                           |
     |                           +---- AuditResult[] (append-only: llm | reviewer | judge)
+    |                           +---- FeedbackData (embedded, post-finalize)
     |                           |
-    |                           +---- (0..1) AppealRecord
+    |                           +---- (0..1) ReviewChecklist (per-question claim/decide workflow)
+    |                           |
+    |                           +---- (0..1) AppealRecord (with AppealType)
+    |                           |              |
+    |                           |              +---- (0..1) AppealChecklist (per-question claim/decide workflow)
     |                           |
     |                           +---- (0..1) CoachingRecord
+    |
+    +---- (*) QLConfig ---- (*) QLQuestion ---- (*) QLTest
     |
     +---- (*) Report ---- (1) ReportFolder
     |
@@ -89,4 +100,4 @@ Team (root, parentId: null) ---- (*) Team (children, nestable)
     +---- (*) Message (per conversation pair)
     +---- (*) AppEvent (per user, TTL 24h)
     +---- (*) BroadcastEvent (org-wide, TTL 24h)
-    +---- (1) GamificationSettings (+ per-team overrides)
+    +---- (1) GamificationSettings (+ per-team + per-user overrides)

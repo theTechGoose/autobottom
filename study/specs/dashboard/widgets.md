@@ -53,6 +53,7 @@ affected WidgetSlots.
 | link-bar     | row of navigation links                    |
 | search       | search input scoped to a data source       |
 | reports-list | browsable list of saved reports            |
+| leaderboard  | ranked list of users by performance        |
 | embed        | iframe or external content embed           |
 
 Marketplace can add new WidgetTypes. Installed
@@ -152,6 +153,19 @@ query pre-filled.
 
 Shows a compact list of saved reports. Clicking
 a report navigates to the full report view.
+
+### leaderboard
+
+| Field  | Type   | Description                        |
+| ------ | ------ | ---------------------------------- |
+| scope  | string | reviewer \| judge \| agent         |
+| metric | string | decisions \| flipRate \| speed \|  |
+|        |        | xp \| streak                       |
+| limit  | number | max entries to show (default 10)   |
+
+Ranked list of users by the selected metric.
+Computed from decision history and game state.
+Scoped to the viewer's team permissions.
 
 ### embed
 

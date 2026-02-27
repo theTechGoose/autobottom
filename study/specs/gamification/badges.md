@@ -14,6 +14,10 @@ BadgeDef
   name         display name
   icon         badge icon
   description  what the badge is for
+  category     milestone | speed | streak | combo |
+               level | quality | special
+  role         reviewer | judge | manager | agent
+               (which role can earn this badge)
   xpReward     XP granted when earned
   threshold    target count to earn
   increment    expression evaluated per event,
@@ -24,14 +28,35 @@ BadgeDef
 
 BadgeDefs are created by admins (or installed from
 marketplace). They define what it takes to earn a
-badge.
+badge. Category groups badges in the UI. Role
+scopes which users are evaluated.
 
 ---
 
 ## 2. Earning Flow
 
-On each qualifying event (typically
-audit.instance.resolved):
+### Evaluation Triggers
+
+Badges are evaluated inline at specific moments:
+
+- **audit.instance.resolved** -- primary trigger
+  for agent badges (milestone, quality, streak)
+- **audit.result.appended.reviewer** -- trigger for
+  reviewer badges (speed, streak, combo)
+- **audit.result.appended.judge** -- trigger for
+  judge badges (quality, combo)
+- **coaching.completed** -- trigger for manager
+  badges
+- **player.levelUp** -- trigger for level badges
+
+Evaluation happens synchronously during the
+triggering action (e.g. during finalize step or
+decision recording). This ensures badge progress
+is immediately visible.
+
+### Flow
+
+On each qualifying event:
 
 1. Evaluate filter[] against the event. All
    criteria must pass for the event to count.

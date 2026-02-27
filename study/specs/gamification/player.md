@@ -11,7 +11,10 @@ celebration bindings.
 
 ```
 Player
-  xp                   current balance (earned - spent)
+  totalXp              lifetime XP earned (monotonic, never
+                       decreases -- drives level calculation)
+  tokenBalance         spendable currency (earned from XP
+                       awards, spent on store purchases)
   dayStreak            consecutive active days
   avatar               Avatar (embedded)
   inventory            Inventory (embedded)
@@ -26,28 +29,43 @@ Player
 
 ---
 
-## 2. XP
+## 2. Dual Currency (XP + Tokens)
 
-XP is both earned and spent. The stored value is
-the current balance, not a lifetime total.
+The player has two separate currencies:
 
-- **Earning:** audit score meets the
-  GamificationSettings threshold. Amount is
-  determined by the scoring system (not specified
-  here). Fires player.xpEarned.
-- **Spending:** purchasing StoreItems, ThemeDefs,
-  or ComboPacks from the store. Deducted from
-  balance. Fires player.xpSpent.
+- **totalXp** -- lifetime XP earned. Monotonically
+  increasing, never decreases. This is the value
+  used to compute level. Spending does NOT reduce
+  totalXp, so level progression is permanent.
+- **tokenBalance** -- spendable currency. When XP
+  is earned, the same amount is added to both
+  totalXp and tokenBalance. Purchases deduct from
+  tokenBalance only.
+
+### Earning
+
+Audit score meets the GamificationSettings
+threshold. Amount is determined by the scoring
+system. Both totalXp and tokenBalance increase
+by the award amount. Fires player.xpEarned.
+
+### Spending
+
+Purchasing StoreItems, ThemeDefs, or ComboPacks
+from the store. Deducted from tokenBalance only.
+Fires player.xpSpent. Level is unaffected because
+totalXp does not change.
 
 ---
 
 ## 3. Levels
 
-Level is computed from XP, not stored. The formula
-derives the level from the current XP balance.
+Level is computed from totalXp, not stored. The
+formula derives the level from the lifetime total.
 When the computed level increases, fires
-player.levelUp. Level can also decrease if XP
-drops below the threshold after spending.
+player.levelUp. Because totalXp never decreases,
+level progression is permanent -- spending tokens
+cannot cause level regression.
 
 ---
 

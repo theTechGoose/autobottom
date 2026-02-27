@@ -6,7 +6,8 @@
 
 | Field | Description |
 | ----- | ----------- |
-| `xp` | current balance, earned and spent (level computed from this) |
+| `totalXp` | lifetime XP earned (monotonic, never decreases -- drives level) |
+| `tokenBalance` | spendable currency (earned with XP, spent on purchases) |
 | `dayStreak` | consecutive active days |
 | `avatar` | Avatar (embedded) |
 | `inventory` | Inventory (embedded) |
@@ -63,9 +64,9 @@ JS runs via Proxy on real element -- no document, no window, no upward DOM trave
 | Field | Description |
 | ----- | ----------- |
 | `name` | display name |
-| `price` | XP cost |
+| `price` | token cost (deducted from tokenBalance) |
 | `icon` | store listing icon |
-| `target` | letter \| frame \| title \| email \| flair |
+| `type` | letter \| frame \| title \| email \| flair \| name_color \| font \| animation \| theme |
 | `color` | CSS color or gradient |
 | `weight` | light \| regular \| medium \| bold |
 | `rarity` | common \| normal \| rare \| epic \| legendary \| limited \| unique |
@@ -151,6 +152,8 @@ JS runs via Proxy on real element -- no document, no window, no upward DOM trave
 | `name` | display name |
 | `icon` | badge icon |
 | `description` | what the badge is for |
+| `category` | milestone \| speed \| streak \| combo \| level \| quality \| special |
+| `role` | reviewer \| judge \| manager \| agent (which role earns this) |
 | `xpReward` | XP granted when earned |
 | `threshold` | target count to earn |
 | `increment` | expression evaluated per event, default 1 (e.g. `fields.wgsRevenue`) |
@@ -198,3 +201,23 @@ JS runs via Proxy on real element -- no document, no window, no upward DOM trave
 | `comboTimeoutMs` | combo window |
 
 **Resolution:** set by team lead, resolves up team hierarchy.
+
+Personal overrides allowed per judge and per
+reviewer (keyed by email). This allows individual
+gamification tuning without affecting team defaults.
+
+---
+
+## LeaderboardEntry `computed`
+
+| Field | Description |
+| ----- | ----------- |
+| `email` | user email |
+| `decisions` | total decisions made |
+| `confirms` | decisions confirming LLM |
+| `flips` | decisions overriding LLM |
+| `flipRate` | flips / decisions |
+| `avgDecisionSpeedMs` | average time to decide |
+
+Per-reviewer and per-judge leaderboards computed
+from decision history. Displayed on dashboards.

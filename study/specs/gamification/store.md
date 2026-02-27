@@ -10,9 +10,10 @@ the visual effect system that powers them.
 ```
 StoreItem
   name        display name
-  price       XP cost
+  price       token cost (deducted from tokenBalance)
   icon        store listing icon
-  target      letter | frame | title | email | flair
+  type        letter | frame | title | email | flair |
+              name_color | font | animation | theme
   color       CSS color or gradient
   weight      light | regular | medium | bold
   rarity      common | normal | rare | epic |
@@ -21,9 +22,13 @@ StoreItem
   isActive    default true
 ```
 
-Each StoreItem targets one avatar slot. The target
-determines where the item is equipped on the
-Avatar.
+Each StoreItem has a type that determines how it
+is equipped. Avatar slot items (letter, frame,
+title, email, flair) are equipped on the Avatar.
+Cosmetic items (name_color, font, animation) are
+equipped as profile-level settings. Theme items
+equip via equippedThemeId on Player (see also
+ThemeDef for full color schemes).
 
 ### Weight Mapping
 
@@ -47,8 +52,9 @@ Limited and unique rarities imply scarcity
 ## 2. Purchasing
 
 1. Player selects item in store.
-2. Check: player.xp >= item.price.
-3. Deduct price from player.xp (player.xpSpent).
+2. Check: player.tokenBalance >= item.price.
+3. Deduct price from player.tokenBalance
+   (player.xpSpent). totalXp is unchanged.
 4. Add item ID to player.inventory.ownedItemIds[].
 5. Fires store.itemPurchased.
 
@@ -60,13 +66,23 @@ inventory. Repurchasing an owned item is blocked.
 ## 3. Equipping
 
 Equipping sets the StoreItem ID on the
-corresponding Avatar slot:
+corresponding slot:
 
-- target: letter -> avatar.letterId
-- target: frame -> avatar.frameId
-- target: title -> avatar.titleId
-- target: email -> avatar.emailId
-- target: flair -> avatar.flairId
+### Avatar Slots
+
+- type: letter -> avatar.letterId
+- type: frame -> avatar.frameId
+- type: title -> avatar.titleId
+- type: email -> avatar.emailId
+- type: flair -> avatar.flairId
+
+### Profile Slots
+
+- type: name_color -> player.equippedNameColor
+- type: font -> player.equippedFont
+- type: animation -> player.animBindings
+- type: theme -> player.equippedThemeId
+  (or use ThemeDef directly)
 
 Only items in the player's inventory can be
 equipped. Equipping a new item in the same slot

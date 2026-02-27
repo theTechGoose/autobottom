@@ -75,3 +75,29 @@ combo drops (onDrop fires) and resets to idle.
 
 Shorter timeout = harder to maintain combos but
 more intense. Longer timeout = more forgiving.
+
+---
+
+## 6. Personal Overrides
+
+In addition to the team cascade, individual judges
+and reviewers can override gamification settings
+for their personal experience. The resolution
+order is:
+
+```
+personal override -> team cascade
+```
+
+Personal overrides are stored per user (keyed by
+email under the org's gamification namespace).
+They can adjust:
+
+- threshold (personal score bar)
+- comboTimeoutMs (personal combo window)
+- enabled (opt out personally)
+- sounds (personal sound preferences)
+
+This allows, for example, a competitive reviewer
+to set a tighter combo timeout while the team
+default stays forgiving.

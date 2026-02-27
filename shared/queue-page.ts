@@ -249,8 +249,19 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     grid-column: 1; grid-row: 2;
     display: flex; flex-direction: column; gap: 0;
     background: #0f1219; border-right: 1px solid #1a1f2b;
-    overflow-y: auto; overflow-x: hidden;
+    overflow: hidden;
     scrollbar-width: thin; scrollbar-color: #1e2736 transparent;
+  }
+  #verdict-scroll {
+    flex: 1; overflow-y: auto; overflow-x: hidden;
+    scrollbar-width: thin; scrollbar-color: #1e2736 transparent;
+  }
+  #verdict-scroll::-webkit-scrollbar { width: 4px; }
+  #verdict-scroll::-webkit-scrollbar-thumb { background: #1e2736; border-radius: 2px; }
+  #decision-btns {
+    flex-shrink: 0; display: flex; gap: 10px;
+    padding: 12px 16px; border-top: 1px solid #1a1f2b;
+    background: #0f1219;
   }
   #verdict-panel::-webkit-scrollbar { width: 4px; }
   #verdict-panel::-webkit-scrollbar-thumb { background: #1e2736; border-radius: 2px; }
@@ -753,8 +764,25 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   #confirm-submit-btn.enabled:hover { background: ${accentDark}; }
 
 </style>
+<style>@keyframes bot-pulse { 0%,100%{opacity:0.5;transform:scale(0.95)} 50%{opacity:1;transform:scale(1.05)} }</style>
 </head>
 <body>
+
+<!-- Loading overlay -->
+<div id="init-overlay" style="position:fixed;inset:0;z-index:9999;background:#0d1117;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;transition:opacity 0.4s;">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" style="width:52px;height:52px;animation:bot-pulse 1.4s ease-in-out infinite;">
+    <rect x="4" y="9" width="24" height="19" rx="4" fill="#0d1117"/>
+    <rect x="4" y="9" width="24" height="19" rx="4" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+    <circle cx="12" cy="18" r="2.5" fill="#3fb950" opacity="0.9"/>
+    <circle cx="20" cy="18" r="2.5" fill="#3fb950" opacity="0.9"/>
+    <rect x="13.5" y="23" width="5" height="1.5" rx="0.75" fill="#3fb950" opacity="0.7"/>
+    <rect x="14" y="5" width="4" height="4" rx="1" fill="#3fb950" opacity="0.6"/>
+    <rect x="15.5" y="4" width="1" height="2" rx="0.5" fill="#3fb950" opacity="0.5"/>
+    <circle cx="3.5" cy="17.5" r="1.5" fill="#3fb950" opacity="0.55"/>
+    <circle cx="28.5" cy="17.5" r="1.5" fill="#3fb950" opacity="0.55"/>
+  </svg>
+  <div style="color:#3fb950;font-size:13px;font-weight:600;letter-spacing:0.5px;">Loading...</div>
+</div>
 
 <!-- Queue screen -->
 <div id="review-screen">
@@ -762,48 +790,49 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   <!-- Left: Verdict panel -->
   <div id="verdict-panel">
-    <div id="verdict-content">
-      <div id="q-label">Question</div>
-      <div id="q-header"></div>
-      ${verdictBadgeHtml}
-      ${appealInfoHtml}
-      <div id="q-populated"></div>
+    <div id="verdict-scroll">
+      <div id="verdict-content">
+        <div id="q-label">Question</div>
+        <div id="q-header"></div>
+        ${verdictBadgeHtml}
+        ${appealInfoHtml}
+        <div id="q-populated"></div>
 
-      <div class="evidence-section">
-        <div class="evidence-label">Defense</div>
-        <div class="evidence-text" id="q-defense"></div>
-      </div>
+        <div class="evidence-section">
+          <div class="evidence-label">Defense</div>
+          <div class="evidence-text" id="q-defense"></div>
+        </div>
 
-      <button id="thinking-toggle">
-        <span class="arrow">${icons.chevronRight}</span>
-        <span>Bot reasoning</span>
-        <span style="margin-left:auto; font-size:10px; color:#3d4452"><kbd style="background:#141820;border:1px solid #1e2736;border-radius:3px;padding:0 4px;font-family:monospace;font-size:10px;color:#6e7681">${thinkingKey}</kbd></span>
-      </button>
-      <div id="thinking-content">
-        <div id="thinking-text"></div>
-      </div>
-
-      ${R ? `
-      <div id="decision-btns" style="display:flex;gap:10px;margin:18px 0 6px;">
-        <button id="btn-confirm" onclick="decide('confirm')" title="Confirm bot was right — keep as No (Y)"
-          style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;border:1px solid rgba(139,92,246,0.35);background:rgba(139,92,246,0.1);color:#bc8cff;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
-          <kbd style="background:#1a1427;border:1px solid rgba(139,92,246,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#8b5cf6;font-family:monospace;">Y</kbd>
-          Confirm No
+        <button id="thinking-toggle">
+          <span class="arrow">${icons.chevronRight}</span>
+          <span>Bot reasoning</span>
+          <span style="margin-left:auto; font-size:10px; color:#3d4452"><kbd style="background:#141820;border:1px solid #1e2736;border-radius:3px;padding:0 4px;font-family:monospace;font-size:10px;color:#6e7681">${thinkingKey}</kbd></span>
         </button>
-        <button id="btn-flip" onclick="decide('flip')" title="Flip — bot was wrong, change to Yes (N)"
-          style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;border:1px solid rgba(34,197,94,0.35);background:rgba(34,197,94,0.08);color:#4ade80;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
-          <kbd style="background:#0f1a14;border:1px solid rgba(34,197,94,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#22c55e;font-family:monospace;">N</kbd>
-          Flip to Yes
-        </button>
-      </div>` : ''}
+        <div id="thinking-content">
+          <div id="thinking-text"></div>
+        </div>
 
-      <div id="meta-row">
-        <div class="meta-chip">Audit <strong id="m-finding"></strong></div>
-        <div class="meta-chip">Q<strong id="m-qindex"></strong></div>
-        <div class="meta-chip">Left <strong id="m-remaining"></strong></div>
-        <div class="meta-chip last-item" id="m-last" style="display:none"><strong>${lastItemLabel}</strong></div>
+        <div id="meta-row">
+          <div class="meta-chip">Audit <strong id="m-finding"></strong></div>
+          <div class="meta-chip">Q<strong id="m-qindex"></strong></div>
+          <div class="meta-chip">Left <strong id="m-remaining"></strong></div>
+          <div class="meta-chip last-item" id="m-last" style="display:none"><strong>${lastItemLabel}</strong></div>
+        </div>
       </div>
     </div>
+    ${R ? `
+    <div id="decision-btns">
+      <button id="btn-confirm" onclick="decide('confirm')" title="Confirm bot was right — keep as No (Y)"
+        style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;border:1px solid rgba(139,92,246,0.35);background:rgba(139,92,246,0.1);color:#bc8cff;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
+        <kbd style="background:#1a1427;border:1px solid rgba(139,92,246,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#8b5cf6;font-family:monospace;">Y</kbd>
+        Confirm No
+      </button>
+      <button id="btn-flip" onclick="decide('flip')" title="Flip — bot was wrong, change to Yes (N)"
+        style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;border:1px solid rgba(34,197,94,0.35);background:rgba(34,197,94,0.08);color:#4ade80;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
+        <kbd style="background:#0f1a14;border:1px solid rgba(34,197,94,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#22c55e;font-family:monospace;">N</kbd>
+        Flip to Yes
+      </button>
+    </div>` : ''}
   </div>
 
   <!-- Right: Transcript -->
@@ -2031,6 +2060,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   // -- Init: try resuming session --
   (function() {
+    function hideOverlay() {
+      var ov = document.getElementById('init-overlay');
+      if (ov) { ov.style.opacity = '0'; setTimeout(function() { ov.remove(); }, 420); }
+    }
     api('/next').then(function(data) {
       reviewer = data.reviewer || '${mode}';
       document.getElementById('reviewer-tag').innerHTML = '<strong>' + reviewer + '</strong>';
@@ -2049,7 +2082,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       } else {
         showEmpty();
       }
+      hideOverlay();
     }).catch(function() {
+      hideOverlay();
       window.location.href = '/login';
     });
   })();

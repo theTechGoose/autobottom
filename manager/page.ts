@@ -470,8 +470,25 @@ export function getManagerPage(): string {
     .stat-row { grid-template-columns: 1fr; }
   }
 </style>
+<style>@keyframes bot-pulse { 0%,100%{opacity:0.5;transform:scale(0.95)} 50%{opacity:1;transform:scale(1.05)} }</style>
 </head>
 <body>
+
+<!-- Loading overlay -->
+<div id="init-overlay" style="position:fixed;inset:0;z-index:9999;background:#0d1117;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;transition:opacity 0.4s;">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" style="width:52px;height:52px;animation:bot-pulse 1.4s ease-in-out infinite;">
+    <rect x="4" y="9" width="24" height="19" rx="4" fill="#0d1117"/>
+    <rect x="4" y="9" width="24" height="19" rx="4" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+    <circle cx="12" cy="18" r="2.5" fill="#3fb950" opacity="0.9"/>
+    <circle cx="20" cy="18" r="2.5" fill="#3fb950" opacity="0.9"/>
+    <rect x="13.5" y="23" width="5" height="1.5" rx="0.75" fill="#3fb950" opacity="0.7"/>
+    <rect x="14" y="5" width="4" height="4" rx="1" fill="#3fb950" opacity="0.6"/>
+    <rect x="15.5" y="4" width="1" height="2" rx="0.5" fill="#3fb950" opacity="0.5"/>
+    <circle cx="3.5" cy="17.5" r="1.5" fill="#3fb950" opacity="0.55"/>
+    <circle cx="28.5" cy="17.5" r="1.5" fill="#3fb950" opacity="0.55"/>
+  </svg>
+  <div style="color:#3fb950;font-size:13px;font-weight:600;letter-spacing:0.5px;">Loading dashboard...</div>
+</div>
 
 <div class="layout" id="app" style="display:none">
   <aside class="sidebar">
@@ -1529,11 +1546,17 @@ export function getManagerPage(): string {
 
   // -- Init: try resuming session --
   (async function() {
+    function hideOverlay() {
+      var ov = document.getElementById('init-overlay');
+      if (ov) { ov.style.opacity = '0'; setTimeout(function() { ov.remove(); }, 420); }
+    }
     try {
       var data = await api('/me');
       username = data.username;
       enterApp();
+      hideOverlay();
     } catch (e) {
+      hideOverlay();
       window.location.href = '/login';
     }
   })();

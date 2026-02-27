@@ -2,16 +2,45 @@
 
 ---
 
+## Batch Flow
+
+```
+AuditBatch (pending)
+  |
+  v
+For each record in batch:
+  -> AuditInstance created (pending)
+  -> Pipeline runs independently
+  -> On completion, doneIds[] updated
+  |
+  v
+All instances done -> AuditBatch (finished)
+```
+
+---
+
 ## Pipeline Flow
 
 ```
-AuditConfig + Field Data
+AuditConfig + Field Data (passed at audit time)
         |
         v
 AuditInstance (pending)
         |
         v
-transcribe -> populate questions -> ask (RAG + LLM)
+init (download recording from recordings service)
+        |
+        v
+transcribe -> transcribe-complete (diarize)
+        |
+        v
+prepare (populate question templates with fields)
+        |
+        v
+ask-batch (fan-out: parallel LLM + RAG batches)
+        |
+        v
+finalize (aggregate answers, generate feedback)
         |
         v
 results.push(origin: llm)
@@ -26,9 +55,9 @@ resolved    results.push      appeal-pending
                |              results.push
             resolved          (origin: judge)
                |                 |
-         ManagerQueueItem     resolved
+         CoachingRecord       resolved
                                  |
-                           ManagerQueueItem
+                           CoachingRecord
 ```
 
 ---
@@ -37,6 +66,9 @@ resolved    results.push      appeal-pending
 
 ```
 pending
+  |
+  v
+creating-job -> pulling-record -> getting-recording
   |
   v
 transcribing
@@ -51,7 +83,9 @@ asking-questions
 resolved  <--  (all paths end here)
   ^
   |
-appeal-pending  (if appeal filed before resolution)
+appeal-pending  (if appeal filed after resolution)
 ```
 
-`retrying` can occur at any pipeline step on transient failure.
+`retrying` can occur at any pipeline step on
+transient failure. `no-recording` is a terminal
+failure state when recording cannot be acquired.

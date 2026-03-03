@@ -1569,7 +1569,8 @@ export function getDashboardPage(): string {
     var rawText = document.getElementById('bulk-rids').value.trim();
     if (!rawText) { toast('Enter at least one Record ID', 'error'); return; }
 
-    var rids = rawText.split(/[\n,]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+    var sep = String.fromCharCode(10);
+    var rids = rawText.replace(/,/g, sep).split(sep).map(function(s) { return s.trim(); }).filter(Boolean);
     if (rids.length === 0) { toast('No valid RIDs found', 'error'); return; }
     if (rids.length > 200) { toast('Max 200 RIDs per bulk run', 'error'); return; }
 
@@ -1583,13 +1584,16 @@ export function getDashboardPage(): string {
     progress.style.display = 'block';
     progress.textContent = '0 / ' + rids.length + ' queued...';
 
+    console.log('[BULK] Starting ' + rids.length + ' audits — type=' + type + ', stagger=' + staggerMs + 'ms');
+
     var started = 0, errors = 0;
 
     function fireNext(i) {
       if (i >= rids.length) {
         btn.disabled = false;
-        var msg = started + ' / ' + rids.length + ' queued' + (errors > 0 ? ', ' + errors + ' failed' : ' ✓');
-        progress.textContent = msg;
+        var msg = started + ' / ' + rids.length + ' queued' + (errors > 0 ? ', ' + errors + ' failed' : '');
+        progress.textContent = msg + ' ✓';
+        console.log('[BULK] Complete — ' + started + ' started, ' + errors + ' errors');
         toast('Bulk complete: ' + msg, errors > 0 ? 'warning' : 'success');
         return;
       }
@@ -1597,9 +1601,18 @@ export function getDashboardPage(): string {
       fetch(endpoint + '?rid=' + encodeURIComponent(rid), { method: 'POST' })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-          if (d.findingId || d.ok) { started++; } else { errors++; }
+          if (d.findingId || d.ok) {
+            started++;
+            console.log('[BULK] (' + (i + 1) + '/' + rids.length + ') RID ' + rid + ' queued — findingId=' + (d.findingId || '?'));
+          } else {
+            errors++;
+            console.warn('[BULK] (' + (i + 1) + '/' + rids.length + ') RID ' + rid + ' failed — ' + (d.error || 'unknown error'));
+          }
         })
-        .catch(function() { errors++; })
+        .catch(function(err) {
+          errors++;
+          console.error('[BULK] (' + (i + 1) + '/' + rids.length + ') RID ' + rid + ' fetch error:', err);
+        })
         .finally(function() {
           progress.textContent = (started + errors) + ' / ' + rids.length + ' queued' + (errors > 0 ? ' (' + errors + ' err)' : '') + '...';
           setTimeout(function() { fireNext(i + 1); }, staggerMs);

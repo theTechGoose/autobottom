@@ -3,6 +3,7 @@ import { stepInit } from "./steps/init.ts";
 import { stepTranscribe } from "./steps/transcribe.ts";
 import { stepTranscribeCb } from "./steps/transcribe-cb.ts";
 import { stepDiarizeAsync } from "./steps/diarize-async.ts";
+import { stepPineconeAsync } from "./steps/pinecone-async.ts";
 import { stepPrepare } from "./steps/prepare.ts";
 import { stepAskBatch } from "./steps/ask-batch.ts";
 import { stepFinalize } from "./steps/finalize.ts";
@@ -14,7 +15,7 @@ import {
 } from "./controller.ts";
 import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
-import { enqueueStep, publishStep } from "./lib/queue.ts";
+import { enqueueStep, publishStep, ALL_QUEUES } from "./lib/queue.ts";
 import {
   trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getPipelineConfig, setPipelineConfig,
   saveFinding, saveTranscript, saveBatchAnswers,
@@ -203,6 +204,7 @@ const postRoutes: Record<string, Handler> = {
   "/audit/step/transcribe": stepTranscribe,
   "/audit/step/transcribe-complete": stepTranscribeCb,
   "/audit/step/diarize-async": stepDiarizeAsync,
+  "/audit/step/pinecone-async": stepPineconeAsync,
   "/audit/step/prepare": stepPrepare,
   "/audit/step/ask-batch": stepAskBatch,
   "/audit/step/finalize": stepFinalize,
@@ -1235,8 +1237,6 @@ async function handleGamificationPageSaveSettings(req: Request): Promise<Respons
 
 // -- Admin: Queues + Parallelism --
 
-const QUEUE_NAME = "audit-pipeline";
-
 async function handleGetQueues(_req: Request): Promise<Response> {
   const res = await fetch(`${env.qstashUrl}/v2/queues`, {
     headers: { Authorization: `Bearer ${env.qstashToken}` },
@@ -1271,7 +1271,8 @@ async function handleSetQueue(req: Request): Promise<Response> {
 }
 
 async function handleGetParallelism(_req: Request): Promise<Response> {
-  const res = await fetch(`${env.qstashUrl}/v2/queues/${QUEUE_NAME}`, {
+  // Read from the first queue as representative — all queues share the same parallelism value.
+  const res = await fetch(`${env.qstashUrl}/v2/queues/${ALL_QUEUES[0]}`, {
     headers: { Authorization: `Bearer ${env.qstashToken}` },
   });
   if (!res.ok) {
@@ -1288,18 +1289,18 @@ async function handleSetParallelism(req: Request): Promise<Response> {
   if (parallelism == null || typeof parallelism !== "number" || parallelism < 1) {
     return json({ error: "parallelism must be a number >= 1" }, 400);
   }
-  const res = await fetch(`${env.qstashUrl}/v2/queues`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.qstashToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ queueName: QUEUE_NAME, parallelism }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    return json({ error: `QStash error: ${res.status} ${text}` }, res.status);
-  }
+  await Promise.all(
+    ALL_QUEUES.map((queueName) =>
+      fetch(`${env.qstashUrl}/v2/queues`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.qstashToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ queueName, parallelism }),
+      })
+    )
+  );
   return json({ ok: true, parallelism });
 }
 

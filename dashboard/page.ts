@@ -1595,6 +1595,7 @@ export function getDashboardPage(): string {
         progress.textContent = msg + ' ✓';
         console.log('[BULK] Complete — ' + started + ' started, ' + errors + ' errors');
         toast('Bulk complete: ' + msg, errors > 0 ? 'warning' : 'success');
+        closeModal('bulk-modal');
         return;
       }
       var rid = rids[i];

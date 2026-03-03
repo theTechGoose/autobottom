@@ -1,8 +1,24 @@
 /** QStash queue helper for enqueuing pipeline steps. */
 import { env } from "../env.ts";
 
-const QUEUE_NAME = "audit-pipeline";
+const TRANSCRIBE_QUEUE = "audit-transcribe";
+const QUESTIONS_QUEUE = "audit-questions";
 const CLEANUP_QUEUE = "audit-cleanup";
+
+/** All managed queues — used by admin handlers to apply parallelism changes to all queues at once. */
+export const ALL_QUEUES = [TRANSCRIBE_QUEUE, QUESTIONS_QUEUE, CLEANUP_QUEUE] as const;
+
+/** Routes each step to its dedicated queue so each pool of 20 slots stays independent. */
+const STEP_QUEUE: Record<string, string> = {
+  "init":            TRANSCRIBE_QUEUE,
+  "transcribe":      TRANSCRIBE_QUEUE,
+  "transcribe-complete": TRANSCRIBE_QUEUE,
+  "prepare":         QUESTIONS_QUEUE,
+  "ask-batch":       QUESTIONS_QUEUE,
+  "finalize":        QUESTIONS_QUEUE,
+  "diarize-async":   CLEANUP_QUEUE,
+  "pinecone-async":  CLEANUP_QUEUE,
+};
 
 const LOCAL_MODE = Deno.env.get("LOCAL_QUEUE") === "true";
 
@@ -63,8 +79,9 @@ async function enqueue(queueName: string, targetUrl: string, body: unknown, dela
 }
 
 export function enqueueStep(step: string, body: unknown, delaySeconds?: number) {
+  const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
   const url = `${env.selfUrl}/audit/step/${step}`;
-  return enqueue(QUEUE_NAME, url, body, delaySeconds);
+  return enqueue(queueName, url, body, delaySeconds);
 }
 
 /** Bypass the queue and deliver immediately via QStash publish. Use for admin retries to skip the backlog. */

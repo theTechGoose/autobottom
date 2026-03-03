@@ -2,7 +2,6 @@
 import { getFinding, saveFinding, setBatchCounter, getCachedQuestions, cacheQuestions, trackActive, savePopulatedQuestions } from "../lib/kv.ts";
 import { enqueueStep, publishStep } from "../lib/queue.ts";
 import { getQuestionsForDestination } from "../providers/quickbase.ts";
-import { upload } from "../providers/pinecone.ts";
 import { populateQuestions } from "../providers/question-expr.ts";
 import { serveConfig } from "../question-lab/kv.ts";
 import type { IQuestionSeed } from "../types/mod.ts";
@@ -93,14 +92,11 @@ export async function stepPrepare(req: Request): Promise<Response> {
   await savePopulatedQuestions(orgId, findingId, populated);
   await saveFinding(orgId, finding);
 
-  // 3. Embed transcript in Pinecone for RAG
+  // 3. Kick off async Pinecone upload (off critical path — ask-batch falls back to rawTranscript)
   if (finding.rawTranscript) {
-    try {
-      await upload(findingId, finding.rawTranscript);
-      console.log(`[STEP-PREPARE] ${findingId}: Transcript embedded in Pinecone`);
-    } catch (err) {
-      console.error(`[STEP-PREPARE] ${findingId}: Pinecone upload failed:`, err);
-    }
+    enqueueStep("pinecone-async", { findingId, orgId }).catch((err) =>
+      console.error(`[STEP-PREPARE] ${findingId}: Failed to enqueue pinecone-async:`, err)
+    );
   }
 
   // 4. Fan-out question batches

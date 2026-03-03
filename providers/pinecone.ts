@@ -1,7 +1,6 @@
 /** Pinecone vector store for RAG retrieval (manual OpenAI embeddings). */
 import OpenAI from "npm:openai";
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function getOpenAI() {
   return new OpenAI({ apiKey: Deno.env.get("OPEN_AI_KEY") });
@@ -98,23 +97,8 @@ export async function upload(findingId: string, text: string) {
     await res.json(); // consume body
   }
 
-  // Wait for indexing (up to 20 seconds)
-  for (let i = 0; i < 20; i++) {
-    const res = await fetch(`https://${host}/describe_index_stats`, {
-      method: "POST",
-      headers: { "Api-Key": key, "Content-Type": "application/json" },
-      body: "{}",
-    });
-    if (res.ok) {
-      const stats = await res.json();
-      const total = stats.namespaces?.[findingId]?.vectorCount ?? 0;
-      if (total >= chunks.length) return;
-    }
-    await sleep(1000);
-  }
-  console.warn(
-    `[PINECONE] records may not be fully indexed yet for ${findingId}`,
-  );
+  // No polling — vectors index async. ask-batch falls back to rawTranscript if Pinecone
+  // returns empty on the first query before indexing completes.
 }
 
 /** Query Pinecone for relevant transcript chunks. */

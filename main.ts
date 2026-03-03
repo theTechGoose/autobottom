@@ -1419,14 +1419,15 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     ? "A few areas to work on. Review your missed questions below."
     : "There's room to improve here. Take a look at what was missed.";
 
-  const missedQs = Array.isArray(finding.answeredQuestions)
-    ? finding.answeredQuestions.filter((q: any) => q.answer === "No")
-    : [];
+  const allQs = Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : [];
+  const missedQs = allQs.filter((q: any) => q.answer === "No");
+  const passedCount = allQs.length - missedQs.length;
+  const scoreColor = scoreVal === 100 ? "#3fb950" : scoreVal >= 80 ? "#58a6ff" : scoreVal >= 60 ? "#d29922" : "#f85149";
   const missedQuestionsHtml = missedQs.length
-    ? missedQs.map((q: any) =>
-        `<tr><td style="padding:8px 12px;border-bottom:1px solid #1e2736;color:#f0f6fc;font-size:13px;">${q.header ?? q.question ?? "Unknown"}</td></tr>`
+    ? missedQs.map((q: any, i: number) =>
+        `<tr><td style="padding:8px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:12px;width:32px;text-align:center;">${i + 1}</td><td style="padding:8px 12px;border-bottom:1px solid #21262d;color:#e6edf3;font-size:13px;">${q.header ?? q.question ?? "Unknown"}</td></tr>`
       ).join("")
-    : `<tr><td style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions — perfect score!</td></tr>`;
+    : `<tr><td colspan="2" style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions — perfect score!</td></tr>`;
 
   console.log(`[WEBHOOK] agentName="${agentName}" voEmail="${voEmail}" supervisorEmail="${supervisorEmail}" crmUrl="${crmUrl}"`);
 
@@ -1438,6 +1439,7 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     supervisorEmail,
     score: scoreVal + "%",
     scoreVerbiage,
+    scoreColor,
     findingId,
     recordId,
     guestName: String(finding.record?.GuestName ?? ""),
@@ -1447,7 +1449,8 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     feedbackText: finding.feedback?.text ?? "",
     missedQuestions: missedQuestionsHtml,
     missedCount: String(missedQs.length),
-    totalQuestions: String(Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions.length : 0),
+    passedCount: String(passedCount),
+    totalQuestions: String(allQs.length),
     crmUrl,
   };
 

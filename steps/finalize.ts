@@ -208,9 +208,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
     }
   }
 
-  // Post to webhook
-  const webhook = finding.updateEndpoint;
-  if (webhook && webhook !== "none") {
+  // Post to webhook + external Deno KV concurrently
+  const webhookPromise = (async () => {
+    const webhook = finding.updateEndpoint;
+    if (!webhook || webhook === "none") return;
     try {
       const sanitized = JSON.parse(JSON.stringify(finding));
       if (sanitized.record) {
@@ -229,10 +230,9 @@ export async function stepFinalize(req: Request): Promise<Response> {
     } catch (err) {
       console.error(`[STEP-FINALIZE] ${findingId}: Webhook failed:`, err);
     }
-  }
+  })();
 
-  // Post to external Deno KV
-  await postToDeno(finding);
+  await Promise.allSettled([webhookPromise, postToDeno(finding)]);
 
   // Update job status
   if (finding.auditJobId) {

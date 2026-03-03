@@ -5,7 +5,17 @@ function getClient() {
   return new Groq({ apiKey: Deno.env.get("GROQ_API_KEY") });
 }
 
-const MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct";
+const FALLBACK_MODELS = [
+  "meta-llama/llama-4-maverick-17b-128e-instruct", // 0: primary
+  "meta-llama/llama-4-scout-17b-16e-instruct",     // 1: same family, own token pool
+  "openai/gpt-oss-120b",                           // 2: fresh pool, cheap
+  "llama-3.3-70b-versatile",                       // 3: last resort
+] as const;
+
+type GroqModel = typeof FALLBACK_MODELS[number];
+
+// Keep for token tracking label on non-question calls
+const MODEL = FALLBACK_MODELS[0];
 
 // -- Token tracking --
 
@@ -84,24 +94,39 @@ export interface LlmAnswer {
   defense: string;
 }
 
-/** Ask the LLM a single QA question with RAG context. Returns JSON answer. */
-export async function askQuestion(question: string, transcript: string): Promise<LlmAnswer> {
+/** Ask the LLM a single QA question with RAG context. Returns JSON answer.
+ *  Automatically cascades through FALLBACK_MODELS on 429/503. */
+export async function askQuestion(question: string, transcript: string, modelIndex = 0): Promise<LlmAnswer> {
+  const model: GroqModel = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
   const userPrompt = makeUserPrompt(question, transcript);
 
-  const res = await client.chat.completions.create({
-    model: MODEL,
-    messages: [
-      { role: "system", content: QA_SYSTEM_PROMPT },
-      { role: "user", content: userPrompt },
-    ],
-    response_format: { type: "json_object" },
-    max_tokens: 8000,
-  });
+  try {
+    const res = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: "system", content: QA_SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
+      response_format: { type: "json_object" },
+      max_tokens: 8000,
+    });
 
-  trackTokens("askQuestion", res.usage);
-  const text = res.choices[0]?.message?.content ?? "";
-  return parseLlmJson<LlmAnswer>(text, { answer: "Error!", thinking: "Error!", defense: "Error!" });
+    trackTokens("askQuestion", res.usage);
+    const text = res.choices[0]?.message?.content ?? "";
+    return parseLlmJson<LlmAnswer>(text, { answer: "Error!", thinking: "Error!", defense: "Error!" });
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    const isRateLimit = msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity");
+    const nextIndex = modelIndex + 1;
+    if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
+      console.warn(`[LLM-FALLBACK] ${model} rate limited → trying ${FALLBACK_MODELS[nextIndex]}`);
+      await new Promise((r) => setTimeout(r, 1000));
+      return askQuestion(question, transcript, nextIndex);
+    }
+    // All models exhausted or non-rate-limit error — bubble up
+    throw e;
+  }
 }
 
 /** Generate feedback summary for failed questions. */

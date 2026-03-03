@@ -355,6 +355,38 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 
 ---
 
+## 20. Email Webhook — Team Member Name + Score Verbiage + CRM URL (`f1acb72`, `4f6c410`, `b31dcf0`)
+
+### Files
+- `main.ts`
+- `providers/quickbase.ts`
+- `dashboard/page.ts`
+- `review/kv.ts`
+
+### Changes
+
+#### Webhook handler (`main.ts`)
+- Agent name now parsed from QB field 144 (`VoName`): `"VO MB - Harmony Eason"` → `"Harmony Eason"` / `"Harmony"`.
+- `teamMember` and `teamMemberFirst` added as template variables.
+- `voEmail` (field 839) and `supervisorEmail` (field 851) extracted and stored for future recipient logic.
+- `crmUrl` computed dynamically: `https://<QB_REALM>.quickbase.com/db/<tableId>?a=dr&rid=<recordId>` (uses package vs date-leg table based on `isPackage` flag).
+- `scoreVerbiage` added — dynamic phrase based on score range (100% / ≥80% / ≥60% / below 60%).
+- All new vars available in email templates: `{{teamMember}}`, `{{teamMemberFirst}}`, `{{crmUrl}}`, `{{scoreVerbiage}}`.
+- Debug logging on `[WEBHOOK]` line showing resolved name, VoGenie, crmUrl.
+
+#### QuickBase (`providers/quickbase.ts`)
+- Added `FIELD_VO_NAME = 144`, `FIELD_VO_EMAIL = 839`, `FIELD_SUPERVISOR_EMAIL = 851`.
+- All three fields added to the date-leg select query.
+- Return object extended: `VoName`, `VoEmail`, `SupervisorEmail`.
+- Temporary raw field logging added during field discovery (may be removed).
+
+#### Clear Review Queue (`review/kv.ts`, `main.ts`, `dashboard/page.ts`)
+- `clearReviewQueue(orgId)` function in `review/kv.ts` — batch-deletes all `review-pending`, `review-audit-pending`, and `review-lock` KV entries in groups of 10 (Deno KV atomic limit).
+- `POST /admin/clear-review-queue` endpoint added to `main.ts`.
+- Admin dashboard **Review Queue** panel: red **"Clear Queue"** button → confirmation modal → clears queue, leaves `review-decided` history intact.
+
+---
+
 ## New API Endpoints Summary
 
 | Method | Path | Auth | Description |
@@ -362,6 +394,7 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 | POST | `/admin/init-org` | Admin | Create org + optional first admin user |
 | POST | `/admin/retry-finding` | Admin | Smart-retry a finding at the correct step |
 | POST | `/admin/terminate-all` | Admin | Mark all active findings as terminated |
+| POST | `/admin/clear-review-queue` | Admin | Batch-delete all pending review items + locks |
 | GET | `/admin/email-templates` | Admin | List email templates |
 | GET | `/admin/email-templates/get?id=X` | Admin | Get single template |
 | POST | `/admin/email-templates` | Admin | Create/update template |

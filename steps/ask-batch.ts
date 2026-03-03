@@ -25,6 +25,7 @@ async function askLlmOne(
   question: IQuestion,
   orgId: string,
   findingId: string,
+  rawTranscript: string,
 ): Promise<IAnsweredQuestion> {
   // Check cache
   const cached = await getCachedAnswer(orgId, findingId, question.populated);
@@ -34,13 +35,21 @@ async function askLlmOne(
   const questionWithAst = parseAst(question);
   const ast = questionWithAst.astResults.ast ?? [];
 
+  /** Query vector store, falling back to raw transcript if Pinecone returns empty. */
+  async function getContext(q: string): Promise<string> {
+    const vectorContext = await vectorQuery(findingId, q);
+    if (vectorContext.trim()) return vectorContext;
+    console.warn(`[STEP-ASK] ${findingId}: Pinecone empty for "${q.slice(0, 40)}..." — using raw transcript fallback`);
+    return rawTranscript.substring(0, 4000);
+  }
+
   // If no AST (simple question), use vector search + LLM
   if (ast.length === 0 || (ast.length === 1 && ast[0].length === 1 && !ast[0][0].flip)) {
-    const vectorContext = await vectorQuery(findingId, question.populated);
-    const answer = await askQuestion(question.populated, vectorContext);
+    const context = await getContext(question.populated);
+    const answer = await askQuestion(question.populated, context);
     await cacheAnswer(orgId, findingId, question.populated, answer);
     const answered = answerQuestion(question, answer);
-    answered.snippet = vectorContext;
+    answered.snippet = context;
     return answered;
   }
 
@@ -51,13 +60,13 @@ async function askLlmOne(
     const andResults: Array<{ answer: boolean; thinking: string; defense: string; snippet: string }> = [];
 
     for (const node of andNodes) {
-      const vectorContext = await vectorQuery(findingId, node.question);
-      const llmAnswer = await askQuestion(node.question, vectorContext);
+      const context = await getContext(node.question);
+      const llmAnswer = await askQuestion(node.question, context);
       const boolAnswer = strToBool(llmAnswer.answer);
 
       if (boolAnswer === null) {
         // Fallback: ask LLM with full question
-        const fullContext = await vectorQuery(findingId, question.populated);
+        const fullContext = await getContext(question.populated);
         const fallbackAnswer = await askQuestion(question.populated, fullContext);
         await cacheAnswer(orgId, findingId, question.populated, fallbackAnswer);
         const answered = answerQuestion(question, fallbackAnswer);
@@ -66,7 +75,7 @@ async function askLlmOne(
       }
 
       const finalBool = node.flip ? !boolAnswer : boolAnswer;
-      andResults.push({ answer: finalBool, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: vectorContext });
+      andResults.push({ answer: finalBool, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: context });
     }
 
     orResults.push(andResults);
@@ -109,23 +118,39 @@ export async function stepAskBatch(req: Request): Promise<Response> {
   const questions: IQuestion[] = allPopulated
     .filter((_: any, i: number) => questionIndices.includes(i));
 
-  // Answer each question
-  const answers: IAnsweredQuestion[] = [];
-  for (const q of questions) {
-    try {
-      const answer = await askLlmOne(q, orgId, findingId);
-      answers.push(answer);
-    } catch (err: any) {
-      const msg = err.message || String(err);
-      if (msg.includes("503") || msg.includes("over capacity") || msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
-        // Throw so the wrapper in main.ts catches it and re-enqueues with delay
-        throw new Error(`GROQ_TRANSIENT: ${msg}`);
+  const rawTranscript = finding.rawTranscript ?? "";
+
+  // Heartbeat: log every 15s so observability confirms batch hasn't hung
+  const batchStart = Date.now();
+  const heartbeat = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - batchStart) / 1000);
+    console.log(`[STEP-ASK-HEARTBEAT] ${findingId} batch ${batchIndex} still running... (${elapsed}s elapsed)`);
+  }, 15000);
+
+  // Answer all questions in parallel with 100ms stagger to avoid Groq burst limits
+  let transientError: Error | null = null;
+  const answers: IAnsweredQuestion[] = await Promise.all(
+    questions.map(async (q, index) => {
+      await new Promise((r) => setTimeout(r, index * 100));
+      try {
+        return await askLlmOne(q, orgId, findingId, rawTranscript);
+      } catch (err: any) {
+        const msg = err.message || String(err);
+        if (msg.includes("503") || msg.includes("over capacity") || msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
+          // All fallback models exhausted — flag for re-queue after batch completes
+          transientError = new Error(`GROQ_TRANSIENT: ${msg}`);
+          return answerQuestion(q, { answer: "Error", thinking: msg, defense: "N/A" });
+        }
+        console.error(`[STEP-ASK] ${findingId}: Question "${q.header}" failed:`, err);
+        return answerQuestion(q, { answer: "Error", thinking: msg, defense: "N/A" });
       }
-      console.error(`[STEP-ASK] ${findingId}: Question "${q.header}" failed:`, err);
-      // Answer as error
-      answers.push(answerQuestion(q, { answer: "Error", thinking: msg, defense: "N/A" }));
-    }
-  }
+    })
+  );
+
+  clearInterval(heartbeat);
+
+  // If all fallback models were exhausted, re-queue the batch
+  if (transientError) throw transientError;
 
   // Save batch answers
   await saveBatchAnswers(orgId, findingId, batchIndex, answers);

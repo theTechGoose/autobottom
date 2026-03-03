@@ -34,26 +34,34 @@ export async function stepInit(req: Request): Promise<Response> {
   finding.findingStatus = "getting-recording";
   await saveFinding(orgId, finding);
 
-  // Multi-genie path: download each genie separately
+  // Multi-genie path: download all genies in parallel
   if (finding.genieIds && finding.genieIds.length > 0) {
-    const keys: string[] = [];
-    for (const gid of finding.genieIds) {
-      const trimmed = String(gid).trim();
-      if (!trimmed || trimmed === "0" || trimmed.replace(/0/g, "") === "") {
-        console.warn(`[STEP-INIT] ${findingId}: Skipping invalid genie ID "${trimmed}"`);
-        continue;
-      }
-      const bytes = await downloadRecording(Number(trimmed), findingId);
-      if (!bytes) {
-        console.warn(`[STEP-INIT] ${findingId}: No recording for genie ${trimmed}, skipping`);
-        continue;
-      }
-      const key = `recordings/${finding.auditJobId}/${trimmed}.mp3`;
-      const ref = new S3Ref(env.s3Bucket, key);
-      await ref.save(bytes);
-      keys.push(key);
-      console.log(`[STEP-INIT] ${findingId}: Genie ${trimmed} saved (${bytes.byteLength} bytes)`);
-    }
+    const validIds = finding.genieIds
+      .map((gid: any) => String(gid).trim())
+      .filter((trimmed: string) => {
+        if (!trimmed || trimmed === "0" || trimmed.replace(/0/g, "") === "") {
+          console.warn(`[STEP-INIT] ${findingId}: Skipping invalid genie ID "${trimmed}"`);
+          return false;
+        }
+        return true;
+      });
+
+    const results = await Promise.all(
+      validIds.map(async (trimmed: string) => {
+        const bytes = await downloadRecording(Number(trimmed), findingId);
+        if (!bytes) {
+          console.warn(`[STEP-INIT] ${findingId}: No recording for genie ${trimmed}, skipping`);
+          return null;
+        }
+        const key = `recordings/${finding.auditJobId}/${trimmed}.mp3`;
+        const ref = new S3Ref(env.s3Bucket, key);
+        await ref.save(bytes);
+        console.log(`[STEP-INIT] ${findingId}: Genie ${trimmed} saved (${bytes.byteLength} bytes)`);
+        return key;
+      })
+    );
+
+    const keys = results.filter((k): k is string => k !== null);
 
     if (keys.length === 0) {
       finding.rawTranscript = "Invalid Genie";

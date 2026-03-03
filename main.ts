@@ -1275,9 +1275,11 @@ async function handleGetParallelism(_req: Request): Promise<Response> {
   const res = await fetch(`${env.qstashUrl}/v2/queues/${ALL_QUEUES[0]}`, {
     headers: { Authorization: `Bearer ${env.qstashToken}` },
   });
+  // 404 = queue not created yet (normal before first deploy with new queue names)
+  if (res.status === 404) return json({ parallelism: null });
   if (!res.ok) {
     const text = await res.text();
-    return json({ error: `QStash error: ${res.status} ${text}` }, res.status);
+    return json({ error: `QStash error: ${res.status} ${text}` }, 500);
   }
   const data = await res.json();
   return json({ parallelism: data.parallelism ?? null });

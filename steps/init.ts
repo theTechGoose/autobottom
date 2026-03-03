@@ -1,5 +1,5 @@
 /** STEP 1: Initialize finding, fetch recording, save to S3. */
-import { saveFinding, getFinding, trackActive } from "../lib/kv.ts";
+import { saveFinding, getFinding, trackActive, getPipelineConfig } from "../lib/kv.ts";
 import { enqueueStep } from "../lib/queue.ts";
 import { downloadRecording } from "../providers/genie.ts";
 import { S3Ref } from "../lib/s3.ts";
@@ -16,7 +16,8 @@ export async function stepInit(req: Request): Promise<Response> {
   const body = await req.json();
   const { findingId, orgId } = body;
 
-  console.log(`[STEP-INIT] ${findingId}: Starting...`);
+  const pipelineCfg = await getPipelineConfig(orgId);
+  console.log(`[STEP-INIT] ${findingId}: Starting... [parallelism=${pipelineCfg.parallelism}]`);
   await trackActive(orgId, findingId, "init");
 
   const finding = await getFinding(orgId, findingId);

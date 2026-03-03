@@ -920,7 +920,7 @@ export function getDashboardPage(): string {
       </div>
       <div class="sf" style="width:130px;margin-bottom:0;">
         <label class="sf-label">Stagger (ms)</label>
-        <input type="number" class="sf-input" id="bulk-stagger" value="100" min="100" max="5000" style="font-size:12px;">
+        <input type="number" class="sf-input" id="bulk-stagger" value="100" min="0" max="5000" style="font-size:12px;">
       </div>
     </div>
     <div id="bulk-progress" style="display:none;margin-top:12px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text-muted);font-family:var(--mono);line-height:1.6;"></div>
@@ -1575,7 +1575,7 @@ export function getDashboardPage(): string {
     if (rids.length > 200) { toast('Max 200 RIDs per bulk run', 'error'); return; }
 
     var type = document.getElementById('bulk-type').value;
-    var staggerMs = Math.max(100, parseInt(document.getElementById('bulk-stagger').value, 10) || 100);
+    var staggerMs = Math.max(0, parseInt(document.getElementById('bulk-stagger').value, 10) || 0);
     var endpoint = type === 'package' ? '/audit/package-by-rid' : '/audit/test-by-rid';
 
     var btn = document.getElementById('bulk-start');

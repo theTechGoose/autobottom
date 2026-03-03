@@ -562,6 +562,7 @@ export function getDashboardPage(): string {
           <option value="dateleg">Date Leg</option>
           <option value="package">Package</option>
         </select>
+        <button class="sf-btn secondary" id="bulk-open-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Bulk</button>
         <button class="sf-btn primary" id="rid-btn" style="padding:6px 16px;font-size:11px;white-space:nowrap;">Start Audit</button>
       </div>
       <div id="rid-result" style="font-size:10px;margin-top:6px;min-height:14px;"></div>
@@ -896,6 +897,36 @@ export function getDashboardPage(): string {
     <div class="modal-actions">
       <button class="sf-btn ghost" id="terminate-cancel">Cancel</button>
       <button class="sf-btn danger" id="terminate-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Yes, Terminate All</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Audit Modal -->
+<div class="modal-overlay" id="bulk-modal">
+  <div class="modal" style="width:560px;">
+    <div class="modal-title">Bulk Audit</div>
+    <div class="modal-sub">Paste Record IDs (one per line or comma-separated). Audits fire sequentially with a stagger delay.</div>
+    <div class="sf">
+      <label class="sf-label">Record IDs</label>
+      <textarea class="sf-input" id="bulk-rids" rows="8" style="font-family:var(--mono);font-size:11px;resize:vertical;" placeholder="12345678&#10;87654321&#10;..."></textarea>
+    </div>
+    <div style="display:flex;gap:12px;align-items:flex-end;margin-top:4px;">
+      <div class="sf" style="flex:1;margin-bottom:0;">
+        <label class="sf-label">Audit Type</label>
+        <select class="sf-input" id="bulk-type" style="font-size:12px;padding:6px 8px;">
+          <option value="dateleg">Date Leg</option>
+          <option value="package">Package</option>
+        </select>
+      </div>
+      <div class="sf" style="width:130px;margin-bottom:0;">
+        <label class="sf-label">Stagger (ms)</label>
+        <input type="number" class="sf-input" id="bulk-stagger" value="300" min="100" max="5000" style="font-size:12px;">
+      </div>
+    </div>
+    <div id="bulk-progress" style="display:none;margin-top:12px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text-muted);font-family:var(--mono);line-height:1.6;"></div>
+    <div class="modal-actions">
+      <button class="sf-btn ghost" id="bulk-cancel">Cancel</button>
+      <button class="sf-btn primary" id="bulk-start">Start Bulk Audit</button>
     </div>
   </div>
 </div>
@@ -1524,6 +1555,59 @@ export function getDashboardPage(): string {
   }
   document.getElementById('rid-btn').addEventListener('click', doRidAudit);
   document.getElementById('rid-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doRidAudit(); });
+
+  // ===== Bulk Audit Modal =====
+  document.getElementById('bulk-open-btn').addEventListener('click', function() {
+    // Sync type selector with single-audit selector
+    document.getElementById('bulk-type').value = document.getElementById('rid-type').value;
+    openModal('bulk-modal');
+  });
+  document.getElementById('bulk-cancel').addEventListener('click', function() { closeModal('bulk-modal'); });
+  backdropClose('bulk-modal');
+
+  document.getElementById('bulk-start').addEventListener('click', function() {
+    var rawText = document.getElementById('bulk-rids').value.trim();
+    if (!rawText) { toast('Enter at least one Record ID', 'error'); return; }
+
+    var rids = rawText.split(/[\n,]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+    if (rids.length === 0) { toast('No valid RIDs found', 'error'); return; }
+    if (rids.length > 200) { toast('Max 200 RIDs per bulk run', 'error'); return; }
+
+    var type = document.getElementById('bulk-type').value;
+    var staggerMs = Math.max(100, parseInt(document.getElementById('bulk-stagger').value, 10) || 300);
+    var endpoint = type === 'package' ? '/audit/package-by-rid' : '/audit/test-by-rid';
+
+    var btn = document.getElementById('bulk-start');
+    var progress = document.getElementById('bulk-progress');
+    btn.disabled = true;
+    progress.style.display = 'block';
+    progress.textContent = '0 / ' + rids.length + ' queued...';
+
+    var started = 0, errors = 0;
+
+    function fireNext(i) {
+      if (i >= rids.length) {
+        btn.disabled = false;
+        var msg = started + ' / ' + rids.length + ' queued' + (errors > 0 ? ', ' + errors + ' failed' : ' ✓');
+        progress.textContent = msg;
+        toast('Bulk complete: ' + msg, errors > 0 ? 'warning' : 'success');
+        return;
+      }
+      var rid = rids[i];
+      fetch(endpoint + '?rid=' + encodeURIComponent(rid), { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.findingId || d.ok) { started++; } else { errors++; }
+        })
+        .catch(function() { errors++; })
+        .finally(function() {
+          progress.textContent = (started + errors) + ' / ' + rids.length + ' queued' + (errors > 0 ? ' (' + errors + ' err)' : '') + '...';
+          setTimeout(function() { fireNext(i + 1); }, staggerMs);
+        });
+    }
+
+    fireNext(0);
+  });
 
   // ===== Webhook Modal =====
   var modal = document.getElementById('webhook-modal');

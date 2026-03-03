@@ -181,56 +181,74 @@ const DIARIZATION_MANAGER = `You are a speaker-identifier bot manager. Your job 
 
 const DIARIZATION_QA = `You are an AI Quality Assurance Bot specializing in evaluating speaker diarization tasks. Determine if the diarization meets a "good enough" quality standard. Response MUST be exactly "Yes" or "This is not good enough".`;
 
+/** Single Groq call with rate-limit retry across FALLBACK_MODELS. */
+async function groqCallWithRetry(
+  params: Parameters<ReturnType<typeof getClient>["chat"]["completions"]["create"]>[0],
+  trackLabel: string,
+  modelIndex = 0,
+): Promise<string> {
+  const model = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
+  const client = getClient();
+  try {
+    const res = await client.chat.completions.create({ ...params, model });
+    trackTokens(trackLabel, res.usage);
+    return res.choices[0]?.message?.content ?? "";
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    const isRateLimit = msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity");
+    const nextIndex = modelIndex + 1;
+    if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
+      console.warn(`[LLM-FALLBACK] diarize/${trackLabel}: ${model} rate limited → trying ${FALLBACK_MODELS[nextIndex]}`);
+      await new Promise((r) => setTimeout(r, 1000));
+      return groqCallWithRetry(params, trackLabel, nextIndex);
+    }
+    throw e;
+  }
+}
+
 /** Diarize a transcript using multi-turn Groq conversation. */
 export async function diarize(rawTranscript: string, maxAttempts = 4): Promise<string> {
-  const client = getClient();
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: DIARIZATION_SYSTEM },
     { role: "user", content: rawTranscript },
   ];
 
   for (let j = 0; j < maxAttempts; j++) {
-    // Step 1: Diarizer produces labeled transcript (plain text, not JSON)
-    const diarizationRes = await client.chat.completions.create({
+    // Step 1: Diarizer produces labeled transcript
+    const diarized = await groqCallWithRetry({
       model: MODEL,
       messages,
       max_tokens: 8000,
-    });
-    trackTokens("diarize", diarizationRes.usage);
-    const diarized = diarizationRes.choices[0]?.message?.content ?? "";
+    }, "diarize");
     messages.push({ role: "assistant", content: diarized });
 
-    // Step 2: Manager reviews (JSON response)
-    const managerRes = await client.chat.completions.create({
-      model: MODEL,
-      messages: [
-        { role: "system", content: DIARIZATION_MANAGER + "\n\nOriginal transcription:\n" + rawTranscript },
-        { role: "user", content: diarized },
-      ],
-      response_format: { type: "json_object" },
-      max_tokens: 8000,
-    });
-    trackTokens("diarize-manager", managerRes.usage);
-    const managerText = managerRes.choices[0]?.message?.content ?? "";
-    const manager = parseLlmJson<{ isCorrect: boolean; thinking: string; feedback: string | null }>(managerText, { isCorrect: true, thinking: "", feedback: null });
+    // Step 2 + 3: Manager review and QA check run concurrently (both only need diarizer output)
+    const [managerText, qaAnswer] = await Promise.all([
+      groqCallWithRetry({
+        model: MODEL,
+        messages: [
+          { role: "system", content: DIARIZATION_MANAGER + "\n\nOriginal transcription:\n" + rawTranscript },
+          { role: "user", content: diarized },
+        ],
+        response_format: { type: "json_object" },
+        max_tokens: 8000,
+      }, "diarize-manager"),
+      groqCallWithRetry({
+        model: MODEL,
+        messages: [
+          { role: "system", content: DIARIZATION_QA },
+          { role: "user", content: diarized },
+        ],
+        max_tokens: 100,
+      }, "diarize-qa"),
+    ]);
 
-    // Step 3: QA check
-    const qaRes = await client.chat.completions.create({
-      model: MODEL,
-      messages: [
-        { role: "system", content: DIARIZATION_QA },
-        { role: "user", content: diarized },
-      ],
-      max_tokens: 100,
-    });
-    trackTokens("diarize-qa", qaRes.usage);
-    const qaAnswer = qaRes.choices[0]?.message?.content?.trim() ?? "";
-
-    if (qaAnswer === "Yes") {
+    if (qaAnswer.trim() === "Yes") {
       return diarized;
     }
 
-    // Feed back to diarizer for another attempt
+    // Feed manager feedback back to diarizer for next attempt
+    const manager = parseLlmJson<{ isCorrect: boolean; thinking: string; feedback: string | null }>(managerText, { isCorrect: true, thinking: "", feedback: null });
     if (manager.feedback) {
       messages.push({ role: "user", content: manager.feedback });
     }

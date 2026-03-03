@@ -2,6 +2,7 @@ import * as icons from "./shared/icons.ts";
 import { stepInit } from "./steps/init.ts";
 import { stepTranscribe } from "./steps/transcribe.ts";
 import { stepTranscribeCb } from "./steps/transcribe-cb.ts";
+import { stepDiarizeAsync } from "./steps/diarize-async.ts";
 import { stepPrepare } from "./steps/prepare.ts";
 import { stepAskBatch } from "./steps/ask-batch.ts";
 import { stepFinalize } from "./steps/finalize.ts";
@@ -201,6 +202,7 @@ const postRoutes: Record<string, Handler> = {
   "/audit/step/init": stepInit,
   "/audit/step/transcribe": stepTranscribe,
   "/audit/step/transcribe-complete": stepTranscribeCb,
+  "/audit/step/diarize-async": stepDiarizeAsync,
   "/audit/step/prepare": stepPrepare,
   "/audit/step/ask-batch": stepAskBatch,
   "/audit/step/finalize": stepFinalize,

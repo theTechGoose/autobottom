@@ -1,7 +1,6 @@
-/** STEP 2b: Diarize the raw transcript using Groq LLM. */
+/** STEP 2b: Post-transcription router — saves raw transcript, fires prepare + diarize-async in parallel. */
 import { getFinding, saveFinding, saveTranscript, trackActive } from "../lib/kv.ts";
 import { enqueueStep } from "../lib/queue.ts";
-import { diarize } from "../providers/groq.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -14,38 +13,34 @@ export async function stepTranscribeCb(req: Request): Promise<Response> {
   const body = await req.json();
   const { findingId, orgId } = body;
 
-  console.log(`[STEP-DIARIZE] ${findingId}: Starting diarization...`);
-  trackActive(orgId, findingId, "diarize").catch(() => {});
+  console.log(`[STEP-TRANSCRIBE-CB] ${findingId}: Starting...`);
+  trackActive(orgId, findingId, "transcribe-cb").catch(() => {});
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
-  // If invalid transcript, skip to finalize
-  if (finding.rawTranscript?.includes("Invalid Genie") || finding.rawTranscript?.includes("Genie Invalid")) {
+  // Invalid transcript: skip straight to finalize
+  if (
+    !finding.rawTranscript ||
+    finding.rawTranscript.includes("Invalid Genie") ||
+    finding.rawTranscript.includes("Genie Invalid")
+  ) {
     await enqueueStep("finalize", { findingId, orgId });
     return json({ ok: true, skipped: true, reason: "invalid transcript" });
   }
 
-  if (!finding.rawTranscript) {
-    await enqueueStep("finalize", { findingId, orgId });
-    return json({ ok: true, skipped: true, reason: "no transcript" });
-  }
-
-  try {
-    const diarized = await diarize(finding.rawTranscript);
-    finding.diarizedTranscript = diarized;
-  } catch (err) {
-    console.error(`[STEP-DIARIZE] ${findingId}: Diarization failed:`, err);
-    // Continue without diarization - raw transcript still available
-  }
-
-  // Persist full transcript in its own KV key (backup)
-  await saveTranscript(orgId, findingId, finding.rawTranscript, finding.diarizedTranscript);
-
+  // Persist raw transcript to its own KV key immediately (diarized will be filled in later)
+  await saveTranscript(orgId, findingId, finding.rawTranscript, undefined);
   await saveFinding(orgId, finding);
 
-  // Move to preparation step
-  await enqueueStep("prepare", { findingId, orgId });
+  // Fire prepare (critical path) + diarize-async (parallel, non-blocking) concurrently.
+  // QA runs entirely off rawTranscript — diarize result is cosmetic only (report display).
+  await Promise.all([
+    enqueueStep("prepare", { findingId, orgId }),
+    enqueueStep("diarize-async", { findingId, orgId }),
+  ]);
+
+  console.log(`[STEP-TRANSCRIBE-CB] ${findingId}: Enqueued prepare + diarize-async`);
   return json({ ok: true });
 }

@@ -1274,12 +1274,14 @@ async function handleGetParallelism(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
   const config = await getPipelineConfig(auth.orgId);
+  console.log(`[PARALLELISM] GET → ${config.parallelism}`);
   return json({ parallelism: config.parallelism });
 }
 
 async function handleSetParallelism(req: Request): Promise<Response> {
+  console.log(`[PARALLELISM] POST received`);
   const auth = await requireAdminAuth(req);
-  if (auth instanceof Response) return auth;
+  if (auth instanceof Response) { console.warn(`[PARALLELISM] POST auth failed`); return auth; }
   const body = await req.json();
   const { parallelism } = body;
   if (parallelism == null || typeof parallelism !== "number" || parallelism < 1) {

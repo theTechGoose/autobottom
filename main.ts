@@ -1270,40 +1270,42 @@ async function handleSetQueue(req: Request): Promise<Response> {
   return json(await res.json());
 }
 
-async function handleGetParallelism(_req: Request): Promise<Response> {
-  // Read from the first queue as representative — all queues share the same parallelism value.
-  const res = await fetch(`${env.qstashUrl}/v2/queues/${ALL_QUEUES[0]}`, {
-    headers: { Authorization: `Bearer ${env.qstashToken}` },
-  });
-  // 404 = queue not created yet (normal before first deploy with new queue names)
-  if (res.status === 404) return json({ parallelism: null });
-  if (!res.ok) {
-    const text = await res.text();
-    return json({ error: `QStash error: ${res.status} ${text}` }, 500);
-  }
-  const data = await res.json();
-  return json({ parallelism: data.parallelism ?? null });
+async function handleGetParallelism(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const config = await getPipelineConfig(auth.orgId);
+  return json({ parallelism: config.parallelism });
 }
 
 async function handleSetParallelism(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
   const body = await req.json();
   const { parallelism } = body;
   if (parallelism == null || typeof parallelism !== "number" || parallelism < 1) {
     return json({ error: "parallelism must be a number >= 1" }, 400);
   }
-  await Promise.all(
-    ALL_QUEUES.map((queueName) =>
-      fetch(`${env.qstashUrl}/v2/queues`, {
+  // Persist to KV as source of truth
+  await setPipelineConfig(auth.orgId, { parallelism });
+  // Apply to all QStash queues concurrently
+  const results = await Promise.all(
+    ALL_QUEUES.map(async (queueName) => {
+      const res = await fetch(`${env.qstashUrl}/v2/queues`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${env.qstashToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ queueName, parallelism }),
-      })
-    )
+      });
+      const ok = res.ok;
+      if (!ok) console.error(`[PARALLELISM] ❌ Failed to set ${queueName}: ${res.status} ${await res.text()}`);
+      else console.log(`[PARALLELISM] ✅ ${queueName} → ${parallelism}`);
+      return { queueName, ok };
+    })
   );
-  return json({ ok: true, parallelism });
+  console.log(`[PARALLELISM] Set to ${parallelism} across ${results.filter((r) => r.ok).length}/${ALL_QUEUES.length} queues`);
+  return json({ ok: true, parallelism, queues: results });
 }
 
 // -- Admin: Email Reports --

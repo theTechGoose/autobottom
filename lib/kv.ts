@@ -322,9 +322,10 @@ export async function getTranscript(orgId: OrgId, findingId: string) {
 export interface PipelineConfig {
   maxRetries: number;
   retryDelaySeconds: number;
+  parallelism: number;
 }
 
-const DEFAULT_PIPELINE_CONFIG: PipelineConfig = { maxRetries: 5, retryDelaySeconds: 10 };
+const DEFAULT_PIPELINE_CONFIG: PipelineConfig = { maxRetries: 5, retryDelaySeconds: 10, parallelism: 20 };
 
 export async function getPipelineConfig(orgId: OrgId): Promise<PipelineConfig> {
   const db = await kv();

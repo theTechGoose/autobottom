@@ -227,7 +227,7 @@ export async function diarize(rawTranscript: string, maxAttempts = 4): Promise<s
       groqCallWithRetry({
         model: MODEL,
         messages: [
-          { role: "system", content: DIARIZATION_MANAGER + "\n\nOriginal transcription:\n" + rawTranscript },
+          { role: "system", content: DIARIZATION_MANAGER },
           { role: "user", content: diarized },
         ],
         response_format: { type: "json_object" },

@@ -14,12 +14,23 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
   const body = await req.json();
   const { findingId, orgId } = body;
 
-  console.log(`[STEP-DIARIZE] ${findingId}: Starting diarization (async)...`);
-  trackActive(orgId, findingId, "diarize-async").catch(() => {});
-
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
+
+  // Don't trackActive for finished findings — finalize already called trackCompleted()
+  // and re-adding here would leave ghost entries in the active audits list
+  if (finding.findingStatus !== "finished") {
+    trackActive(orgId, findingId, "diarize-async").catch(() => {});
+  }
+
+  // Idempotency: skip if already diarized (QStash at-least-once delivery can cause duplicate runs)
+  if (finding.diarizedTranscript) {
+    console.log(`[STEP-DIARIZE] ${findingId}: Already diarized, skipping`);
+    return json({ ok: true, skipped: true });
+  }
+
+  console.log(`[STEP-DIARIZE] ${findingId}: Starting diarization...`);
 
   const raw = finding.rawTranscript ?? "";
   if (!raw || raw.includes("Invalid Genie") || raw.includes("Genie Invalid")) {

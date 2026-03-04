@@ -15,8 +15,8 @@ function json(data: unknown, status = 200) {
   });
 }
 
-function strToBool(s: string): boolean | null {
-  const lower = s.trim().toLowerCase();
+function strToBool(s: unknown): boolean | null {
+  const lower = String(s ?? "").trim().toLowerCase();
   if (["yes", "y", "true", "1"].includes(lower)) return true;
   if (["no", "n", "false", "0"].includes(lower)) return false;
   return null;

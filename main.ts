@@ -7,6 +7,7 @@ import { stepDiarizeAsync } from "./steps/diarize-async.ts";
 import { stepPineconeAsync } from "./steps/pinecone-async.ts";
 import { stepPrepare } from "./steps/prepare.ts";
 import { stepAskBatch } from "./steps/ask-batch.ts";
+import { stepAskAll } from "./steps/ask-all.ts";
 import { stepFinalize } from "./steps/finalize.ts";
 import { stepCleanup } from "./steps/cleanup.ts";
 import { stepBadWordCheck } from "./steps/bad-word-check.ts";
@@ -211,6 +212,7 @@ const postRoutes: Record<string, Handler> = {
   "/audit/step/pinecone-async": stepPineconeAsync,
   "/audit/step/prepare": stepPrepare,
   "/audit/step/ask-batch": stepAskBatch,
+  "/audit/step/ask-all": stepAskAll,
   "/audit/step/finalize": stepFinalize,
   "/audit/step/cleanup": stepCleanup,
   "/audit/step/bad-word-check": stepBadWordCheck,

@@ -16,6 +16,7 @@ const STEP_QUEUE: Record<string, string> = {
   "transcribe-complete": TRANSCRIBE_QUEUE,
   "prepare":         QUESTIONS_QUEUE,
   "ask-batch":       QUESTIONS_QUEUE,
+  "ask-all":         QUESTIONS_QUEUE,
   "finalize":        QUESTIONS_QUEUE,
   "diarize-async":   CLEANUP_QUEUE,
   "pinecone-async":  CLEANUP_QUEUE,

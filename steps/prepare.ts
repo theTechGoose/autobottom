@@ -1,5 +1,5 @@
 /** STEP 3: Fetch questions from QuickBase (or Question Lab), embed transcript in Pinecone, fan-out question batches. */
-import { getFinding, saveFinding, setBatchCounter, getCachedQuestions, cacheQuestions, trackActive, savePopulatedQuestions } from "../lib/kv.ts";
+import { getFinding, saveFinding, getCachedQuestions, cacheQuestions, trackActive, savePopulatedQuestions } from "../lib/kv.ts";
 import { enqueueStep, publishStep } from "../lib/queue.ts";
 import { getQuestionsForDestination } from "../providers/quickbase.ts";
 import { populateQuestions } from "../providers/question-expr.ts";
@@ -106,45 +106,22 @@ export async function stepPrepare(req: Request): Promise<Response> {
     );
   }
 
-  // 4. Fan-out question batches
-  const BATCH_SIZE = 5;
-  const batches: Array<{ batchIndex: number; questionIndices: number[] }> = [];
-  for (let i = 0; i < populated.length; i += BATCH_SIZE) {
-    batches.push({
-      batchIndex: batches.length,
-      questionIndices: Array.from({ length: Math.min(BATCH_SIZE, populated.length - i) }, (_, j) => i + j),
-    });
-  }
-
-  if (batches.length === 0) {
+  if (populated.length === 0) {
     // No questions - go straight to finalize
     finding.answeredQuestions = [];
     await saveFinding(orgId, finding);
     const dispatch = adminRetry ? publishStep : enqueueStep;
-    await dispatch("finalize", { findingId, orgId });
-    return json({ ok: true, batches: 0 });
+    await dispatch("finalize", { findingId, orgId, totalBatches: 0 });
+    return json({ ok: true, questions: 0 });
   }
 
-  // Set counter for fan-in
-  await setBatchCounter(orgId, findingId, batches.length);
-
-  // Enqueue all batches
+  // Enqueue single ask-all step (answers all questions in one Promise.all with 100ms stagger)
   finding.findingStatus = "asking-questions";
   await saveFinding(orgId, finding);
 
   const dispatch = adminRetry ? publishStep : enqueueStep;
-  const promises = batches.map((batch) =>
-    dispatch("ask-batch", {
-      findingId,
-      orgId,
-      adminRetry,
-      batchIndex: batch.batchIndex,
-      questionIndices: batch.questionIndices,
-      totalBatches: batches.length,
-    })
-  );
-  await Promise.all(promises);
+  await dispatch("ask-all", { findingId, orgId, adminRetry });
 
-  console.log(`[STEP-PREPARE] ${findingId}: Enqueued ${batches.length} question batches`);
-  return json({ ok: true, batches: batches.length });
+  console.log(`[STEP-PREPARE] ${findingId}: Enqueued ask-all for ${populated.length} questions`);
+  return json({ ok: true, questions: populated.length });
 }

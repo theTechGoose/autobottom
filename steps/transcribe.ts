@@ -12,6 +12,8 @@ function json(data: unknown, status = 200) {
   });
 }
 
+const POLL_DELAY_SECONDS = 15;
+
 export async function stepTranscribe(req: Request): Promise<Response> {
   const body = await req.json();
   const { findingId, orgId } = body;
@@ -91,10 +93,11 @@ export async function stepTranscribe(req: Request): Promise<Response> {
   try {
     const transcriptId = await submitTranscription(uploadUrl, findingId);
     finding.assemblyAiTranscriptId = transcriptId;
+    (finding as Record<string, any>).assemblyAiSubmittedAt = Date.now();
     await saveFinding(orgId, finding);
     // Return immediately — poll-transcript handles waiting and result processing
-    await enqueueStep("poll-transcript", { findingId, orgId }, 30);
-    console.log(`[STEP-TRANSCRIBE] ${findingId}: Submitted ${transcriptId}, polling in 30s`);
+    await enqueueStep("poll-transcript", { findingId, orgId }, POLL_DELAY_SECONDS);
+    console.log(`[STEP-TRANSCRIBE] ${findingId}: 🚀 Submitted ${transcriptId}, polling in ${POLL_DELAY_SECONDS}s`);
     return json({ ok: true, transcriptId });
   } catch (err) {
     console.error(`[STEP-TRANSCRIBE] ${findingId}: Submit failed:`, err);

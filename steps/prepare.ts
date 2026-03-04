@@ -99,6 +99,13 @@ export async function stepPrepare(req: Request): Promise<Response> {
     );
   }
 
+  // 3b. Bad word check for package records (off critical path)
+  if (finding.rawTranscript && finding.recordingIdField === "GenieNumber") {
+    enqueueStep("bad-word-check", { findingId, orgId }).catch((err) =>
+      console.error(`[STEP-PREPARE] ${findingId}: Failed to enqueue bad-word-check:`, err)
+    );
+  }
+
   // 4. Fan-out question batches
   const BATCH_SIZE = 5;
   const batches: Array<{ batchIndex: number; questionIndices: number[] }> = [];

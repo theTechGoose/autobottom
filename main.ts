@@ -8,6 +8,7 @@ import { stepPrepare } from "./steps/prepare.ts";
 import { stepAskBatch } from "./steps/ask-batch.ts";
 import { stepFinalize } from "./steps/finalize.ts";
 import { stepCleanup } from "./steps/cleanup.ts";
+import { stepBadWordCheck } from "./steps/bad-word-check.ts";
 import {
   handleAuditByRid, handlePackageByRid, handleGetFinding, handleGetReport,
   handleGetStats, handleGetRecording, handleFileAppeal, handleAppealStatus,
@@ -21,6 +22,7 @@ import {
   saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
+  getBadWordConfig, saveBadWordConfig,
   getAllAnswersForFinding,
   getGamificationSettings, saveGamificationSettings,
   getJudgeGamificationOverride, saveJudgeGamificationOverride,
@@ -209,6 +211,7 @@ const postRoutes: Record<string, Handler> = {
   "/audit/step/ask-batch": stepAskBatch,
   "/audit/step/finalize": stepFinalize,
   "/audit/step/cleanup": stepCleanup,
+  "/audit/step/bad-word-check": stepBadWordCheck,
 
   // API endpoints (orgId from auth/query/default-org)
   "/audit/test-by-rid": withOrgId(handleAuditByRid),
@@ -241,6 +244,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/email-reports/delete": handleDeleteEmailReport,
   "/admin/email-templates": handleSaveEmailTemplate,
   "/admin/email-templates/delete": handleDeleteEmailTemplate,
+  "/admin/bad-word-config": handleSaveBadWordConfig,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/admin/reset-finding": handleResetFinding,
 
@@ -338,6 +342,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/email-reports": handleListEmailReports,
   "/admin/email-templates": handleListEmailTemplates,
   "/admin/email-templates/get": handleGetEmailTemplate,
+  "/admin/bad-word-config": handleGetBadWordConfig,
   "/docs/index": () => Promise.resolve(html(getDocsIndexHtml())),
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
   "/api/openapi.json": () => Promise.resolve(json(getOpenApiSpec())),
@@ -1374,6 +1379,22 @@ async function handleDeleteEmailTemplate(req: Request): Promise<Response> {
   const body = await req.json();
   if (!body.id) return json({ error: "id required" }, 400);
   await deleteEmailTemplate(auth.orgId, body.id);
+  return json({ ok: true });
+}
+
+// -- Admin: Bad Word Config --
+
+async function handleGetBadWordConfig(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  return json(await getBadWordConfig(auth.orgId));
+}
+
+async function handleSaveBadWordConfig(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  await saveBadWordConfig(auth.orgId, body);
   return json({ ok: true });
 }
 

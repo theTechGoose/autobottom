@@ -18,6 +18,7 @@ const STEP_QUEUE: Record<string, string> = {
   "finalize":        QUESTIONS_QUEUE,
   "diarize-async":   CLEANUP_QUEUE,
   "pinecone-async":  CLEANUP_QUEUE,
+  "bad-word-check":  CLEANUP_QUEUE,
 };
 
 const LOCAL_MODE = Deno.env.get("LOCAL_QUEUE") === "true";

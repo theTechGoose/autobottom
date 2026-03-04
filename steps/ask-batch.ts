@@ -1,9 +1,9 @@
 /** STEP 4: Answer a batch of questions via RAG + Groq LLM. */
 import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, decrementBatchCounter, trackActive, getPopulatedQuestions, getPipelineConfig } from "../lib/kv.ts";
 import { enqueueStep, publishStep } from "../lib/queue.ts";
-import { askQuestion } from "../providers/groq.ts";
+import { askQuestion, summarize } from "../providers/groq.ts";
 import { query as vectorQuery } from "../providers/pinecone.ts";
-import { parseAst } from "../providers/question-expr.ts";
+import { parseAst, evaluateAutoYes } from "../providers/question-expr.ts";
 import { answerQuestion } from "../types/mod.ts";
 import type { IQuestion, IAnsweredQuestion, ILlmQuestionAnswer } from "../types/mod.ts";
 
@@ -27,6 +27,15 @@ async function askLlmOne(
   findingId: string,
   rawTranscript: string,
 ): Promise<IAnsweredQuestion> {
+  // Auto-yes: skip Groq entirely if the expression matches populated field values
+  if (question.autoYesExp) {
+    const autoYes = evaluateAutoYes(question.autoYesExp);
+    if (autoYes.applies) {
+      console.log(`[STEP-ASK] ${findingId}: Auto-Yes "${question.header}" — ${autoYes.message}`);
+      return answerQuestion(question, { answer: "Yes", thinking: autoYes.message, defense: "Auto-Yes" });
+    }
+  }
+
   // Check cache
   const cached = await getCachedAnswer(orgId, findingId, question.populated);
   if (cached) return answerQuestion(question, cached);
@@ -90,10 +99,20 @@ async function askLlmOne(
   const allDefense = orResults.flat().map((r) => r.defense);
   const allSnippets = orResults.flat().map((r) => r.snippet);
 
+  // For compound questions (multiple AST nodes), summarize thinking/defense into one coherent output
+  let thinking: string;
+  let defense: string;
+  if (allThinking.length === 1) {
+    thinking = allThinking[0];
+    defense = allDefense[0];
+  } else {
+    [thinking, defense] = await Promise.all([summarize(allThinking), summarize(allDefense)]);
+  }
+
   const finalAnswer: ILlmQuestionAnswer = {
     answer: orResult ? "Yes" : "No",
-    thinking: allThinking.length === 1 ? allThinking[0] : allThinking.join("\n---\n"),
-    defense: allDefense.length === 1 ? allDefense[0] : allDefense.join("\n---\n"),
+    thinking,
+    defense,
   };
 
   await cacheAnswer(orgId, findingId, question.populated, finalAnswer);
@@ -139,7 +158,13 @@ export async function stepAskBatch(req: Request): Promise<Response> {
     questions.map(async (q, index) => {
       await new Promise((r) => setTimeout(r, index * 100));
       try {
-        return await askLlmOne(q, orgId, findingId, rawTranscript);
+        const qStart = Date.now();
+        const result = await askLlmOne(q, orgId, findingId, rawTranscript);
+        const qDuration = Date.now() - qStart;
+        if (qDuration > 10000) {
+          console.warn(`[STEP-ASK-SLOW] ${findingId}: Question "${q.header}" took ${qDuration}ms`);
+        }
+        return result;
       } catch (err: any) {
         const msg = err.message || String(err);
         if (!batchError) batchError = new Error(msg);

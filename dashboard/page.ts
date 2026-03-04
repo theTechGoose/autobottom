@@ -377,6 +377,13 @@ export function getDashboardPage(): string {
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
+      <!-- Bad Words (opens modal) -->
+      <div class="sb-link" id="bad-words-open">
+        <div class="icon" style="background:var(--red-bg);color:var(--red);">${icons.alertTriangle}</div>
+        <span class="title">Bad Words</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
       <!-- Users (opens modal) -->
       <div class="sb-link" id="users-open">
         <div class="icon users">${icons.users}</div>
@@ -695,6 +702,71 @@ export function getDashboardPage(): string {
         <div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);flex-shrink:0;">Live Preview</div>
         <iframe id="et-preview" style="flex:1;border:none;background:#fff;" sandbox="allow-same-origin"></iframe>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bad Words Modal -->
+<div class="modal-overlay" id="bad-words-modal">
+  <div class="modal" style="width:680px;max-width:95vw;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div>
+        <div class="modal-title">Bad Word Detection</div>
+        <div class="modal-sub">Alert on prohibited phrases in package transcripts</div>
+      </div>
+      <button class="sf-btn ghost" id="bad-words-cancel">Close</button>
+    </div>
+
+    <!-- Enable toggle -->
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:16px;">
+      <label style="font-size:11px;font-weight:600;color:var(--text-bright);flex:1;">Enable bad word detection for package audits</label>
+      <input type="checkbox" id="bw-enabled" style="width:16px;height:16px;cursor:pointer;">
+    </div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:0;">
+      <button class="bw-tab active" data-tab="emails" style="padding:7px 14px;font-size:11px;font-weight:600;border:none;background:transparent;color:var(--blue);cursor:pointer;border-bottom:2px solid var(--blue);">Recipients</button>
+      <button class="bw-tab" data-tab="words" style="padding:7px 14px;font-size:11px;font-weight:600;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;">Words</button>
+      <button class="bw-tab" data-tab="offices" style="padding:7px 14px;font-size:11px;font-weight:600;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;">Offices</button>
+    </div>
+
+    <!-- Tab: Recipients -->
+    <div id="bw-tab-emails" class="bw-tab-panel">
+      <div class="modal-sub" style="margin-bottom:10px;">Email addresses that receive alerts when bad words are detected.</div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <input id="bw-email-input" class="sf-input" type="email" placeholder="email@example.com" style="flex:1;">
+        <button class="sf-btn primary" id="bw-email-add">Add</button>
+      </div>
+      <div id="bw-email-list" style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;"></div>
+    </div>
+
+    <!-- Tab: Words -->
+    <div id="bw-tab-words" class="bw-tab-panel" style="display:none;">
+      <div class="modal-sub" style="margin-bottom:10px;">Phrases to search for in transcripts. Case-insensitive, partial phrase match.</div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <input id="bw-word-input" class="sf-input" type="text" placeholder="e.g. resort fees included" style="flex:1;">
+        <button class="sf-btn primary" id="bw-word-add">Add</button>
+      </div>
+      <div id="bw-word-list" style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;"></div>
+    </div>
+
+    <!-- Tab: Offices -->
+    <div id="bw-tab-offices" class="bw-tab-panel" style="display:none;">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-bright);flex:1;">Check all offices (ignore patterns below)</label>
+        <input type="checkbox" id="bw-all-offices" style="width:16px;height:16px;cursor:pointer;">
+      </div>
+      <div class="modal-sub" style="margin-bottom:10px;">Office name patterns (case-insensitive substring). E.g. <strong>JAY</strong> matches JAY312, JAY222, etc. Only used when "all offices" is off.</div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <input id="bw-office-input" class="sf-input" type="text" placeholder="e.g. JAY" style="flex:1;">
+        <button class="sf-btn primary" id="bw-office-add">Add</button>
+      </div>
+      <div id="bw-office-list" style="display:flex;flex-direction:column;gap:4px;max-height:180px;overflow-y:auto;"></div>
+    </div>
+
+    <div class="sf-actions" style="margin-top:16px;justify-content:flex-end;">
+      <button class="sf-btn ghost" id="bad-words-cancel2">Cancel</button>
+      <button class="sf-btn primary" id="bw-save-btn">Save Changes</button>
     </div>
   </div>
 </div>
@@ -2144,6 +2216,112 @@ export function getDashboardPage(): string {
       .then(function() { toast('Template deleted', 'success'); })
       .catch(function() { toast('Delete failed', 'error'); btn.disabled = false; });
   });
+  // ===== Bad Words =====
+  var bwConfig = { enabled: false, allOffices: false, emails: [], words: [], officePatterns: [] };
+
+  function bwRenderTag(text, onRemove) {
+    var el = document.createElement('div');
+    el.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text-bright);';
+    el.innerHTML = '<span>' + text.replace(/</g, '&lt;') + '</span><button style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:0 0 0 8px;">×</button>';
+    el.querySelector('button').addEventListener('click', onRemove);
+    return el;
+  }
+
+  function bwRenderLists() {
+    var emailList = document.getElementById('bw-email-list');
+    var wordList = document.getElementById('bw-word-list');
+    var officeList = document.getElementById('bw-office-list');
+    emailList.innerHTML = '';
+    wordList.innerHTML = '';
+    officeList.innerHTML = '';
+    if (!bwConfig.emails.length) emailList.innerHTML = '<div style="color:var(--text-dim);font-size:10px;padding:6px;">No recipients</div>';
+    bwConfig.emails.forEach(function(email, i) {
+      emailList.appendChild(bwRenderTag(email, function() { bwConfig.emails.splice(i, 1); bwRenderLists(); }));
+    });
+    if (!bwConfig.words.length) wordList.innerHTML = '<div style="color:var(--text-dim);font-size:10px;padding:6px;">No words configured</div>';
+    bwConfig.words.forEach(function(w, i) {
+      wordList.appendChild(bwRenderTag(w.word, function() { bwConfig.words.splice(i, 1); bwRenderLists(); }));
+    });
+    if (!bwConfig.officePatterns.length) officeList.innerHTML = '<div style="color:var(--text-dim);font-size:10px;padding:6px;">No patterns — add patterns or enable "all offices" above</div>';
+    bwConfig.officePatterns.forEach(function(p, i) {
+      officeList.appendChild(bwRenderTag(p, function() { bwConfig.officePatterns.splice(i, 1); bwRenderLists(); }));
+    });
+  }
+
+  function bwFetch() {
+    fetch('/admin/bad-word-config').then(function(r) { return r.json(); }).then(function(d) {
+      bwConfig = { enabled: !!d.enabled, allOffices: !!d.allOffices, emails: d.emails || [], words: d.words || [], officePatterns: d.officePatterns || [] };
+      document.getElementById('bw-enabled').checked = bwConfig.enabled;
+      document.getElementById('bw-all-offices').checked = bwConfig.allOffices;
+      bwRenderLists();
+    });
+  }
+
+  document.getElementById('bad-words-open').addEventListener('click', function() {
+    openModal('bad-words-modal');
+    bwFetch();
+  });
+  document.getElementById('bad-words-cancel').addEventListener('click', function() { closeModal('bad-words-modal'); });
+  document.getElementById('bad-words-cancel2').addEventListener('click', function() { closeModal('bad-words-modal'); });
+  backdropClose('bad-words-modal');
+
+  // Tab switching
+  document.querySelectorAll('.bw-tab').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var tab = this.getAttribute('data-tab');
+      document.querySelectorAll('.bw-tab').forEach(function(b) {
+        b.style.color = 'var(--text-muted)'; b.style.borderBottom = '2px solid transparent';
+      });
+      this.style.color = 'var(--blue)'; this.style.borderBottom = '2px solid var(--blue)';
+      document.querySelectorAll('.bw-tab-panel').forEach(function(p) { p.style.display = 'none'; });
+      document.getElementById('bw-tab-' + tab).style.display = '';
+    });
+  });
+
+  // Add handlers
+  document.getElementById('bw-email-add').addEventListener('click', function() {
+    var val = document.getElementById('bw-email-input').value.trim();
+    if (!val || !val.includes('@')) { toast('Enter a valid email', 'error'); return; }
+    if (bwConfig.emails.includes(val)) { toast('Already added', 'error'); return; }
+    bwConfig.emails.push(val);
+    document.getElementById('bw-email-input').value = '';
+    bwRenderLists();
+  });
+  document.getElementById('bw-email-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('bw-email-add').click(); });
+
+  document.getElementById('bw-word-add').addEventListener('click', function() {
+    var val = document.getElementById('bw-word-input').value.trim();
+    if (!val) { toast('Enter a word or phrase', 'error'); return; }
+    if (bwConfig.words.some(function(w) { return w.word.toLowerCase() === val.toLowerCase(); })) { toast('Already added', 'error'); return; }
+    bwConfig.words.push({ word: val });
+    document.getElementById('bw-word-input').value = '';
+    bwRenderLists();
+  });
+  document.getElementById('bw-word-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('bw-word-add').click(); });
+
+  document.getElementById('bw-office-add').addEventListener('click', function() {
+    var val = document.getElementById('bw-office-input').value.trim();
+    if (!val) { toast('Enter an office name pattern', 'error'); return; }
+    if (bwConfig.officePatterns.some(function(p) { return p.toLowerCase() === val.toLowerCase(); })) { toast('Already added', 'error'); return; }
+    bwConfig.officePatterns.push(val);
+    document.getElementById('bw-office-input').value = '';
+    bwRenderLists();
+  });
+  document.getElementById('bw-office-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('bw-office-add').click(); });
+
+  document.getElementById('bw-enabled').addEventListener('change', function() { bwConfig.enabled = this.checked; });
+  document.getElementById('bw-all-offices').addEventListener('change', function() { bwConfig.allOffices = this.checked; });
+
+  document.getElementById('bw-save-btn').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Saving...';
+    fetch('/admin/bad-word-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bwConfig) })
+      .then(function(r) { return r.json(); })
+      .then(function() { toast('Bad word config saved', 'success'); })
+      .catch(function() { toast('Save failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Save Changes'; });
+  });
+
 })();
 </script>
 </body>

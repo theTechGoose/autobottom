@@ -507,6 +507,41 @@ export async function deleteEmailTemplate(orgId: OrgId, id: string): Promise<voi
   await db.delete(orgKey(orgId, "email-template", id));
 }
 
+// -- Bad Word Config --
+
+export interface BadWordEntry {
+  word: string;
+}
+
+export interface BadWordConfig {
+  enabled: boolean;
+  emails: string[];
+  words: BadWordEntry[];
+  /** When true, check all offices regardless of officePatterns. */
+  allOffices: boolean;
+  /** Office name substrings (case-insensitive) to monitor. Only used when allOffices is false. E.g. ["JAY"] matches JAY312, JAY222, etc. */
+  officePatterns: string[];
+}
+
+const DEFAULT_BAD_WORD_CONFIG: BadWordConfig = {
+  enabled: false,
+  emails: [],
+  words: [],
+  allOffices: false,
+  officePatterns: [],
+};
+
+export async function getBadWordConfig(orgId: OrgId): Promise<BadWordConfig> {
+  const db = await kv();
+  const entry = await db.get<BadWordConfig>(orgKey(orgId, "bad-word-config"));
+  return entry.value ?? { ...DEFAULT_BAD_WORD_CONFIG };
+}
+
+export async function saveBadWordConfig(orgId: OrgId, config: BadWordConfig): Promise<void> {
+  const db = await kv();
+  await db.set(orgKey(orgId, "bad-word-config"), config);
+}
+
 // -- Sound Pack Metadata (S3-backed) --
 
 export type SoundSlot = "ping" | "double" | "triple" | "mega" | "ultra" | "rampage" | "godlike" | "levelup" | "shutdown";

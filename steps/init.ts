@@ -25,6 +25,12 @@ export async function stepInit(req: Request): Promise<Response> {
   console.log(`[STEP-INIT] ${findingId}: record keys=${JSON.stringify(Object.keys(finding.record ?? {}))} values=${JSON.stringify(finding.record ?? {})}`);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
+  // Record audit start time (used for duration tracking)
+  if (!finding.startedAt) {
+    finding.startedAt = Date.now();
+    await saveFinding(orgId, finding);
+  }
+
   // Update active entry with QB record metadata now that we have the finding
   const qbRecordId = String(finding.record?.RecordId ?? "");
   trackActive(orgId, findingId, "init", {

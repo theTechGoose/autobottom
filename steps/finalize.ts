@@ -93,11 +93,17 @@ export async function stepFinalize(req: Request): Promise<Response> {
     }
   }
 
+  const completedAt = Date.now();
+  const startedAt = (finding as Record<string, any>).startedAt as number | undefined;
+  const durationMs = startedAt ? completedAt - startedAt : undefined;
   finding.findingStatus = "finished";
+  (finding as Record<string, any>).completedAt = completedAt;
   await saveFinding(orgId, finding);
   await trackCompleted(orgId, findingId, {
     recordId: String(finding.record?.RecordId ?? "") || undefined,
     isPackage: finding.recordingIdField === "GenieNumber",
+    startedAt,
+    durationMs,
   });
 
   // Route to appropriate queue

@@ -180,10 +180,10 @@ export async function getAllBatchAnswers(orgId: OrgId, findingId: string, totalB
 }
 
 /** Get recently completed findings, sorted newest-first (24h window, limit default 25). */
-export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<Array<{ findingId: string; ts: number; recordId?: string; isPackage?: boolean }>> {
+export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<Array<{ findingId: string; ts: number; recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number }>> {
   const db = await kv();
-  const items: Array<{ findingId: string; ts: number; recordId?: string; isPackage?: boolean }> = [];
-  for await (const e of db.list<{ findingId: string; ts: number; recordId?: string; isPackage?: boolean }>({ prefix: orgKey(orgId, "stats-completed") })) {
+  const items: Array<{ findingId: string; ts: number; recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number }> = [];
+  for await (const e of db.list<{ findingId: string; ts: number; recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number }>({ prefix: orgKey(orgId, "stats-completed") })) {
     if (e.value) items.push(e.value);
   }
   return items.sort((a, b) => b.ts - a.ts).slice(0, limit);
@@ -218,7 +218,7 @@ export async function trackActive(orgId: OrgId, findingId: string, step: string,
 }
 
 /** Remove a finding from active tracking (finished or cleaned up). */
-export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean }) {
+export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number }) {
   const db = await kv();
   await db.delete(orgKey(orgId, "stats-active", findingId));
   await db.set(orgKey(orgId, "stats-completed", `${Date.now()}-${findingId}`), { findingId, ts: Date.now(), ...(meta ?? {}) }, { expireIn: DAY_MS });

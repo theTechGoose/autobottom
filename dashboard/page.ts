@@ -585,8 +585,8 @@ export function getDashboardPage(): string {
 
     <div class="tbl">
       <div class="tbl-title">Recently Completed (24h)</div>
-      <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Completed</th></tr></thead>
-      <tbody id="tb-recent"><tr class="empty-row"><td colspan="3">No completed audits</td></tr></tbody></table>
+      <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead>
+      <tbody id="tb-recent"><tr class="empty-row"><td colspan="5">No completed audits</td></tr></tbody></table>
     </div>
   </main>
 </div>
@@ -1201,9 +1201,17 @@ export function getDashboardPage(): string {
     drawDonut(r.pending || 0, r.decided || 0);
   }
 
+  function fmtDur(ms) {
+    if (!ms || ms < 0) return '--';
+    var s = Math.round(ms / 1000);
+    if (s < 60) return s + 's';
+    var m = Math.floor(s / 60), rem = s % 60;
+    return m + 'm ' + (rem > 0 ? rem + 's' : '');
+  }
+
   function renderRecent(items) {
     var tb = document.getElementById('tb-recent');
-    if (!items.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="3">No completed audits</td></tr>'; return; }
+    if (!items.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="5">No completed audits</td></tr>'; return; }
     var qbDateUrl = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=';
     var qbPkgUrl  = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=';
     tb.innerHTML = '';
@@ -1215,7 +1223,10 @@ export function getDashboardPage(): string {
         var qbUrl = (c.isPackage ? qbPkgUrl : qbDateUrl) + encodeURIComponent(c.recordId);
         ridHtml = '<a href="' + qbUrl + '" target="_blank" class="tbl-link">' + c.recordId + '</a>';
       }
-      tr.innerHTML = '<td class="mono"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">' + fid + '</a></td><td>' + ridHtml + '</td><td class="time-ago">' + timeAgo(c.ts) + '</td>';
+      var startedHtml = c.startedAt ? '<span class="time-ago" title="' + new Date(c.startedAt).toLocaleTimeString() + '">' + timeAgo(c.startedAt) + '</span>' : '--';
+      var finishedHtml = '<span class="time-ago" title="' + new Date(c.ts).toLocaleTimeString() + '">' + timeAgo(c.ts) + '</span>';
+      var durHtml = c.durationMs ? '<span style="font-variant-numeric:tabular-nums">' + fmtDur(c.durationMs) + '</span>' : '--';
+      tr.innerHTML = '<td class="mono"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">' + fid + '</a></td><td>' + ridHtml + '</td><td>' + startedHtml + '</td><td>' + finishedHtml + '</td><td>' + durHtml + '</td>';
       tb.appendChild(tr);
     }
   }

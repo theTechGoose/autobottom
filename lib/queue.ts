@@ -12,6 +12,7 @@ export const ALL_QUEUES = [TRANSCRIBE_QUEUE, QUESTIONS_QUEUE, CLEANUP_QUEUE] as 
 const STEP_QUEUE: Record<string, string> = {
   "init":            TRANSCRIBE_QUEUE,
   "transcribe":      TRANSCRIBE_QUEUE,
+  "poll-transcript": TRANSCRIBE_QUEUE,
   "transcribe-complete": TRANSCRIBE_QUEUE,
   "prepare":         QUESTIONS_QUEUE,
   "ask-batch":       QUESTIONS_QUEUE,

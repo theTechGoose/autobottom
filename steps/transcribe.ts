@@ -1,7 +1,7 @@
-/** STEP 2: Submit audio to AssemblyAI and transcribe. */
+/** STEP 2: Submit audio to AssemblyAI. Single-genie returns immediately; poll-transcript handles the wait. */
 import { getFinding, saveFinding, trackActive } from "../lib/kv.ts";
 import { enqueueStep } from "../lib/queue.ts";
-import { transcribe, transcribeWithUtterances } from "../providers/assemblyai.ts";
+import { transcribe, uploadAudio, submitTranscription } from "../providers/assemblyai.ts";
 import { S3Ref } from "../lib/s3.ts";
 import { env } from "../env.ts";
 
@@ -63,7 +63,7 @@ export async function stepTranscribe(req: Request): Promise<Response> {
     return json({ ok: true, multiGenie: true, transcribed: texts.length });
   }
 
-  // Get recording bytes from S3 and upload to AssemblyAI
+  // Single-genie path: non-blocking submit → poll-transcript handles the rest
   const s3Key = finding.s3RecordingKey;
   if (!s3Key) {
     finding.rawTranscript = "Invalid Genie";
@@ -73,61 +73,35 @@ export async function stepTranscribe(req: Request): Promise<Response> {
     return json({ ok: true, skipped: true, reason: "no s3 key" });
   }
 
-  const ref = new S3Ref(env.s3Bucket, s3Key);
-  const bytes = await ref.get();
-  if (!bytes) {
-    finding.rawTranscript = "Invalid Genie";
-    finding.findingStatus = "finished";
-    await saveFinding(orgId, finding);
-    await enqueueStep("finalize", { findingId, orgId });
-    return json({ ok: true, skipped: true, reason: "s3 file missing" });
-  }
-
-  // Snip path: transcribe with utterances and filter by time window
-  if (finding.snipStart != null) {
-    try {
-      const result = await transcribeWithUtterances(bytes, 3, 1500, findingId);
-      const filtered = result.utterances.filter(
-        (u) => u.start >= finding.snipStart! && (finding.snipEnd == null || u.end <= finding.snipEnd),
-      );
-      const text = filtered.length > 0
-        ? filtered.map((u) => `${u.role}: ${u.text}`).join("\n")
-        : result.text;
-
-      if (!text || text.trim().length === 0) {
-        finding.rawTranscript = "Genie Invalid";
-        finding.findingStatus = "finished";
-      } else {
-        finding.rawTranscript = text;
-      }
-    } catch (err) {
-      console.error(`[STEP-TRANSCRIBE] ${findingId}: Snip transcription failed:`, err);
-      finding.rawTranscript = "Genie Invalid";
+  // Use pre-uploaded URL from init if available, otherwise upload now
+  let uploadUrl: string = finding.assemblyAiUploadUrl || "";
+  if (!uploadUrl) {
+    const ref = new S3Ref(env.s3Bucket, s3Key);
+    const bytes = await ref.get();
+    if (!bytes) {
+      finding.rawTranscript = "Invalid Genie";
       finding.findingStatus = "finished";
+      await saveFinding(orgId, finding);
+      await enqueueStep("finalize", { findingId, orgId });
+      return json({ ok: true, skipped: true, reason: "s3 file missing" });
     }
-
-    await saveFinding(orgId, finding);
-    await enqueueStep("transcribe-complete", { findingId, orgId });
-    return json({ ok: true, snip: true });
+    uploadUrl = await uploadAudio(bytes);
   }
 
   try {
-    const text = await transcribe(bytes, 3, 1500, findingId);
-    if (!text || text.trim().length === 0) {
-      finding.rawTranscript = "Genie Invalid";
-      finding.findingStatus = "finished";
-    } else {
-      finding.rawTranscript = text;
-    }
+    const transcriptId = await submitTranscription(uploadUrl, findingId);
+    finding.assemblyAiTranscriptId = transcriptId;
+    await saveFinding(orgId, finding);
+    // Return immediately — poll-transcript handles waiting and result processing
+    await enqueueStep("poll-transcript", { findingId, orgId }, 30);
+    console.log(`[STEP-TRANSCRIBE] ${findingId}: Submitted ${transcriptId}, polling in 30s`);
+    return json({ ok: true, transcriptId });
   } catch (err) {
-    console.error(`[STEP-TRANSCRIBE] ${findingId}: Transcription failed:`, err);
+    console.error(`[STEP-TRANSCRIBE] ${findingId}: Submit failed:`, err);
     finding.rawTranscript = "Genie Invalid";
     finding.findingStatus = "finished";
+    await saveFinding(orgId, finding);
+    await enqueueStep("transcribe-complete", { findingId, orgId });
+    return json({ ok: true, error: true });
   }
-
-  await saveFinding(orgId, finding);
-
-  // Move to diarization step
-  await enqueueStep("transcribe-complete", { findingId, orgId });
-  return json({ ok: true });
 }

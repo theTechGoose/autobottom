@@ -617,6 +617,16 @@ export function getDashboardPage(): string {
       <label class="sf-label">Headers (JSON)</label>
       <textarea class="sf-input" id="a-headers" placeholder='{"Authorization": "Bearer ..."}'></textarea>
     </div>
+    <div class="sf">
+      <label class="sf-label">Test Email <span style="color:var(--text-dim);font-weight:400;">(overrides all recipients when set — leave blank for live)</span></label>
+      <input type="text" class="sf-input" id="a-test-email" placeholder="yourname@example.com">
+    </div>
+    <div class="sf" id="wh-template-row" style="display:none;">
+      <label class="sf-label">Email Template <span style="color:var(--text-dim);font-weight:400;">(used for direct emails on this event)</span></label>
+      <select class="sf-input" id="a-template-id">
+        <option value="">— First available template —</option>
+      </select>
+    </div>
     <div class="modal-actions">
       <button class="sf-btn secondary" id="webhook-cancel">Cancel</button>
       <button class="sf-btn primary" id="a-settings-save">Save</button>
@@ -640,7 +650,10 @@ export function getDashboardPage(): string {
         <div class="modal-title" style="margin-bottom:2px;">Email Templates</div>
         <div class="modal-sub" style="margin-bottom:0;">Build and preview audit notification emails</div>
       </div>
-      <button class="sf-btn ghost" id="email-templates-cancel" style="font-size:11px;">Close</button>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="sf-btn ghost" id="et-seed-btn" style="font-size:11px;" title="Load built-in default templates">Seed Defaults</button>
+        <button class="sf-btn ghost" id="email-templates-cancel" style="font-size:11px;">Close</button>
+      </div>
     </div>
     <!-- Body -->
     <div style="display:flex;flex:1;overflow:hidden;min-height:0;">
@@ -1722,23 +1735,49 @@ export function getDashboardPage(): string {
   var whKind = 'terminate';
   var whSubs = { terminate: 'Called when an audit is terminated (100% first pass or review completed)', appeal: 'Called when an appeal is filed', manager: 'Called when remediation is submitted', 'judge-finish': 'Called when a judge finishes all appeal decisions for an audit' };
   var whCache = {};
+  var etTemplateList = [];
+
+  // Load template list for the dropdown
+  fetch('/admin/email-templates').then(function(r){return r.json()}).then(function(list){
+    etTemplateList = Array.isArray(list) ? list : [];
+    var sel = document.getElementById('a-template-id');
+    sel.innerHTML = '<option value="">— First available template —</option>';
+    etTemplateList.forEach(function(t) {
+      var opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.name;
+      sel.appendChild(opt);
+    });
+  }).catch(function(){});
+
+  // Kinds that have direct email sending and need template/testEmail fields
+  var EMAIL_KINDS = ['terminate', 'appeal', 'judge-finish'];
+
+  function applyWebhookData(kind, d) {
+    document.getElementById('a-posturl').value = d.postUrl || '';
+    document.getElementById('a-headers').value = d.postHeaders ? JSON.stringify(d.postHeaders, null, 2) : '';
+    document.getElementById('a-test-email').value = d.testEmail || '';
+    var templateRow = document.getElementById('wh-template-row');
+    templateRow.style.display = EMAIL_KINDS.includes(kind) ? '' : 'none';
+    if (EMAIL_KINDS.includes(kind)) {
+      document.getElementById('a-template-id').value = d.emailTemplateId || '';
+    }
+  }
 
   function loadWebhookTab(kind) {
     whKind = kind;
     document.querySelectorAll('.wh-tab').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-kind')===kind)});
     document.getElementById('wh-sub').textContent = whSubs[kind];
+    document.getElementById('wh-template-row').style.display = EMAIL_KINDS.includes(kind) ? '' : 'none';
     if (whCache[kind]) {
-      document.getElementById('a-posturl').value = whCache[kind].postUrl || '';
-      document.getElementById('a-headers').value = whCache[kind].postHeaders ? JSON.stringify(whCache[kind].postHeaders, null, 2) : '';
+      applyWebhookData(kind, whCache[kind]);
     } else {
       document.getElementById('a-posturl').value = '';
       document.getElementById('a-headers').value = '';
+      document.getElementById('a-test-email').value = '';
       fetch('/admin/settings/' + kind).then(function(r){return r.json()}).then(function(d) {
         whCache[kind] = d;
-        if (whKind === kind) {
-          document.getElementById('a-posturl').value = d.postUrl || '';
-          document.getElementById('a-headers').value = d.postHeaders ? JSON.stringify(d.postHeaders, null, 2) : '';
-        }
+        if (whKind === kind) applyWebhookData(kind, d);
       }).catch(function(){});
     }
   }
@@ -1771,8 +1810,12 @@ export function getDashboardPage(): string {
     var btn = this, url = document.getElementById('a-posturl').value.trim();
     var raw = document.getElementById('a-headers').value.trim(), headers = {};
     if (raw) { try { headers = JSON.parse(raw); } catch(e) { toast('Invalid JSON','error'); return; } }
+    var testEmail = document.getElementById('a-test-email').value.trim();
+    var emailTemplateId = EMAIL_KINDS.includes(whKind) ? (document.getElementById('a-template-id').value || '') : '';
     btnLoad(btn);
     var saved = { postUrl: url, postHeaders: headers };
+    if (testEmail) saved.testEmail = testEmail;
+    if (emailTemplateId) saved.emailTemplateId = emailTemplateId;
     fetch('/admin/settings/' + whKind, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(saved) })
     .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
     .then(function(){whCache[whKind]=saved;toast(whKind+' webhook saved','success');btnDone(btn,'Save');closeModal('webhook-modal');})
@@ -2216,6 +2259,24 @@ export function getDashboardPage(): string {
       .then(function() { toast('Template deleted', 'success'); })
       .catch(function() { toast('Delete failed', 'error'); btn.disabled = false; });
   });
+
+  document.getElementById('et-seed-btn').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Seeding...';
+    fetch('/admin/email-templates/seed-defaults', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.created && d.created.length) {
+          toast('Created: ' + d.created.join(', '), 'success');
+          etFetch();
+        } else {
+          toast('Default templates already exist', 'success');
+        }
+      })
+      .catch(function() { toast('Seed failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Seed Defaults'; });
+  });
+
   // ===== Bad Words =====
   var bwConfig = { enabled: false, allOffices: false, emails: [], words: [], officePatterns: [] };
 

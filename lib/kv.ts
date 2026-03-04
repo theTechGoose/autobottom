@@ -346,6 +346,10 @@ export async function setPipelineConfig(orgId: OrgId, config: Partial<PipelineCo
 export interface WebhookConfig {
   postUrl: string;
   postHeaders: Record<string, string>;
+  /** If set, all emails for this webhook kind go here instead of the real recipient (test mode). */
+  testEmail?: string;
+  /** Template ID to use when sending direct emails for this webhook kind (appeal, judge). */
+  emailTemplateId?: string;
 }
 
 export type WebhookKind = "terminate" | "appeal" | "manager" | "judge";

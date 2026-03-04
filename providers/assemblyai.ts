@@ -8,7 +8,7 @@ function authHeaders(): Record<string, string> {
 }
 
 /** Upload raw audio bytes to AssemblyAI. Returns the upload URL. */
-async function uploadAudio(bytes: Uint8Array): Promise<string> {
+export async function uploadAudio(bytes: Uint8Array): Promise<string> {
   const res = await fetch(`${BASE}/upload`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/octet-stream" },
@@ -166,6 +166,53 @@ export async function transcribeWithUtterances(audioBytes: Uint8Array, maxAttemp
   }
 
   throw new Error(`Transcription failed after ${maxAttempts} attempts: ${String(lastError)}`);
+}
+
+/** Submit a transcription job for a pre-uploaded URL. Returns the transcript ID. */
+export async function submitTranscription(uploadUrl: string, findingId?: string): Promise<string> {
+  const tag = findingId ? `${findingId}: ` : "";
+  const res = await fetch(`${BASE}/transcript`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      audio_url: uploadUrl,
+      language_code: "en_us",
+      punctuate: true,
+      format_text: true,
+      speaker_labels: true,
+    }),
+  });
+  if (!res.ok) throw new Error(`AssemblyAI submit failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  if (data.status === "error") throw new Error(data.error || "AssemblyAI submit error");
+  console.log(`[ASSEMBLYAI] ${tag}submitted transcript ${data.id}`);
+  return data.id;
+}
+
+/** Single status check — does NOT poll. Returns raw transcript object. */
+export async function pollTranscriptOnce(transcriptId: string): Promise<any> {
+  const res = await fetch(`${BASE}/transcript/${transcriptId}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`AssemblyAI poll failed: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+/** Process a completed transcript object into labeled text + utterances, with optional snip filter. */
+export function processTranscriptResult(
+  transcript: any,
+  snipStart?: number | null,
+  snipEnd?: number | null,
+): TranscriptResult {
+  const allLabeled = transcript.utterances?.length > 0 ? identifyRoles(transcript.utterances) : [];
+  let utterances = allLabeled;
+  if (snipStart != null && utterances.length > 0) {
+    utterances = utterances.filter(
+      (u) => u.start >= snipStart! && (snipEnd == null || u.end <= snipEnd),
+    );
+  }
+  const text = utterances.length > 0
+    ? utterances.map((u: LabeledUtterance) => `${u.role}: ${u.text}`).join("\n")
+    : (transcript.text || "");
+  return { text, utterances };
 }
 
 function identifyRoles(utterances: any[]): LabeledUtterance[] {

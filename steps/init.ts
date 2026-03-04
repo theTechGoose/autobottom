@@ -2,6 +2,7 @@
 import { saveFinding, getFinding, trackActive, getPipelineConfig } from "../lib/kv.ts";
 import { enqueueStep } from "../lib/queue.ts";
 import { downloadRecording } from "../providers/genie.ts";
+import { uploadAudio } from "../providers/assemblyai.ts";
 import { S3Ref } from "../lib/s3.ts";
 import { env } from "../env.ts";
 
@@ -122,6 +123,16 @@ export async function stepInit(req: Request): Promise<Response> {
   await saveFinding(orgId, finding);
 
   console.log(`[STEP-INIT] ${findingId}: Recording saved to S3 (${bytes.byteLength} bytes)`);
+
+  // Pre-upload to AssemblyAI so transcribe step can skip the upload and return immediately
+  try {
+    const assemblyAiUploadUrl = await uploadAudio(bytes);
+    finding.assemblyAiUploadUrl = assemblyAiUploadUrl;
+    await saveFinding(orgId, finding);
+    console.log(`[STEP-INIT] ${findingId}: Pre-uploaded to AssemblyAI`);
+  } catch (err) {
+    console.warn(`[STEP-INIT] ${findingId}: AssemblyAI pre-upload failed (transcribe will retry):`, err);
+  }
 
   // Enqueue transcription
   await enqueueStep("transcribe", { findingId, orgId });

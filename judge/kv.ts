@@ -1,6 +1,8 @@
 /** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getWebhookConfig, getEmailTemplate, listEmailTemplates } from "../lib/kv.ts";
+import { sendEmail } from "../providers/postmark.ts";
+import { env } from "../env.ts";
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
 import { checkBadges } from "../shared/badges.ts";
@@ -467,6 +469,93 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judgedBy: string
       header: d.header,
     })),
   });
+
+  // Send judge-complete email to TM
+  sendJudgeCompleteEmail(orgId, findingId, finding, originalScore, finalScore, overturns, total, judgedBy).catch((err) =>
+    console.error(`[JUDGE] ${findingId}: Judge-complete email failed:`, err)
+  );
+}
+
+/** Send appeal-resolved email to the TM after judge finalizes. */
+async function sendJudgeCompleteEmail(
+  orgId: OrgId,
+  findingId: string,
+  finding: Record<string, any>,
+  originalScore: number,
+  finalScore: number,
+  overturns: number,
+  total: number,
+  judgedBy: string,
+) {
+  const judgeCfg = await getWebhookConfig(orgId, "judge").catch(() => null);
+  const testEmail = judgeCfg?.testEmail;
+
+  // Resolve template from judge config or fall back to template named "judge"
+  let template = null;
+  if (judgeCfg?.emailTemplateId) {
+    template = await getEmailTemplate(orgId, judgeCfg.emailTemplateId);
+  }
+  if (!template) {
+    const all = await listEmailTemplates(orgId);
+    template = all.find((t) => t.name.toLowerCase().includes("judge") || t.name.toLowerCase().includes("appeal result")) ?? null;
+  }
+
+  const voEmail = String(finding.record?.VoEmail ?? "");
+  const agentEmail = String(finding.owner ?? "");
+  const voNameRaw = String(finding.record?.VoName ?? "");
+  const teamMember = voNameRaw.includes(" - ") ? voNameRaw.split(" - ").slice(1).join(" - ").trim() : voNameRaw.trim();
+  const teamMemberFirst = teamMember.split(" ")[0] || teamMember;
+  const supervisorEmail = String(finding.record?.SupervisorEmail ?? "");
+  const recordId = String(finding.record?.RecordId ?? "");
+  const guestName = String(finding.record?.GuestName ?? "");
+  const reportUrl = `${env.selfUrl}/audit/report?id=${findingId}`;
+
+  const vars: Record<string, string> = {
+    findingId,
+    agentName: teamMember || agentEmail,
+    agentEmail: voEmail || agentEmail,
+    teamMemberFirst,
+    recordId,
+    guestName,
+    supervisorEmail,
+    originalScore: originalScore + "%",
+    finalScore: finalScore + "%",
+    overturns: String(overturns),
+    totalQuestions: String(total),
+    judgedBy,
+    reportUrl,
+  };
+  const render = (s: string) => s.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? "");
+
+  let subject: string;
+  let htmlBody: string;
+
+  if (template) {
+    subject = render(template.subject);
+    htmlBody = render(template.html);
+  } else {
+    const scoreColor = finalScore === 100 ? "#3fb950" : finalScore >= 80 ? "#58a6ff" : finalScore >= 60 ? "#d29922" : "#f85149";
+    subject = `Appeal Result: ${teamMember || agentEmail} — Score ${finalScore}%`;
+    htmlBody = `<!DOCTYPE html><html><body style="font-family:sans-serif;background:#0d1117;color:#e6edf3;padding:24px;">
+<h2 style="color:#58a6ff;">Appeal Result</h2>
+<p>Hi ${teamMemberFirst || "there"},</p>
+<p>Your appeal for guest <strong>${guestName}</strong> has been reviewed by our team.</p>
+<table style="border:1px solid #30363d;border-radius:8px;padding:16px 20px;background:#161b22;margin:16px 0;">
+  <tr><td style="padding:4px 12px 4px 0;color:#8b949e;font-size:11px;text-transform:uppercase;">Original Score</td><td style="font-weight:700;color:#8b949e;">${originalScore}%</td></tr>
+  <tr><td style="padding:4px 12px 4px 0;color:#8b949e;font-size:11px;text-transform:uppercase;">Final Score</td><td style="font-weight:700;color:${scoreColor};font-size:20px;">${finalScore}%</td></tr>
+  <tr><td style="padding:4px 12px 4px 0;color:#8b949e;font-size:11px;text-transform:uppercase;">Overturns</td><td style="font-weight:700;color:#e6edf3;">${overturns} of ${total}</td></tr>
+</table>
+<a href="${reportUrl}" style="padding:10px 20px;background:#238636;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;">View Updated Report</a>
+</body></html>`;
+  }
+
+  const to = testEmail || (voEmail || agentEmail);
+  if (!to) { console.warn(`[JUDGE-EMAIL] ${findingId}: No recipient email`); return; }
+
+  const cc = testEmail ? undefined : (supervisorEmail || undefined);
+  const bcc = testEmail ? undefined : "ai@monsterrg.com,alexandera@monsterrg.com";
+  await sendEmail({ to, subject, htmlBody, cc, bcc });
+  console.log(`[JUDGE-EMAIL] ${findingId}: Sent → ${to}`);
 }
 
 // -- Stats --

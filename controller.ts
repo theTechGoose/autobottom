@@ -1,7 +1,8 @@
 /** API controller - creates audit jobs and kicks off the QStash pipeline. */
 import * as icons from "./shared/icons.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
-import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook } from "./lib/kv.ts";
+import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook, getWebhookConfig, getEmailTemplate, listEmailTemplates } from "./lib/kv.ts";
+import { sendEmail } from "./providers/postmark.ts";
 import { enqueueStep } from "./lib/queue.ts";
 import { getDateLegByRid } from "./providers/quickbase.ts";
 import { S3Ref } from "./lib/s3.ts";
@@ -206,6 +207,73 @@ export async function handleGetRecording(orgId: OrgId, req: Request): Promise<Re
   });
 }
 
+/** Build and send the appeal-filed notification email. */
+async function sendAppealNotificationEmail(orgId: OrgId, findingId: string, finding: Record<string, any>, comment?: string) {
+  const appealCfg = await getWebhookConfig(orgId, "appeal").catch(() => null);
+  const testEmail = appealCfg?.testEmail;
+
+  // Look up template from appeal config or fall back to first available template
+  let template = null;
+  if (appealCfg?.emailTemplateId) {
+    template = await getEmailTemplate(orgId, appealCfg.emailTemplateId);
+  }
+  if (!template) {
+    const all = await listEmailTemplates(orgId);
+    template = all.find((t) => t.name.toLowerCase().includes("appeal")) ?? null;
+  }
+
+  const reportUrl = `${env.selfUrl}/audit/report?id=${findingId}`;
+  const judgeUrl = `${env.selfUrl}/judge`;
+  const agentEmail = String(finding.owner ?? "");
+  const voEmail = String(finding.record?.VoEmail ?? "");
+  const voNameRaw = String(finding.record?.VoName ?? "");
+  const teamMember = voNameRaw.includes(" - ") ? voNameRaw.split(" - ").slice(1).join(" - ").trim() : voNameRaw.trim();
+  const agentName = teamMember || agentEmail;
+  const recordId = String(finding.record?.RecordId ?? "");
+  const guestName = String(finding.record?.GuestName ?? "");
+
+  const vars: Record<string, string> = {
+    findingId,
+    agentName,
+    agentEmail: voEmail || agentEmail,
+    recordId,
+    guestName,
+    reportUrl,
+    judgeUrl,
+    comment: comment ?? "",
+    appealedAt: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }) + " EST",
+  };
+  const render = (s: string) => s.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? "");
+
+  let subject: string;
+  let htmlBody: string;
+
+  if (template) {
+    subject = render(template.subject);
+    htmlBody = render(template.html);
+  } else {
+    // Built-in fallback
+    subject = `Appeal Filed: ${agentName} — Record ${recordId}`;
+    htmlBody = `<!DOCTYPE html><html><body style="font-family:sans-serif;background:#0d1117;color:#e6edf3;padding:24px;">
+<h2 style="color:#f0883e;">⚠️ Appeal Filed</h2>
+<p><strong>Agent:</strong> ${agentName} (${voEmail || agentEmail})</p>
+<p><strong>Record ID:</strong> ${recordId}</p>
+<p><strong>Guest:</strong> ${guestName}</p>
+<p><strong>Finding ID:</strong> ${findingId}</p>
+${comment ? `<p><strong>Comment:</strong> ${comment}</p>` : ""}
+<p style="margin-top:20px;">
+  <a href="${reportUrl}" style="padding:8px 16px;background:#238636;color:#fff;border-radius:6px;text-decoration:none;margin-right:10px;">View Report</a>
+  <a href="${judgeUrl}" style="padding:8px 16px;background:#21262d;color:#c9d1d9;border-radius:6px;text-decoration:none;border:1px solid #30363d;">Judge Panel</a>
+</p>
+</body></html>`;
+  }
+
+  const to = testEmail || "alexandera@monsterrg.com";
+  const cc = testEmail ? undefined : "ai@monsterrg.com";
+  await sendEmail({ to, subject, htmlBody, cc });
+  console.log(`[APPEAL-EMAIL] ${findingId}: Notification → ${to}`);
+}
+
 /**
  * POST /audit/appeal
  * File an appeal for a finding - queues ALL questions for judge review.
@@ -257,6 +325,11 @@ export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Resp
     questionCount: questions.length,
     appealedAt: new Date(appealedAt).toISOString(),
   }).catch((err) => console.error(`[APPEAL] ${findingId}: Webhook failed:`, err));
+
+  // Send appeal-filed notification email
+  sendAppealNotificationEmail(orgId, findingId, f, comment).catch((err) =>
+    console.error(`[APPEAL] ${findingId}: Notification email failed:`, err)
+  );
 
   return json({ ok: true, judgeUrl: "/judge" });
 }
@@ -1004,17 +1077,20 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         <span class="hero-stat"><span class="dot dot-red" style="background:var(--red)"></span>${noCount} failed</span>
         <span class="hero-stat"><span class="dot" style="background:var(--text-dim)"></span>${total} total</span>
       </div>
+      ${(f as any).appealSourceFindingId ? `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--teal);margin-bottom:8px;padding:4px 10px;background:var(--teal-bg);border-radius:4px;display:inline-block;">Re-Audit</div>` : ""}
       <div class="hero-actions">
-        <button class="appeal-btn" id="appeal-btn" onclick="confirmAppeal()">File Appeal</button>
+        ${passRate < 100 ? `<button class="appeal-btn" id="appeal-btn" onclick="confirmAppeal()">File Appeal</button>
+        <button class="appeal-btn" id="reaudit-btn" onclick="toggleAppealPanel()" style="background:var(--bg-surface);border:1px solid var(--border);font-size:11px;">Re-Audit</button>` : ""}
       </div>
-      <!-- Appeal Confirmation -->
+      <!-- Appeal Confirmation (judge review) -->
       <div id="appeal-confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);z-index:200;align-items:center;justify-content:center;">
-        <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:28px 32px 22px;max-width:380px;width:90vw;animation:appealIn 0.16s ease;">
+        <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:28px 32px 22px;max-width:420px;width:90vw;animation:appealIn 0.16s ease;">
           <div style="font-size:16px;font-weight:700;color:#e6edf3;margin-bottom:6px;">File an Appeal?</div>
-          <div style="font-size:12px;color:#6e7681;margin-bottom:20px;line-height:1.5;">This will allow you to submit a different or additional recording for re-audit. Only one appeal can be filed per record.</div>
+          <div style="font-size:12px;color:#6e7681;margin-bottom:14px;line-height:1.5;">A judge will review the AI's decisions on this audit. Please explain what you believe was incorrectly assessed. Only one appeal can be filed per record.</div>
+          <textarea id="appeal-comment-input" placeholder="Explain what was wrong with the assessment..." style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:10px 12px;font-size:12px;font-family:inherit;resize:vertical;min-height:72px;outline:none;margin-bottom:14px;"></textarea>
           <div style="display:flex;gap:10px;justify-content:flex-end;">
             <button onclick="document.getElementById('appeal-confirm-overlay').style.display='none'" style="padding:8px 18px;border-radius:7px;border:1px solid #1c2333;background:transparent;color:#6e7681;font-size:12px;font-weight:600;cursor:pointer;">Cancel</button>
-            <button onclick="document.getElementById('appeal-confirm-overlay').style.display='none';toggleAppealPanel()" style="padding:8px 18px;border-radius:7px;border:none;background:#58a6ff;color:#fff;font-size:12px;font-weight:600;cursor:pointer;">Continue</button>
+            <button id="appeal-submit-btn" onclick="submitJudgeAppeal()" style="padding:8px 18px;border-radius:7px;border:none;background:#58a6ff;color:#fff;font-size:12px;font-weight:600;cursor:pointer;">File Appeal</button>
           </div>
         </div>
       </div>
@@ -1183,30 +1259,60 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
 
     function confirmAppeal() {
       var btn = document.getElementById('appeal-btn');
-      if (btn.disabled || btn.classList.contains('filed')) return;
+      if (!btn || btn.disabled || btn.classList.contains('filed')) return;
+      document.getElementById('appeal-comment-input').value = '';
       document.getElementById('appeal-confirm-overlay').style.display = 'flex';
+    }
+
+    function submitJudgeAppeal() {
+      var comment = document.getElementById('appeal-comment-input').value.trim();
+      var submitBtn = document.getElementById('appeal-submit-btn');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Filing...';
+      fetch('/audit/appeal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ findingId: '${esc(id)}', comment: comment }),
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          document.getElementById('appeal-confirm-overlay').style.display = 'none';
+          if (d.ok) {
+            lockAppealBtn();
+          } else {
+            alert(d.error || 'Failed to file appeal');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'File Appeal';
+          }
+        })
+        .catch(function() {
+          alert('Network error — please try again');
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'File Appeal';
+        });
     }
 
     function lockAppealBtn() {
       var btn = document.getElementById('appeal-btn');
+      if (!btn) return;
       btn.textContent = 'Appeal Filed';
       btn.classList.add('filed');
       btn.disabled = true;
       btn.onclick = null;
+      var reauditBtn = document.getElementById('reaudit-btn');
+      if (reauditBtn) { reauditBtn.disabled = true; reauditBtn.style.opacity = '0.4'; }
     }
 
     function toggleAppealPanel() {
       var panel = document.getElementById('appeal-panel');
-      var btn = document.getElementById('appeal-btn');
+      var btn = document.getElementById('reaudit-btn');
       _appealOpen = !_appealOpen;
       if (_appealOpen) {
         panel.classList.add('open');
-        btn.textContent = 'Cancel';
-        btn.style.background = 'var(--border)';
+        if (btn) { btn.textContent = 'Cancel Re-Audit'; btn.style.background = 'var(--border)'; }
       } else {
         panel.classList.remove('open');
-        btn.textContent = 'File Appeal';
-        btn.style.background = '';
+        if (btn) { btn.textContent = 'Re-Audit'; btn.style.background = ''; }
       }
     }
 
@@ -1456,24 +1562,20 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         document.getElementById('audio-error').style.display = 'inline';
       });
     })();
-    // Check if appeal/re-audit already exists on load
+    // Check if appeal already exists on load — disable both buttons if so
     fetch('/audit/appeal/status?findingId=${esc(id)}')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.exists) {
-          var btn = document.getElementById('appeal-btn');
-          btn.textContent = 'Appeal Filed';
-          btn.classList.add('filed');
-          btn.disabled = true;
-          document.getElementById('appeal-panel').classList.remove('open');
+          lockAppealBtn();
+          var panel = document.getElementById('appeal-panel');
+          if (panel) panel.classList.remove('open');
         }
       }).catch(function() {});
-    // Also hide panel if this finding was already re-audited
+    // Also hide re-audit button if this finding was already re-audited
     ${(f as any).reAuditedAt ? `(function() {
-      var btn = document.getElementById('appeal-btn');
-      btn.textContent = 'Re-Audited';
-      btn.classList.add('filed');
-      btn.disabled = true;
+      var reauditBtn = document.getElementById('reaudit-btn');
+      if (reauditBtn) { reauditBtn.textContent = 'Re-Audited'; reauditBtn.classList.add('filed'); reauditBtn.disabled = true; }
     })();` : ''}
   </script>
 </body>

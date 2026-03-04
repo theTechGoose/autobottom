@@ -573,8 +573,8 @@ export function getDashboardPage(): string {
         <span>Active Audits</span>
         <button class="sf-btn danger" id="terminate-all-btn" style="font-size:9px;padding:3px 10px;">Terminate All</button>
       </div>
-      <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Step</th><th>Duration</th><th></th></tr></thead>
-      <tbody id="tb-active"><tr class="empty-row"><td colspan="5">No active audits</td></tr></tbody></table>
+      <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Step</th><th>Started</th><th>Duration</th><th></th></tr></thead>
+      <tbody id="tb-active"><tr class="empty-row"><td colspan="6">No active audits</td></tr></tbody></table>
     </div>
 
     <div class="tbl">
@@ -1233,7 +1233,7 @@ export function getDashboardPage(): string {
 
   function renderActive(active) {
     var tb = document.getElementById('tb-active');
-    if (!active.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="5">No active audits</td></tr>'; return; }
+    if (!active.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="6">No active audits</td></tr>'; return; }
     tb.innerHTML = '';
     // Derive Deno Deploy observability logs URL from hostname: {project}.{org}.deno.net
     var logsOrgProject = null;
@@ -1253,7 +1253,8 @@ export function getDashboardPage(): string {
         var qbUrl = (a.isPackage ? qbPkgUrl : qbDateUrl) + encodeURIComponent(a.recordId);
         ridHtml = '<a href="' + qbUrl + '" target="_blank" class="tbl-link">' + a.recordId + '</a>';
       }
-      tr.innerHTML = '<td>' + fidHtml + '</td><td>' + ridHtml + '</td><td><span class="step-badge">' + (a.step||'--') + '</span></td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
+      var startedCell = a.startedAt ? '<span title="' + new Date(a.startedAt).toLocaleTimeString() + '">' + timeAgo(a.startedAt) + '</span>' : '--';
+      tr.innerHTML = '<td>' + fidHtml + '</td><td>' + ridHtml + '</td><td><span class="step-badge">' + (a.step||'--') + '</span></td><td>' + startedCell + '</td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
       tb.appendChild(tr);
     }
     tb.querySelectorAll('.retry-btn').forEach(function(btn) {

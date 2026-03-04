@@ -17,7 +17,9 @@ function getHeaders(accountId: AccountId): Headers {
 async function tryAccountOnce(contract: number, accountId: AccountId): Promise<string | null> {
   try {
     const url = `${env.genieBaseUrl}/api/v1/${accountId}/judge_search.wr?filter_contract=${contract}`;
-    const res = await fetch(url, { headers: getHeaders(accountId) });
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 15_000);
+    const res = await fetch(url, { headers: getHeaders(accountId), signal: ctrl.signal }).finally(() => clearTimeout(t));
     if (!res.ok) return null;
     const json = await res.json();
     if (json?.error || !json?.data || !Array.isArray(json.data) || json.data.length === 0) return null;
@@ -45,7 +47,9 @@ async function downloadRecordingData(src: string, accountId: AccountId, contract
   let lastError: unknown;
   for (let i = 1; i <= maxAttempts; i++) {
     try {
-      const res = await fetch(src, { headers: getHeaders(accountId) });
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 120_000);
+      const res = await fetch(src, { headers: getHeaders(accountId), signal: ctrl.signal }).finally(() => clearTimeout(t));
       if (!res.ok) throw new Error(`Status ${res.status}`);
       const buf = await res.arrayBuffer();
       const bytes = new Uint8Array(buf);

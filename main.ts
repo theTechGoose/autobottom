@@ -117,7 +117,7 @@ function json(data: unknown, status = 200): Response {
 
 function html(body: string): Response {
   return new Response(body, {
-    headers: { "Content-Type": "text/html; charset=utf-8" },
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
   });
 }
 

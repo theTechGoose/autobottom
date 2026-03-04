@@ -31,11 +31,12 @@ export async function stepInit(req: Request): Promise<Response> {
     await saveFinding(orgId, finding);
   }
 
-  // Update active entry with QB record metadata now that we have the finding
+  // Update active entry with QB record metadata + audit start time
   const qbRecordId = String(finding.record?.RecordId ?? "");
   trackActive(orgId, findingId, "init", {
     recordId: qbRecordId || undefined,
     isPackage: finding.recordingIdField === "GenieNumber",
+    startedAt: finding.startedAt,
   }).catch(() => {});
 
   finding.findingStatus = "getting-recording";

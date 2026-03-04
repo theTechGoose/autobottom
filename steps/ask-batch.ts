@@ -1,5 +1,5 @@
 /** STEP 4: Answer a batch of questions via RAG + Groq LLM. */
-import { getFinding, saveFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, decrementBatchCounter, trackActive, getPopulatedQuestions } from "../lib/kv.ts";
+import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, decrementBatchCounter, trackActive, getPopulatedQuestions, getPipelineConfig } from "../lib/kv.ts";
 import { enqueueStep, publishStep } from "../lib/queue.ts";
 import { askQuestion } from "../providers/groq.ts";
 import { query as vectorQuery } from "../providers/pinecone.ts";
@@ -104,10 +104,10 @@ async function askLlmOne(
 
 export async function stepAskBatch(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches } = body;
+  const { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches, retryCount = 0 } = body;
 
   const stepStartMs = Date.now();
-  console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex}/${totalBatches} started at ${new Date(stepStartMs).toISOString()} (${questionIndices.length} questions)`);
+  console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex}/${totalBatches} started at ${new Date(stepStartMs).toISOString()} (${questionIndices.length} questions, attempt ${retryCount + 1})`);
   trackActive(orgId, findingId, `ask-batch-${batchIndex}`).catch(() => {});
 
   const finding = await getFinding(orgId, findingId);
@@ -116,6 +116,8 @@ export async function stepAskBatch(req: Request): Promise<Response> {
     console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex} skipped — finding already ${finding.findingStatus}`);
     return json({ ok: true, skipped: true, reason: finding.findingStatus });
   }
+
+  const pipelineCfg = await getPipelineConfig(orgId);
 
   // Read from dedicated chunked KV key first (survives finding trim), fall back to finding
   const allPopulated = await getPopulatedQuestions(orgId, findingId) ?? finding.populatedQuestions ?? [];
@@ -132,7 +134,7 @@ export async function stepAskBatch(req: Request): Promise<Response> {
   }, 15000);
 
   // Answer all questions in parallel with 100ms stagger to avoid Groq burst limits
-  let transientError: Error | null = null;
+  let batchError: Error | null = null;
   const answers: IAnsweredQuestion[] = await Promise.all(
     questions.map(async (q, index) => {
       await new Promise((r) => setTimeout(r, index * 100));
@@ -140,11 +142,7 @@ export async function stepAskBatch(req: Request): Promise<Response> {
         return await askLlmOne(q, orgId, findingId, rawTranscript);
       } catch (err: any) {
         const msg = err.message || String(err);
-        if (msg.includes("503") || msg.includes("over capacity") || msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
-          // All fallback models exhausted — flag for re-queue after batch completes
-          transientError = new Error(`GROQ_TRANSIENT: ${msg}`);
-          return answerQuestion(q, { answer: "Error", thinking: msg, defense: "N/A" });
-        }
+        if (!batchError) batchError = new Error(msg);
         console.error(`[STEP-ASK] ${findingId}: Question "${q.header}" failed:`, err);
         return answerQuestion(q, { answer: "Error", thinking: msg, defense: "N/A" });
       }
@@ -153,8 +151,16 @@ export async function stepAskBatch(req: Request): Promise<Response> {
 
   clearInterval(heartbeat);
 
-  // If all fallback models were exhausted, re-queue the batch
-  if (transientError) throw transientError;
+  // On any error, retry via pipeline config settings (maxRetries, retryDelaySeconds)
+  if (batchError) {
+    if (retryCount < pipelineCfg.maxRetries) {
+      const delay = pipelineCfg.retryDelaySeconds * Math.pow(2, retryCount);
+      console.warn(`[STEP-ASK] ${findingId}: Batch ${batchIndex} error (attempt ${retryCount + 1}/${pipelineCfg.maxRetries}), retrying in ${delay}s — ${batchError.message.slice(0, 100)}`);
+      await enqueueStep("ask-batch", { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches, retryCount: retryCount + 1 }, delay);
+      return json({ ok: true, retrying: true, attempt: retryCount + 1 });
+    }
+    console.error(`[STEP-ASK] ${findingId}: Batch ${batchIndex} exhausted ${pipelineCfg.maxRetries} retries — saving Error answers`);
+  }
 
   // Save batch answers
   await saveBatchAnswers(orgId, findingId, batchIndex, answers);

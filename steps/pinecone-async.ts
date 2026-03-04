@@ -1,6 +1,6 @@
 /** STEP 3b: Async Pinecone upload — runs off critical path alongside ask-batch.
  *  ask-batch falls back to rawTranscript if Pinecone isn't indexed yet. */
-import { getFinding, trackActive } from "../lib/kv.ts";
+import { getFinding } from "../lib/kv.ts";
 import { upload } from "../providers/pinecone.ts";
 
 function json(data: unknown, status = 200) {
@@ -15,7 +15,6 @@ export async function stepPineconeAsync(req: Request): Promise<Response> {
   const { findingId, orgId } = body;
 
   console.log(`[STEP-PINECONE] ${findingId}: Starting async Pinecone upload...`);
-  trackActive(orgId, findingId, "pinecone-async").catch(() => {});
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);

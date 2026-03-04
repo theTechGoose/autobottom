@@ -333,6 +333,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/settings/judge": handleAdminGetSettings,
   "/admin/settings/judge-finish": handleAdminGetSettings,
   "/admin/parallelism": handleGetParallelism,
+  "/admin/queues": handleGetQueues,
   "/admin/users": handleAdminListUsers,
   "/admin/email-reports": handleListEmailReports,
   "/admin/email-templates": handleListEmailTemplates,

@@ -824,6 +824,16 @@ export function getDashboardPage(): string {
     <div class="pm-divider"></div>
 
     <div class="pm-section">
+      <div class="pm-section-label" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>Queue Status (Live from QStash)</span>
+        <button class="sf-btn ghost" id="pm-check-queues" style="font-size:10px;padding:3px 10px;height:auto;">Check</button>
+      </div>
+      <div id="pm-queue-status" style="font-size:11px;color:var(--text-dim);padding:4px 0;">Click "Check" to verify QStash queue parallelism</div>
+    </div>
+
+    <div class="pm-divider"></div>
+
+    <div class="pm-section">
       <div class="pm-section-label">Retry Policy</div>
       <div class="pm-field">
         <div class="pm-field-info">
@@ -1742,6 +1752,23 @@ export function getDashboardPage(): string {
     ])
     .then(function(){toast('Pipeline settings saved','success');btnDone(btn,'Save')})
     .catch(function(e){toast(e.message,'error');btnDone(btn,'Save')});
+  });
+
+  document.getElementById('pm-check-queues').addEventListener('click', function() {
+    var btn = this, el = document.getElementById('pm-queue-status');
+    btn.textContent = 'Checking...'; btn.disabled = true;
+    fetch('/admin/queues').then(function(r){return r.json()}).then(function(d) {
+      var queues = Array.isArray(d) ? d : (d.queues || []);
+      if (!queues.length) { el.innerHTML = '<span style="color:var(--yellow)">No queues found in QStash</span>'; return; }
+      el.innerHTML = queues.map(function(q) {
+        var par = q.parallelism ?? q.concurrency ?? '?';
+        var ok = par >= 20;
+        var col = ok ? 'var(--green)' : 'var(--red)';
+        return '<div style="display:flex;justify-content:space-between;padding:2px 0;"><span style="color:var(--text-muted)">' + q.name + '</span><span style="color:' + col + ';font-weight:700;font-family:var(--mono)">parallelism=' + par + '</span></div>';
+      }).join('');
+    }).catch(function(e){
+      el.innerHTML = '<span style="color:var(--red)">Error: ' + e.message + '</span>';
+    }).finally(function(){ btn.textContent = 'Check'; btn.disabled = false; });
   });
 
   // ===== Dev tools =====

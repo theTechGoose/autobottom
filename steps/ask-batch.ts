@@ -106,12 +106,16 @@ export async function stepAskBatch(req: Request): Promise<Response> {
   const body = await req.json();
   const { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches } = body;
 
-  console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex}/${totalBatches} (${questionIndices.length} questions)`);
+  const stepStartMs = Date.now();
+  console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex}/${totalBatches} started at ${new Date(stepStartMs).toISOString()} (${questionIndices.length} questions)`);
   trackActive(orgId, findingId, `ask-batch-${batchIndex}`).catch(() => {});
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
-  if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
+  if (finding.findingStatus === "terminated" || finding.findingStatus === "finished") {
+    console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex} skipped — finding already ${finding.findingStatus}`);
+    return json({ ok: true, skipped: true, reason: finding.findingStatus });
+  }
 
   // Read from dedicated chunked KV key first (survives finding trim), fall back to finding
   const allPopulated = await getPopulatedQuestions(orgId, findingId) ?? finding.populatedQuestions ?? [];

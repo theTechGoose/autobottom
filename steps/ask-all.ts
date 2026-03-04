@@ -1,6 +1,7 @@
 /** STEP 4 (alt): Answer ALL questions in a single Promise.all — no fan-out overhead. Like OmniSource's approach. */
 import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, trackActive, getPopulatedQuestions } from "../lib/kv.ts";
 import { enqueueStep, publishStep } from "../lib/queue.ts";
+import { upload as pineconeUpload } from "../providers/pinecone.ts";
 import { askQuestion, summarize } from "../providers/groq.ts";
 import { query as vectorQuery } from "../providers/pinecone.ts";
 import { parseAst, evaluateAutoYes } from "../providers/question-expr.ts";
@@ -146,6 +147,17 @@ export async function stepAskAll(req: Request): Promise<Response> {
     const dispatch = adminRetry ? publishStep : enqueueStep;
     await dispatch("finalize", { findingId, orgId, totalBatches: 0 });
     return json({ ok: true, answers: 0 });
+  }
+
+  // Upload transcript to Pinecone BEFORE questions start (matches OmniSource pattern)
+  if (rawTranscript && !rawTranscript.includes("Invalid Genie") && !rawTranscript.includes("Genie Invalid")) {
+    try {
+      const uploadStart = Date.now();
+      await pineconeUpload(findingId, rawTranscript);
+      console.log(`[STEP-ASK-ALL] ${findingId}: ✅ Pinecone upload done in ${Date.now() - uploadStart}ms`);
+    } catch (err) {
+      console.error(`[STEP-ASK-ALL] ${findingId}: ⚠️ Pinecone upload failed, falling back to raw transcript:`, err);
+    }
   }
 
   console.log(`[STEP-ASK-ALL] ${findingId}: Answering ${questions.length} questions in parallel (100ms stagger)`);

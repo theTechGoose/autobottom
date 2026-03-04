@@ -1,4 +1,4 @@
-/** STEP 3: Fetch questions from QuickBase (or Question Lab), embed transcript in Pinecone, fan-out question batches. */
+/** STEP 3: Fetch questions from QuickBase (or Question Lab), populate with record values, enqueue ask-all. */
 import { getFinding, saveFinding, getCachedQuestions, cacheQuestions, trackActive, savePopulatedQuestions } from "../lib/kv.ts";
 import { enqueueStep, publishStep } from "../lib/queue.ts";
 import { getQuestionsForDestination } from "../providers/quickbase.ts";
@@ -92,14 +92,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
   await savePopulatedQuestions(orgId, findingId, populated);
   await saveFinding(orgId, finding);
 
-  // 3. Kick off async Pinecone upload (off critical path — ask-batch falls back to rawTranscript)
-  if (finding.rawTranscript) {
-    enqueueStep("pinecone-async", { findingId, orgId }).catch((err) =>
-      console.error(`[STEP-PREPARE] ${findingId}: Failed to enqueue pinecone-async:`, err)
-    );
-  }
-
-  // 3b. Bad word check for package records (off critical path)
+  // 3. Bad word check for package records (off critical path)
   if (finding.rawTranscript && finding.recordingIdField === "GenieNumber") {
     enqueueStep("bad-word-check", { findingId, orgId }).catch((err) =>
       console.error(`[STEP-PREPARE] ${findingId}: Failed to enqueue bad-word-check:`, err)

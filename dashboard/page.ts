@@ -2214,7 +2214,9 @@ export function getDashboardPage(): string {
   }
 
   function etUpdatePreview() {
-    document.getElementById('et-preview').srcdoc = document.getElementById('et-html').value;
+    var html = document.getElementById('et-html').value;
+    html = html.replace(/\{\{logoUrl\}\}/g, '/favicon.svg');
+    document.getElementById('et-preview').srcdoc = html;
   }
 
   function etNewTemplate() {

@@ -108,6 +108,20 @@ import type { StoreItem } from "./shared/badges.ts";
 // Impersonation
 import { getImpersonateSnippet } from "./shared/impersonate-bar.ts";
 
+// -- Logo --
+
+let _logoDataUri: string | undefined;
+async function getLogoDataUri(): Promise<string> {
+  if (_logoDataUri !== undefined) return _logoDataUri;
+  try {
+    const svg = await Deno.readTextFile(new URL("./favicon.svg", import.meta.url));
+    _logoDataUri = `data:image/svg+xml;base64,${btoa(svg)}`;
+  } catch {
+    _logoDataUri = "";
+  }
+  return _logoDataUri;
+}
+
 // -- Helpers --
 
 type Handler = (req: Request) => Promise<Response>;
@@ -1505,6 +1519,8 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     totalQuestions: String(allQs.length),
     crmUrl,
     managerNotesDisplay: missedQs.length === 0 ? "display:none" : "",
+    logoUrl: await getLogoDataUri() || `${env.selfUrl}/favicon.svg`,
+    selfUrl: env.selfUrl,
   };
 
   const resolvedTest = webhookCfg?.testEmail || "";
@@ -1548,6 +1564,8 @@ async function handleAppealFiledWebhook(req: Request): Promise<Response> {
     judgeUrl: `${env.selfUrl}/judge`,
     comment: comment ?? "",
     appealedAt: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }) + " EST",
+    logoUrl: await getLogoDataUri() || `${env.selfUrl}/favicon.svg`,
+    selfUrl: env.selfUrl,
   };
 
   const resolvedTest = webhookCfg?.testEmail || "";
@@ -1597,6 +1615,8 @@ async function handleAppealDecidedWebhook(req: Request): Promise<Response> {
     totalQuestions: String(totalQuestions ?? 0),
     judgedBy: judgedBy ?? "",
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
+    logoUrl: await getLogoDataUri() || `${env.selfUrl}/favicon.svg`,
+    selfUrl: env.selfUrl,
   };
 
   const resolvedTest = webhookCfg?.testEmail || "";
@@ -1642,6 +1662,8 @@ async function handleManagerReviewWebhook(req: Request): Promise<Response> {
     managerNotes: remediation?.notes ?? "",
     addressedBy: remediation?.addressedBy ?? "",
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
+    logoUrl: await getLogoDataUri() || `${env.selfUrl}/favicon.svg`,
+    selfUrl: env.selfUrl,
   };
 
   const resolvedTest = webhookCfg?.testEmail || "";

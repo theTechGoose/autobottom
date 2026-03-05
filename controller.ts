@@ -474,7 +474,11 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
 
   // Fetch full transcript from dedicated KV key (not subject to 64KB trim)
   const storedTranscript = await getTranscript(orgId, id);
-  const transcriptText = storedTranscript?.diarized || storedTranscript?.raw || f.diarizedTranscript || f.rawTranscript || "";
+  // Only trust diarized if it actually contains speaker labels — Groq sometimes returns artifact text
+  const diarizedText = storedTranscript?.diarized;
+  const hasSpeakerLabels = diarizedText ? (diarizedText.includes("[AGENT]") || diarizedText.includes("[CUSTOMER]")) : false;
+  const rawFallback = storedTranscript?.raw || f.diarizedTranscript || f.rawTranscript || "";
+  const transcriptText = hasSpeakerLabels ? diarizedText! : rawFallback;
   const transcriptHtml = transcriptText
     ? esc(transcriptText).replace(/\.\.\.\[KV_TRIM\]/g, "...").replace(/\[AGENT\]/g, '<span class="speaker agent">[AGENT]</span>')
                          .replace(/\[CUSTOMER\]/g, '<span class="speaker customer">[CUSTOMER]</span>')

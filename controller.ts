@@ -259,6 +259,7 @@ export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Resp
     auditor: f.owner,
     questionCount: questions.length,
     appealedAt: new Date(appealedAt).toISOString(),
+    ...(comment ? { comment: String(comment) } : {}),
   }).catch((err) => console.error(`[APPEAL] ${findingId}: Webhook failed:`, err));
 
   return json({ ok: true, judgeUrl: "/judge" });
@@ -1189,14 +1190,38 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     var _uploadFile = null;
     var _failedQuestions = ${JSON.stringify(questions.filter((q: any) => !isYesAnswer(q.answer)).map((q: any) => ({ header: q.header ?? "" })))};
 
+    function updateAppealSubmitState() {
+      var anyChecked = _failedQuestions.some(function(_, i) {
+        var cb = document.getElementById('aq-' + i);
+        return cb && cb.checked;
+      });
+      document.getElementById('appeal-submit-btn').disabled = !anyChecked;
+    }
+
+    function toggleAllAppealQuestions(checked) {
+      _failedQuestions.forEach(function(_, i) {
+        var cb = document.getElementById('aq-' + i);
+        if (cb) cb.checked = checked;
+      });
+      updateAppealSubmitState();
+    }
+
     function confirmAppeal() {
       var btn = document.getElementById('appeal-btn');
       if (!btn || btn.disabled || btn.classList.contains('filed')) return;
       document.getElementById('appeal-comment-input').value = '';
+      document.getElementById('appeal-submit-btn').disabled = true;
       var list = document.getElementById('appeal-questions-list');
-      list.innerHTML = _failedQuestions.map(function(q, i) {
+      var checkAllHtml = '';
+      if (_failedQuestions.length > 1) {
+        checkAllHtml = '<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;color:#8b949e;margin-bottom:4px;">' +
+          '<input type="checkbox" id="aq-all" style="accent-color:#58a6ff;" onchange="toggleAllAppealQuestions(this.checked)">' +
+          '<span>Check All</span></label>' +
+          '<div style="height:1px;background:#30363d;margin-bottom:4px;"></div>';
+      }
+      list.innerHTML = checkAllHtml + _failedQuestions.map(function(q, i) {
         return '<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:12px;color:#c9d1d9;background:#0d1117;border:1px solid #21262d;">' +
-          '<input type="checkbox" id="aq-' + i + '" checked style="margin-top:2px;accent-color:#58a6ff;flex-shrink:0;">' +
+          '<input type="checkbox" id="aq-' + i + '" style="margin-top:2px;accent-color:#58a6ff;flex-shrink:0;" onchange="updateAppealSubmitState()">' +
           '<span>' + q.header + '</span></label>';
       }).join('');
       document.getElementById('appeal-confirm-overlay').style.display = 'flex';
@@ -1209,10 +1234,6 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         var cb = document.getElementById('aq-' + i);
         return cb && cb.checked;
       }).map(function(q) { return q.header; });
-      if (selectedQuestions.length === 0) {
-        alert('Please select at least one question to appeal.');
-        return;
-      }
       submitBtn.disabled = true;
       submitBtn.textContent = 'Filing...';
       fetch('/audit/appeal', {

@@ -662,7 +662,6 @@ export function getDashboardPage(): string {
         <div class="modal-sub" style="margin-bottom:0;">Build and preview audit notification emails</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
-        <button class="sf-btn ghost" id="et-seed-btn" style="font-size:11px;" title="Load built-in default templates">Seed Defaults</button>
         <button class="sf-btn ghost" id="email-templates-cancel" style="font-size:11px;">Close</button>
       </div>
     </div>
@@ -2292,23 +2291,6 @@ export function getDashboardPage(): string {
       .then(function() { etNewTemplate(); return etFetch(); })
       .then(function() { toast('Template deleted', 'success'); })
       .catch(function() { toast('Delete failed', 'error'); btn.disabled = false; });
-  });
-
-  document.getElementById('et-seed-btn').addEventListener('click', function() {
-    var btn = this;
-    btn.disabled = true; btn.textContent = 'Seeding...';
-    fetch('/admin/email-templates/seed-defaults', { method: 'POST' })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.created && d.created.length) {
-          toast('Created: ' + d.created.join(', '), 'success');
-          etFetch();
-        } else {
-          toast('Default templates already exist', 'success');
-        }
-      })
-      .catch(function() { toast('Seed failed', 'error'); })
-      .finally(function() { btn.disabled = false; btn.textContent = 'Seed Defaults'; });
   });
 
   // ===== Bad Words =====

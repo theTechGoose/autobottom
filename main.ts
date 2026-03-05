@@ -248,7 +248,6 @@ const postRoutes: Record<string, Handler> = {
   "/admin/email-reports/delete": handleDeleteEmailReport,
   "/admin/email-templates": handleSaveEmailTemplate,
   "/admin/email-templates/delete": handleDeleteEmailTemplate,
-  "/admin/email-templates/seed-defaults": handleSeedEmailTemplates,
   "/admin/bad-word-config": handleSaveBadWordConfig,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
@@ -2160,94 +2159,10 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
   return { seeded, managerSeeded, judgeSeeded, qlabSeeded, orgId };
 }
 
-// -- Default Email Templates --
-
-const DEFAULT_AUDIT_COMPLETE_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Audit Results</title></head>
-<body style="margin:0;padding:0;background:#0d1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;min-height:100vh;">
-  <tr><td align="center" style="padding:32px 16px;">
-    <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#161b22;border:1px solid #30363d;border-radius:12px;overflow:hidden;">
-      <tr><td style="background:#161b22;padding:28px 32px 20px;border-bottom:1px solid #21262d;">
-        <table width="100%" cellpadding="0" cellspacing="0"><tr>
-          <td style="vertical-align:middle;">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;margin-right:10px;"><circle cx="18" cy="18" r="18" fill="#21262d"/><line x1="18" y1="4" x2="18" y2="9" stroke="#3fb950" stroke-width="2" stroke-linecap="round"/><circle cx="18" cy="3.5" r="1.5" fill="#3fb950"/><rect x="9" y="9" width="18" height="14" rx="4" fill="#30363d" stroke="#3fb950" stroke-width="1.2"/><circle cx="14" cy="16" r="2.5" fill="#3fb950" opacity="0.9"/><circle cx="22" cy="16" r="2.5" fill="#3fb950" opacity="0.9"/><circle cx="14.8" cy="15.3" r="0.8" fill="#0d1117"/><circle cx="22.8" cy="15.3" r="0.8" fill="#0d1117"/><rect x="13" y="24" width="10" height="8" rx="2" fill="#30363d" stroke="#21262d" stroke-width="1"/><rect x="6" y="25" width="6" height="3" rx="1.5" fill="#30363d"/><rect x="24" y="25" width="6" height="3" rx="1.5" fill="#30363d"/><rect x="14" y="32" width="3" height="4" rx="1" fill="#21262d"/><rect x="19" y="32" width="3" height="4" rx="1" fill="#21262d"/></svg>
-            <span style="font-size:15px;font-weight:700;color:#e6edf3;vertical-align:middle;letter-spacing:-0.3px;">AutoBot Audit Results</span>
-          </td>
-          <td align="right" style="vertical-align:middle;"><span style="font-size:11px;color:#8b949e;font-family:monospace;">{{findingId}}</span></td>
-        </tr></table>
-      </td></tr>
-      <tr><td style="padding:28px 32px 0;">
-        <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#e6edf3;">Hi {{teamMemberFirst}},</p>
-        <p style="margin:0;font-size:14px;color:#8b949e;line-height:1.6;">Your audit for guest <strong style="color:#c9d1d9;">{{guestName}}</strong> has been completed. Here's a summary of your results.</p>
-      </td></tr>
-      <tr><td style="padding:24px 32px;">
-        <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden;">
-          <tr>
-            <td style="padding:20px 24px;border-right:1px solid #21262d;" width="50%">
-              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#8b949e;margin-bottom:6px;">Score</div>
-              <div style="font-size:42px;font-weight:800;color:{{scoreColor}};font-variant-numeric:tabular-nums;line-height:1;">{{score}}</div>
-              <div style="font-size:12px;color:#8b949e;margin-top:4px;">{{scoreVerbiage}}</div>
-            </td>
-            <td style="padding:20px 24px;" width="50%">
-              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#8b949e;margin-bottom:6px;">Questions</div>
-              <div style="font-size:14px;color:#e6edf3;margin-bottom:4px;"><span style="color:#3fb950;font-weight:700;">{{passedCount}}</span> passed</div>
-              <div style="font-size:14px;color:#e6edf3;"><span style="color:#f85149;font-weight:700;">{{missedCount}}</span> missed <span style="color:#8b949e;font-size:11px;"> / {{totalQuestions}} total</span></div>
-            </td>
-          </tr>
-        </table>
-      </td></tr>
-      <tr><td style="padding:0 32px 24px;">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#8b949e;margin-bottom:10px;">Missed Questions</div>
-        <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #30363d;border-radius:8px;overflow:hidden;border-collapse:collapse;">
-          <thead><tr style="background:#21262d;">
-            <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#8b949e;border-bottom:1px solid #30363d;">#</th>
-            <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#8b949e;border-bottom:1px solid #30363d;">Category</th>
-          </tr></thead>
-          <tbody>{{missedQuestions}}</tbody>
-        </table>
-      </td></tr>
-      <tr><td style="padding:0 32px 28px;">
-        <table cellpadding="0" cellspacing="0"><tr>
-          <td style="padding-right:10px;"><a href="{{reportUrl}}" style="display:inline-block;padding:10px 20px;background:#238636;color:#ffffff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600;border:1px solid #2ea043;">View Full Report</a></td>
-          <td><a href="{{crmUrl}}" style="display:inline-block;padding:10px 20px;background:#21262d;color:#c9d1d9;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600;border:1px solid #30363d;">Open in CRM</a></td>
-        </tr></table>
-      </td></tr>
-      <tr><td style="padding:0 32px 28px;">
-        <table width="100%" cellpadding="0" cellspacing="0" style="background:#161b22;border:1px solid #21262d;border-left:3px solid #58a6ff;border-radius:0 6px 6px 0;">
-          <tr><td style="padding:14px 16px;">
-            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#58a6ff;margin-bottom:6px;">System Notes</div>
-            <div style="font-size:13px;color:#c9d1d9;line-height:1.6;">{{feedbackText}}</div>
-          </td></tr>
-        </table>
-      </td></tr>
-      <tr><td style="background:#0d1117;padding:16px 32px;border-top:1px solid #21262d;">
-        <p style="margin:0;font-size:11px;color:#6e7681;line-height:1.6;">This is an automated audit notification. Questions? Contact your supervisor.<br>Audit ID: <span style="font-family:monospace;color:#8b949e;">{{findingId}}</span></p>
-      </td></tr>
-    </table>
-  </td></tr>
-</table>
-</body></html>`;
-
 async function handleSeedEmailTemplates(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
-
-  const existing = await listEmailTemplates(auth.orgId);
-  const names = existing.map((t) => t.name.toLowerCase());
-  const created: string[] = [];
-
-  if (!names.some((n) => n.includes("audit complete") || n.includes("audit result"))) {
-    await saveEmailTemplate(auth.orgId, {
-      name: "Audit Complete",
-      subject: "Your Audit Results — {{teamMemberFirst}} ({{score}})",
-      html: DEFAULT_AUDIT_COMPLETE_HTML,
-    });
-    created.push("Audit Complete");
-  }
-
-  return json({ ok: true, created });
+  return json({ ok: true, created: [] });
 }
 
 async function handleSeed(_req: Request): Promise<Response> {

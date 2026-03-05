@@ -604,8 +604,8 @@ export function getDashboardPage(): string {
     <div class="modal-title">Webhook Configuration</div>
     <div class="wh-tabs" id="wh-tabs">
       <button class="wh-tab active" data-kind="terminate">Audit Complete</button>
-      <button class="wh-tab" data-kind="appeal">Appeal</button>
-      <button class="wh-tab" data-kind="manager">Manager</button>
+      <button class="wh-tab" data-kind="appeal">Appeal Filed</button>
+      <button class="wh-tab" data-kind="manager">Manager Review</button>
       <button class="wh-tab" data-kind="judge-finish">Judge Finish</button>
     </div>
     <div class="modal-sub" id="wh-sub">Called when an audit review is completed</div>
@@ -628,7 +628,7 @@ export function getDashboardPage(): string {
     <div class="sf" id="wh-template-row" style="display:none;">
       <label class="sf-label">Email Template <span style="color:var(--text-dim);font-weight:400;">(used for direct emails on this event)</span></label>
       <select class="sf-input" id="a-template-id">
-        <option value="">— First available template —</option>
+        <option value="">— No template (email disabled) —</option>
       </select>
     </div>
     <div id="wh-default-url-row" style="display:none;margin-top:10px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;">
@@ -1744,7 +1744,7 @@ export function getDashboardPage(): string {
   // ===== Webhook Modal =====
   var modal = document.getElementById('webhook-modal');
   var whKind = 'terminate';
-  var whSubs = { terminate: 'Called when an audit is complete (100% first pass or review completed)', appeal: 'Called when an appeal is filed', manager: 'Called when remediation is submitted', 'judge-finish': 'Called when a judge finishes all appeal decisions for an audit' };
+  var whSubs = { terminate: 'Called when an audit is complete (100% first pass or review completed)', appeal: 'Called when an agent files an appeal', manager: 'Called when a manager submits a remediation note on a failed audit', 'judge-finish': 'Called when a judge finishes all appeal decisions for an audit' };
   var whCache = {};
   var etTemplateList = [];
 
@@ -1762,7 +1762,7 @@ export function getDashboardPage(): string {
   }).catch(function(){});
 
   // Kinds that have direct email sending and need template/testEmail fields
-  var EMAIL_KINDS = ['terminate', 'appeal', 'judge-finish'];
+  var EMAIL_KINDS = ['terminate', 'appeal', 'manager', 'judge-finish'];
 
   function applyWebhookData(kind, d) {
     document.getElementById('a-posturl').value = d.postUrl || '';
@@ -1775,9 +1775,10 @@ export function getDashboardPage(): string {
       document.getElementById('a-template-id').value = d.emailTemplateId || '';
     }
     var defaultUrlRow = document.getElementById('wh-default-url-row');
-    if (kind === 'terminate') {
+    var selfEndpoints = { terminate: '/webhooks/audit-complete', appeal: '/webhooks/appeal-filed', manager: '/webhooks/manager-review', 'judge-finish': '/webhooks/appeal-decided' };
+    if (selfEndpoints[kind]) {
       var orgId = currentOrgId || 'YOUR_ORG_ID';
-      var defaultUrl = window.location.origin + '/webhooks/audit-complete?org=' + encodeURIComponent(orgId);
+      var defaultUrl = window.location.origin + selfEndpoints[kind] + '?org=' + encodeURIComponent(orgId);
       document.getElementById('wh-default-url-text').textContent = defaultUrl;
       defaultUrlRow.style.display = '';
     } else {

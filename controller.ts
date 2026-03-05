@@ -1,8 +1,7 @@
 /** API controller - creates audit jobs and kicks off the QStash pipeline. */
 import * as icons from "./shared/icons.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
-import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook, getWebhookConfig, getEmailTemplate, listEmailTemplates } from "./lib/kv.ts";
-import { sendEmail } from "./providers/postmark.ts";
+import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook } from "./lib/kv.ts";
 import { enqueueStep } from "./lib/queue.ts";
 import { getDateLegByRid } from "./providers/quickbase.ts";
 import { S3Ref } from "./lib/s3.ts";
@@ -207,72 +206,6 @@ export async function handleGetRecording(orgId: OrgId, req: Request): Promise<Re
   });
 }
 
-/** Build and send the appeal-filed notification email. */
-async function sendAppealNotificationEmail(orgId: OrgId, findingId: string, finding: Record<string, any>, comment?: string) {
-  const appealCfg = await getWebhookConfig(orgId, "appeal").catch(() => null);
-  const testEmail = appealCfg?.testEmail;
-
-  // Look up template from appeal config or fall back to first available template
-  let template = null;
-  if (appealCfg?.emailTemplateId) {
-    template = await getEmailTemplate(orgId, appealCfg.emailTemplateId);
-  }
-  if (!template) {
-    const all = await listEmailTemplates(orgId);
-    template = all.find((t) => t.name.toLowerCase().includes("appeal")) ?? null;
-  }
-
-  const reportUrl = `${env.selfUrl}/audit/report?id=${findingId}`;
-  const judgeUrl = `${env.selfUrl}/judge`;
-  const agentEmail = String(finding.owner ?? "");
-  const voEmail = String(finding.record?.VoEmail ?? "");
-  const voNameRaw = String(finding.record?.VoName ?? "");
-  const teamMember = voNameRaw.includes(" - ") ? voNameRaw.split(" - ").slice(1).join(" - ").trim() : voNameRaw.trim();
-  const agentName = teamMember || agentEmail;
-  const recordId = String(finding.record?.RecordId ?? "");
-  const guestName = String(finding.record?.GuestName ?? "");
-
-  const vars: Record<string, string> = {
-    findingId,
-    agentName,
-    agentEmail: voEmail || agentEmail,
-    recordId,
-    guestName,
-    reportUrl,
-    judgeUrl,
-    comment: comment ?? "",
-    appealedAt: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }) + " EST",
-  };
-  const render = (s: string) => s.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? "");
-
-  let subject: string;
-  let htmlBody: string;
-
-  if (template) {
-    subject = render(template.subject);
-    htmlBody = render(template.html);
-  } else {
-    // Built-in fallback
-    subject = `Appeal Filed: ${agentName} — Record ${recordId}`;
-    htmlBody = `<!DOCTYPE html><html><body style="font-family:sans-serif;background:#0d1117;color:#e6edf3;padding:24px;">
-<h2 style="color:#f0883e;">⚠️ Appeal Filed</h2>
-<p><strong>Agent:</strong> ${agentName} (${voEmail || agentEmail})</p>
-<p><strong>Record ID:</strong> ${recordId}</p>
-<p><strong>Guest:</strong> ${guestName}</p>
-<p><strong>Finding ID:</strong> ${findingId}</p>
-${comment ? `<p><strong>Comment:</strong> ${comment}</p>` : ""}
-<p style="margin-top:20px;">
-  <a href="${reportUrl}" style="padding:8px 16px;background:#238636;color:#fff;border-radius:6px;text-decoration:none;margin-right:10px;">View Report</a>
-  <a href="${judgeUrl}" style="padding:8px 16px;background:#21262d;color:#c9d1d9;border-radius:6px;text-decoration:none;border:1px solid #30363d;">Judge Panel</a>
-</p>
-</body></html>`;
-  }
-
-  const to = testEmail || "alexandera@monsterrg.com";
-  const cc = testEmail ? undefined : "ai@monsterrg.com";
-  await sendEmail({ to, subject, htmlBody, cc });
-  console.log(`[APPEAL-EMAIL] ${findingId}: Notification → ${to}`);
-}
 
 /**
  * POST /audit/appeal
@@ -325,11 +258,6 @@ export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Resp
     questionCount: questions.length,
     appealedAt: new Date(appealedAt).toISOString(),
   }).catch((err) => console.error(`[APPEAL] ${findingId}: Webhook failed:`, err));
-
-  // Send appeal-filed notification email
-  sendAppealNotificationEmail(orgId, findingId, f, comment).catch((err) =>
-    console.error(`[APPEAL] ${findingId}: Notification email failed:`, err)
-  );
 
   return json({ ok: true, judgeUrl: "/judge" });
 }

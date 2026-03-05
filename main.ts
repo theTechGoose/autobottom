@@ -251,6 +251,9 @@ const postRoutes: Record<string, Handler> = {
   "/admin/email-templates/seed-defaults": handleSeedEmailTemplates,
   "/admin/bad-word-config": handleSaveBadWordConfig,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
+  "/webhooks/appeal-filed": handleAppealFiledWebhook,
+  "/webhooks/appeal-decided": handleAppealDecidedWebhook,
+  "/webhooks/manager-review": handleManagerReviewWebhook,
   "/admin/reset-finding": handleResetFinding,
 
   // Appeal (orgId in body)
@@ -1405,68 +1408,74 @@ async function handleSaveBadWordConfig(req: Request): Promise<Response> {
   return json({ ok: true });
 }
 
+// -- Webhooks: Shared Helpers --
+
+/** Resolve template — only sends if a specific template is configured via emailTemplateId. */
+async function resolveWebhookTemplate(orgId: OrgId, webhookCfg: WebhookConfig | null) {
+  if (!webhookCfg?.emailTemplateId) return null;
+  return getEmailTemplate(orgId, webhookCfg.emailTemplateId);
+}
+
+/** Parse QB VoName field "VO MB - Harmony Eason" → { full: "Harmony Eason", first: "Harmony" } */
+function parseVoName(voNameRaw: string, fallback: string) {
+  const full = voNameRaw.includes(" - ")
+    ? voNameRaw.split(" - ").slice(1).join(" - ").trim()
+    : voNameRaw.trim();
+  const display = full || (fallback.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || fallback);
+  return { full: display, first: display.split(" ")[0] || display };
+}
+
+/** Mustache-style variable substitution. */
+function renderTemplate(str: string, vars: Record<string, string>): string {
+  return str.replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => vars[k] ?? "");
+}
+
+/** Resolve test/live recipients. In test mode: only testEmail, no cc/bcc. */
+function resolveRecipients(webhookCfg: WebhookConfig | null, to: string) {
+  const test = webhookCfg?.testEmail || "";
+  return {
+    to: test || to,
+    cc: test ? undefined : undefined, // caller sets cc
+    bcc: test ? undefined : (webhookCfg?.bcc || undefined),
+    isTest: !!test,
+  };
+}
+
 // -- Webhooks: Audit Complete Email --
 
 async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const orgId = url.searchParams.get("org") as OrgId;
-
   if (!orgId) return json({ error: "org required" }, 400);
 
-  // Read all config from the terminate webhook config — not URL params
   const webhookCfg = await getWebhookConfig(orgId, "terminate").catch(() => null);
-
   const body = await req.json();
   const { finding, score } = body;
   if (!finding) return json({ error: "finding required" }, 400);
 
-  // Template: webhook config emailTemplateId → name match → first available
-  let template = null;
-  if (webhookCfg?.emailTemplateId) {
-    template = await getEmailTemplate(orgId, webhookCfg.emailTemplateId);
-  }
-  if (!template) {
-    const all = await listEmailTemplates(orgId);
-    template = all.find((t) => t.name.toLowerCase().includes("audit")) ?? all[0] ?? null;
-  }
-  if (!template) return json({ error: "no template found" }, 404);
+  const template = await resolveWebhookTemplate(orgId, webhookCfg);
+  if (!template) return json({ ok: true, skipped: "no template configured" });
 
   console.log(`[WEBHOOK] finding.record keys:`, JSON.stringify(Object.keys(finding.record ?? {})));
-  console.log(`[WEBHOOK] finding.record values:`, JSON.stringify(finding.record ?? {}));
 
   const agentEmail = finding.owner ?? "";
-  // Parse VO name from QB field 144: "VO MB - Harmony Eason" → "Harmony Eason"
-  const voNameRaw = String(finding.record?.VoName ?? "");
-  const teamMemberFull = voNameRaw.includes(" - ")
-    ? voNameRaw.split(" - ").slice(1).join(" - ").trim()
-    : voNameRaw.trim();
-  const teamMemberFirst = teamMemberFull.split(" ")[0] || teamMemberFull;
-  const agentName = teamMemberFull ||
-    (agentEmail.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || agentEmail);
-  // QB email fields
   const voEmail = String(finding.record?.VoEmail ?? "");
   const supervisorEmail = String(finding.record?.SupervisorEmail ?? "");
-  const scoreVal = score ?? (Array.isArray(finding.answeredQuestions)
-    ? Math.round(finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length * 100)
-    : 0);
+  const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String(finding.record?.VoName ?? ""), agentEmail);
   const findingId = finding.id ?? "";
   const recordId = String(finding.record?.RecordId ?? "");
   const isPackage = !!finding.isPackage;
   const qbTableId = isPackage ? "bu3e8x98x" : "bpb28qsnn";
   const crmUrl = recordId ? `https://${env.qbRealm}.quickbase.com/db/${qbTableId}?a=dr&rid=${recordId}` : "";
-
-  // Dynamic score verbiage
-  const scoreVerbiage = scoreVal === 100
-    ? "Perfect score — great call! Review your audit below."
-    : scoreVal >= 80
-    ? "Strong performance overall. Check the missed questions below."
-    : scoreVal >= 60
-    ? "A few areas to work on. Review your missed questions below."
+  const scoreVal = score ?? (Array.isArray(finding.answeredQuestions)
+    ? Math.round(finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length * 100)
+    : 0);
+  const scoreVerbiage = scoreVal === 100 ? "Perfect score — great call! Review your audit below."
+    : scoreVal >= 80 ? "Strong performance overall. Check the missed questions below."
+    : scoreVal >= 60 ? "A few areas to work on. Review your missed questions below."
     : "There's room to improve here. Take a look at what was missed.";
-
   const allQs = Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : [];
   const missedQs = allQs.filter((q: any) => q.answer === "No");
-  const passedCount = allQs.length - missedQs.length;
   const scoreColor = scoreVal === 100 ? "#3fb950" : scoreVal >= 80 ? "#58a6ff" : scoreVal >= 60 ? "#d29922" : "#f85149";
   const missedQuestionsHtml = missedQs.length
     ? missedQs.map((q: any, i: number) =>
@@ -1474,10 +1483,8 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
       ).join("")
     : `<tr><td colspan="2" style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions — perfect score!</td></tr>`;
 
-  console.log(`[WEBHOOK] agentName="${agentName}" voEmail="${voEmail}" supervisorEmail="${supervisorEmail}" crmUrl="${crmUrl}"`);
-
   const vars: Record<string, string> = {
-    agentName,
+    agentName: teamMemberFull,
     agentEmail: voEmail || agentEmail,
     teamMember: teamMemberFull,
     teamMemberFirst,
@@ -1494,28 +1501,157 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     feedbackText: finding.feedback?.text ?? "",
     missedQuestions: missedQuestionsHtml,
     missedCount: String(missedQs.length),
-    passedCount: String(passedCount),
+    passedCount: String(allQs.length - missedQs.length),
     totalQuestions: String(allQs.length),
     crmUrl,
     managerNotesDisplay: missedQs.length === 0 ? "display:none" : "",
   };
 
-  const render = (str: string) => str.replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => vars[k] ?? "");
-  const htmlBody = render(template.html);
-  const subject = render(template.subject);
-
-  // Test email from webhook config overrides all recipients; blank = live mode
   const resolvedTest = webhookCfg?.testEmail || "";
-
   const to = resolvedTest || (voEmail || agentEmail);
   if (!to) return json({ error: "no recipient email" }, 400);
-
-  // In test mode: only send to test address, no CC/BCC
   const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
   const bcc = resolvedTest ? undefined : (webhookCfg?.bcc || undefined);
 
-  await sendEmail({ to, subject, htmlBody, cc, bcc });
+  await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), cc, bcc });
   console.log(`[EMAIL] Audit complete → ${to}${cc ? ` cc:${cc}` : ""}${bcc ? ` bcc:${bcc}` : ""} (finding: ${findingId})`);
+  return json({ ok: true, to });
+}
+
+// -- Webhooks: Appeal Filed Email --
+
+async function handleAppealFiledWebhook(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const orgId = url.searchParams.get("org") as OrgId;
+  if (!orgId) return json({ error: "org required" }, 400);
+
+  const webhookCfg = await getWebhookConfig(orgId, "appeal").catch(() => null);
+  const body = await req.json();
+  const { finding, findingId: fid, comment } = body;
+  const findingId = fid ?? finding?.id ?? "";
+  if (!findingId) return json({ error: "findingId required" }, 400);
+
+  const template = await resolveWebhookTemplate(orgId, webhookCfg);
+  if (!template) return json({ ok: true, skipped: "no template configured" });
+
+  const agentEmail = String(finding?.owner ?? "");
+  const voEmail = String(finding?.record?.VoEmail ?? "");
+  const { full: agentName } = parseVoName(String(finding?.record?.VoName ?? ""), agentEmail);
+
+  const vars: Record<string, string> = {
+    findingId,
+    agentName,
+    agentEmail: voEmail || agentEmail,
+    recordId: String(finding?.record?.RecordId ?? ""),
+    guestName: String(finding?.record?.GuestName ?? ""),
+    reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
+    judgeUrl: `${env.selfUrl}/judge`,
+    comment: comment ?? "",
+    appealedAt: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }) + " EST",
+  };
+
+  const resolvedTest = webhookCfg?.testEmail || "";
+  // Appeal-filed is a staff notification — BCC list serves as primary recipients
+  const bccList = webhookCfg?.bcc || "";
+  const to = resolvedTest || bccList.split(",")[0]?.trim() || "";
+  if (!to) return json({ error: "no recipient configured — set BCC in Appeal webhook settings" }, 400);
+  const bcc = resolvedTest ? undefined : (bccList.split(",").slice(1).join(",").trim() || undefined);
+
+  await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), bcc });
+  console.log(`[EMAIL] Appeal filed → ${to} (finding: ${findingId})`);
+  return json({ ok: true, to });
+}
+
+// -- Webhooks: Appeal Decided Email --
+
+async function handleAppealDecidedWebhook(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const orgId = url.searchParams.get("org") as OrgId;
+  if (!orgId) return json({ error: "org required" }, 400);
+
+  const webhookCfg = await getWebhookConfig(orgId, "judge").catch(() => null);
+  const body = await req.json();
+  const { finding, findingId: fid, originalScore, finalScore, overturns, totalQuestions, judgedBy } = body;
+  const findingId = fid ?? finding?.id ?? "";
+  if (!findingId) return json({ error: "findingId required" }, 400);
+
+  const template = await resolveWebhookTemplate(orgId, webhookCfg);
+  if (!template) return json({ ok: true, skipped: "no template configured" });
+
+  const agentEmail = String(finding?.owner ?? "");
+  const voEmail = String(finding?.record?.VoEmail ?? "");
+  const supervisorEmail = String(finding?.record?.SupervisorEmail ?? "");
+  const { full: agentName, first: teamMemberFirst } = parseVoName(String(finding?.record?.VoName ?? ""), agentEmail);
+
+  const vars: Record<string, string> = {
+    findingId,
+    agentName,
+    agentEmail: voEmail || agentEmail,
+    teamMemberFirst,
+    recordId: String(finding?.record?.RecordId ?? ""),
+    guestName: String(finding?.record?.GuestName ?? ""),
+    supervisorEmail,
+    originalScore: (originalScore ?? 0) + "%",
+    finalScore: (finalScore ?? 0) + "%",
+    overturns: String(overturns ?? 0),
+    totalQuestions: String(totalQuestions ?? 0),
+    judgedBy: judgedBy ?? "",
+    reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
+  };
+
+  const resolvedTest = webhookCfg?.testEmail || "";
+  const to = resolvedTest || (voEmail || agentEmail);
+  if (!to) return json({ error: "no recipient email" }, 400);
+  const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
+  const bcc = resolvedTest ? undefined : (webhookCfg?.bcc || undefined);
+
+  await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), cc, bcc });
+  console.log(`[EMAIL] Appeal decided → ${to}${cc ? ` cc:${cc}` : ""}${bcc ? ` bcc:${bcc}` : ""} (finding: ${findingId})`);
+  return json({ ok: true, to });
+}
+
+// -- Webhooks: Manager Review Email --
+
+async function handleManagerReviewWebhook(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const orgId = url.searchParams.get("org") as OrgId;
+  if (!orgId) return json({ error: "org required" }, 400);
+
+  const webhookCfg = await getWebhookConfig(orgId, "manager").catch(() => null);
+  const body = await req.json();
+  const { finding, findingId: fid, remediation } = body;
+  const findingId = fid ?? finding?.id ?? "";
+  if (!findingId) return json({ error: "findingId required" }, 400);
+
+  const template = await resolveWebhookTemplate(orgId, webhookCfg);
+  if (!template) return json({ ok: true, skipped: "no template configured" });
+
+  const agentEmail = String(finding?.owner ?? "");
+  const voEmail = String(finding?.record?.VoEmail ?? "");
+  const supervisorEmail = String(finding?.record?.SupervisorEmail ?? "");
+  const { full: agentName, first: teamMemberFirst } = parseVoName(String(finding?.record?.VoName ?? ""), agentEmail);
+
+  const vars: Record<string, string> = {
+    findingId,
+    agentName,
+    agentEmail: voEmail || agentEmail,
+    teamMemberFirst,
+    recordId: String(finding?.record?.RecordId ?? ""),
+    guestName: String(finding?.record?.GuestName ?? ""),
+    supervisorEmail,
+    managerNotes: remediation?.notes ?? "",
+    addressedBy: remediation?.addressedBy ?? "",
+    reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
+  };
+
+  const resolvedTest = webhookCfg?.testEmail || "";
+  const to = resolvedTest || (voEmail || agentEmail);
+  if (!to) return json({ error: "no recipient email" }, 400);
+  const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
+  const bcc = resolvedTest ? undefined : (webhookCfg?.bcc || undefined);
+
+  await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), cc, bcc });
+  console.log(`[EMAIL] Manager review → ${to}${cc ? ` cc:${cc}` : ""}${bcc ? ` bcc:${bcc}` : ""} (finding: ${findingId})`);
   return json({ ok: true, to });
 }
 

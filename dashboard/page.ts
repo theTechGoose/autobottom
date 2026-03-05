@@ -631,6 +631,13 @@ export function getDashboardPage(): string {
         <option value="">— First available template —</option>
       </select>
     </div>
+    <div id="wh-default-url-row" style="display:none;margin-top:10px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:6px;">Default Email Endpoint (auto-configured)</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <code id="wh-default-url-text" style="font-size:10px;color:var(--cyan);word-break:break-all;flex:1;line-height:1.5;"></code>
+        <button class="sf-btn ghost" id="wh-default-url-copy" style="font-size:10px;white-space:nowrap;flex-shrink:0;">Copy</button>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="sf-btn secondary" id="webhook-cancel">Cancel</button>
       <button class="sf-btn primary" id="a-settings-save">Save</button>
@@ -1767,6 +1774,15 @@ export function getDashboardPage(): string {
     if (EMAIL_KINDS.includes(kind)) {
       document.getElementById('a-template-id').value = d.emailTemplateId || '';
     }
+    var defaultUrlRow = document.getElementById('wh-default-url-row');
+    if (kind === 'terminate') {
+      var orgId = currentOrgId || 'YOUR_ORG_ID';
+      var defaultUrl = window.location.origin + '/webhooks/audit-complete?org=' + encodeURIComponent(orgId);
+      document.getElementById('wh-default-url-text').textContent = defaultUrl;
+      defaultUrlRow.style.display = '';
+    } else {
+      defaultUrlRow.style.display = 'none';
+    }
   }
 
   function loadWebhookTab(kind) {
@@ -1791,6 +1807,15 @@ export function getDashboardPage(): string {
   document.getElementById('wh-tabs').addEventListener('click', function(e) {
     var tab = e.target.closest('.wh-tab');
     if (tab) loadWebhookTab(tab.getAttribute('data-kind'));
+  });
+
+  document.getElementById('wh-default-url-copy').addEventListener('click', function() {
+    var text = document.getElementById('wh-default-url-text').textContent;
+    navigator.clipboard.writeText(text).then(function() {
+      var btn = document.getElementById('wh-default-url-copy');
+      btn.textContent = 'Copied!';
+      setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+    });
   });
 
   document.getElementById('webhook-open').addEventListener('click', function() {

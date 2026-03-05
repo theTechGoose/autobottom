@@ -722,6 +722,7 @@ async function handleAdminSaveSettings(req: Request): Promise<Response> {
     postHeaders: body.postHeaders ?? {},
     ...(body.testEmail ? { testEmail: String(body.testEmail) } : {}),
     ...(body.emailTemplateId ? { emailTemplateId: String(body.emailTemplateId) } : {}),
+    ...(body.bcc ? { bcc: String(body.bcc) } : {}),
   };
   await saveWebhookConfig(auth.orgId, kind, config);
   return json({ ok: true });

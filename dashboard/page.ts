@@ -1752,7 +1752,7 @@ export function getDashboardPage(): string {
   fetch('/admin/email-templates').then(function(r){return r.json()}).then(function(list){
     etTemplateList = Array.isArray(list) ? list : [];
     var sel = document.getElementById('a-template-id');
-    sel.innerHTML = '<option value="">— First available template —</option>';
+    sel.innerHTML = '<option value="">— No template (email disabled) —</option>';
     etTemplateList.forEach(function(t) {
       var opt = document.createElement('option');
       opt.value = t.id;

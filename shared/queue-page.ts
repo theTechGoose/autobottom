@@ -833,7 +833,36 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         <kbd style="background:#0f1a14;border:1px solid rgba(34,197,94,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#22c55e;font-family:monospace;">N</kbd>
         Flip to Yes
       </button>
-    </div>` : ''}
+    </div>` : `
+    <div id="decision-btns" style="flex-direction:column;gap:8px;">
+      <button onclick="decide('uphold')" title="Uphold — bot was right, keep as No (Y)"
+        style="display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 0;border-radius:8px;border:1px solid rgba(20,184,166,0.35);background:rgba(20,184,166,0.08);color:#2dd4bf;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
+        <kbd style="background:#0a1e1c;border:1px solid rgba(20,184,166,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#14b8a6;font-family:monospace;">Y</kbd>
+        Uphold
+      </button>
+      <div style="display:flex;gap:8px;">
+        <button onclick="decide('overturn','error')" title="Overturn: Error (A)"
+          style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-radius:8px;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.07);color:#f85149;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;">
+          <kbd style="background:#1a0f0e;border:1px solid rgba(248,81,73,0.35);border-radius:3px;padding:1px 4px;font-size:10px;color:#f85149;font-family:monospace;">A</kbd>
+          Error
+        </button>
+        <button onclick="decide('overturn','logic')" title="Overturn: Logic (S)"
+          style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-radius:8px;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.07);color:#f85149;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;">
+          <kbd style="background:#1a0f0e;border:1px solid rgba(248,81,73,0.35);border-radius:3px;padding:1px 4px;font-size:10px;color:#f85149;font-family:monospace;">S</kbd>
+          Logic
+        </button>
+        <button onclick="decide('overturn','fragment')" title="Overturn: Fragment (D)"
+          style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-radius:8px;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.07);color:#f85149;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;">
+          <kbd style="background:#1a0f0e;border:1px solid rgba(248,81,73,0.35);border-radius:3px;padding:1px 4px;font-size:10px;color:#f85149;font-family:monospace;">D</kbd>
+          Fragment
+        </button>
+        <button onclick="decide('overturn','transcript')" title="Overturn: Transcript (F)"
+          style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-radius:8px;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.07);color:#f85149;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;">
+          <kbd style="background:#1a0f0e;border:1px solid rgba(248,81,73,0.35);border-radius:3px;padding:1px 4px;font-size:10px;color:#f85149;font-family:monospace;">F</kbd>
+          Transcript
+        </button>
+      </div>
+    </div>`}
   </div>
 
   <!-- Right: Transcript -->

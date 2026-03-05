@@ -239,8 +239,11 @@ export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Resp
     return json({ error: "no answered questions to appeal" }, 400);
   }
 
-  // Populate judge queue with ALL questions
-  await populateJudgeQueue(orgId, findingId, questions, "redo");
+  // Populate judge queue with only the disputed questions (or all if none specified)
+  const questionsToQueue = appealedQuestions.length > 0
+    ? questions.filter((q: any) => appealedQuestions.includes(q.header ?? ""))
+    : questions;
+  await populateJudgeQueue(orgId, findingId, questionsToQueue, "redo");
 
   // Save appeal record
   const appealedAt = Date.now();

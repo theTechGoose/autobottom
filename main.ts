@@ -256,10 +256,10 @@ const postRoutes: Record<string, Handler> = {
   "/webhooks/manager-review": handleManagerReviewWebhook,
   "/admin/reset-finding": handleResetFinding,
 
-  // Appeal (orgId in body)
-  "/audit/appeal": withBodyOrg(handleFileAppeal),
-  "/audit/appeal/different-recording": withBodyOrg(handleAppealDifferentRecording),
-  "/audit/appeal/upload-recording": withBodyOrg(handleAppealUploadRecording),
+  // Appeal (orgId from auth/query/default)
+  "/audit/appeal": withOrgId(handleFileAppeal),
+  "/audit/appeal/different-recording": withOrgId(handleAppealDifferentRecording),
+  "/audit/appeal/upload-recording": withOrgId(handleAppealUploadRecording),
 
   // Review API (auth handled internally)
   "/review/api/decide": handleDecide,
@@ -2217,7 +2217,7 @@ const DEFAULT_AUDIT_COMPLETE_HTML = `<!DOCTYPE html>
       <tr><td style="padding:0 32px 28px;">
         <table width="100%" cellpadding="0" cellspacing="0" style="background:#161b22;border:1px solid #21262d;border-left:3px solid #58a6ff;border-radius:0 6px 6px 0;">
           <tr><td style="padding:14px 16px;">
-            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#58a6ff;margin-bottom:6px;">Manager Notes</div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#58a6ff;margin-bottom:6px;">System Notes</div>
             <div style="font-size:13px;color:#c9d1d9;line-height:1.6;">{{feedbackText}}</div>
           </td></tr>
         </table>

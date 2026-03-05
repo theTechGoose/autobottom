@@ -40,6 +40,7 @@ export interface AppealRecord {
   judgedBy?: string;
   auditor?: string;
   comment?: string;
+  appealedQuestions?: string[];
 }
 
 export interface AppealStats {

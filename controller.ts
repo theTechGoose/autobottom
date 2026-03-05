@@ -221,6 +221,7 @@ export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Resp
 
   const findingId = body.findingId;
   const comment = body.comment;
+  const appealedQuestions: string[] = Array.isArray(body.appealedQuestions) ? body.appealedQuestions : [];
   if (!findingId) return json({ error: "findingId required" }, 400);
 
   // Check if appeal already exists
@@ -249,6 +250,7 @@ export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Resp
     status: "pending",
     auditor: f.owner,
     ...(comment ? { comment: String(comment) } : {}),
+    ...(appealedQuestions.length > 0 ? { appealedQuestions } : {}),
   });
 
   fireWebhook(orgId, "appeal", {
@@ -1008,14 +1010,15 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       ${(f as any).appealSourceFindingId ? `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--teal);margin-bottom:8px;padding:4px 10px;background:var(--teal-bg);border-radius:4px;display:inline-block;">Re-Audit</div>` : ""}
       <div class="hero-actions">
         ${passRate < 100 ? `<button class="appeal-btn" id="appeal-btn" onclick="confirmAppeal()">File Appeal</button>
-        <button class="appeal-btn" id="reaudit-btn" onclick="toggleAppealPanel()" style="background:var(--bg-surface);border:1px solid var(--border);font-size:11px;">Re-Audit</button>` : ""}
+        <button class="appeal-btn" id="reaudit-btn" onclick="toggleAppealPanel()" style="background:var(--bg-surface);border:1px solid var(--border);font-size:11px;">Submit New/More Genies</button>` : ""}
       </div>
       <!-- Appeal Confirmation (judge review) -->
       <div id="appeal-confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);z-index:200;align-items:center;justify-content:center;">
-        <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:28px 32px 22px;max-width:420px;width:90vw;animation:appealIn 0.16s ease;">
+        <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:28px 32px 22px;max-width:480px;width:90vw;animation:appealIn 0.16s ease;">
           <div style="font-size:16px;font-weight:700;color:#e6edf3;margin-bottom:6px;">File an Appeal?</div>
-          <div style="font-size:12px;color:#6e7681;margin-bottom:14px;line-height:1.5;">A judge will review the AI's decisions on this audit. Please explain what you believe was incorrectly assessed. Only one appeal can be filed per record.</div>
-          <textarea id="appeal-comment-input" placeholder="Explain what was wrong with the assessment..." style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:10px 12px;font-size:12px;font-family:inherit;resize:vertical;min-height:72px;outline:none;margin-bottom:14px;"></textarea>
+          <div style="font-size:12px;color:#6e7681;margin-bottom:12px;line-height:1.5;">Select the questions you believe were incorrectly assessed. A judge will review those decisions. Only one appeal can be filed per record.</div>
+          <div id="appeal-questions-list" style="margin-bottom:12px;max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
+          <textarea id="appeal-comment-input" placeholder="Additional context for the judge (optional)..." style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:10px 12px;font-size:12px;font-family:inherit;resize:vertical;min-height:60px;outline:none;margin-bottom:14px;"></textarea>
           <div style="display:flex;gap:10px;justify-content:flex-end;">
             <button onclick="document.getElementById('appeal-confirm-overlay').style.display='none'" style="padding:8px 18px;border-radius:7px;border:1px solid #1c2333;background:transparent;color:#6e7681;font-size:12px;font-weight:600;cursor:pointer;">Cancel</button>
             <button id="appeal-submit-btn" onclick="submitJudgeAppeal()" style="padding:8px 18px;border-radius:7px;border:none;background:#58a6ff;color:#fff;font-size:12px;font-weight:600;cursor:pointer;">File Appeal</button>
@@ -1184,23 +1187,38 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     var _snipStartMs = null;
     var _snipEndMs = null;
     var _uploadFile = null;
+    var _failedQuestions = ${JSON.stringify(questions.filter((q: any) => !isYesAnswer(q.answer)).map((q: any) => ({ header: q.header ?? "" })))};
 
     function confirmAppeal() {
       var btn = document.getElementById('appeal-btn');
       if (!btn || btn.disabled || btn.classList.contains('filed')) return;
       document.getElementById('appeal-comment-input').value = '';
+      var list = document.getElementById('appeal-questions-list');
+      list.innerHTML = _failedQuestions.map(function(q, i) {
+        return '<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:12px;color:#c9d1d9;background:#0d1117;border:1px solid #21262d;">' +
+          '<input type="checkbox" id="aq-' + i + '" checked style="margin-top:2px;accent-color:#58a6ff;flex-shrink:0;">' +
+          '<span>' + q.header + '</span></label>';
+      }).join('');
       document.getElementById('appeal-confirm-overlay').style.display = 'flex';
     }
 
     function submitJudgeAppeal() {
       var comment = document.getElementById('appeal-comment-input').value.trim();
       var submitBtn = document.getElementById('appeal-submit-btn');
+      var selectedQuestions = _failedQuestions.filter(function(_, i) {
+        var cb = document.getElementById('aq-' + i);
+        return cb && cb.checked;
+      }).map(function(q) { return q.header; });
+      if (selectedQuestions.length === 0) {
+        alert('Please select at least one question to appeal.');
+        return;
+      }
       submitBtn.disabled = true;
       submitBtn.textContent = 'Filing...';
       fetch('/audit/appeal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ findingId: '${esc(id)}', comment: comment }),
+        body: JSON.stringify({ findingId: '${esc(id)}', comment: comment, appealedQuestions: selectedQuestions }),
       })
         .then(function(r) { return r.json(); })
         .then(function(d) {

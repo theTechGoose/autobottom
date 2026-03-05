@@ -1409,19 +1409,26 @@ async function handleSaveBadWordConfig(req: Request): Promise<Response> {
 
 async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const templateId = url.searchParams.get("template");
-  const testEmail = url.searchParams.get("test");
   const orgId = url.searchParams.get("org") as OrgId;
 
   if (!orgId) return json({ error: "org required" }, 400);
+
+  // Read all config from the terminate webhook config — not URL params
+  const webhookCfg = await getWebhookConfig(orgId, "terminate").catch(() => null);
 
   const body = await req.json();
   const { finding, score } = body;
   if (!finding) return json({ error: "finding required" }, 400);
 
-  const template = templateId
-    ? await getEmailTemplate(orgId, templateId)
-    : (await listEmailTemplates(orgId))[0];
+  // Template: webhook config emailTemplateId → name match → first available
+  let template = null;
+  if (webhookCfg?.emailTemplateId) {
+    template = await getEmailTemplate(orgId, webhookCfg.emailTemplateId);
+  }
+  if (!template) {
+    const all = await listEmailTemplates(orgId);
+    template = all.find((t) => t.name.toLowerCase().includes("audit")) ?? all[0] ?? null;
+  }
   if (!template) return json({ error: "no template found" }, 404);
 
   console.log(`[WEBHOOK] finding.record keys:`, JSON.stringify(Object.keys(finding.record ?? {})));
@@ -1490,25 +1497,25 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     passedCount: String(passedCount),
     totalQuestions: String(allQs.length),
     crmUrl,
+    managerNotesDisplay: missedQs.length === 0 ? "display:none" : "",
   };
 
   const render = (str: string) => str.replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => vars[k] ?? "");
   const htmlBody = render(template.html);
   const subject = render(template.subject);
 
-  // Resolve test email: query param takes priority, then terminate webhook config's testEmail
-  const webhookCfg = await getWebhookConfig(orgId, "terminate").catch(() => null);
-  const resolvedTest = testEmail || webhookCfg?.testEmail || "";
+  // Test email from webhook config overrides all recipients; blank = live mode
+  const resolvedTest = webhookCfg?.testEmail || "";
 
   const to = resolvedTest || (voEmail || agentEmail);
   if (!to) return json({ error: "no recipient email" }, 400);
 
-  // In test mode, send only to test address (no real recipients)
+  // In test mode: only send to test address, no CC/BCC
   const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
-  const bcc = resolvedTest ? undefined : "ai@monsterrg.com,alexandera@monsterrg.com";
+  const bcc = resolvedTest ? undefined : (webhookCfg?.bcc || undefined);
 
   await sendEmail({ to, subject, htmlBody, cc, bcc });
-  console.log(`[EMAIL] Audit complete email → ${to}${cc ? ` cc:${cc}` : ""}${bcc ? " bcc:fixed" : ""} (finding: ${findingId})`);
+  console.log(`[EMAIL] Audit complete → ${to}${cc ? ` cc:${cc}` : ""}${bcc ? ` bcc:${bcc}` : ""} (finding: ${findingId})`);
   return json({ ok: true, to });
 }
 

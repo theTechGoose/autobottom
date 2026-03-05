@@ -117,7 +117,7 @@ export async function askQuestion(question: string, transcript: string, modelInd
     return parseLlmJson<LlmAnswer>(text, { answer: "Error!", thinking: "Error!", defense: "Error!" });
   } catch (e: any) {
     const msg = String(e?.message ?? e);
-    const isRateLimit = msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity");
+    const isRateLimit = msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity") || msg.includes("json_validate_failed");
     const nextIndex = modelIndex + 1;
     if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
       console.warn(`[LLM-FALLBACK] ${model} rate limited → trying ${FALLBACK_MODELS[nextIndex]}`);

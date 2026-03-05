@@ -348,8 +348,10 @@ export interface WebhookConfig {
   postHeaders: Record<string, string>;
   /** If set, all emails for this webhook kind go here instead of the real recipient (test mode). */
   testEmail?: string;
-  /** Template ID to use when sending direct emails for this webhook kind (appeal, judge). */
+  /** Template ID to use when sending direct emails for this webhook kind. */
   emailTemplateId?: string;
+  /** BCC recipients (comma-separated). Skipped when testEmail is set. */
+  bcc?: string;
 }
 
 export type WebhookKind = "terminate" | "appeal" | "manager" | "judge";
@@ -380,6 +382,26 @@ export async function saveWebhookConfig(orgId: OrgId, kind: WebhookKind, config:
 
 export async function fireWebhook(orgId: OrgId, kind: WebhookKind, payload: unknown): Promise<void> {
   const config = await getWebhookConfig(orgId, kind);
+
+  // For terminate events, always fire the self audit-complete endpoint so the email
+  // sends without requiring manual URL configuration. If the user has also set an
+  // external postUrl (different from our own endpoint), fire that too.
+  if (kind === "terminate") {
+    const selfUrl = Deno.env.get("SELF_URL");
+    if (selfUrl) {
+      const selfAuditUrl = `${selfUrl}/webhooks/audit-complete?org=${orgId}`;
+      const isExternalUrl = config?.postUrl && !config.postUrl.includes("/webhooks/audit-complete");
+      // Always fire self-email endpoint (unless postUrl IS already the self endpoint, handled below)
+      if (!config?.postUrl || isExternalUrl) {
+        fetch(selfAuditUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        }).catch((err) => console.error(`[WEBHOOK:terminate-email] self-email failed:`, err));
+      }
+    }
+  }
+
   if (!config?.postUrl) return;
 
   const headers: Record<string, string> = {

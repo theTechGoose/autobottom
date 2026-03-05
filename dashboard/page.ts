@@ -603,14 +603,14 @@ export function getDashboardPage(): string {
   <div class="modal">
     <div class="modal-title">Webhook Configuration</div>
     <div class="wh-tabs" id="wh-tabs">
-      <button class="wh-tab active" data-kind="terminate">Terminate</button>
+      <button class="wh-tab active" data-kind="terminate">Audit Complete</button>
       <button class="wh-tab" data-kind="appeal">Appeal</button>
       <button class="wh-tab" data-kind="manager">Manager</button>
       <button class="wh-tab" data-kind="judge-finish">Judge Finish</button>
     </div>
     <div class="modal-sub" id="wh-sub">Called when an audit review is completed</div>
     <div class="sf">
-      <label class="sf-label">POST URL</label>
+      <label class="sf-label">External Webhook URL <span style="color:var(--text-dim);font-weight:400;">(optional — for external integrations only)</span></label>
       <input type="text" class="sf-input" id="a-posturl" placeholder="https://example.com/webhook">
     </div>
     <div class="sf">
@@ -620,6 +620,10 @@ export function getDashboardPage(): string {
     <div class="sf">
       <label class="sf-label">Test Email <span style="color:var(--text-dim);font-weight:400;">(overrides all recipients when set — leave blank for live)</span></label>
       <input type="text" class="sf-input" id="a-test-email" placeholder="yourname@example.com">
+    </div>
+    <div class="sf">
+      <label class="sf-label">BCC <span style="color:var(--text-dim);font-weight:400;">(comma-separated — skipped when test email is set)</span></label>
+      <input type="text" class="sf-input" id="a-bcc" placeholder="email1@example.com,email2@example.com">
     </div>
     <div class="sf" id="wh-template-row" style="display:none;">
       <label class="sf-label">Email Template <span style="color:var(--text-dim);font-weight:400;">(used for direct emails on this event)</span></label>
@@ -1733,7 +1737,7 @@ export function getDashboardPage(): string {
   // ===== Webhook Modal =====
   var modal = document.getElementById('webhook-modal');
   var whKind = 'terminate';
-  var whSubs = { terminate: 'Called when an audit is terminated (100% first pass or review completed)', appeal: 'Called when an appeal is filed', manager: 'Called when remediation is submitted', 'judge-finish': 'Called when a judge finishes all appeal decisions for an audit' };
+  var whSubs = { terminate: 'Called when an audit is complete (100% first pass or review completed)', appeal: 'Called when an appeal is filed', manager: 'Called when remediation is submitted', 'judge-finish': 'Called when a judge finishes all appeal decisions for an audit' };
   var whCache = {};
   var etTemplateList = [];
 
@@ -1757,6 +1761,7 @@ export function getDashboardPage(): string {
     document.getElementById('a-posturl').value = d.postUrl || '';
     document.getElementById('a-headers').value = d.postHeaders ? JSON.stringify(d.postHeaders, null, 2) : '';
     document.getElementById('a-test-email').value = d.testEmail || '';
+    document.getElementById('a-bcc').value = d.bcc || '';
     var templateRow = document.getElementById('wh-template-row');
     templateRow.style.display = EMAIL_KINDS.includes(kind) ? '' : 'none';
     if (EMAIL_KINDS.includes(kind)) {
@@ -1775,6 +1780,7 @@ export function getDashboardPage(): string {
       document.getElementById('a-posturl').value = '';
       document.getElementById('a-headers').value = '';
       document.getElementById('a-test-email').value = '';
+      document.getElementById('a-bcc').value = '';
       fetch('/admin/settings/' + kind).then(function(r){return r.json()}).then(function(d) {
         whCache[kind] = d;
         if (whKind === kind) applyWebhookData(kind, d);
@@ -1811,10 +1817,12 @@ export function getDashboardPage(): string {
     var raw = document.getElementById('a-headers').value.trim(), headers = {};
     if (raw) { try { headers = JSON.parse(raw); } catch(e) { toast('Invalid JSON','error'); return; } }
     var testEmail = document.getElementById('a-test-email').value.trim();
+    var bcc = document.getElementById('a-bcc').value.trim();
     var emailTemplateId = EMAIL_KINDS.includes(whKind) ? (document.getElementById('a-template-id').value || '') : '';
     btnLoad(btn);
     var saved = { postUrl: url, postHeaders: headers };
     if (testEmail) saved.testEmail = testEmail;
+    if (bcc) saved.bcc = bcc;
     if (emailTemplateId) saved.emailTemplateId = emailTemplateId;
     fetch('/admin/settings/' + whKind, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(saved) })
     .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})

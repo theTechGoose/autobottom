@@ -1289,7 +1289,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       var checkAllHtml = '';
       if (_failedQuestions.length > 1) {
         checkAllHtml = '<div style="margin-bottom:8px;">' +
-          '<button id="aq-all-btn" onclick="handleCheckAll()" style="padding:4px 14px;border-radius:6px;border:1px solid #6e57e0;background:rgba(110,87,224,0.12);color:#a78bfa;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.3px;transition:background 0.15s;" onmouseover="this.style.background=\'rgba(110,87,224,0.22)\'" onmouseout="this.style.background=\'rgba(110,87,224,0.12)\'">Check All</button>' +
+          '<button id="aq-all-btn" onclick="handleCheckAll()" style="padding:4px 14px;border-radius:6px;border:1px solid #6e57e0;background:rgba(110,87,224,0.12);color:#a78bfa;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.3px;">Check All</button>' +
           '</div>' +
           '<div style="height:1px;background:#30363d;margin-bottom:6px;"></div>';
       }

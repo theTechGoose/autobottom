@@ -1267,7 +1267,17 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         var cb = document.getElementById('aq-' + i);
         if (cb) cb.checked = checked;
       });
+      var btn = document.getElementById('aq-all-btn');
+      if (btn) btn.textContent = checked ? 'Uncheck All' : 'Check All';
       updateAppealSubmitState();
+    }
+
+    function handleCheckAll() {
+      var allChecked = _failedQuestions.every(function(_, i) {
+        var cb = document.getElementById('aq-' + i);
+        return cb && cb.checked;
+      });
+      toggleAllAppealQuestions(!allChecked);
     }
 
     function confirmAppeal() {
@@ -1278,10 +1288,10 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       var list = document.getElementById('appeal-questions-list');
       var checkAllHtml = '';
       if (_failedQuestions.length > 1) {
-        checkAllHtml = '<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;color:#8b949e;margin-bottom:4px;">' +
-          '<input type="checkbox" id="aq-all" style="accent-color:#58a6ff;" onchange="toggleAllAppealQuestions(this.checked)">' +
-          '<span>Check All</span></label>' +
-          '<div style="height:1px;background:#30363d;margin-bottom:4px;"></div>';
+        checkAllHtml = '<div style="margin-bottom:8px;">' +
+          '<button id="aq-all-btn" onclick="handleCheckAll()" style="padding:4px 14px;border-radius:6px;border:1px solid #6e57e0;background:rgba(110,87,224,0.12);color:#a78bfa;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.3px;transition:background 0.15s;" onmouseover="this.style.background=\'rgba(110,87,224,0.22)\'" onmouseout="this.style.background=\'rgba(110,87,224,0.12)\'">Check All</button>' +
+          '</div>' +
+          '<div style="height:1px;background:#30363d;margin-bottom:6px;"></div>';
       }
       list.innerHTML = checkAllHtml + _failedQuestions.map(function(q, i) {
         return '<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:12px;color:#c9d1d9;background:#0d1117;border:1px solid #21262d;">' +
@@ -1412,7 +1422,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
 
     function validateRecordingInput(inp) {
       var v = inp.value.trim();
-      inp.style.borderColor = isAllDigits(v) ? 'var(--teal)' : '';
+      inp.style.borderColor = isAllDigits(v) ? '#3d7a5a' : '';
     }
 
     function onRecordingPaste(e, inp) {

@@ -6,7 +6,7 @@ import { generateFeedback } from "../providers/groq.ts";
 import { answerQuestion } from "../types/mod.ts";
 import type { IAnsweredQuestion } from "../types/mod.ts";
 import { populateReviewQueue } from "../review/kv.ts";
-import { populateJudgeQueue, saveAppeal } from "../judge/kv.ts";
+import { populateJudgeQueue, saveAppeal, getAppeal } from "../judge/kv.ts";
 import { checkBadges } from "../shared/badges.ts";
 import { env } from "../env.ts";
 
@@ -110,17 +110,25 @@ export async function stepFinalize(req: Request): Promise<Response> {
   if (finding.answeredQuestions?.length) {
     try {
       if (isAppealReAudit) {
-        // Appeal re-audits go to judge queue (ALL questions, not just "No")
+        // Appeal re-audits go to judge queue — only the originally disputed questions
         const f = finding as Record<string, any>;
-        await populateJudgeQueue(orgId, findingId, finding.answeredQuestions as any[], f.appealType);
+        const sourceFindingId = f.appealSourceFindingId as string;
+        const originalAppeal = await getAppeal(orgId, sourceFindingId).catch(() => null);
+        const disputedHeaders: string[] = originalAppeal?.appealedQuestions ?? [];
+        const allAnswered = finding.answeredQuestions as any[];
+        const questionsToQueue = disputedHeaders.length > 0
+          ? allAnswered.filter((q: any) => disputedHeaders.includes(q.header ?? ""))
+          : allAnswered;
+        await populateJudgeQueue(orgId, findingId, questionsToQueue, f.appealType);
         await saveAppeal(orgId, {
           findingId,
           appealedAt: Date.now(),
           status: "pending",
           auditor: finding.owner,
           comment: f.appealComment,
+          ...(disputedHeaders.length > 0 ? { appealedQuestions: disputedHeaders } : {}),
         });
-        console.log(`[STEP-FINALIZE] ${findingId}: Appeal re-audit routed to judge queue`);
+        console.log(`[STEP-FINALIZE] ${findingId}: Appeal re-audit routed to judge queue (${questionsToQueue.length}/${allAnswered.length} disputed questions)`);
       } else {
         // Normal audits go to review queue with "No" answers
         await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[]);

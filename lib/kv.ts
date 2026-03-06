@@ -22,13 +22,18 @@ class ChunkedKv {
   async set(prefix: Deno.KvKey, value: unknown, options?: { expireIn?: number }) {
     const raw = JSON.stringify(value);
     if (raw.length <= CHUNK_LIMIT) {
+      // Write _n=0 first so concurrent readers see null (key gone) rather than
+      // stale _n=1 pointing at a now-oversized chunk0 during a single→multi transition.
+      await this.#db.set([...prefix, "_n"], 0, options);
       await this.#db.set([...prefix, 0], raw, options);
       await this.#db.set([...prefix, "_n"], 1, options);
       return;
     }
     const n = Math.ceil(raw.length / CHUNK_LIMIT);
-    // Write chunks sequentially — atomic batch would exceed Deno KV's 800KB per-commit limit for large findings.
-    // _n is written last so readers only see complete data.
+    // Write _n=0 first — readers that race during the chunk writes see null rather
+    // than corrupt data from a stale _n pointing at partially-written new chunks.
+    // Atomic batch would exceed Deno KV's 800KB per-commit limit for large findings.
+    await this.#db.set([...prefix, "_n"], 0, options ?? {});
     for (let i = 0; i < n; i++) {
       await this.#db.set([...prefix, i], raw.slice(i * CHUNK_LIMIT, (i + 1) * CHUNK_LIMIT), options ?? {});
     }
@@ -38,7 +43,7 @@ class ChunkedKv {
   /** Read a chunked value back. Returns null if not found. */
   async get<T = unknown>(prefix: Deno.KvKey): Promise<T | null> {
     const meta = await this.#db.get<number>([...prefix, "_n"]);
-    if (meta.value == null) return null;
+    if (meta.value == null || meta.value === 0) return null;
     const parts: string[] = [];
     for (let i = 0; i < meta.value; i++) {
       const entry = await this.#db.get<string>([...prefix, i]);
@@ -49,7 +54,12 @@ class ChunkedKv {
       parts.push(entry.value);
     }
     if (parts.length === 0) return null;
-    return JSON.parse(parts.join("")) as T;
+    try {
+      return JSON.parse(parts.join("")) as T;
+    } catch (err) {
+      console.error(`[ChunkedKv] JSON.parse failed for key ${JSON.stringify(prefix)} (${parts.join("").length} chars):`, err);
+      return null;
+    }
   }
 
   /** Delete all chunks for a prefix. */

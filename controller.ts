@@ -1317,12 +1317,9 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
 
     function validateRecordingInput(inp) {
       var v = inp.value.trim();
-      if (!v) { inp.style.borderColor = ''; return; }
-      inp.style.borderColor = /^\d{8}$/.test(v) ? 'var(--teal)' : 'var(--red)';
+      // Green for valid 8-digit ID, neutral otherwise — red only on submit attempt
+      inp.style.borderColor = (v && /^\d{8}$/.test(v)) ? 'var(--teal)' : '';
     }
-
-    // Validate pre-filled first input on load
-    (function() { var el = document.getElementById('recording-input-first'); if (el) validateRecordingInput(el); })();
 
     function onRecordingPaste(e, inp) {
       e.preventDefault();

@@ -2215,7 +2215,7 @@ export function getDashboardPage(): string {
 
   function etUpdatePreview() {
     var html = document.getElementById('et-html').value;
-    html = html.replace(/\{\{logoUrl\}\}/g, '/favicon.svg');
+    html = html.replace(/\{\{logoUrl\}\}/g, '/logo.png');
     document.getElementById('et-preview').srcdoc = html;
   }
 

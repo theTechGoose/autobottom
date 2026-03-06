@@ -394,15 +394,24 @@ export async function fireWebhook(orgId: OrgId, kind: WebhookKind, payload: unkn
   const selfEmailPath = selfEmailEndpoints[kind];
   if (selfEmailPath) {
     const selfUrl = Deno.env.get("SELF_URL");
-    if (selfUrl) {
+    if (!selfUrl) {
+      console.warn(`[WEBHOOK:${kind}] SELF_URL not set — cannot fire self-email`);
+    } else {
       const selfEndpointUrl = `${selfUrl}${selfEmailPath}?org=${orgId}`;
       const isExternalUrl = config?.postUrl && !config.postUrl.includes(selfEmailPath);
       if (!config?.postUrl || isExternalUrl) {
+        console.log(`[WEBHOOK:${kind}] Firing self-email → ${selfEndpointUrl}`);
         fetch(selfEndpointUrl, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(payload),
+        }).then(async (r) => {
+          const text = await r.text();
+          if (!r.ok) console.error(`[WEBHOOK:${kind}-email] self-email HTTP ${r.status}: ${text}`);
+          else console.log(`[WEBHOOK:${kind}-email] self-email response: ${text.slice(0, 200)}`);
         }).catch((err) => console.error(`[WEBHOOK:${kind}-email] self-email failed:`, err));
+      } else {
+        console.log(`[WEBHOOK:${kind}] Skipping self-email (postUrl already covers it): ${config?.postUrl}`);
       }
     }
   }

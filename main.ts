@@ -108,18 +108,22 @@ import type { StoreItem } from "./shared/badges.ts";
 // Impersonation
 import { getImpersonateSnippet } from "./shared/impersonate-bar.ts";
 
-// -- Logo --
+// -- Logo PNG (rasterized on demand via resvg-wasm) --
 
-let _logoDataUri: string | undefined;
-async function getLogoDataUri(): Promise<string> {
-  if (_logoDataUri !== undefined) return _logoDataUri;
+let _logoPng: Uint8Array | null = null;
+async function getLogoPng(): Promise<Uint8Array | null> {
+  if (_logoPng) return _logoPng;
   try {
+    const { initWasm, Resvg } = await import("npm:@resvg/resvg-wasm");
+    // Load WASM from the package — Deno resolves this from the npm cache
+    await initWasm(fetch("https://unpkg.com/@resvg/resvg-wasm@2.6.2/index_bg.wasm"));
     const svg = await Deno.readTextFile(new URL("./favicon.svg", import.meta.url));
-    _logoDataUri = `data:image/svg+xml;base64,${btoa(svg)}`;
-  } catch {
-    _logoDataUri = "";
+    const resvg = new Resvg(svg, { fitTo: { mode: "width", value: 64 } });
+    _logoPng = resvg.render().asPng();
+  } catch (err) {
+    console.warn("[LOGO] PNG generation failed:", err);
   }
-  return _logoDataUri;
+  return _logoPng;
 }
 
 // -- Helpers --
@@ -1462,15 +1466,22 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   const orgId = url.searchParams.get("org") as OrgId;
   if (!orgId) return json({ error: "org required" }, 400);
 
-  const webhookCfg = await getWebhookConfig(orgId, "terminate").catch(() => null);
+  const webhookCfg = await getWebhookConfig(orgId, "terminate").catch((err) => {
+    console.error(`[EMAIL] audit-complete: getWebhookConfig failed:`, err);
+    return null;
+  });
+  console.log(`[EMAIL] audit-complete: org=${orgId} emailTemplateId=${webhookCfg?.emailTemplateId ?? "NONE"} testEmail=${webhookCfg?.testEmail ?? ""}`);
+
   const body = await req.json();
   const { finding, score } = body;
   if (!finding) return json({ error: "finding required" }, 400);
 
   const template = await resolveWebhookTemplate(orgId, webhookCfg);
-  if (!template) return json({ ok: true, skipped: "no template configured" });
-
-  console.log(`[WEBHOOK] finding.record keys:`, JSON.stringify(Object.keys(finding.record ?? {})));
+  if (!template) {
+    console.log(`[EMAIL] audit-complete: skipped — emailTemplateId=${webhookCfg?.emailTemplateId ?? "not set"}`);
+    return json({ ok: true, skipped: "no template configured" });
+  }
+  console.log(`[EMAIL] audit-complete: template="${template.name}" subject="${template.subject}"`);
 
   const agentEmail = finding.owner ?? "";
   const voEmail = String(finding.record?.VoEmail ?? "");
@@ -1519,18 +1530,24 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     totalQuestions: String(allQs.length),
     crmUrl,
     managerNotesDisplay: missedQs.length === 0 ? "display:none" : "",
-    logoUrl: await getLogoDataUri() || `${env.selfUrl}/favicon.svg`,
+    logoUrl: `${env.selfUrl}/logo.png`,
     selfUrl: env.selfUrl,
   };
 
   const resolvedTest = webhookCfg?.testEmail || "";
   const to = resolvedTest || (voEmail || agentEmail);
+  console.log(`[EMAIL] audit-complete: to=${to} cc=${supervisorEmail || "none"} bcc=${webhookCfg?.bcc || "none"} score=${scoreVal}% finding=${findingId}`);
   if (!to) return json({ error: "no recipient email" }, 400);
   const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
   const bcc = resolvedTest ? undefined : (webhookCfg?.bcc || undefined);
 
-  await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), cc, bcc });
-  console.log(`[EMAIL] Audit complete → ${to}${cc ? ` cc:${cc}` : ""}${bcc ? ` bcc:${bcc}` : ""} (finding: ${findingId})`);
+  try {
+    await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), cc, bcc });
+    console.log(`[EMAIL] ✅ Audit complete sent → ${to}${cc ? ` cc:${cc}` : ""}${bcc ? ` bcc:${bcc}` : ""} (finding: ${findingId})`);
+  } catch (err) {
+    console.error(`[EMAIL] ❌ Audit complete send failed (finding: ${findingId}):`, err);
+    return json({ error: "email send failed" }, 500);
+  }
   return json({ ok: true, to });
 }
 
@@ -1564,7 +1581,7 @@ async function handleAppealFiledWebhook(req: Request): Promise<Response> {
     judgeUrl: `${env.selfUrl}/judge`,
     comment: comment ?? "",
     appealedAt: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }) + " EST",
-    logoUrl: await getLogoDataUri() || `${env.selfUrl}/favicon.svg`,
+    logoUrl: `${env.selfUrl}/logo.png`,
     selfUrl: env.selfUrl,
   };
 
@@ -1615,7 +1632,7 @@ async function handleAppealDecidedWebhook(req: Request): Promise<Response> {
     totalQuestions: String(totalQuestions ?? 0),
     judgedBy: judgedBy ?? "",
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
-    logoUrl: await getLogoDataUri() || `${env.selfUrl}/favicon.svg`,
+    logoUrl: `${env.selfUrl}/logo.png`,
     selfUrl: env.selfUrl,
   };
 
@@ -1662,7 +1679,7 @@ async function handleManagerReviewWebhook(req: Request): Promise<Response> {
     managerNotes: remediation?.notes ?? "",
     addressedBy: remediation?.addressedBy ?? "",
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
-    logoUrl: await getLogoDataUri() || `${env.selfUrl}/favicon.svg`,
+    logoUrl: `${env.selfUrl}/logo.png`,
     selfUrl: env.selfUrl,
   };
 
@@ -2631,6 +2648,14 @@ Deno.serve(async (req) => {
       const svg = await Deno.readTextFile(new URL("./favicon.svg", import.meta.url));
       return new Response(svg, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" } });
     } catch { return new Response("", { status: 404 }); }
+  }
+
+  // Logo PNG (for email clients that block SVG — Gmail, etc.)
+  if (url.pathname === "/logo.png") {
+    const png = await getLogoPng();
+    if (png) return new Response(png, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
+    // Fallback: redirect to SVG
+    return Response.redirect(`${env.selfUrl}/favicon.svg`, 302);
   }
 
   // Serve sound files from S3: /sounds/{orgId}/{packId}/{slot}.mp3

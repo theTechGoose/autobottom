@@ -843,8 +843,6 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       outline: none; transition: border-color 0.15s;
     }
     .recording-input:focus { border-color: var(--teal); }
-    .recording-input.valid { border-color: var(--teal); }
-    .recording-input.invalid { border-color: var(--red); }
     .recording-remove {
       background: none; border: none; color: var(--red); cursor: pointer; font-size: 16px;
       padding: 4px 8px; border-radius: 4px; transition: background 0.15s;
@@ -1045,7 +1043,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           <div class="fork-label">Provide corrected or additional Recording IDs</div>
           <div class="recording-inputs" id="recording-inputs">
             <div class="recording-row">
-              <input type="text" class="recording-input" id="recording-input-first" value="${esc(String(f.recordingId ?? ""))}" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onblur="onRecordingInput(this)" onpaste="onRecordingPaste(event, this)" />
+              <input type="text" class="recording-input" id="recording-input-first" value="${esc(String(f.recordingId ?? ""))}" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onblur="validateRecordingInput(this)" onpaste="onRecordingPaste(event, this)" />
               <button class="recording-remove" style="visibility:hidden;" disabled>&times;</button>
             </div>
           </div>
@@ -1304,30 +1302,34 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       var container = document.getElementById('recording-inputs');
       var row = document.createElement('div');
       row.className = 'recording-row';
-      row.innerHTML = '<input type="text" class="recording-input" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onblur="onRecordingInput(this)" onpaste="onRecordingPaste(event, this)" /><button class="recording-remove" onclick="this.parentElement.remove()">&times;</button>';
+      row.innerHTML = '<input type="text" class="recording-input" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onblur="validateRecordingInput(this)" onpaste="onRecordingPaste(event, this)" /><button class="recording-remove" onclick="this.parentElement.remove()">&times;</button>';
       container.appendChild(row);
       var inp = row.querySelector('.recording-input');
-      if (value) { inp.value = value; onRecordingInput(inp); }
+      if (value) { inp.value = value; validateRecordingInput(inp); }
       else inp.focus();
       return inp;
     }
 
     function onRecordingInput(inp) {
+      // Clear validation feedback while typing — neutral state
+      inp.style.borderColor = '';
+    }
+
+    function validateRecordingInput(inp) {
       var v = inp.value.trim();
-      if (!v) { inp.classList.remove('valid', 'invalid'); return; }
-      if (/^\d{8}$/.test(v)) { inp.classList.add('valid'); inp.classList.remove('invalid'); }
-      else { inp.classList.add('invalid'); inp.classList.remove('valid'); }
+      if (!v) { inp.style.borderColor = ''; return; }
+      inp.style.borderColor = /^\d{8}$/.test(v) ? 'var(--teal)' : 'var(--red)';
     }
 
     // Validate pre-filled first input on load
-    (function() { var el = document.getElementById('recording-input-first'); if (el) onRecordingInput(el); })();
+    (function() { var el = document.getElementById('recording-input-first'); if (el) validateRecordingInput(el); })();
 
     function onRecordingPaste(e, inp) {
       e.preventDefault();
       var text = (e.clipboardData || window.clipboardData).getData('text');
       var parts = text.split(/[,\s]+/).map(function(s) { return s.trim(); }).filter(Boolean);
-      if (parts.length <= 1) { inp.value = parts[0] || ''; onRecordingInput(inp); return; }
-      inp.value = parts[0]; onRecordingInput(inp);
+      if (parts.length <= 1) { inp.value = parts[0] || ''; validateRecordingInput(inp); return; }
+      inp.value = parts[0]; validateRecordingInput(inp);
       for (var i = 1; i < parts.length; i++) { addRecordingInput(parts[i]); }
     }
 
@@ -1338,7 +1340,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       inputs.forEach(function(inp) {
         var v = inp.value.trim();
         if (!v) return;
-        if (!/^\d{8}$/.test(v)) { inp.classList.add('invalid'); hasInvalid = true; }
+        if (!/^\d{8}$/.test(v)) { inp.style.borderColor = 'var(--red)'; hasInvalid = true; }
         else ids.push(v);
       });
       if (hasInvalid) return;

@@ -1045,7 +1045,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           <div class="fork-label">Provide corrected or additional Recording IDs</div>
           <div class="recording-inputs" id="recording-inputs">
             <div class="recording-row">
-              <input type="text" class="recording-input" value="${esc(String(f.recordingId ?? ""))}" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onpaste="onRecordingPaste(event, this)" />
+              <input type="text" class="recording-input" id="recording-input-first" value="${esc(String(f.recordingId ?? ""))}" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onblur="onRecordingInput(this)" onpaste="onRecordingPaste(event, this)" />
+              <button class="recording-remove" style="visibility:hidden;" disabled>&times;</button>
             </div>
           </div>
           <button class="fork-add-btn" onclick="addRecordingInput()">+ Add Another</button>
@@ -1303,7 +1304,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       var container = document.getElementById('recording-inputs');
       var row = document.createElement('div');
       row.className = 'recording-row';
-      row.innerHTML = '<input type="text" class="recording-input" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onpaste="onRecordingPaste(event, this)" /><button class="recording-remove" onclick="this.parentElement.remove()">&times;</button>';
+      row.innerHTML = '<input type="text" class="recording-input" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onblur="onRecordingInput(this)" onpaste="onRecordingPaste(event, this)" /><button class="recording-remove" onclick="this.parentElement.remove()">&times;</button>';
       container.appendChild(row);
       var inp = row.querySelector('.recording-input');
       if (value) { inp.value = value; onRecordingInput(inp); }
@@ -1317,6 +1318,9 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       if (/^\d{8}$/.test(v)) { inp.classList.add('valid'); inp.classList.remove('invalid'); }
       else { inp.classList.add('invalid'); inp.classList.remove('valid'); }
     }
+
+    // Validate pre-filled first input on load
+    (function() { var el = document.getElementById('recording-input-first'); if (el) onRecordingInput(el); })();
 
     function onRecordingPaste(e, inp) {
       e.preventDefault();

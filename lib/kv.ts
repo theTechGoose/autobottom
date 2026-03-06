@@ -364,7 +364,7 @@ export interface WebhookConfig {
   bcc?: string;
 }
 
-export type WebhookKind = "terminate" | "appeal" | "manager" | "judge";
+export type WebhookKind = "terminate" | "appeal" | "manager" | "judge" | "re-audit-receipt";
 
 export async function getWebhookConfig(orgId: OrgId, kind: WebhookKind): Promise<WebhookConfig | null> {
   const db = await kv();

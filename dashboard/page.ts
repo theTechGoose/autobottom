@@ -607,6 +607,7 @@ export function getDashboardPage(): string {
       <button class="wh-tab" data-kind="appeal">Appeal Filed</button>
       <button class="wh-tab" data-kind="manager">Manager Review</button>
       <button class="wh-tab" data-kind="judge-finish">Judge Finish</button>
+      <button class="wh-tab" data-kind="re-audit-receipt">Re-Audit Receipt</button>
     </div>
     <div class="modal-sub" id="wh-sub">Called when an audit review is completed</div>
     <div class="sf">
@@ -1743,7 +1744,7 @@ export function getDashboardPage(): string {
   // ===== Webhook Modal =====
   var modal = document.getElementById('webhook-modal');
   var whKind = 'terminate';
-  var whSubs = { terminate: 'Called when an audit is complete (100% first pass or review completed)', appeal: 'Called when an agent files an appeal', manager: 'Called when a manager submits a remediation note on a failed audit', 'judge-finish': 'Called when a judge finishes all appeal decisions for an audit' };
+  var whSubs = { terminate: 'Called when an audit is complete (100% first pass or review completed)', appeal: 'Called when an agent files an appeal', manager: 'Called when a manager submits a remediation note on a failed audit', 'judge-finish': 'Called when a judge finishes all appeal decisions for an audit', 're-audit-receipt': 'Sent to the agent when they request a receipt email after submitting a re-audit' };
   var whCache = {};
   var etTemplateList = [];
 
@@ -1761,7 +1762,7 @@ export function getDashboardPage(): string {
   }).catch(function(){});
 
   // Kinds that have direct email sending and need template/testEmail fields
-  var EMAIL_KINDS = ['terminate', 'appeal', 'manager', 'judge-finish'];
+  var EMAIL_KINDS = ['terminate', 'appeal', 'manager', 'judge-finish', 're-audit-receipt'];
 
   function applyWebhookData(kind, d) {
     document.getElementById('a-posturl').value = d.postUrl || '';

@@ -387,6 +387,116 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 
 ---
 
+## 21. Diarized Transcript Guard
+
+### Files
+- `controller.ts`
+
+### Changes
+- `handleGetReport` now only uses the diarized transcript if it actually contains `[AGENT]` or `[CUSTOMER]` speaker labels.
+- If diarized text is absent or is a Groq artifact (e.g. "The final reformatted response is as above."), falls back to raw transcript.
+- Fallback chain: `storedTranscript.diarized` (if has labels) → `storedTranscript.raw` → `finding.diarizedTranscript` → `finding.rawTranscript`.
+
+---
+
+## 22. Robot Logo PNG Endpoint
+
+### Files
+- `main.ts`
+- `favicon.svg`
+
+### Changes
+- `GET /logo.png` route added — serves the robot SVG rasterized to a 64×64 PNG using `@resvg/resvg-wasm` (pure WASM, no native binaries, works on Deno Deploy).
+- PNG is generated once on first request and cached in memory (`_logoPng`).
+- Falls back to a 302 redirect to `/favicon.svg` if WASM init fails.
+- Used because Gmail blocks both inline SVG and hosted SVG in `<img>` tags; PNG is the only reliable option.
+
+---
+
+## 23. Email Webhook — Logo Variable + Comprehensive Logging
+
+### Files
+- `main.ts`
+- `lib/kv.ts`
+- `dashboard/page.ts`
+
+### Changes
+
+#### Logo in email templates
+- `{{logoUrl}}` template variable added — resolves to `${env.selfUrl}/logo.png` in all four webhook handlers (`audit-complete`, appeal filed, appeal result, re-audit result).
+- `{{selfUrl}}` variable also added (base URL, useful for constructing custom links).
+- `etUpdatePreview()` in the email template editor substitutes `{{logoUrl}}` → `/logo.png` before setting the preview iframe `srcdoc`, so the robot logo renders in the live preview.
+
+#### Webhook logging
+- `fireWebhook()` in `lib/kv.ts` logs when it fires a self-email and logs the HTTP status + first 200 chars of the response body.
+- `handleAuditCompleteWebhook` in `main.ts` logs `emailTemplateId`, `testEmail`, resolved recipient, CC/BCC, score, and findingId before sending. Wraps `sendEmail()` in try/catch and logs `❌` on failure.
+
+---
+
+## 24. Judge Queue — Disputed Questions Only
+
+### Files
+- `steps/finalize.ts`
+- `judge/kv.ts`
+
+### Changes
+- Previously, when a re-audit finding finalized, **all** newly answered questions were sent to the judge queue — even ones the agent never disputed.
+- Now, on the re-audit path (`isAppealReAudit` / `appealSourceFindingId` present), `finalize.ts` looks up the original appeal record via `getAppeal()`, reads its `appealedQuestions` array (the specific question headers the agent disputed), and filters `answeredQuestions` to only the disputed subset before calling `populateJudgeQueue()`.
+- If the original appeal has no `appealedQuestions` (legacy), falls back to queuing all answers.
+- `appealedQuestions` is also preserved on the new appeal record created during re-audit.
+- `getAppeal` import added from `../judge/kv.ts`.
+
+---
+
+## 25. ChunkedKv Race Condition Fix (v2)
+
+### Files
+- `lib/kv.ts`
+
+### Changes
+**Root cause:** `prepare` and `diarize-async` run in parallel. When `prepare` saves an updated finding that crossed the 30,000-char threshold (single → multi-chunk), it wrote chunk0 (30 KB truncated JSON) and chunk1, then set `_n=2`. If `diarize-async` read `_n=1` (stale) after chunk0 was already overwritten, it tried to `JSON.parse` a 30,000-char truncated JSON string → `SyntaxError: Unterminated string in JSON at position 30000`.
+
+**Fix in `set()`:**
+- Writes `_n = 0` first (a sentinel: readers see null, not corrupt data), then writes all chunks, then writes `_n = n`.
+- Concurrent readers that race during the write window get null → step exits cleanly → QStash retries → succeeds.
+- Same sentinel applied for the single-chunk path (writes `_n=0`, then chunk0, then `_n=1`) to cover the multi→single shrink transition.
+
+**Fix in `get()`:**
+- Treats `_n === 0` as null (the in-progress sentinel).
+- Wraps `JSON.parse(parts.join(""))` in try/catch — returns null on malformed JSON instead of throwing. Defensive fallback in case of any mid-write read that slips through.
+
+---
+
+## 26. Multi-Genie Appeal UI — Submit New/More Genies
+
+### Files
+- `controller.ts`
+
+### Changes
+- **Separate input slots** per Genie ID instead of a single comma-separated text field. Each slot is its own `<input>` with `maxlength="8"`.
+- **`+ Add Another`** button appends a new empty input row (with a `×` remove button) and focuses it.
+- **Paste-to-split**: pasting a comma- or space-separated string into any input (e.g. `27465709, 24765716`) automatically splits it across individual rows via `onRecordingPaste()`.
+- **Blur validation**: `validateRecordingInput()` runs on `onblur` — turns border teal if the value is all-digit and non-empty, clears to neutral otherwise. No red during normal interaction.
+- **Submit validation**: `isAllDigits()` (charCode 48–57 comparison, no regex) validates each non-empty field on submit. Invalid fields turn red and submission is blocked.
+- **Spacing consistency**: first input row has an invisible placeholder `×` button so all rows have identical flex layout.
+- **`oninput` clears state**: typing clears the validation border immediately (neutral while editing).
+- Backend validation unchanged: `handleAppealDifferentRecording` validates `/^\d+$/` per ID; accepts any-length numeric IDs.
+
+---
+
+## 27. Appeal Re-Audit — `orgId` Missing in Enqueued Steps
+
+### Files
+- `controller.ts`
+
+### Changes
+- `handleAppealDifferentRecording`: `enqueueStep("init", { findingId: newFindingId })` was missing `orgId` → init step received `orgId: undefined` → `getPipelineConfig(undefined)` threw `TypeError: expected string, number, bigint, ArrayBufferView, boolean` from Deno KV on every attempt → 3 retries exhausted → finding stuck at `pending` forever.
+- Fixed: both appeal handlers now pass `orgId` in the step body:
+  - `handleAppealDifferentRecording`: `enqueueStep("init", { findingId: newFindingId, orgId })`
+  - `handleAppealUploadRecording`: `enqueueStep("transcribe", { findingId: newFindingId, orgId })`
+
+---
+
 ## New API Endpoints Summary
 
 | Method | Path | Auth | Description |
@@ -401,6 +511,7 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 | POST | `/admin/email-templates/delete` | Admin | Delete template |
 | POST | `/webhooks/audit-complete` | None | Receive terminate webhook, send agent email |
 | GET | `/favicon.svg` | None | Serve robot favicon |
+| GET | `/logo.png` | None | Serve robot PNG (rasterized from SVG via resvg-wasm, email-safe) |
 
 ---
 

@@ -340,8 +340,9 @@ export async function handleAppealDifferentRecording(orgId: OrgId, req: Request)
   await enqueueStep("init", { findingId: newFindingId, orgId });
 
   const reportUrl = `${env.selfUrl}/audit/report?id=${newFindingId}`;
-  console.log(`[APPEAL] ${appealType}: old=${findingId} new=${newFindingId} recordings=${normalizedIds.join(",")}`);
-  return json({ ok: true, newFindingId, reportUrl });
+  const agentEmail = oldFinding.owner ?? "";
+  console.log(`[APPEAL] ${appealType}: old=${findingId} new=${newFindingId} recordings=${normalizedIds.join(",")} agent=${agentEmail}`);
+  return json({ ok: true, newFindingId, reportUrl, agentEmail });
 }
 
 /**
@@ -419,8 +420,9 @@ export async function handleAppealUploadRecording(orgId: OrgId, req: Request): P
   await enqueueStep("transcribe", { findingId: newFindingId, orgId });
 
   const reportUrl = `${env.selfUrl}/audit/report?id=${newFindingId}`;
-  console.log(`[APPEAL] Upload-recording: old=${findingId} new=${newFindingId} snip=${snipStart ?? "none"}-${snipEnd ?? "none"}`);
-  return json({ ok: true, newFindingId, reportUrl });
+  const agentEmail = oldFinding.owner ?? "";
+  console.log(`[APPEAL] Upload-recording: old=${findingId} new=${newFindingId} snip=${snipStart ?? "none"}-${snipEnd ?? "none"} agent=${agentEmail}`);
+  return json({ ok: true, newFindingId, reportUrl, agentEmail });
 }
 
 /**
@@ -1006,19 +1008,19 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       </div>
     </div>
     <div class="hero-body">
-      <div class="hero-score ${passRate >= 80 ? "good" : "bad"}">${passRate}%</div>
+      <div id="live-score" class="hero-score ${passRate >= 80 ? "good" : "bad"}">${passRate}%</div>
       <div class="hero-bar">
-        <div class="hero-bar-track"><div class="hero-bar-fill ${passRate >= 80 ? "good" : "bad"}" style="width:${passRate}%"></div></div>
+        <div class="hero-bar-track"><div id="live-bar" class="hero-bar-fill ${passRate >= 80 ? "good" : "bad"}" style="width:${passRate}%"></div></div>
       </div>
       <div class="hero-stats">
-        <span class="hero-stat"><span class="dot dot-green" style="background:var(--green)"></span>${yesCount} passed</span>
-        <span class="hero-stat"><span class="dot dot-red" style="background:var(--red)"></span>${noCount} failed</span>
-        <span class="hero-stat"><span class="dot" style="background:var(--text-dim)"></span>${total} total</span>
+        <span class="hero-stat"><span class="dot dot-green" style="background:var(--green)"></span><span id="live-passed">${yesCount} passed</span></span>
+        <span class="hero-stat"><span class="dot dot-red" style="background:var(--red)"></span><span id="live-failed">${noCount} failed</span></span>
+        <span class="hero-stat"><span class="dot" style="background:var(--text-dim)"></span><span id="live-total">${total} total</span></span>
       </div>
+      <div id="live-badge" style="display:none;align-items:center;gap:5px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--teal);margin-bottom:8px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--teal);animation:bot-pulse 1.2s ease-in-out infinite;display:inline-block;"></span>Live</div>
       ${(f as any).appealSourceFindingId ? `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--teal);margin-bottom:8px;padding:4px 10px;background:var(--teal-bg);border-radius:4px;display:inline-block;">Re-Audit</div>` : ""}
       <div class="hero-actions">
-        ${passRate < 100 ? `<button class="appeal-btn" id="appeal-btn" onclick="confirmAppeal()">File Appeal</button>
-        <button class="appeal-btn" id="reaudit-btn" onclick="toggleAppealPanel()" style="background:var(--bg-surface);border:1px solid var(--border);font-size:11px;">Submit New/More Genies</button>` : ""}
+        ${passRate < 100 ? `<button class="appeal-btn" id="appeal-btn" onclick="openAppealChoice()">File Appeal</button>` : ""}
       </div>
       <!-- Appeal Confirmation (judge review) -->
       <div id="appeal-confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);z-index:200;align-items:center;justify-content:center;">
@@ -1034,6 +1036,51 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         </div>
       </div>
       <style>@keyframes appealIn { from { opacity:0;transform:scale(0.95) translateY(6px); } to { opacity:1;transform:none; } }</style>
+
+      <!-- Choice Modal: Appeal Decision vs Re-Audit Recording -->
+      <div id="appeal-choice-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);z-index:200;align-items:center;justify-content:center;">
+        <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:28px 28px 22px;max-width:520px;width:90vw;animation:appealIn 0.16s ease;">
+          <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:6px;">What would you like to do?</div>
+          <div style="font-size:12px;color:#6e7681;margin-bottom:20px;">Choose how you'd like to address this audit result.</div>
+          <div style="display:flex;gap:12px;margin-bottom:20px;">
+            <button id="choice-appeal-btn" onclick="chooseAppeal()" style="flex:1;text-align:left;padding:18px;border-radius:10px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;cursor:pointer;transition:border-color 0.15s;" onmouseover="this.style.borderColor='#58a6ff'" onmouseout="this.style.borderColor='#30363d'">
+              <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:#58a6ff;">Appeal Decision</div>
+              <div style="font-size:11px;color:#6e7681;line-height:1.5;">Submit for a human to review the flagged questions</div>
+            </button>
+            <button id="choice-reaudit-btn" onclick="chooseReAudit()" style="flex:1;text-align:left;padding:18px;border-radius:10px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;cursor:pointer;transition:border-color 0.15s;" onmouseover="this.style.borderColor='var(--teal)'" onmouseout="this.style.borderColor='#30363d'">
+              <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:var(--teal);">Re-Audit Recording</div>
+              <div style="font-size:11px;color:#6e7681;line-height:1.5;">Run the audit again using a different or additional recording</div>
+            </button>
+          </div>
+          <div style="text-align:center;">
+            <button onclick="document.getElementById('appeal-choice-overlay').style.display='none'" style="padding:6px 22px;border-radius:7px;border:1px solid #30363d;background:transparent;color:#6e7681;font-size:12px;cursor:pointer;">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Appeal Submitted! Success Screen -->
+      <div id="appeal-success-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);z-index:210;align-items:center;justify-content:center;">
+        <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:36px 32px;max-width:380px;width:90vw;text-align:center;animation:appealIn 0.16s ease;">
+          <div style="font-size:36px;margin-bottom:14px;">✅</div>
+          <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:8px;">Appeal Submitted!</div>
+          <div style="font-size:12px;color:#6e7681;line-height:1.5;">A judge will review your selected questions and make a final determination.</div>
+        </div>
+      </div>
+
+      <!-- Re-Audit Receipt Offer -->
+      <div id="receipt-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);z-index:210;align-items:center;justify-content:center;">
+        <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:36px 32px;max-width:400px;width:90vw;text-align:center;animation:appealIn 0.16s ease;">
+          <div style="font-size:36px;margin-bottom:14px;">🔄</div>
+          <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:10px;">Audit Re-submitted!</div>
+          <div style="font-size:12px;color:#6e7681;margin-bottom:4px;line-height:1.5;">Would you like a receipt sent to</div>
+          <div id="receipt-email-display" style="font-size:13px;font-weight:600;color:#58a6ff;margin-bottom:22px;"></div>
+          <div style="display:flex;gap:10px;justify-content:center;">
+            <button id="receipt-yes-btn" onclick="sendReceiptYes()" style="padding:10px 24px;border-radius:8px;background:var(--teal);border:none;color:#fff;font-size:13px;font-weight:700;cursor:pointer;">For sure!</button>
+            <button onclick="sendReceiptNo()" style="padding:10px 24px;border-radius:8px;background:transparent;border:1px solid #30363d;color:#8b949e;font-size:13px;font-weight:600;cursor:pointer;">Nah, I'm good!</button>
+          </div>
+        </div>
+      </div>
+
       <div class="appeal-panel" id="appeal-panel">
         <div class="appeal-tabs">
           <button class="appeal-tab active" id="tab-recording" onclick="switchFork('recording')">Different Recording</button>
@@ -1254,6 +1301,9 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           document.getElementById('appeal-confirm-overlay').style.display = 'none';
           if (d.ok) {
             lockAppealBtn();
+            var successEl = document.getElementById('appeal-success-overlay');
+            successEl.style.display = 'flex';
+            setTimeout(function() { successEl.style.display = 'none'; }, 3000);
           } else {
             alert(d.error || 'Failed to file appeal');
             submitBtn.disabled = false;
@@ -1274,21 +1324,52 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       btn.classList.add('filed');
       btn.disabled = true;
       btn.onclick = null;
-      var reauditBtn = document.getElementById('reaudit-btn');
-      if (reauditBtn) { reauditBtn.disabled = true; reauditBtn.style.opacity = '0.4'; }
     }
 
-    function toggleAppealPanel() {
+    function openAppealChoice() {
+      var btn = document.getElementById('appeal-btn');
+      if (!btn || btn.disabled || btn.classList.contains('filed')) return;
+      document.getElementById('appeal-choice-overlay').style.display = 'flex';
+    }
+
+    function chooseAppeal() {
+      document.getElementById('appeal-choice-overlay').style.display = 'none';
+      confirmAppeal();
+    }
+
+    function chooseReAudit() {
+      document.getElementById('appeal-choice-overlay').style.display = 'none';
       var panel = document.getElementById('appeal-panel');
-      var btn = document.getElementById('reaudit-btn');
-      _appealOpen = !_appealOpen;
-      if (_appealOpen) {
-        panel.classList.add('open');
-        if (btn) { btn.textContent = 'Cancel Re-Audit'; btn.style.background = 'var(--border)'; }
-      } else {
-        panel.classList.remove('open');
-        if (btn) { btn.textContent = 'Re-Audit'; btn.style.background = ''; }
-      }
+      _appealOpen = true;
+      panel.classList.add('open');
+    }
+
+    var _pendingReauditFindingId = null;
+    var _pendingReauditReportUrl = null;
+    var _pendingAgentEmail = null;
+
+    function sendReceiptYes() {
+      var btn = document.getElementById('receipt-yes-btn');
+      btn.disabled = true; btn.textContent = 'Sending...';
+      fetch('/audit/send-reaudit-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ findingId: _pendingReauditFindingId }),
+      }).catch(function() {}).finally(function() {
+        window.location.href = _pendingReauditReportUrl;
+      });
+    }
+
+    function sendReceiptNo() {
+      window.location.href = _pendingReauditReportUrl;
+    }
+
+    function showReceiptModal(newFindingId, reportUrl, agentEmail) {
+      _pendingReauditFindingId = newFindingId;
+      _pendingReauditReportUrl = reportUrl;
+      _pendingAgentEmail = agentEmail || '';
+      document.getElementById('receipt-email-display').textContent = _pendingAgentEmail || 'your email on file';
+      document.getElementById('receipt-overlay').style.display = 'flex';
     }
 
     function switchFork(name) {
@@ -1368,8 +1449,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           setTimeout(function() { btn.textContent = 'Submit Re-Audit'; btn.disabled = false; }, 2500);
         } else {
           lockAppealBtn();
-          btn.textContent = 'Redirecting...';
-          window.location.href = '/audit/report?id=' + d.newFindingId;
+          btn.textContent = 'Submitted!';
+          showReceiptModal(d.newFindingId, d.reportUrl || '/audit/report?id=' + d.newFindingId, d.agentEmail);
         }
       }).catch(function() {
         btn.textContent = 'Error';
@@ -1525,8 +1606,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
             setTimeout(function() { btn.textContent = 'Submit Re-Audit'; btn.disabled = false; }, 2500);
           } else {
             lockAppealBtn();
-            btn.textContent = 'Redirecting...';
-            window.location.href = '/audit/report?id=' + d.newFindingId;
+            btn.textContent = 'Submitted!';
+            showReceiptModal(d.newFindingId, d.reportUrl || '/audit/report?id=' + d.newFindingId, d.agentEmail);
           }
         }).catch(function() {
           btn.textContent = 'Error';
@@ -1575,7 +1656,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         document.getElementById('audio-error').style.display = 'inline';
       });
     })();
-    // Check if appeal already exists on load — disable both buttons if so
+    // Check if appeal already exists on load — disable button if so
     fetch('/audit/appeal/status?findingId=${esc(id)}')
       .then(function(r) { return r.json(); })
       .then(function(d) {
@@ -1585,11 +1666,41 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           if (panel) panel.classList.remove('open');
         }
       }).catch(function() {});
-    // Also hide re-audit button if this finding was already re-audited
+    // If already re-audited, lock the button too
     ${(f as any).reAuditedAt ? `(function() {
-      var reauditBtn = document.getElementById('reaudit-btn');
-      if (reauditBtn) { reauditBtn.textContent = 'Re-Audited'; reauditBtn.classList.add('filed'); reauditBtn.disabled = true; }
+      var btn = document.getElementById('appeal-btn');
+      if (btn) { btn.textContent = 'Re-Audited'; btn.classList.add('filed'); btn.disabled = true; btn.onclick = null; }
     })();` : ''}
+    // SSE live updates — subscribe while finding is still processing
+    (function() {
+      var status = '${esc(String((f as any).findingStatus ?? "pending"))}';
+      if (status === 'finished' || status === 'terminated') return;
+      var liveEl = document.getElementById('live-badge');
+      if (liveEl) liveEl.style.display = 'inline-flex';
+      var es = new EventSource('/audit/report-sse?id=${esc(id)}');
+      es.addEventListener('update', function(e) {
+        var d = JSON.parse(e.data);
+        var scoreEl = document.getElementById('live-score');
+        var barEl = document.getElementById('live-bar');
+        var passedEl = document.getElementById('live-passed');
+        var failedEl = document.getElementById('live-failed');
+        var totalEl = document.getElementById('live-total');
+        if (scoreEl) { scoreEl.textContent = d.score + '%'; scoreEl.className = 'hero-score ' + (d.score >= 80 ? 'good' : 'bad'); }
+        if (barEl) { barEl.style.width = d.score + '%'; barEl.className = 'hero-bar-fill ' + (d.score >= 80 ? 'good' : 'bad'); }
+        if (passedEl) passedEl.textContent = d.passed + ' passed';
+        if (failedEl) failedEl.textContent = d.failed + ' failed';
+        if (totalEl) totalEl.textContent = d.total + ' total';
+      });
+      es.addEventListener('complete', function() {
+        es.close();
+        if (liveEl) liveEl.style.display = 'none';
+        setTimeout(function() { window.location.reload(); }, 600);
+      });
+      es.onerror = function() {
+        es.close();
+        if (liveEl) liveEl.style.display = 'none';
+      };
+    })();
   </script>
 </body>
 </html>`;

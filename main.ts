@@ -21,7 +21,7 @@ import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
 import { enqueueStep, publishStep, ALL_QUEUES } from "./lib/queue.ts";
 import {
   trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getPipelineConfig, setPipelineConfig,
-  saveFinding, saveTranscript, saveBatchAnswers,
+  getFinding, saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
   getBadWordConfig, saveBadWordConfig,
@@ -260,6 +260,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/settings/review": handleAdminSaveSettings,
   "/admin/settings/judge": handleAdminSaveSettings,
   "/admin/settings/judge-finish": handleAdminSaveSettings,
+  "/admin/settings/re-audit-receipt": handleAdminSaveSettings,
   "/admin/users": handleAdminAddUser,
   "/admin/parallelism": handleSetParallelism,
   "/admin/email-reports": handleSaveEmailReport,
@@ -277,6 +278,7 @@ const postRoutes: Record<string, Handler> = {
   "/audit/appeal": withOrgId(handleFileAppeal),
   "/audit/appeal/different-recording": withOrgId(handleAppealDifferentRecording),
   "/audit/appeal/upload-recording": withOrgId(handleAppealUploadRecording),
+  "/audit/send-reaudit-receipt": withOrgId(handleSendReauditReceipt),
 
   // Review API (auth handled internally)
   "/review/api/decide": handleDecide,
@@ -349,6 +351,7 @@ const getRoutes: Record<string, Handler> = {
   "/audit/stats": withOrgId(handleGetStats),
   "/audit/recording": withOrgId(handleGetRecording),
   "/audit/appeal/status": withOrgId(handleAppealStatus),
+  "/audit/report-sse": withOrgId(handleReportSSE),
 
   // Admin
   "/admin/seed": handleSeedDryRun,
@@ -361,6 +364,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/settings/review": handleAdminGetSettings,
   "/admin/settings/judge": handleAdminGetSettings,
   "/admin/settings/judge-finish": handleAdminGetSettings,
+  "/admin/settings/re-audit-receipt": handleAdminGetSettings,
   "/admin/parallelism": handleGetParallelism,
   "/admin/queues": handleGetQueues,
   "/admin/users": handleAdminListUsers,
@@ -713,6 +717,7 @@ function extractSettingsKind(req: Request): WebhookKind | null {
     appeal: "appeal", judge: "appeal",
     manager: "manager",
     "judge-finish": "judge",
+    "re-audit-receipt": "re-audit-receipt",
   };
   return kindMap[kind] ?? null;
 }
@@ -1691,6 +1696,162 @@ async function handleManagerReviewWebhook(req: Request): Promise<Response> {
 
   await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), cc, bcc });
   console.log(`[EMAIL] Manager review → ${to}${cc ? ` cc:${cc}` : ""}${bcc ? ` bcc:${bcc}` : ""} (finding: ${findingId})`);
+  return json({ ok: true, to });
+}
+
+// -- Audit: Report SSE --
+
+async function handleReportSSE(orgId: OrgId, req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const id = url.searchParams.get("id");
+  if (!id) return json({ error: "id required" }, 400);
+
+  console.log(`[SSE] 🔍 report-sse: org=${orgId} finding=${id}`);
+
+  const isYesAnswer = (a: string) => {
+    const s = String(a ?? "").trim().toLowerCase();
+    return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
+  };
+
+  let closed = false;
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const enq = (chunk: string) => {
+        if (!closed) controller.enqueue(encoder.encode(chunk));
+      };
+
+      const sendEvent = (event: string, data: unknown) => {
+        enq(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      const keepalive = () => enq(`: keepalive\n\n`);
+
+      const poll = async () => {
+        if (closed) return;
+        try {
+          const f = await getFinding(orgId, id);
+          if (!f) {
+            console.warn(`[SSE] ⚠️ report-sse: finding ${id} not found, closing`);
+            closed = true;
+            controller.close();
+            return;
+          }
+
+          const questions: any[] = f.answeredQuestions ?? [];
+          const yesCount = questions.filter((q: any) => isYesAnswer(q.answer)).length;
+          const noCount = questions.filter((q: any) => !isYesAnswer(q.answer)).length;
+          const total = questions.length;
+          const score = total > 0 ? Math.round((yesCount / total) * 100) : 0;
+          const status = f.findingStatus ?? "pending";
+
+          sendEvent("update", { score, passed: yesCount, failed: noCount, total, status });
+
+          if (status === "finished" || status === "terminated") {
+            console.log(`[SSE] ✅ report-sse: finding ${id} complete (status=${status} score=${score}%)`);
+            sendEvent("complete", { status });
+            closed = true;
+            controller.close();
+            return;
+          }
+
+          setTimeout(poll, 2000);
+        } catch (err) {
+          console.error(`[SSE] ❌ report-sse poll error (finding=${id}):`, err);
+          // Keep polling on transient errors
+          setTimeout(poll, 3000);
+        }
+      };
+
+      const keepaliveTimer = setInterval(keepalive, 15_000);
+
+      req.signal.addEventListener("abort", () => {
+        console.log(`[SSE] report-sse: client disconnected (finding=${id})`);
+        closed = true;
+        clearInterval(keepaliveTimer);
+        try { controller.close(); } catch { /* already closed */ }
+      });
+
+      // Initial poll after short delay
+      setTimeout(poll, 1500);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+// -- Audit: Send Re-Audit Receipt Email --
+
+async function handleSendReauditReceipt(orgId: OrgId, req: Request): Promise<Response> {
+  const body = await req.json().catch(() => ({}));
+  const { findingId } = body;
+  if (!findingId) return json({ error: "findingId required" }, 400);
+
+  console.log(`[EMAIL] 🔍 re-audit-receipt: org=${orgId} finding=${findingId}`);
+
+  const webhookCfg = await getWebhookConfig(orgId, "re-audit-receipt").catch((err) => {
+    console.error(`[EMAIL] re-audit-receipt: getWebhookConfig failed:`, err);
+    return null;
+  });
+  console.log(`[EMAIL] re-audit-receipt: emailTemplateId=${webhookCfg?.emailTemplateId ?? "NONE"} testEmail=${webhookCfg?.testEmail ?? ""}`);
+
+  const template = await resolveWebhookTemplate(orgId, webhookCfg);
+  if (!template) {
+    console.log(`[EMAIL] re-audit-receipt: ⚠️ skipped — no template configured`);
+    return json({ ok: true, skipped: "no template configured" });
+  }
+
+  const finding = await getFinding(orgId, findingId);
+  if (!finding) return json({ error: "finding not found" }, 404);
+
+  const agentEmail = String(finding.owner ?? "");
+  const voEmail = String((finding.record as any)?.VoEmail ?? "");
+  const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String((finding.record as any)?.VoName ?? ""), agentEmail);
+  const recordId = String((finding.record as any)?.RecordId ?? "");
+
+  const questions: any[] = (finding as any).answeredQuestions ?? [];
+  const isYesAnswer = (a: string) => {
+    const s = String(a ?? "").trim().toLowerCase();
+    return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
+  };
+  const yesCount = questions.filter((q: any) => isYesAnswer(q.answer)).length;
+  const total = questions.length;
+  const scoreVal = total > 0 ? Math.round((yesCount / total) * 100) : 0;
+
+  const vars: Record<string, string> = {
+    agentName: teamMemberFull,
+    agentEmail: voEmail || agentEmail,
+    teamMember: teamMemberFull,
+    teamMemberFirst,
+    score: scoreVal + "%",
+    findingId,
+    recordId,
+    guestName: String((finding.record as any)?.GuestName ?? ""),
+    reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
+    recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
+    logoUrl: `${env.selfUrl}/logo.png`,
+    selfUrl: env.selfUrl,
+  };
+
+  const { to, bcc } = resolveRecipients(webhookCfg, voEmail || agentEmail);
+  console.log(`[EMAIL] re-audit-receipt: to=${to} bcc=${bcc || "none"} score=${scoreVal}% finding=${findingId}`);
+  if (!to) return json({ error: "no recipient email" }, 400);
+
+  try {
+    await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), bcc });
+    console.log(`[EMAIL] ✅ Re-audit receipt sent → ${to}${bcc ? ` bcc:${bcc}` : ""} (finding: ${findingId})`);
+  } catch (err) {
+    console.error(`[EMAIL] ❌ Re-audit receipt send failed (finding: ${findingId}):`, err);
+    return json({ error: "email send failed" }, 500);
+  }
   return json({ ok: true, to });
 }
 

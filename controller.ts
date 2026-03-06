@@ -818,13 +818,11 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     .copy-btn:hover { color: var(--text-muted); border-color: var(--border-hover); }
     .copy-btn.copied { color: var(--green); border-color: var(--green); }
 
-    /* Appeal panel */
+    /* Appeal panel — lives inside reaudit-overlay modal */
     .appeal-panel {
-      display: none; max-width: 520px; margin: 18px auto 0; text-align: left;
-      background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius);
-      overflow: hidden;
+      text-align: left;
+      background: #161c28;
     }
-    .appeal-panel.open { display: block; }
     .appeal-tabs {
       display: flex; border-bottom: 1px solid var(--border);
     }
@@ -1027,7 +1025,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:28px 32px 22px;max-width:480px;width:90vw;animation:appealIn 0.16s ease;">
           <div style="font-size:16px;font-weight:700;color:#e6edf3;margin-bottom:6px;">File an Appeal?</div>
           <div style="font-size:12px;color:#6e7681;margin-bottom:12px;line-height:1.5;">Select the questions you believe were incorrectly assessed. A judge will review those decisions. Only one appeal can be filed per record.</div>
-          <div id="appeal-questions-list" style="margin-bottom:12px;max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
+          <div id="appeal-questions-list" style="margin-bottom:12px;max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;padding-right:10px;box-sizing:border-box;"></div>
           <textarea id="appeal-comment-input" placeholder="Additional context for the judge (optional)..." style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:10px 12px;font-size:12px;font-family:inherit;resize:vertical;min-height:60px;outline:none;margin-bottom:14px;"></textarea>
           <div style="display:flex;gap:10px;justify-content:flex-end;">
             <button onclick="document.getElementById('appeal-confirm-overlay').style.display='none'" style="padding:8px 18px;border-radius:7px;border:1px solid #1c2333;background:transparent;color:#6e7681;font-size:12px;font-weight:600;cursor:pointer;">Cancel</button>
@@ -1081,6 +1079,14 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         </div>
       </div>
 
+      <!-- Re-Audit Recording Modal Overlay -->
+      <div id="reaudit-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);z-index:200;align-items:center;justify-content:center;">
+        <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;width:90vw;max-width:560px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;animation:appealIn 0.16s ease;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 14px;border-bottom:1px solid #1c2333;flex-shrink:0;">
+            <div style="font-size:15px;font-weight:700;color:#e6edf3;">Re-Audit Recording</div>
+            <button onclick="document.getElementById('reaudit-overlay').style.display='none'" style="background:none;border:none;color:#6e7681;font-size:22px;cursor:pointer;line-height:1;padding:0 4px;">&times;</button>
+          </div>
+          <div style="overflow-y:auto;flex:1;">
       <div class="appeal-panel" id="appeal-panel">
         <div class="appeal-tabs">
           <button class="appeal-tab active" id="tab-recording" onclick="switchFork('recording')">Different Recording</button>
@@ -1145,6 +1151,9 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           <button class="fork-submit" id="upload-submit" onclick="submitUploadRecording()" disabled>Submit Re-Audit</button>
         </div>
       </div>
+          </div><!-- /scroll-container -->
+        </div><!-- /modal-box -->
+      </div><!-- /reaudit-overlay -->
     </div>
   </div>
 
@@ -1339,9 +1348,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
 
     function chooseReAudit() {
       document.getElementById('appeal-choice-overlay').style.display = 'none';
-      var panel = document.getElementById('appeal-panel');
+      document.getElementById('reaudit-overlay').style.display = 'flex';
       _appealOpen = true;
-      panel.classList.add('open');
     }
 
     var _pendingReauditFindingId = null;
@@ -1662,8 +1670,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       .then(function(d) {
         if (d.exists) {
           lockAppealBtn();
-          var panel = document.getElementById('appeal-panel');
-          if (panel) panel.classList.remove('open');
+          var overlay = document.getElementById('reaudit-overlay');
+          if (overlay) overlay.style.display = 'none';
         }
       }).catch(function() {});
     // If already re-audited, lock the button too

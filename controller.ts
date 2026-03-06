@@ -337,7 +337,7 @@ export async function handleAppealDifferentRecording(orgId: OrgId, req: Request)
   };
 
   await saveFinding(orgId, newFinding as Record<string, any>);
-  await enqueueStep("init", { findingId: newFindingId });
+  await enqueueStep("init", { findingId: newFindingId, orgId });
 
   const reportUrl = `${env.selfUrl}/audit/report?id=${newFindingId}`;
   console.log(`[APPEAL] ${appealType}: old=${findingId} new=${newFindingId} recordings=${normalizedIds.join(",")}`);
@@ -416,7 +416,7 @@ export async function handleAppealUploadRecording(orgId: OrgId, req: Request): P
   await saveFinding(orgId, newFinding as Record<string, any>);
 
   // Skip init (recording already in S3), go straight to transcribe
-  await enqueueStep("transcribe", { findingId: newFindingId });
+  await enqueueStep("transcribe", { findingId: newFindingId, orgId });
 
   const reportUrl = `${env.selfUrl}/audit/report?id=${newFindingId}`;
   console.log(`[APPEAL] Upload-recording: old=${findingId} new=${newFindingId} snip=${snipStart ?? "none"}-${snipEnd ?? "none"}`);

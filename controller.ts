@@ -1315,10 +1315,15 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       inp.style.borderColor = '';
     }
 
+    function isAllDigits(s) {
+      if (!s) return false;
+      for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); if (c < 48 || c > 57) return false; }
+      return true;
+    }
+
     function validateRecordingInput(inp) {
       var v = inp.value.trim();
-      // Green for valid 8-digit ID, neutral otherwise — red only on submit attempt
-      inp.style.borderColor = (v && /^\d+$/.test(v)) ? 'var(--teal)' : '';
+      inp.style.borderColor = isAllDigits(v) ? 'var(--teal)' : '';
     }
 
     function onRecordingPaste(e, inp) {
@@ -1336,9 +1341,10 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       var hasInvalid = false;
       inputs.forEach(function(inp) {
         var v = inp.value.trim();
-        console.log('[RE-AUDIT] input value:', JSON.stringify(v), 'length:', v.length, 'valid:', /^\d+$/.test(v));
+        var codes = []; for (var ci = 0; ci < v.length; ci++) codes.push(v.charCodeAt(ci));
+        console.log('[RE-AUDIT] value:', JSON.stringify(v), 'len:', v.length, 'codes:', codes, 'ok:', isAllDigits(v));
         if (!v) return;
-        if (!/^\d+$/.test(v)) { inp.style.borderColor = 'var(--red)'; hasInvalid = true; }
+        if (!isAllDigits(v)) { inp.style.borderColor = 'var(--red)'; hasInvalid = true; }
         else ids.push(v);
       });
       if (hasInvalid) return;

@@ -843,6 +843,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       outline: none; transition: border-color 0.15s;
     }
     .recording-input:focus { border-color: var(--teal); }
+    .recording-input.valid { border-color: var(--teal); }
+    .recording-input.invalid { border-color: var(--red); }
     .recording-remove {
       background: none; border: none; color: var(--red); cursor: pointer; font-size: 16px;
       padding: 4px 8px; border-radius: 4px; transition: background 0.15s;
@@ -1043,7 +1045,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           <div class="fork-label">Provide corrected or additional Recording IDs</div>
           <div class="recording-inputs" id="recording-inputs">
             <div class="recording-row">
-              <input type="text" class="recording-input" value="${esc(String(f.recordingId ?? ""))}" placeholder="Recording ID" />
+              <input type="text" class="recording-input" value="${esc(String(f.recordingId ?? ""))}" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onpaste="onRecordingPaste(event, this)" />
             </div>
           </div>
           <button class="fork-add-btn" onclick="addRecordingInput()">+ Add Another</button>
@@ -1297,19 +1299,46 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       document.getElementById('tab-upload').classList.toggle('active', name === 'upload');
     }
 
-    function addRecordingInput() {
+    function addRecordingInput(value) {
       var container = document.getElementById('recording-inputs');
       var row = document.createElement('div');
       row.className = 'recording-row';
-      row.innerHTML = '<input type="text" class="recording-input" placeholder="Recording ID" /><button class="recording-remove" onclick="this.parentElement.remove()">&times;</button>';
+      row.innerHTML = '<input type="text" class="recording-input" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onpaste="onRecordingPaste(event, this)" /><button class="recording-remove" onclick="this.parentElement.remove()">&times;</button>';
       container.appendChild(row);
+      var inp = row.querySelector('.recording-input');
+      if (value) { inp.value = value; onRecordingInput(inp); }
+      else inp.focus();
+      return inp;
+    }
+
+    function onRecordingInput(inp) {
+      var v = inp.value.trim();
+      if (!v) { inp.classList.remove('valid', 'invalid'); return; }
+      if (/^\d{8}$/.test(v)) { inp.classList.add('valid'); inp.classList.remove('invalid'); }
+      else { inp.classList.add('invalid'); inp.classList.remove('valid'); }
+    }
+
+    function onRecordingPaste(e, inp) {
+      e.preventDefault();
+      var text = (e.clipboardData || window.clipboardData).getData('text');
+      var parts = text.split(/[,\s]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (parts.length <= 1) { inp.value = parts[0] || ''; onRecordingInput(inp); return; }
+      inp.value = parts[0]; onRecordingInput(inp);
+      for (var i = 1; i < parts.length; i++) { addRecordingInput(parts[i]); }
     }
 
     function submitDifferentRecording() {
       var inputs = document.querySelectorAll('#recording-inputs .recording-input');
       var ids = [];
-      inputs.forEach(function(inp) { var v = inp.value.trim(); if (v) ids.push(v); });
-      if (ids.length === 0) { alert('Enter at least one Recording ID'); return; }
+      var hasInvalid = false;
+      inputs.forEach(function(inp) {
+        var v = inp.value.trim();
+        if (!v) return;
+        if (!/^\d{8}$/.test(v)) { inp.classList.add('invalid'); hasInvalid = true; }
+        else ids.push(v);
+      });
+      if (hasInvalid) return;
+      if (ids.length === 0) { alert('Enter at least one 8-digit Genie ID'); return; }
 
       var comment = (document.getElementById('recording-comment').value || '').trim();
       var btn = document.querySelector('#fork-recording .fork-submit');

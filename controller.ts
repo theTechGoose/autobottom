@@ -1318,7 +1318,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     function validateRecordingInput(inp) {
       var v = inp.value.trim();
       // Green for valid 8-digit ID, neutral otherwise — red only on submit attempt
-      inp.style.borderColor = (v && /^\d{8}$/.test(v)) ? 'var(--teal)' : '';
+      inp.style.borderColor = (v && /^\d+$/.test(v)) ? 'var(--teal)' : '';
     }
 
     function onRecordingPaste(e, inp) {
@@ -1336,12 +1336,13 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       var hasInvalid = false;
       inputs.forEach(function(inp) {
         var v = inp.value.trim();
+        console.log('[RE-AUDIT] input value:', JSON.stringify(v), 'length:', v.length, 'valid:', /^\d+$/.test(v));
         if (!v) return;
-        if (!/^\d{8}$/.test(v)) { inp.style.borderColor = 'var(--red)'; hasInvalid = true; }
+        if (!/^\d+$/.test(v)) { inp.style.borderColor = 'var(--red)'; hasInvalid = true; }
         else ids.push(v);
       });
       if (hasInvalid) return;
-      if (ids.length === 0) { alert('Enter at least one 8-digit Genie ID'); return; }
+      if (ids.length === 0) { alert('Enter at least one Recording ID'); return; }
 
       var comment = (document.getElementById('recording-comment').value || '').trim();
       var btn = document.querySelector('#fork-recording .fork-submit');

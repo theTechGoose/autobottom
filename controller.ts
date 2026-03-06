@@ -340,8 +340,10 @@ export async function handleAppealDifferentRecording(orgId: OrgId, req: Request)
   await enqueueStep("init", { findingId: newFindingId, orgId });
 
   const reportUrl = `${env.selfUrl}/audit/report?id=${newFindingId}`;
-  const agentEmail = oldFinding.owner ?? "";
-  console.log(`[APPEAL] ${appealType}: old=${findingId} new=${newFindingId} recordings=${normalizedIds.join(",")} agent=${agentEmail}`);
+  const voEmail = String((oldFinding.record as any)?.VoEmail ?? "");
+  const ownerEmail = oldFinding.owner && oldFinding.owner !== "api" ? oldFinding.owner : "";
+  const agentEmail = voEmail || ownerEmail;
+  console.log(`[APPEAL] ${appealType}: old=${findingId} new=${newFindingId} recordings=${normalizedIds.join(",")} agent=${agentEmail || "(none)"}`);
   return json({ ok: true, newFindingId, reportUrl, agentEmail });
 }
 
@@ -420,8 +422,10 @@ export async function handleAppealUploadRecording(orgId: OrgId, req: Request): P
   await enqueueStep("transcribe", { findingId: newFindingId, orgId });
 
   const reportUrl = `${env.selfUrl}/audit/report?id=${newFindingId}`;
-  const agentEmail = oldFinding.owner ?? "";
-  console.log(`[APPEAL] Upload-recording: old=${findingId} new=${newFindingId} snip=${snipStart ?? "none"}-${snipEnd ?? "none"} agent=${agentEmail}`);
+  const voEmail = String((oldFinding.record as any)?.VoEmail ?? "");
+  const ownerEmail = oldFinding.owner && oldFinding.owner !== "api" ? oldFinding.owner : "";
+  const agentEmail = voEmail || ownerEmail;
+  console.log(`[APPEAL] Upload-recording: old=${findingId} new=${newFindingId} snip=${snipStart ?? "none"}-${snipEnd ?? "none"} agent=${agentEmail || "(none)"}`);
   return json({ ok: true, newFindingId, reportUrl, agentEmail });
 }
 
@@ -1070,8 +1074,10 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:36px 32px;max-width:400px;width:90vw;text-align:center;animation:appealIn 0.16s ease;">
           <div style="font-size:36px;margin-bottom:14px;">🔄</div>
           <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:10px;">Audit Re-submitted!</div>
-          <div style="font-size:12px;color:#6e7681;margin-bottom:4px;line-height:1.5;">Would you like a receipt sent to</div>
-          <div id="receipt-email-display" style="font-size:13px;font-weight:600;color:#58a6ff;margin-bottom:22px;"></div>
+          <div id="receipt-sent-to-row" style="margin-bottom:22px;">
+            <div style="font-size:12px;color:#6e7681;margin-bottom:4px;line-height:1.5;">Would you like a receipt sent to</div>
+            <div id="receipt-email-display" style="font-size:13px;font-weight:600;color:#58a6ff;"></div>
+          </div>
           <div style="display:flex;gap:10px;justify-content:center;">
             <button id="receipt-yes-btn" onclick="sendReceiptYes()" style="padding:10px 24px;border-radius:8px;background:var(--teal);border:none;color:#fff;font-size:13px;font-weight:700;cursor:pointer;">For sure!</button>
             <button onclick="sendReceiptNo()" style="padding:10px 24px;border-radius:8px;background:transparent;border:1px solid #30363d;color:#8b949e;font-size:13px;font-weight:600;cursor:pointer;">Nah, I'm good!</button>
@@ -1385,8 +1391,16 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     function showReceiptModal(newFindingId, reportUrl, agentEmail) {
       _pendingReauditFindingId = newFindingId;
       _pendingReauditReportUrl = reportUrl;
-      _pendingAgentEmail = agentEmail || '';
-      document.getElementById('receipt-email-display').textContent = _pendingAgentEmail || 'your email on file';
+      var email = (agentEmail && agentEmail !== 'api') ? agentEmail : '';
+      _pendingAgentEmail = email;
+      var sentToRow = document.getElementById('receipt-sent-to-row');
+      var displayEl = document.getElementById('receipt-email-display');
+      if (email) {
+        displayEl.textContent = email;
+        sentToRow.style.display = '';
+      } else {
+        sentToRow.style.display = 'none';
+      }
       document.getElementById('receipt-overlay').style.display = 'flex';
     }
 

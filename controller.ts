@@ -466,6 +466,11 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
   const questions: any[] = fullAnswers.length > 0 ? fullAnswers : (f.answeredQuestions ?? []);
 
   const record = f.record ?? {};
+  const recordId = String(record.RecordId ?? "");
+  const isPackage = f.recordingIdField === "GenieNumber";
+  const qbTableId = isPackage ? "bu3e8x98x" : "bpb28qsnn";
+  const crmUrl = recordId ? `https://${env.qbRealm}.quickbase.com/db/${qbTableId}?a=dr&rid=${recordId}` : "";
+
   const isYesAnswer = (a: string) => {
     const s = String(a ?? "").trim().toLowerCase();
     return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
@@ -1076,7 +1081,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       <!-- Re-Audit Receipt Offer -->
       <div id="receipt-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);z-index:210;align-items:center;justify-content:center;">
         <div style="background:#161c28;border:1px solid #1c2333;border-radius:14px;padding:36px 32px;max-width:400px;width:90vw;text-align:center;animation:appealIn 0.16s ease;">
-          <div style="font-size:36px;margin-bottom:14px;">🔄</div>
+          <div style="font-size:48px;margin-bottom:14px;">☑️</div>
           <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:10px;">Audit Re-submitted!</div>
           <div id="receipt-sent-to-row" style="margin-bottom:22px;">
             <div style="font-size:12px;color:#6e7681;margin-bottom:6px;line-height:1.5;">Would you like a receipt emailed to</div>
@@ -1171,7 +1176,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
   <div class="main">
     <!-- Compact metadata strip -->
     <div class="meta-bar">
-      <div class="meta-cell"><div class="meta-label">Record ID</div><div class="meta-value">${esc(String(record.RecordId ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Record ID</div><div class="meta-value">${crmUrl ? `<a href="${crmUrl}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;border-bottom:1px solid #30363d;" onmouseover="this.style.borderBottomColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderBottomColor='#30363d';this.style.color=''">${esc(recordId)}</a>` : esc(recordId)}</div></div>
       <div class="meta-cell"><div class="meta-label">Recording ID</div><div class="meta-value">${esc(String(f.recordingId ?? ""))}</div></div>
       <div class="meta-cell"><div class="meta-label">Destination</div><div class="meta-value">${esc(String(record.RelatedDestinationId ?? ""))}</div></div>
       <div class="meta-cell"><div class="meta-label">Owner</div><div class="meta-value">${esc(f.owner ?? "")}</div></div>

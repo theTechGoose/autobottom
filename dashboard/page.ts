@@ -1881,7 +1881,7 @@ export function getDashboardPage(): string {
     var sup = document.getElementById('a-supervisor').value;
     if (selectedRole !== 'admin' && !sup) { toast('Select a supervisor','error'); return; }
     btnLoad(btn,'Creating...');
-    fetch('/admin/users', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u,password:p,role:selectedRole,supervisor:sup||null}) })
+    fetch('/admin/users', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:u,password:p,role:selectedRole,supervisor:sup||null}) })
     .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
     .then(function(d){
       toast(d.role+' "'+u+'" created','success');

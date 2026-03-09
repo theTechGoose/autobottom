@@ -171,7 +171,11 @@ export async function stepAskAll(req: Request): Promise<Response> {
   if (rawTranscript && !rawTranscript.includes("Invalid Genie") && !rawTranscript.includes("Genie Invalid")) {
     try {
       const uploadStart = Date.now();
-      await pineconeUpload(findingId, rawTranscript);
+      // Race upload against a 60s ceiling — OpenAI embedding retries can hang beyond per-call timeouts
+      await Promise.race([
+        pineconeUpload(findingId, rawTranscript),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Pinecone upload timed out after 60s")), 60_000)),
+      ]);
       console.log(`[STEP-ASK-ALL] ${findingId}: ✅ Pinecone upload done in ${Date.now() - uploadStart}ms`);
     } catch (err) {
       console.error(`[STEP-ASK-ALL] ${findingId}: ⚠️ Pinecone upload failed, falling back to raw transcript:`, err);

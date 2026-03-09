@@ -77,22 +77,28 @@ async function askLlmOne(
   for (const andNodes of ast) {
     const andResults: Array<{ answer: boolean; thinking: string; defense: string; snippet: string }> = [];
 
+    // Fetch one context for the whole AND group using a combined query.
+    // Generic nodes (e.g. "Did the agent disclose any charges?") can match wrong transcript
+    // sections on their own. Combining with specific sibling nodes (e.g. "Did the agent mention
+    // the 11% service fee?") anchors Pinecone retrieval to the correct part of the transcript.
+    const combinedQuery = andNodes.map((n) => toQueryText(n.question)).filter(Boolean).join(" ");
+    const sharedContext = await getContext(combinedQuery || andNodes[0].question);
+
     for (const node of andNodes) {
-      const context = await getContext(node.question);
-      const llmAnswer = await askQuestion(node.question, context);
+      const llmAnswer = await askQuestion(node.question, sharedContext);
       const boolAnswer = strToBool(llmAnswer.answer);
 
       if (boolAnswer === null) {
         // LLM returned ambiguous text — with the lenient strToBool above this should be rare.
         // Log and treat as No so compound evaluation can proceed rather than silently bailing.
         console.warn(`[STEP-ASK-ALL] ${findingId}: "${question.header}" node returned ambiguous answer "${llmAnswer.answer}", treating as No`);
-        andResults.push({ answer: false, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: context });
+        andResults.push({ answer: false, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: sharedContext });
         continue;
       }
 
       const finalBool = node.flip ? !boolAnswer : boolAnswer;
       console.log(`[STEP-ASK-ALL] ${findingId}: "${question.header}" node="${node.question.slice(0, 60)}..." → ${llmAnswer.answer}${node.flip ? ` (flipped→${finalBool})` : ""}`);
-      andResults.push({ answer: finalBool, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: context });
+      andResults.push({ answer: finalBool, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: sharedContext });
     }
 
     orResults.push(andResults);

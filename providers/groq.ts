@@ -82,7 +82,8 @@ You are a seasoned quality-assurance veteran. Your task is to analyze a transcri
 Instructions
 * Format your output strictly as a valid JSON object.
 * Do not include any text outside of the JSON.
-* Be analytical, structured, and transparent in your thought process.`;
+* Be analytical, structured, and transparent in your thought process.
+* When asked whether something was said, mentioned, or disclosed — answer Yes if it occurred at ANY point during the call, not just at the beginning. Do not add timing qualifiers ("initially", "at first", "upfront") unless the question explicitly asks for them.`;
 
 export function makeUserPrompt(question: string, transcript: string): string {
   return `Question: ${question} \n\n Transcription Fragment(s): ${transcript}\n Notes: \n -If the guest is divorced they are single, if they are separated they are not.`;

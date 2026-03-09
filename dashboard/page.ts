@@ -1425,29 +1425,38 @@ export function getDashboardPage(): string {
     for (var i = 0; i < ago.length && i < errors.length; i++) ago[i].textContent = timeAgo(errors[i].ts);
   }
 
+  var _sectionsLoading = 0;
   function fetchSection(name, renderFn) {
+    var t0 = Date.now();
+    _sectionsLoading++;
     return fetch('/admin/dashboard/section?section=' + name)
       .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(renderFn)
-      .catch(function(e) { console.error('[dashboard] ' + name + ' failed:', e); });
+      .then(function(d) {
+        console.log('[dashboard] ' + name + ' loaded in ' + (Date.now() - t0) + 'ms');
+        renderFn(d);
+      })
+      .catch(function(e) { console.error('[dashboard] ' + name + ' failed after ' + (Date.now() - t0) + 'ms:', e); })
+      .finally(function() {
+        _sectionsLoading--;
+        if (_sectionsLoading <= 0) document.getElementById('status-dot').className = 'dot';
+      });
   }
 
-  async function fetchData() {
-    var dot = document.getElementById('status-dot');
-    dot.className = 'dot loading';
-    await Promise.all([
-      fetchSection('pipeline', renderPipeline),
-      fetchSection('review', renderReview),
-      fetchSection('tokens', renderTokens),
-      fetchSection('recent', renderRecent),
-    ]);
-    dot.className = 'dot';
+  function fetchData() {
+    document.getElementById('status-dot').className = 'dot loading';
+    // Fire all sections independently — each renders as it arrives, no waiting
+    fetchSection('pipeline', renderPipeline);
+    fetchSection('review', renderReview);
+    fetchSection('tokens', renderTokens);
+    fetchSection('recent', renderRecent);
   }
 
-  fetchData().finally(function() {
+  // Drop the overlay immediately — sections load in behind it
+  (function() {
     var ov = document.getElementById('init-overlay');
     if (ov) { ov.style.opacity = '0'; setTimeout(function() { ov.remove(); }, 420); }
-  });
+  })();
+  fetchData();
   setInterval(function() { countdown--; if (countdown <= 0) { fetchData(); countdown = 30; } document.getElementById('countdown').textContent = String(countdown); }, 1000);
   setInterval(tickLive, 1000);
 

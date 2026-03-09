@@ -1178,7 +1178,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     <div class="meta-bar">
       <div class="meta-cell"><div class="meta-label">Record ID</div><div class="meta-value">${crmUrl ? `<a href="${crmUrl}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;border-bottom:1px solid #30363d;" onmouseover="this.style.borderBottomColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderBottomColor='#30363d';this.style.color=''">${esc(recordId)}</a>` : esc(recordId)}</div></div>
       <div class="meta-cell"><div class="meta-label">Recording ID</div><div class="meta-value">${esc(String(f.recordingId ?? ""))}</div></div>
-      <div class="meta-cell"><div class="meta-label">Destination</div><div class="meta-value">${esc(String(record.RelatedDestinationId ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Destination</div><div class="meta-value">${esc(String(record.DestinationDisplay || record.RelatedDestinationId ?? ""))}</div></div>
       <div class="meta-cell"><div class="meta-label">Owner</div><div class="meta-value">${esc(f.owner ?? "")}</div></div>
       <div class="meta-cell"><div class="meta-label">Status</div><div class="meta-value">${esc(f.findingStatus ?? "")}</div></div>
       <div class="meta-cell"><div class="meta-label">Timestamp</div><div class="meta-value">${esc(f.job?.timestamp ?? "")}</div></div>

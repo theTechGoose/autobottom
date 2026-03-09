@@ -118,7 +118,11 @@ export async function askQuestion(question: string, transcript: string, modelInd
 
     trackTokens("askQuestion", res.usage);
     const text = res.choices[0]?.message?.content ?? "";
-    return parseLlmJson<LlmAnswer>(text, { answer: "Error!", thinking: "Error!", defense: "Error!" });
+    const parsed = parseLlmJson<LlmAnswer>(text, { answer: "Error!", thinking: "Error!", defense: "Error!" });
+    // Groq occasionally returns answer as a nested object instead of a string — normalize it.
+    // JSON.stringify preserves yes/no values inside nested structure so strToBool can still find them.
+    if (typeof parsed.answer !== "string") parsed.answer = JSON.stringify(parsed.answer) ?? "Error!";
+    return parsed;
   } catch (e: any) {
     const msg = String(e?.message ?? e);
     const isTimeout = msg.includes("aborted") || msg.includes("AbortError");

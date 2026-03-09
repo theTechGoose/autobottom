@@ -592,8 +592,8 @@ export function getDashboardPage(): string {
 
     <div class="tbl">
       <div class="tbl-title">Recently Completed (24h)</div>
-      <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead>
-      <tbody id="tb-recent"><tr class="empty-row"><td colspan="5">No completed audits</td></tr></tbody></table>
+      <table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead>
+      <tbody id="tb-recent"><tr class="empty-row"><td colspan="6">No completed audits</td></tr></tbody></table>
     </div>
   </main>
 </div>
@@ -1317,13 +1317,20 @@ export function getDashboardPage(): string {
 
   function renderRecent(items) {
     var tb = document.getElementById('tb-recent');
-    if (!items.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="5">No completed audits</td></tr>'; return; }
+    if (!items.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="6">No completed audits</td></tr>'; return; }
+    var logsOrgProject = null;
+    var hm = window.location.hostname.match(/^([^.]+)\.([^.]+)\.deno\.net$/);
+    if (hm) logsOrgProject = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/observability/logs?query=';
+    var logsSuffix = '&start=now%2Fy&end=now';
     var qbDateUrl = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=';
     var qbPkgUrl  = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=';
     tb.innerHTML = '';
     for (var i = 0; i < items.length; i++) {
       var c = items[i], tr = document.createElement('tr');
       var fid = c.findingId || '--';
+      var logsHtml = logsOrgProject
+        ? '<a href="' + logsOrgProject + encodeURIComponent(fid) + logsSuffix + '" target="_blank" class="tbl-link" style="font-size:10px;">logs</a>'
+        : '--';
       var ridHtml = '--';
       if (c.recordId) {
         var qbUrl = (c.isPackage ? qbPkgUrl : qbDateUrl) + encodeURIComponent(c.recordId);
@@ -1332,7 +1339,7 @@ export function getDashboardPage(): string {
       var startedHtml = c.startedAt ? '<span class="time-ago" title="' + new Date(c.startedAt).toLocaleTimeString() + '">' + timeAgo(c.startedAt) + '</span>' : '--';
       var finishedHtml = '<span class="time-ago" title="' + new Date(c.ts).toLocaleTimeString() + '">' + timeAgo(c.ts) + '</span>';
       var durHtml = c.durationMs ? '<span style="font-variant-numeric:tabular-nums">' + fmtDur(c.durationMs) + '</span>' : '--';
-      tr.innerHTML = '<td class="mono"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">' + fid + '</a></td><td>' + ridHtml + '</td><td>' + startedHtml + '</td><td>' + finishedHtml + '</td><td>' + durHtml + '</td>';
+      tr.innerHTML = '<td class="mono"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">' + fid + '</a></td><td>' + logsHtml + '</td><td>' + ridHtml + '</td><td>' + startedHtml + '</td><td>' + finishedHtml + '</td><td>' + durHtml + '</td>';
       tb.appendChild(tr);
     }
   }

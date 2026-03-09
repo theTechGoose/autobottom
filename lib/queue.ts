@@ -59,9 +59,11 @@ async function enqueue(queueName: string, targetUrl: string, body: unknown, dela
 
   // QStash enqueue (queue-based) does not support Upstash-Delay.
   // Use publish (non-queued) for delayed messages instead.
+  // Delayed publishes get 3 retries so a cold-start 5xx doesn't silently drop the message.
   let endpoint: string;
   if (delaySeconds) {
     headers["Upstash-Delay"] = `${delaySeconds}s`;
+    headers["Upstash-Retries"] = "3";
     endpoint = `${env.qstashUrl}/v2/publish/${targetUrl}`;
   } else {
     endpoint = `${env.qstashUrl}/v2/enqueue/${queueName}/${targetUrl}`;

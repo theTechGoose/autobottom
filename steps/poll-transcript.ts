@@ -17,6 +17,7 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
   const { findingId, orgId } = body;
 
   const pollStart = Date.now();
+  console.log(`[STEP-POLL-TRANSCRIPT] ${findingId}: Starting...`);
   trackActive(orgId, findingId, "poll-transcript").catch(() => {});
 
   const finding = await getFinding(orgId, findingId);

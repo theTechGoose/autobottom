@@ -101,6 +101,8 @@ export async function stepFinalize(req: Request): Promise<Response> {
   const completedAt = Date.now();
   const startedAt = (finding as Record<string, any>).startedAt as number | undefined;
   const durationMs = startedAt ? completedAt - startedAt : undefined;
+  const qs = finding.answeredQuestions as any[] | undefined;
+  const score = qs?.length ? Math.round((qs.filter((q: any) => q.answer === "Yes").length / qs.length) * 100) : undefined;
   finding.findingStatus = "finished";
   (finding as Record<string, any>).completedAt = completedAt;
   await saveFinding(orgId, finding);
@@ -109,6 +111,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
     isPackage: finding.recordingIdField === "GenieNumber",
     startedAt,
     durationMs,
+    score,
   });
 
   // Route to review queue — all findings including recording re-audits go to reviewers.

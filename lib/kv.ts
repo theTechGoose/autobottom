@@ -228,7 +228,7 @@ export async function trackActive(orgId: OrgId, findingId: string, step: string,
 }
 
 /** Remove a finding from active tracking (finished or cleaned up). */
-export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number }) {
+export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number }) {
   const db = await kv();
   await db.delete(orgKey(orgId, "stats-active", findingId));
   await db.set(orgKey(orgId, "stats-completed", `${Date.now()}-${findingId}`), { findingId, ts: Date.now(), ...(meta ?? {}) }, { expireIn: DAY_MS });

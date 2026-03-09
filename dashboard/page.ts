@@ -1273,19 +1273,29 @@ export function getDashboardPage(): string {
       + '<div class="donut-item" style="color:var(--text-dim);font-size:11px">Total<span class="donut-val" style="color:var(--text-muted)">' + fmt(total) + '</span></div>';
   }
 
-  // ===== Render =====
-  function render(data) {
-    lastData = data;
-    var p = data.pipeline || {}, r = data.review || {}, t = data.tokens || {};
-
+  // ===== Render (per-section) =====
+  function renderPipeline(p) {
+    if (!lastData) lastData = {};
+    lastData.pipeline = p;
     document.getElementById('s-pipe').textContent = fmt(p.inPipe);
     document.getElementById('s-completed').textContent = fmt(p.completed24h);
     document.getElementById('s-errors').textContent = fmt(p.errors24h);
     document.getElementById('s-retries').textContent = fmt(p.retries24h);
+    renderActive(p.active || []);
+    renderErrors(p.errors || []);
+    drawActivityChart(p.completedTs, p.errorsTs, p.retriesTs);
+  }
+
+  function renderReview(r) {
+    if (!lastData) lastData = {};
+    lastData.review = r;
     document.getElementById('r-pending').textContent = fmt(r.pending);
     document.getElementById('r-decided').textContent = fmt(r.decided);
-    document.getElementById('t-total').innerHTML = fmt(t.total_tokens) + ' <small>tokens (' + fmt(t.calls) + ' calls)</small>';
+    drawDonut(r.pending || 0, r.decided || 0);
+  }
 
+  function renderTokens(t) {
+    document.getElementById('t-total').innerHTML = fmt(t.total_tokens) + ' <small>tokens (' + fmt(t.calls) + ' calls)</small>';
     var fnList = document.getElementById('t-functions');
     fnList.innerHTML = '';
     var byFn = t.by_function || {};
@@ -1297,14 +1307,15 @@ export function getDashboardPage(): string {
       fnList.appendChild(row);
     }
     if (!fns.length) fnList.innerHTML = '<div style="color:var(--text-dim);font-style:italic;font-size:10px;padding:4px">No usage this hour</div>';
+  }
 
-    renderActive(p.active || []);
-    renderErrors(p.errors || []);
-    renderRecent(data.recentCompleted || []);
-
-    // Charts
-    drawActivityChart(p.completedTs, p.errorsTs, p.retriesTs);
-    drawDonut(r.pending || 0, r.decided || 0);
+  // Legacy render kept for 30s refresh compatibility
+  function render(data) {
+    lastData = data;
+    if (data.pipeline) renderPipeline(data.pipeline);
+    if (data.review) renderReview(data.review);
+    if (data.tokens) renderTokens(data.tokens);
+    if (data.recentCompleted) renderRecent(data.recentCompleted);
   }
 
   function fmtDur(ms) {
@@ -1414,15 +1425,23 @@ export function getDashboardPage(): string {
     for (var i = 0; i < ago.length && i < errors.length; i++) ago[i].textContent = timeAgo(errors[i].ts);
   }
 
+  function fetchSection(name, renderFn) {
+    return fetch('/admin/dashboard/section?section=' + name)
+      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(renderFn)
+      .catch(function(e) { console.error('[dashboard] ' + name + ' failed:', e); });
+  }
+
   async function fetchData() {
     var dot = document.getElementById('status-dot');
     dot.className = 'dot loading';
-    try {
-      var res = await fetch('/admin/dashboard/data');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      render(await res.json());
-      dot.className = 'dot';
-    } catch(e) { console.error('fetch:', e); dot.className = 'dot error'; }
+    await Promise.all([
+      fetchSection('pipeline', renderPipeline),
+      fetchSection('review', renderReview),
+      fetchSection('tokens', renderTokens),
+      fetchSection('recent', renderRecent),
+    ]);
+    dot.className = 'dot';
   }
 
   fetchData().finally(function() {
@@ -1502,6 +1521,7 @@ export function getDashboardPage(): string {
     var sel = document.getElementById('a-supervisor');
     var credStep = document.getElementById('um-cred-step');
     var btnRole = document.getElementById('um-btn-role');
+    if (!btnRole || !group || !sel || !credStep) return;
     btnRole.textContent = selectedRole === 'user' ? 'Agent' : selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1);
 
     if (selectedRole === 'admin') {

@@ -410,6 +410,7 @@ const getRoutes: Record<string, Handler> = {
   // Dashboard (admin only)
   "/admin/dashboard": requireRolePageAuth(["admin"], handleDashboardPage),
   "/admin/dashboard/data": handleDashboardData,
+  "/admin/dashboard/section": handleDashboardSection,
   "/admin/api/me": handleAdminMe,
   "/admin/retry-finding": handleRetryFinding,
 
@@ -638,6 +639,35 @@ async function handleDashboardData(req: Request): Promise<Response> {
     appeals,
     recentCompleted,
   });
+}
+
+const DASHBOARD_SECTIONS: Record<string, (orgId: string) => Promise<unknown>> = {
+  pipeline: async (orgId) => {
+    const s = await getStats(orgId);
+    return {
+      inPipe: s.active.length,
+      active: s.active,
+      completed24h: s.completedCount,
+      completedTs: s.completed.map((c: any) => c.ts),
+      errors24h: s.errors.length,
+      errors: s.errors,
+      errorsTs: s.errors.map((e: any) => e.ts),
+      retries24h: s.retries.length,
+      retriesTs: s.retries.map((r: any) => r.ts),
+    };
+  },
+  review: (orgId) => getReviewStats(orgId),
+  tokens: (_orgId) => getTokenUsage(1),
+  recent: (orgId) => getRecentCompleted(orgId, 25),
+};
+
+async function handleDashboardSection(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const section = new URL(req.url).searchParams.get("section") ?? "";
+  const fn = DASHBOARD_SECTIONS[section];
+  if (!fn) return json({ error: "unknown section" }, 400);
+  return json(await fn(auth.orgId));
 }
 
 async function handleAdminMe(req: Request): Promise<Response> {

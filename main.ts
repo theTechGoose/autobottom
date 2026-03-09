@@ -1495,7 +1495,7 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   const findingId = finding.id ?? "";
   const recordId = String(finding.record?.RecordId ?? "");
   const isPackage = !!finding.isPackage;
-  const qbTableId = isPackage ? "bu3e8x98x" : "bpb28qsnn";
+  const qbTableId = isPackage ? "bttffb64u" : "bpb28qsnn";
   const crmUrl = recordId ? `https://${env.qbRealm}.quickbase.com/db/${qbTableId}?a=dr&rid=${recordId}` : "";
   const scoreVal = score ?? (Array.isArray(finding.answeredQuestions)
     ? Math.round(finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length * 100)

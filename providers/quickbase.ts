@@ -51,18 +51,35 @@ const FIELD_VO_NAME = 144;
 const FIELD_VO_EMAIL = 839;
 const FIELD_SUPERVISOR_EMAIL = 851;
 const FIELD_DESTINATION_DISPLAY = 566;
+// AutoYes expression fields on date leg records
+const DATE_LEG_AUTOYES_FIELDS = [
+  49,  // MaritalStatus
+  460, // TotalWGSAttached
+  553, // DepositCollected
+  594, // TotalMCCAttached
+  706, // TotalAmountPaid
+];
 
 /** Fetch a date leg record by RID, returning human-readable field map. */
 export async function getDateLegByRid(rid: string): Promise<Record<string, any> | null> {
   const records = await queryRecords({
     tableId: DATE_LEGS_TABLE,
     where: `{${FIELD_RECORD_ID}.EX.'${rid}'}`,
-    select: [FIELD_RECORD_ID, FIELD_VO_GENIE, FIELD_RELATED_DESTINATION, FIELD_DESTINATION_DISPLAY, FIELD_GUEST_NAME, FIELD_VO_NAME, FIELD_VO_EMAIL, FIELD_SUPERVISOR_EMAIL],
+    select: [
+      FIELD_RECORD_ID, FIELD_VO_GENIE, FIELD_RELATED_DESTINATION, FIELD_DESTINATION_DISPLAY,
+      FIELD_GUEST_NAME, FIELD_VO_NAME, FIELD_VO_EMAIL, FIELD_SUPERVISOR_EMAIL,
+      ...DATE_LEG_AUTOYES_FIELDS,
+    ],
   });
 
   if (records.length === 0) return null;
 
   const r = records[0];
+  const autoYesValues: Record<string, string> = {};
+  for (const fid of DATE_LEG_AUTOYES_FIELDS) {
+    autoYesValues[String(fid)] = r[fid]?.value != null ? String(r[fid].value) : "";
+  }
+
   return {
     RecordId: r[FIELD_RECORD_ID]?.value ?? rid,
     VoGenie: r[FIELD_VO_GENIE]?.value ?? "",
@@ -72,6 +89,41 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     VoName: r[FIELD_VO_NAME]?.value ?? "",
     VoEmail: r[FIELD_VO_EMAIL]?.value ?? "",
     SupervisorEmail: r[FIELD_SUPERVISOR_EMAIL]?.value ?? "",
+    ...autoYesValues,
+  };
+}
+
+// PACKAGES table
+const PACKAGES_TABLE = "bttffb64u";
+const PKG_FIELD_RECORD_ID = 3;
+const PKG_FIELD_GENIE_NUMBER = 18; // GenieNumber — recording ID field
+// AutoYes expression fields on package records
+const PACKAGE_AUTOYES_FIELDS = [
+  67,  // MaritalStatus
+  306, // MSPSubscription
+  345, // HasMCC
+];
+
+/** Fetch a package record by RID, returning a field map with numeric string keys for autoYes expressions. */
+export async function getPackageByRid(rid: string): Promise<Record<string, any> | null> {
+  const records = await queryRecords({
+    tableId: PACKAGES_TABLE,
+    where: `{${PKG_FIELD_RECORD_ID}.EX.'${rid}'}`,
+    select: [PKG_FIELD_RECORD_ID, PKG_FIELD_GENIE_NUMBER, ...PACKAGE_AUTOYES_FIELDS],
+  });
+
+  if (records.length === 0) return null;
+
+  const r = records[0];
+  const autoYesValues: Record<string, string> = {};
+  for (const fid of PACKAGE_AUTOYES_FIELDS) {
+    autoYesValues[String(fid)] = r[fid]?.value != null ? String(r[fid].value) : "";
+  }
+
+  return {
+    RecordId: r[PKG_FIELD_RECORD_ID]?.value ?? rid,
+    GenieNumber: r[PKG_FIELD_GENIE_NUMBER]?.value ?? "",
+    ...autoYesValues,
   };
 }
 

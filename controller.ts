@@ -3,7 +3,7 @@ import * as icons from "./shared/icons.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook, getWebhookConfig } from "./lib/kv.ts";
 import { enqueueStep } from "./lib/queue.ts";
-import { getDateLegByRid } from "./providers/quickbase.ts";
+import { getDateLegByRid, getPackageByRid } from "./providers/quickbase.ts";
 import { S3Ref } from "./lib/s3.ts";
 import { env } from "./env.ts";
 import { populateJudgeQueue, saveAppeal, getAppeal } from "./judge/kv.ts";
@@ -108,7 +108,11 @@ export async function handlePackageByRid(orgId: OrgId, req: Request): Promise<Re
     // No body is fine
   }
 
-  const record = body.record ?? { RecordId: rid };
+  let record = body.record;
+  if (!record) {
+    // Fetch package record from QuickBase to populate autoYes expression fields
+    record = await getPackageByRid(rid) ?? { RecordId: rid };
+  }
   const recordingIdField = body.recordingIdField ?? "GenieNumber";
 
   const jobId = nanoid();
@@ -468,7 +472,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
   const record = f.record ?? {};
   const recordId = String(record.RecordId ?? "");
   const isPackage = f.recordingIdField === "GenieNumber";
-  const qbTableId = isPackage ? "bu3e8x98x" : "bpb28qsnn";
+  const qbTableId = isPackage ? "bttffb64u" : "bpb28qsnn";
   const crmUrl = recordId ? `https://${env.qbRealm}.quickbase.com/db/${qbTableId}?a=dr&rid=${recordId}` : "";
 
   const isYesAnswer = (a: string) => {

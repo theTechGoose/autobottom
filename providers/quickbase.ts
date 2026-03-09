@@ -133,7 +133,9 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
 // PACKAGES table
 const PACKAGES_TABLE = "bttffb64u";
 const PKG_FIELD_RECORD_ID = 3;
-const PKG_FIELD_GENIE_NUMBER = 18; // GenieNumber — recording ID field
+const PKG_FIELD_GENIE_NUMBER = 18;    // GenieNumber — recording ID field
+const PKG_FIELD_RELATED_OFFICE_ID = 45;  // RelatedOfficeId — used to derive destination
+const PKG_FIELD_GM_EMAIL = 114;           // RelatedOfficeId - Office GM Email — audit result recipient
 // AutoYes expression fields on package records
 const PACKAGE_AUTOYES_FIELDS = [
   67,  // MaritalStatus
@@ -146,7 +148,7 @@ export async function getPackageByRid(rid: string): Promise<Record<string, any> 
   const records = await queryRecords({
     tableId: PACKAGES_TABLE,
     where: `{${PKG_FIELD_RECORD_ID}.EX.'${rid}'}`,
-    select: [PKG_FIELD_RECORD_ID, PKG_FIELD_GENIE_NUMBER, ...PACKAGE_AUTOYES_FIELDS],
+    select: [PKG_FIELD_RECORD_ID, PKG_FIELD_GENIE_NUMBER, PKG_FIELD_RELATED_OFFICE_ID, PKG_FIELD_GM_EMAIL, ...PACKAGE_AUTOYES_FIELDS],
   });
 
   if (records.length === 0) return null;
@@ -160,6 +162,8 @@ export async function getPackageByRid(rid: string): Promise<Record<string, any> 
   return {
     RecordId: r[PKG_FIELD_RECORD_ID]?.value ?? rid,
     GenieNumber: r[PKG_FIELD_GENIE_NUMBER]?.value ?? "",
+    RelatedOfficeId: r[PKG_FIELD_RELATED_OFFICE_ID]?.value ?? 0,
+    GmEmail: r[PKG_FIELD_GM_EMAIL]?.value ?? "",
     ...autoYesValues,
   };
 }

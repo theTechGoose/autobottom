@@ -40,6 +40,31 @@ export async function stepPrepare(req: Request): Promise<Response> {
     const qlabConfig = finding.qlabConfig;
     let questionSeeds: IQuestionSeed[];
 
+    // For package audits (GenieNumber field), synthesize RelatedDestinationId from RelatedOfficeId
+    // using the same office→destination mapping as the legacy auto-bot.
+    // This runs before the qlabConfig check so that if qlabConfig is ever set on a package,
+    // it still takes precedence (Question Lab migration path preserved).
+    if (finding.recordingIdField === "GenieNumber" && !finding.record?.RelatedDestinationId) {
+      const officeId = Number(finding.record?.RelatedOfficeId ?? 0);
+      let destId: number;
+      if (officeId === 127 || officeId === 199) {
+        destId = 2701; // ZZZ - ECG
+      } else if (
+        officeId === 213 || officeId === 1307 ||
+        [1291, 1394, 1395, 1396, 1397, 1398, 1399, 1400, 1401, 1402, 1403].includes(officeId)
+      ) {
+        destId = 2703; // ZZZ - MCC Only
+      } else if (officeId === 1435) {
+        destId = 2705; // ZZZ - CLW
+      } else if (officeId === 1496) {
+        destId = 2706; // ZZZ - ES3
+      } else {
+        destId = 2702; // ZZZ - Generic Package
+      }
+      finding.record = { ...finding.record, RelatedDestinationId: destId };
+      console.log(`[STEP-PREPARE] ${findingId}: Package — mapped officeId=${officeId} → destinationId=${destId}`);
+    }
+
     if (qlabConfig) {
       console.log(`[STEP-PREPARE] ${findingId}: Using Question Lab config "${qlabConfig}"`);
       const qlabSeeds = await serveConfig(orgId, qlabConfig);

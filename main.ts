@@ -1542,10 +1542,11 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   const agentEmail = finding.owner ?? "";
   const voEmail = String(finding.record?.VoEmail ?? "");
   const supervisorEmail = String(finding.record?.SupervisorEmail ?? "");
+  const gmEmail = String(finding.record?.GmEmail ?? "");
   const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String(finding.record?.VoName ?? ""), agentEmail);
   const findingId = finding.id ?? "";
   const recordId = String(finding.record?.RecordId ?? "");
-  const isPackage = !!finding.isPackage;
+  const isPackage = finding.recordingIdField === "GenieNumber";
   const qbTableId = isPackage ? "bttffb64u" : "bpb28qsnn";
   const crmUrl = recordId ? `https://${env.qbRealm}.quickbase.com/db/${qbTableId}?a=dr&rid=${recordId}` : "";
   const scoreVal = score ?? (Array.isArray(finding.answeredQuestions)
@@ -1591,8 +1592,9 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   };
 
   const resolvedTest = webhookCfg?.testEmail || "";
-  const to = resolvedTest || (voEmail || agentEmail);
-  console.log(`[EMAIL] audit-complete: to=${to} cc=${supervisorEmail || "none"} bcc=${webhookCfg?.bcc || "none"} score=${scoreVal}% finding=${findingId}`);
+  // Packages: send to office GM. Date legs: send to VO/agent. Test override always wins.
+  const to = resolvedTest || (isPackage ? gmEmail : (voEmail || agentEmail));
+  console.log(`[EMAIL] audit-complete: to=${to} isPackage=${isPackage} cc=${supervisorEmail || "none"} bcc=${webhookCfg?.bcc || "none"} score=${scoreVal}% finding=${findingId}`);
   if (!to) return json({ error: "no recipient email" }, 400);
   const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
   const bcc = resolvedTest ? undefined : (webhookCfg?.bcc || undefined);

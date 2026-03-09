@@ -83,10 +83,16 @@ export async function handleDecide(req: Request): Promise<Response> {
     return json({ error: "reason must be one of: error, logic, fragment, transcript" }, 400);
   }
 
-  const result = await recordDecision(
-    auth.orgId, findingId, questionIndex, decision, auth.email,
-    reason || undefined, combo ?? undefined, level ?? undefined,
-  );
+  const t0 = Date.now();
+  const [result, next] = await Promise.all([
+    recordDecision(
+      auth.orgId, findingId, questionIndex, decision, auth.email,
+      reason || undefined, combo ?? undefined, level ?? undefined,
+    ),
+    claimNextItem(auth.orgId, auth.email),
+  ]);
+  console.log(`[JUDGE] ⚡ decide: ${Date.now() - t0}ms findingId=${findingId} decision=${decision}`);
+
   if (!result.success) {
     return json({ error: "failed to record decision (lock expired or not owned)" }, 409);
   }
@@ -99,8 +105,6 @@ export async function handleDecide(req: Request): Promise<Response> {
       decision,
     }).catch(() => {});
   }
-
-  const next = await claimNextItem(auth.orgId, auth.email);
 
   const newBadges = result.newBadges.map(({ check: _, ...rest }) => rest);
   return json({ decided: { findingId, questionIndex, decision, reason: reason || null }, auditComplete: result.auditComplete, next, newBadges });

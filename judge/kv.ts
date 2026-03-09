@@ -239,55 +239,56 @@ export async function recordDecision(
 
   const res = await atomic.commit();
   if (!res.ok) {
+    console.warn(`[JUDGE] recordDecision CONFLICT: ${findingId}/${questionIndex} — atomic commit failed`);
     return { success: false, auditComplete: false, newBadges: [] };
   }
 
-  console.log(`[JUDGE] recordDecision OK: ${findingId}/${questionIndex} = ${decision}`);
-
   const auditComplete = newCount <= 0;
+  console.log(`[JUDGE] ✅ recordDecision: ${findingId}/${questionIndex} = ${decision}${auditComplete ? " (audit complete)" : ""}`);
 
   if (auditComplete) {
     postJudgedAudit(orgId, findingId, judge).catch((err) =>
-      console.error(`[JUDGE] ${findingId}: Completion failed:`, err)
+      console.error(`[JUDGE] ${findingId}: ❌ Completion failed:`, err)
     );
   }
 
-  // -- Badge checking --
-  let newBadges: BadgeDef[] = [];
-  try {
-    const stats = await getBadgeStats(orgId, judge);
-    stats.totalDecisions++;
-    if (decision === "overturn") {
-      stats.totalOverturns++;
-      stats.consecutiveUpholds = 0;
-    } else {
-      stats.consecutiveUpholds++;
-    }
-    if (clientCombo != null && clientCombo > stats.bestCombo) stats.bestCombo = clientCombo;
-    if (clientLevel != null && clientLevel > stats.level) stats.level = clientLevel;
-    const today = new Date().toISOString().slice(0, 10);
-    if (stats.lastActiveDate !== today) {
-      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      stats.dayStreak = stats.lastActiveDate === yesterday ? stats.dayStreak + 1 : 1;
-      stats.lastActiveDate = today;
-    }
-    await updateBadgeStats(orgId, judge, stats);
+  // Badge checking is off the critical path — fire and forget so the judge gets instant response
+  (async () => {
+    try {
+      const stats = await getBadgeStats(orgId, judge);
+      stats.totalDecisions++;
+      if (decision === "overturn") {
+        stats.totalOverturns++;
+        stats.consecutiveUpholds = 0;
+      } else {
+        stats.consecutiveUpholds++;
+      }
+      if (clientCombo != null && clientCombo > stats.bestCombo) stats.bestCombo = clientCombo;
+      if (clientLevel != null && clientLevel > stats.level) stats.level = clientLevel;
+      const today = new Date().toISOString().slice(0, 10);
+      if (stats.lastActiveDate !== today) {
+        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        stats.dayStreak = stats.lastActiveDate === yesterday ? stats.dayStreak + 1 : 1;
+        stats.lastActiveDate = today;
+      }
+      await updateBadgeStats(orgId, judge, stats);
 
-    const earned = await getEarnedBadges(orgId, judge);
-    const earnedSet = new Set(earned.map((b) => b.badgeId));
-    newBadges = checkBadges("judge", stats, earnedSet);
+      const earned = await getEarnedBadges(orgId, judge);
+      const earnedSet = new Set(earned.map((b) => b.badgeId));
+      const newBadges = checkBadges("judge", stats, earnedSet);
 
-    let badgeXp = 0;
-    for (const badge of newBadges) {
-      await awardBadge(orgId, judge, badge);
-      badgeXp += badge.xpReward;
+      let badgeXp = 0;
+      for (const badge of newBadges) {
+        await awardBadge(orgId, judge, badge);
+        badgeXp += badge.xpReward;
+      }
+      await awardXp(orgId, judge, 10 + badgeXp, "judge");
+    } catch (err) {
+      console.error(`[JUDGE] Badge check error for ${judge}:`, err);
     }
-    await awardXp(orgId, judge, 10 + badgeXp, "judge");
-  } catch (err) {
-    console.error(`[JUDGE] Badge check error for ${judge}:`, err);
-  }
+  })();
 
-  return { success: true, auditComplete, newBadges };
+  return { success: true, auditComplete, newBadges: [] };
 }
 
 // -- Go Back (Undo) --

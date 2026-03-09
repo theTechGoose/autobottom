@@ -96,27 +96,38 @@ export interface LlmAnswer {
 }
 
 /** Ask the LLM a single QA question with RAG context. Returns JSON answer.
- *  Automatically cascades through FALLBACK_MODELS on 429/503. */
-const LLM_TIMEOUT_MS = 120_000; // 2 min — well beyond any legitimate slow response
+ *  Automatically cascades through FALLBACK_MODELS on 429/503.
+ *  Uses Promise.race+setTimeout for timeout instead of AbortController — npm SDKs in Deno
+ *  do not reliably propagate AbortSignal through to their internal fetch calls. */
+const LLM_TIMEOUT_MS = 25_000; // 25s per call — fits in QStash 30s window even with stagger
 
 export async function askQuestion(question: string, transcript: string, modelIndex = 0): Promise<LlmAnswer> {
   const model: GroqModel = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
   const userPrompt = makeUserPrompt(question, transcript);
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+
+  let timerId: ReturnType<typeof setTimeout>;
+  const timeoutP = new Promise<never>((_, reject) => {
+    timerId = setTimeout(
+      () => reject(new Error(`LLM timed out after ${LLM_TIMEOUT_MS / 1000}s (model=${model})`)),
+      LLM_TIMEOUT_MS,
+    );
+  });
 
   try {
-    const res = await client.chat.completions.create({
-      model,
-      messages: [
-        { role: "system", content: QA_SYSTEM_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-      response_format: { type: "json_object" },
-      max_tokens: 8000,
-    }, { signal: controller.signal });
-
+    const res = await Promise.race([
+      client.chat.completions.create({
+        model,
+        messages: [
+          { role: "system", content: QA_SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        response_format: { type: "json_object" },
+        max_tokens: 8000,
+      }),
+      timeoutP,
+    ]);
+    clearTimeout(timerId!);
     trackTokens("askQuestion", res.usage);
     const text = res.choices[0]?.message?.content ?? "";
     const parsed = parseLlmJson<LlmAnswer>(text, { answer: "Error!", thinking: "Error!", defense: "Error!" });
@@ -125,8 +136,9 @@ export async function askQuestion(question: string, transcript: string, modelInd
     if (typeof parsed.answer !== "string") parsed.answer = JSON.stringify(parsed.answer) ?? "Error!";
     return parsed;
   } catch (e: any) {
+    clearTimeout(timerId!);
     const msg = String(e?.message ?? e);
-    const isTimeout = msg.includes("aborted") || msg.includes("AbortError");
+    const isTimeout = msg.includes("timed out") || msg.includes("aborted") || msg.includes("AbortError");
     if (isTimeout) {
       console.error(`[LLM-TIMEOUT] ⚠️ ${model} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
     }
@@ -138,8 +150,6 @@ export async function askQuestion(question: string, transcript: string, modelInd
       return askQuestion(question, transcript, nextIndex);
     }
     throw e;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 

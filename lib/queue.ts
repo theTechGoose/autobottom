@@ -57,6 +57,11 @@ async function enqueue(queueName: string, targetUrl: string, body: unknown, dela
     "Upstash-Retries": "0",
   };
 
+  // ask-all runs 25 Groq calls in parallel — extend QStash delivery timeout to 900s (15 min)
+  if (step === "ask-all") {
+    headers["Upstash-Timeout"] = "900";
+  }
+
   // QStash enqueue (queue-based) does not support Upstash-Delay.
   // Use publish (non-queued) for delayed messages instead.
   // Delayed publishes get 3 retries so a cold-start 5xx doesn't silently drop the message.

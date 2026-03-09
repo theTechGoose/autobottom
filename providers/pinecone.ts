@@ -43,17 +43,28 @@ async function getPineconeHost(): Promise<string> {
 
 async function embed(input: string): Promise<number[]> {
   const openai = getOpenAI();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), PINECONE_TIMEOUT_MS);
+  // Use Promise.race+setTimeout — npm SDKs in Deno don't reliably propagate AbortSignal
+  let timerId: ReturnType<typeof setTimeout>;
+  const timeoutP = new Promise<never>((_, reject) => {
+    timerId = setTimeout(
+      () => reject(new Error(`OpenAI embed timed out after ${PINECONE_TIMEOUT_MS / 1000}s`)),
+      PINECONE_TIMEOUT_MS,
+    );
+  });
   try {
-    const res = await openai.embeddings.create({
-      input,
-      model: "text-embedding-3-small",
-      encoding_format: "float",
-    }, { signal: controller.signal });
+    const res = await Promise.race([
+      openai.embeddings.create({
+        input,
+        model: "text-embedding-3-small",
+        encoding_format: "float",
+      }),
+      timeoutP,
+    ]);
+    clearTimeout(timerId!);
     return res.data[0].embedding;
-  } finally {
-    clearTimeout(timeoutId);
+  } catch (e) {
+    clearTimeout(timerId!);
+    throw e;
   }
 }
 

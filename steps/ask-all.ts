@@ -55,8 +55,13 @@ async function askLlmOne(
   /** Query vector store using a clean query (no instruction notes), falling back to raw transcript. */
   async function getContext(q: string): Promise<string> {
     const query = toQueryText(q) || q;
-    const vectorContext = await vectorQuery(findingId, query);
-    if (vectorContext.trim()) return vectorContext;
+    try {
+      const vectorContext = await vectorQuery(findingId, query);
+      if (vectorContext.trim()) return vectorContext;
+    } catch (err) {
+      console.warn(`[STEP-ASK-ALL] ${findingId}: ⚠️ Pinecone failed for "${query.slice(0, 40)}..." — raw transcript fallback:`, err);
+      return rawTranscript.substring(0, 4000);
+    }
     console.warn(`[STEP-ASK-ALL] ${findingId}: Pinecone empty for "${query.slice(0, 40)}..." — using raw transcript fallback`);
     return rawTranscript.substring(0, 4000);
   }

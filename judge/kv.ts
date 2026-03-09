@@ -108,12 +108,21 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
 
   let current: JudgeItem | null = null;
   let peek: JudgeItem | null = null;
-  let remaining = 0;
+
+  // Recording re-audit types should never reach the judge queue.
+  // Auto-dispose any that leaked in from old code paths.
+  const SKIP_APPEAL_TYPES = new Set(["different-recording", "additional-recording", "upload-recording"]);
 
   const iter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
   for await (const entry of iter) {
-    remaining++;
     const item = entry.value;
+
+    // Dispose recording re-audit items silently
+    if (item.appealType && SKIP_APPEAL_TYPES.has(item.appealType)) {
+      await db.delete(entry.key);
+      continue;
+    }
+
     const lockKey = orgKey(orgId, "judge-lock", item.findingId, item.questionIndex);
 
     if (!current) {
@@ -125,19 +134,23 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
 
       if (res.ok) {
         current = item;
-        continue;
       }
     } else if (!peek) {
       const lockEntry = await db.get(lockKey);
       if (lockEntry.value === null) {
         peek = item;
+        break; // Have both current and peek — no need to scan further
       }
     }
-
-    // Don't break early -- continue iterating to get accurate remaining count
   }
 
-  if (current) remaining--;
+  // Get accurate remaining count from per-audit counters (one KV entry per audit, not per question)
+  let remaining = 0;
+  const counterIter = db.list<number>({ prefix: orgKey(orgId, "judge-audit-pending") });
+  for await (const entry of counterIter) {
+    remaining += entry.value ?? 0;
+  }
+  if (current) remaining--; // Exclude the one we just claimed
 
   let transcript = null;
   let auditRemaining = 0;

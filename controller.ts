@@ -239,10 +239,14 @@ export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Resp
     return json({ error: "no answered questions to appeal" }, 400);
   }
 
-  // Populate judge queue with only the disputed questions (or all if none specified)
+  // Populate judge queue with only the disputed questions.
+  // If none specified, fall back to failed (No) questions only — agents don't appeal questions they passed.
   const questionsToQueue = appealedQuestions.length > 0
     ? questions.filter((q: any) => appealedQuestions.includes(q.header ?? ""))
-    : questions;
+    : questions.filter((q: any) => String(q.answer ?? "").toLowerCase() === "no");
+  if (questionsToQueue.length === 0) {
+    return json({ error: "no failed questions to appeal" }, 400);
+  }
   await populateJudgeQueue(orgId, findingId, questionsToQueue, "redo");
 
   // Save appeal record

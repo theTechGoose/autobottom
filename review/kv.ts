@@ -24,6 +24,7 @@ export interface ReviewItem {
   thinking: string;
   defense: string;
   answer: string;
+  recordingIdField?: string; // "GenieNumber" = package, absent/other = date leg
 }
 
 export interface ReviewDecision extends ReviewItem {
@@ -58,6 +59,7 @@ export async function populateReviewQueue(
   orgId: OrgId,
   findingId: string,
   answeredQuestions: Array<{ answer: string; header: string; populated: string; thinking: string; defense: string }>,
+  recordingIdField?: string,
 ) {
   const db = await kv();
   const noAnswers = answeredQuestions
@@ -76,6 +78,7 @@ export async function populateReviewQueue(
       thinking: q.thinking,
       defense: q.defense,
       answer: q.answer,
+      ...(recordingIdField ? { recordingIdField } : {}),
     };
     atomic.set(orgKey(orgId, "review-pending", findingId, q.index), item);
   }
@@ -391,15 +394,28 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
 
 // -- Stats --
 
-export async function getReviewStats(orgId: OrgId): Promise<{ pending: number; decided: number }> {
+export async function getReviewStats(orgId: OrgId): Promise<{
+  pending: number; decided: number;
+  dateLegPending: number; packagePending: number;
+  dateLegDecided: number; packageDecided: number;
+}> {
   const db = await kv();
-  let pending = 0;
-  let decided = 0;
+  let pending = 0, decided = 0;
+  let dateLegPending = 0, packagePending = 0;
+  let dateLegDecided = 0, packageDecided = 0;
 
-  for await (const _ of db.list({ prefix: orgKey(orgId, "review-pending") })) pending++;
-  for await (const _ of db.list({ prefix: orgKey(orgId, "review-decided") })) decided++;
+  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") })) {
+    pending++;
+    if (entry.value?.recordingIdField === "GenieNumber") packagePending++;
+    else dateLegPending++;
+  }
+  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-decided") })) {
+    decided++;
+    if (entry.value?.recordingIdField === "GenieNumber") packageDecided++;
+    else dateLegDecided++;
+  }
 
-  return { pending, decided };
+  return { pending, decided, dateLegPending, packagePending, dateLegDecided, packageDecided };
 }
 
 // -- Reviewer Dashboard --

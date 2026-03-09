@@ -118,7 +118,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
   // Formal judge appeals are handled upstream in handleFileAppeal (original finding), not here.
   if (finding.answeredQuestions?.length) {
     try {
-      await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[]);
+      await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[], finding.recordingIdField as string | undefined);
       console.log(`[STEP-FINALIZE] ${findingId}: → review queue${isRecordingReAudit ? ` (recording re-audit: ${appealType})` : ""}`);
     } catch (err) {
       console.error(`[STEP-FINALIZE] ${findingId}: Queue population failed:`, err);

@@ -538,10 +538,22 @@ export function getDashboardPage(): string {
           <span>Review Queue</span>
           <button class="sf-btn danger" id="clear-review-btn" style="font-size:9px;padding:3px 10px;">Clear Queue</button>
         </div>
-        <div class="rq-row">
-          <div class="rq-stat pending"><div class="rv" id="r-pending">--</div><div class="rl">Pending</div></div>
-          <div class="rq-div"></div>
-          <div class="rq-stat decided"><div class="rv" id="r-decided">--</div><div class="rl">Decided</div></div>
+        <div style="width:100%;border-collapse:collapse;display:table;font-size:11px;margin-top:6px;">
+          <div style="display:table-row;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:.8px;font-size:9px;">
+            <div style="display:table-cell;padding:2px 0 6px;"></div>
+            <div style="display:table-cell;padding:2px 8px 6px;text-align:right;">Pending</div>
+            <div style="display:table-cell;padding:2px 0 6px;text-align:right;">Decided</div>
+          </div>
+          <div style="display:table-row;">
+            <div style="display:table-cell;padding:4px 0;color:var(--text-dim);font-size:10px;white-space:nowrap;">Date Legs</div>
+            <div style="display:table-cell;padding:4px 8px;text-align:right;font-size:16px;font-weight:700;color:var(--yellow);" id="r-dl-pending">--</div>
+            <div style="display:table-cell;padding:4px 0;text-align:right;font-size:16px;font-weight:700;color:var(--green);" id="r-dl-decided">--</div>
+          </div>
+          <div style="display:table-row;">
+            <div style="display:table-cell;padding:4px 0;color:var(--text-dim);font-size:10px;white-space:nowrap;">Packages</div>
+            <div style="display:table-cell;padding:4px 8px;text-align:right;font-size:16px;font-weight:700;color:var(--yellow);" id="r-pkg-pending">--</div>
+            <div style="display:table-cell;padding:4px 0;text-align:right;font-size:16px;font-weight:700;color:var(--green);" id="r-pkg-decided">--</div>
+          </div>
         </div>
       </div>
       <div class="panel">
@@ -1289,9 +1301,13 @@ export function getDashboardPage(): string {
   function renderReview(r) {
     if (!lastData) lastData = {};
     lastData.review = r;
-    document.getElementById('r-pending').textContent = fmt(r.pending);
-    document.getElementById('r-decided').textContent = fmt(r.decided);
-    drawDonut(r.pending || 0, r.decided || 0);
+    document.getElementById('r-dl-pending').textContent = fmt(r.dateLegPending ?? r.pending);
+    document.getElementById('r-dl-decided').textContent = fmt(r.dateLegDecided ?? r.decided);
+    document.getElementById('r-pkg-pending').textContent = fmt(r.packagePending ?? 0);
+    document.getElementById('r-pkg-decided').textContent = fmt(r.packageDecided ?? 0);
+    var totalPending = (r.dateLegPending ?? r.pending ?? 0) + (r.packagePending ?? 0);
+    var totalDecided = (r.dateLegDecided ?? r.decided ?? 0) + (r.packageDecided ?? 0);
+    drawDonut(totalPending, totalDecided);
   }
 
   function renderTokens(t) {

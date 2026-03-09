@@ -40,11 +40,9 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
     // No body is fine
   }
 
-  let record = body.record;
-  if (!record) {
-    // Fetch full record from QuickBase so we get the VoGenie field
-    record = await getDateLegByRid(rid) ?? { RecordId: rid };
-  }
+  // Always fetch from QuickBase — body.record from QB triggers lacks autoYes expression fields.
+  // Fall back to body.record only if QB fetch fails.
+  const record = await getDateLegByRid(rid) ?? body.record ?? { RecordId: rid };
   const recordingIdField = body.recordingIdField ?? "VoGenie";
 
   // Create job
@@ -108,11 +106,9 @@ export async function handlePackageByRid(orgId: OrgId, req: Request): Promise<Re
     // No body is fine
   }
 
-  let record = body.record;
-  if (!record) {
-    // Fetch package record from QuickBase to populate autoYes expression fields
-    record = await getPackageByRid(rid) ?? { RecordId: rid };
-  }
+  // Always fetch from QuickBase — body.record from QB triggers lacks autoYes expression fields.
+  // Fall back to body.record only if QB fetch fails.
+  const record = await getPackageByRid(rid) ?? body.record ?? { RecordId: rid };
   const recordingIdField = body.recordingIdField ?? "GenieNumber";
 
   const jobId = nanoid();

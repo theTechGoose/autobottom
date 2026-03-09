@@ -69,11 +69,11 @@ export async function stepPrepare(req: Request): Promise<Response> {
   }
 
   console.log(`[STEP-PREPARE] ${findingId}: Got ${questionSeeds.length} questions`);
+  console.log(`[STEP-PREPARE] ${findingId}: record keys=${JSON.stringify(Object.keys(finding.record ?? {}))}`);
 
   // 2. Populate questions with record values
   // Simple field lookup - for now just use record keys directly
   const fieldLookup = (id: string, record: Record<string, any>) => {
-    // Try direct key match first, then try by field ID
     return record[id] ?? undefined;
   };
 
@@ -86,6 +86,13 @@ export async function stepPrepare(req: Request): Promise<Response> {
   }
 
   const populated = populateQuestions(questionSeeds, cleanRecord, fieldLookup);
+
+  // Log autoYes expressions after population so we can verify field values resolved correctly
+  const autoYesPopulated = populated.filter((q) => q.autoYesExp).map((q) => `"${q.header}": ${q.autoYesExp}`);
+  if (autoYesPopulated.length > 0) {
+    console.log(`[STEP-PREPARE] ${findingId}: autoYes expressions after population:\n  ${autoYesPopulated.join("\n  ")}`);
+  }
+
   finding.unpopulatedQuestions = questionSeeds;
   finding.populatedQuestions = populated;
   // Save populated questions to a separate KV key so they survive finding trim

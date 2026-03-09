@@ -1565,6 +1565,19 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
       ).join("")
     : `<tr><td colspan="2" style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions — perfect score!</td></tr>`;
 
+  // Package vs date-leg dynamic vars — single template supports both
+  const auditTypeLabel = isPackage ? "package verification" : "date leg";
+  const guestNameVal = String(finding.record?.GuestName ?? "");
+  const greeting = isPackage ? "Hi," : `Hi ${teamMemberFirst},`;
+  const guestContext = (!isPackage && guestNameVal)
+    ? ` for <strong style="color:#c9d1d9;">${guestNameVal}</strong>`
+    : "";
+  const supportTeamName = isPackage ? "AI Team" : "Excellence Audit Team";
+  const recordTypeLabel = isPackage ? "Package ID" : "Date Leg ID";
+  const urgentNote = isPackage
+    ? ""
+    : `For urgent issues, include your <em>${recordTypeLabel}</em> in the subject so we can find it fast.`;
+
   const vars: Record<string, string> = {
     agentName: teamMemberFull,
     agentEmail: voEmail || agentEmail,
@@ -1576,7 +1589,14 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     scoreColor,
     findingId,
     recordId,
-    guestName: String(finding.record?.GuestName ?? ""),
+    guestName: guestNameVal,
+    // Dynamic per audit type
+    greeting,
+    auditTypeLabel,
+    guestContext,
+    supportTeamName,
+    recordTypeLabel,
+    urgentNote,
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
     recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
     appealUrl: `${env.selfUrl}/audit/appeal?findingId=${findingId}`,
@@ -1627,12 +1647,16 @@ async function handleAppealFiledWebhook(req: Request): Promise<Response> {
 
   const agentEmail = String(finding?.owner ?? "");
   const voEmail = String(finding?.record?.VoEmail ?? "");
-  const { full: agentName } = parseVoName(String(finding?.record?.VoName ?? ""), agentEmail);
+  const gmEmail = String(finding?.record?.GmEmail ?? "");
+  const isPackage = finding?.recordingIdField === "GenieNumber";
+  const recipientEmail = isPackage ? gmEmail : (voEmail || agentEmail);
+  const { full: agentName } = parseVoName(String(finding?.record?.VoName ?? ""), recipientEmail);
 
   const vars: Record<string, string> = {
     findingId,
     agentName,
-    agentEmail: voEmail || agentEmail,
+    agentEmail: recipientEmail,
+    gmEmail,
     recordId: String(finding?.record?.RecordId ?? ""),
     guestName: String(finding?.record?.GuestName ?? ""),
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
@@ -1673,13 +1697,17 @@ async function handleAppealDecidedWebhook(req: Request): Promise<Response> {
 
   const agentEmail = String(finding?.owner ?? "");
   const voEmail = String(finding?.record?.VoEmail ?? "");
+  const gmEmail = String(finding?.record?.GmEmail ?? "");
   const supervisorEmail = String(finding?.record?.SupervisorEmail ?? "");
-  const { full: agentName, first: teamMemberFirst } = parseVoName(String(finding?.record?.VoName ?? ""), agentEmail);
+  const isPackage = finding?.recordingIdField === "GenieNumber";
+  const recipientEmail = isPackage ? gmEmail : (voEmail || agentEmail);
+  const { full: agentName, first: teamMemberFirst } = parseVoName(String(finding?.record?.VoName ?? ""), recipientEmail);
 
   const vars: Record<string, string> = {
     findingId,
     agentName,
-    agentEmail: voEmail || agentEmail,
+    agentEmail: recipientEmail,
+    gmEmail,
     teamMemberFirst,
     recordId: String(finding?.record?.RecordId ?? ""),
     guestName: String(finding?.record?.GuestName ?? ""),
@@ -1695,7 +1723,7 @@ async function handleAppealDecidedWebhook(req: Request): Promise<Response> {
   };
 
   const resolvedTest = webhookCfg?.testEmail || "";
-  const to = resolvedTest || (voEmail || agentEmail);
+  const to = resolvedTest || recipientEmail;
   if (!to) return json({ error: "no recipient email" }, 400);
   const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
   const bcc = resolvedTest ? undefined : (webhookCfg?.bcc || undefined);
@@ -1723,13 +1751,17 @@ async function handleManagerReviewWebhook(req: Request): Promise<Response> {
 
   const agentEmail = String(finding?.owner ?? "");
   const voEmail = String(finding?.record?.VoEmail ?? "");
+  const gmEmail = String(finding?.record?.GmEmail ?? "");
   const supervisorEmail = String(finding?.record?.SupervisorEmail ?? "");
-  const { full: agentName, first: teamMemberFirst } = parseVoName(String(finding?.record?.VoName ?? ""), agentEmail);
+  const isPackage = finding?.recordingIdField === "GenieNumber";
+  const recipientEmail = isPackage ? gmEmail : (voEmail || agentEmail);
+  const { full: agentName, first: teamMemberFirst } = parseVoName(String(finding?.record?.VoName ?? ""), recipientEmail);
 
   const vars: Record<string, string> = {
     findingId,
     agentName,
-    agentEmail: voEmail || agentEmail,
+    agentEmail: recipientEmail,
+    gmEmail,
     teamMemberFirst,
     recordId: String(finding?.record?.RecordId ?? ""),
     guestName: String(finding?.record?.GuestName ?? ""),
@@ -1742,7 +1774,7 @@ async function handleManagerReviewWebhook(req: Request): Promise<Response> {
   };
 
   const resolvedTest = webhookCfg?.testEmail || "";
-  const to = resolvedTest || (voEmail || agentEmail);
+  const to = resolvedTest || recipientEmail;
   if (!to) return json({ error: "no recipient email" }, 400);
   const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
   const bcc = resolvedTest ? undefined : (webhookCfg?.bcc || undefined);
@@ -1873,7 +1905,10 @@ async function handleSendReauditReceipt(orgId: OrgId, req: Request): Promise<Res
 
   const agentEmail = String((finding as any).owner ?? "");
   const voEmail = String((finding.record as any)?.VoEmail ?? "");
-  const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String((finding.record as any)?.VoName ?? ""), agentEmail);
+  const gmEmail = String((finding.record as any)?.GmEmail ?? "");
+  const isPackage = (finding as any).recordingIdField === "GenieNumber";
+  const recipientEmail = isPackage ? gmEmail : (voEmail || (agentEmail !== "api" ? agentEmail : ""));
+  const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String((finding.record as any)?.VoName ?? ""), recipientEmail);
   const recordId = String((finding.record as any)?.RecordId ?? "");
 
   // Appeal type details
@@ -1895,7 +1930,8 @@ async function handleSendReauditReceipt(orgId: OrgId, req: Request): Promise<Res
 
   const vars: Record<string, string> = {
     agentName: teamMemberFull,
-    agentEmail: voEmail || agentEmail,
+    agentEmail: recipientEmail,
+    gmEmail,
     teamMember: teamMemberFull,
     teamMemberFirst,
     findingId,
@@ -1915,7 +1951,7 @@ async function handleSendReauditReceipt(orgId: OrgId, req: Request): Promise<Res
   };
 
   // Resolve recipients — bccOnly: send to BCC address directly, skip agent
-  const agentRecipient = voEmail || (agentEmail !== "api" ? agentEmail : "");
+  const agentRecipient = recipientEmail;
   const { to: resolvedTo, bcc } = resolveRecipients(webhookCfg, agentRecipient);
   const to = bccOnly ? (webhookCfg?.bcc || "") : resolvedTo;
 

@@ -17,9 +17,16 @@ function json(data: unknown, status = 200) {
 
 function strToBool(s: unknown): boolean | null {
   const lower = String(s ?? "").trim().toLowerCase();
-  if (["yes", "y", "true", "1"].includes(lower)) return true;
-  if (["no", "n", "false", "0"].includes(lower)) return false;
+  if (lower.startsWith("yes") || lower === "y" || lower === "true" || lower === "1") return true;
+  if (lower.startsWith("no") || lower === "n" || lower === "false" || lower === "0") return false;
+  if (lower.includes("yes")) return true;
+  if (lower.includes("no")) return false;
   return null;
+}
+
+/** Strip backtick note blocks and +: prefix so Pinecone gets a clean semantic query. */
+function toQueryText(q: string): string {
+  return q.replace(/```[^`]*```/g, "").replace(/^\+:/, "").trim();
 }
 
 async function askLlmOne(
@@ -45,11 +52,12 @@ async function askLlmOne(
   const questionWithAst = parseAst(question);
   const ast = questionWithAst.astResults.ast ?? [];
 
-  /** Query vector store, falling back to raw transcript if Pinecone returns empty. */
+  /** Query vector store using a clean query (no instruction notes), falling back to raw transcript. */
   async function getContext(q: string): Promise<string> {
-    const vectorContext = await vectorQuery(findingId, q);
+    const query = toQueryText(q) || q;
+    const vectorContext = await vectorQuery(findingId, query);
     if (vectorContext.trim()) return vectorContext;
-    console.warn(`[STEP-ASK-ALL] ${findingId}: Pinecone empty for "${q.slice(0, 40)}..." — using raw transcript fallback`);
+    console.warn(`[STEP-ASK-ALL] ${findingId}: Pinecone empty for "${query.slice(0, 40)}..." — using raw transcript fallback`);
     return rawTranscript.substring(0, 4000);
   }
 
@@ -75,13 +83,11 @@ async function askLlmOne(
       const boolAnswer = strToBool(llmAnswer.answer);
 
       if (boolAnswer === null) {
-        // Fallback: ask LLM with full question
-        const fullContext = await getContext(question.populated);
-        const fallbackAnswer = await askQuestion(question.populated, fullContext);
-        await cacheAnswer(orgId, findingId, question.populated, fallbackAnswer);
-        const answered = answerQuestion(question, fallbackAnswer);
-        answered.snippet = fullContext;
-        return answered;
+        // LLM returned ambiguous text — with the lenient strToBool above this should be rare.
+        // Log and treat as No so compound evaluation can proceed rather than silently bailing.
+        console.warn(`[STEP-ASK-ALL] ${findingId}: "${question.header}" node returned ambiguous answer "${llmAnswer.answer}", treating as No`);
+        andResults.push({ answer: false, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: context });
+        continue;
       }
 
       const finalBool = node.flip ? !boolAnswer : boolAnswer;

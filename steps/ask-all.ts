@@ -167,19 +167,19 @@ export async function stepAskAll(req: Request): Promise<Response> {
     return json({ ok: true, answers: 0 });
   }
 
-  // Upload transcript to Pinecone BEFORE questions start (matches OmniSource pattern)
+  // Upload transcript to Pinecone in the background — questions already fall back to rawTranscript
+  // if Pinecone is empty, so the critical path never waits on this.
   if (rawTranscript && !rawTranscript.includes("Invalid Genie") && !rawTranscript.includes("Genie Invalid")) {
-    try {
-      const uploadStart = Date.now();
-      // Race upload against a 60s ceiling — OpenAI embedding retries can hang beyond per-call timeouts
-      await Promise.race([
-        pineconeUpload(findingId, rawTranscript),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Pinecone upload timed out after 60s")), 60_000)),
-      ]);
+    const uploadStart = Date.now();
+    console.log(`[STEP-ASK-ALL] ${findingId}: 🔼 Pinecone upload started (background)`);
+    Promise.race([
+      pineconeUpload(findingId, rawTranscript),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timed out after 60s")), 60_000)),
+    ]).then(() => {
       console.log(`[STEP-ASK-ALL] ${findingId}: ✅ Pinecone upload done in ${Date.now() - uploadStart}ms`);
-    } catch (err) {
-      console.error(`[STEP-ASK-ALL] ${findingId}: ⚠️ Pinecone upload failed, falling back to raw transcript:`, err);
-    }
+    }).catch((err) => {
+      console.error(`[STEP-ASK-ALL] ${findingId}: ⚠️ Pinecone upload failed (questions using raw transcript):`, err);
+    });
   }
 
   // Hard ceiling: 15 minutes for all questions. Per-call timeouts in groq/pinecone should

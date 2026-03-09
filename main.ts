@@ -765,23 +765,44 @@ async function handleAdminAddUser(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
 
   const body = await req.json();
-  const { email, password, role, supervisor } = body;
-  if (!email || !password) return json({ error: "email and password required" }, 400);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "email must be a valid email address" }, 400);
+  const { email: emailField, username, password, role, supervisor } = body;
+  const email = emailField || username;
+  console.log(`[ADD-USER] org=${auth.orgId} email=${email} role=${role} supervisor=${supervisor} body_keys=${Object.keys(body).join(",")}`);
+
+  if (!email || !password) {
+    console.error(`[ADD-USER] ❌ Missing fields: email=${email} hasPassword=${!!password}`);
+    return json({ error: "email and password required" }, 400);
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    console.error(`[ADD-USER] ❌ Invalid email: ${email}`);
+    return json({ error: "email must be a valid email address" }, 400);
+  }
 
   const validRoles = ["admin", "judge", "manager", "reviewer", "user"];
   const userRole = validRoles.includes(role) ? role : "reviewer";
 
   if ((userRole === "judge" || userRole === "manager") && supervisor) {
     const sup = await getUser(auth.orgId, supervisor);
-    if (!sup || sup.role !== "admin") return json({ error: "judges and managers must be assigned to an admin" }, 400);
+    if (!sup || sup.role !== "admin") {
+      console.error(`[ADD-USER] ❌ Invalid supervisor for ${userRole}: supervisor=${supervisor} sup=${JSON.stringify(sup)}`);
+      return json({ error: "judges and managers must be assigned to an admin" }, 400);
+    }
   } else if ((userRole === "reviewer" || userRole === "user") && supervisor) {
     const sup = await getUser(auth.orgId, supervisor);
-    if (!sup || (sup.role !== "judge" && sup.role !== "manager")) return json({ error: "reviewers must be assigned to a judge or manager" }, 400);
+    if (!sup || (sup.role !== "judge" && sup.role !== "manager")) {
+      console.error(`[ADD-USER] ❌ Invalid supervisor for reviewer: supervisor=${supervisor} sup=${JSON.stringify(sup)}`);
+      return json({ error: "reviewers must be assigned to a judge or manager" }, 400);
+    }
   }
 
-  await createUser(auth.orgId, email, password, userRole as any, supervisor || undefined);
-  return json({ ok: true, email, role: userRole, supervisor: supervisor || null });
+  try {
+    await createUser(auth.orgId, email, password, userRole as any, supervisor || undefined);
+    console.log(`[ADD-USER] ✅ Created ${email} (${userRole}) in org ${auth.orgId}`);
+    return json({ ok: true, email, role: userRole, supervisor: supervisor || null });
+  } catch (err: any) {
+    console.error(`[ADD-USER] ❌ createUser failed for ${email}:`, err);
+    return json({ error: err.message || "failed to create user" }, 500);
+  }
 }
 
 // -- Admin: Pipeline Config --

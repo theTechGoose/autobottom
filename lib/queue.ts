@@ -46,7 +46,7 @@ async function localEnqueue(targetUrl: string, body: unknown, delaySeconds?: num
   return `local-${Date.now()}`;
 }
 
-async function enqueue(queueName: string, targetUrl: string, body: unknown, delaySeconds?: number) {
+async function enqueue(queueName: string, targetUrl: string, body: unknown, delaySeconds?: number, extraHeaders?: Record<string, string>) {
   if (LOCAL_MODE) {
     return localEnqueue(targetUrl, body, delaySeconds);
   }
@@ -55,12 +55,8 @@ async function enqueue(queueName: string, targetUrl: string, body: unknown, dela
     Authorization: `Bearer ${env.qstashToken}`,
     "Content-Type": "application/json",
     "Upstash-Retries": "0",
+    ...extraHeaders,
   };
-
-  // ask-all runs 25 Groq calls in parallel — extend QStash delivery timeout to 900s (15 min)
-  if (step === "ask-all") {
-    headers["Upstash-Timeout"] = "900";
-  }
 
   // QStash enqueue (queue-based) does not support Upstash-Delay.
   // Use publish (non-queued) for delayed messages instead.
@@ -91,7 +87,9 @@ async function enqueue(queueName: string, targetUrl: string, body: unknown, dela
 export function enqueueStep(step: string, body: unknown, delaySeconds?: number) {
   const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
   const url = `${env.selfUrl}/audit/step/${step}`;
-  return enqueue(queueName, url, body, delaySeconds);
+  // ask-all runs many parallel Groq calls — extend QStash delivery timeout to 15 min
+  const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "900" } : undefined;
+  return enqueue(queueName, url, body, delaySeconds, extraHeaders);
 }
 
 /** Bypass the queue and deliver immediately via QStash publish. Use for admin retries to skip the backlog. */

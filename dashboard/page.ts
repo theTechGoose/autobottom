@@ -598,8 +598,8 @@ export function getDashboardPage(): string {
 
     <div class="tbl">
       <div class="tbl-title">Recent Errors (24h)</div>
-      <table><thead><tr><th>Finding ID</th><th>Step</th><th>Error</th><th>When</th></tr></thead>
-      <tbody id="tb-errors"><tr class="empty-row"><td colspan="4">No errors</td></tr></tbody></table>
+      <table><thead><tr><th>Finding ID</th><th>Logs</th><th>Step</th><th>Error</th><th>When</th></tr></thead>
+      <tbody id="tb-errors"><tr class="empty-row"><td colspan="5">No errors</td></tr></tbody></table>
     </div>
 
     <div class="tbl">
@@ -1421,12 +1421,20 @@ export function getDashboardPage(): string {
 
   function renderErrors(errors) {
     var tb = document.getElementById('tb-errors');
-    if (!errors.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="4">No errors</td></tr>'; return; }
+    if (!errors.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="5">No errors</td></tr>'; return; }
     errors.sort(function(a,b) { return (b.ts||0)-(a.ts||0); });
     tb.innerHTML = '';
+    var logsOrgProject = null;
+    var hm = window.location.hostname.match(/^([^.]+)\.([^.]+)\.deno\.net$/);
+    if (hm) logsOrgProject = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/observability/logs?query=';
+    var logsSuffix = '&start=now%2Fy&end=now';
     for (var i = 0; i < Math.min(errors.length, 20); i++) {
       var e = errors[i], tr = document.createElement('tr');
-      tr.innerHTML = '<td class="mono">' + (e.findingId||'--') + '</td><td><span class="step-badge">' + (e.step||'--') + '</span></td><td class="error-msg" title="' + ((e.error||'').replace(/"/g,'&quot;')) + '">' + (e.error||'--') + '</td><td class="time-ago">' + timeAgo(e.ts) + '</td>';
+      var fid = e.findingId || '--';
+      var logsHtml = logsOrgProject
+        ? '<a href="' + logsOrgProject + encodeURIComponent(fid) + logsSuffix + '" target="_blank" class="tbl-link" style="font-size:10px;">logs</a>'
+        : '--';
+      tr.innerHTML = '<td class="mono">' + fid + '</td><td>' + logsHtml + '</td><td><span class="step-badge">' + (e.step||'--') + '</span></td><td class="error-msg" title="' + ((e.error||'').replace(/"/g,'&quot;')) + '">' + (e.error||'--') + '</td><td class="time-ago">' + timeAgo(e.ts) + '</td>';
       tb.appendChild(tr);
     }
   }

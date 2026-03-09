@@ -1,7 +1,7 @@
 /** API controller - creates audit jobs and kicks off the QStash pipeline. */
 import * as icons from "./shared/icons.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
-import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook } from "./lib/kv.ts";
+import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook, getWebhookConfig } from "./lib/kv.ts";
 import { enqueueStep } from "./lib/queue.ts";
 import { getDateLegByRid } from "./providers/quickbase.ts";
 import { S3Ref } from "./lib/s3.ts";
@@ -343,8 +343,10 @@ export async function handleAppealDifferentRecording(orgId: OrgId, req: Request)
   const voEmail = String((oldFinding.record as any)?.VoEmail ?? "");
   const ownerEmail = oldFinding.owner && oldFinding.owner !== "api" ? oldFinding.owner : "";
   const agentEmail = voEmail || ownerEmail;
-  console.log(`[APPEAL] ${appealType}: old=${findingId} new=${newFindingId} recordings=${normalizedIds.join(",")} agent=${agentEmail || "(none)"}`);
-  return json({ ok: true, newFindingId, reportUrl, agentEmail });
+  const receiptCfg = await getWebhookConfig(orgId, "re-audit-receipt").catch(() => null);
+  const receiptDisplayEmail = receiptCfg?.testEmail || agentEmail;
+  console.log(`[APPEAL] ${appealType}: old=${findingId} new=${newFindingId} recordings=${normalizedIds.join(",")} agent=${agentEmail || "(none)"} receiptTo=${receiptDisplayEmail || "(none)"}`);
+  return json({ ok: true, newFindingId, reportUrl, agentEmail, receiptDisplayEmail });
 }
 
 /**
@@ -425,8 +427,10 @@ export async function handleAppealUploadRecording(orgId: OrgId, req: Request): P
   const voEmail = String((oldFinding.record as any)?.VoEmail ?? "");
   const ownerEmail = oldFinding.owner && oldFinding.owner !== "api" ? oldFinding.owner : "";
   const agentEmail = voEmail || ownerEmail;
-  console.log(`[APPEAL] Upload-recording: old=${findingId} new=${newFindingId} snip=${snipStart ?? "none"}-${snipEnd ?? "none"} agent=${agentEmail || "(none)"}`);
-  return json({ ok: true, newFindingId, reportUrl, agentEmail });
+  const receiptCfg = await getWebhookConfig(orgId, "re-audit-receipt").catch(() => null);
+  const receiptDisplayEmail = receiptCfg?.testEmail || agentEmail;
+  console.log(`[APPEAL] Upload-recording: old=${findingId} new=${newFindingId} snip=${snipStart ?? "none"}-${snipEnd ?? "none"} agent=${agentEmail || "(none)"} receiptTo=${receiptDisplayEmail || "(none)"}`);
+  return json({ ok: true, newFindingId, reportUrl, agentEmail, receiptDisplayEmail });
 }
 
 /**
@@ -1075,8 +1079,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           <div style="font-size:36px;margin-bottom:14px;">🔄</div>
           <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:10px;">Audit Re-submitted!</div>
           <div id="receipt-sent-to-row" style="margin-bottom:22px;">
-            <div style="font-size:12px;color:#6e7681;margin-bottom:4px;line-height:1.5;">Would you like a receipt sent to</div>
-            <div id="receipt-email-display" style="font-size:13px;font-weight:600;color:#58a6ff;"></div>
+            <div style="font-size:12px;color:#6e7681;margin-bottom:6px;line-height:1.5;">Would you like a receipt emailed to</div>
+            <div id="receipt-email-display" style="font-size:13px;font-weight:600;color:#58a6ff;word-break:break-all;"></div>
           </div>
           <div style="display:flex;gap:10px;justify-content:center;">
             <button id="receipt-yes-btn" onclick="sendReceiptYes()" style="padding:10px 24px;border-radius:8px;background:var(--teal);border:none;color:#fff;font-size:13px;font-weight:700;cursor:pointer;">For sure!</button>
@@ -1378,25 +1382,32 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       fetch('/audit/send-reaudit-receipt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ findingId: _pendingReauditFindingId }),
+        body: JSON.stringify({ findingId: _pendingReauditFindingId, bccOnly: false }),
       }).catch(function() {}).finally(function() {
         window.location.href = _pendingReauditReportUrl;
       });
     }
 
     function sendReceiptNo() {
+      // Always fire BCC even on opt-out, but skip agent email
+      fetch('/audit/send-reaudit-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ findingId: _pendingReauditFindingId, bccOnly: true }),
+      }).catch(function() {});
       window.location.href = _pendingReauditReportUrl;
     }
 
-    function showReceiptModal(newFindingId, reportUrl, agentEmail) {
+    function showReceiptModal(newFindingId, reportUrl, agentEmail, receiptDisplayEmail) {
       _pendingReauditFindingId = newFindingId;
       _pendingReauditReportUrl = reportUrl;
-      var email = (agentEmail && agentEmail !== 'api') ? agentEmail : '';
+      var displayEmail = receiptDisplayEmail || agentEmail || '';
+      var email = (displayEmail && displayEmail !== 'api') ? displayEmail : '';
       _pendingAgentEmail = email;
       var sentToRow = document.getElementById('receipt-sent-to-row');
       var displayEl = document.getElementById('receipt-email-display');
       if (email) {
-        displayEl.textContent = email;
+        displayEl.textContent = email + '?';
         sentToRow.style.display = '';
       } else {
         sentToRow.style.display = 'none';
@@ -1482,7 +1493,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         } else {
           lockAppealBtn();
           btn.textContent = 'Submitted!';
-          showReceiptModal(d.newFindingId, d.reportUrl || '/audit/report?id=' + d.newFindingId, d.agentEmail);
+          showReceiptModal(d.newFindingId, d.reportUrl || '/audit/report?id=' + d.newFindingId, d.agentEmail, d.receiptDisplayEmail);
         }
       }).catch(function() {
         btn.textContent = 'Error';
@@ -1639,7 +1650,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           } else {
             lockAppealBtn();
             btn.textContent = 'Submitted!';
-            showReceiptModal(d.newFindingId, d.reportUrl || '/audit/report?id=' + d.newFindingId, d.agentEmail);
+            showReceiptModal(d.newFindingId, d.reportUrl || '/audit/report?id=' + d.newFindingId, d.agentEmail, d.receiptDisplayEmail);
           }
         }).catch(function() {
           btn.textContent = 'Error';

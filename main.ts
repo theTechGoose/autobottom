@@ -1792,16 +1792,22 @@ async function handleReportSSE(orgId: OrgId, req: Request): Promise<Response> {
 
 async function handleSendReauditReceipt(orgId: OrgId, req: Request): Promise<Response> {
   const body = await req.json().catch(() => ({}));
-  const { findingId } = body;
+  const { findingId, bccOnly = false } = body;
   if (!findingId) return json({ error: "findingId required" }, 400);
 
-  console.log(`[EMAIL] 🔍 re-audit-receipt: org=${orgId} finding=${findingId}`);
+  console.log(`[EMAIL] 🔍 re-audit-receipt: org=${orgId} finding=${findingId} bccOnly=${bccOnly}`);
 
   const webhookCfg = await getWebhookConfig(orgId, "re-audit-receipt").catch((err) => {
     console.error(`[EMAIL] re-audit-receipt: getWebhookConfig failed:`, err);
     return null;
   });
-  console.log(`[EMAIL] re-audit-receipt: emailTemplateId=${webhookCfg?.emailTemplateId ?? "NONE"} testEmail=${webhookCfg?.testEmail ?? ""}`);
+  console.log(`[EMAIL] re-audit-receipt: emailTemplateId=${webhookCfg?.emailTemplateId ?? "NONE"} testEmail=${webhookCfg?.testEmail ?? ""} bcc=${webhookCfg?.bcc ?? ""}`);
+
+  // BCC-only path (agent opted out) — skip entirely if no BCC configured
+  if (bccOnly && !webhookCfg?.bcc) {
+    console.log(`[EMAIL] re-audit-receipt: ⚠️ bccOnly but no BCC configured — skipped`);
+    return json({ ok: true, skipped: "bcc-only but no bcc configured" });
+  }
 
   const template = await resolveWebhookTemplate(orgId, webhookCfg);
   if (!template) {
@@ -1812,42 +1818,63 @@ async function handleSendReauditReceipt(orgId: OrgId, req: Request): Promise<Res
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
 
-  const agentEmail = String(finding.owner ?? "");
+  const agentEmail = String((finding as any).owner ?? "");
   const voEmail = String((finding.record as any)?.VoEmail ?? "");
   const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String((finding.record as any)?.VoName ?? ""), agentEmail);
   const recordId = String((finding.record as any)?.RecordId ?? "");
 
-  const questions: any[] = (finding as any).answeredQuestions ?? [];
-  const isYesAnswer = (a: string) => {
-    const s = String(a ?? "").trim().toLowerCase();
-    return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
-  };
-  const yesCount = questions.filter((q: any) => isYesAnswer(q.answer)).length;
-  const total = questions.length;
-  const scoreVal = total > 0 ? Math.round((yesCount / total) * 100) : 0;
+  // Appeal type details
+  const appealType = String((finding as any).appealType ?? "");
+  const appealTypeLabel = appealType === "additional-recording" ? "Additional Recording"
+    : appealType === "different-recording" ? "Replacement Recording"
+    : appealType === "upload-recording" ? "Uploaded Recording"
+    : "Re-Audit";
+  const newGenieIds = Array.isArray((finding as any).genieIds)
+    ? (finding as any).genieIds.join(", ")
+    : String((finding as any).recordingId ?? "");
+  const originalFindingId = String((finding as any).appealSourceFindingId ?? "");
+  const originalFinding = originalFindingId ? await getFinding(orgId, originalFindingId).catch(() => null) : null;
+  const originalGenieId = originalFinding
+    ? (Array.isArray((originalFinding as any).genieIds)
+        ? (originalFinding as any).genieIds.join(", ")
+        : String((originalFinding as any).recordingId ?? ""))
+    : "";
 
   const vars: Record<string, string> = {
     agentName: teamMemberFull,
     agentEmail: voEmail || agentEmail,
     teamMember: teamMemberFull,
     teamMemberFirst,
-    score: scoreVal + "%",
     findingId,
     recordId,
     guestName: String((finding.record as any)?.GuestName ?? ""),
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
+    originalReportUrl: originalFindingId ? `${env.selfUrl}/audit/report?id=${originalFindingId}` : "",
     recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
+    appealType,
+    appealTypeLabel,
+    newGenieIds,
+    originalGenieId,
+    originalFindingId,
     logoUrl: `${env.selfUrl}/logo.png`,
     selfUrl: env.selfUrl,
+    submittedAt: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }) + " EST",
   };
 
-  const { to, bcc } = resolveRecipients(webhookCfg, voEmail || agentEmail);
-  console.log(`[EMAIL] re-audit-receipt: to=${to} bcc=${bcc || "none"} score=${scoreVal}% finding=${findingId}`);
-  if (!to) return json({ error: "no recipient email" }, 400);
+  // Resolve recipients — bccOnly: send to BCC address directly, skip agent
+  const agentRecipient = voEmail || (agentEmail !== "api" ? agentEmail : "");
+  const { to: resolvedTo, bcc } = resolveRecipients(webhookCfg, agentRecipient);
+  const to = bccOnly ? (webhookCfg?.bcc || "") : resolvedTo;
+
+  console.log(`[EMAIL] re-audit-receipt: to=${to || "(none)"} bcc=${bcc || "none"} bccOnly=${bccOnly} finding=${findingId}`);
+  if (!to) return json({ ok: true, skipped: "no recipient" });
+
+  // When bccOnly, don't also re-send to the BCC (it IS the recipient now)
+  const emailBcc = bccOnly ? undefined : bcc;
 
   try {
-    await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), bcc });
-    console.log(`[EMAIL] ✅ Re-audit receipt sent → ${to}${bcc ? ` bcc:${bcc}` : ""} (finding: ${findingId})`);
+    await sendEmail({ to, subject: renderTemplate(template.subject, vars), htmlBody: renderTemplate(template.html, vars), bcc: emailBcc });
+    console.log(`[EMAIL] ✅ Re-audit receipt sent → ${to}${emailBcc ? ` bcc:${emailBcc}` : ""}${bccOnly ? " (bcc-only)" : ""} (finding: ${findingId})`);
   } catch (err) {
     console.error(`[EMAIL] ❌ Re-audit receipt send failed (finding: ${findingId}):`, err);
     return json({ error: "email send failed" }, 500);

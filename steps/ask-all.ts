@@ -160,29 +160,42 @@ export async function stepAskAll(req: Request): Promise<Response> {
     }
   }
 
+  // Hard ceiling: 15 minutes for all questions. Per-call timeouts in groq/pinecone should
+  // catch hangs first, but this is the last line of defense so the step never runs forever.
+  const STEP_TIMEOUT_MS = 15 * 60 * 1000;
+  const stepController = new AbortController();
+  const stepTimeoutId = setTimeout(() => stepController.abort(), STEP_TIMEOUT_MS);
+
   console.log(`[STEP-ASK-ALL] ${findingId}: Answering ${questions.length} questions in parallel (100ms stagger)`);
 
   // Answer all questions in parallel with 100ms stagger to avoid Groq burst limits.
   // Each question waits index*100ms before firing (q0=0ms, q1=100ms, q2=200ms...).
   // Promise.all means they all run concurrently — no waiting for previous to finish.
-  const answers: IAnsweredQuestion[] = await Promise.all(
-    questions.map(async (q, index) => {
-      await new Promise((r) => setTimeout(r, index * 100));
-      try {
-        const qStart = Date.now();
-        const result = await askLlmOne(q, orgId, findingId, rawTranscript);
-        const qDuration = Date.now() - qStart;
-        if (qDuration > 10000) {
-          console.warn(`[STEP-ASK-ALL] ${findingId}: ⚠️ Slow question "${q.header}" took ${qDuration}ms`);
+  const answers: IAnsweredQuestion[] = await Promise.race([
+    Promise.all(
+      questions.map(async (q, index) => {
+        await new Promise((r) => setTimeout(r, index * 100));
+        try {
+          const qStart = Date.now();
+          const result = await askLlmOne(q, orgId, findingId, rawTranscript);
+          const qDuration = Date.now() - qStart;
+          if (qDuration > 10000) {
+            console.warn(`[STEP-ASK-ALL] ${findingId}: ⚠️ Slow question "${q.header}" took ${qDuration}ms`);
+          }
+          return result;
+        } catch (err: any) {
+          const msg = err.message || String(err);
+          console.error(`[STEP-ASK-ALL] ${findingId}: ❌ Question "${q.header}" failed:`, err);
+          return answerQuestion(q, { answer: "Error", thinking: msg, defense: "N/A" });
         }
-        return result;
-      } catch (err: any) {
-        const msg = err.message || String(err);
-        console.error(`[STEP-ASK-ALL] ${findingId}: ❌ Question "${q.header}" failed:`, err);
-        return answerQuestion(q, { answer: "Error", thinking: msg, defense: "N/A" });
-      }
-    })
-  );
+      })
+    ),
+    new Promise<never>((_, reject) =>
+      stepController.signal.addEventListener("abort", () =>
+        reject(new Error(`step exceeded ${STEP_TIMEOUT_MS / 60000} minute ceiling`))
+      )
+    ),
+  ]).finally(() => clearTimeout(stepTimeoutId));
 
   const elapsedSec = ((Date.now() - stepStart) / 1000).toFixed(1);
   const yeses = answers.filter((a) => a.answer === "Yes").length;

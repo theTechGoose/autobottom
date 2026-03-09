@@ -96,10 +96,14 @@ export interface LlmAnswer {
 
 /** Ask the LLM a single QA question with RAG context. Returns JSON answer.
  *  Automatically cascades through FALLBACK_MODELS on 429/503. */
+const LLM_TIMEOUT_MS = 120_000; // 2 min — well beyond any legitimate slow response
+
 export async function askQuestion(question: string, transcript: string, modelIndex = 0): Promise<LlmAnswer> {
   const model: GroqModel = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
   const userPrompt = makeUserPrompt(question, transcript);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
   try {
     const res = await client.chat.completions.create({
@@ -110,56 +114,73 @@ export async function askQuestion(question: string, transcript: string, modelInd
       ],
       response_format: { type: "json_object" },
       max_tokens: 8000,
-    });
+    }, { signal: controller.signal });
 
     trackTokens("askQuestion", res.usage);
     const text = res.choices[0]?.message?.content ?? "";
     return parseLlmJson<LlmAnswer>(text, { answer: "Error!", thinking: "Error!", defense: "Error!" });
   } catch (e: any) {
     const msg = String(e?.message ?? e);
-    const isRateLimit = msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity") || msg.includes("json_validate_failed");
+    const isTimeout = msg.includes("aborted") || msg.includes("AbortError");
+    if (isTimeout) {
+      console.error(`[LLM-TIMEOUT] ⚠️ ${model} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
+    }
+    const isRateLimit = isTimeout || msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity") || msg.includes("json_validate_failed");
     const nextIndex = modelIndex + 1;
     if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
-      console.warn(`[LLM-FALLBACK] ${model} rate limited → trying ${FALLBACK_MODELS[nextIndex]}`);
+      console.warn(`[LLM-FALLBACK] ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
       await new Promise((r) => setTimeout(r, 1000));
       return askQuestion(question, transcript, nextIndex);
     }
-    // All models exhausted or non-rate-limit error — bubble up
     throw e;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
 /** Generate feedback summary for failed questions. */
 export async function generateFeedback(failedQuestions: string): Promise<string> {
   const client = getClient();
-  const res = await client.chat.completions.create({
-    model: MODEL,
-    messages: [
-      {
-        role: "system",
-        content: "The following is a list of questions that failed an audit. Please provide a summary of why the team member failed the audit and what they can do to improve.\n\nSummary:",
-      },
-      { role: "user", content: failedQuestions },
-    ],
-    max_tokens: 8000,
-  });
-  trackTokens("generateFeedback", res.usage);
-  return res.choices[0]?.message?.content ?? "";
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  try {
+    const res = await client.chat.completions.create({
+      model: MODEL,
+      messages: [
+        {
+          role: "system",
+          content: "The following is a list of questions that failed an audit. Please provide a summary of why the team member failed the audit and what they can do to improve.\n\nSummary:",
+        },
+        { role: "user", content: failedQuestions },
+      ],
+      max_tokens: 8000,
+    }, { signal: controller.signal });
+    trackTokens("generateFeedback", res.usage);
+    return res.choices[0]?.message?.content ?? "";
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /** Summarize multiple thinking/defense outputs into one. */
 export async function summarize(texts: string[]): Promise<string> {
   const client = getClient();
-  const res = await client.chat.completions.create({
-    model: MODEL,
-    messages: [
-      { role: "system", content: "please give a summary.\n\nsummary:" },
-      { role: "user", content: texts.join("\n") },
-    ],
-    max_tokens: 8000,
-  });
-  trackTokens("summarize", res.usage);
-  return res.choices[0]?.message?.content ?? "";
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  try {
+    const res = await client.chat.completions.create({
+      model: MODEL,
+      messages: [
+        { role: "system", content: "please give a summary.\n\nsummary:" },
+        { role: "user", content: texts.join("\n") },
+      ],
+      max_tokens: 8000,
+    }, { signal: controller.signal });
+    trackTokens("summarize", res.usage);
+    return res.choices[0]?.message?.content ?? "";
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 const DIARIZATION_SYSTEM = `### Role ###
@@ -189,20 +210,26 @@ async function groqCallWithRetry(
 ): Promise<string> {
   const model = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
   try {
-    const res = await client.chat.completions.create({ ...params, model });
+    const res = await client.chat.completions.create({ ...params, model }, { signal: controller.signal });
     trackTokens(trackLabel, res.usage);
     return res.choices[0]?.message?.content ?? "";
   } catch (e: any) {
     const msg = String(e?.message ?? e);
-    const isRateLimit = msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity");
+    const isTimeout = msg.includes("aborted") || msg.includes("AbortError");
+    if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${trackLabel}/${model} no response after ${LLM_TIMEOUT_MS / 1000}s`);
+    const isRateLimit = isTimeout || msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity");
     const nextIndex = modelIndex + 1;
     if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
-      console.warn(`[LLM-FALLBACK] diarize/${trackLabel}: ${model} rate limited → trying ${FALLBACK_MODELS[nextIndex]}`);
+      console.warn(`[LLM-FALLBACK] diarize/${trackLabel}: ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
       await new Promise((r) => setTimeout(r, 1000));
       return groqCallWithRetry(params, trackLabel, nextIndex);
     }
     throw e;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

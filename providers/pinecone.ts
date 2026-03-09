@@ -14,12 +14,24 @@ const PINECONE_HOST = () => {
   return { key, index };
 };
 
+const PINECONE_TIMEOUT_MS = 30_000;
+
+async function timedFetch(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), PINECONE_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /** Get the Pinecone index host URL. Cached after first call. */
 let _hostUrl: string | undefined;
 async function getPineconeHost(): Promise<string> {
   if (_hostUrl) return _hostUrl;
   const { key, index } = PINECONE_HOST();
-  const res = await fetch(`https://api.pinecone.io/indexes/${index}`, {
+  const res = await timedFetch(`https://api.pinecone.io/indexes/${index}`, {
     headers: { "Api-Key": key },
   });
   if (!res.ok) throw new Error(`Pinecone describe index failed: ${res.status}`);
@@ -31,12 +43,18 @@ async function getPineconeHost(): Promise<string> {
 
 async function embed(input: string): Promise<number[]> {
   const openai = getOpenAI();
-  const res = await openai.embeddings.create({
-    input,
-    model: "text-embedding-3-small",
-    encoding_format: "float",
-  });
-  return res.data[0].embedding;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), PINECONE_TIMEOUT_MS);
+  try {
+    const res = await openai.embeddings.create({
+      input,
+      model: "text-embedding-3-small",
+      encoding_format: "float",
+    }, { signal: controller.signal });
+    return res.data[0].embedding;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /** Simple semantic chunking by splitting on sentence boundaries with overlap. */
@@ -81,7 +99,7 @@ export async function upload(findingId: string, text: string) {
   // Upsert in batches of 100
   for (let i = 0; i < vectors.length; i += 100) {
     const batch = vectors.slice(i, i + 100);
-    const res = await fetch(`https://${host}/vectors/upsert`, {
+    const res = await timedFetch(`https://${host}/vectors/upsert`, {
       method: "POST",
       headers: {
         "Api-Key": key,
@@ -111,7 +129,7 @@ export async function query(
 
   const queryVector = await embed(question);
 
-  const res = await fetch(`https://${host}/query`, {
+  const res = await timedFetch(`https://${host}/query`, {
     method: "POST",
     headers: {
       "Api-Key": key,
@@ -148,7 +166,7 @@ export async function deleteNamespace(findingId: string) {
   const host = await getPineconeHost();
   const { key } = PINECONE_HOST();
 
-  const res = await fetch(`https://${host}/vectors/delete`, {
+  const res = await timedFetch(`https://${host}/vectors/delete`, {
     method: "POST",
     headers: {
       "Api-Key": key,

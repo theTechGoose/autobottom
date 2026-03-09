@@ -39,7 +39,12 @@ export async function stepFinalize(req: Request): Promise<Response> {
   if (!finding) return json({ error: "finding not found" }, 404);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
-  const isAppealReAudit = !!(finding as Record<string, any>).appealSourceFindingId;
+  const appealType = String((finding as Record<string, any>).appealType ?? "");
+  // Recording re-audits (different/additional/upload) are treated as normal audits for queue routing
+  const RECORDING_REAUDIT_TYPES = ["different-recording", "additional-recording", "upload-recording"];
+  const isRecordingReAudit = RECORDING_REAUDIT_TYPES.includes(appealType);
+  // Judge appeal re-audits are findings that came from a formal judge appeal (not a recording swap)
+  const isJudgeAppealReAudit = !!(finding as Record<string, any>).appealSourceFindingId && !isRecordingReAudit;
 
   // Collect batch answers if we have them
   if (totalBatches && totalBatches > 0) {
@@ -106,33 +111,12 @@ export async function stepFinalize(req: Request): Promise<Response> {
     durationMs,
   });
 
-  // Route to appropriate queue
+  // Route to review queue — all findings including recording re-audits go to reviewers.
+  // Formal judge appeals are handled upstream in handleFileAppeal (original finding), not here.
   if (finding.answeredQuestions?.length) {
     try {
-      if (isAppealReAudit) {
-        // Appeal re-audits go to judge queue — only the originally disputed questions
-        const f = finding as Record<string, any>;
-        const sourceFindingId = f.appealSourceFindingId as string;
-        const originalAppeal = await getAppeal(orgId, sourceFindingId).catch(() => null);
-        const disputedHeaders: string[] = originalAppeal?.appealedQuestions ?? [];
-        const allAnswered = finding.answeredQuestions as any[];
-        const questionsToQueue = disputedHeaders.length > 0
-          ? allAnswered.filter((q: any) => disputedHeaders.includes(q.header ?? ""))
-          : allAnswered;
-        await populateJudgeQueue(orgId, findingId, questionsToQueue, f.appealType);
-        await saveAppeal(orgId, {
-          findingId,
-          appealedAt: Date.now(),
-          status: "pending",
-          auditor: finding.owner,
-          comment: f.appealComment,
-          ...(disputedHeaders.length > 0 ? { appealedQuestions: disputedHeaders } : {}),
-        });
-        console.log(`[STEP-FINALIZE] ${findingId}: Appeal re-audit routed to judge queue (${questionsToQueue.length}/${allAnswered.length} disputed questions)`);
-      } else {
-        // Normal audits go to review queue with "No" answers
-        await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[]);
-      }
+      await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[]);
+      console.log(`[STEP-FINALIZE] ${findingId}: → review queue${isRecordingReAudit ? ` (recording re-audit: ${appealType})` : ""}`);
     } catch (err) {
       console.error(`[STEP-FINALIZE] ${findingId}: Queue population failed:`, err);
     }
@@ -272,8 +256,8 @@ export async function stepFinalize(req: Request): Promise<Response> {
   const yeses = (finding.answeredQuestions as any[])?.filter((q: any) => q.answer === "Yes").length ?? 0;
   console.log(`[STEP-FINALIZE] ${findingId}: Complete - ${yeses} Yes, ${nos} No`);
 
-  // 100% first pass -- audit is terminated, no review needed (but appeal re-audits always go to judge)
-  if (nos === 0 && yeses > 0 && !isAppealReAudit) {
+  // 100% -- no failing questions, fire terminate webhook (includes recording re-audits)
+  if (nos === 0 && yeses > 0) {
     fireWebhook(orgId, "terminate", {
       findingId,
       finding,

@@ -77,11 +77,16 @@ async function askLlmOne(
   for (const andNodes of ast) {
     const andResults: Array<{ answer: boolean; thinking: string; defense: string; snippet: string }> = [];
 
-    // Fetch one context for the whole AND group using a combined query.
-    // Generic nodes (e.g. "Did the agent disclose any charges?") can match wrong transcript
-    // sections on their own. Combining with specific sibling nodes (e.g. "Did the agent mention
-    // the 11% service fee?") anchors Pinecone retrieval to the correct part of the transcript.
-    const combinedQuery = andNodes.map((n) => toQueryText(n.question)).filter(Boolean).join(" ");
+    // Build a combined Pinecone query from transcript-lookup nodes only.
+    // Logical/semantic nodes ("Does 'X' include 'Y'?") don't need specific transcript context
+    // and contaminate the combined query, pulling Pinecone toward the wrong section.
+    // Transcript-lookup nodes reliably contain "team member" in this question corpus.
+    // If no transcript nodes exist in the group, fall back to using all nodes.
+    const transcriptNodes = andNodes.filter((n) =>
+      toQueryText(n.question).toLowerCase().includes("team member")
+    );
+    const queryNodes = transcriptNodes.length > 0 ? transcriptNodes : andNodes;
+    const combinedQuery = queryNodes.map((n) => toQueryText(n.question)).filter(Boolean).join(" ");
     const sharedContext = await getContext(combinedQuery || andNodes[0].question);
 
     for (const node of andNodes) {

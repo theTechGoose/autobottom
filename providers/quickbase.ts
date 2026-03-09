@@ -18,7 +18,10 @@ interface QBQueryOptions {
   sortBy?: { fieldId: number; order: "ASC" | "DESC" }[];
 }
 
-export async function queryRecords(opts: QBQueryOptions): Promise<any[]> {
+const QB_TIMEOUT_MS = 30_000;
+const QB_RETRY_DELAYS = [2000, 5000, 10000]; // 3 retries: 2s, 5s, 10s
+
+export async function queryRecords(opts: QBQueryOptions, attempt = 0): Promise<any[]> {
   const body: any = {
     from: opts.tableId,
     where: opts.where,
@@ -26,14 +29,42 @@ export async function queryRecords(opts: QBQueryOptions): Promise<any[]> {
   };
   if (opts.sortBy) body.sortBy = opts.sortBy;
 
-  const res = await fetch(`${API}/records/query`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), QB_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API}/records/query`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (e: any) {
+    clearTimeout(timeoutId);
+    const msg = String(e?.message ?? e);
+    const isTimeout = msg.includes("aborted") || msg.includes("AbortError");
+    const label = isTimeout ? `timed out after ${QB_TIMEOUT_MS / 1000}s` : msg;
+    if (attempt < QB_RETRY_DELAYS.length) {
+      const delay = QB_RETRY_DELAYS[attempt];
+      console.warn(`[QB] ⚠️ queryRecords attempt ${attempt + 1} ${label} — retrying in ${delay}ms (table=${opts.tableId})`);
+      await new Promise((r) => setTimeout(r, delay));
+      return queryRecords(opts, attempt + 1);
+    }
+    throw new Error(`QuickBase query failed after ${attempt + 1} attempts: ${label} (table=${opts.tableId})`);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!res.ok) {
     const text = await res.text();
+    const isRetryable = res.status === 429 || res.status >= 500;
+    if (isRetryable && attempt < QB_RETRY_DELAYS.length) {
+      const delay = QB_RETRY_DELAYS[attempt];
+      console.warn(`[QB] ⚠️ queryRecords attempt ${attempt + 1} got ${res.status} — retrying in ${delay}ms (table=${opts.tableId})`);
+      await new Promise((r) => setTimeout(r, delay));
+      return queryRecords(opts, attempt + 1);
+    }
     throw new Error(`QuickBase query failed: ${res.status} ${text}`);
   }
 

@@ -53,7 +53,13 @@ const FIELD_SUPERVISOR_EMAIL = 851;
 const FIELD_DESTINATION_DISPLAY = 566;
 // AutoYes expression fields on date leg records
 const DATE_LEG_AUTOYES_FIELDS = [
+  8,   // ArrivalDate
+  10,  // DepartureDate
+  32,  // GuestName
+  33,  // SpouseName
   49,  // MaritalStatus
+  297, // RoomTypeMaxOccupancy
+  314, // DestinationPretty
   460, // TotalWGSAttached
   553, // DepositCollected
   594, // TotalMCCAttached

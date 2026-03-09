@@ -3,7 +3,7 @@
 This document details every meaningful change made on Adam's development track (commits by `adamp@monsterrg.com`) relative to Rafa's base codebase. Use this as a merge guide when reconciling the two tracks.
 
 Rafa's base commits: `51b89f8`, `cf11273`, `961e61d`, `4258169`, `613858a`, `abd3638`
-Adam's commits (oldest → newest): `6a3fd0c` through `1555c3d`
+Adam's commits (oldest → newest): `6a3fd0c` through `00f3f14`
 
 ---
 
@@ -497,6 +497,310 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 
 ---
 
+---
+
+## 28. Three Dedicated QStash Queues (`speedy` series)
+
+### Files
+- `lib/queue.ts`
+
+### Changes
+- Replaced single-queue design with **three independent named queues**, each with its own pool of 20 parallel slots:
+  - `audit-transcribe` — init, transcribe, poll-transcript, transcribe-complete, prepare
+  - `audit-questions` — ask-batch, ask-all
+  - `audit-cleanup` — finalize, diarize-async, pinecone-async, bad-word-check
+- `STEP_QUEUE` routing table maps each step name to its queue so callers just call `enqueueStep("step-name", body)`.
+- `ALL_QUEUES` export lists all three queue names so admin parallelism changes can be applied to all at once.
+- `LOCAL_MODE` support: when `LOCAL_QUEUE=true`, `enqueueStep` POSTs directly to `localhost` (with optional delay via `setTimeout`) instead of calling QStash — for local development without QStash credentials.
+- Delayed messages: QStash queue-based enqueue does not support `Upstash-Delay`, so delayed steps (e.g. poll-transcript re-enqueues with 15s delay) use `publish` endpoint instead of `enqueue`.
+
+---
+
+## 29. Async Transcription — poll-transcript Step (`speedy` series)
+
+### Files
+- `steps/transcribe.ts`
+- `steps/poll-transcript.ts` (new)
+- `providers/assemblyai.ts`
+
+### Changes
+
+#### `steps/transcribe.ts`
+- **Single-genie path is now non-blocking**: calls `submitTranscription()` (returns transcript ID immediately) instead of `transcribe()` (which waited ~90s for result).
+- Saves `assemblyAiTranscriptId` and `assemblyAiSubmittedAt` (epoch ms) to the finding.
+- Immediately enqueues `poll-transcript` with a 15-second initial delay, then returns `200 OK`.
+- Multi-genie path (multiple `s3RecordingKeys`) still uses the synchronous per-file `transcribe()` path because it concatenates results.
+- If the finding already has a transcript, skips to `transcribe-complete`.
+
+#### `steps/poll-transcript.ts` (new)
+- Polls AssemblyAI using `pollTranscriptOnce(transcriptId)`.
+- Status `queued` or `processing`: re-enqueues `poll-transcript` with 15s delay and returns.
+- Status `completed`: calls `processTranscriptResult()`, saves `rawTranscript`, enqueues `transcribe-complete`.
+- Status error/unknown: saves `Genie Invalid` transcript, enqueues `transcribe-complete`.
+- Logs elapsed time since `assemblyAiSubmittedAt` for every poll.
+- Poll failures (network errors) re-enqueue rather than failing permanently.
+
+---
+
+## 30. Off-Critical-Path Async Steps (`speedy` series, `batchybatch` series)
+
+### Files
+- `steps/diarize-async.ts` (new)
+- `steps/pinecone-async.ts` (new)
+
+### Changes
+
+#### `steps/diarize-async.ts`
+- Runs in parallel with `prepare` — enqueued from `transcribe-complete` (or the old `transcribe-cb`).
+- Calls `diarize()` from Groq to produce `[AGENT]`/`[CUSTOMER]`-labeled transcript text.
+- Saves result to both `finding.diarizedTranscript` and a separate `saveTranscript(orgId, findingId, raw, diarized)` KV key.
+- Idempotent: skips if `finding.diarizedTranscript` is already set (handles QStash at-least-once delivery).
+- Does not call `trackActive()` for finished findings — prevents ghost entries in active audits list.
+- Non-fatal: diarization failure is logged but does not block the pipeline; report page falls back to raw transcript automatically.
+
+#### `steps/pinecone-async.ts`
+- Formerly used to upload transcript to Pinecone off-path. This step still exists in routing but Pinecone upload has been moved inline into `ask-all` (before questions fire). This step is now a no-op safety valve.
+
+---
+
+## 31. ask-all Replaces ask-batch Fan-out (`batchybatch` series)
+
+### Files
+- `steps/ask-all.ts` (new, replaces ask-batch fan-out)
+- `steps/prepare.ts`
+
+### Changes
+- **ask-all** answers all questions for a finding in a **single QStash step** instead of fan-out batches.
+- Uses `Promise.all()` with a **100ms stagger** between question starts (`index * 100ms delay`) to avoid Groq burst rate limits while still running fully concurrently.
+- **Pinecone upload runs inline** before questions start — `pineconeUpload(findingId, rawTranscript)` is called once at the top of ask-all. Falls back to raw transcript in each question if Pinecone isn't available.
+- **15-minute step ceiling**: `AbortController` + `Promise.race()` hard-kills the step after 15 minutes if questions hang (last line of defense after per-call timeouts in Groq/Pinecone providers).
+- Saves answers using `saveBatchAnswers(orgId, findingId, 0, answers)` — batch 0, totalBatches=1 — keeping full compatibility with `finalize`'s `getAllBatchAnswers()`.
+- Per-question timing: logs a warning for any question taking >10s.
+- **Per-node logging**: for compound questions (multi-node AST), each sub-node's answer and flip is logged individually for debugging.
+- Reads populated questions from `getPopulatedQuestions(orgId, findingId)` (dedicated KV key that survives finding trim) with fallback to `finding.populatedQuestions`.
+- `adminRetry` propagation: uses `publishStep` instead of `enqueueStep` for downstream finalize dispatch.
+
+---
+
+## 32. autoYes Expression System + QB Field Fetches (`autoyesfeets`, `fieldsneededfeet` series, `fixyfeet`)
+
+### Files
+- `providers/question-expr.ts`
+- `providers/quickbase.ts`
+- `controller.ts`
+- `steps/prepare.ts`
+- `lib/kv.ts`
+
+### Changes
+
+#### autoYes Expression Operators (`providers/question-expr.ts`)
+`evaluateAutoYes(expr, record, fieldLookup)` supports:
+- `{{fieldId}}/sub::message` — auto-Yes if field value does NOT contain `sub` (e.g. guest is not single)
+- `{{fieldId}}~sub::message` — auto-Yes if field value CONTAINS `sub`
+- `{{fieldId}}=val::message` — auto-Yes if field equals `val` (special case: `0=0` always true)
+- `{{fieldId}}#val::message` — auto-Yes if field does NOT equal `val`
+- `{{fieldId}}<num::message` — auto-Yes if field value is numerically less than `num`
+
+#### Compound Question Prefix (`+:`) Fix (`providers/question-expr.ts`)
+- `parseAst()` now strips `+:` from `cleaned` text before building the AND/OR AST.
+- Previously `+:` leaked into the first AST node's question text (sent literally to the LLM), causing extra noise and degraded accuracy.
+- `body = isPrefixed ? cleaned.replace(/^\+:/, "").trim() : cleaned` — applied before splitting on `|` and `&` operators.
+
+#### QuickBase Date-Leg autoYes Fields (`providers/quickbase.ts`)
+- `DATE_LEG_AUTOYES_FIELDS = [49, 460, 553, 594, 706]` added to `getDateLegByRid()`:
+  - 49 = MaritalStatus
+  - 460 = TotalWGSAttached
+  - 553 = DepositCollected
+  - 594 = TotalMCCAttached
+  - 706 = TotalAmountPaid
+- Fields returned as numeric string keys: `{ "49": "Single Female", "460": "0", ... }` — matches the `{{49}}` field reference syntax.
+
+#### New `getPackageByRid()` Function (`providers/quickbase.ts`)
+- Package table: `bttffb64u` (was previously incorrect — `bu3e8x98x` is the audit questions table).
+- Fields selected: 3 (RecordId), 18 (GenieNumber), 67 (MaritalStatus), 306 (MSPSubscription), 345 (HasMCC).
+- `PACKAGE_AUTOYES_FIELDS = [67, 306, 345]` returned as numeric string keys.
+
+#### Controller Always-Fetch Fix (`controller.ts`)
+- **Root cause**: QB trigger sends `body.record` with only named fields (RecordId, VoGenie, etc.), completely bypassing `getDateLegByRid` and leaving numeric autoYes fields empty.
+- **Fix**: Both `handleAuditByRid` and `handlePackageByRid` now **always call their QB fetch function first**; `body.record` is only the fallback if QB fetch fails or returns null:
+  ```typescript
+  // handleAuditByRid:
+  const record = await getDateLegByRid(rid) ?? body.record ?? { RecordId: rid };
+  // handlePackageByRid:
+  const record = await getPackageByRid(rid) ?? body.record ?? { RecordId: rid };
+  ```
+- CRM URL bug fixed in both `controller.ts` and `main.ts`: `bu3e8x98x` → `bttffb64u` for the package table deep link.
+
+#### Populated Questions KV Key (`lib/kv.ts`, `steps/prepare.ts`)
+- `savePopulatedQuestions(orgId, findingId, questions)` / `getPopulatedQuestions(orgId, findingId)` — saves populated question array to a **dedicated KV key** separate from the finding object.
+- Prevents populated questions from being lost when the finding object is trimmed (ChunkedKV size management).
+- `steps/prepare.ts` saves to this key immediately after `populateQuestions()`.
+- `steps/ask-all.ts` reads from this key first (fallback to finding).
+
+#### Prepare Logging (`steps/prepare.ts`)
+- Logs all record keys at entry: `[STEP-PREPARE] record keys=[...]`.
+- Logs autoYes expressions after population showing resolved field values: `"MaritalStatus": {{49}}/single::Guest is married`.
+
+---
+
+## 33. Bad Word Detection (`badwords` commit)
+
+### Files
+- `steps/bad-word-check.ts` (new)
+- `providers/bad-word.ts` (new)
+- `lib/kv.ts` (new functions: `getBadWordConfig`, `saveBadWordConfig`)
+- `main.ts` (new routes)
+- `dashboard/page.ts` (new config UI)
+
+### Changes
+- Off-critical-path step enqueued from `prepare` when `finding.rawTranscript` is set and `finding.recordingIdField === "GenieNumber"` (package audits only).
+- `checkFindingForBadWords(config, transcript, ctx)` scans transcript for configured word/phrase violations.
+- Context passed includes: `findingId`, `recordId`, `agentEmail`, `officeName`, `guestName`, `reservationId`.
+- Non-fatal: errors are logged but returned as `{ ok: true, error: ... }` — never blocks the audit pipeline.
+- Admin config stored in KV as `bad-word-config` per org.
+- `GET /admin/bad-word-config` and `POST /admin/bad-word-config` routes for managing the word list.
+- Routes: `bad-word-check` step assigned to `CLEANUP_QUEUE`.
+
+---
+
+## 34. Finalize — All Findings to Review Queue + Timing Tracking (`flowfeet` series)
+
+### Files
+- `steps/finalize.ts`
+- `lib/kv.ts`
+
+### Changes
+
+#### Queue Routing
+- **All findings — including recording re-audits — now go to the review queue** via `populateReviewQueue()`.
+- Previously, recording re-audits (`different-recording`, `additional-recording`, `upload-recording`) had separate routing logic. Now they're treated uniformly.
+- Formal judge appeal re-audits (`appealSourceFindingId` present, not a recording re-audit) still go through `handleFileAppeal` on the original finding, not through finalize.
+- Log message includes the appeal type when routing: `→ review queue (recording re-audit: different-recording)`.
+
+#### Timing Tracking
+- `startedAt` is set in `steps/init.ts` (first step) and preserved on the finding.
+- `completedAt` is set in finalize at the moment of save.
+- `durationMs = completedAt - startedAt` computed in finalize.
+- `trackCompleted()` now accepts and stores `{ startedAt, durationMs }` alongside existing `recordId`/`isPackage`.
+- `getRecentCompleted()` returns `startedAt` and `durationMs` in the result array for dashboard display.
+
+#### Agent Gamification Events
+- `emitEvent(orgId, finding.owner, "audit-completed", { findingId, score, recordingId })` fired for every completed audit.
+- Prefab broadcast events: `sale_completed` (always), `perfect_score` (score=100), `badge_earned` (when new badge awarded).
+- XP formula: `floor(score * 0.3)` + 50 bonus for 100%, +20 for ≥90%.
+- Badge stat tracking: `totalAudits`, `perfectScoreCount`, `avgScore`, `dayStreak`, `lastActiveDate`.
+
+---
+
+## 35. Judge Queue — Overturn Reasons (`judgefeets` commit)
+
+### Files
+- `judge/kv.ts`
+- `shared/queue-page.ts`
+
+### Changes
+
+#### `judge/kv.ts`
+- `JudgeDecision` interface extended with `reason?: "error" | "logic" | "fragment" | "transcript"`.
+- `recordDecision(orgId, item, decision, judge, reason?)` accepts and persists the reason code.
+- On overturn: `judgeAction` and `judgeReason` stored on the corrected answer in the re-audit finding.
+- Appeal webhook payload includes `reason` field per question override.
+
+#### `shared/queue-page.ts`
+- Four overturn reason buttons replace the single "Flip to Yes" button:
+  - **Error (A)** — bot made a factual error
+  - **Logic (S)** — bot's logic was flawed
+  - **Fragment (D)** — transcript fragment was misread
+  - **Transcript (F)** — transcript quality issue
+- Keyboard hotkeys: `Y` = Uphold, `A/S/D/F` = Overturn with reason.
+- Toast messages: `"Upheld"` or `"Overturned: Error"` / `"Overturned: Logic"` / etc.
+- `REASON_LABELS` map for display: `{ error: 'Error', logic: 'Logic', fragment: 'Fragment', transcript: 'Transcript' }`.
+
+---
+
+## 36. Pipeline Config — Admin Parallelism Control
+
+### Files
+- `main.ts`
+- `lib/kv.ts`
+
+### Changes
+- `getPipelineConfig(orgId)` / `setPipelineConfig(orgId, config)` KV functions.
+- Config shape: `{ parallelism: number }` — controls QStash queue parallelism.
+- `GET /admin/pipeline-config` — returns current config.
+- `POST /admin/pipeline-config` — updates parallelism (applied to all three queues via `ALL_QUEUES`).
+- `stepInit` reads pipeline config at startup and logs `[parallelism=N]`.
+- `trackActive()` metadata extended: accepts `startedAt` in addition to `recordId`/`isPackage`.
+
+---
+
+## 37. Bulk Audit Dashboard UI (`bulk` series)
+
+### Files
+- `dashboard/page.ts`
+
+### Changes
+- **Bulk Audit** button added to the test audit widget row (small secondary button labeled "Bulk").
+- Opens a modal with:
+  - Textarea for pasting Record IDs (one per line or comma-separated, max 200).
+  - Type selector (Date Leg / Package) pre-filled from the single-audit type selector.
+  - Stagger delay input (ms between each audit fire, default 100ms).
+  - Progress log area showing per-RID status as audits fire.
+- JS fires audits **sequentially** with the configured stagger delay between each (not parallel) to avoid overwhelming the queue.
+- Each audit calls the same `POST /audit/test-by-rid` or `POST /audit/package-by-rid` endpoints as the single-audit widget.
+- Progress log shows: RID, HTTP status, findingId or error for each audit as it completes.
+
+---
+
+## 38. Report Page — Live SSE Updates (`reportfeet` commit)
+
+### Files
+- `controller.ts`
+- `main.ts`
+
+### Changes
+
+#### `GET /audit/report-sse?id=X`
+- Server-Sent Events endpoint that streams live audit progress while a finding is still processing.
+- Polls the finding every 3 seconds; emits `update` events with `{ score, passed, failed, total, status }`.
+- Closes the stream when `finding.findingStatus === "finished"` (emits one final update first).
+- Returns `text/event-stream` with `Connection: keep-alive` and `Cache-Control: no-cache`.
+- Client disconnection detected via `req.signal.aborted`.
+
+#### Report page client-side SSE
+- Report page subscribes to `report-sse` when the finding is not yet `"finished"`.
+- Live updates: score hero (`#live-score`), progress bar (`#live-bar`), passed/failed/total counters.
+- "Live" badge indicator (pulsing teal dot) shown while streaming, hidden on completion.
+- EventSource auto-closes on the `close` event from the server.
+
+---
+
+## 39. Init Step — Multi-Genie Parallel Download + AssemblyAI Pre-Upload + startedAt (`newgeniefeet` commit)
+
+### Files
+- `steps/init.ts`
+
+### Changes
+
+#### Multi-Genie Parallel Download
+- When `finding.genieIds` (array) is present, all genies are downloaded **in parallel** using `Promise.all()`.
+- Invalid genie IDs are filtered before download: empty strings, `"0"`, all-zeros are skipped with a warning.
+- Each downloaded file is saved to S3 as `recordings/<auditJobId>/<genieId>.mp3`.
+- Resulting S3 keys stored in `finding.s3RecordingKeys` (array) and `finding.s3RecordingKey` (first key).
+- If all genies are invalid or download fails, sets `rawTranscript = "Invalid Genie"` and skips to finalize.
+
+#### AssemblyAI Pre-Upload
+- After saving to S3, `init` attempts to **pre-upload the audio to AssemblyAI** (`uploadAudio(bytes)`).
+- Pre-upload URL saved to `finding.assemblyAiUploadUrl`.
+- In `transcribe`, if `assemblyAiUploadUrl` is already set, the S3 re-download is skipped and the cached URL is used directly — reduces transcribe step latency.
+- Pre-upload failure is non-fatal: transcribe step will upload on its own.
+
+#### startedAt Tracking
+- `finding.startedAt = Date.now()` set in `init` if not already set (idempotent on retry).
+- `trackActive()` called with `{ recordId, isPackage, startedAt }` metadata after QB record is known.
+
+---
+
 ## New API Endpoints Summary
 
 | Method | Path | Auth | Description |
@@ -505,6 +809,16 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 | POST | `/admin/retry-finding` | Admin | Smart-retry a finding at the correct step |
 | POST | `/admin/terminate-all` | Admin | Mark all active findings as terminated |
 | POST | `/admin/clear-review-queue` | Admin | Batch-delete all pending review items + locks |
+| GET | `/admin/pipeline-config` | Admin | Get pipeline parallelism config |
+| POST | `/admin/pipeline-config` | Admin | Set pipeline parallelism (applied to all 3 queues) |
+| GET | `/admin/bad-word-config` | Admin | Get bad word detection config |
+| POST | `/admin/bad-word-config` | Admin | Save bad word detection config |
+| GET | `/audit/report-sse?id=X` | None | SSE stream of live audit progress |
+| POST | `/audit/step/poll-transcript` | QStash | Poll AssemblyAI for transcript result |
+| POST | `/audit/step/ask-all` | QStash | Answer all questions in one parallel step |
+| POST | `/audit/step/diarize-async` | QStash | Off-path speaker diarization |
+| POST | `/audit/step/pinecone-async` | QStash | Off-path Pinecone upload (legacy, now inline in ask-all) |
+| POST | `/audit/step/bad-word-check` | QStash | Off-path bad word scan for package audits |
 | GET | `/admin/email-templates` | Admin | List email templates |
 | GET | `/admin/email-templates/get?id=X` | Admin | Get single template |
 | POST | `/admin/email-templates` | Admin | Create/update template |
@@ -523,6 +837,9 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 | `<org>:stats-active:<findingId>` | `ActiveEntry` | Now includes `recordId`, `isPackage` |
 | `<org>:stats-completed:<ts>:<findingId>` | `CompletedEntry` | Now includes `recordId`, `isPackage` |
 | `<org>:review-lock:<findingId>:<qIndex>` | `LockEntry` | 30s reviewer claim lock (new) |
+| `<org>:populated-questions:<findingId>` | `IQuestion[]` | Dedicated key for populated questions (survives finding trim) |
+| `<org>:bad-word-config` | `BadWordConfig` | Bad word detection configuration |
+| `<org>:pipeline-config` | `{ parallelism: number }` | QStash queue parallelism setting |
 | `default-org` | `string` | Default orgId used when none specified |
 
 ---
@@ -544,5 +861,12 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 3. **`main.ts`** — many new routes and handlers added. Merge route maps (GET/POST) carefully.
 4. **`shared/queue-page.ts`** — review queue UI rewritten substantially (decision buttons, sticky footer, overlay, scrollbar, perf fix). High conflict probability if Rafa touched this.
 5. **`steps/*.ts`** — terminated guard added to every step file. Each is a small early-return check at the top — low conflict risk.
-6. **`providers/quickbase.ts`** — `FIELD_GUEST_NAME = 32` and `GuestName` field added. Low conflict risk unless Rafa changed the QB query structure.
-7. **`controller.ts`** — report page changes (full ID, toggle fix, appeal modal). Low conflict risk.
+6. **`providers/quickbase.ts`** — `FIELD_GUEST_NAME = 32`, `GuestName`, new autoYes fields (49, 460, 553, 594, 706 on date legs; 67, 306, 345 on packages), new `getPackageByRid()`. Low conflict risk unless Rafa changed the QB query structure.
+7. **`controller.ts`** — report page changes (full ID, toggle fix, appeal modal), SSE endpoint, always-fetch QB fix, CRM URL fix for package table. Low conflict risk if Rafa didn't touch these areas.
+8. **`lib/queue.ts`** — complete redesign: 3 queues, step routing table, LOCAL_MODE. High conflict risk if Rafa has any queue changes.
+9. **`steps/ask-all.ts`** — entirely new file (replaces ask-batch fan-out). No Rafa equivalent.
+10. **`steps/poll-transcript.ts`**, **`steps/diarize-async.ts`**, **`steps/pinecone-async.ts`**, **`steps/bad-word-check.ts`** — all new files. No conflict risk.
+11. **`steps/transcribe.ts`** — single-genie now async/non-blocking. If Rafa modified transcribe, merge the non-blocking submit path carefully.
+12. **`steps/init.ts`** — multi-genie parallel download, pre-upload, startedAt. Merge carefully if Rafa modified init.
+13. **`steps/finalize.ts`** — routing (all to review queue), timing, gamification. High conflict risk if Rafa touched finalize.
+14. **`providers/question-expr.ts`** — `+:` prefix strip fix in `parseAst`, `evaluateAutoYes` operator additions. Review carefully.

@@ -42,7 +42,10 @@ export function parseAst(question: IQuestion): IQuestion {
 
   const { cleaned, notes } = pullNotes(question.populated);
 
-  const ast: IQuestionAstNode[][] = cleaned.split(orSep).map((or) => {
+  // Strip the +: prefix from cleaned so it doesn't leak into node question text
+  const body = isPrefixed ? cleaned.replace(/^\+:/, "").trim() : cleaned;
+
+  const ast: IQuestionAstNode[][] = body.split(orSep).map((or) => {
     return or.split(andSep).map((and) => ({
       flip: and.includes(operators.not),
       question: `${notes.join("\n")} ` + and.replace(operators.not, "").trim(),

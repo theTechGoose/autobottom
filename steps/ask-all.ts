@@ -85,6 +85,7 @@ async function askLlmOne(
       }
 
       const finalBool = node.flip ? !boolAnswer : boolAnswer;
+      console.log(`[STEP-ASK-ALL] ${findingId}: "${question.header}" node="${node.question.slice(0, 60)}..." → ${llmAnswer.answer}${node.flip ? ` (flipped→${finalBool})` : ""}`);
       andResults.push({ answer: finalBool, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: context });
     }
 

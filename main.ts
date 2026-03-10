@@ -1590,6 +1590,8 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     findingId,
     recordId,
     guestName: guestNameVal,
+    // Unique subject identifier: guest name for date legs, record ID for packages (or when name missing)
+    subjectGuest: guestNameVal || (isPackage ? `Package #${recordId}` : `#${recordId}`),
     // Dynamic per audit type
     greeting,
     auditTypeLabel,

@@ -88,7 +88,8 @@ export function enqueueStep(step: string, body: unknown, delaySeconds?: number) 
   const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
   const url = `${env.selfUrl}/audit/step/${step}`;
   // ask-all runs many parallel Groq calls — extend QStash delivery timeout to 15 min
-  const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "900" } : undefined;
+  // QStash uses Go duration parsing: needs unit suffix ("900s", not "900")
+  const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "900s" } : undefined;
   return enqueue(queueName, url, body, delaySeconds, extraHeaders);
 }
 

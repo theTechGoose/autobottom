@@ -8,15 +8,22 @@ function authHeaders(): Record<string, string> {
 }
 
 /** Upload raw audio bytes to AssemblyAI. Returns the upload URL. */
-export async function uploadAudio(bytes: Uint8Array): Promise<string> {
-  const res = await fetch(`${BASE}/upload`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/octet-stream" },
-    body: bytes,
-  });
-  if (!res.ok) throw new Error(`AssemblyAI upload failed: ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  return data.upload_url;
+export async function uploadAudio(bytes: Uint8Array, timeoutMs = 60_000): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${BASE}/upload`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/octet-stream" },
+      body: bytes,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`AssemblyAI upload failed: ${res.status} ${await res.text()}`);
+    const data = await res.json();
+    return data.upload_url;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Transcribe raw audio bytes. Returns speaker-labeled transcript text. */

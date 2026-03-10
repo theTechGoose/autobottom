@@ -2122,8 +2122,8 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       case 'backspace': e.preventDefault(); goBack(); break;
       case 'l': scrollColumns(1); break;
       case 'h': scrollColumns(-1); break;
-      case 'j': scrollColumns(1); recAudio.currentTime = Math.min(recAudio.duration || 0, recAudio.currentTime + 0); break;
-      case 'k': scrollColumns(-1); recAudio.currentTime = Math.max(0, recAudio.currentTime - 0); break;
+      case 'j': scrollColumns(1); break;
+      case 'k': scrollColumns(-1); break;
       case 'p': if (recAudio.paused) recAudio.play(); else recAudio.pause(); break;
     }
   });
@@ -2243,7 +2243,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   wfCanvas.addEventListener('click', function(e) {
     var rect = wfCanvas.getBoundingClientRect();
     var pct = (e.clientX - rect.left) / rect.width;
-    if (recAudio.duration) recAudio.currentTime = pct * recAudio.duration;
+    var dur = recAudio.duration;
+    if (!dur || isNaN(dur)) return;
+    recAudio.currentTime = pct * dur;
+    if (recAudio.paused) recAudio.play();
   });
   document.getElementById('ap-back').addEventListener('click', function() { recAudio.currentTime = Math.max(0, recAudio.currentTime - 5); });
   document.getElementById('ap-fwd').addEventListener('click', function() { recAudio.currentTime = Math.min(recAudio.duration||0, recAudio.currentTime + 5); });

@@ -119,9 +119,9 @@ export async function stepFinalize(req: Request): Promise<Response> {
   });
   console.log(`[STEP-FINALIZE] ${findingId}: ✅ trackCompleted saved — score=${score ?? "?"}% owner=${finding.owner ?? "unknown"} dept=${department ?? "unknown"} type=${isPackage ? "package" : "date-leg"}`);
 
-  // Route to review queue — all findings including recording re-audits go to reviewers.
+  // Route to review queue — skip Invalid Genie (no recording to review).
   // Formal judge appeals are handled upstream in handleFileAppeal (original finding), not here.
-  if (finding.answeredQuestions?.length) {
+  if (!isInvalid && finding.answeredQuestions?.length) {
     try {
       const recordId = String(finding.record?.RecordId ?? "") || undefined;
       await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[], finding.recordingIdField as string | undefined, recordId);
@@ -129,6 +129,8 @@ export async function stepFinalize(req: Request): Promise<Response> {
     } catch (err) {
       console.error(`[STEP-FINALIZE] ${findingId}: Queue population failed:`, err);
     }
+  } else if (isInvalid) {
+    console.log(`[STEP-FINALIZE] ${findingId}: Skipping review queue — Invalid Genie`);
   }
 
   // Emit audit-completed event for the agent
@@ -264,6 +266,18 @@ export async function stepFinalize(req: Request): Promise<Response> {
   const nos = (finding.answeredQuestions as any[])?.filter((q: any) => q.answer === "No").length ?? 0;
   const yeses = (finding.answeredQuestions as any[])?.filter((q: any) => q.answer === "Yes").length ?? 0;
   console.log(`[STEP-FINALIZE] ${findingId}: Complete - ${yeses} Yes, ${nos} No`);
+
+  // Invalid Genie — fire terminate immediately, no review needed
+  if (isInvalid) {
+    fireWebhook(orgId, "terminate", {
+      findingId,
+      finding,
+      answeredQuestions: finding.answeredQuestions,
+      score: 0,
+      reason: "invalid_genie",
+      terminatedAt: new Date().toISOString(),
+    }).catch((err) => console.error(`[STEP-FINALIZE] ${findingId}: Terminate webhook (invalid) failed:`, err));
+  }
 
   // 100% -- no failing questions, fire terminate webhook (includes recording re-audits)
   if (nos === 0 && yeses > 0) {

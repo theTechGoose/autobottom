@@ -1869,11 +1869,19 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   const allQs = Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : [];
   const missedQs = allQs.filter((q: any) => q.answer === "No");
   const scoreColor = scoreVal === 100 ? "#3fb950" : scoreVal >= 80 ? "#58a6ff" : scoreVal >= 60 ? "#d29922" : "#f85149";
-  const missedQuestionsHtml = missedQs.length
+  const passedOrFailed = scoreVal === 100 ? "Passed" : "Failed";
+  const isInvalidGenie = (finding.rawTranscript ?? "").includes("Invalid Genie") || (finding.rawTranscript ?? "").includes("Genie Invalid");
+  const missedQuestionsRows = missedQs.length
     ? missedQs.map((q: any, i: number) =>
         `<tr><td style="padding:8px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:12px;width:32px;text-align:center;">${i + 1}</td><td style="padding:8px 12px;border-bottom:1px solid #21262d;color:#e6edf3;font-size:13px;">${q.header ?? q.question ?? "Unknown"}</td></tr>`
       ).join("")
     : `<tr><td colspan="2" style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions — perfect score!</td></tr>`;
+  const missedQuestionsHtml = missedQuestionsRows;
+  const notesSection = isInvalidGenie
+    ? `<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #f85149;border-radius:8px;padding:18px 20px;"><p style="margin:0 0 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#f85149;">Recording Invalid</p><p style="margin:0;font-size:14px;color:#c9d1d9;line-height:1.6;">Your Genie recording could not be located. <a href="${env.selfUrl}/audit/appeal?findingId=${finding.id ?? ""}" style="color:#58a6ff;text-decoration:none;">Click here to submit a new recording →</a></p></div>`
+    : missedQs.length === 0
+      ? `<div style="background:#161b22;border:1px solid #2ea043;border-radius:8px;padding:18px 20px;text-align:center;"><p style="margin:0;font-size:15px;font-weight:600;color:#3fb950;">Perfect score — great call!</p><p style="margin:6px 0 0;font-size:13px;color:#8b949e;">Review your audit below to see what you did right.</p></div>`
+      : `<p style="margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#8b949e;">Missed Questions</p><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #21262d;border-radius:8px;overflow:hidden;"><tr style="background:#161b22;"><td style="padding:8px 14px;font-size:11px;font-weight:700;color:#8b949e;width:32px;">#</td><td style="padding:8px 14px;font-size:11px;font-weight:700;color:#8b949e;">Category</td></tr>${missedQuestionsRows}</table>`;
 
   // Package vs date-leg dynamic vars — single template supports both
   const auditTypeLabel = isPackage ? "package verification" : "date leg";
@@ -1897,6 +1905,8 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     score: scoreVal + "%",
     scoreVerbiage,
     scoreColor,
+    passedOrFailed,
+    notesSection,
     findingId,
     recordId,
     guestName: guestNameVal,

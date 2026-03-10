@@ -52,18 +52,25 @@ async function askLlmOne(
   const questionWithAst = parseAst(question);
   const ast = questionWithAst.astResults.ast ?? [];
 
+  // For short transcripts (≤8000 chars) skip RAG entirely — the full text fits comfortably
+  // in the LLM context window and is far more reliable than a semantic chunk retrieval that
+  // might match the wrong section (e.g. rewards email instead of confirmation email mention).
+  const SHORT_TRANSCRIPT_THRESHOLD = 8000;
+  const useFullTranscript = rawTranscript.length <= SHORT_TRANSCRIPT_THRESHOLD;
+
   /** Query vector store using a clean query (no instruction notes), falling back to raw transcript. */
   async function getContext(q: string): Promise<string> {
+    if (useFullTranscript) return rawTranscript;
     const query = toQueryText(q) || q;
     try {
       const vectorContext = await vectorQuery(findingId, query);
       if (vectorContext.trim()) return vectorContext;
     } catch (err) {
       console.warn(`[STEP-ASK-ALL] ${findingId}: ⚠️ Pinecone failed for "${query.slice(0, 40)}..." — raw transcript fallback:`, err);
-      return rawTranscript.substring(0, 4000);
+      return rawTranscript.substring(0, 8000);
     }
     console.warn(`[STEP-ASK-ALL] ${findingId}: Pinecone empty for "${query.slice(0, 40)}..." — using raw transcript fallback`);
-    return rawTranscript.substring(0, 4000);
+    return rawTranscript.substring(0, 8000);
   }
 
   // If no AST (simple question), use vector search + LLM

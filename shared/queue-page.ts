@@ -822,6 +822,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           <div class="meta-chip" id="m-type-chip" style="display:none"></div>
           <div class="meta-chip" id="m-record-id-chip" style="display:none">Record <strong id="m-record-id"></strong></div>
           <a class="meta-chip" id="m-record-link" href="#" target="_blank" rel="noopener" style="display:none;color:#58a6ff;text-decoration:none;">View Record →</a>
+          <a class="meta-chip" id="m-report-link" href="#" target="_blank" rel="noopener" style="display:none;color:#a371f7;text-decoration:none;">View Report →</a>
           <div class="meta-chip last-item" id="m-last" style="display:none"><strong>${lastItemLabel}</strong></div>
         </div>
       </div>
@@ -1548,6 +1549,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       recLink.style.display = 'none';
     }
 
+    var reportLink = document.getElementById('m-report-link');
+    if (reportLink && currentItem.findingId) {
+      reportLink.href = '/audit/report?id=' + encodeURIComponent(currentItem.findingId);
+      reportLink.style.display = '';
+    }
+
     ${verdictBadgeRenderJs}
 
     document.getElementById('m-last').style.display = currentAuditRemaining === 1 ? '' : 'none';
@@ -1788,6 +1795,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           currentAuditRemaining = data.next.auditRemaining || 0;
           if (didSwap) {
             peekItem = data.next.peek;
+            // renderCurrent() already ran with the old auditRemaining — sync badge now
+            var mLastSwap = document.getElementById('m-last');
+            if (mLastSwap) mLastSwap.style.display = currentAuditRemaining === 1 ? '' : 'none';
           } else {
             currentItem = data.next.current;
             peekItem = data.next.peek;
@@ -1804,8 +1814,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         } else if (!didSwap) {
           showEmpty();
         } else {
-          var mRem2 = document.getElementById('m-remaining'); if (mRem2) mRem2.textContent = '0';
+          // didSwap + no more items: the item we swapped to is the last in queue
           peekItem = null;
+          currentAuditRemaining = 1;
+          var mLastFinal = document.getElementById('m-last');
+          if (mLastFinal) mLastFinal.style.display = '';
+          var mRem2 = document.getElementById('m-remaining'); if (mRem2) mRem2.textContent = '0';
         }
         busy = false;
       });

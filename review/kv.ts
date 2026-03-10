@@ -2,7 +2,7 @@
 
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
-import { getFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
 import { populateManagerQueue } from "../manager/kv.ts";
 import { checkBadges, BADGE_CATALOG } from "../shared/badges.ts";
 import type { BadgeDef } from "../shared/badges.ts";
@@ -395,11 +395,22 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
     return a;
   });
 
+  const reviewedAt = new Date().toISOString();
+  const yeses = correctedAnswers.filter((a: any) => a.answer === "Yes").length;
+  const score = correctedAnswers.length > 0 ? Math.round((yeses / correctedAnswers.length) * 100) : 0;
+
+  // Save corrected answers back to the finding so the report page reflects the review outcome
+  finding.answeredQuestions = correctedAnswers;
+  (finding as Record<string, unknown>).reviewedAt = reviewedAt;
+  (finding as Record<string, unknown>).reviewScore = score;
+  await saveFinding(orgId, finding);
+  console.log(`[REVIEW] ${findingId}: ✅ Saved corrected finding — ${yeses}/${correctedAnswers.length} Yes = ${score}%`);
+
   await fireWebhook(orgId, "terminate", {
     findingId,
     finding: { ...finding, answeredQuestions: correctedAnswers },
     correctedAnswers,
-    reviewedAt: new Date().toISOString(),
+    reviewedAt,
   });
 }
 

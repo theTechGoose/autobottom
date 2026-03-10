@@ -142,7 +142,7 @@ export async function askQuestion(question: string, transcript: string, modelInd
     if (isTimeout) {
       console.error(`[LLM-TIMEOUT] ⚠️ ${model} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
     }
-    const isRateLimit = isTimeout || msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity") || msg.includes("json_validate_failed");
+    const isRateLimit = isTimeout || msg.includes("429") || msg.includes("503") || msg.includes("404") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity") || msg.includes("json_validate_failed") || msg.includes("model_not_found");
     const nextIndex = modelIndex + 1;
     if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
       console.warn(`[LLM-FALLBACK] ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
@@ -155,47 +155,29 @@ export async function askQuestion(question: string, transcript: string, modelInd
 
 /** Generate feedback summary for failed questions. */
 export async function generateFeedback(failedQuestions: string): Promise<string> {
-  const client = getClient();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-  try {
-    const res = await client.chat.completions.create({
-      model: MODEL,
-      messages: [
-        {
-          role: "system",
-          content: "The following is a list of questions that failed an audit. Please provide a summary of why the team member failed the audit and what they can do to improve.\n\nSummary:",
-        },
-        { role: "user", content: failedQuestions },
-      ],
-      max_tokens: 8000,
-    }, { signal: controller.signal });
-    trackTokens("generateFeedback", res.usage);
-    return res.choices[0]?.message?.content ?? "";
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  return groqCallWithRetry({
+    model: MODEL,
+    messages: [
+      {
+        role: "system",
+        content: "The following is a list of questions that failed an audit. Please provide a summary of why the team member failed the audit and what they can do to improve.\n\nSummary:",
+      },
+      { role: "user", content: failedQuestions },
+    ],
+    max_tokens: 8000,
+  }, "generateFeedback");
 }
 
 /** Summarize multiple thinking/defense outputs into one. */
 export async function summarize(texts: string[]): Promise<string> {
-  const client = getClient();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-  try {
-    const res = await client.chat.completions.create({
-      model: MODEL,
-      messages: [
-        { role: "system", content: "please give a summary.\n\nsummary:" },
-        { role: "user", content: texts.join("\n") },
-      ],
-      max_tokens: 8000,
-    }, { signal: controller.signal });
-    trackTokens("summarize", res.usage);
-    return res.choices[0]?.message?.content ?? "";
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  return groqCallWithRetry({
+    model: MODEL,
+    messages: [
+      { role: "system", content: "please give a summary.\n\nsummary:" },
+      { role: "user", content: texts.join("\n") },
+    ],
+    max_tokens: 8000,
+  }, "summarize");
 }
 
 const DIARIZATION_SYSTEM = `### Role ###
@@ -235,7 +217,7 @@ async function groqCallWithRetry(
     const msg = String(e?.message ?? e);
     const isTimeout = msg.includes("aborted") || msg.includes("AbortError");
     if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${trackLabel}/${model} no response after ${LLM_TIMEOUT_MS / 1000}s`);
-    const isRateLimit = isTimeout || msg.includes("429") || msg.includes("503") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity");
+    const isRateLimit = isTimeout || msg.includes("429") || msg.includes("503") || msg.includes("404") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity") || msg.includes("model_not_found");
     const nextIndex = modelIndex + 1;
     if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
       console.warn(`[LLM-FALLBACK] diarize/${trackLabel}: ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);

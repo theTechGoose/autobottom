@@ -884,7 +884,7 @@ export function getDashboardPage(): string {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
           <div class="sf">
             <label class="sf-label">Email</label>
-            <input type="email" class="sf-input" id="a-username" placeholder="jsmith@example.com">
+            <input type="text" class="sf-input" id="a-username" placeholder="jsmith@example.com" autocomplete="off">
           </div>
           <div class="sf">
             <label class="sf-label">Password</label>
@@ -1543,9 +1543,24 @@ export function getDashboardPage(): string {
         + '<div class="um-user-info"><div class="um-user-email">' + esc(u.email) + '</div>'
         + '<div class="um-user-meta">' + (u.supervisor ? 'reports to ' + esc(u.supervisor) : 'no supervisor') + '</div></div>'
         + '<span class="um-badge ' + u.role + '">' + (u.role === 'user' ? 'agent' : u.role) + '</span>'
+        + '<button class="sf-btn ghost um-delete-btn" data-email="' + esc(u.email) + '" style="margin-left:6px;font-size:10px;padding:3px 8px;color:var(--red);" title="Delete user">✕</button>'
         + '</div>';
     }
     el.innerHTML = html;
+    el.querySelectorAll('.um-delete-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var email = this.getAttribute('data-email');
+        if (!confirm('Delete user ' + email + '? This cannot be undone.')) return;
+        fetch('/admin/users/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email }) })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.error) { toast(d.error, 'error'); return; }
+            toast('Deleted ' + email, 'success');
+            fetchUsers().then(function() { renderUserList(); updateSupervisorDropdown(); });
+          })
+          .catch(function() { toast('Delete failed', 'error'); });
+      });
+    });
   }
 
   function updateSupervisorDropdown() {

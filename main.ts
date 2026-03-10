@@ -262,6 +262,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/settings/judge-finish": handleAdminSaveSettings,
   "/admin/settings/re-audit-receipt": handleAdminSaveSettings,
   "/admin/users": handleAdminAddUser,
+  "/admin/users/delete": handleAdminDeleteUser,
   "/admin/parallelism": handleSetParallelism,
   "/admin/email-reports": handleSaveEmailReport,
   "/admin/email-reports/delete": handleDeleteEmailReport,
@@ -833,6 +834,17 @@ async function handleAdminAddUser(req: Request): Promise<Response> {
     console.error(`[ADD-USER] ❌ createUser failed for ${email}:`, err);
     return json({ error: err.message || "failed to create user" }, 500);
   }
+}
+
+async function handleAdminDeleteUser(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const { email } = await req.json();
+  if (!email) return json({ error: "email required" }, 400);
+  if (email === auth.email) return json({ error: "cannot delete your own account" }, 400);
+  await deleteUser(auth.orgId, email);
+  console.log(`[DELETE-USER] ✅ ${auth.email} deleted ${email} from org ${auth.orgId}`);
+  return json({ ok: true });
 }
 
 // -- Admin: Pipeline Config --

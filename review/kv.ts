@@ -19,12 +19,15 @@ async function kv(): Promise<Deno.Kv> {
 export interface ReviewItem {
   findingId: string;
   questionIndex: number;
+  reviewIndex: number;       // 1-based position within this finding's failed questions
+  totalForFinding: number;   // total failed questions for this finding
   header: string;
   populated: string;
   thinking: string;
   defense: string;
   answer: string;
   recordingIdField?: string; // "GenieNumber" = package, absent/other = date leg
+  recordId?: string;         // QB record ID for direct link
 }
 
 export interface ReviewDecision extends ReviewItem {
@@ -60,6 +63,7 @@ export async function populateReviewQueue(
   findingId: string,
   answeredQuestions: Array<{ answer: string; header: string; populated: string; thinking: string; defense: string }>,
   recordingIdField?: string,
+  recordId?: string,
 ) {
   const db = await kv();
   const noAnswers = answeredQuestions
@@ -69,16 +73,19 @@ export async function populateReviewQueue(
   if (noAnswers.length === 0) return;
 
   const atomic = db.atomic();
-  for (const q of noAnswers) {
+  for (const [reviewIdx, q] of noAnswers.entries()) {
     const item: ReviewItem = {
       findingId,
       questionIndex: q.index,
+      reviewIndex: reviewIdx + 1,
+      totalForFinding: noAnswers.length,
       header: q.header,
       populated: q.populated,
       thinking: q.thinking,
       defense: q.defense,
       answer: q.answer,
       ...(recordingIdField ? { recordingIdField } : {}),
+      ...(recordId ? { recordId } : {}),
     };
     atomic.set(orgKey(orgId, "review-pending", findingId, q.index), item);
   }
@@ -303,11 +310,15 @@ export async function undoDecision(
   const item: ReviewItem = {
     findingId: decided.findingId,
     questionIndex: decided.questionIndex,
+    reviewIndex: decided.reviewIndex ?? 1,
+    totalForFinding: decided.totalForFinding ?? 1,
     header: decided.header,
     populated: decided.populated,
     thinking: decided.thinking,
     defense: decided.defense,
     answer: decided.answer,
+    ...(decided.recordingIdField ? { recordingIdField: decided.recordingIdField } : {}),
+    ...(decided.recordId ? { recordId: decided.recordId } : {}),
   };
 
   // Move back: delete decided, restore to pending, increment counter
@@ -566,10 +577,12 @@ export async function backfillFromFinished(orgId: OrgId) {
     if (noAnswers.length === 0) continue;
 
     const atomic = db.atomic();
-    for (const q of noAnswers) {
+    for (const [reviewIdx, q] of noAnswers.entries()) {
       const item: ReviewItem = {
         findingId,
         questionIndex: q.index,
+        reviewIndex: reviewIdx + 1,
+        totalForFinding: noAnswers.length,
         header: q.header ?? "",
         populated: q.populated ?? "",
         thinking: q.thinking ?? "",

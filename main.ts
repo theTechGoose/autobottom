@@ -656,14 +656,17 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const scoreMax = parseInt(url.searchParams.get("scoreMax") || "100", 10);
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
   const limit = Math.min(100, Math.max(10, parseInt(url.searchParams.get("limit") || "50", 10)));
-  // since: unix ms timestamp; client sends based on selected window. Default: today (midnight local).
+  // since/until: unix ms timestamps. Default: today at midnight.
   const sinceParam = url.searchParams.get("since");
+  const untilParam = url.searchParams.get("until");
   const since = sinceParam ? parseInt(sinceParam, 10) : (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+  const until = untilParam ? parseInt(untilParam, 10) : undefined;
 
   // getAllCompleted does an efficient reverse KV scan with early-break at `since`
   const windowEntries = await getAllCompleted(auth.orgId, since);
 
   const filtered = windowEntries.filter((c) => {
+    if (until && c.ts > until) return false;
     if (type === "date-leg" && c.isPackage) return false;
     if (type === "package" && !c.isPackage) return false;
     if (owner && c.owner !== owner) return false;
@@ -746,6 +749,12 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
       <button class="window-btn active-default" data-hours="24">24h</button>
       <button class="window-btn" data-hours="72">3d</button>
       <button class="window-btn" data-hours="168">7d</button>
+      <span style="color:var(--text-dim);font-size:10px;margin:0 4px;align-self:center;">or</span>
+      <input type="date" id="f-date-start" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;padding:3px 8px;height:26px;">
+      <span style="color:var(--text-dim);align-self:center;">–</span>
+      <input type="date" id="f-date-end" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;padding:3px 8px;height:26px;">
+      <button class="btn btn-primary" id="f-date-go" style="padding:3px 10px;font-size:11px;height:26px;">Go</button>
+      <button class="btn btn-ghost" id="f-date-clear" style="padding:3px 8px;font-size:11px;height:26px;display:none;">✕ Clear</button>
     </div>
   </label>
   <label>Type
@@ -779,7 +788,7 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
 </div>
 <script>
 var WINDOW_HOURS = 24;
-var state = { page: 1, type: 'all', owner: '', department: '', scoreMin: 0, scoreMax: 100, limit: 50 };
+var state = { page: 1, type: 'all', owner: '', department: '', scoreMin: 0, scoreMax: 100, limit: 50, customStart: null, customEnd: null };
 var logsBase = null;
 var hm = window.location.hostname.match(/^([^.]+)\\.([^.]+)\\.deno\\.net$/);
 if (hm) logsBase = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/observability/logs?query=';
@@ -801,6 +810,10 @@ function windowLabel(){return WINDOW_HOURS>=168?'7d':WINDOW_HOURS>=72?'3d':WINDO
 
 function setWindow(h){
   WINDOW_HOURS=h;
+  state.customStart=null;state.customEnd=null;
+  document.getElementById('f-date-start').value='';
+  document.getElementById('f-date-end').value='';
+  document.getElementById('f-date-clear').style.display='none';
   document.querySelectorAll('.window-btn').forEach(function(b){b.classList.toggle('active',+b.getAttribute('data-hours')===h)});
   document.getElementById('hdr-window').textContent='('+windowLabel()+')';
   // Reset dropdowns so they repopulate for new window
@@ -811,8 +824,10 @@ function setWindow(h){
 }
 
 function load(){
-  var since=Date.now()-WINDOW_HOURS*3600000;
-  var params=new URLSearchParams({type:state.type,owner:state.owner,department:state.department,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit,since:since});
+  var since=state.customStart!==null?state.customStart:Date.now()-WINDOW_HOURS*3600000;
+  var p={type:state.type,owner:state.owner,department:state.department,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit,since:since};
+  if(state.customEnd!==null)p.until=state.customEnd;
+  var params=new URLSearchParams(p);
   document.getElementById('tbl-body').innerHTML='<div class="loading">Loading...</div>';
   fetch('/admin/audits/data?'+params)
     .then(function(r){return r.json()})
@@ -898,6 +913,23 @@ document.getElementById('f-dept').onchange=function(){state.department=this.valu
 document.querySelectorAll('.window-btn').forEach(function(btn){
   btn.addEventListener('click',function(){setWindow(+this.getAttribute('data-hours'));load();});
 });
+document.getElementById('f-date-go').addEventListener('click',function(){
+  var s=document.getElementById('f-date-start').value;
+  var e=document.getElementById('f-date-end').value;
+  if(!s||!e){alert('Select both start and end dates');return;}
+  if(s>e){alert('Start date must be before end date');return;}
+  state.customStart=new Date(s+'T00:00:00').getTime();
+  state.customEnd=new Date(e+'T23:59:59').getTime();
+  state.page=1;
+  document.querySelectorAll('.window-btn').forEach(function(b){b.classList.remove('active')});
+  document.getElementById('hdr-window').textContent='('+s+' – '+e+')';
+  document.getElementById('f-date-clear').style.display='';
+  var ow=document.getElementById('f-owner');while(ow.options.length>1)ow.remove(1);
+  var dw=document.getElementById('f-dept');while(dw.options.length>1)dw.remove(1);
+  state.owner='';state.department='';ow.value='';dw.value='';
+  load();
+});
+document.getElementById('f-date-clear').addEventListener('click',function(){setWindow(24);load();});
 // Set default 24h active
 setWindow(24);
 

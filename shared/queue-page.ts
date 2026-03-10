@@ -10,6 +10,7 @@
  *   - API: /review/api vs /judge/api
  */
 import * as icons from "./icons.ts";
+import { env } from "../env.ts";
 
 export function generateQueuePage(mode: "review" | "judge", gamificationJson?: string): string {
   const R = mode === "review";
@@ -101,11 +102,13 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         <div class="cs-row"><kbd>B</kbd><span>Undo / Back</span></div>
         <div class="cs-row"><kbd>${thinkingKey}</kbd><span>Toggle detail</span></div>
         <div class="cs-row"><kbd>H</kbd> <kbd>L</kbd><span>Scroll cols</span></div>
+        <div class="cs-row"><kbd>J</kbd> <kbd>K</kbd><span>Scroll cols (alt)</span></div>
       </div>
       <div class="cs-section">
         <div class="cs-group-label">Playback</div>
         <div class="cs-row"><kbd>P</kbd><span>Play / Pause</span></div>
         <div class="cs-row"><kbd>&larr;</kbd> <kbd>&rarr;</kbd><span>Seek (accel)</span></div>
+        <div class="cs-row"><kbd>^&uarr;</kbd> <kbd>^&darr;</kbd><span>Speed ±0.5×</span></div>
       </div>
       <div class="cs-section">
         <div class="cs-group-label">Search</div>
@@ -126,11 +129,13 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         <div class="cs-row"><kbd>B</kbd><span>Undo / Back</span></div>
         <div class="cs-row"><kbd>${thinkingKey}</kbd><span>Toggle detail</span></div>
         <div class="cs-row"><kbd>H</kbd> <kbd>L</kbd><span>Scroll cols</span></div>
+        <div class="cs-row"><kbd>J</kbd> <kbd>K</kbd><span>Scroll cols (alt)</span></div>
       </div>
       <div class="cs-section">
         <div class="cs-group-label">Playback</div>
         <div class="cs-row"><kbd>P</kbd><span>Play / Pause</span></div>
         <div class="cs-row"><kbd>&larr;</kbd> <kbd>&rarr;</kbd><span>Seek (accel)</span></div>
+        <div class="cs-row"><kbd>^&uarr;</kbd> <kbd>^&darr;</kbd><span>Speed ±0.5×</span></div>
       </div>
       <div class="cs-section">
         <div class="cs-group-label">Search</div>
@@ -336,9 +341,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   .meta-chip {
     display: inline-flex; align-items: center; gap: 4px;
     background: #141820; border: 1px solid #1a1f2b; border-radius: 6px;
-    padding: 3px 10px; font-size: 11px; color: #6e7681; white-space: nowrap;
+    padding: 4px 12px; font-size: 13px; color: #6e7681; white-space: nowrap;
   }
-  .meta-chip strong { color: #c9d1d9; font-weight: 600; }
+  .meta-chip strong { color: #c9d1d9; font-weight: 600; font-size: 13px; }
+  /* Package / Date Leg type badges inside meta row */
+  .badge-pkg { display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;background:rgba(20,184,166,0.12);color:#2dd4bf;border:1px solid rgba(20,184,166,0.25); }
+  .badge-dl  { display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;background:rgba(88,166,255,0.12);color:#58a6ff;border:1px solid rgba(88,166,255,0.25); }
 
   /* ===== Transcript (right side) ===== */
   #transcript-panel {
@@ -423,15 +431,15 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   .cs-divider { height: 1px; background: #1a1f2b; margin: 2px 0; }
 
   #bar-center { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-  #speed-tracker { font-size: 11px; color: #3d4452; font-variant-numeric: tabular-nums; }
+  #speed-tracker { font-size: 12px; color: #3d4452; font-variant-numeric: tabular-nums; }
   #speed-tracker strong { color: #6e7681; }
 
   #bar-right { display: flex; gap: 8px; align-items: center; flex-shrink: 0; margin-left: auto; }
-  #reviewer-tag { font-size: 11px; color: #3d4452; }
+  #reviewer-tag { font-size: 12px; color: #3d4452; }
   #reviewer-tag strong { color: #6e7681; }
   .bar-btn {
     background: none; border: 1px solid #1e2736; border-radius: 6px;
-    padding: 3px 10px; color: #6e7681; font-size: 10px; cursor: pointer;
+    padding: 4px 12px; color: #6e7681; font-size: 12px; cursor: pointer;
     transition: all 0.15s; text-transform: uppercase; letter-spacing: 0.5px;
   }
   .bar-btn:hover { background: #141820; color: #8b949e; border-color: #2d333b; }
@@ -811,8 +819,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
         <div id="meta-row">
           <div class="meta-chip">Audit <strong id="m-finding"></strong></div>
-          <div class="meta-chip">Q<strong id="m-qindex"></strong></div>
-          <div class="meta-chip">Left <strong id="m-remaining"></strong></div>
+          <div class="meta-chip" id="m-type-chip" style="display:none"></div>
+          <div class="meta-chip"><strong id="m-qprogress">–/–</strong></div>
+          <div class="meta-chip" id="m-record-id-chip" style="display:none">Record <strong id="m-record-id"></strong></div>
+          <a class="meta-chip" id="m-record-link" href="#" target="_blank" rel="noopener" style="display:none;color:#58a6ff;text-decoration:none;">View Record →</a>
           <div class="meta-chip last-item" id="m-last" style="display:none"><strong>${lastItemLabel}</strong></div>
         </div>
       </div>
@@ -890,6 +900,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       <canvas id="ap-waveform"></canvas>
       <button class="ap-seek" id="ap-fwd" title="Forward 5s (Right arrow)">5s&rarr;</button>
       <span class="ap-time" id="ap-time">0:00</span>
+      <span id="ap-speed" title="Playback speed (Ctrl+↑/↓)" style="display:none;font-size:10px;color:#6e7681;font-variant-numeric:tabular-nums;white-space:nowrap;border:1px solid #1e2736;border-radius:4px;padding:1px 5px;cursor:default;">1.0×</span>
       <div id="skip-indicator"><span id="skip-label"></span><div id="skip-bar-wrap"><div id="skip-bar"></div></div></div>
     </div>
     <div id="bar-center">
@@ -997,6 +1008,14 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   var pendingReason = null;
   var REASON_LABELS = { error: 'Error', logic: 'Logic', fragment: 'Fragment', transcript: 'Transcript' };
   var transcriptCache = {};
+
+  // QuickBase record URL bases
+  var QB_REALM = '${env.qbRealm}';
+  var QB_DATE_TABLE = 'bpb28qsnn';
+  var QB_PKG_TABLE  = 'bttffb64u';
+
+  // Playback speed (Ctrl+↑/↓)
+  var playbackRate = 1.0;
 
   // Transcript search state
   var searchMatches = [];
@@ -1503,12 +1522,38 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     document.getElementById('q-defense').textContent = currentItem.defense || 'No defense provided';
     document.getElementById('thinking-text').textContent = currentItem.thinking || 'No reasoning provided';
     document.getElementById('m-finding').textContent = currentItem.findingId;
-    document.getElementById('m-qindex').textContent = String(currentItem.questionIndex);
+
+    // 1/5 progress counter
+    var prog = document.getElementById('m-qprogress');
+    if (prog) prog.textContent = (currentItem.reviewIndex ?? (currentItem.questionIndex + 1)) + '/' + (currentItem.totalForFinding ?? '?');
+
+    // Package / Date Leg badge
+    var typeChip = document.getElementById('m-type-chip');
+    if (typeChip) {
+      var isPackage = currentItem.recordingIdField === 'GenieNumber';
+      typeChip.innerHTML = isPackage
+        ? '<span class="badge-pkg">Package</span>'
+        : '<span class="badge-dl">Date Leg</span>';
+      typeChip.style.display = '';
+    }
+
+    // Record ID + QB link
+    var recId = currentItem.recordId || '';
+    var ridChip = document.getElementById('m-record-id-chip');
+    var ridEl = document.getElementById('m-record-id');
+    var recLink = document.getElementById('m-record-link');
+    if (recId && ridChip && ridEl && recLink) {
+      ridEl.textContent = recId;
+      ridChip.style.display = '';
+      var qbTable = (currentItem.recordingIdField === 'GenieNumber') ? QB_PKG_TABLE : QB_DATE_TABLE;
+      recLink.href = 'https://' + QB_REALM + '.quickbase.com/db/' + qbTable + '?a=dr&rid=' + encodeURIComponent(recId);
+      recLink.style.display = '';
+    } else if (ridChip && recLink) {
+      ridChip.style.display = 'none';
+      recLink.style.display = 'none';
+    }
 
     ${verdictBadgeRenderJs}
-
-    var remaining = peekItem ? '...' : '0';
-    document.getElementById('m-remaining').textContent = remaining;
 
     document.getElementById('m-last').style.display = currentAuditRemaining === 1 ? '' : 'none';
 
@@ -1735,11 +1780,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           if (data.next.transcript && data.next.current) {
             transcriptCache[data.next.current.findingId] = data.next.transcript;
           }
-          document.getElementById('m-remaining').textContent = String(remaining);
+          var mRem = document.getElementById('m-remaining'); if (mRem) mRem.textContent = String(remaining);
         } else if (!didSwap) {
           showEmpty();
         } else {
-          document.getElementById('m-remaining').textContent = '0';
+          var mRem2 = document.getElementById('m-remaining'); if (mRem2) mRem2.textContent = '0';
           peekItem = null;
         }
         busy = false;
@@ -1816,7 +1861,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         }
         showReview();
         renderCurrent();
-        document.getElementById('m-remaining').textContent = String(data.remaining);
+        var mRem3 = document.getElementById('m-remaining'); if (mRem3) mRem3.textContent = String(data.remaining);
       });
       toast('Undid last decision', 'undo');
       resetCombo();
@@ -2009,12 +2054,63 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   function toggleCheatSheet() {
     document.getElementById('cheat-sheet').classList.toggle('open');
   }
-  document.getElementById('help-hint').addEventListener('click', toggleCheatSheet);
+  document.getElementById('help-hint').addEventListener('click', function(e) {
+    e.stopPropagation();
+    toggleCheatSheet();
+  });
 
-  // -- Keyboard --
+  // Close cheat sheet when clicking outside
+  document.addEventListener('click', function(e) {
+    var cs = document.getElementById('cheat-sheet');
+    if (cs.classList.contains('open') && !cs.contains(e.target)) {
+      cs.classList.remove('open');
+    }
+  });
+
+  // -- Speed display --
+  function updateSpeedDisplay() {
+    var el = document.getElementById('ap-speed');
+    if (!el) return;
+    if (playbackRate === 1.0) {
+      el.style.display = 'none';
+    } else {
+      el.style.display = '';
+      el.textContent = playbackRate.toFixed(1) + '\u00d7';
+      el.style.color = playbackRate > 1 ? '#58a6ff' : '#fbbf24';
+    }
+  }
+
+  // -- Arrow keys: capture phase so scrollable transcript can't steal them --
   document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     if (document.getElementById('confirm-overlay').classList.contains('open')) return;
+
+    // Speed controls
+    if (e.ctrlKey && e.key === 'ArrowUp') {
+      e.preventDefault();
+      playbackRate = Math.min(3.0, Math.round((playbackRate + 0.5) * 10) / 10);
+      recAudio.playbackRate = playbackRate;
+      updateSpeedDisplay();
+      return;
+    }
+    if (e.ctrlKey && e.key === 'ArrowDown') {
+      e.preventDefault();
+      playbackRate = Math.max(0.5, Math.round((playbackRate - 0.5) * 10) / 10);
+      recAudio.playbackRate = playbackRate;
+      updateSpeedDisplay();
+      return;
+    }
+
+    // Seek arrow keys (capture before browser scroll)
+    if (e.key === 'ArrowLeft' && !e.ctrlKey) { e.preventDefault(); skipSeek(-1); return; }
+    if (e.key === 'ArrowRight' && !e.ctrlKey) { e.preventDefault(); skipSeek(1); return; }
+  }, true); // capture phase
+
+  // -- Keyboard (bubbling phase for all other keys) --
+  document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (document.getElementById('confirm-overlay').classList.contains('open')) return;
+    if (e.ctrlKey) return; // already handled in capture phase
 
     switch (e.key) {
       case '?': e.preventDefault(); toggleCheatSheet(); return;
@@ -2031,9 +2127,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       case 'backspace': e.preventDefault(); goBack(); break;
       case 'l': scrollColumns(1); break;
       case 'h': scrollColumns(-1); break;
+      case 'j': scrollColumns(1); recAudio.currentTime = Math.min(recAudio.duration || 0, recAudio.currentTime + 0); break;
+      case 'k': scrollColumns(-1); recAudio.currentTime = Math.max(0, recAudio.currentTime - 0); break;
       case 'p': if (recAudio.paused) recAudio.play(); else recAudio.pause(); break;
-      case 'arrowleft': e.preventDefault(); skipSeek(-1); break;
-      case 'arrowright': e.preventDefault(); skipSeek(1); break;
     }
   });
 

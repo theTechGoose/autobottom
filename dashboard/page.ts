@@ -1944,11 +1944,10 @@ export function getDashboardPage(): string {
   });
   document.getElementById('a-adduser').addEventListener('click', function() {
     var btn = this, u = document.getElementById('a-username').value.trim(), p = document.getElementById('a-password').value;
-    console.log('[adduser] u=' + JSON.stringify(u) + ' len=' + u.length + ' p.len=' + p.length + ' role=' + selectedRole + ' regexOk=' + /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(u));
     if (!u || !p) { toast('Enter email & password','error'); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(u)) { toast('Enter a valid email address','error'); return; }
+    var atIdx = u.indexOf('@'); var dotIdx = u.lastIndexOf('.');
+    if (atIdx < 1 || dotIdx <= atIdx + 1 || dotIdx >= u.length - 1) { toast('Enter a valid email address','error'); return; }
     var sup = document.getElementById('a-supervisor').value;
-    console.log('[adduser] sup=' + JSON.stringify(sup) + ' supCheck=' + (selectedRole !== 'admin' && !sup));
     if (selectedRole !== 'admin' && !sup) { toast('Select a supervisor','error'); return; }
     btnLoad(btn,'Creating...');
     fetch('/admin/users', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:u,password:p,role:selectedRole,supervisor:sup||null}) })

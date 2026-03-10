@@ -804,7 +804,8 @@ async function handleAdminAddUser(req: Request): Promise<Response> {
     console.error(`[ADD-USER] ❌ Missing fields: email=${email} hasPassword=${!!password}`);
     return json({ error: "email and password required" }, 400);
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  const atIdx = email.indexOf("@"); const dotIdx = email.lastIndexOf(".");
+  if (atIdx < 1 || dotIdx <= atIdx + 1 || dotIdx >= email.length - 1) {
     console.error(`[ADD-USER] ❌ Invalid email: ${email}`);
     return json({ error: "email must be a valid email address" }, 400);
   }

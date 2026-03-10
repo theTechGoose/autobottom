@@ -356,14 +356,19 @@ export async function getStats(orgId: OrgId) {
 
 // -- Transcript (chunked) --
 
-export async function saveTranscript(orgId: OrgId, findingId: string, raw: string, diarized?: string) {
+export async function saveTranscript(orgId: OrgId, findingId: string, raw: string, diarized?: string, utteranceTimes?: number[]) {
   const store = await chunked();
-  await store.set(orgKey(orgId, "audit-transcript", findingId), { raw, diarized: diarized ?? raw });
+  const existing = await store.get<{ raw: string; diarized: string; utteranceTimes?: number[] }>(orgKey(orgId, "audit-transcript", findingId));
+  await store.set(orgKey(orgId, "audit-transcript", findingId), {
+    raw,
+    diarized: diarized ?? existing?.diarized ?? raw,
+    utteranceTimes: utteranceTimes ?? existing?.utteranceTimes,
+  });
 }
 
 export async function getTranscript(orgId: OrgId, findingId: string) {
   const store = await chunked();
-  return store.get<{ raw: string; diarized: string }>(orgKey(orgId, "audit-transcript", findingId));
+  return store.get<{ raw: string; diarized: string; utteranceTimes?: number[] }>(orgKey(orgId, "audit-transcript", findingId));
 }
 
 // -- Pipeline Config (admin-settable) --

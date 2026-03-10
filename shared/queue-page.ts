@@ -1625,6 +1625,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     return snippets;
   }
 
+  function fmtTranscriptTime(ms) {
+    var s = Math.floor(ms / 1000);
+    var m = Math.floor(s / 60);
+    return m + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
+  }
+
   function renderTranscript() {
     var body = document.getElementById('transcript-body');
     body.innerHTML = '';
@@ -1632,22 +1638,41 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       body.innerHTML = '<p style="color:#3d4452;padding:20px">No transcript available</p>';
       return;
     }
-    var text = currentTranscript.diarized || currentTranscript.raw;
+    // Use raw when utterance times are available (times are indexed to raw lines, not diarized)
+    var times = currentTranscript.utteranceTimes;
+    var text = (times && times.length > 0) ? (currentTranscript.raw || currentTranscript.diarized) : (currentTranscript.diarized || currentTranscript.raw);
     var defense = (currentItem && currentItem.defense || '').toLowerCase();
     var thinking = (currentItem && currentItem.thinking || '').toLowerCase();
     var evidenceSnippets = extractEvidenceSnippets(currentItem && currentItem.defense, currentItem && currentItem.thinking);
     var lines = text.split('\\n');
+    var timeIdx = 0; // tracks which utteranceTimes entry to use (skip blank lines)
     for (var li = 0; li < lines.length; li++) {
       var line = lines[li];
       if (!line.trim()) continue;
       var div = document.createElement('div');
       div.className = 't-line';
 
+      // Attach timestamp if available (in seconds for audio seeking)
+      if (times && timeIdx < times.length) {
+        div.setAttribute('data-time', String(times[timeIdx] / 1000));
+        timeIdx++;
+      }
+
       var match = line.match(/^\\[?(AGENT|CUSTOMER|SYSTEM|Agent|Customer|System)\\]?[:\\s]*(.*)/i);
       if (match) {
         var speaker = match[1].toUpperCase();
         var content = match[2] || '';
         div.classList.add(speaker === 'AGENT' ? 't-agent' : speaker === 'CUSTOMER' ? 't-customer' : 't-system');
+
+        // Timestamp chip (shown only when we have real times)
+        if (times && div.getAttribute('data-time') !== null) {
+          var tChip = document.createElement('span');
+          tChip.className = 't-time';
+          tChip.textContent = fmtTranscriptTime(times[timeIdx - 1]);
+          tChip.style.cssText = 'font-size:9px;color:#3d4452;font-family:monospace;margin-right:5px;flex-shrink:0;user-select:none;';
+          div.appendChild(tChip);
+        }
+
         var label = document.createElement('span');
         label.className = 't-speaker';
         label.textContent = speaker;
@@ -1941,15 +1966,22 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     updateColIndicator();
   }
   function seekToTranscriptLine(el) {
-    // Estimate audio position: lineIndex / totalLines * duration
-    var lines = document.querySelectorAll('#transcript-body .t-line');
-    var idx = -1;
-    for (var i = 0; i < lines.length; i++) {
-      if (lines[i] === el) { idx = i; break; }
+    var dur = recAudio.duration;
+    if (!dur || isNaN(dur)) return;
+    // Prefer real timestamp from data-time attribute (seconds)
+    var timeAttr = parseFloat(el.getAttribute('data-time'));
+    if (!isNaN(timeAttr)) {
+      recAudio.currentTime = Math.min(timeAttr, dur);
+    } else {
+      // Fallback: proportional estimate based on line position
+      var lines = document.querySelectorAll('#transcript-body .t-line');
+      var idx = -1;
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i] === el) { idx = i; break; }
+      }
+      if (idx < 0) return;
+      recAudio.currentTime = (idx / Math.max(1, lines.length - 1)) * dur;
     }
-    if (idx < 0 || !recAudio.duration) return;
-    var pct = idx / Math.max(1, lines.length - 1);
-    recAudio.currentTime = pct * recAudio.duration;
     if (recAudio.paused) recAudio.play();
   }
 

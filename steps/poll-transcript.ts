@@ -73,6 +73,10 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
     finding.findingStatus = "finished";
   } else {
     finding.rawTranscript = result.text;
+    // Store utterance start times (ms) so the reviewer can seek audio to the right position per line
+    if (result.utterances && result.utterances.length > 0) {
+      (finding as Record<string, any>).utteranceTimes = result.utterances.map((u: { start: number }) => u.start);
+    }
   }
 
   await saveFinding(orgId, finding);

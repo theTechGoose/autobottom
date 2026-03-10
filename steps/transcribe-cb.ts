@@ -31,7 +31,8 @@ export async function stepTranscribeCb(req: Request): Promise<Response> {
   }
 
   // Persist raw transcript to its own KV key immediately (diarized will be filled in later)
-  await saveTranscript(orgId, findingId, finding.rawTranscript, undefined);
+  const utteranceTimes = (finding as Record<string, any>).utteranceTimes as number[] | undefined;
+  await saveTranscript(orgId, findingId, finding.rawTranscript, undefined, utteranceTimes);
   await saveFinding(orgId, finding);
 
   // Fire prepare (critical path) + diarize-async (parallel, non-blocking) concurrently.

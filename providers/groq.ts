@@ -199,7 +199,8 @@ const DIARIZATION_MANAGER = `You are a speaker-identifier bot manager. Your job 
 
 const DIARIZATION_QA = `You are an AI Quality Assurance Bot specializing in evaluating speaker diarization tasks. Determine if the diarization meets a "good enough" quality standard. Response MUST be exactly "Yes" or "This is not good enough".`;
 
-/** Single Groq call with rate-limit retry across FALLBACK_MODELS. */
+/** Single Groq call with rate-limit retry across FALLBACK_MODELS.
+ *  Uses Promise.race+setTimeout for timeout — npm SDKs in Deno don't reliably propagate AbortSignal. */
 async function groqCallWithRetry(
   params: Parameters<ReturnType<typeof getClient>["chat"]["completions"]["create"]>[0],
   trackLabel: string,
@@ -207,26 +208,34 @@ async function groqCallWithRetry(
 ): Promise<string> {
   const model = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  let timerId: ReturnType<typeof setTimeout>;
+  const timeoutP = new Promise<never>((_, reject) => {
+    timerId = setTimeout(
+      () => reject(new Error(`LLM timed out after ${LLM_TIMEOUT_MS / 1000}s (${trackLabel}/${model})`)),
+      LLM_TIMEOUT_MS,
+    );
+  });
   try {
-    const res = await client.chat.completions.create({ ...params, model }, { signal: controller.signal });
+    const res = await Promise.race([
+      client.chat.completions.create({ ...params, model }),
+      timeoutP,
+    ]);
+    clearTimeout(timerId!);
     trackTokens(trackLabel, res.usage);
     return res.choices[0]?.message?.content ?? "";
   } catch (e: any) {
+    clearTimeout(timerId!);
     const msg = String(e?.message ?? e);
-    const isTimeout = msg.includes("aborted") || msg.includes("AbortError");
-    if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${trackLabel}/${model} no response after ${LLM_TIMEOUT_MS / 1000}s`);
+    const isTimeout = msg.includes("timed out") || msg.includes("aborted") || msg.includes("AbortError");
+    if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${trackLabel}/${model} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
     const isRateLimit = isTimeout || msg.includes("429") || msg.includes("503") || msg.includes("404") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity") || msg.includes("model_not_found");
     const nextIndex = modelIndex + 1;
     if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
-      console.warn(`[LLM-FALLBACK] diarize/${trackLabel}: ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
+      console.warn(`[LLM-FALLBACK] ${trackLabel}: ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
       await new Promise((r) => setTimeout(r, 1000));
       return groqCallWithRetry(params, trackLabel, nextIndex);
     }
     throw e;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 

@@ -87,7 +87,10 @@ async function enqueue(queueName: string, targetUrl: string, body: unknown, dela
 export function enqueueStep(step: string, body: unknown, delaySeconds?: number) {
   const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
   const url = `${env.selfUrl}/audit/step/${step}`;
-  return enqueue(queueName, url, body, delaySeconds);
+  // ask-all runs 25 questions in parallel with model fallback chains — needs more than QStash's 30s default.
+  // 120s is enough for any fallback scenario while keeping slot hold time reasonable (vs 900s which starved the queue).
+  const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "120s" } : undefined;
+  return enqueue(queueName, url, body, delaySeconds, extraHeaders);
 }
 
 /** Bypass the queue and deliver immediately via QStash publish. Use for admin retries to skip the backlog. */

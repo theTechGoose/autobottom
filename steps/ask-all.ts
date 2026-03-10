@@ -187,11 +187,12 @@ export async function stepAskAll(req: Request): Promise<Response> {
     });
   }
 
-  // Hard ceiling: 15 minutes for all questions. Per-call timeouts in groq/pinecone should
-  // catch hangs first, but this is the last line of defense so the step never runs forever.
-  const STEP_TIMEOUT_MS = 15 * 60 * 1000;
-  const stepController = new AbortController();
-  const stepTimeoutId = setTimeout(() => stepController.abort(), STEP_TIMEOUT_MS);
+  // Hard ceiling: 110s — fires just before QStash's 120s slot timeout so the step can log a clean
+  // error and return 500 instead of being silently killed. Per-call timeouts in groq/pinecone should
+  // catch individual hangs well before this fires.
+  // Uses setTimeout directly — AbortController doesn't reliably propagate through npm SDKs in Deno Deploy.
+  const STEP_TIMEOUT_MS = 110_000;
+  let stepTimerId: ReturnType<typeof setTimeout>;
 
   console.log(`[STEP-ASK-ALL] ${findingId}: Answering ${questions.length} questions in parallel (100ms stagger)`);
 
@@ -207,33 +208,38 @@ export async function stepAskAll(req: Request): Promise<Response> {
           const result = await askLlmOne(q, orgId, findingId, rawTranscript);
           const qDuration = Date.now() - qStart;
           if (qDuration > 10000) {
-            console.warn(`[STEP-ASK-ALL] ${findingId}: ⚠️ Slow question "${q.header}" took ${qDuration}ms`);
+            console.warn(`[STEP-ASK-ALL] ${findingId}: ⚠️ Slow question "${q.header}" took ${(qDuration / 1000).toFixed(1)}s`);
           }
           return result;
         } catch (err: any) {
           const msg = err.message || String(err);
-          console.error(`[STEP-ASK-ALL] ${findingId}: ❌ Question "${q.header}" failed:`, err);
+          console.error(`[STEP-ASK-ALL] ${findingId}: ❌ Question "${q.header}" failed: ${msg}`);
           return answerQuestion(q, { answer: "Error", thinking: msg, defense: "N/A" });
         }
       })
     ),
-    new Promise<never>((_, reject) =>
-      stepController.signal.addEventListener("abort", () =>
-        reject(new Error(`step exceeded ${STEP_TIMEOUT_MS / 60000} minute ceiling`))
-      )
-    ),
-  ]).finally(() => clearTimeout(stepTimeoutId));
+    new Promise<never>((_, reject) => {
+      stepTimerId = setTimeout(() => {
+        console.error(`[STEP-ASK-ALL] ${findingId}: ❌ Step ceiling hit (${STEP_TIMEOUT_MS / 1000}s) — returning 500 so QStash drops cleanly`);
+        reject(new Error(`ask-all step exceeded ${STEP_TIMEOUT_MS / 1000}s ceiling`));
+      }, STEP_TIMEOUT_MS);
+    }),
+  ]);
+  clearTimeout(stepTimerId!);
 
   const elapsedSec = ((Date.now() - stepStart) / 1000).toFixed(1);
   const yeses = answers.filter((a) => a.answer === "Yes").length;
   const nos = answers.filter((a) => a.answer === "No").length;
-  console.log(`[STEP-ASK-ALL] ${findingId}: ✅ All ${answers.length} questions done in ${elapsedSec}s — ${yeses} Yes, ${nos} No`);
+  const errors = answers.filter((a) => a.answer === "Error").length;
+  console.log(`[STEP-ASK-ALL] ${findingId}: ✅ All ${answers.length} questions done in ${elapsedSec}s — ${yeses} Yes, ${nos} No${errors ? `, ${errors} ❌ Error` : ""}`);
 
   // Save answers as batch 0, totalBatches=1 (compatible with finalize's getAllBatchAnswers)
+  console.log(`[STEP-ASK-ALL] ${findingId}: Saving answers + enqueuing finalize...`);
   await saveBatchAnswers(orgId, findingId, 0, answers);
 
   const dispatch = adminRetry ? publishStep : enqueueStep;
   await dispatch("finalize", { findingId, orgId, totalBatches: 1 });
+  console.log(`[STEP-ASK-ALL] ${findingId}: ✅ Finalize enqueued`);
 
-  return json({ ok: true, answers: answers.length, yeses, nos, elapsedSec });
+  return json({ ok: true, answers: answers.length, yeses, nos, errors, elapsedSec });
 }

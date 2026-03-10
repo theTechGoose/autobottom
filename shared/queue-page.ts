@@ -374,9 +374,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   /* ===== Bottom bar ===== */
   #bottom-bar {
     grid-column: 1 / -1; grid-row: 3;
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; gap: 16px;
     padding: 0 24px; background: #0f1219; border-top: 1px solid #1a1f2b;
-    height: 44px;
+    height: 72px;
   }
 
   /* Help hint (? button) */
@@ -422,11 +422,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   .cs-row kbd.cs-neg { border-color: ${negKbdBorder}; color: ${negKbdColor}; }
   .cs-divider { height: 1px; background: #1a1f2b; margin: 2px 0; }
 
-  #bar-center { display: flex; align-items: center; gap: 12px; }
+  #bar-center { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
   #speed-tracker { font-size: 11px; color: #3d4452; font-variant-numeric: tabular-nums; }
   #speed-tracker strong { color: #6e7681; }
 
-  #bar-right { display: flex; gap: 8px; align-items: center; }
+  #bar-right { display: flex; gap: 8px; align-items: center; flex-shrink: 0; margin-left: auto; }
   #reviewer-tag { font-size: 11px; color: #3d4452; }
   #reviewer-tag strong { color: #6e7681; }
   .bar-btn {
@@ -633,7 +633,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   #session-count { font-size: 11px; color: #3d4452; font-variant-numeric: tabular-nums; }
 
   /* Audio player (bottom bar) */
-  .ap { display: flex; align-items: center; gap: 6px; }
+  .ap { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
   .ap-play {
     width: 22px; height: 22px; border-radius: 50%; border: none; cursor: pointer;
     background: ${btnAccent}; color: #fff; display: flex; align-items: center; justify-content: center;
@@ -641,11 +641,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   }
   .ap-play:hover { background: ${btnHover}; box-shadow: 0 0 8px ${btnShadow}; }
   .ap-play svg { width: 9px; height: 9px; fill: #fff; }
-  .ap-track { width: 140px; height: 4px; background: #1a1f2b; border-radius: 2px; cursor: pointer; position: relative; transition: height 0.15s; }
-  .ap-track:hover { height: 6px; }
-  .ap-track:hover .ap-thumb { opacity: 1; }
-  .ap-fill { height: 100%; background: ${btnHover}; border-radius: 2px; width: 0%; pointer-events: none; transition: width 0.1s; position: relative; }
-  .ap-thumb { position: absolute; right: -4px; top: 50%; transform: translateY(-50%); width: 8px; height: 8px; border-radius: 50%; background: ${accentLight}; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+  #ap-waveform { flex: 1; min-width: 0; height: 48px; cursor: pointer; border-radius: 3px; display: block; }
   .ap-time { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 9px; color: #3d4452; white-space: nowrap; }
   .ap-seek {
     background: #141820; border: 1px solid #1e2736; border-radius: 4px;
@@ -891,7 +887,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         <span id="ap-icon-pause" style="display:none">${icons.pause16}</span>
       </button>
       <button class="ap-seek" id="ap-back" title="Back 5s (Left arrow)">&larr;5s</button>
-      <div class="ap-track" id="ap-track"><div class="ap-fill" id="ap-fill"><div class="ap-thumb"></div></div></div>
+      <canvas id="ap-waveform"></canvas>
       <button class="ap-seek" id="ap-fwd" title="Forward 5s (Right arrow)">5s&rarr;</button>
       <span class="ap-time" id="ap-time">0:00</span>
       <div id="skip-indicator"><span id="skip-label"></span><div id="skip-bar-wrap"><div id="skip-bar"></div></div></div>
@@ -2052,26 +2048,98 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   var apPlay = document.getElementById('ap-play');
   var apIconPlay = document.getElementById('ap-icon-play');
   var apIconPause = document.getElementById('ap-icon-pause');
-  var apTrack = document.getElementById('ap-track');
-  var apFill = document.getElementById('ap-fill');
   var apTime = document.getElementById('ap-time');
+  var wfCanvas = document.getElementById('ap-waveform');
+  var wfCtx = wfCanvas.getContext('2d');
+  var wfBars = null; // Float32Array of normalised bar heights
   var currentRecFinding = null;
+  var WF_N = 120; // number of bars
+  var WF_PLAYED = '${btnHover}';
+  var WF_UNPLAYED = '#1e2736';
+  var WF_HEAD = '${accentLight}';
 
   function fmtTime(s) { var m = Math.floor(s/60); var sec = Math.floor(s%60); return m + ':' + (sec<10?'0':'') + sec; }
+
+  function drawWaveform() {
+    var dpr = window.devicePixelRatio || 1;
+    var rect = wfCanvas.getBoundingClientRect();
+    var pw = Math.round(rect.width * dpr), ph = Math.round(rect.height * dpr);
+    if (pw > 0 && ph > 0 && (wfCanvas.width !== pw || wfCanvas.height !== ph)) { wfCanvas.width = pw; wfCanvas.height = ph; }
+    var w = wfCanvas.width, h = wfCanvas.height;
+    wfCtx.clearRect(0, 0, w, h);
+    var cur = recAudio.currentTime || 0;
+    var dur = recAudio.duration || 0;
+    var pct = dur > 0 ? cur / dur : 0;
+    if (!wfBars) {
+      // Loading placeholder: flat dim line
+      wfCtx.fillStyle = WF_UNPLAYED;
+      wfCtx.fillRect(0, h/2 - 1, w, 2);
+      return;
+    }
+    var bars = wfBars.length;
+    var gap = 1;
+    var barW = (w - gap * (bars - 1)) / bars;
+    for (var i = 0; i < bars; i++) {
+      var amp = wfBars[i];
+      var barH = Math.max(2, amp * h * 0.9);
+      var x = i * (barW + gap);
+      var played = (i / bars) < pct;
+      wfCtx.fillStyle = played ? WF_PLAYED : WF_UNPLAYED;
+      wfCtx.beginPath();
+      var r = Math.min(barW / 2, 1.5);
+      var y = (h - barH) / 2;
+      wfCtx.roundRect(x, y, barW, barH, r);
+      wfCtx.fill();
+    }
+    // Playhead
+    if (dur > 0) {
+      wfCtx.fillStyle = WF_HEAD;
+      wfCtx.fillRect(Math.round(pct * w) - 1, 0, 2, h);
+    }
+  }
+
   function updateApTime() {
     var cur = recAudio.currentTime||0; var dur = recAudio.duration||0;
     apTime.textContent = fmtTime(cur) + '/' + fmtTime(dur);
-    if (dur > 0) apFill.style.width = (cur/dur*100) + '%';
+    drawWaveform();
   }
+
+  function loadWaveform(findingId) {
+    wfBars = null;
+    drawWaveform();
+    fetch('/audit/recording?id=' + encodeURIComponent(findingId))
+      .then(function(r) { return r.arrayBuffer(); })
+      .then(function(buf) {
+        var ctx = new AudioContext();
+        return ctx.decodeAudioData(buf).then(function(decoded) {
+          var ch = decoded.getChannelData(0);
+          var sPerBar = Math.floor(ch.length / WF_N);
+          var bars = new Float32Array(WF_N);
+          var max = 0;
+          for (var i = 0; i < WF_N; i++) {
+            var sum = 0;
+            for (var j = 0; j < sPerBar; j++) sum += Math.abs(ch[i * sPerBar + j]);
+            bars[i] = sum / sPerBar;
+            if (bars[i] > max) max = bars[i];
+          }
+          if (max > 0) for (var i = 0; i < WF_N; i++) bars[i] /= max;
+          wfBars = bars;
+          ctx.close();
+          drawWaveform();
+        });
+      })
+      .catch(function(e) { console.error('[WAVEFORM] decode error', e); });
+  }
+
   function loadRecording(findingId) {
     if (!findingId || findingId === currentRecFinding) return;
     currentRecFinding = findingId;
     recAudio.src = '/audit/recording?id=' + encodeURIComponent(findingId);
     recAudio.load();
-    apFill.style.width = '0%';
     apTime.textContent = '0:00';
     apIconPlay.style.display = 'block';
     apIconPause.style.display = 'none';
+    loadWaveform(findingId);
   }
   apPlay.addEventListener('click', function() {
     if (recAudio.paused) recAudio.play(); else recAudio.pause();
@@ -2081,8 +2149,8 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   recAudio.addEventListener('ended', function() { apIconPlay.style.display='block'; apIconPause.style.display='none'; });
   recAudio.addEventListener('timeupdate', updateApTime);
   recAudio.addEventListener('loadedmetadata', updateApTime);
-  apTrack.addEventListener('click', function(e) {
-    var rect = apTrack.getBoundingClientRect();
+  wfCanvas.addEventListener('click', function(e) {
+    var rect = wfCanvas.getBoundingClientRect();
     var pct = (e.clientX - rect.left) / rect.width;
     if (recAudio.duration) recAudio.currentTime = pct * recAudio.duration;
   });

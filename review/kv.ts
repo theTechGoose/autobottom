@@ -290,14 +290,27 @@ export async function undoDecision(
     }
   }
 
-  // Find the most recent decision by this reviewer
-  let latestDecided: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number } | null = null;
+  // Collect all decisions by this reviewer, sorted most-recent first
+  const myDecisions: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number }[] = [];
   const decidedIter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") });
   for await (const entry of decidedIter) {
     if (entry.value.reviewer === reviewer) {
-      if (!latestDecided || entry.value.decidedAt > latestDecided.decidedAt) {
-        latestDecided = { entry, decidedAt: entry.value.decidedAt };
-      }
+      myDecisions.push({ entry, decidedAt: entry.value.decidedAt });
+    }
+  }
+  myDecisions.sort((a, b) => b.decidedAt - a.decidedAt);
+
+  // Find the most recent decision that belongs to an unfinalized audit.
+  // When an audit is finalized (postCorrectedAudit called), its review-audit-pending
+  // counter key is deleted. Skip any entry whose counter is gone — those audits are done.
+  let latestDecided: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number } | null = null;
+  for (const candidate of myDecisions) {
+    const counterCheck = await db.get<number>(
+      orgKey(orgId, "review-audit-pending", candidate.entry.value.findingId),
+    );
+    if (counterCheck.value !== null) {
+      latestDecided = candidate;
+      break;
     }
   }
 

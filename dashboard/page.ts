@@ -603,7 +603,10 @@ export function getDashboardPage(): string {
     </div>
 
     <div class="tbl">
-      <div class="tbl-title">Recently Completed (24h)</div>
+      <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>Recently Completed (24h)</span>
+        <a href="/admin/audits" target="_blank" style="font-size:10px;color:var(--blue);text-decoration:none;font-weight:600;padding:3px 10px;border:1px solid rgba(88,166,255,0.25);border-radius:5px;background:rgba(88,166,255,0.08);">View All →</a>
+      </div>
       <table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead>
       <tbody id="tb-recent"><tr class="empty-row"><td colspan="7">No completed audits</td></tr></tbody></table>
     </div>

@@ -189,14 +189,37 @@ export async function getAllBatchAnswers(orgId: OrgId, findingId: string, totalB
   return all;
 }
 
+export interface CompletedAuditStat {
+  findingId: string;
+  ts: number;
+  recordId?: string;
+  isPackage?: boolean;
+  startedAt?: number;
+  durationMs?: number;
+  score?: number;
+  owner?: string;
+  department?: string;
+}
+
 /** Get recently completed findings, sorted newest-first (24h window, limit default 25). */
-export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<Array<{ findingId: string; ts: number; recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number }>> {
+export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<CompletedAuditStat[]> {
   const db = await kv();
-  const items: Array<{ findingId: string; ts: number; recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number }> = [];
-  for await (const e of db.list<{ findingId: string; ts: number; recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number }>({ prefix: orgKey(orgId, "stats-completed") })) {
+  const items: CompletedAuditStat[] = [];
+  for await (const e of db.list<CompletedAuditStat>({ prefix: orgKey(orgId, "stats-completed") })) {
     if (e.value) items.push(e.value);
   }
   return items.sort((a, b) => b.ts - a.ts).slice(0, limit);
+}
+
+/** Get ALL completed findings in the 24h window, no limit (for the audits history page). */
+export async function getAllCompleted(orgId: OrgId): Promise<CompletedAuditStat[]> {
+  const db = await kv();
+  const items: CompletedAuditStat[] = [];
+  for await (const e of db.list<CompletedAuditStat>({ prefix: orgKey(orgId, "stats-completed") })) {
+    if (e.value) items.push(e.value);
+  }
+  console.log(`[KV] getAllCompleted: found ${items.length} entries for org ${orgId}`);
+  return items.sort((a, b) => b.ts - a.ts);
 }
 
 /** Scan all batch answer keys for a finding (no totalBatches needed). */
@@ -228,10 +251,11 @@ export async function trackActive(orgId: OrgId, findingId: string, step: string,
 }
 
 /** Remove a finding from active tracking (finished or cleaned up). */
-export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number }) {
+export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number; owner?: string; department?: string }) {
   const db = await kv();
   await db.delete(orgKey(orgId, "stats-active", findingId));
   await db.set(orgKey(orgId, "stats-completed", `${Date.now()}-${findingId}`), { findingId, ts: Date.now(), ...(meta ?? {}) }, { expireIn: DAY_MS });
+  console.log(`[TRACK-COMPLETED] ✅ ${findingId}: score=${meta?.score ?? "?"}% owner=${meta?.owner ?? "unknown"} dept=${meta?.department ?? "unknown"} type=${meta?.isPackage ? "package" : "date-leg"}`);
 }
 
 /** Terminate all active audits: mark each finding as terminated and remove from active tracking. */

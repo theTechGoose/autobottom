@@ -106,13 +106,18 @@ export async function stepFinalize(req: Request): Promise<Response> {
   finding.findingStatus = "finished";
   (finding as Record<string, any>).completedAt = completedAt;
   await saveFinding(orgId, finding);
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const department = String(isPackage ? (finding.record?.OfficeName ?? "") : (finding.record?.ActivatingOffice ?? "")) || undefined;
   await trackCompleted(orgId, findingId, {
     recordId: String(finding.record?.RecordId ?? "") || undefined,
-    isPackage: finding.recordingIdField === "GenieNumber",
+    isPackage,
     startedAt,
     durationMs,
     score,
+    owner: finding.owner,
+    department,
   });
+  console.log(`[STEP-FINALIZE] ${findingId}: ✅ trackCompleted saved — score=${score ?? "?"}% owner=${finding.owner ?? "unknown"} dept=${department ?? "unknown"} type=${isPackage ? "package" : "date-leg"}`);
 
   // Route to review queue — all findings including recording re-audits go to reviewers.
   // Formal judge appeals are handled upstream in handleFileAppeal (original finding), not here.

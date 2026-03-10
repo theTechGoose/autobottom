@@ -82,6 +82,7 @@ const FIELD_VO_NAME = 144;
 const FIELD_VO_EMAIL = 839;
 const FIELD_SUPERVISOR_EMAIL = 851;
 const FIELD_DESTINATION_DISPLAY = 566;
+const FIELD_ACTIVATING_OFFICE = 140; // Activating Office (department)
 // AutoYes expression fields on date leg records
 const DATE_LEG_AUTOYES_FIELDS = [
   8,   // ArrivalDate
@@ -104,7 +105,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     where: `{${FIELD_RECORD_ID}.EX.'${rid}'}`,
     select: [
       FIELD_RECORD_ID, FIELD_VO_GENIE, FIELD_RELATED_DESTINATION, FIELD_DESTINATION_DISPLAY,
-      FIELD_GUEST_NAME, FIELD_VO_NAME, FIELD_VO_EMAIL, FIELD_SUPERVISOR_EMAIL,
+      FIELD_GUEST_NAME, FIELD_VO_NAME, FIELD_VO_EMAIL, FIELD_SUPERVISOR_EMAIL, FIELD_ACTIVATING_OFFICE,
       ...DATE_LEG_AUTOYES_FIELDS,
     ],
   });
@@ -126,6 +127,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     VoName: r[FIELD_VO_NAME]?.value ?? "",
     VoEmail: r[FIELD_VO_EMAIL]?.value ?? "",
     SupervisorEmail: r[FIELD_SUPERVISOR_EMAIL]?.value ?? "",
+    ActivatingOffice: String(r[FIELD_ACTIVATING_OFFICE]?.value ?? ""),
     ...autoYesValues,
   };
 }
@@ -135,6 +137,7 @@ const PACKAGES_TABLE = "bttffb64u";
 const PKG_FIELD_RECORD_ID = 3;
 const PKG_FIELD_GENIE_NUMBER = 18;    // GenieNumber — recording ID field
 const PKG_FIELD_RELATED_OFFICE_ID = 45;  // RelatedOfficeId — used to derive destination
+const PKG_FIELD_OFFICE_NAME = 46;         // Office (department)
 const PKG_FIELD_GM_EMAIL = 114;           // RelatedOfficeId - Office GM Email — audit result recipient
 // AutoYes expression fields on package records
 const PACKAGE_AUTOYES_FIELDS = [
@@ -148,7 +151,7 @@ export async function getPackageByRid(rid: string): Promise<Record<string, any> 
   const records = await queryRecords({
     tableId: PACKAGES_TABLE,
     where: `{${PKG_FIELD_RECORD_ID}.EX.'${rid}'}`,
-    select: [PKG_FIELD_RECORD_ID, PKG_FIELD_GENIE_NUMBER, PKG_FIELD_RELATED_OFFICE_ID, PKG_FIELD_GM_EMAIL, ...PACKAGE_AUTOYES_FIELDS],
+    select: [PKG_FIELD_RECORD_ID, PKG_FIELD_GENIE_NUMBER, PKG_FIELD_RELATED_OFFICE_ID, PKG_FIELD_OFFICE_NAME, PKG_FIELD_GM_EMAIL, ...PACKAGE_AUTOYES_FIELDS],
   });
 
   if (records.length === 0) return null;
@@ -163,6 +166,7 @@ export async function getPackageByRid(rid: string): Promise<Record<string, any> 
     RecordId: r[PKG_FIELD_RECORD_ID]?.value ?? rid,
     GenieNumber: r[PKG_FIELD_GENIE_NUMBER]?.value ?? "",
     RelatedOfficeId: r[PKG_FIELD_RELATED_OFFICE_ID]?.value ?? 0,
+    OfficeName: String(r[PKG_FIELD_OFFICE_NAME]?.value ?? ""),
     GmEmail: r[PKG_FIELD_GM_EMAIL]?.value ?? "",
     ...autoYesValues,
   };

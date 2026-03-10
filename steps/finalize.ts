@@ -102,7 +102,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
   const startedAt = (finding as Record<string, any>).startedAt as number | undefined;
   const durationMs = startedAt ? completedAt - startedAt : undefined;
   const qs = finding.answeredQuestions as any[] | undefined;
-  const score = qs?.length ? Math.round((qs.filter((q: any) => q.answer === "Yes").length / qs.length) * 100) : undefined;
+  const score = isInvalid ? 0 : (qs?.length ? Math.round((qs.filter((q: any) => q.answer === "Yes").length / qs.length) * 100) : undefined);
   finding.findingStatus = "finished";
   (finding as Record<string, any>).completedAt = completedAt;
   await saveFinding(orgId, finding);

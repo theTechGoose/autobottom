@@ -201,25 +201,40 @@ export interface CompletedAuditStat {
   department?: string;
 }
 
-/** Get recently completed findings, sorted newest-first (24h window, limit default 25). */
+/**
+ * Get the N most-recently completed findings, newest-first.
+ * Uses reverse KV iteration — O(limit) regardless of total history size.
+ */
 export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<CompletedAuditStat[]> {
   const db = await kv();
   const items: CompletedAuditStat[] = [];
-  for await (const e of db.list<CompletedAuditStat>({ prefix: orgKey(orgId, "stats-completed") })) {
+  for await (const e of db.list<CompletedAuditStat>(
+    { prefix: orgKey(orgId, "stats-completed") },
+    { reverse: true, limit },
+  )) {
     if (e.value) items.push(e.value);
   }
-  return items.sort((a, b) => b.ts - a.ts).slice(0, limit);
+  return items;
 }
 
-/** Get ALL completed findings in the 24h window, no limit (for the audits history page). */
-export async function getAllCompleted(orgId: OrgId): Promise<CompletedAuditStat[]> {
+/**
+ * Get all completed findings since `since` (ms timestamp), newest-first.
+ * Uses reverse KV iteration with early-break — O(results in window).
+ * Omit `since` to get the full history.
+ */
+export async function getAllCompleted(orgId: OrgId, since?: number): Promise<CompletedAuditStat[]> {
   const db = await kv();
   const items: CompletedAuditStat[] = [];
-  for await (const e of db.list<CompletedAuditStat>({ prefix: orgKey(orgId, "stats-completed") })) {
-    if (e.value) items.push(e.value);
+  for await (const e of db.list<CompletedAuditStat>(
+    { prefix: orgKey(orgId, "stats-completed") },
+    { reverse: true },
+  )) {
+    if (!e.value) continue;
+    if (since && e.value.ts < since) break; // keys are ts-prefixed; reverse scan → can break early
+    items.push(e.value);
   }
-  console.log(`[KV] getAllCompleted: found ${items.length} entries for org ${orgId}`);
-  return items.sort((a, b) => b.ts - a.ts);
+  console.log(`[KV] getAllCompleted: ${items.length} entries for org ${orgId}${since ? ` since ${new Date(since).toISOString()}` : " (all-time)"}`);
+  return items;
 }
 
 /** Scan all batch answer keys for a finding (no totalBatches needed). */
@@ -237,7 +252,7 @@ export async function getAllAnswersForFinding(orgId: OrgId, findingId: string) {
   return all;
 }
 
-// -- Pipeline Stats (24h TTL) --
+// -- Pipeline Stats --
 
 const DAY_MS = 86_400_000;
 
@@ -254,7 +269,7 @@ export async function trackActive(orgId: OrgId, findingId: string, step: string,
 export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number; owner?: string; department?: string }) {
   const db = await kv();
   await db.delete(orgKey(orgId, "stats-active", findingId));
-  await db.set(orgKey(orgId, "stats-completed", `${Date.now()}-${findingId}`), { findingId, ts: Date.now(), ...(meta ?? {}) }, { expireIn: DAY_MS });
+  await db.set(orgKey(orgId, "stats-completed", `${Date.now()}-${findingId}`), { findingId, ts: Date.now(), ...(meta ?? {}) });
   console.log(`[TRACK-COMPLETED] ✅ ${findingId}: score=${meta?.score ?? "?"}% owner=${meta?.owner ?? "unknown"} dept=${meta?.department ?? "unknown"} type=${meta?.isPackage ? "package" : "date-leg"}`);
 }
 

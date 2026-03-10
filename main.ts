@@ -649,17 +649,21 @@ async function handleAuditsData(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
 
   const url = new URL(req.url);
-  const type = url.searchParams.get("type") || "all"; // all | date-leg | package
+  const type = url.searchParams.get("type") || "all";
   const owner = url.searchParams.get("owner") || "";
   const department = url.searchParams.get("department") || "";
   const scoreMin = parseInt(url.searchParams.get("scoreMin") || "0", 10);
   const scoreMax = parseInt(url.searchParams.get("scoreMax") || "100", 10);
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
   const limit = Math.min(100, Math.max(10, parseInt(url.searchParams.get("limit") || "50", 10)));
+  // since: unix ms timestamp; client sends based on selected window. Default: today (midnight local).
+  const sinceParam = url.searchParams.get("since");
+  const since = sinceParam ? parseInt(sinceParam, 10) : (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
 
-  const all = await getAllCompleted(auth.orgId);
+  // getAllCompleted does an efficient reverse KV scan with early-break at `since`
+  const windowEntries = await getAllCompleted(auth.orgId, since);
 
-  let filtered = all.filter((c) => {
+  const filtered = windowEntries.filter((c) => {
     if (type === "date-leg" && c.isPackage) return false;
     if (type === "package" && !c.isPackage) return false;
     if (owner && c.owner !== owner) return false;
@@ -668,13 +672,14 @@ async function handleAuditsData(req: Request): Promise<Response> {
     return true;
   });
 
-  const owners = [...new Set(all.map((c) => c.owner).filter(Boolean))].sort() as string[];
-  const departments = [...new Set(all.map((c) => c.department).filter(Boolean))].sort() as string[];
+  // Dropdown options come from the full window (unfiltered), so selections stay visible
+  const owners = [...new Set(windowEntries.map((c) => c.owner).filter(Boolean))].sort() as string[];
+  const departments = [...new Set(windowEntries.map((c) => c.department).filter(Boolean))].sort() as string[];
   const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / limit));
   const items = filtered.slice((page - 1) * limit, page * limit);
 
-  console.log(`[AUDITS] 🔍 ${auth.email} fetched audit history: ${total}/${all.length} total, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}`);
+  console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}`);
   return json({ items, total, pages, page, owners, departments });
 }
 
@@ -694,6 +699,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .filters{display:flex;align-items:center;gap:10px;padding:14px 24px;background:var(--bg-raised);border-bottom:1px solid var(--border);flex-wrap:wrap}
 .filters label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted);display:flex;flex-direction:column;gap:3px}
 .filters select,.filters input[type=number]{background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:5px 8px;font-family:var(--mono)}
+.window-btns{display:flex;gap:4px}.window-btn{padding:4px 10px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);transition:all 0.15s}.window-btn:hover{background:var(--bg-surface);color:var(--text)}.window-btn.active{background:rgba(88,166,255,0.15);border-color:rgba(88,166,255,0.5);color:var(--blue)}
 .filters select:focus,.filters input:focus{outline:none;border-color:var(--blue)}
 .btn{padding:5px 14px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:none;transition:all 0.15s}
 .btn-primary{background:#1f6feb;color:#fff}.btn-primary:hover{background:#388bfd}
@@ -732,11 +738,21 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
   <span class="sub" id="hdr-count">Loading...</span>
 </div>
 <div class="filters">
+  <label>Date Range
+    <div class="window-btns">
+      <button class="window-btn active" data-hours="1">1h</button>
+      <button class="window-btn" data-hours="4">4h</button>
+      <button class="window-btn" data-hours="12">12h</button>
+      <button class="window-btn active-default" data-hours="24">24h</button>
+      <button class="window-btn" data-hours="72">3d</button>
+      <button class="window-btn" data-hours="168">7d</button>
+    </div>
+  </label>
   <label>Type
     <select id="f-type"><option value="all">All Types</option><option value="date-leg">Date Leg</option><option value="package">Package</option></select>
   </label>
-  <label>Agent
-    <select id="f-owner"><option value="">All Agents</option></select>
+  <label>Team Member
+    <select id="f-owner"><option value="">All Members</option></select>
   </label>
   <label>Department
     <select id="f-dept"><option value="">All Departments</option></select>
@@ -762,6 +778,7 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
   <div class="pagination" id="pagination" style="display:none"></div>
 </div>
 <script>
+var WINDOW_HOURS = 24;
 var state = { page: 1, type: 'all', owner: '', department: '', scoreMin: 0, scoreMax: 100, limit: 50 };
 var logsBase = null;
 var hm = window.location.hostname.match(/^([^.]+)\\.([^.]+)\\.deno\\.net$/);
@@ -780,29 +797,41 @@ function scoreHtml(s){
   return '<span class="'+cls+'">'+s+'%</span>';
 }
 
+function windowLabel(){return WINDOW_HOURS>=168?'7d':WINDOW_HOURS>=72?'3d':WINDOW_HOURS>=24?'24h':WINDOW_HOURS+'h'}
+
+function setWindow(h){
+  WINDOW_HOURS=h;
+  document.querySelectorAll('.window-btn').forEach(function(b){b.classList.toggle('active',+b.getAttribute('data-hours')===h)});
+  document.getElementById('hdr-window').textContent='('+windowLabel()+')';
+  // Reset dropdowns so they repopulate for new window
+  var ow=document.getElementById('f-owner');while(ow.options.length>1)ow.remove(1);
+  var dw=document.getElementById('f-dept');while(dw.options.length>1)dw.remove(1);
+  state.owner='';state.department='';state.page=1;
+  ow.value='';dw.value='';
+}
+
 function load(){
-  var params=new URLSearchParams({type:state.type,owner:state.owner,department:state.department,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit});
+  var since=Date.now()-WINDOW_HOURS*3600000;
+  var params=new URLSearchParams({type:state.type,owner:state.owner,department:state.department,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit,since:since});
   document.getElementById('tbl-body').innerHTML='<div class="loading">Loading...</div>';
   fetch('/admin/audits/data?'+params)
     .then(function(r){return r.json()})
     .then(function(d){
-      // populate owner + department dropdowns (once, from first load)
-      if(d.owners&&document.getElementById('f-owner').options.length===1){
-        d.owners.forEach(function(o){
-          var opt=document.createElement('option');opt.value=o;opt.textContent=o.split('@')[0];
-          document.getElementById('f-owner').appendChild(opt);
-        });
-      }
-      if(d.departments&&document.getElementById('f-dept').options.length===1){
-        d.departments.forEach(function(dep){
-          var opt=document.createElement('option');opt.value=dep;opt.textContent=dep;
-          document.getElementById('f-dept').appendChild(opt);
-        });
-      }
+      // repopulate owner + department dropdowns
+      var ow=document.getElementById('f-owner');
+      var curO=state.owner;
+      while(ow.options.length>1)ow.remove(1);
+      d.owners.forEach(function(o){var opt=document.createElement('option');opt.value=o;opt.textContent=o.split('@')[0];ow.appendChild(opt)});
+      if(curO)ow.value=curO;
+      var dw=document.getElementById('f-dept');
+      var curD=state.department;
+      while(dw.options.length>1)dw.remove(1);
+      d.departments.forEach(function(dep){var opt=document.createElement('option');opt.value=dep;opt.textContent=dep;dw.appendChild(opt)});
+      if(curD)dw.value=curD;
       renderStats(d);
       renderTable(d);
       renderPagination(d);
-      document.getElementById('hdr-count').textContent=d.total+' audits found';
+      document.getElementById('hdr-count').textContent=d.total+' audits in window';
     })
     .catch(function(e){document.getElementById('tbl-body').innerHTML='<div class="empty">Failed to load: '+e.message+'</div>'});
 }
@@ -814,7 +843,7 @@ function renderStats(d){
   var pkgs=items.filter(function(c){return c.isPackage}).length;
   var dls=items.filter(function(c){return!c.isPackage}).length;
   document.getElementById('stats-row').innerHTML=
-    stat(d.total,'Total (24h)')+stat(passes,'≥80% Pass')+stat(items.length-passes,'<80% Fail')+
+    stat(d.total,'Total ('+windowLabel()+')')+stat(passes,'≥80% Pass')+stat(items.length-passes,'<80% Fail')+
     stat(pkgs,'Packages')+stat(dls,'Date Legs')+stat(avgScore+'%','Avg Score (page)');
 }
 function stat(v,l){return '<div class="stat-card"><div class="val">'+v+'</div><div class="lbl">'+l+'</div></div>'}
@@ -833,7 +862,7 @@ function renderTable(d){
     var dur=c.durationMs?'<span style="font-variant-numeric:tabular-nums">'+fmtDur(c.durationMs)+'</span>':'--';
     return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+typeBadge+'</td><td>'+owner+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td></tr>';
   }).join('');
-  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Agent</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Team Member</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function renderPagination(d){
@@ -858,15 +887,19 @@ document.getElementById('apply-btn').onclick=function(){
 document.getElementById('reset-btn').onclick=function(){
   state={page:1,type:'all',owner:'',department:'',scoreMin:0,scoreMax:100,limit:50};
   document.getElementById('f-type').value='all';
-  document.getElementById('f-owner').value='';
-  document.getElementById('f-dept').value='';
   document.getElementById('f-score-min').value=0;
   document.getElementById('f-score-max').value=100;
+  setWindow(24);
   load();
 };
 document.getElementById('f-type').onchange=function(){state.type=this.value;state.page=1;load()};
 document.getElementById('f-owner').onchange=function(){state.owner=this.value;state.page=1;load()};
 document.getElementById('f-dept').onchange=function(){state.department=this.value;state.page=1;load()};
+document.querySelectorAll('.window-btn').forEach(function(btn){
+  btn.addEventListener('click',function(){setWindow(+this.getAttribute('data-hours'));load();});
+});
+// Set default 24h active
+setWindow(24);
 
 load();
 </script>

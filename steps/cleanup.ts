@@ -12,7 +12,7 @@ export async function stepCleanup(req: Request): Promise<Response> {
   const body = await req.json();
   const { findingId, orgId, pineconeNamespace } = body;
 
-  console.log(`[STEP-CLEANUP] ${findingId}: Cleaning up...`);
+  console.log(`[STEP-CLEANUP] ${findingId}: Cleaning up 24h-old audit (Pinecone + KV)...`);
 
   // Delete Pinecone namespace
   const ns = pineconeNamespace ?? findingId;

@@ -820,7 +820,6 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         <div id="meta-row">
           <div class="meta-chip">Audit <strong id="m-finding"></strong></div>
           <div class="meta-chip" id="m-type-chip" style="display:none"></div>
-          <div class="meta-chip"><strong id="m-qprogress">–/–</strong></div>
           <div class="meta-chip" id="m-record-id-chip" style="display:none">Record <strong id="m-record-id"></strong></div>
           <a class="meta-chip" id="m-record-link" href="#" target="_blank" rel="noopener" style="display:none;color:#58a6ff;text-decoration:none;">View Record →</a>
           <div class="meta-chip last-item" id="m-last" style="display:none"><strong>${lastItemLabel}</strong></div>
@@ -1522,10 +1521,6 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     document.getElementById('q-defense').textContent = currentItem.defense || 'No defense provided';
     document.getElementById('thinking-text').textContent = currentItem.thinking || 'No reasoning provided';
     document.getElementById('m-finding').textContent = currentItem.findingId;
-
-    // 1/5 progress counter
-    var prog = document.getElementById('m-qprogress');
-    if (prog) prog.textContent = (currentItem.reviewIndex ?? (currentItem.questionIndex + 1)) + '/' + (currentItem.totalForFinding ?? '?');
 
     // Package / Date Leg badge
     var typeChip = document.getElementById('m-type-chip');

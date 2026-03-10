@@ -819,9 +819,9 @@ async function handleAdminAddUser(req: Request): Promise<Response> {
     }
   } else if ((userRole === "reviewer" || userRole === "user") && supervisor) {
     const sup = await getUser(auth.orgId, supervisor);
-    if (!sup || (sup.role !== "judge" && sup.role !== "manager")) {
+    if (!sup || (sup.role !== "judge" && sup.role !== "manager" && sup.role !== "admin")) {
       console.error(`[ADD-USER] ❌ Invalid supervisor for reviewer: supervisor=${supervisor} sup=${JSON.stringify(sup)}`);
-      return json({ error: "reviewers must be assigned to a judge or manager" }, 400);
+      return json({ error: "reviewers must be assigned to a judge, manager, or admin" }, 400);
     }
   }
 

@@ -1540,7 +1540,7 @@ export function getDashboardPage(): string {
       var u = sorted[i], c = roleColors[u.role] || 'blue';
       html += '<div class="um-user-row">'
         + '<div class="um-user-avatar" style="background:var(--' + c + '-bg);color:var(--' + c + ');">' + (roleInitials[u.role] || '?') + '</div>'
-        + '<div class="um-user-info"><div class="um-user-email">' + esc(u.username) + '</div>'
+        + '<div class="um-user-info"><div class="um-user-email">' + esc(u.email) + '</div>'
         + '<div class="um-user-meta">' + (u.supervisor ? 'reports to ' + esc(u.supervisor) : 'no supervisor') + '</div></div>'
         + '<span class="um-badge ' + u.role + '">' + (u.role === 'user' ? 'agent' : u.role) + '</span>'
         + '</div>';
@@ -1570,18 +1570,18 @@ export function getDashboardPage(): string {
       labelText = 'an Admin';
       filterFn = function(u) { return u.role === 'admin'; };
     } else {
-      labelText = 'a Judge or Manager';
-      filterFn = function(u) { return u.role === 'judge' || u.role === 'manager'; };
+      labelText = 'a Judge, Manager, or Admin';
+      filterFn = function(u) { return u.role === 'judge' || u.role === 'manager' || u.role === 'admin'; };
     }
     label.textContent = labelText;
     var opts = '<option value="">-- Select --</option>';
     var others = '';
     for (var i = 0; i < allUsers.length; i++) {
       if (filterFn(allUsers[i])) {
-        if (currentAdminEmail && allUsers[i].username === currentAdminEmail) {
+        if (currentAdminEmail && allUsers[i].email === currentAdminEmail) {
           opts += '<option value="' + esc(currentAdminEmail) + '">Self (' + esc(currentAdminEmail) + ')</option>';
         } else {
-          others += '<option value="' + esc(allUsers[i].username) + '">' + esc(allUsers[i].username) + '</option>';
+          others += '<option value="' + esc(allUsers[i].email) + '">' + esc(allUsers[i].email) + '</option>';
         }
       }
     }

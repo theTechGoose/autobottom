@@ -87,22 +87,22 @@ async function enqueue(queueName: string, targetUrl: string, body: unknown, dela
 export function enqueueStep(step: string, body: unknown, delaySeconds?: number) {
   const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
   const url = `${env.selfUrl}/audit/step/${step}`;
-  // ask-all runs many parallel Groq calls — extend QStash delivery timeout to 15 min
-  // QStash uses Go duration parsing: needs unit suffix ("900s", not "900")
-  const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "900s" } : undefined;
-  return enqueue(queueName, url, body, delaySeconds, extraHeaders);
+  return enqueue(queueName, url, body, delaySeconds);
 }
 
 /** Bypass the queue and deliver immediately via QStash publish. Use for admin retries to skip the backlog. */
 export async function publishStep(step: string, body: unknown) {
   const url = `${env.selfUrl}/audit/step/${step}`;
   if (LOCAL_MODE) return localEnqueue(url, body);
+  // ask-all needs a longer response timeout — publish path only (queue slots stay free)
+  const timeout = step === "ask-all" ? { "Upstash-Timeout": "900s" } : {};
   const res = await fetch(`${env.qstashUrl}/v2/publish/${url}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${env.qstashToken}`,
       "Content-Type": "application/json",
       "Upstash-Retries": "0",
+      ...timeout,
     },
     body: JSON.stringify(body),
   });

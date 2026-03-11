@@ -3,7 +3,7 @@
 This document details every meaningful change made on Adam's development track (commits by `adamp@monsterrg.com`) relative to Rafa's base codebase. Use this as a merge guide when reconciling the two tracks.
 
 Rafa's base commits: `51b89f8`, `cf11273`, `961e61d`, `4258169`, `613858a`, `abd3638`
-Adam's commits (oldest → newest): `6a3fd0c` through `00f3f14`
+Adam's commits (oldest → newest): `6a3fd0c` through `79740e1`
 
 ---
 
@@ -1084,6 +1084,12 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 | POST | `/webhooks/audit-complete` | None | Receive terminate webhook, send agent email |
 | GET | `/favicon.svg` | None | Serve robot favicon |
 | GET | `/logo.png` | None | Serve robot PNG (rasterized from SVG via resvg-wasm, email-safe) |
+| POST | `/admin/terminate-all` | Admin | Mark all active as terminated + purge QStash queues + pause queues |
+| POST | `/admin/pause-queues` | Admin | Pause all QStash queues (stop message delivery) |
+| POST | `/admin/resume-queues` | Admin | Resume all QStash queues after a pause |
+| GET | `/admin/audits` | Admin | Full audit history page with filters, date range, pagination |
+| GET | `/admin/audits/data` | Admin | JSON audit history (type/owner/dept/score/since/until filters) |
+| POST | `/admin/users/delete` | Admin | Delete a user account (prevents self-deletion) |
 
 ---
 
@@ -1099,6 +1105,9 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 | `<org>:bad-word-config` | `BadWordConfig` | Bad word detection configuration |
 | `<org>:pipeline-config` | `{ parallelism: number }` | QStash queue parallelism setting |
 | `default-org` | `string` | Default orgId used when none specified |
+| `watchdog-active:<findingId>` | `{ orgId, findingId, step, ts }` | Global stuck-audit index (2h TTL); written by trackActive, deleted by trackCompleted/terminateAllActive |
+| `<org>:stats-completed:<ts>:<findingId>` | `CompletedAuditStat` | Extended: now includes `owner`, `department`, `startedAt`, `durationMs`; permanent (no TTL) |
+| `<org>:review-pending:<findingId>:<qIndex>` | `ReviewItem` | Extended: now includes `reviewIndex`, `totalForFinding`, `recordId`, `recordingIdField` |
 
 ---
 

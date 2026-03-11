@@ -590,7 +590,10 @@ export function getDashboardPage(): string {
     <div class="tbl">
       <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
         <span>Active Audits</span>
-        <button class="sf-btn danger" id="terminate-all-btn" style="font-size:9px;padding:3px 10px;">Terminate All</button>
+        <div style="display:flex;gap:6px;">
+          <button class="sf-btn" id="resume-queues-btn" style="font-size:9px;padding:3px 10px;">Resume Queues</button>
+          <button class="sf-btn danger" id="terminate-all-btn" style="font-size:9px;padding:3px 10px;">Terminate All</button>
+        </div>
       </div>
       <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Step</th><th>Started</th><th>Duration</th><th></th></tr></thead>
       <tbody id="tb-active"><tr class="empty-row"><td colspan="6">No active audits</td></tr></tbody></table>
@@ -1675,6 +1678,20 @@ export function getDashboardPage(): string {
   document.getElementById('devtools-open').addEventListener('click', function() { openModal('devtools-modal'); });
   document.getElementById('devtools-cancel').addEventListener('click', function() { closeModal('devtools-modal'); });
   backdropClose('devtools-modal');
+
+  // ===== Resume Queues =====
+  document.getElementById('resume-queues-btn').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Resuming...';
+    fetch('/admin/resume-queues', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) toast('Queues resumed', 'success');
+        else toast(d.error || 'Failed', 'error');
+      })
+      .catch(function() { toast('Request failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Resume Queues'; });
+  });
 
   // ===== Terminate All =====
   document.getElementById('terminate-all-btn').addEventListener('click', function() {

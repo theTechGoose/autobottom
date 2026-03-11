@@ -18,7 +18,7 @@ import {
 } from "./controller.ts";
 import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
-import { enqueueStep, publishStep, ALL_QUEUES } from "./lib/queue.ts";
+import { enqueueStep, publishStep, ALL_QUEUES, pauseAllQueues, resumeAllQueues } from "./lib/queue.ts";
 import {
   trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig, getStuckFindings,
   getFinding, saveFinding, saveTranscript, saveBatchAnswers,
@@ -251,6 +251,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/init-org": handleInitOrg,
   "/admin/retry-finding": handleRetryFinding,
   "/admin/terminate-all": handleTerminateAll,
+  "/admin/resume-queues": handleResumeQueues,
   "/admin/clear-review-queue": handleClearReviewQueue,
   "/admin/queues": handleSetQueue,
   "/admin/pipeline-config": handleSetPipelineConfig,
@@ -2383,8 +2384,20 @@ async function handleTerminateAll(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
 
   const terminated = await terminateAllActive(auth.orgId);
-  console.log(`[ADMIN] ${auth.email} terminated ${terminated} active audits`);
+  await pauseAllQueues();
+  console.log(`[ADMIN] ${auth.email} terminated ${terminated} active audits + paused all queues`);
   return json({ ok: true, terminated });
+}
+
+// -- Admin: Resume Queues --
+
+async function handleResumeQueues(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  await resumeAllQueues();
+  console.log(`[ADMIN] ${auth.email} resumed all queues`);
+  return json({ ok: true });
 }
 
 // -- Admin: Clear Review Queue --

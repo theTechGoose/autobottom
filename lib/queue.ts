@@ -121,3 +121,20 @@ export function enqueueCleanup(body: unknown, delaySeconds: number) {
   const url = `${env.selfUrl}/audit/step/cleanup`;
   return enqueue(CLEANUP_QUEUE, url, body, delaySeconds);
 }
+
+async function setAllQueuesState(action: "pause" | "resume"): Promise<void> {
+  if (LOCAL_MODE) return;
+  await Promise.all(ALL_QUEUES.map(async (q) => {
+    const res = await fetch(`${env.qstashUrl}/v2/queues/${q}/${action}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.qstashToken}` },
+    });
+    if (!res.ok) console.error(`[QSTASH] ${action} ${q} failed: ${res.status} ${await res.text()}`);
+  }));
+}
+
+/** Pause all QStash queues — pending messages stop delivering until resumed. */
+export const pauseAllQueues = () => setAllQueuesState("pause");
+
+/** Resume all QStash queues after a pause. */
+export const resumeAllQueues = () => setAllQueuesState("resume");

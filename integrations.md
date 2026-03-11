@@ -801,6 +801,264 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 
 ---
 
+---
+
+## 40. Groq Model Update + LLM Timeout Refactor (`modelfeet`, `timeoutfeet`, `errorfeet`, `loggedfeets`, `resubfeets`)
+
+### Files
+- `providers/groq.ts`
+- `providers/pinecone.ts`
+- `providers/assemblyai.ts`
+- `steps/ask-all.ts`
+
+### Changes
+
+#### Model Update (`modelfeet`)
+- Removed deprecated `meta-llama/llama-4-maverick-17b-128e-instruct` from fallback chain.
+- `FALLBACK_MODELS` is now: `openai/gpt-oss-120b` (primary) → `meta-llama/llama-4-scout-17b-16e-instruct` → `llama-3.3-70b-versatile`.
+
+#### Timeout Refactor (all timeout commits)
+- `askQuestion()` and `groqCallWithRetry()` in `providers/groq.ts`: replaced `AbortController` (unreliable through npm SDK in Deno Deploy) with `Promise.race + setTimeout` pattern.
+- `LLM_TIMEOUT_MS` reduced to 25s per call (fits within QStash 30s default).
+- `groqCallWithRetry()` used across `generateFeedback()`, `summarize()`, `diarize()` — no more bespoke per-function fetch/abort logic.
+- `404` and `model_not_found` added to fallback trigger conditions (alongside 429, 503, timeout, rate_limit_exceeded).
+- `providers/pinecone.ts`: `embed()` also switched to `Promise.race + setTimeout` pattern.
+- `providers/assemblyai.ts`: `uploadAudio()` gets `AbortController + 60s setTimeout` with `finally` cleanup.
+
+#### ask-all Step Ceiling (`loggedfeets`)
+- Hard ceiling reduced from 15 min to **110s** (fires just before QStash's 120s slot timeout for a clean 500 return).
+- Ceiling now uses `setTimeout` directly (not AbortController).
+- Per-question error count added to the summary log line.
+- Log lines added before/after saving answers and enqueuing finalize.
+
+#### RAG False Negative Fix (`newbugfixyfix`)
+- Added `SHORT_TRANSCRIPT_THRESHOLD = 8000` chars.
+- Transcripts ≤8000 chars skip Pinecone entirely — full raw transcript passed directly to the LLM.
+- Raw transcript fallback size increased from 4000 → 8000 chars for longer transcripts.
+- `getContext()` wraps `vectorQuery()` in try/catch — Pinecone failure now falls back gracefully.
+
+---
+
+## 41. QStash Queue Pause / Resume / Purge (`terminatefeet`, `queuefeet`, `fullsyncfeet`)
+
+### Files
+- `lib/queue.ts`
+- `main.ts`
+- `dashboard/page.ts`
+
+### Changes
+
+#### DRY helpers (`queuefeet`)
+- Extracted `qstashAuth()` helper (returns auth header object — used everywhere instead of repeated inline).
+- Extracted `forEachQueue<T>(fn)` helper — `Promise.all(ALL_QUEUES.map(fn))` — used by all four queue operations.
+
+#### Pause / Resume
+- `setAllQueuesState(action)` DRY helper calls QStash `POST /v2/queues/{q}/pause|resume` for every managed queue.
+- `pauseAllQueues()` and `resumeAllQueues()` exported as named constants.
+- `handleTerminateAll` now calls `pauseAllQueues()` after terminating active findings.
+- `POST /admin/pause-queues` and `POST /admin/resume-queues` endpoints added.
+- Dashboard: **Pause/Resume Queues toggle button** next to "Terminate All". State flips on each click; after Terminate All the button automatically switches to "Resume Queues" mode.
+
+#### Purge (`queuefeet`, `fullsyncfeet`)
+- `purgeAllQueues()` — paginates through `GET /v2/messages?queueName={q}` for each queue, deletes every pending message via `DELETE /v2/messages/{id}`, returns total deleted count.
+- `handleTerminateAll` now also calls `purgeAllQueues()` in parallel; response includes `purged` count; toast shows both terminated + purged counts.
+- Fixed endpoint: initially tried `/v2/queues/{q}/messages` (405), corrected to `/v2/messages?queueName={q}`.
+
+#### Queue Counts (`queuefeet`)
+- `getQueueCounts()` — fetches `messageCount` from `GET /v2/queues/{q}` for each queue.
+- `handleDashboardData` calls `getQueueCounts()` in parallel with other stats; exposes `queued` (sum) and `activeCount` on the pipeline payload.
+- `inPipe` stat now = `activeCount + queued`.
+
+#### Dashboard Stat Cards (`queuefeet`, `displayfeet`)
+- Added **Active** and **Queued** stat cards (6 cards total in the pipeline stat row).
+- Grid updated from 4 → 6 columns; responsive breakpoint from 2 → 3.
+
+---
+
+## 42. Watchdog Cron — Stuck Audit Recovery (`modelfeet`)
+
+### Files
+- `lib/kv.ts`
+- `main.ts`
+
+### Changes
+- `trackActive()` now writes a global `["watchdog-active", findingId]` KV entry (TTL 2h) with `{ orgId, findingId, step, ts }`.
+- `trackCompleted()` and `terminateAllActive()` both delete the watchdog entry on completion/termination.
+- `getStuckFindings(thresholdMs)` — scans the `watchdog-active` prefix; returns any findings whose `ts` is older than the threshold.
+- `Deno.cron("watchdog", "0 * * * *", ...)` added to `main.ts` — runs hourly, detects findings stuck >30 min, re-publishes them via `publishStep`, bumps their watchdog timestamp.
+
+---
+
+## 43. Transcript Timestamps + Audio Seeking (`timestamps`)
+
+### Files
+- `steps/poll-transcript.ts`
+- `steps/transcribe-cb.ts`
+- `lib/kv.ts`
+- `shared/queue-page.ts`
+
+### Changes
+- `poll-transcript` saves `utteranceTimes` (array of utterance start times in ms) from AssemblyAI poll result onto the finding.
+- `transcribe-cb` passes `utteranceTimes` through to `saveTranscript()`.
+- `saveTranscript()` / `getTranscript()` updated to persist and return `utteranceTimes?: number[]`. Save merges with existing `diarized` transcript to avoid overwriting.
+- Review queue page: when `utteranceTimes` present, `data-time` attribute (seconds) added to each transcript line div.
+- Timestamp chip (`mm:ss`, monospace) shown per utterance in transcript view.
+- `seekToTranscriptLine()` uses `data-time` for precise audio seeking; falls back to proportional position estimate.
+- Clicking waveform now auto-plays if paused.
+
+---
+
+## 44. Audio Waveform Visualizer (`wavefeet`)
+
+### Files
+- `shared/queue-page.ts`
+
+### Changes
+- Replaced the simple `ap-track`/`ap-fill` progress bar with a **Canvas-based waveform visualizer**.
+- `loadWaveform(findingId)` fetches the audio, decodes it with Web Audio API, downsamples to 120 bars.
+- Draws filled/unfilled bars with a playhead that moves on `timeupdate`.
+- DPR-aware canvas sizing for sharp rendering on retina displays.
+- Bottom bar height increased to 72px to accommodate the waveform.
+
+---
+
+## 45. Review Queue — Type Breakdown, Progress Chip, QB Record Link (`dashfeet`, `newbie feets`, `badgefeet`)
+
+### Files
+- `review/kv.ts`
+- `steps/finalize.ts`
+- `dashboard/page.ts`
+- `shared/queue-page.ts`
+
+### Changes
+
+#### Review Stats by Type (`dashfeet`)
+- `ReviewItem` interface extended with `recordingIdField`.
+- `populateReviewQueue()` accepts and stores `recordingIdField`.
+- `getReviewStats()` now returns separate `dateLegPending`, `dateLegDecided`, `packagePending`, `packageDecided` counts.
+- Admin dashboard Review Queue panel replaced single pending/decided donut with a two-row table (Date Legs row + Packages row).
+- `steps/finalize.ts` passes `finding.recordingIdField` to `populateReviewQueue()`.
+
+#### ReviewItem Enrichment (`newbie feets`)
+- `ReviewItem` extended: `reviewIndex` (1-based position within finding), `totalForFinding`, `recordId` (QB record ID).
+- `populateReviewQueue()`, `backfillFromFinished()`, and `undoDecision()` all set/preserve these fields.
+- `steps/finalize.ts` passes `recordId` to `populateReviewQueue()`.
+
+#### Review UI (`newbie feets`, `badgefeet`)
+- Meta row now shows: **N/M progress** chip, **Package/Date Leg** type badge, **Record ID** chip, **View Record →** QB deep-link.
+- **View Report →** purple meta chip added (links to `/audit/report?id=...`).
+- QB realm and table IDs embedded from env.
+- Keyboard shortcut cheat sheet updated (J/K skip audio, Ctrl+Up/Down playback speed).
+- Arrow key handling moved to capture phase to prevent browser scroll stealing.
+- Ctrl+Up/Down controls audio playback speed.
+
+---
+
+## 46. Review — Corrected Answers Saved Back to Finding (`fix updates`, `777d803`)
+
+### Files
+- `review/kv.ts`
+
+### Changes
+- After `postCorrectedAudit()` finalizes review decisions, the corrected `answeredQuestions`, `reviewedAt`, and `reviewScore` are saved back to the finding via `saveFinding()` so the report page reflects the review outcome immediately.
+- Batch 0 overwritten via `saveBatchAnswers()` (report page reads batch KV, not `finding.answeredQuestions`).
+- Stale batch keys (1+) cleaned up by deleting their `_n` sentinel keys.
+
+---
+
+## 47. Undo Decision — Skip Finalized Audits (`putitinreverseterry`)
+
+### Files
+- `review/kv.ts`
+
+### Changes
+- `undoDecision()` previously could undo decisions from already-finalized audits (where the `review-audit-pending` counter was deleted).
+- Fixed: collects all decisions by the reviewer sorted newest-first, then checks each candidate's `review-audit-pending` counter key — skips any where the counter is null (finalized audit).
+
+---
+
+## 48. Invalid Genie — Score, Review Skip, Webhook, Email (`zerosfeet`, `777d803`, `newbugfixyfix`)
+
+### Files
+- `steps/finalize.ts`
+- `main.ts`
+
+### Changes
+- Invalid Genie findings now receive `score = 0` instead of `undefined` in finalize.
+- Invalid Genie findings are **skipped from the review queue** — go directly to terminated.
+- Finalize immediately fires the terminate webhook for Invalid Genie with `reason: "invalid_genie"`.
+- `handleAuditCompleteWebhook` detects `isInvalidGenie` and injects a `notesSection` variable: "Recording Invalid" banner with report + new-recording link (instead of the missed questions table).
+- Email link for Invalid Genie fixed: was pointing to `/audit/appeal?findingId=X` (404), now points to `/audit/report?id=X`.
+- `passedOrFailed` template variable added (derives from score).
+
+---
+
+## 49. Audit History Page (`recentlyauditedfeet`, `storefeets`, `newbie feets`)
+
+### Files
+- `lib/kv.ts`
+- `main.ts`
+- `providers/quickbase.ts`
+- `steps/finalize.ts`
+- `dashboard/page.ts`
+
+### Changes
+
+#### KV Layer
+- `CompletedAuditStat` interface extended with `owner` and `department`.
+- `trackCompleted()` accepts and stores `owner` (finding.owner) and `department` (ActivatingOffice or OfficeName).
+- `getAllCompleted(orgId, since?)` — scans completed stats with reverse iteration + early-break for O(window) performance.
+- `getRecentCompleted()` refactored to use `reverse: true, limit` scan.
+- Removed 24h TTL from `trackCompleted()` — completed stats now stored permanently.
+
+#### QuickBase
+- `FIELD_ACTIVATING_OFFICE` (field 140) added to date leg queries → `ActivatingOffice`.
+- `PKG_FIELD_OFFICE_NAME` (field 46) added to package queries → `OfficeName`.
+
+#### API Routes
+- `GET /admin/audits` — full dark-themed HTML page with stat cards (total, pass/fail, packages, date legs, avg score), table, filters, and pagination.
+- `GET /admin/audits/data` — JSON API supporting query params: `type`, `owner`, `department`, `scoreMin`, `scoreMax`, `since`, `until`, `page`.
+
+#### UI Features
+- Time window buttons: 1h / 4h / 12h / 24h / 3d / 7d.
+- Custom date range picker (start/end date inputs with Go/Clear).
+- Filter dropdowns: type, team member, department, score range.
+- "View All →" link added next to "Recently Completed (24h)" on the main dashboard.
+
+---
+
+## 50. Email Template Variables — Package Support + New Vars (`audit email update`, `67c1d88`, `b6a97c5`)
+
+### Files
+- `main.ts`
+
+### Changes
+- `subjectGuest` variable: guest name for date legs, `"Package #<recordId>"` for packages.
+- `passedOrFailed` variable: `"Passed"` or `"Failed"` based on score.
+- `gmEmail` variable: `GmEmail` field from QB (used to route package emails to the GM instead of VO).
+- `notesSection`: rendered HTML block — Invalid Genie banner, perfect score banner, or missed questions table.
+- `greeting`, `auditTypeLabel`, `guestContext`, `supportTeamName`, `recordTypeLabel`, `urgentNote` dynamic vars.
+- All four email webhook handlers (audit-complete, appeal-filed, appeal-decided, re-audit) route package emails to `gmEmail` and date-leg emails to `voEmail/agentEmail`.
+
+---
+
+## 51. User Account Management — Delete User (`accountfeets`, `accountfeet2`, `accountsfeet`)
+
+### Files
+- `dashboard/page.ts`
+- `main.ts`
+- `auth/kv.ts`
+
+### Changes
+- User list rendering fixed: was reading `u.username`, now correctly reads `u.email`.
+- Supervisor dropdown allows admins as valid supervisors.
+- Email input changed from `type="email"` to `type="text"` with `autocomplete="off"` (prevents browser validation interference).
+- Email validation simplified to `indexOf('@')` / `lastIndexOf('.')` check (in both dashboard JS and `handleAdminAddUser`).
+- Delete (✕) button added per user row → confirmation prompt → `POST /admin/users/delete`.
+- `handleAdminDeleteUser` validates email, prevents self-deletion, calls `deleteUser()`.
+
+---
+
 ## New API Endpoints Summary
 
 | Method | Path | Auth | Description |

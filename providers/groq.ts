@@ -6,10 +6,9 @@ function getClient() {
 }
 
 const FALLBACK_MODELS = [
-  "meta-llama/llama-4-maverick-17b-128e-instruct", // 0: primary
-  "meta-llama/llama-4-scout-17b-16e-instruct",     // 1: same family, own token pool
-  "openai/gpt-oss-120b",                           // 2: fresh pool, cheap
-  "llama-3.3-70b-versatile",                       // 3: last resort
+  "openai/gpt-oss-120b",                       // 0: primary (replaces deprecated maverick)
+  "meta-llama/llama-4-scout-17b-16e-instruct", // 1: fallback
+  "llama-3.3-70b-versatile",                   // 2: last resort
 ] as const;
 
 type GroqModel = typeof FALLBACK_MODELS[number];

@@ -20,7 +20,7 @@ import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
 import { enqueueStep, publishStep, ALL_QUEUES } from "./lib/queue.ts";
 import {
-  trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig,
+  trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig, getStuckFindings,
   getFinding, saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
@@ -3230,6 +3230,29 @@ async function handleGetOrgUsers(req: Request): Promise<Response> {
   const users = await listUsers(auth.orgId);
   return json(users.filter((u) => u.email !== auth.email).map((u) => ({ email: u.email, role: u.role })));
 }
+
+// -- Watchdog Cron --
+// Hourly: find findings stuck in the same step for > 30 minutes and re-publish them.
+// Root cause: Deno KV 503s under high parallelism leave steps hanging indefinitely with no timeout.
+Deno.cron("watchdog", "0 * * * *", async () => {
+  try {
+    const stuck = await getStuckFindings(30 * 60 * 1000);
+    if (stuck.length === 0) return;
+    console.log(`[WATCHDOG] ⚠️ Found ${stuck.length} stuck finding(s)`);
+    for (const s of stuck) {
+      try {
+        console.log(`[WATCHDOG] 🔁 Re-publishing ${s.findingId} (step=${s.step}, age=${Math.round(s.ageMs / 60000)}min)`);
+        await publishStep(s.step, { findingId: s.findingId, orgId: s.orgId });
+        // Bump watchdog ts so we don't immediately re-trigger on next cron run
+        await trackActive(s.orgId as OrgId, s.findingId, s.step);
+      } catch (err) {
+        console.error(`[WATCHDOG] ❌ Failed to re-publish ${s.findingId}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error("[WATCHDOG] ❌ Error:", err);
+  }
+});
 
 // -- Server --
 

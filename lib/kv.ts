@@ -257,20 +257,38 @@ export async function getAllAnswersForFinding(orgId: OrgId, findingId: string) {
 const DAY_MS = 86_400_000;
 
 /** Mark a finding as actively processing. Merges with existing entry to preserve recordId/isPackage across step transitions. */
-export async function trackActive(orgId: OrgId, findingId: string, step: string, meta?: { recordId?: string; isPackage?: boolean }) {
+export async function trackActive(orgId: OrgId, findingId: string, step: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number }) {
   const db = await kv();
   const key = orgKey(orgId, "stats-active", findingId);
   const existing = await db.get<Record<string, unknown>>(key);
   const prev = (existing.value ?? {}) as Record<string, unknown>;
   await db.set(key, { ...prev, step, ts: Date.now(), ...(meta ?? {}) });
+  // Global watchdog index — scanned by the cron to detect stuck findings
+  await db.set(["watchdog-active", findingId], { orgId, findingId, step, ts: Date.now() }, { expireIn: 2 * 60 * 60 * 1000 });
 }
 
 /** Remove a finding from active tracking (finished or cleaned up). */
 export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number; owner?: string; department?: string }) {
   const db = await kv();
   await db.delete(orgKey(orgId, "stats-active", findingId));
+  await db.delete(["watchdog-active", findingId]);
   await db.set(orgKey(orgId, "stats-completed", `${Date.now()}-${findingId}`), { findingId, ts: Date.now(), ...(meta ?? {}) });
   console.log(`[TRACK-COMPLETED] ✅ ${findingId}: score=${meta?.score ?? "?"}% owner=${meta?.owner ?? "unknown"} dept=${meta?.department ?? "unknown"} type=${meta?.isPackage ? "package" : "date-leg"}`);
+}
+
+/** Return findings stuck in the same step longer than thresholdMs. Used by the watchdog cron. */
+export async function getStuckFindings(thresholdMs = 15 * 60 * 1000): Promise<Array<{ orgId: string; findingId: string; step: string; ts: number; ageMs: number }>> {
+  const db = await kv();
+  const now = Date.now();
+  const stuck: Array<{ orgId: string; findingId: string; step: string; ts: number; ageMs: number }> = [];
+  for await (const entry of db.list<{ orgId: string; findingId: string; step: string; ts: number }>({ prefix: ["watchdog-active"] })) {
+    if (!entry.value) continue;
+    const ageMs = now - (entry.value.ts ?? 0);
+    if (ageMs > thresholdMs) {
+      stuck.push({ ...entry.value, ageMs });
+    }
+  }
+  return stuck;
 }
 
 /** Terminate all active audits: mark each finding as terminated and remove from active tracking. */
@@ -290,6 +308,7 @@ export async function terminateAllActive(orgId: OrgId): Promise<number> {
       }
     } catch { /* best-effort */ }
     await db.delete(key);
+    await db.delete(["watchdog-active", findingId]);
   }));
   return entries.length;
 }

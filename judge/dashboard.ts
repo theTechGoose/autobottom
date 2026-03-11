@@ -512,7 +512,7 @@ export function getJudgeDashboardPage(): string {
         var r = reviewers[i];
         var dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '--';
         var tr = document.createElement('tr');
-        tr.innerHTML = '<td><strong>' + esc(r.username) + '</strong></td><td>' + dateStr + '</td><td><button class="sf-btn danger" data-email="' + esc(r.username) + '">Remove</button></td>';
+        tr.innerHTML = '<td><strong>' + esc(r.email) + '</strong></td><td>' + dateStr + '</td><td><button class="sf-btn danger" data-email="' + esc(r.email) + '">Remove</button></td>';
         tbody.appendChild(tr);
       }
       tbody.querySelectorAll('.sf-btn.danger').forEach(function(btn) {

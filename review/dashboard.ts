@@ -191,7 +191,7 @@ export function getReviewDashboardPage(): string {
         <div class="stat-card">
           <div class="stat-label">Queue Pending</div>
           <div class="stat-value yellow" id="s-q-pending">0</div>
-          <div class="stat-sub">awaiting review</div>
+          <div class="stat-sub" id="s-q-pending-sub">awaiting review</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Queue Decided</div>
@@ -310,6 +310,7 @@ export function getReviewDashboardPage(): string {
 
     // Queue stats
     document.getElementById('s-q-pending').textContent = data.queue.pending;
+    document.getElementById('s-q-pending-sub').textContent = data.queue.pending + ' questions across ' + (data.queue.pendingAuditCount || 0) + ' audits';
     document.getElementById('s-q-decided').textContent = data.queue.decided;
 
     // Personal stats

@@ -126,7 +126,18 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
     const lockKey = orgKey(orgId, "judge-lock", item.findingId, item.questionIndex);
 
     if (!current) {
-      const lockEntry = await db.get(lockKey);
+      const lockEntry = await db.get<{ claimedBy: string }>(lockKey);
+
+      // Already locked by someone else — skip this item
+      if (lockEntry.value !== null && lockEntry.value.claimedBy !== judge) continue;
+
+      // Already locked by us (page refresh / reconnect) — reclaim without CAS race
+      if (lockEntry.value !== null && lockEntry.value.claimedBy === judge) {
+        current = item;
+        continue;
+      }
+
+      // Lock is null — proceed with atomic CAS
       const res = await db.atomic()
         .check(lockEntry)
         .set(lockKey, { claimedBy: judge, claimedAt: now }, { expireIn: LOCK_TTL })
@@ -227,6 +238,7 @@ export async function recordDecision(
   const newCount = currentCount - 1;
 
   const atomic = db.atomic()
+    .check(pendingEntry)
     .delete(lockKey)
     .delete(pendingKey)
     .set(orgKey(orgId, "judge-decided", findingId, questionIndex), decided);

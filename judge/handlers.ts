@@ -84,13 +84,11 @@ export async function handleDecide(req: Request): Promise<Response> {
   }
 
   const t0 = Date.now();
-  const [result, next] = await Promise.all([
-    recordDecision(
-      auth.orgId, findingId, questionIndex, decision, auth.email,
-      reason || undefined, combo ?? undefined, level ?? undefined,
-    ),
-    claimNextItem(auth.orgId, auth.email),
-  ]);
+  const result = await recordDecision(
+    auth.orgId, findingId, questionIndex, decision, auth.email,
+    reason || undefined, combo ?? undefined, level ?? undefined,
+  );
+  const next = await claimNextItem(auth.orgId, auth.email);
   console.log(`[JUDGE] ⚡ decide: ${Date.now() - t0}ms findingId=${findingId} decision=${decision}`);
 
   if (!result.success) {

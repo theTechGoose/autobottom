@@ -1734,6 +1734,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   function executeDecision(decision, reason) {
     if (!currentItem || busy) return;
     busy = true;
+    var decideBtns = document.querySelectorAll('.decide-btn');
+    for (var bi = 0; bi < decideBtns.length; bi++) { decideBtns[bi].style.opacity = '0.5'; decideBtns[bi].style.pointerEvents = 'none'; }
+    // Optimistically hide "Final for Audit" badge
+    var mLastOpt = document.getElementById('m-last');
+    if (mLastOpt) mLastOpt.style.display = 'none';
     var item = currentItem;
 
     trackDecision();
@@ -1772,7 +1777,25 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       body: JSON.stringify(bodyObj),
     }).then(function(res) {
       return res.json().then(function(data) {
-        if (res.status === 409) { busy = false; return; }
+        if (res.status === 409) {
+          busy = false;
+          var reenableBtns = document.querySelectorAll('.decide-btn');
+          for (var ri = 0; ri < reenableBtns.length; ri++) { reenableBtns[ri].style.opacity = ''; reenableBtns[ri].style.pointerEvents = ''; }
+          toast('Already decided — loading next item', 'info');
+          fetch(API + '/next').then(function(r) { return r.json(); }).then(function(d) {
+            if (d.current) {
+              currentItem = d.current;
+              peekItem = d.peek || null;
+              currentTranscript = d.transcript || null;
+              currentAuditRemaining = d.auditRemaining || 0;
+              renderCurrent();
+            } else {
+              currentItem = null;
+              showEmpty();
+            }
+          });
+          return;
+        }
         if (!res.ok) throw new Error(data.error || 'Request failed');
 
         if (data.auditComplete) {
@@ -1822,10 +1845,14 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           var mRem2 = document.getElementById('m-remaining'); if (mRem2) mRem2.textContent = '0';
         }
         busy = false;
+        var reenBtns = document.querySelectorAll('.decide-btn');
+        for (var rbi = 0; rbi < reenBtns.length; rbi++) { reenBtns[rbi].style.opacity = ''; reenBtns[rbi].style.pointerEvents = ''; }
       });
     }).catch(function(err) {
       toast(err.message, 'error');
       busy = false;
+      var reenBtns2 = document.querySelectorAll('.decide-btn');
+      for (var rbi2 = 0; rbi2 < reenBtns2.length; rbi2++) { reenBtns2[rbi2].style.opacity = ''; reenBtns2[rbi2].style.pointerEvents = ''; }
     });
   }
 

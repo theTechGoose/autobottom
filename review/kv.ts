@@ -45,7 +45,7 @@ export interface ReviewerLeaderboardEntry {
 }
 
 export interface ReviewerDashboardData {
-  queue: { pending: number; decided: number };
+  queue: { pending: number; decided: number; pendingAuditCount: number };
   personal: {
     totalDecisions: number;
     confirmCount: number;
@@ -120,7 +120,18 @@ export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
 
     if (!current) {
       // Try to claim this item atomically — prevents two reviewers grabbing same question
-      const lockEntry = await db.get(lockKey);
+      const lockEntry = await db.get<{ claimedBy: string }>(lockKey);
+
+      // Already locked by someone else — skip this item
+      if (lockEntry.value !== null && lockEntry.value.claimedBy !== reviewer) continue;
+
+      // Already locked by us (page refresh / reconnect) — reclaim without CAS race
+      if (lockEntry.value !== null && lockEntry.value.claimedBy === reviewer) {
+        current = item;
+        continue;
+      }
+
+      // Lock is null — proceed with atomic CAS
       const res = await db.atomic()
         .check(lockEntry)
         .set(lockKey, { claimedBy: reviewer, claimedAt: now }, { expireIn: LOCK_TTL })
@@ -442,6 +453,7 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
 
 export async function getReviewStats(orgId: OrgId): Promise<{
   pending: number; decided: number;
+  pendingAuditCount: number;
   dateLegPending: number; packagePending: number;
   dateLegDecided: number; packageDecided: number;
 }> {
@@ -449,9 +461,12 @@ export async function getReviewStats(orgId: OrgId): Promise<{
   let pending = 0, decided = 0;
   let dateLegPending = 0, packagePending = 0;
   let dateLegDecided = 0, packageDecided = 0;
+  const pendingAudits = new Set<string>();
 
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") })) {
     pending++;
+    const fId = entry.value?.findingId || (entry.key[2] as string);
+    if (fId) pendingAudits.add(fId);
     if (entry.value?.recordingIdField === "GenieNumber") packagePending++;
     else dateLegPending++;
   }
@@ -461,7 +476,7 @@ export async function getReviewStats(orgId: OrgId): Promise<{
     else dateLegDecided++;
   }
 
-  return { pending, decided, dateLegPending, packagePending, dateLegDecided, packageDecided };
+  return { pending, decided, pendingAuditCount: pendingAudits.size, dateLegPending, packagePending, dateLegDecided, packageDecided };
 }
 
 // -- Reviewer Dashboard --
@@ -469,9 +484,14 @@ export async function getReviewStats(orgId: OrgId): Promise<{
 export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): Promise<ReviewerDashboardData> {
   const db = await kv();
 
-  // Count pending items
+  // Count pending items and unique audits
   let pending = 0;
-  for await (const _ of db.list({ prefix: orgKey(orgId, "review-pending") })) pending++;
+  const dashPendingAudits = new Set<string>();
+  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") })) {
+    pending++;
+    const fId = entry.value?.findingId || (entry.key[2] as string);
+    if (fId) dashPendingAudits.add(fId);
+  }
 
   // Scan all decided items -- build personal list + per-reviewer map
   const myDecisions: ReviewDecision[] = [];
@@ -528,7 +548,7 @@ export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): 
   const recentDecisions = myDecisions.slice().reverse().slice(0, 50);
 
   return {
-    queue: { pending, decided },
+    queue: { pending, decided, pendingAuditCount: dashPendingAudits.size },
     personal: { totalDecisions, confirmCount, flipCount, avgDecisionSpeedMs },
     byReviewer,
     recentDecisions,

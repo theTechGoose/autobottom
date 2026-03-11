@@ -503,6 +503,14 @@ export function getDashboardPage(): string {
         <div class="stat-label">In Pipeline</div>
         <div class="stat-value" id="s-pipe">--</div>
       </div>
+      <div class="stat-card blue">
+        <div class="stat-label">Active</div>
+        <div class="stat-value" id="s-active">--</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-label">Queued</div>
+        <div class="stat-value" id="s-queued">--</div>
+      </div>
       <div class="stat-card green">
         <div class="stat-label">Completed (24h)</div>
         <div class="stat-value" id="s-completed">--</div>
@@ -1296,6 +1304,8 @@ export function getDashboardPage(): string {
     if (!lastData) lastData = {};
     lastData.pipeline = p;
     document.getElementById('s-pipe').textContent = fmt(p.inPipe);
+    document.getElementById('s-active').textContent = fmt(p.activeCount);
+    document.getElementById('s-queued').textContent = fmt(p.queued);
     document.getElementById('s-completed').textContent = fmt(p.completed24h);
     document.getElementById('s-errors').textContent = fmt(p.errors24h);
     document.getElementById('s-retries').textContent = fmt(p.retries24h);
@@ -1679,18 +1689,27 @@ export function getDashboardPage(): string {
   document.getElementById('devtools-cancel').addEventListener('click', function() { closeModal('devtools-modal'); });
   backdropClose('devtools-modal');
 
-  // ===== Resume Queues =====
+  // ===== Queue Pause/Resume Toggle =====
+  // After terminate-all the queues are paused, so we start in "paused" state (button = Resume).
+  // Clicking toggles and flips the label.
+  var queuesPaused = false;
+  function updateQueueBtn() {
+    var btn = document.getElementById('resume-queues-btn');
+    btn.textContent = queuesPaused ? 'Resume Queues' : 'Pause Queues';
+    btn.className = 'sf-btn' + (queuesPaused ? ' primary' : '');
+  }
   document.getElementById('resume-queues-btn').addEventListener('click', function() {
     var btn = this;
-    btn.disabled = true; btn.textContent = 'Resuming...';
-    fetch('/admin/resume-queues', { method: 'POST' })
+    var action = queuesPaused ? 'resume' : 'pause';
+    btn.disabled = true; btn.textContent = action === 'resume' ? 'Resuming...' : 'Pausing...';
+    fetch('/admin/' + action + '-queues', { method: 'POST' })
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        if (d.ok) toast('Queues resumed', 'success');
+        if (d.ok) { queuesPaused = !queuesPaused; toast('Queues ' + action + 'd', 'success'); }
         else toast(d.error || 'Failed', 'error');
       })
       .catch(function() { toast('Request failed', 'error'); })
-      .finally(function() { btn.disabled = false; btn.textContent = 'Resume Queues'; });
+      .finally(function() { btn.disabled = false; updateQueueBtn(); });
   });
 
   // ===== Terminate All =====
@@ -1707,7 +1726,8 @@ export function getDashboardPage(): string {
       .then(function(d) {
         closeModal('terminate-modal');
         if (d.ok) {
-          toast('Terminated ' + (d.terminated || 0) + ' active audit(s)', 'success');
+          toast('Terminated ' + (d.terminated || 0) + ' audit(s), purged ' + (d.purged || 0) + ' queued', 'success');
+          queuesPaused = true; updateQueueBtn();
           fetchData();
         } else {
           toast(d.error || 'Failed', 'error');

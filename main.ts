@@ -18,7 +18,7 @@ import {
 } from "./controller.ts";
 import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
-import { enqueueStep, publishStep, ALL_QUEUES, pauseAllQueues, resumeAllQueues } from "./lib/queue.ts";
+import { enqueueStep, publishStep, ALL_QUEUES, pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts } from "./lib/queue.ts";
 import {
   trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig, getStuckFindings,
   getFinding, saveFinding, saveTranscript, saveBatchAnswers,
@@ -251,6 +251,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/init-org": handleInitOrg,
   "/admin/retry-finding": handleRetryFinding,
   "/admin/terminate-all": handleTerminateAll,
+  "/admin/pause-queues": handlePauseQueues,
   "/admin/resume-queues": handleResumeQueues,
   "/admin/clear-review-queue": handleClearReviewQueue,
   "/admin/queues": handleSetQueue,
@@ -618,17 +619,22 @@ async function handleDashboardData(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
-  const [pipelineStats, tokens, review, appeals, recentCompleted] = await Promise.all([
+  const [pipelineStats, tokens, review, appeals, recentCompleted, queueCounts] = await Promise.all([
     getStats(auth.orgId),
     getTokenUsage(1),
     getReviewStats(auth.orgId),
     getAppealStats(auth.orgId),
     getRecentCompleted(auth.orgId, 25),
+    getQueueCounts(),
   ]);
+
+  const queued = Object.values(queueCounts).reduce((a, b) => a + b, 0);
 
   return json({
     pipeline: {
-      inPipe: pipelineStats.active.length,
+      inPipe: pipelineStats.active.length + queued,
+      activeCount: pipelineStats.active.length,
+      queued,
       active: pipelineStats.active,
       completed24h: pipelineStats.completedCount,
       completedTs: pipelineStats.completed.map((c: any) => c.ts),
@@ -2383,13 +2389,24 @@ async function handleTerminateAll(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
-  const terminated = await terminateAllActive(auth.orgId);
+  const [terminated, purged] = await Promise.all([
+    terminateAllActive(auth.orgId),
+    purgeAllQueues(),
+  ]);
   await pauseAllQueues();
-  console.log(`[ADMIN] ${auth.email} terminated ${terminated} active audits + paused all queues`);
-  return json({ ok: true, terminated });
+  console.log(`[ADMIN] ${auth.email} terminated ${terminated} active audits, purged ${purged} queued messages, paused all queues`);
+  return json({ ok: true, terminated, purged });
 }
 
-// -- Admin: Resume Queues --
+// -- Admin: Pause / Resume Queues --
+
+async function handlePauseQueues(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  await pauseAllQueues();
+  console.log(`[ADMIN] ${auth.email} paused all queues`);
+  return json({ ok: true });
+}
 
 async function handleResumeQueues(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);

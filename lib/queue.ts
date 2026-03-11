@@ -122,15 +122,21 @@ export function enqueueCleanup(body: unknown, delaySeconds: number) {
   return enqueue(CLEANUP_QUEUE, url, body, delaySeconds);
 }
 
+const qstashAuth = () => ({ Authorization: `Bearer ${env.qstashToken}` });
+
+async function forEachQueue<T>(fn: (q: string) => Promise<T>): Promise<T[]> {
+  return Promise.all(ALL_QUEUES.map(fn));
+}
+
 async function setAllQueuesState(action: "pause" | "resume"): Promise<void> {
   if (LOCAL_MODE) return;
-  await Promise.all(ALL_QUEUES.map(async (q) => {
+  await forEachQueue(async (q) => {
     const res = await fetch(`${env.qstashUrl}/v2/queues/${q}/${action}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${env.qstashToken}` },
+      headers: qstashAuth(),
     });
     if (!res.ok) console.error(`[QSTASH] ${action} ${q} failed: ${res.status} ${await res.text()}`);
-  }));
+  });
 }
 
 /** Pause all QStash queues — pending messages stop delivering until resumed. */
@@ -138,3 +144,38 @@ export const pauseAllQueues = () => setAllQueuesState("pause");
 
 /** Resume all QStash queues after a pause. */
 export const resumeAllQueues = () => setAllQueuesState("resume");
+
+/** Delete all pending messages from every managed queue. Returns total deleted. */
+export async function purgeAllQueues(): Promise<number> {
+  if (LOCAL_MODE) return 0;
+  let total = 0;
+  await forEachQueue(async (q) => {
+    let cursor: string | undefined;
+    do {
+      const url = new URL(`${env.qstashUrl}/v2/queues/${q}/messages`);
+      if (cursor) url.searchParams.set("cursor", cursor);
+      const res = await fetch(url.toString(), { headers: qstashAuth() });
+      if (!res.ok) { console.error(`[QSTASH] list ${q} failed: ${res.status}`); return; }
+      const { messages = [], cursor: next } = await res.json();
+      cursor = next;
+      await Promise.all((messages as { messageId: string }[]).map(async (m) => {
+        const del = await fetch(`${env.qstashUrl}/v2/messages/${m.messageId}`, {
+          method: "DELETE", headers: qstashAuth(),
+        });
+        if (del.ok) total++;
+      }));
+    } while (cursor);
+  });
+  return total;
+}
+
+/** Get pending message count per queue from QStash. */
+export async function getQueueCounts(): Promise<Record<string, number>> {
+  if (LOCAL_MODE) return Object.fromEntries(ALL_QUEUES.map((q) => [q, 0]));
+  const pairs = await forEachQueue(async (q) => {
+    const res = await fetch(`${env.qstashUrl}/v2/queues/${q}`, { headers: qstashAuth() });
+    const data = res.ok ? await res.json() : {};
+    return [q, data.messageCount ?? 0] as [string, number];
+  });
+  return Object.fromEntries(pairs);
+}

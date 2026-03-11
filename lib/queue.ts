@@ -152,7 +152,8 @@ export async function purgeAllQueues(): Promise<number> {
   await forEachQueue(async (q) => {
     let cursor: string | undefined;
     do {
-      const url = new URL(`${env.qstashUrl}/v2/queues/${q}/messages`);
+      const url = new URL(`${env.qstashUrl}/v2/messages`);
+      url.searchParams.set("queueName", q);
       if (cursor) url.searchParams.set("cursor", cursor);
       const res = await fetch(url.toString(), { headers: qstashAuth() });
       if (!res.ok) { console.error(`[QSTASH] list ${q} failed: ${res.status}`); return; }

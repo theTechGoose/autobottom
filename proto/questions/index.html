@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expression Builder</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,300&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f4f2ed;--surface:#ffffff;--surface-hover:#faf9f7;--surface-inset:#efeee9;
+  --border:#dfdcd4;--border-subtle:#e9e6e0;
+  --text:#1a1816;--text-secondary:#5e5953;--text-muted:#98938b;
+  --accent:#c2410c;--accent-hover:#9a3412;--accent-soft:#fff7ed;--accent-glow:rgba(194,65,12,.12);
+  --green:#047857;--green-soft:#ecfdf5;
+  --orange:#b45309;--orange-soft:#fffbeb;
+  --red:#dc2626;--red-soft:#fef2f2;
+  --blue:#1e40af;--blue-soft:#eff6ff;
+  --radius:4px;--radius-lg:6px;
+  --shadow-xs:0 1px 2px rgba(0,0,0,.03);
+  --shadow:0 1px 3px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.03);
+  --font:'Outfit',system-ui,sans-serif;
+  --mono:'JetBrains Mono',monospace;
+  --serif:'Fraunces',Georgia,serif;
+  --ease:cubic-bezier(.4,0,.2,1);
+}
+html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--text);font-size:12px;line-height:1.5;-webkit-font-smoothing:antialiased}
+
+#app{height:100vh;display:flex;flex-direction:column;overflow:hidden;max-width:1280px;margin:0 auto}
+#app::before{content:'';display:block;height:3px;background:linear-gradient(90deg,var(--accent),#ea580c);flex-shrink:0}
+
+.page-header{
+  display:flex;align-items:center;gap:12px;
+  padding:10px 24px;border-bottom:1px solid var(--border);
+  background:var(--surface);flex-shrink:0;
+  box-shadow:0 1px 4px rgba(0,0,0,.03);position:relative;z-index:1;
+}
+.page-header h1{
+  font-family:var(--serif);font-size:21px;font-weight:300;
+  font-style:italic;font-variation-settings:'SOFT' 50,'WONK' 1;
+  color:var(--text);line-height:1.1;white-space:nowrap;
+}
+.page-header p{font-size:11px;color:var(--text-muted);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.header-pills{display:flex;gap:4px;flex-shrink:0}
+.pill{font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:.06em;text-transform:uppercase}
+.pill.version{background:var(--surface-inset);color:var(--text-secondary);border:1px solid var(--border)}
+.pill.active{background:var(--green-soft);color:var(--green);border:1px solid #a7f3d0}
+.pill.draft{background:var(--orange-soft);color:var(--orange);border:1px solid #fde68a}
+
+.main-grid{flex:1;display:grid;grid-template-columns:1fr 340px;min-height:0;overflow:hidden}
+.left-col{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--border)}
+.right-col{display:flex;flex-direction:column;min-height:0;background:var(--surface);box-shadow:inset 2px 0 8px rgba(0,0,0,.015)}
+
+.composer{padding:12px 20px 0;flex-shrink:0}
+.composer-box{
+  position:relative;background:var(--surface);
+  border:1.5px solid var(--border);border-radius:var(--radius);
+  padding:8px 12px;transition:border-color .2s,box-shadow .2s;box-shadow:var(--shadow-xs);
+}
+.composer-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.composer-box textarea{
+  width:100%;border:none;outline:none;resize:none;font-family:var(--font);
+  font-size:13px;line-height:1.5;color:var(--text);background:transparent;
+  min-height:18px;max-height:72px;
+}
+.composer-box textarea::placeholder{color:var(--text-muted)}
+.composer-hint{display:flex;align-items:center;justify-content:space-between;margin-top:4px;opacity:0;transition:opacity .15s;pointer-events:none}
+.composer-box:focus-within .composer-hint{opacity:1;pointer-events:auto}
+.composer-hint span{font-size:10px;color:var(--text-muted)}
+.composer-hint kbd{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--surface-inset);border:1px solid var(--border);color:var(--text-muted);font-family:var(--font)}
+
+.understanding{overflow:hidden;max-height:0;opacity:0;transition:max-height .3s,opacity .2s,margin .2s;margin-top:0}
+.understanding.visible{max-height:100px;opacity:1;margin-top:6px}
+.understanding-inner{
+  display:flex;align-items:center;gap:8px;padding:7px 10px;
+  background:var(--surface);border:1px solid var(--border);
+  border-left:3px solid var(--orange);border-radius:0 var(--radius) var(--radius) 0;
+  box-shadow:var(--shadow-xs);
+}
+.understanding-icon{width:22px;height:22px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0}
+.understanding-icon.ai{background:var(--orange-soft);color:var(--orange)}
+.understanding-icon.instant{background:var(--green-soft);color:var(--green)}
+.understanding-icon.scope{background:var(--blue-soft);color:var(--blue)}
+.understanding-body{flex:1;min-width:0}
+.understanding-type{font-size:10px;font-weight:600;color:var(--text-secondary)}
+.understanding-eval{font-size:10px;color:var(--text-muted);font-family:var(--mono);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.understanding-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.confidence-ring{width:24px;height:24px;position:relative}
+.confidence-ring svg{width:24px;height:24px;transform:rotate(-90deg)}
+.confidence-ring circle{fill:none;stroke-width:3}
+.confidence-ring .bg{stroke:var(--border)}
+.confidence-ring .fill{stroke:var(--accent);stroke-linecap:round;transition:stroke-dashoffset .5s}
+.confidence-pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:700;color:var(--text-secondary)}
+.add-btn{
+  width:24px;height:24px;border-radius:var(--radius);border:none;background:var(--accent);color:#fff;
+  font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:transform .12s,opacity .12s;box-shadow:0 1px 3px rgba(194,65,12,.25);
+}
+.add-btn:hover{transform:scale(1.08)}
+.add-btn:disabled{opacity:.3;cursor:default;transform:none;box-shadow:none}
+.understanding.error .understanding-inner{border-color:#fca5a5;border-left-color:var(--red);background:var(--red-soft)}
+.understanding.error .understanding-icon{background:var(--red-soft);color:var(--red)}
+
+#conditions{flex:1;overflow-y:auto;padding:8px 20px 20px;min-height:0}
+.section-label{
+  font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;
+  color:var(--text-muted);margin-bottom:6px;padding-bottom:6px;
+  border-bottom:1px solid var(--border-subtle);display:flex;align-items:center;gap:6px;
+}
+.section-label::after{content:'';flex:1;height:0}
+
+.cond-list{display:flex;flex-direction:column;gap:2px}
+.cond-card{
+  display:flex;align-items:flex-start;gap:8px;padding:7px 10px;
+  background:var(--surface);border:1px solid var(--border);
+  border-left:2.5px solid var(--border-subtle);
+  border-radius:0 var(--radius) var(--radius) 0;
+  cursor:pointer;transition:all .15s;box-shadow:var(--shadow-xs);position:relative;
+}
+.cond-card:hover{box-shadow:var(--shadow);border-color:#d0cdc6;transform:translateX(1px)}
+.cond-card::before{content:none}
+.cond-card.negated{border-left-color:var(--red)}
+.cond-card.scope-card{border-left-color:var(--blue)}
+.cond-icon{width:20px;height:20px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:1px}
+.cond-icon.ai{background:var(--orange-soft);color:var(--orange)}
+.cond-icon.instant{background:var(--green-soft);color:var(--green)}
+.cond-body{flex:1;min-width:0}
+.cond-text{font-size:12px;font-weight:500;color:var(--text);line-height:1.4}
+.cond-x{
+  width:18px;height:18px;border:none;background:transparent;border-radius:3px;
+  cursor:pointer;font-size:9px;color:var(--text-muted);display:flex;align-items:center;
+  justify-content:center;opacity:0;transition:all .12s;flex-shrink:0;margin-top:1px;
+}
+.cond-card:hover .cond-x{opacity:1}
+.cond-x:hover{background:var(--red-soft);color:var(--red)}
+
+.cond-detail{max-height:0;overflow:hidden;opacity:0;transition:max-height .25s,opacity .15s,padding .25s;padding:0 0 0 28px}
+.cond-card.expanded .cond-detail{max-height:200px;opacity:1;padding:6px 0 2px 28px}
+.detail-grid{display:grid;grid-template-columns:64px 1fr;gap:2px 8px;font-size:10px}
+.detail-label{color:var(--text-muted);font-weight:600}
+.detail-value{color:var(--text-secondary)}
+.detail-value.mono{font-family:var(--mono);font-size:9px}
+
+.or-group{border:1.5px dashed var(--border);border-radius:var(--radius-lg);padding:8px;margin:1px 0}
+.or-group-head{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.or-group-label{font-size:10px;font-weight:700;color:var(--text-secondary)}
+.or-pill{font-size:8px;padding:1px 5px;border-radius:3px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-weight:700;color:var(--text-muted);letter-spacing:.04em}
+.or-pill:hover{border-color:var(--accent);color:var(--accent)}
+.or-divider{text-align:center;font-size:9px;color:var(--text-muted);font-weight:700;padding:1px 0;letter-spacing:.04em}
+.or-group .cond-list{margin-bottom:0}
+
+.panels{flex:1;overflow-y:auto;min-height:0}
+.panel-section{border-bottom:1px solid var(--border-subtle)}
+.panel-section:last-child{border-bottom:none}
+.panel-section-head{
+  font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--text-muted);padding:12px 16px 6px;display:flex;align-items:center;gap:6px;
+}
+.panel-section-head .badge{font-size:9px;background:var(--accent-soft);color:var(--accent);padding:1px 5px;border-radius:3px;font-weight:700}
+.panel-section-body{padding:0 16px 12px}
+.panel-tabs{display:flex;border-bottom:1px solid var(--border);padding:0;flex-shrink:0}
+.panel-tab{
+  padding:10px 14px;font-size:11px;font-weight:600;color:var(--text-muted);
+  cursor:pointer;border-bottom:2.5px solid transparent;transition:all .12s;letter-spacing:.02em;
+}
+.panel-tab:hover{color:var(--text-secondary)}
+.panel-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.panel-tab .badge{font-size:9px;background:var(--accent-soft);color:var(--accent);padding:1px 5px;border-radius:3px;margin-left:3px;font-weight:700}
+.panel-body{padding:14px 16px;flex:1;overflow-y:auto;min-height:0}
+
+.coverage-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+.coverage-label{width:68px;font-size:11px;font-weight:500;color:var(--text-secondary);flex-shrink:0}
+.coverage-bar{flex:1;height:4px;background:var(--surface-inset);border-radius:2px;overflow:hidden}
+.coverage-fill{height:100%;border-radius:2px;transition:width .4s}
+.coverage-fill.has{background:var(--accent)}
+.coverage-fill.none{background:var(--border);width:100%}
+.coverage-count{font-size:10px;color:var(--text-muted);width:80px;text-align:right;flex-shrink:0;font-family:var(--mono)}
+.coverage-nudge{
+  font-size:11px;color:#92400e;margin-top:10px;padding:7px 10px;
+  background:var(--orange-soft);border-radius:0 var(--radius) var(--radius) 0;
+  line-height:1.4;border-left:3px solid var(--orange);
+}
+
+.test-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.test-summary{font-size:11px;font-weight:600}
+.test-summary .pass{color:var(--green)}
+.test-summary .fail{color:var(--red)}
+.run-btn{
+  font-size:11px;padding:4px 10px;border-radius:var(--radius);border:none;
+  background:var(--accent);color:#fff;cursor:pointer;font-weight:600;
+  margin-left:auto;transition:all .12s;font-family:var(--font);
+}
+.run-btn:hover{background:var(--accent-hover)}
+.run-btn:disabled{opacity:.5;cursor:default}
+.test-list{display:flex;flex-direction:column;gap:2px}
+.test-row{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:var(--radius);background:var(--surface-hover);font-size:11px}
+.test-dot{width:5px;height:5px;border-radius:1px;flex-shrink:0}
+.test-dot.pass{background:var(--green)}
+.test-dot.fail{background:var(--red)}
+.test-dot.pending{background:var(--border)}
+.test-name{font-weight:500;flex:1}
+.test-expect{font-size:9px;color:var(--text-muted);font-family:var(--mono)}
+.test-mismatch{font-size:9px;color:var(--red);font-weight:600}
+
+.cost-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.cost-card{padding:8px 10px;border-radius:var(--radius);background:var(--surface-inset)}
+.cost-card h4{font-size:8px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px}
+.cost-value{font-size:17px;font-weight:700;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.cost-sub{font-size:9px;color:var(--text-secondary);margin-top:1px;line-height:1.3}
+.cost-breakdown{margin-top:6px}
+.cost-row{display:flex;justify-content:space-between;font-size:9px;padding:1px 0;border-bottom:1px solid var(--border-subtle);font-family:var(--mono)}
+.cost-row:last-child{border-bottom:none;font-weight:600}
+.cost-split{margin-top:6px;display:flex;align-items:center;gap:4px}
+.cost-split-bar{flex:1;height:4px;border-radius:2px;background:var(--green-soft);overflow:hidden;display:flex}
+.cost-split-ai{background:var(--orange);height:100%;transition:width .3s}
+.cost-split-label{font-size:8px;color:var(--text-muted);white-space:nowrap}
+
+.empty{text-align:center;padding:24px 12px;color:var(--text-muted)}
+.empty p{font-size:12px;margin-bottom:2px}
+.empty small{font-size:11px}
+
+@keyframes slideIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
+.slide-up{animation:slideIn .2s var(--ease)}
+
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(0,0,0,.08);border-radius:2px}
+::-webkit-scrollbar-thumb:hover{background:rgba(0,0,0,.14)}
+
+@media(max-width:860px){
+  .main-grid{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .left-col{border-right:none;border-bottom:1px solid var(--border);max-height:55vh}
+  .right-col{min-height:300px}
+}
+
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="page-header" id="pageHeader"></div>
+  <div class="main-grid">
+    <div class="left-col">
+      <div class="composer" id="composer"></div>
+      <div id="conditions"></div>
+    </div>
+    <div class="right-col">
+      <div class="panels" id="panels"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const state = {
+  question: null,
+  expandedCond: null,
+  parseResult: null,
+  activeTab: "coverage",
+  testResults: null,
+  testsRunning: false,
+};
+
+const api = {
+  async get(p) { return (await fetch(`/api/${p}`)).json(); },
+  async post(p, b) { return (await fetch(`/api/${p}`, { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(b) })).json(); },
+  async del(p) { return (await fetch(`/api/${p}`, { method:"DELETE" })).json(); },
+};
+
+// ── Header ──
+function renderHeader() {
+  const q = state.question;
+  if (!q) return;
+  document.getElementById("pageHeader").innerHTML = `
+    <h1>${esc(q.name)}</h1>
+    <p>${esc(q.description)}</p>
+    <div class="header-pills">
+      <span class="pill version">${q.version}</span>
+      <span class="pill ${q.status}">${q.status}</span>
+    </div>
+  `;
+}
+
+// ── Composer (the magic input) ──
+function renderComposer() {
+  document.getElementById("composer").innerHTML = `
+    <div class="composer-box">
+      <textarea id="condInput" rows="1" placeholder="What should this question check for?"></textarea>
+      <div class="composer-hint">
+        <span>Describe a condition in plain English</span>
+        <span><kbd>Enter</kbd> to add</span>
+      </div>
+    </div>
+    <div class="understanding" id="understanding"></div>
+  `;
+  const ta = document.getElementById("condInput");
+  ta.addEventListener("input", onInput);
+  ta.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addCondition(); }
+  });
+  // Auto-resize
+  ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; });
+}
+
+let debounce = null;
+function onInput(e) {
+  const text = e.target.value.trim();
+  clearTimeout(debounce);
+  const el = document.getElementById("understanding");
+
+  if (text.length < 3) {
+    state.parseResult = null;
+    el.classList.remove("visible", "error");
+    return;
+  }
+
+  debounce = setTimeout(async () => {
+    const q = state.question;
+    const result = await api.post("parse", { text, fields: q?.fields || [] });
+    state.parseResult = result;
+    renderUnderstanding(result);
+  }, 200);
+}
+
+function renderUnderstanding(r) {
+  const el = document.getElementById("understanding");
+  if (!el) return;
+
+  if (r.error) {
+    el.className = "understanding visible error";
+    el.innerHTML = `<div class="understanding-inner">
+      <div class="understanding-icon" style="background:var(--red-soft);color:var(--red)">?</div>
+      <div class="understanding-body">
+        <div class="understanding-type" style="color:var(--red)">${esc(r.error)}</div>
+      </div>
+    </div>`;
+    return;
+  }
+
+  const iconClass = r.type === "scope" ? "scope" : r.strategy;
+  const iconChar = r.strategy === "ai" ? "\u2728" : r.type === "scope" ? "\u21B3" : "\u26A1";
+  const typeLabel = r.type === "scope" ? "Scope filter"
+    : r.strategy === "ai" ? `AI ${r.type} check`
+    : `Instant ${r.type} check`;
+  const pct = Math.round(r.confidence * 100);
+  const circ = 2 * Math.PI * 12;
+  const offset = circ - (circ * r.confidence);
+
+  el.className = "understanding visible";
+  el.innerHTML = `<div class="understanding-inner slide-up">
+    <div class="understanding-icon ${iconClass}">${iconChar}</div>
+    <div class="understanding-body">
+      <div class="understanding-type">${typeLabel} ${r.negated ? '<span style="color:var(--red);font-weight:700">\u00b7 negated</span>' : ""} \u00b7 ${r.category}</div>
+      <div class="understanding-eval">${esc(r.evaluation)}</div>
+    </div>
+    <div class="understanding-right">
+      <div class="confidence-ring">
+        <svg viewBox="0 0 28 28"><circle class="bg" cx="14" cy="14" r="12"/><circle class="fill" cx="14" cy="14" r="12" stroke-dasharray="${circ}" stroke-dashoffset="${offset}"/></svg>
+        <span class="confidence-pct">${pct}</span>
+      </div>
+      <button class="add-btn" id="addBtn" onclick="addCondition()" ${r.error ? "disabled" : ""}>+</button>
+    </div>
+  </div>`;
+}
+
+// ── Conditions ──
+function renderConditions() {
+  const q = state.question;
+  if (!q) return;
+  const el = document.getElementById("conditions");
+
+  const rendered = new Set();
+  const groups = q.groups.map(g => ({ ...g, conditions: q.conditions.filter(c => c.groupId === g.id) }));
+  let html = "";
+
+  for (const cond of q.conditions) {
+    if (rendered.has(cond.id)) continue;
+    if (cond.groupId) {
+      const group = groups.find(g => g.id === cond.groupId);
+      if (group && !rendered.has(group.id)) {
+        rendered.add(group.id);
+        html += renderGroup(group);
+        group.conditions.forEach(c => rendered.add(c.id));
+      }
+    } else {
+      html += renderCard(cond);
+      rendered.add(cond.id);
+    }
+  }
+
+  if (!q.conditions.length) {
+    html = `<div class="empty"><p>No conditions yet</p><small>Type above to add your first check</small></div>`;
+  }
+
+  el.innerHTML = `
+    <div class="section-label">Conditions</div>
+    <div class="cond-list">${html}</div>
+  `;
+}
+
+function renderCard(cond) {
+  const expanded = state.expandedCond === cond.id;
+  const classes = [
+    "cond-card",
+    cond.negated && "negated",
+    cond.type === "scope" && "scope-card",
+    expanded && "expanded",
+  ].filter(Boolean).join(" ");
+
+  const iconClass = cond.type === "scope" ? "instant" : cond.strategy;
+  const iconChar = cond.strategy === "ai" ? "\u2728" : cond.type === "scope" ? "\u21B3" : "\u26A1";
+
+  let detail = "";
+  if (expanded) {
+    const versions = (cond.versions || []).slice().reverse();
+    detail = `<div class="cond-detail" style="max-height:200px;opacity:1;padding:8px 0 2px 34px">
+      <div class="detail-grid">
+        <span class="detail-label">Type</span><span class="detail-value">${cond.type}</span>
+        <span class="detail-label">Strategy</span><span class="detail-value">${cond.strategy === "ai" ? "AI evaluation" : "Instant"}</span>
+        <span class="detail-label">Evaluates</span><span class="detail-value mono">${esc(cond.evaluation)}</span>
+        <span class="detail-label">Confidence</span><span class="detail-value">${Math.round(cond.confidence * 100)}%</span>
+        ${cond.expression ? `<span class="detail-label">Expression</span><span class="detail-value mono">${cond.expression.field} ${cond.expression.operator} ${cond.expression.value}</span>` : ""}
+      </div>
+      ${versions.length > 1 ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">${versions.length} version${versions.length !== 1 ? "s" : ""} \u2014 latest: ${timeAgo(versions[0].ts)}</div>` : ""}
+    </div>`;
+  } else {
+    detail = `<div class="cond-detail"></div>`;
+  }
+
+  return `<div class="${classes}" data-cid="${cond.id}" onclick="toggleInspect('${cond.id}')">
+    <div class="cond-icon ${iconClass}">${iconChar}</div>
+    <div class="cond-body">
+      <div class="cond-text">${esc(cond.text)}</div>
+    </div>
+    <button class="cond-x" onclick="event.stopPropagation();deleteCond('${cond.id}')" title="Remove">&#x2715;</button>
+    ${detail}
+  </div>`;
+}
+
+function renderGroup(group) {
+  const inner = group.conditions.map((c, i) => {
+    const card = renderCard(c);
+    const div = i < group.conditions.length - 1 ? `<div class="or-divider">${group.operator.toLowerCase()}</div>` : "";
+    return card + div;
+  }).join("");
+  return `<div class="or-group">
+    <div class="or-group-head">
+      <span class="or-group-label">${esc(group.label)}</span>
+      <button class="or-pill">${group.operator}</button>
+    </div>
+    <div class="cond-list">${inner}</div>
+  </div>`;
+}
+
+// ── Bottom Panels ──
+function renderPanels() {
+  const q = state.question;
+  if (!q) return;
+  document.getElementById("panels").innerHTML = `
+    <div class="panel-section">
+      <div class="panel-section-head">Coverage</div>
+      <div class="panel-section-body">${renderCoverage(q)}</div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-section-head">Tests <span class="badge">${q.testCases.length}</span></div>
+      <div class="panel-section-body">${renderTests(q)}</div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-section-head">Cost</div>
+      <div class="panel-section-body">${renderCost(q)}</div>
+    </div>
+  `;
+}
+
+function renderCoverage(q) {
+  const cats = ["Opening","Process","Compliance","Closing","Soft Skills","Sales"];
+  const counts = {};
+  for (const c of q.conditions) if (c.type !== "scope") counts[c.category] = (counts[c.category]||0)+1;
+  const max = Math.max(3, ...Object.values(counts));
+  const uncovered = cats.filter(c => !counts[c]);
+  return `
+    ${cats.map(cat => {
+      const n = counts[cat]||0;
+      const pct = n > 0 ? Math.min(100, (n/max)*100) : 0;
+      return `<div class="coverage-row">
+        <span class="coverage-label">${cat}</span>
+        <div class="coverage-bar"><div class="coverage-fill ${n > 0 ? "has" : "none"}" style="width:${n > 0 ? pct : 100}%"></div></div>
+        <span class="coverage-count">${n > 0 ? `${n} condition${n>1?"s":""}` : "none"}</span>
+      </div>`;
+    }).join("")}
+    ${uncovered.length ? `<div class="coverage-nudge">Missing coverage: <strong>${uncovered.join(", ")}</strong>. Consider adding conditions for ${uncovered.length===1?"this category":"these categories"}.</div>` : ""}
+  `;
+}
+
+function renderTests(q) {
+  const results = state.testResults;
+  const passing = results ? results.filter(r=>r.match).length : q.testCases.filter(t=>t.lastResult===t.expected).length;
+  const failing = results ? results.filter(r=>!r.match).length : q.testCases.filter(t=>t.lastResult&&t.lastResult!==t.expected).length;
+  const total = q.testCases.length;
+  if (!total) return `<div class="empty"><p>No test cases yet</p></div>`;
+  return `
+    <div class="test-header">
+      <span class="test-summary">${total} test${total!==1?"s":""} \u2014 <span class="pass">${passing} passing</span>, <span class="fail">${failing} failing</span></span>
+      <button class="run-btn" onclick="runTests()" ${state.testsRunning?"disabled":""}>${state.testsRunning?"Running...":"Run All"}</button>
+    </div>
+    <div class="test-list">
+      ${q.testCases.map(tc => {
+        const res = results?.find(r=>r.testId===tc.id);
+        const icon = res ? (res.match?"pass":"fail") : (tc.lastResult ? (tc.lastResult===tc.expected?"pass":"fail") : "pending");
+        const mismatch = res&&!res.match ? `<span class="test-mismatch">Expected ${res.expected}, got ${res.actual}</span>` : "";
+        return `<div class="test-row"><span class="test-dot ${icon}"></span><span class="test-name">${esc(tc.name)}</span><span class="test-expect">expects ${tc.expected}</span>${mismatch}</div>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderCost(q) {
+  const ai = q.conditions.filter(c=>c.strategy==="ai"&&c.type!=="scope").length;
+  const inst = q.conditions.filter(c=>c.strategy==="instant").length;
+  const total = ai+inst;
+  const cpa = 0.0007;
+  const perCall = ai*cpa;
+  const aiPct = total>0?(ai/total)*100:0;
+  return `<div class="cost-grid">
+    <div class="cost-card">
+      <h4>Per Evaluation</h4>
+      <div class="cost-value">$${perCall.toFixed(4)}</div>
+      <div class="cost-sub">${total} conditions per call</div>
+      <div class="cost-breakdown">
+        <div class="cost-row"><span>${ai} AI x $${cpa}</span><span>$${(ai*cpa).toFixed(4)}</span></div>
+        <div class="cost-row"><span>${inst} Instant x $0</span><span>$0.0000</span></div>
+        <div class="cost-row"><span>Total</span><span>$${perCall.toFixed(4)}</span></div>
+      </div>
+    </div>
+    <div class="cost-card">
+      <h4>Monthly Estimate</h4>
+      <div class="cost-value">$${(perCall*10000).toFixed(2)}</div>
+      <div class="cost-sub">Based on 10,000 calls/month</div>
+      <div class="cost-split" style="margin-top:14px">
+        <span class="cost-split-label" style="color:var(--orange)">AI ${Math.round(aiPct)}%</span>
+        <div class="cost-split-bar"><div class="cost-split-ai" style="width:${aiPct}%"></div></div>
+        <span class="cost-split-label" style="color:var(--green)">Instant ${Math.round(100-aiPct)}%</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Actions ──
+function toggleInspect(id) {
+  state.expandedCond = state.expandedCond === id ? null : id;
+  renderConditions();
+}
+
+async function addCondition() {
+  const ta = document.getElementById("condInput");
+  const text = ta.value.trim();
+  const pr = state.parseResult;
+  if (!pr || pr.error || !text) return;
+
+  const cond = await api.post(`questions/${state.question.id}/conditions`, {
+    text, type:pr.type, negated:pr.negated, strategy:pr.strategy,
+    category:pr.category, confidence:pr.confidence, evaluation:pr.evaluation, expression:pr.expression,
+  });
+  state.question.conditions.push(cond);
+  ta.value = "";
+  ta.style.height = "auto";
+  state.parseResult = null;
+  document.getElementById("understanding").className = "understanding";
+  renderConditions();
+  renderPanels();
+}
+
+async function deleteCond(id) {
+  const q = state.question;
+  await api.del(`questions/${q.id}/conditions/${id}`);
+  q.conditions = q.conditions.filter(c => c.id !== id);
+  q.groups = q.groups.filter(g => q.conditions.some(c => c.groupId === g.id));
+  if (state.expandedCond === id) state.expandedCond = null;
+  renderConditions();
+  renderPanels();
+}
+
+async function runTests() {
+  state.testsRunning = true;
+  renderPanels();
+  const results = await api.post(`questions/${state.question.id}/test`, {});
+  state.testResults = results;
+  state.testsRunning = false;
+  for (const r of results) {
+    const tc = state.question.testCases.find(t => t.id === r.testId);
+    if (tc) tc.lastResult = r.actual;
+  }
+  renderPanels();
+}
+
+// ── Helpers ──
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+function timeAgo(ts) {
+  const m = Math.floor((Date.now()-ts)/60000);
+  if (m<60) return `${m}m ago`;
+  const h = Math.floor(m/60);
+  if (h<24) return `${h}h ago`;
+  return `${Math.floor(h/24)}d ago`;
+}
+
+// ── Delegation ──
+document.getElementById("panels").addEventListener("click", e => {
+  const tab = e.target.closest(".panel-tab");
+  if (tab) { state.activeTab = tab.dataset.tab; renderPanels(); }
+});
+
+// ── Init ──
+async function init() {
+  const questions = await api.get("questions");
+  state.question = questions[0] || null;
+  renderHeader();
+  renderComposer();
+  renderConditions();
+  renderPanels();
+}
+init();
+</script>
+</body>
+</html>

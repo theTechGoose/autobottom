@@ -23,14 +23,28 @@ doesn't understand.
 
 ---
 
-```REDO_THIS:
-- **expression supoprt**: each question defines a set of fields it depends on as just names. when the user types a question in the format of field operator value or value operator field it then makes it an expresion. this means that the user must add a name and a description. the llm then extracts the variable from the text at runtime and runs the expression.
+## Expressions
 
-love the idea basically we are increasing the accuracy of the llm by breaking down operations for categories where we have information. for example maritalStatus: 'married' we know this
-in the question we just need to extract maritalStatus as a variable and compare recordMaritalStatus equals callMaritalStatus
+When structured data is available, conditions can use expressions instead of AI evaluation.
+This trades LLM interpretation for deterministic comparison -- higher accuracy, zero cost.
 
-we can have many operators not just the standard > < !, chains and even array operators such as includes etc... the order of the variableExtraction operator value should be interchangeable so value operator variableExtraction should also be valid.
-```
+**How it works.** Each question declares named fields it depends on (e.g., `maritalStatus`,
+`holdCount`). When a user writes a condition in `field operator value` or `value operator field`
+form, the system recognizes it as an expression. The user provides a name and description; at
+runtime the LLM extracts the variable from the transcript and the expression evaluates
+deterministically.
+
+**Example:** A record says `maritalStatus: "married"`. The condition
+`"caller's marital status equals married"` becomes the expression
+`extractedMaritalStatus == recordMaritalStatus` -- the LLM only extracts, it doesn't judge.
+
+**Operators:** `==`, `!=`, `>`, `<`, `>=`, `<=`, `includes`, `not includes`, and chainable
+combinations (`&&`, `||`). Operand order is interchangeable --
+`field operator value` and `value operator field` are both valid.
+
+**Detection.** The parser identifies expressions by the presence of a declared field name
+paired with a recognized operator. If the input looks like an expression but references an
+undeclared field, the system prompts the user to declare it or rephrase as a boolean check.
 
 ## Structure rules
 
@@ -68,18 +82,16 @@ is for trust-building, not configuration.
 
 the user can save transcript fragments as test cases. the user can then set an expected outcome. the entire test suite can then be rerun and show which ones passed and which ones failed
 
-```REDO_THIS:
+**Live-test mode.** As the user edits a condition, saved test cases re-run automatically.
+Debounce is strategy-dependent: expression and keyword conditions debounce at 250ms (cheap,
+near-instant). AI conditions debounce at a user-configurable interval (default longer) since
+each invocation costs money. Results update inline so the user sees the effect of their edit
+without manually triggering a run.
 
-**Live-Test mode ** as you edit the question the question is ran with the test case. debounced at a configurable time to debounce to save costs. only apply the debounce to questions where an llm is involved. if its anything else where the cost is small just run it at a 250ms debounce.
-```
-
-```REDO_THIS:
-**Compound Question** allow a user to zoom into a fragment of a compount question example <fragment1> and <fragment2> and see where it is failing. this way the user knows where they need to make their edits
-
-
-questions are divided in the test and an indicator shows which ones failed and which ones did not that way you can see which fragment is broken and gear your edits towards that.
-
-```
+**Compound question debugging.** When a condition contains multiple fragments
+(e.g., `<fragment1> and <fragment2>`), test results break down per-fragment. Each fragment shows
+a pass/fail indicator so the user can see exactly which piece is broken and focus their edits
+there. The user can zoom into a single fragment to inspect its evaluation in isolation.
 
 ---
 
@@ -102,53 +114,74 @@ test run.
 Every edit saves the previous version automatically. Any version can be restored. Combined
 with test cases: write v1, test, refine to v2, and if v3 regresses, restore v2.
 
-```REDO_THIS:
 ## Question lifecycle
 
-**Draft** -> **Active** -> **Archived**. Active questions are locked;
-clone version to draft to change. Activation snapshots the version. Shadow mode available for
-silent evaluation before going live. Export/import as JSON.
-so you have the following flow
-prodVersion: xyz
-drafts: [
-xyz,
-bbx,
-bbc
-etc..
-]
-history: [
-...
+Three states: **Draft**, **Active** (prod), **Archived**.
 
-]
+A question has one active version and zero or more drafts:
 
-the one that gets promoted is the one that the user selects to be promoted. drafts are just that. drafts.
-
-here is what we do:
-user is on a question designated as prod. says damn. this question sucks starts editing the question. under the hood the app creates a new version and saves it as a draft. user can then
-promote this version to prod.
-
-if you need more clariication ask. this is very important
+```
+activeVersion: "v3"
+drafts: ["v4-experiment", "v4-shorter", "v5-rewrite"]
+history: ["v1", "v2", "v3"]
 ```
 
-```REDO_THIS:
+**Editing flow.** The user opens an active question and starts editing. The moment they change
+anything, the app forks a new draft automatically -- the active version is never mutated
+directly. The user works on the draft, tests it, and when satisfied, promotes it to active.
+Promotion snapshots the draft as the new active version and pushes the previous active version
+into history.
+
+Multiple drafts can exist simultaneously. They are independent experiments -- the user
+explicitly chooses which one to promote. No automatic merging, no conflicts.
+
+**Shadow mode.** A draft can be activated in shadow mode: it evaluates silently alongside the
+current active version without affecting scores. Useful for validating changes on live traffic
+before committing.
+
+**Archival.** Deactivated questions move to Archived. Restorable.
+
+**Export/import.** Questions export as JSON (version, conditions, test cases). Import creates
+a new draft.
+
 ## Persistence
 
-Auto-save, save version to ui every second, in local storage. if change is detected then save in server. if history saved in ui with server fallback. if user navigates away from the question page, the app will check for unsaved history on load meaning that ANYWHERE in the app. (server + local fallback). No save button. Navigation guard if auto-save failed.
-question-scoped undo/redo.
+No save button. Everything auto-saves.
 
-i dont want a landmine but i do want the app so have a robust undo system that even if the user gets off of this computer and goes somewhere else the undo history is still available. and that if they close out the browser the undo history is still available and saved next time the app sees it. make sense?
-```
+**Local layer.** Every edit writes to localStorage immediately (debounced at ~1s). This gives
+instant undo/redo that survives page refreshes and browser crashes. Undo history is
+question-scoped.
 
-```REDO_THIS:
+**Server layer.** When the local state diverges from the last-known server state, the app
+syncs to the server. The server is the source of truth; localStorage is a fast local cache
+and crash-recovery buffer.
+
+**Undo history durability.** Undo history is persisted to the server alongside the draft, not
+just kept in localStorage. If the user closes the browser, switches machines, or clears local
+storage, the undo history is restored from the server on next load. localStorage is checked
+first for speed; server is the fallback.
+
+**Recovery on load.** When the question editor opens, the app checks localStorage for unsaved
+changes. If found (e.g., the previous session crashed before syncing), it reconciles with the
+server version and prompts the user to keep or discard the local changes.
+
+**Navigation guard.** If auto-save to the server has failed and the user tries to navigate
+away, a warning appears.
 
 ## Locks
 
-add an option to kick the current user after a 30 second delay.
-yep the lock scoped to questionid means that there could be 3 users talking instead of 2. thats good
+Questions support one active editor at a time. The lock is scoped to the question, not to a
+pair of users -- if three people try to edit, all three join the same coordination space.
 
-Support multiple editors however questions are locked.
-if a user tries to open a locked question it opens a chat dialog between them. so they can coordinate. nothing fancy just simple db scoped as locks:<questionId>:<userId1>:<userId2> this way the comunication is really fucking simple.
-```
+**Lock key:** `locks:<questionId>`. Stores the current holder and a list of waiting users.
+
+**Contention flow.** When a user opens a locked question, a chat dialog opens between them
+and anyone else on that lock (holder + other waiters). Simple real-time chat scoped to the
+lock -- no channels, no threads, just messages. Users coordinate who should be editing.
+
+**Kick option.** A waiting user can request control. The current holder gets a 30-second
+countdown to respond. If they don't, the lock transfers automatically. This handles the
+walked-away-from-desk case without requiring a TTL that could interrupt active work.
 
 ---
 

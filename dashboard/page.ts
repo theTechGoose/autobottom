@@ -246,7 +246,7 @@ export function getDashboardPage(): string {
   /* ===== Main Content ===== */
   .main { flex: 1; margin-left: var(--sidebar-w); padding: 22px 24px; }
 
-  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+  .stat-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 16px; }
   .stat-card { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; transition: border-color 0.15s; }
   .stat-card:hover { border-color: var(--border-hover); }
   .stat-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-bottom: 3px; }
@@ -325,7 +325,7 @@ export function getDashboardPage(): string {
     .sidebar { position: relative; width: 100%; min-width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
     .layout { flex-direction: column; }
     .main { margin-left: 0; }
-    .stat-row { grid-template-columns: repeat(2, 1fr); }
+    .stat-row { grid-template-columns: repeat(3, 1fr); }
     .charts { grid-template-columns: 1fr; }
     .panels { grid-template-columns: 1fr; }
   }

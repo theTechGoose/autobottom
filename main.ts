@@ -2436,19 +2436,82 @@ async function handleDumpState(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
 
   const db = await Deno.openKv();
+  const snapshotId = crypto.randomUUID();
+  const CHUNK_LIMIT = 900_000; // ~900KB per chunk (safe under 1MB KV value limit)
 
-  // Dump ALL entries under this org's prefix — full app state
-  const entries: Array<{ key: Deno.KvKeyPart[]; value: unknown }> = [];
+  let chunk: Array<{ key: Deno.KvKeyPart[]; value: unknown }> = [];
+  let chunkBytes = 0;
+  let chunkIndex = 0;
+  let totalEntries = 0;
+
   const iter = db.list({ prefix: [auth.orgId] });
   for await (const entry of iter) {
-    entries.push({
-      key: entry.key as Deno.KvKeyPart[],
-      value: entry.value,
-    });
+    const item = { key: entry.key as Deno.KvKeyPart[], value: entry.value };
+    const itemJson = JSON.stringify(item);
+    const itemSize = itemJson.length;
+
+    // If adding this item would exceed the chunk limit, flush current chunk
+    if (chunkBytes + itemSize > CHUNK_LIMIT && chunk.length > 0) {
+      await db.set(["snapshot", snapshotId, chunkIndex], chunk);
+      chunkIndex++;
+      chunk = [];
+      chunkBytes = 0;
+    }
+
+    chunk.push(item);
+    chunkBytes += itemSize;
+    totalEntries++;
   }
 
-  console.log(`[ADMIN] ${auth.email} dumped full state: ${entries.length} entries`);
-  return json({ orgId: auth.orgId, entries, exportedAt: new Date().toISOString() });
+  // Flush remaining
+  if (chunk.length > 0) {
+    await db.set(["snapshot", snapshotId, chunkIndex], chunk);
+    chunkIndex++;
+  }
+
+  // Store snapshot metadata
+  await db.set(["snapshot", snapshotId, "_meta"], {
+    orgId: auth.orgId,
+    chunks: chunkIndex,
+    totalEntries,
+    exportedAt: new Date().toISOString(),
+  });
+
+  console.log(`[ADMIN] ${auth.email} snapshot ${snapshotId}: ${totalEntries} entries in ${chunkIndex} chunks`);
+  return json({ snapshotId, chunks: chunkIndex, totalEntries });
+}
+
+async function handleSnapshotChunk(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const url = new URL(req.url);
+  const parts = url.pathname.split("/");
+  // /admin/snapshot/:id/:chunk
+  const snapshotId = parts[3];
+  const chunkIndex = parseInt(parts[4], 10);
+
+  if (!snapshotId || isNaN(chunkIndex)) {
+    return json({ error: "snapshotId and chunk index required" }, 400);
+  }
+
+  const db = await Deno.openKv();
+  const meta = await db.get<{ orgId: string; chunks: number; totalEntries: number; exportedAt: string }>(
+    ["snapshot", snapshotId, "_meta"],
+  );
+  if (!meta.value) return json({ error: "snapshot not found" }, 404);
+
+  const entry = await db.get<Array<{ key: Deno.KvKeyPart[]; value: unknown }>>(
+    ["snapshot", snapshotId, chunkIndex],
+  );
+  if (!entry.value) return json({ error: "chunk not found" }, 404);
+
+  return json({
+    content: entry.value,
+    index: chunkIndex,
+    isLast: chunkIndex >= meta.value.chunks - 1,
+    orgId: meta.value.orgId,
+  });
 }
 
 // -- Admin: Import State --
@@ -3380,6 +3443,11 @@ Deno.serve(async (req) => {
     if (png) return new Response(png as BodyInit, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
     // Fallback: redirect to SVG
     return Response.redirect(`${env.selfUrl}/favicon.svg`, 302);
+  }
+
+  // Snapshot chunk: GET /admin/snapshot/:id/:chunk
+  if (req.method === "GET" && url.pathname.startsWith("/admin/snapshot/")) {
+    return handleSnapshotChunk(req);
   }
 
   // Serve sound files from S3: /sounds/{orgId}/{packId}/{slot}.mp3

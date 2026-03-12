@@ -254,7 +254,6 @@ const postRoutes: Record<string, Handler> = {
   "/admin/pause-queues": handlePauseQueues,
   "/admin/resume-queues": handleResumeQueues,
   "/admin/clear-review-queue": handleClearReviewQueue,
-  "/admin/app-stats": handleAppStats,
   "/admin/dump-state": handleDumpState,
   "/admin/import-state": handleImportState,
   "/admin/pull-state": handlePullState,
@@ -2433,126 +2432,31 @@ async function handleClearReviewQueue(req: Request): Promise<Response> {
 
 // -- Admin: Dump State --
 
-async function handleAppStats(req: Request): Promise<Response> {
-  const auth = await requireAdminAuth(req);
-  if (auth instanceof Response) return auth;
-
-  const db = await Deno.openKv();
-  let totalEntries = 0;
-  let totalBytes = 0;
-  const buckets: Record<string, { count: number; bytes: number }> = {};
-
-  const iter = db.list({ prefix: [auth.orgId] });
-  for await (const entry of iter) {
-    const keyType = String(entry.key[1] ?? "unknown");
-    const valueJson = JSON.stringify(entry.value);
-    const size = valueJson.length;
-    totalEntries++;
-    totalBytes += size;
-    if (!buckets[keyType]) buckets[keyType] = { count: 0, bytes: 0 };
-    buckets[keyType].count++;
-    buckets[keyType].bytes += size;
-  }
-
-  // Sort buckets by bytes desc
-  const sorted = Object.entries(buckets)
-    .sort((a, b) => b[1].bytes - a[1].bytes)
-    .map(([key, stats]) => ({ key, ...stats, mb: (stats.bytes / 1_000_000).toFixed(2) }));
-
-  const estimatedChunks = Math.ceil(totalBytes / 900_000);
-  const estimatedSeconds = Math.ceil(estimatedChunks * 1.5); // ~1.5s per chunk fetch+write
-
-  return json({
-    orgId: auth.orgId,
-    totalEntries,
-    totalMb: (totalBytes / 1_000_000).toFixed(2),
-    estimatedChunks,
-    estimatedSeconds,
-    buckets: sorted,
-  });
-}
-
 async function handleDumpState(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
+  const body = await req.json().catch(() => ({})) as { cursor?: Deno.KvKeyPart[]; limit?: number };
+  const PAGE = body.limit ?? 500;
+
   const db = await Deno.openKv();
-  const snapshotId = crypto.randomUUID();
-  const CHUNK_LIMIT = 900_000; // ~900KB per chunk (safe under 1MB KV value limit)
+  const selector: Deno.KvListSelector = body.cursor
+    ? { prefix: [auth.orgId], start: body.cursor as Deno.KvKey }
+    : { prefix: [auth.orgId] };
 
-  let chunk: Array<{ key: Deno.KvKeyPart[]; value: unknown }> = [];
-  let chunkBytes = 0;
-  let chunkIndex = 0;
-  let totalEntries = 0;
+  const entries: Array<{ key: Deno.KvKeyPart[]; value: unknown }> = [];
+  let lastKey: Deno.KvKeyPart[] | null = null;
 
-  const iter = db.list({ prefix: [auth.orgId] });
+  const iter = db.list(selector, { limit: PAGE });
   for await (const entry of iter) {
-    const item = { key: entry.key as Deno.KvKeyPart[], value: entry.value };
-    const itemJson = JSON.stringify(item);
-    const itemSize = itemJson.length;
-
-    // If adding this item would exceed the chunk limit, flush current chunk
-    if (chunkBytes + itemSize > CHUNK_LIMIT && chunk.length > 0) {
-      await db.set(["snapshot", snapshotId, chunkIndex], chunk);
-      chunkIndex++;
-      chunk = [];
-      chunkBytes = 0;
-    }
-
-    chunk.push(item);
-    chunkBytes += itemSize;
-    totalEntries++;
+    entries.push({ key: entry.key as Deno.KvKeyPart[], value: entry.value });
+    lastKey = entry.key as Deno.KvKeyPart[];
   }
 
-  // Flush remaining
-  if (chunk.length > 0) {
-    await db.set(["snapshot", snapshotId, chunkIndex], chunk);
-    chunkIndex++;
-  }
+  const done = entries.length < PAGE;
+  console.log(`[ADMIN] dump-state: ${entries.length} entries, done=${done}`);
 
-  // Store snapshot metadata
-  await db.set(["snapshot", snapshotId, "_meta"], {
-    orgId: auth.orgId,
-    chunks: chunkIndex,
-    totalEntries,
-    exportedAt: new Date().toISOString(),
-  });
-
-  console.log(`[ADMIN] ${auth.email} snapshot ${snapshotId}: ${totalEntries} entries in ${chunkIndex} chunks`);
-  return json({ snapshotId, chunks: chunkIndex, totalEntries });
-}
-
-async function handleSnapshotChunk(req: Request): Promise<Response> {
-  const auth = await requireAdminAuth(req);
-  if (auth instanceof Response) return auth;
-
-  const url = new URL(req.url);
-  const parts = url.pathname.split("/");
-  // /admin/snapshot/:id/:chunk
-  const snapshotId = parts[3];
-  const chunkIndex = parseInt(parts[4], 10);
-
-  if (!snapshotId || isNaN(chunkIndex)) {
-    return json({ error: "snapshotId and chunk index required" }, 400);
-  }
-
-  const db = await Deno.openKv();
-  const meta = await db.get<{ orgId: string; chunks: number; totalEntries: number; exportedAt: string }>(
-    ["snapshot", snapshotId, "_meta"],
-  );
-  if (!meta.value) return json({ error: "snapshot not found" }, 404);
-
-  const entry = await db.get<Array<{ key: Deno.KvKeyPart[]; value: unknown }>>(
-    ["snapshot", snapshotId, chunkIndex],
-  );
-  if (!entry.value) return json({ error: "chunk not found" }, 404);
-
-  return json({
-    content: entry.value,
-    index: chunkIndex,
-    isLast: chunkIndex >= meta.value.chunks - 1,
-    orgId: meta.value.orgId,
-  });
+  return json({ orgId: auth.orgId, entries, cursor: done ? null : lastKey, done });
 }
 
 // -- Admin: Import State (direct entries) --
@@ -2604,21 +2508,20 @@ async function handleImportState(req: Request): Promise<Response> {
   return json({ ok: true, cleared, written });
 }
 
-// -- Admin: Pull State (fetch snapshot chunks from remote, import locally) --
+// -- Admin: Pull State (paginated fetch from remote dump-state, import locally) --
 
 async function handlePullState(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
   const body = await req.json();
-  const { sourceUrl, snapshotId, cookie } = body as {
+  const { sourceUrl, cookie } = body as {
     sourceUrl: string;   // e.g. "https://autobottom.thetechgoose.deno.net"
-    snapshotId: string;
     cookie: string;      // session cookie value from the source server
   };
 
-  if (!sourceUrl || !snapshotId || !cookie) {
-    return json({ error: "sourceUrl, snapshotId, and cookie required" }, 400);
+  if (!sourceUrl || !cookie) {
+    return json({ error: "sourceUrl and cookie required" }, 400);
   }
 
   const db = await Deno.openKv();
@@ -2633,36 +2536,41 @@ async function handlePullState(req: Request): Promise<Response> {
   }
   console.log(`[ADMIN] pull-state: cleared ${cleared} local entries`);
 
-  // Fetch chunks one by one from the source server
-  let chunkIndex = 0;
+  // Paginated fetch from remote dump-state
+  let cursor: unknown = undefined;
   let written = 0;
+  let pages = 0;
   let sourceOrgId: string | null = null;
 
   while (true) {
-    const chunkUrl = `${sourceUrl}/admin/snapshot/${snapshotId}/${chunkIndex}`;
-    console.log(`[ADMIN] pull-state: fetching chunk ${chunkIndex}...`);
+    const fetchBody: Record<string, unknown> = { limit: 500 };
+    if (cursor) fetchBody.cursor = cursor;
 
-    const res = await fetch(chunkUrl, {
-      headers: { "Cookie": `session=${cookie}` },
+    console.log(`[ADMIN] pull-state: fetching page ${pages}...`);
+    const res = await fetch(`${sourceUrl}/admin/dump-state`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Cookie": `session=${cookie}` },
+      body: JSON.stringify(fetchBody),
     });
+
     if (!res.ok) {
       const errText = await res.text();
-      return json({ error: `Failed to fetch chunk ${chunkIndex}: ${res.status} ${errText}` }, 502);
+      return json({ error: `Failed to fetch page ${pages}: ${res.status} ${errText}`, written, pages }, 502);
     }
 
     const data = await res.json() as {
-      content: Array<{ key: Deno.KvKeyPart[]; value: unknown }>;
-      index: number;
-      isLast: boolean;
       orgId: string;
+      entries: Array<{ key: Deno.KvKeyPart[]; value: unknown }>;
+      cursor: unknown;
+      done: boolean;
     };
 
     if (!sourceOrgId) sourceOrgId = data.orgId;
 
-    // Write entries from this chunk, remapping orgId
+    // Write entries, remapping orgId
     const BATCH = 10;
-    for (let i = 0; i < data.content.length; i += BATCH) {
-      const batch = data.content.slice(i, i + BATCH);
+    for (let i = 0; i < data.entries.length; i += BATCH) {
+      const batch = data.entries.slice(i, i + BATCH);
       const atomic = db.atomic();
       for (const entry of batch) {
         let key = entry.key;
@@ -2675,14 +2583,15 @@ async function handlePullState(req: Request): Promise<Response> {
       await atomic.commit();
     }
 
-    console.log(`[ADMIN] pull-state: chunk ${chunkIndex} imported (${data.content.length} entries)`);
+    pages++;
+    console.log(`[ADMIN] pull-state: page ${pages} done (${data.entries.length} entries)`);
 
-    if (data.isLast) break;
-    chunkIndex++;
+    if (data.done) break;
+    cursor = data.cursor;
   }
 
-  console.log(`[ADMIN] ${auth.email} pull-state complete: cleared ${cleared}, wrote ${written} entries from ${sourceUrl}`);
-  return json({ ok: true, cleared, written, chunks: chunkIndex + 1, sourceOrgId });
+  console.log(`[ADMIN] ${auth.email} pull-state complete: cleared ${cleared}, wrote ${written} entries in ${pages} pages`);
+  return json({ ok: true, cleared, written, pages, sourceOrgId });
 }
 
 // -- Admin: Init Org --
@@ -3565,11 +3474,6 @@ Deno.serve(async (req) => {
     if (png) return new Response(png as BodyInit, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
     // Fallback: redirect to SVG
     return Response.redirect(`${env.selfUrl}/favicon.svg`, 302);
-  }
-
-  // Snapshot chunk: GET /admin/snapshot/:id/:chunk
-  if (req.method === "GET" && url.pathname.startsWith("/admin/snapshot/")) {
-    return handleSnapshotChunk(req);
   }
 
   // Serve sound files from S3: /sounds/{orgId}/{packId}/{slot}.mp3

@@ -2436,44 +2436,18 @@ async function handleDumpState(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
 
   const db = await Deno.openKv();
-  const prefixes = [
-    "review-pending",
-    "review-active",
-    "review-decided",
-    "review-audit-pending",
-    "review-lock",
-    "judge-pending",
-    "judge-active",
-    "judge-decided",
-    "judge-audit-pending",
-    "manager-queue",
-    "manager-remediation",
-    "finding",
-    "transcript",
-    "appeal",
-  ];
 
+  // Dump ALL entries under this org's prefix — full app state
   const entries: Array<{ key: Deno.KvKeyPart[]; value: unknown }> = [];
-  for (const prefix of prefixes) {
-    const iter = db.list({ prefix: orgKey(auth.orgId, prefix) });
-    for await (const entry of iter) {
-      entries.push({
-        key: entry.key as Deno.KvKeyPart[],
-        value: entry.value,
-      });
-    }
-  }
-
-  // Also dump users for this org so staging can recreate sessions
-  const userIter = db.list({ prefix: orgKey(auth.orgId, "user") });
-  for await (const entry of userIter) {
+  const iter = db.list({ prefix: [auth.orgId] });
+  for await (const entry of iter) {
     entries.push({
       key: entry.key as Deno.KvKeyPart[],
       value: entry.value,
     });
   }
 
-  console.log(`[ADMIN] ${auth.email} dumped state: ${entries.length} entries`);
+  console.log(`[ADMIN] ${auth.email} dumped full state: ${entries.length} entries`);
   return json({ orgId: auth.orgId, entries, exportedAt: new Date().toISOString() });
 }
 
@@ -2496,27 +2470,12 @@ async function handleImportState(req: Request): Promise<Response> {
   const db = await Deno.openKv();
   const targetOrgId = auth.orgId;
 
-  // Clear existing queue state on the target
-  const clearPrefixes = [
-    "review-pending",
-    "review-active",
-    "review-decided",
-    "review-audit-pending",
-    "review-lock",
-    "judge-pending",
-    "judge-active",
-    "judge-decided",
-    "judge-audit-pending",
-    "manager-queue",
-    "manager-remediation",
-  ];
+  // Nuke ALL existing state for this org
   let cleared = 0;
-  for (const prefix of clearPrefixes) {
-    const iter = db.list({ prefix: orgKey(targetOrgId, prefix) });
-    for await (const entry of iter) {
-      await db.delete(entry.key);
-      cleared++;
-    }
+  const nukeIter = db.list({ prefix: [targetOrgId] });
+  for await (const entry of nukeIter) {
+    await db.delete(entry.key);
+    cleared++;
   }
 
   // Write imported entries, remapping orgId if source differs from target

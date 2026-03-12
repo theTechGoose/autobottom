@@ -1,5 +1,6 @@
 /** Groq LLM provider for question answering, diarization, and feedback. */
 import Groq from "npm:groq-sdk";
+import type { ChatCompletion } from "npm:groq-sdk/resources/chat/completions";
 
 function getClient() {
   return new Groq({ apiKey: Deno.env.get("GROQ_API_KEY") });
@@ -218,7 +219,7 @@ async function groqCallWithRetry(
     const res = await Promise.race([
       client.chat.completions.create({ ...params, model }),
       timeoutP,
-    ]);
+    ]) as ChatCompletion;
     clearTimeout(timerId!);
     trackTokens(trackLabel, res.usage);
     return res.choices[0]?.message?.content ?? "";

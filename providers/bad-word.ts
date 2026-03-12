@@ -80,6 +80,7 @@ export interface BadWordEmailContext {
   recordId?: string;
   agentEmail?: string;
   officeName?: string;
+  officeId?: number;
   guestName?: string;
   reservationId?: string;
 }

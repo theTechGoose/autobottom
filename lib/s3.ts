@@ -8,13 +8,13 @@ const accessKey = Deno.env.get("AWS_ACCESS_KEY_ID")!;
 const secretKey = Deno.env.get("AWS_SECRET_ACCESS_KEY")!;
 
 async function hmac(key: ArrayBuffer | Uint8Array, data: string): Promise<ArrayBuffer> {
-  const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const k = await crypto.subtle.importKey("raw", key as BufferSource, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return crypto.subtle.sign("HMAC", k, new TextEncoder().encode(data));
 }
 
 async function sha256(data: Uint8Array | string): Promise<string> {
   const buf = typeof data === "string" ? new TextEncoder().encode(data) : data;
-  const hash = await crypto.subtle.digest("SHA-256", buf);
+  const hash = await crypto.subtle.digest("SHA-256", buf as BufferSource);
   return hex(new Uint8Array(hash));
 }
 
@@ -65,7 +65,7 @@ export class S3Ref {
     const payloadHash = await sha256(body);
     const headers: Record<string, string> = { "content-type": "application/octet-stream" };
     const url = await signV4("PUT", this.bucket, this.key, payloadHash, headers);
-    const res = await fetch(url, { method: "PUT", headers, body });
+    const res = await fetch(url, { method: "PUT", headers, body: body as BodyInit });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`S3 PUT failed: ${res.status} ${text}`);

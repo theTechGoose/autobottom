@@ -15,7 +15,7 @@ export async function uploadAudio(bytes: Uint8Array, timeoutMs = 60_000): Promis
     const res = await fetch(`${BASE}/upload`, {
       method: "POST",
       headers: { ...authHeaders(), "Content-Type": "application/octet-stream" },
-      body: bytes,
+      body: bytes as BodyInit,
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`AssemblyAI upload failed: ${res.status} ${await res.text()}`);

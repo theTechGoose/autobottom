@@ -197,7 +197,7 @@ export async function handleGetRecording(orgId: OrgId, req: Request): Promise<Re
   const bytes = await s3.get();
   if (!bytes) return json({ error: "recording not found in S3" }, 404);
 
-  return new Response(bytes, {
+  return new Response(bytes as BodyInit, {
     headers: {
       "Content-Type": "audio/mpeg",
       "Content-Length": String(bytes.byteLength),

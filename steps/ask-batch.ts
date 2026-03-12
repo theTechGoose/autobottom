@@ -180,7 +180,7 @@ export async function stepAskBatch(req: Request): Promise<Response> {
   if (batchError) {
     if (retryCount < pipelineCfg.maxRetries) {
       const delay = pipelineCfg.retryDelaySeconds * Math.pow(2, retryCount);
-      console.warn(`[STEP-ASK] ${findingId}: Batch ${batchIndex} error (attempt ${retryCount + 1}/${pipelineCfg.maxRetries}), retrying in ${delay}s — ${batchError.message.slice(0, 100)}`);
+      console.warn(`[STEP-ASK] ${findingId}: Batch ${batchIndex} error (attempt ${retryCount + 1}/${pipelineCfg.maxRetries}), retrying in ${delay}s — ${(batchError as Error).message.slice(0, 100)}`);
       await enqueueStep("ask-batch", { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches, retryCount: retryCount + 1 }, delay);
       return json({ ok: true, retrying: true, attempt: retryCount + 1 });
     }

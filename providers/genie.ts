@@ -67,14 +67,15 @@ async function searchOnce(contract: number, role: AccountRole, tag: string): Pro
   }
 }
 
-async function searchWithRetry(contract: number, role: AccountRole, tag: string, maxAttempts = 5, delayMs = 2000): Promise<string | null> {
+async function searchWithRetry(contract: number, role: AccountRole, tag: string, maxAttempts = 5): Promise<string | null> {
+  const accountId = getAccountId(role);
   for (let i = 1; i <= maxAttempts; i++) {
-    console.log(`[GENIE] 🔍 search attempt ${i}/${maxAttempts}: contract=${contract} role=${role} ${tag}`);
+    console.log(`[GENIE] 🔍 search attempt ${i}/${maxAttempts}: contract=${contract} role=${role} accountId=${accountId} ${tag}`);
     const src = await searchOnce(contract, role, tag);
     if (src) return src;
-    if (i < maxAttempts) await sleep(delayMs);
+    if (i < maxAttempts) await sleep(2 ** i * 1000);
   }
-  console.warn(`[GENIE] 🔍 search exhausted ${maxAttempts} attempts: contract=${contract} role=${role} ${tag}`);
+  console.warn(`[GENIE] 🔍 search exhausted ${maxAttempts} attempts: contract=${contract} role=${role} accountId=${accountId} ${tag}`);
   return null;
 }
 
@@ -84,7 +85,6 @@ async function downloadWithRetry(
   contract: number,
   tag: string,
   maxAttempts = 3,
-  delayMs = 2000,
 ): Promise<Uint8Array> {
   let lastError: unknown;
   console.log(`[GENIE] ⬇️ download start: contract=${contract} role=${role} src=${src} ${tag}`);
@@ -125,7 +125,7 @@ async function downloadWithRetry(
         throw new Error(`Dead URL — cascade. ${msg}`);
       }
       console.warn(`[GENIE] ⚠️ download attempt ${i}/${maxAttempts} failed: contract=${contract} role=${role} ${tag}`, err);
-      if (i < maxAttempts) await sleep(delayMs);
+      if (i < maxAttempts) await sleep(2 ** i * 1000);
     }
   }
   throw new Error(`Genie download failed after ${maxAttempts} attempts. Last: ${String(lastError)}`);
@@ -164,11 +164,4 @@ export async function downloadRecording(genieId: number, findingId?: string): Pr
 
   console.error(`[GENIE] ❌ all strategies exhausted: contract=${genieId}`);
   return null;
-}
-
-/** Get just the recording URL without downloading. */
-export async function getRecordingUrl(genieId: number): Promise<string | null> {
-  const primarySrc = await searchWithRetry(genieId, "primary");
-  if (primarySrc) return primarySrc;
-  return searchWithRetry(genieId, "secondary");
 }

@@ -98,7 +98,7 @@ export async function publishStep(step: string, body: unknown) {
   const url = `${env.selfUrl}/audit/step/${step}`;
   if (LOCAL_MODE) return localEnqueue(url, body);
   // ask-all needs a longer response timeout — publish path only (queue slots stay free)
-  const timeout = step === "ask-all" ? { "Upstash-Timeout": "900s" } : {};
+  const timeout: Record<string, string> = step === "ask-all" ? { "Upstash-Timeout": "900s" } : {};
   const res = await fetch(`${env.qstashUrl}/v2/publish/${url}`, {
     method: "POST",
     headers: {

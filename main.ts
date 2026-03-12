@@ -369,7 +369,6 @@ const getRoutes: Record<string, Handler> = {
   "/admin/settings/judge-finish": handleAdminGetSettings,
   "/admin/settings/re-audit-receipt": handleAdminGetSettings,
   "/admin/parallelism": handleGetParallelism,
-  "/admin/queues": handleGetQueues,
   "/admin/users": handleAdminListUsers,
   "/admin/email-reports": handleListEmailReports,
   "/admin/email-templates": handleListEmailTemplates,
@@ -1562,10 +1561,10 @@ async function handleUploadSound(req: Request): Promise<Response> {
 }
 
 const BUILTIN_PACKS: Record<string, Record<SoundSlot, string>> = {
-  smite: { ping: "smite-mario-coin.mp3", double: "smite-double-kill.mp3", triple: "smite-triple-kill.mp3", mega: "smite-quadra-kill.mp3", ultra: "smite-penta-kill.mp3", rampage: "smite-rampage.mp3", godlike: "smite-godlike.mp3", levelup: "smite-unstoppable.mp3" },
-  opengameart: { ping: "oga-Coin01.mp3", double: "oga-Rise01.mp3", triple: "oga-Rise02.mp3", mega: "oga-Rise03.mp3", ultra: "oga-Rise04.mp3", rampage: "oga-Rise05.mp3", godlike: "oga-Rise07.mp3", levelup: "oga-Upper01.mp3" },
-  "mixkit-punchy": { ping: "mixkit-winning-coin.mp3", double: "mixkit-alert-ding.mp3", triple: "mixkit-achievement-bell.mp3", mega: "mixkit-bonus-reached.mp3", ultra: "mixkit-game-bonus.mp3", rampage: "mixkit-success-alert.mp3", godlike: "mixkit-arcade-retro.mp3", levelup: "mixkit-fairy-sparkle.mp3" },
-  "mixkit-epic": { ping: "mixkit-notification.mp3", double: "mixkit-game-notification.mp3", triple: "mixkit-magic-notify.mp3", mega: "mixkit-achievement-bell.mp3", ultra: "mixkit-bonus-reached.mp3", rampage: "mixkit-arcade-retro.mp3", godlike: "mixkit-success-alert.mp3", levelup: "mixkit-fairy-sparkle.mp3" },
+  smite: { ping: "smite-mario-coin.mp3", double: "smite-double-kill.mp3", triple: "smite-triple-kill.mp3", mega: "smite-quadra-kill.mp3", ultra: "smite-penta-kill.mp3", rampage: "smite-rampage.mp3", godlike: "smite-godlike.mp3", levelup: "smite-unstoppable.mp3", shutdown: "" },
+  opengameart: { ping: "oga-Coin01.mp3", double: "oga-Rise01.mp3", triple: "oga-Rise02.mp3", mega: "oga-Rise03.mp3", ultra: "oga-Rise04.mp3", rampage: "oga-Rise05.mp3", godlike: "oga-Rise07.mp3", levelup: "oga-Upper01.mp3", shutdown: "" },
+  "mixkit-punchy": { ping: "mixkit-winning-coin.mp3", double: "mixkit-alert-ding.mp3", triple: "mixkit-achievement-bell.mp3", mega: "mixkit-bonus-reached.mp3", ultra: "mixkit-game-bonus.mp3", rampage: "mixkit-success-alert.mp3", godlike: "mixkit-arcade-retro.mp3", levelup: "mixkit-fairy-sparkle.mp3", shutdown: "" },
+  "mixkit-epic": { ping: "mixkit-notification.mp3", double: "mixkit-game-notification.mp3", triple: "mixkit-magic-notify.mp3", mega: "mixkit-achievement-bell.mp3", ultra: "mixkit-bonus-reached.mp3", rampage: "mixkit-arcade-retro.mp3", godlike: "mixkit-success-alert.mp3", levelup: "mixkit-fairy-sparkle.mp3", shutdown: "" },
 };
 
 const BUILTIN_PACK_NAMES: Record<string, string> = {
@@ -3305,7 +3304,7 @@ Deno.serve(async (req) => {
   // Logo PNG (for email clients that block SVG — Gmail, etc.)
   if (url.pathname === "/logo.png") {
     const png = await getLogoPng();
-    if (png) return new Response(png, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
+    if (png) return new Response(png as BodyInit, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
     // Fallback: redirect to SVG
     return Response.redirect(`${env.selfUrl}/favicon.svg`, 302);
   }
@@ -3320,7 +3319,7 @@ Deno.serve(async (req) => {
         const ref = new S3Ref(env.s3Bucket, s3Key);
         const bytes = await ref.get();
         if (!bytes) return json({ error: "not found" }, 404);
-        return new Response(bytes, { headers: { "Content-Type": "audio/mpeg", "Cache-Control": "public, max-age=86400" } });
+        return new Response(bytes as BodyInit, { headers: { "Content-Type": "audio/mpeg", "Cache-Control": "public, max-age=86400" } });
       } catch { return json({ error: "not found" }, 404); }
     }
     // Legacy: serve local files by name (fallback during migration)

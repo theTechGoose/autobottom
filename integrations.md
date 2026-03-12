@@ -1059,6 +1059,46 @@ New functions: `listEmailTemplates(orgId)`, `getEmailTemplate(orgId, id)`, `save
 
 ---
 
+## 52. Genie Retry Logic + Verbose Logging (`geniefeet`, `a59547b`)
+
+### Files
+- `providers/genie.ts` — per-attempt logging, findingId tag propagation
+- `steps/init.ts` — isRetryableGenie, job-level retry with QStash delay
+- `lib/kv.ts` — trackActive meta extended with genieRetryAt/genieAttempts
+- `dashboard/page.ts` — genie-retry step badge with live countdown
+
+### Changes
+
+#### Genie Provider Logging (`providers/genie.ts`)
+- Added `tag` (findingId) param to `searchOnce`, `searchWithRetry`, `downloadWithRetry`, `tryStrategy` — all log lines now include the findingId for easy log grep.
+- `searchOnce`: logs exact reason for each null return — HTTP status, API error body, empty data array, missing `contract` field, missing/blank `src`.
+- `searchWithRetry`: logs `search attempt i/max` before each attempt; logs "exhausted N attempts" at the end.
+- `downloadWithRetry`: all existing log lines now include `${tag}`.
+- `getRecordingUrl`: updated to pass `tag` to `searchWithRetry` (was missing, caused TypeScript compile error).
+
+#### Job-Level Genie Retry (`steps/init.ts`)
+- `isRetryableGenie(rid)`: regex `/^[23]\d{7}$/` — true for real 8-digit Genie IDs starting with 2 or 3; false for all-zeros, placeholder, or other formats.
+- `MAX_GENIE_RETRIES = 3` (allows 2 retries after initial attempt).
+- `GENIE_RETRY_DELAY_SEC = 600` (10 minutes between retries).
+- When `downloadRecording` returns null for a retryable Genie ID:
+  - Increments `finding.genieAttempts`; saves `finding.genieRetryAt = now + 10min`.
+  - Calls `trackActive(orgId, findingId, "genie-retry", { genieRetryAt, genieAttempts })`.
+  - Re-enqueues `init` step with a 600-second QStash delay (uses `Upstash-Delay: 600s` via the publish path).
+  - Returns `{ ok: true, retrying: true, attempt, retryAt }`.
+- After `MAX_GENIE_RETRIES - 1` failed retries, falls through to existing "Invalid Genie" path (rawTranscript = "Invalid Genie", finalize).
+
+#### KV Extension (`lib/kv.ts`)
+- `trackActive` meta type extended: added optional `genieRetryAt?: number` and `genieAttempts?: number` fields.
+- These are stored in `stats-active:<findingId>` and surfaced to the dashboard.
+
+#### Dashboard Genie-Retry Badge (`dashboard/page.ts`)
+- In `renderActive()`, when `a.step === 'genie-retry'` and `a.genieRetryAt` is set:
+  - Calculates seconds remaining until retry: `Math.max(0, Math.round((a.genieRetryAt - Date.now()) / 1000))`.
+  - Renders yellow badge: `⏳ genie-retry (Xm Ys)` with title showing attempt number and countdown.
+  - Style: `background: rgba(210,153,34,0.15); color: var(--yellow)`.
+
+---
+
 ## New API Endpoints Summary
 
 | Method | Path | Auth | Description |

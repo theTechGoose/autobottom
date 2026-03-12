@@ -998,12 +998,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   var STORAGE_PREFIX = '${storagePrefix}';
   var GAME_CONFIG = ${gamificationJson || '{"threshold":0,"comboTimeoutMs":10000,"enabled":true,"sounds":{}}'};
   var POSITIVE_DECISION = '${posDecision}';
-  var currentItem = null;
-  var peekItems = [];
-  var currentTranscript = null;
+  var buffer = []; // flat array of BufferItems, each with auditRemaining + transcript
   var reviewer = null;
   var busy = false;
-  var currentAuditRemaining = 0;
   var pendingDecision = null;
   var pendingReason = null;
   var REASON_LABELS = { error: 'Error', logic: 'Logic', fragment: 'Fragment', transcript: 'Transcript' };
@@ -1480,16 +1477,13 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   // -- Queue --
   function loadNext() {
     return api('/next').then(function(data) {
-      if (!data.current) {
+      buffer = data.buffer || [];
+      if (buffer.length === 0) {
         showEmpty();
         return;
       }
-      currentItem = data.current;
-      peekItems = data.peek || [];
-      currentTranscript = data.transcript;
-      currentAuditRemaining = data.auditRemaining || 0;
-      if (currentTranscript && currentItem) {
-        transcriptCache[currentItem.findingId] = currentTranscript;
+      for (var i = 0; i < buffer.length; i++) {
+        if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
       }
       showReview();
     }).catch(function(err) {
@@ -1515,6 +1509,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   }
 
   function renderCurrent() {
+    var currentItem = buffer[0];
     if (!currentItem) return;
     if (searchOpen) closeSearch();
     document.getElementById('q-header').textContent = currentItem.header;
@@ -1557,7 +1552,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
     ${verdictBadgeRenderJs}
 
-    document.getElementById('m-last').style.display = currentAuditRemaining === 1 ? '' : 'none';
+    document.getElementById('m-last').style.display = currentItem.auditRemaining === 1 ? '' : 'none';
 
     document.getElementById('thinking-content').classList.remove('open');
     document.querySelector('#thinking-toggle .arrow').classList.remove('open');
@@ -1641,6 +1636,8 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   function renderTranscript() {
     var body = document.getElementById('transcript-body');
     body.innerHTML = '';
+    var currentItem = buffer[0];
+    var currentTranscript = currentItem ? currentItem.transcript : null;
     if (!currentTranscript || (!currentTranscript.diarized && !currentTranscript.raw)) {
       body.innerHTML = '<p style="color:#3d4452;padding:20px">No transcript available</p>';
       return;
@@ -1721,11 +1718,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   window.decide = function(decision, reason) { decide(decision, reason); };
   function decide(decision, reason) {
-    if (!currentItem) return;
+    if (buffer.length === 0) return;
     // Only block if buffer is empty AND a request is in flight
-    if (busy && peekItems.length === 0) return;
+    if (busy && buffer.length === 0) return;
 
-    if (currentAuditRemaining === 1) {
+    if (buffer[0].auditRemaining === 1) {
       pendingDecision = decision;
       pendingReason = reason || null;
       showConfirmModal();
@@ -1746,13 +1743,13 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   }
 
   function executeDecision(decision, reason) {
-    if (!currentItem) return;
-    if (busy && peekItems.length === 0) return;
+    if (buffer.length === 0) return;
+    if (busy && buffer.length === 0) return;
 
     // Optimistically hide "Final for Audit" badge
     var mLastOpt = document.getElementById('m-last');
     if (mLastOpt) mLastOpt.style.display = 'none';
-    var item = currentItem;
+    var item = buffer.shift(); // consume from front
 
     trackDecision();
     tickCombo();
@@ -1761,12 +1758,8 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     awardXp(decision === POSITIVE_DECISION ? 10 : 15);
     updateStreak();
 
-    // Swap to next peek item instantly
-    if (peekItems.length > 0) {
-      currentItem = peekItems.shift();
-      if (transcriptCache[currentItem.findingId]) {
-        currentTranscript = transcriptCache[currentItem.findingId];
-      }
+    // Swap to next buffer item instantly
+    if (buffer.length > 0) {
       animateTransition(function() { renderCurrent(); });
     } else {
       // Buffer empty — block until /decide comes back
@@ -1796,15 +1789,15 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         inflight--;
 
         if (res.status === 409) {
-          // Silently absorb — item was already handled. Replenish buffer if possible.
-          if (inflight === 0 && !currentItem) {
+          // Silently absorb — item was already handled (stale). Refresh if buffer empty.
+          if (inflight === 0 && buffer.length === 0) {
             fetch(API + '/next').then(function(r) { return r.json(); }).then(function(d) {
-              if (d.current) {
-                currentItem = d.current;
-                peekItems = d.peek || [];
-                currentTranscript = d.transcript || null;
-                currentAuditRemaining = d.auditRemaining || 0;
-                renderCurrent();
+              buffer = d.buffer || [];
+              if (buffer.length > 0) {
+                for (var i = 0; i < buffer.length; i++) {
+                  if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
+                }
+                showReview();
               } else {
                 showEmpty();
               }
@@ -1829,42 +1822,27 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           }
         }
 
-        var remaining = data.next && data.next.remaining != null ? data.next.remaining : 0;
-        updateProgress(remaining);
-
-        if (data.next && data.next.current) {
-          // Push new peek items onto buffer (replenish)
-          var newPeek = data.next.peek || [];
-          for (var npi = 0; npi < newPeek.length; npi++) { peekItems.push(newPeek[npi]); }
-          if (data.next.transcript && data.next.current) {
-            transcriptCache[data.next.current.findingId] = data.next.transcript;
-          }
-
-          // If we were blocked (buffer was empty), load the current from response
-          if (busy && !currentItem) {
-            currentItem = data.next.current;
-            currentTranscript = data.next.transcript;
-            currentAuditRemaining = data.next.auditRemaining || 0;
-            if (currentTranscript && currentItem) {
-              transcriptCache[currentItem.findingId] = currentTranscript;
+        // Push new buffer items from response (replenish)
+        var newItems = data.buffer || [];
+        for (var ni = 0; ni < newItems.length; ni++) {
+          // Avoid duplicates: don't push items already in the buffer
+          var isDup = false;
+          for (var bi2 = 0; bi2 < buffer.length; bi2++) {
+            if (buffer[bi2].findingId === newItems[ni].findingId && buffer[bi2].questionIndex === newItems[ni].questionIndex) {
+              isDup = true; break;
             }
-            renderCurrent();
-          } else {
-            // Update auditRemaining from latest response
-            currentAuditRemaining = data.next.auditRemaining || 0;
-            var mLastSwap = document.getElementById('m-last');
-            if (mLastSwap) mLastSwap.style.display = currentAuditRemaining === 1 ? '' : 'none';
           }
-          var mRem = document.getElementById('m-remaining'); if (mRem) mRem.textContent = String(remaining);
-        } else if (busy && !currentItem) {
-          // No more items in queue
+          if (!isDup) {
+            buffer.push(newItems[ni]);
+            if (newItems[ni].transcript) transcriptCache[newItems[ni].findingId] = newItems[ni].transcript;
+          }
+        }
+
+        // If we were blocked (buffer was empty), render the first item
+        if (busy && buffer.length > 0) {
+          showReview();
+        } else if (busy && buffer.length === 0) {
           showEmpty();
-        } else if (peekItems.length === 0) {
-          // Current item is the last one
-          currentAuditRemaining = 1;
-          var mLastFinal = document.getElementById('m-last');
-          if (mLastFinal) mLastFinal.style.display = '';
-          var mRem2 = document.getElementById('m-remaining'); if (mRem2) mRem2.textContent = '0';
         }
 
         // Only unblock if all in-flight requests are done
@@ -1939,17 +1917,17 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     if (busy) return;
     busy = true;
     api('/back', { method: 'POST', body: '{}' }).then(function(data) {
+      buffer = data.buffer || [];
+      for (var i = 0; i < buffer.length; i++) {
+        if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
+      }
       animateTransition(function() {
-        currentItem = data.current;
-        currentTranscript = data.transcript;
-        peekItems = data.peek || [];
-        currentAuditRemaining = data.auditRemaining || 0;
-        if (currentTranscript && currentItem) {
-          transcriptCache[currentItem.findingId] = currentTranscript;
+        if (buffer.length > 0) {
+          showReview();
+          renderCurrent();
+        } else {
+          showEmpty();
         }
-        showReview();
-        renderCurrent();
-        var mRem3 = document.getElementById('m-remaining'); if (mRem3) mRem3.textContent = String(data.remaining);
       });
       toast('Undid last decision', 'undo');
       resetCombo();
@@ -2366,11 +2344,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         totalDecided = stats.decided;
         updateProgress(stats.pending);
       }).catch(function(){});
-      if (data.current) {
-        currentItem = data.current;
-        peekItems = data.peek || [];
-        currentTranscript = data.transcript;
-        if (currentTranscript && currentItem) transcriptCache[currentItem.findingId] = currentTranscript;
+      buffer = data.buffer || [];
+      if (buffer.length > 0) {
+        for (var i = 0; i < buffer.length; i++) {
+          if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
+        }
         showReview();
       } else {
         showEmpty();

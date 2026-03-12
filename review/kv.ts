@@ -135,14 +135,16 @@ async function doBadgeCheck(
 
 const ACTIVE_TTL = 30 * 60 * 1000; // 30 minutes — abandoned claims expire back to available pool
 
-const PEEK_SIZE = 5;
+export const BUFFER_SIZE = 5;
+
+export interface BufferItem extends ReviewItem {
+  auditRemaining: number;
+  transcript: { raw: string; diarized: string; utteranceTimes?: number[] } | null;
+}
 
 export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
-  current: ReviewItem | null;
-  transcript: { raw: string; diarized: string } | null;
-  peek: ReviewItem[];
+  buffer: BufferItem[];
   remaining: number;
-  auditRemaining: number;
 }> {
   const db = await kv();
   const now = Date.now();
@@ -150,63 +152,41 @@ export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
   // Helper: atomically claim up to `count` items from pending
   async function claimFromPending(count: number): Promise<ReviewItem[]> {
     const claimed: ReviewItem[] = [];
-    const peekIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
-    for await (const pe of peekIter) {
-      const peekActiveKey = orgKey(orgId, "review-active", reviewer, pe.value.findingId, pe.value.questionIndex);
-      const peekRes = await db.atomic()
-        .check(pe)
-        .delete(pe.key)
-        .set(peekActiveKey, { ...pe.value, claimedAt: now })
+    const iter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
+    for await (const entry of iter) {
+      const activeKey = orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex);
+      const res = await db.atomic()
+        .check(entry)
+        .delete(entry.key)
+        .set(activeKey, { ...entry.value, claimedAt: now })
         .commit();
-      if (peekRes.ok) {
-        claimed.push(pe.value);
+      if (res.ok) {
+        claimed.push(entry.value);
         if (claimed.length >= count) break;
       }
     }
     return claimed;
   }
 
-  // 1. Check if this reviewer already has active items (page refresh / reconnect)
-  const activeItems: (ReviewItem & { claimedAt: number })[] = [];
-  const activeIter = db.list<ReviewItem & { claimedAt: number }>({
-    prefix: orgKey(orgId, "review-active", reviewer),
-  });
-  for await (const entry of activeIter) {
-    activeItems.push(entry.value);
-  }
-
-  if (activeItems.length > 0) {
-    const item = activeItems[0];
+  // Helper: enrich a ReviewItem into a BufferItem (add transcript + auditRemaining)
+  async function enrich(item: ReviewItem): Promise<BufferItem> {
     let transcript = await getTranscript(orgId, item.findingId);
     if (transcript && !transcript.utteranceTimes?.length) {
       transcript = await backfillUtteranceTimes(orgId, item.findingId, transcript);
     }
     const counterEntry = await db.get<number>(orgKey(orgId, "review-audit-pending", item.findingId));
-
-    // Remaining active items are already-claimed peeks
-    const peek: ReviewItem[] = activeItems.slice(1);
-
-    // Top up peek buffer from pending if needed
-    if (peek.length < PEEK_SIZE) {
-      const more = await claimFromPending(PEEK_SIZE - peek.length);
-      peek.push(...more);
-    }
-
-    return {
-      current: item,
-      transcript,
-      peek,
-      remaining: 0,
-      auditRemaining: counterEntry.value ?? 0,
-    };
+    return { ...item, auditRemaining: counterEntry.value ?? 0, transcript };
   }
 
-  // 2. No active item — sweep expired active claims from OTHER reviewers back to pending
+  // 1. Sweep expired active claims from OTHER reviewers back to pending
   const allActiveIter = db.list<ReviewItem & { claimedAt: number }>({
     prefix: orgKey(orgId, "review-active"),
   });
   for await (const entry of allActiveIter) {
     const val = entry.value;
+    // Skip this reviewer's own items
+    const keyParts = entry.key as Deno.KvKeyPart[];
+    if (keyParts[2] === reviewer) continue;
     if (val.claimedAt && (now - val.claimedAt) > ACTIVE_TTL) {
       const pendingKey = orgKey(orgId, "review-pending", val.findingId, val.questionIndex);
       const { claimedAt: _, ...baseItem } = val;
@@ -221,41 +201,28 @@ export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
     }
   }
 
-  // 3. Iterate pending queue and atomically dequeue current + peek items
-  let current: ReviewItem | null = null;
-  const peek: ReviewItem[] = [];
-
-  const iter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
-  for await (const entry of iter) {
-    const activeKey = orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex);
-    const activeValue = { ...entry.value, claimedAt: now };
-    const res = await db.atomic()
-      .check(entry)
-      .delete(entry.key)
-      .set(activeKey, activeValue)
-      .commit();
-    if (!res.ok) continue; // CAS failed — someone else took it
-
-    if (!current) {
-      current = entry.value;
-    } else {
-      peek.push(entry.value);
-      if (peek.length >= PEEK_SIZE) break;
-    }
+  // 2. Collect existing active items for this reviewer
+  const activeItems: ReviewItem[] = [];
+  const activeIter = db.list<ReviewItem & { claimedAt: number }>({
+    prefix: orgKey(orgId, "review-active", reviewer),
+  });
+  for await (const entry of activeIter) {
+    activeItems.push(entry.value);
   }
 
-  let transcript = null;
-  let auditRemaining = 0;
-  if (current) {
-    transcript = await getTranscript(orgId, current.findingId);
-    if (transcript && !transcript.utteranceTimes?.length) {
-      transcript = await backfillUtteranceTimes(orgId, current.findingId, transcript);
-    }
-    const counterEntry = await db.get<number>(orgKey(orgId, "review-audit-pending", current.findingId));
-    auditRemaining = counterEntry.value ?? 0;
+  // 3. Top up from pending if needed
+  if (activeItems.length < BUFFER_SIZE) {
+    const more = await claimFromPending(BUFFER_SIZE - activeItems.length);
+    activeItems.push(...more);
   }
 
-  return { current, transcript, peek, remaining: 0, auditRemaining };
+  // 4. Enrich all items with transcript + auditRemaining
+  const buffer: BufferItem[] = [];
+  for (const item of activeItems) {
+    buffer.push(await enrich(item));
+  }
+
+  return { buffer, remaining: 0 };
 }
 
 // -- Record Decision --
@@ -373,15 +340,12 @@ export async function undoDecision(
   orgId: OrgId,
   reviewer: string,
 ): Promise<{
-  restored: ReviewItem | null;
-  transcript: { raw: string; diarized: string } | null;
-  peek: ReviewItem[];
+  buffer: BufferItem[];
   remaining: number;
-  auditRemaining: number;
 }> {
   const db = await kv();
 
-  // Release any current active item held by this reviewer (put it back in pending)
+  // Release all current active items held by this reviewer (put them back in pending)
   const activeIter = db.list<ReviewItem & { claimedAt: number }>({
     prefix: orgKey(orgId, "review-active", reviewer),
   });
@@ -416,7 +380,7 @@ export async function undoDecision(
   }
 
   if (!latestDecided) {
-    return { restored: null, transcript: null, peek: [], remaining: 0, auditRemaining: 0 };
+    return { buffer: [], remaining: 0 };
   }
 
   const decided = latestDecided.entry.value;
@@ -450,31 +414,11 @@ export async function undoDecision(
 
   const res = await atomic.commit();
   if (!res.ok) {
-    return { restored: null, transcript: null, peek: [], remaining: 0, auditRemaining: 0 };
+    return { buffer: [], remaining: 0 };
   }
 
-  let transcript = await getTranscript(orgId, findingId);
-  if (transcript && !transcript.utteranceTimes?.length) {
-    transcript = await backfillUtteranceTimes(orgId, findingId, transcript);
-  }
-
-  // Claim peek items from pending (atomic dequeue)
-  const peek: ReviewItem[] = [];
-  const pendingIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
-  for await (const entry of pendingIter) {
-    const peekActiveKey = orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex);
-    const peekRes = await db.atomic()
-      .check(entry)
-      .delete(entry.key)
-      .set(peekActiveKey, { ...entry.value, claimedAt: Date.now() })
-      .commit();
-    if (peekRes.ok) {
-      peek.push(entry.value);
-      if (peek.length >= PEEK_SIZE) break;
-    }
-  }
-
-  return { restored: item, transcript, peek, remaining: 0, auditRemaining: newCount };
+  // Now use claimNextItem to get the full buffer (restored item is first active)
+  return claimNextItem(orgId, reviewer);
 }
 
 // -- Audit Completion POST --

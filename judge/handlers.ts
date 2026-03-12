@@ -105,7 +105,7 @@ export async function handleDecide(req: Request): Promise<Response> {
   }
 
   const newBadges = result.newBadges.map(({ check: _, ...rest }) => rest);
-  return json({ decided: { findingId, questionIndex, decision, reason: reason || null }, auditComplete: result.auditComplete, next, newBadges });
+  return json({ decided: { findingId, questionIndex, decision, reason: reason || null }, auditComplete: result.auditComplete, buffer: next.buffer, newBadges });
 }
 
 export async function handleBack(req: Request): Promise<Response> {
@@ -113,17 +113,11 @@ export async function handleBack(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
 
   const result = await undoDecision(auth.orgId, auth.email);
-  if (!result.restored) {
+  if (result.buffer.length === 0) {
     return json({ error: "nothing to undo" }, 404);
   }
 
-  return json({
-    current: result.restored,
-    transcript: result.transcript,
-    peek: result.peek,
-    remaining: result.remaining,
-    auditRemaining: result.auditRemaining,
-  });
+  return json({ buffer: result.buffer, remaining: result.remaining });
 }
 
 // -- Stats --

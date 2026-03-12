@@ -1411,7 +1411,16 @@ export function getDashboardPage(): string {
         ridHtml = '<a href="' + qbUrl + '" target="_blank" class="tbl-link">' + a.recordId + '</a>';
       }
       var startedCell = a.startedAt ? '<span title="' + new Date(a.startedAt).toLocaleTimeString() + '">' + timeAgo(a.startedAt) + '</span>' : '--';
-      tr.innerHTML = '<td>' + fidHtml + '</td><td>' + ridHtml + '</td><td><span class="step-badge">' + (a.step||'--') + '</span></td><td>' + startedCell + '</td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
+      var stepHtml;
+      if (a.step === 'genie-retry' && a.genieRetryAt) {
+        var secsLeft = Math.max(0, Math.round((a.genieRetryAt - Date.now()) / 1000));
+        var minsLeft = Math.floor(secsLeft / 60), s2 = secsLeft % 60;
+        var countdown = minsLeft + 'm ' + (s2 < 10 ? '0' : '') + s2 + 's';
+        stepHtml = '<span class="step-badge" style="background:rgba(210,153,34,0.15);color:var(--yellow);" title="Attempt ' + (a.genieAttempts||1) + '/2 — retrying in ' + countdown + '">⏳ genie-retry (' + countdown + ')</span>';
+      } else {
+        stepHtml = '<span class="step-badge">' + (a.step||'--') + '</span>';
+      }
+      tr.innerHTML = '<td>' + fidHtml + '</td><td>' + ridHtml + '</td><td>' + stepHtml + '</td><td>' + startedCell + '</td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
       tb.appendChild(tr);
     }
     tb.querySelectorAll('.retry-btn').forEach(function(btn) {

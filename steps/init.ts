@@ -13,6 +13,15 @@ function json(data: unknown, status = 200) {
   });
 }
 
+const MAX_GENIE_RETRIES = 3;
+const GENIE_RETRY_DELAY_SEC = 600; // 10 minutes
+
+/** True for real Genie IDs: 8 digits starting with 2 or 3.
+ *  All-zeros, 7-digit, or other prefixes are fake/placeholder IDs — no point retrying. */
+function isRetryableGenie(rid: string): boolean {
+  return /^[23]\d{7}$/.test(rid);
+}
+
 export async function stepInit(req: Request): Promise<Response> {
   const body = await req.json();
   const { findingId, orgId } = body;
@@ -105,12 +114,30 @@ export async function stepInit(req: Request): Promise<Response> {
   // Download recording from Genie
   const bytes = await downloadRecording(Number(rid), findingId);
   if (!bytes) {
-    console.warn(`[STEP-INIT] ${findingId}: No recording found for Genie ${rid}`);
+    const attempts = (finding.genieAttempts ?? 0) + 1;
+    if (isRetryableGenie(rid) && attempts < MAX_GENIE_RETRIES) {
+      const retryAt = Date.now() + GENIE_RETRY_DELAY_SEC * 1000;
+      finding.genieAttempts = attempts;
+      finding.genieRetryAt = retryAt;
+      await saveFinding(orgId, finding);
+      await trackActive(orgId, findingId, "genie-retry", {
+        recordId: qbRecordId || undefined,
+        isPackage: finding.recordingIdField === "GenieNumber",
+        startedAt: finding.startedAt,
+        genieRetryAt: retryAt,
+        genieAttempts: attempts,
+      });
+      await enqueueStep("init", { findingId, orgId }, GENIE_RETRY_DELAY_SEC);
+      console.log(`[STEP-INIT] ${findingId}: ⏳ Genie ${rid} not found — retry ${attempts}/${MAX_GENIE_RETRIES - 1} in ${GENIE_RETRY_DELAY_SEC / 60}min`);
+      return json({ ok: true, retrying: true, attempt: attempts, retryAt });
+    }
+    const reason = isRetryableGenie(rid) ? "no recording (retries exhausted)" : "no recording (not retryable)";
+    console.warn(`[STEP-INIT] ${findingId}: No recording found for Genie ${rid} — ${reason}`);
     finding.rawTranscript = "Invalid Genie";
     finding.findingStatus = "finished";
     await saveFinding(orgId, finding);
     await enqueueStep("finalize", { findingId, orgId });
-    return json({ ok: true, skipped: true, reason: "no recording" });
+    return json({ ok: true, skipped: true, reason });
   }
 
   // Save to S3

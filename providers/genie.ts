@@ -29,33 +29,52 @@ function isValidAudio(bytes: Uint8Array): boolean {
   return isId3 || isMp3Frame || isRiff || isOgg;
 }
 
-async function searchOnce(contract: number, role: AccountRole): Promise<string | null> {
+async function searchOnce(contract: number, role: AccountRole, tag: string): Promise<string | null> {
   const accountId = getAccountId(role);
   try {
     const url = `${env.genieBaseUrl}/api/v1/${accountId}/judge_search.wr?filter_contract=${contract}`;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 15_000);
     const res = await fetch(url, { headers: getHeaders(role), signal: ctrl.signal }).finally(() => clearTimeout(t));
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[GENIE] 🔍 search HTTP ${res.status}: contract=${contract} role=${role} ${tag}`);
+      return null;
+    }
     const json = await res.json();
-    if (json?.error || !json?.data || !Array.isArray(json.data) || json.data.length === 0) return null;
+    if (json?.error) {
+      console.warn(`[GENIE] 🔍 search API error: contract=${contract} role=${role} error=${JSON.stringify(json.error)} ${tag}`);
+      return null;
+    }
+    if (!json?.data || !Array.isArray(json.data) || json.data.length === 0) {
+      console.warn(`[GENIE] 🔍 search empty: contract=${contract} role=${role} data=${JSON.stringify(json?.data)} ${tag}`);
+      return null;
+    }
     const [record] = json.data;
-    if (!record?.contract || record.contract === "") return null;
+    if (!record?.contract || record.contract === "") {
+      console.warn(`[GENIE] 🔍 search no contract field: contract=${contract} role=${role} record=${JSON.stringify(record)} ${tag}`);
+      return null;
+    }
     const src = record?.src as string | undefined;
-    if (!src || src === `${env.genieBaseUrl}/` || src.trim() === "") return null;
+    if (!src || src === `${env.genieBaseUrl}/` || src.trim() === "") {
+      console.warn(`[GENIE] 🔍 search no src: contract=${contract} role=${role} src=${src} ${tag}`);
+      return null;
+    }
+    console.log(`[GENIE] 🔍 search found: contract=${contract} role=${role} src=${src} ${tag}`);
     return src;
   } catch (err) {
-    console.error(`[GENIE] 🔍 search error: role=${role} contract=${contract}`, err);
+    console.error(`[GENIE] 🔍 search error: role=${role} contract=${contract} ${tag}`, err);
     return null;
   }
 }
 
-async function searchWithRetry(contract: number, role: AccountRole, maxAttempts = 5, delayMs = 2000): Promise<string | null> {
+async function searchWithRetry(contract: number, role: AccountRole, tag: string, maxAttempts = 5, delayMs = 2000): Promise<string | null> {
   for (let i = 1; i <= maxAttempts; i++) {
-    const src = await searchOnce(contract, role);
+    console.log(`[GENIE] 🔍 search attempt ${i}/${maxAttempts}: contract=${contract} role=${role} ${tag}`);
+    const src = await searchOnce(contract, role, tag);
     if (src) return src;
     if (i < maxAttempts) await sleep(delayMs);
   }
+  console.warn(`[GENIE] 🔍 search exhausted ${maxAttempts} attempts: contract=${contract} role=${role} ${tag}`);
   return null;
 }
 
@@ -63,11 +82,12 @@ async function downloadWithRetry(
   src: string,
   role: AccountRole,
   contract: number,
+  tag: string,
   maxAttempts = 3,
   delayMs = 2000,
 ): Promise<Uint8Array> {
   let lastError: unknown;
-  console.log(`[GENIE] ⬇️ download start: contract=${contract} role=${role} src=${src}`);
+  console.log(`[GENIE] ⬇️ download start: contract=${contract} role=${role} src=${src} ${tag}`);
 
   for (let i = 1; i <= maxAttempts; i++) {
     try {
@@ -95,16 +115,16 @@ async function downloadWithRetry(
         throw new Error(`DEAD_URL: invalid magic bytes 0x${bytes[0].toString(16).padStart(2, "0")} (size: ${bytes.byteLength})`);
       }
 
-      console.log(`[GENIE] ✅ download ok: contract=${contract} role=${role} bytes=${bytes.byteLength}`);
+      console.log(`[GENIE] ✅ download ok: contract=${contract} role=${role} bytes=${bytes.byteLength} ${tag}`);
       return bytes;
     } catch (err) {
       lastError = err;
       const msg = String(err);
       if (msg.includes("DEAD_URL")) {
-        console.warn(`[GENIE] ❌ dead url — cascading: contract=${contract} role=${role} error=${msg}`);
+        console.warn(`[GENIE] ❌ dead url — cascading: contract=${contract} role=${role} error=${msg} ${tag}`);
         throw new Error(`Dead URL — cascade. ${msg}`);
       }
-      console.warn(`[GENIE] ⚠️ download attempt ${i}/${maxAttempts} failed: contract=${contract} role=${role}`, err);
+      console.warn(`[GENIE] ⚠️ download attempt ${i}/${maxAttempts} failed: contract=${contract} role=${role} ${tag}`, err);
       if (i < maxAttempts) await sleep(delayMs);
     }
   }
@@ -113,15 +133,15 @@ async function downloadWithRetry(
 
 async function tryStrategy(role: AccountRole, contract: number, tag: string): Promise<Uint8Array | null> {
   console.log(`[GENIE] 🚀 strategy: static-${role} contract=${contract} ${tag}`);
-  const src = await searchWithRetry(contract, role);
+  const src = await searchWithRetry(contract, role, tag);
   if (!src) {
-    console.warn(`[GENIE] ❌ no src found: role=${role} contract=${contract}`);
+    console.warn(`[GENIE] ❌ no src found: role=${role} contract=${contract} ${tag}`);
     return null;
   }
   try {
-    return await downloadWithRetry(src, role, contract);
+    return await downloadWithRetry(src, role, contract, tag);
   } catch (err) {
-    console.warn(`[GENIE] ❌ strategy failed: role=${role} contract=${contract}`, err);
+    console.warn(`[GENIE] ❌ strategy failed: role=${role} contract=${contract} ${tag}`, err);
     return null;
   }
 }

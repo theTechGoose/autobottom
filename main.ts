@@ -452,10 +452,13 @@ async function handleRegisterPost(req: Request): Promise<Response> {
   await createUser(orgId, email, password, "admin");
   const token = await createSession({ email, orgId, role: "admin" });
 
-  return json({ ok: true, orgId }, {
+  return new Response(JSON.stringify({ ok: true, orgId }), {
     status: 200,
-    headers: { "Set-Cookie": sessionCookie(token) },
-  } as any);
+    headers: {
+      "Content-Type": "application/json",
+      "Set-Cookie": sessionCookie(token),
+    },
+  });
 }
 
 async function handleLoginPost(req: Request): Promise<Response> {

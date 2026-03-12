@@ -254,6 +254,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/pause-queues": handlePauseQueues,
   "/admin/resume-queues": handleResumeQueues,
   "/admin/clear-review-queue": handleClearReviewQueue,
+  "/admin/app-stats": handleAppStats,
   "/admin/dump-state": handleDumpState,
   "/admin/import-state": handleImportState,
   "/admin/pull-state": handlePullState,
@@ -2431,6 +2432,45 @@ async function handleClearReviewQueue(req: Request): Promise<Response> {
 }
 
 // -- Admin: Dump State --
+
+async function handleAppStats(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const db = await Deno.openKv();
+  let totalEntries = 0;
+  let totalBytes = 0;
+  const buckets: Record<string, { count: number; bytes: number }> = {};
+
+  const iter = db.list({ prefix: [auth.orgId] });
+  for await (const entry of iter) {
+    const keyType = String(entry.key[1] ?? "unknown");
+    const valueJson = JSON.stringify(entry.value);
+    const size = valueJson.length;
+    totalEntries++;
+    totalBytes += size;
+    if (!buckets[keyType]) buckets[keyType] = { count: 0, bytes: 0 };
+    buckets[keyType].count++;
+    buckets[keyType].bytes += size;
+  }
+
+  // Sort buckets by bytes desc
+  const sorted = Object.entries(buckets)
+    .sort((a, b) => b[1].bytes - a[1].bytes)
+    .map(([key, stats]) => ({ key, ...stats, mb: (stats.bytes / 1_000_000).toFixed(2) }));
+
+  const estimatedChunks = Math.ceil(totalBytes / 900_000);
+  const estimatedSeconds = Math.ceil(estimatedChunks * 1.5); // ~1.5s per chunk fetch+write
+
+  return json({
+    orgId: auth.orgId,
+    totalEntries,
+    totalMb: (totalBytes / 1_000_000).toFixed(2),
+    estimatedChunks,
+    estimatedSeconds,
+    buckets: sorted,
+  });
+}
 
 async function handleDumpState(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);

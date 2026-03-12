@@ -999,7 +999,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   var GAME_CONFIG = ${gamificationJson || '{"threshold":0,"comboTimeoutMs":10000,"enabled":true,"sounds":{}}'};
   var POSITIVE_DECISION = '${posDecision}';
   var currentItem = null;
-  var peekItem = null;
+  var peekItems = [];
   var currentTranscript = null;
   var reviewer = null;
   var busy = false;
@@ -1485,7 +1485,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         return;
       }
       currentItem = data.current;
-      peekItem = data.peek;
+      peekItems = data.peek || [];
       currentTranscript = data.transcript;
       currentAuditRemaining = data.auditRemaining || 0;
       if (currentTranscript && currentItem) {
@@ -1749,10 +1749,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     updateStreak();
 
     var didSwap = false;
-    if (peekItem) {
+    if (peekItems.length > 0) {
       didSwap = true;
-      currentItem = peekItem;
-      peekItem = null;
+      currentItem = peekItems.shift();
       if (transcriptCache[currentItem.findingId]) {
         currentTranscript = transcriptCache[currentItem.findingId];
       }
@@ -1785,7 +1784,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           fetch(API + '/next').then(function(r) { return r.json(); }).then(function(d) {
             if (d.current) {
               currentItem = d.current;
-              peekItem = d.peek || null;
+              peekItems = d.peek || [];
               currentTranscript = d.transcript || null;
               currentAuditRemaining = d.auditRemaining || 0;
               renderCurrent();
@@ -1817,13 +1816,14 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         if (data.next && data.next.current) {
           currentAuditRemaining = data.next.auditRemaining || 0;
           if (didSwap) {
-            peekItem = data.next.peek;
+            var newPeek = data.next.peek || [];
+            for (var npi = 0; npi < newPeek.length; npi++) { peekItems.push(newPeek[npi]); }
             // renderCurrent() already ran with the old auditRemaining — sync badge now
             var mLastSwap = document.getElementById('m-last');
             if (mLastSwap) mLastSwap.style.display = currentAuditRemaining === 1 ? '' : 'none';
           } else {
             currentItem = data.next.current;
-            peekItem = data.next.peek;
+            peekItems = data.next.peek || [];
             currentTranscript = data.next.transcript;
             if (currentTranscript && currentItem) {
               transcriptCache[currentItem.findingId] = currentTranscript;
@@ -1838,7 +1838,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           showEmpty();
         } else {
           // didSwap + no more items: the item we swapped to is the last in queue
-          peekItem = null;
+          peekItems = [];
           currentAuditRemaining = 1;
           var mLastFinal = document.getElementById('m-last');
           if (mLastFinal) mLastFinal.style.display = '';
@@ -1915,7 +1915,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       animateTransition(function() {
         currentItem = data.current;
         currentTranscript = data.transcript;
-        peekItem = data.peek;
+        peekItems = data.peek || [];
         currentAuditRemaining = data.auditRemaining || 0;
         if (currentTranscript && currentItem) {
           transcriptCache[currentItem.findingId] = currentTranscript;
@@ -2341,7 +2341,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       }).catch(function(){});
       if (data.current) {
         currentItem = data.current;
-        peekItem = data.peek;
+        peekItems = data.peek || [];
         currentTranscript = data.transcript;
         if (currentTranscript && currentItem) transcriptCache[currentItem.findingId] = currentTranscript;
         showReview();

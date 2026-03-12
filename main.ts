@@ -256,6 +256,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/clear-review-queue": handleClearReviewQueue,
   "/admin/dump-state": handleDumpState,
   "/admin/import-state": handleImportState,
+  "/admin/pull-state": handlePullState,
   "/admin/queues": handleSetQueue,
   "/admin/pipeline-config": handleSetPipelineConfig,
   "/admin/settings/terminate": handleAdminSaveSettings,
@@ -2514,7 +2515,7 @@ async function handleSnapshotChunk(req: Request): Promise<Response> {
   });
 }
 
-// -- Admin: Import State --
+// -- Admin: Import State (direct entries) --
 
 async function handleImportState(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
@@ -2561,6 +2562,87 @@ async function handleImportState(req: Request): Promise<Response> {
 
   console.log(`[ADMIN] ${auth.email} imported state: cleared ${cleared}, wrote ${written} entries (source org: ${sourceOrgId ?? "same"})`);
   return json({ ok: true, cleared, written });
+}
+
+// -- Admin: Pull State (fetch snapshot chunks from remote, import locally) --
+
+async function handlePullState(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const body = await req.json();
+  const { sourceUrl, snapshotId, cookie } = body as {
+    sourceUrl: string;   // e.g. "https://autobottom.thetechgoose.deno.net"
+    snapshotId: string;
+    cookie: string;      // session cookie value from the source server
+  };
+
+  if (!sourceUrl || !snapshotId || !cookie) {
+    return json({ error: "sourceUrl, snapshotId, and cookie required" }, 400);
+  }
+
+  const db = await Deno.openKv();
+  const targetOrgId = auth.orgId;
+
+  // Nuke local state first
+  let cleared = 0;
+  const nukeIter = db.list({ prefix: [targetOrgId] });
+  for await (const entry of nukeIter) {
+    await db.delete(entry.key);
+    cleared++;
+  }
+  console.log(`[ADMIN] pull-state: cleared ${cleared} local entries`);
+
+  // Fetch chunks one by one from the source server
+  let chunkIndex = 0;
+  let written = 0;
+  let sourceOrgId: string | null = null;
+
+  while (true) {
+    const chunkUrl = `${sourceUrl}/admin/snapshot/${snapshotId}/${chunkIndex}`;
+    console.log(`[ADMIN] pull-state: fetching chunk ${chunkIndex}...`);
+
+    const res = await fetch(chunkUrl, {
+      headers: { "Cookie": `session=${cookie}` },
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      return json({ error: `Failed to fetch chunk ${chunkIndex}: ${res.status} ${errText}` }, 502);
+    }
+
+    const data = await res.json() as {
+      content: Array<{ key: Deno.KvKeyPart[]; value: unknown }>;
+      index: number;
+      isLast: boolean;
+      orgId: string;
+    };
+
+    if (!sourceOrgId) sourceOrgId = data.orgId;
+
+    // Write entries from this chunk, remapping orgId
+    const BATCH = 10;
+    for (let i = 0; i < data.content.length; i += BATCH) {
+      const batch = data.content.slice(i, i + BATCH);
+      const atomic = db.atomic();
+      for (const entry of batch) {
+        let key = entry.key;
+        if (sourceOrgId && key[0] === sourceOrgId && sourceOrgId !== targetOrgId) {
+          key = [targetOrgId, ...key.slice(1)];
+        }
+        atomic.set(key as Deno.KvKey, entry.value);
+        written++;
+      }
+      await atomic.commit();
+    }
+
+    console.log(`[ADMIN] pull-state: chunk ${chunkIndex} imported (${data.content.length} entries)`);
+
+    if (data.isLast) break;
+    chunkIndex++;
+  }
+
+  console.log(`[ADMIN] ${auth.email} pull-state complete: cleared ${cleared}, wrote ${written} entries from ${sourceUrl}`);
+  return json({ ok: true, cleared, written, chunks: chunkIndex + 1, sourceOrgId });
 }
 
 // -- Admin: Init Org --

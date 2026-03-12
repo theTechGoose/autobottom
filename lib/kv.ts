@@ -1,116 +1,89 @@
 /** Deno KV state management for audit findings, jobs, and counters. All keys are org-scoped. */
 
-import { orgKey } from "./org.ts";
 import type { OrgId } from "./org.ts";
 import { pollTranscriptOnce, processTranscriptResult } from "../providers/assemblyai.ts";
+import { TypedStore, initStores } from "./storage/typed-kv.ts";
+import {
+  AuditFinding, AuditJob, QuestionCache, DestinationQuestions,
+  BatchCounter, PopulatedQuestions, BatchAnswers, AuditTranscript,
+} from "./storage/dtos/audit.ts";
+import {
+  ActiveTracking, WatchdogActive, CompletedAuditStat as CompletedAuditStatDto,
+  ErrorTracking, RetryTracking,
+} from "./storage/dtos/stats.ts";
+import {
+  PipelineConfig as PipelineConfigDto, WebhookConfigDto, BadWordConfig as BadWordConfigDto,
+} from "./storage/dtos/config.ts";
+import {
+  EmailReportConfig as EmailReportConfigDto, EmailTemplate as EmailTemplateDto,
+} from "./storage/dtos/email.ts";
+import {
+  GamificationSettingsDto, SoundPackMeta as SoundPackMetaDto,
+  CustomStoreItem, EarnedBadgeDto, BadgeStatsDto, GameStateDto,
+} from "./storage/dtos/gamification.ts";
+import {
+  AppEvent as AppEventDto, BroadcastEvent as BroadcastEventDto,
+  PrefabSubscriptions, MessageDto, UnreadCount,
+} from "./storage/dtos/events.ts";
 
-let _kv: Deno.Kv | undefined;
+// ── Store instances (lazy) ──────────────────────────────────────────────────
 
-async function kv(): Promise<Deno.Kv> {
-  if (!_kv) _kv = await Deno.openKv();
-  return _kv;
+let _db: Deno.Kv | undefined;
+let _stores: ReturnType<typeof initStores> | undefined;
+
+async function db(): Promise<Deno.Kv> {
+  if (!_db) _db = await Deno.openKv();
+  return _db;
 }
 
-// -- ChunkedKv: generic chunked storage to work around 64KB limit --
-
-const CHUNK_LIMIT = 30_000; // chars per chunk; V8 may use 2-byte encoding so 30K*2=60KB < 64KB limit
-
-class ChunkedKv {
-  #db: Deno.Kv;
-  constructor(db: Deno.Kv) { this.#db = db; }
-
-  /** Save a JSON-serializable value, automatically chunking if needed. */
-  async set(prefix: Deno.KvKey, value: unknown, options?: { expireIn?: number }) {
-    const raw = JSON.stringify(value);
-    if (raw.length <= CHUNK_LIMIT) {
-      // Write _n=0 first so concurrent readers see null (key gone) rather than
-      // stale _n=1 pointing at a now-oversized chunk0 during a single→multi transition.
-      await this.#db.set([...prefix, "_n"], 0, options);
-      await this.#db.set([...prefix, 0], raw, options);
-      await this.#db.set([...prefix, "_n"], 1, options);
-      return;
-    }
-    const n = Math.ceil(raw.length / CHUNK_LIMIT);
-    // Write _n=0 first — readers that race during the chunk writes see null rather
-    // than corrupt data from a stale _n pointing at partially-written new chunks.
-    // Atomic batch would exceed Deno KV's 800KB per-commit limit for large findings.
-    await this.#db.set([...prefix, "_n"], 0, options ?? {});
-    for (let i = 0; i < n; i++) {
-      await this.#db.set([...prefix, i], raw.slice(i * CHUNK_LIMIT, (i + 1) * CHUNK_LIMIT), options ?? {});
-    }
-    await this.#db.set([...prefix, "_n"], n, options ?? {});
-  }
-
-  /** Read a chunked value back. Returns null if not found. */
-  async get<T = unknown>(prefix: Deno.KvKey): Promise<T | null> {
-    const meta = await this.#db.get<number>([...prefix, "_n"]);
-    if (meta.value == null || meta.value === 0) return null;
-    const parts: string[] = [];
-    for (let i = 0; i < meta.value; i++) {
-      const entry = await this.#db.get<string>([...prefix, i]);
-      if (typeof entry.value !== "string") {
-        console.error(`[ChunkedKv] Missing chunk ${i}/${meta.value} for key ${JSON.stringify(prefix)}`);
-        return null;
-      }
-      parts.push(entry.value);
-    }
-    if (parts.length === 0) return null;
-    try {
-      return JSON.parse(parts.join("")) as T;
-    } catch (err) {
-      console.error(`[ChunkedKv] JSON.parse failed for key ${JSON.stringify(prefix)} (${parts.join("").length} chars):`, err);
-      return null;
-    }
-  }
-
-  /** Delete all chunks for a prefix. */
-  async delete(prefix: Deno.KvKey) {
-    const meta = await this.#db.get<number>([...prefix, "_n"]);
-    if (meta.value == null) return;
-    // Delete _n first so readers see the key as gone immediately
-    await this.#db.delete([...prefix, "_n"]);
-    for (let i = 0; i < meta.value; i++) {
-      await this.#db.delete([...prefix, i]);
-    }
-  }
+async function stores() {
+  if (!_stores) _stores = initStores(await db());
+  return _stores;
 }
 
-async function chunked(): Promise<ChunkedKv> {
-  return new ChunkedKv(await kv());
+async function store<T>(dto: new () => T): Promise<TypedStore<T>> {
+  return (await stores())(dto);
 }
 
-// -- Finding CRUD --
+// ── Finding CRUD (chunked) ──────────────────────────────────────────────────
 
 export async function getFinding(orgId: OrgId, id: string) {
-  const store = await chunked();
-  return store.get<Record<string, any>>(orgKey(orgId, "audit-finding", id));
+  const s = await store(AuditFinding);
+  return s.getChunked([orgId, id]) as Promise<Record<string, any> | null>;
 }
 
 export async function saveFinding(orgId: OrgId, finding: Record<string, any>) {
-  const store = await chunked();
-  await store.set(orgKey(orgId, "audit-finding", finding.id), finding);
+  const s = await store(AuditFinding);
+  await s.setChunked([orgId, finding.id], finding as any);
 }
 
-// -- Job CRUD --
+// ── Job CRUD ────────────────────────────────────────────────────────────────
 
 export async function getJob(orgId: OrgId, id: string) {
-  const db = await kv();
-  const entry = await db.get(orgKey(orgId, "audit-job", id));
-  return entry.value as Record<string, any> | null;
+  const s = await store(AuditJob);
+  return s.get([orgId, id]) as Promise<Record<string, any> | null>;
 }
 
 export async function saveJob(orgId: OrgId, job: Record<string, any>) {
-  const db = await kv();
-  await db.set(orgKey(orgId, "audit-job", job.id), job);
+  const s = await store(AuditJob);
+  await s.set([orgId, job.id], job as any);
 }
 
-// -- Question Cache (10 min TTL) --
+// ── Question Cache (10 min TTL) ─────────────────────────────────────────────
+
+async function hashString(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
+}
 
 export async function getCachedAnswer(orgId: OrgId, auditId: string, questionText: string) {
-  const db = await kv();
+  const s = await store(QuestionCache);
   const hash = await hashString(questionText);
-  const entry = await db.get(orgKey(orgId, "question-cache", auditId, hash));
-  return entry.value as { answer: string; thinking: string; defense: string } | null;
+  return s.get([orgId, auditId, hash]) as Promise<{ answer: string; thinking: string; defense: string } | null>;
 }
 
 export async function cacheAnswer(
@@ -119,76 +92,86 @@ export async function cacheAnswer(
   questionText: string,
   answer: { answer: string; thinking: string; defense: string },
 ) {
-  const db = await kv();
+  const s = await store(QuestionCache);
   const hash = await hashString(questionText);
-  await db.set(orgKey(orgId, "question-cache", auditId, hash), answer, { expireIn: 600_000 });
+  await s.set([orgId, auditId, hash], answer as any, { expireIn: 600_000 });
 }
 
-// -- Question Destination Cache (10 min TTL) --
+// ── Question Destination Cache (10 min TTL, chunked) ────────────────────────
 
 export async function getCachedQuestions(orgId: OrgId, destinationId: string) {
-  const store = await chunked();
-  return store.get<any[]>(orgKey(orgId, "destination-questions", destinationId));
+  const s = await store(DestinationQuestions);
+  return s.getChunked([orgId, destinationId]) as Promise<any[] | null>;
 }
 
 export async function cacheQuestions(orgId: OrgId, destinationId: string, questions: any[]) {
-  const store = await chunked();
-  await store.set(orgKey(orgId, "destination-questions", destinationId), questions, { expireIn: 600_000 });
+  const s = await store(DestinationQuestions);
+  await s.setChunked([orgId, destinationId], questions as any, { expireIn: 600_000 });
 }
 
-// -- Batch Counter (for fan-out / fan-in) --
+// ── Batch Counter (atomic CAS) ──────────────────────────────────────────────
 
 export async function setBatchCounter(orgId: OrgId, findingId: string, count: number) {
-  const db = await kv();
-  await db.set(orgKey(orgId, "audit-batches-remaining", findingId), count);
+  const s = await store(BatchCounter);
+  await s.set([orgId, findingId], count as any);
 }
 
 export async function decrementBatchCounter(orgId: OrgId, findingId: string): Promise<number> {
-  const db = await kv();
-  const key = orgKey(orgId, "audit-batches-remaining", findingId);
+  const s = await store(BatchCounter);
+  const key = s.toKey([orgId, findingId]);
   while (true) {
-    const entry = await db.get<number>(key);
+    const entry = await s.rawDb.get<number>(key);
     const current = entry.value ?? 0;
     const next = current - 1;
-    const res = await db.atomic()
+    const res = await s.rawDb.atomic()
       .check(entry)
       .set(key, next)
       .commit();
     if (res.ok) return next;
-    // CAS failed, retry
   }
 }
 
-// -- Populated Questions (chunked) --
+// ── Populated Questions (chunked) ───────────────────────────────────────────
 
 export async function savePopulatedQuestions(orgId: OrgId, findingId: string, questions: any[]) {
-  const store = await chunked();
-  await store.set(orgKey(orgId, "audit-populated-questions", findingId), questions);
+  const s = await store(PopulatedQuestions);
+  await s.setChunked([orgId, findingId], questions as any);
 }
 
 export async function getPopulatedQuestions(orgId: OrgId, findingId: string): Promise<any[] | null> {
-  const store = await chunked();
-  return store.get<any[]>(orgKey(orgId, "audit-populated-questions", findingId));
+  const s = await store(PopulatedQuestions);
+  return s.getChunked([orgId, findingId]) as Promise<any[] | null>;
 }
 
-// -- Batch Answers --
+// ── Batch Answers (chunked) ─────────────────────────────────────────────────
 
 export async function saveBatchAnswers(orgId: OrgId, findingId: string, batchIndex: number, answers: any[]) {
-  const store = await chunked();
-  await store.set(orgKey(orgId, "audit-answers", findingId, batchIndex), answers);
+  const s = await store(BatchAnswers);
+  await s.setChunked([orgId, findingId, String(batchIndex)], answers as any);
 }
 
 export async function getAllBatchAnswers(orgId: OrgId, findingId: string, totalBatches: number) {
-  const store = await chunked();
+  const s = await store(BatchAnswers);
   const all: any[] = [];
   for (let i = 0; i < totalBatches; i++) {
-    const batch = await store.get<any[]>(orgKey(orgId, "audit-answers", findingId, i));
-    if (batch && Array.isArray(batch)) {
-      all.push(...batch);
-    }
+    const batch = await s.getChunked([orgId, findingId, String(i)]) as any[] | null;
+    if (batch && Array.isArray(batch)) all.push(...batch);
   }
   return all;
 }
+
+export async function getAllAnswersForFinding(orgId: OrgId, findingId: string) {
+  const s = await store(BatchAnswers);
+  const all: any[] = [];
+  for (let i = 0; i < 100; i++) {
+    const batch = await s.getChunked([orgId, findingId, String(i)]) as any[] | null;
+    if (batch === null) break;
+    if (Array.isArray(batch)) all.push(...batch);
+  }
+  return all;
+}
+
+// ── Pipeline Stats ──────────────────────────────────────────────────────────
 
 export interface CompletedAuditStat {
   findingId: string;
@@ -202,143 +185,99 @@ export interface CompletedAuditStat {
   department?: string;
 }
 
-/**
- * Get the N most-recently completed findings, newest-first.
- * Uses reverse KV iteration — O(limit) regardless of total history size.
- */
+const DAY_MS = 86_400_000;
+
 export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<CompletedAuditStat[]> {
-  const db = await kv();
-  const items: CompletedAuditStat[] = [];
-  for await (const e of db.list<CompletedAuditStat>(
-    { prefix: orgKey(orgId, "stats-completed") },
-    { reverse: true, limit },
-  )) {
-    if (e.value) items.push(e.value);
-  }
-  return items;
+  const s = await store(CompletedAuditStatDto);
+  const results = await s.listRaw([orgId], { reverse: true, limit });
+  return results.map((r) => r.value) as unknown as CompletedAuditStat[];
 }
 
-/**
- * Get all completed findings since `since` (ms timestamp), newest-first.
- * Uses reverse KV iteration with early-break — O(results in window).
- * Omit `since` to get the full history.
- */
 export async function getAllCompleted(orgId: OrgId, since?: number): Promise<CompletedAuditStat[]> {
-  const db = await kv();
+  const s = await store(CompletedAuditStatDto);
+  const results = await s.listRaw([orgId], { reverse: true });
   const items: CompletedAuditStat[] = [];
-  for await (const e of db.list<CompletedAuditStat>(
-    { prefix: orgKey(orgId, "stats-completed") },
-    { reverse: true },
-  )) {
-    if (!e.value) continue;
-    if (since && e.value.ts < since) break; // keys are ts-prefixed; reverse scan → can break early
-    items.push(e.value);
+  for (const r of results) {
+    const v = r.value as unknown as CompletedAuditStat;
+    if (since && v.ts < since) break;
+    items.push(v);
   }
   console.log(`[KV] getAllCompleted: ${items.length} entries for org ${orgId}${since ? ` since ${new Date(since).toISOString()}` : " (all-time)"}`);
   return items;
 }
 
-/** Scan all batch answer keys for a finding (no totalBatches needed). */
-export async function getAllAnswersForFinding(orgId: OrgId, findingId: string) {
-  const store = await chunked();
-  // Scan batch indices 0..99 (more than enough)
-  const all: any[] = [];
-  for (let i = 0; i < 100; i++) {
-    const batch = await store.get<any[]>(orgKey(orgId, "audit-answers", findingId, i));
-    if (batch === null) break;
-    if (Array.isArray(batch)) {
-      all.push(...batch);
-    }
-  }
-  return all;
-}
-
-// -- Pipeline Stats --
-
-const DAY_MS = 86_400_000;
-
-/** Mark a finding as actively processing. Merges with existing entry to preserve recordId/isPackage across step transitions. */
 export async function trackActive(orgId: OrgId, findingId: string, step: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; genieRetryAt?: number; genieAttempts?: number }) {
-  const db = await kv();
-  const key = orgKey(orgId, "stats-active", findingId);
-  const existing = await db.get<Record<string, unknown>>(key);
-  const prev = (existing.value ?? {}) as Record<string, unknown>;
-  await db.set(key, { ...prev, step, ts: Date.now(), ...(meta ?? {}) });
-  // Global watchdog index — scanned by the cron to detect stuck findings
-  await db.set(["watchdog-active", findingId], { orgId, findingId, step, ts: Date.now() }, { expireIn: 2 * 60 * 60 * 1000 });
+  const s = await store(ActiveTracking);
+  const existing = await s.get([orgId, findingId]);
+  const prev = (existing ?? {}) as Record<string, unknown>;
+  await s.set([orgId, findingId], { ...prev, step, ts: Date.now(), ...(meta ?? {}) } as any);
+  // Global watchdog index
+  const w = await store(WatchdogActive);
+  await w.set([findingId], { orgId, findingId, step, ts: Date.now() } as any, { expireIn: 2 * 60 * 60 * 1000 });
 }
 
-/** Remove a finding from active tracking (finished or cleaned up). */
 export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number; owner?: string; department?: string }) {
-  const db = await kv();
-  await db.delete(orgKey(orgId, "stats-active", findingId));
-  await db.delete(["watchdog-active", findingId]);
-  await db.set(orgKey(orgId, "stats-completed", `${Date.now()}-${findingId}`), { findingId, ts: Date.now(), ...(meta ?? {}) });
+  const s = await store(ActiveTracking);
+  await s.delete([orgId, findingId]);
+  const w = await store(WatchdogActive);
+  await w.delete([findingId]);
+  const c = await store(CompletedAuditStatDto);
+  await c.set([orgId, `${Date.now()}-${findingId}`], { findingId, ts: Date.now(), ...(meta ?? {}) } as any);
   console.log(`[TRACK-COMPLETED] ✅ ${findingId}: score=${meta?.score ?? "?"}% owner=${meta?.owner ?? "unknown"} dept=${meta?.department ?? "unknown"} type=${meta?.isPackage ? "package" : "date-leg"}`);
 }
 
-/** Return findings stuck in the same step longer than thresholdMs. Used by the watchdog cron. */
 export async function getStuckFindings(thresholdMs = 15 * 60 * 1000): Promise<Array<{ orgId: string; findingId: string; step: string; ts: number; ageMs: number }>> {
-  const db = await kv();
+  const w = await store(WatchdogActive);
   const now = Date.now();
+  const all = await w.list();
   const stuck: Array<{ orgId: string; findingId: string; step: string; ts: number; ageMs: number }> = [];
-  for await (const entry of db.list<{ orgId: string; findingId: string; step: string; ts: number }>({ prefix: ["watchdog-active"] })) {
-    if (!entry.value) continue;
-    const ageMs = now - (entry.value.ts ?? 0);
-    if (ageMs > thresholdMs) {
-      stuck.push({ ...entry.value, ageMs });
-    }
+  for (const entry of all) {
+    const v = entry.value as unknown as { orgId: string; findingId: string; step: string; ts: number };
+    const ageMs = now - (v.ts ?? 0);
+    if (ageMs > thresholdMs) stuck.push({ ...v, ageMs });
   }
   return stuck;
 }
 
-/** Terminate all active audits: mark each finding as terminated and remove from active tracking. */
 export async function terminateAllActive(orgId: OrgId): Promise<number> {
-  const db = await kv();
-  const entries: Array<{ key: Deno.KvKey; findingId: string }> = [];
-  for await (const e of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "stats-active") })) {
-    const fid = (e.value?.findingId ?? String(e.key[e.key.length - 1])) as string;
-    entries.push({ key: e.key, findingId: fid });
-  }
-  await Promise.all(entries.map(async ({ key, findingId }) => {
+  const s = await store(ActiveTracking);
+  const entries = await s.list(orgId);
+  await Promise.all(entries.map(async (entry) => {
+    const v = entry.value as unknown as { findingId?: string };
+    const fid = v.findingId ?? "";
     try {
-      const finding = await getFinding(orgId, findingId);
+      const finding = await getFinding(orgId, fid);
       if (finding && finding.findingStatus !== "finished") {
         finding.findingStatus = "terminated";
         await saveFinding(orgId, finding);
       }
     } catch { /* best-effort */ }
-    await db.delete(key);
-    await db.delete(["watchdog-active", findingId]);
+    await s.delete([orgId, fid]);
+    const w = await store(WatchdogActive);
+    await w.delete([fid]);
   }));
   return entries.length;
 }
 
-/** Log a step error event. */
 export async function trackError(orgId: OrgId, findingId: string, step: string, error: string) {
-  const db = await kv();
-  await db.set(orgKey(orgId, "stats-error", `${Date.now()}-${findingId}`), { findingId, step, error, ts: Date.now() }, { expireIn: DAY_MS });
+  const s = await store(ErrorTracking);
+  await s.set([orgId, `${Date.now()}-${findingId}`], { findingId, step, error, ts: Date.now() } as any, { expireIn: DAY_MS });
 }
 
-/** Log a retry event. */
 export async function trackRetry(orgId: OrgId, findingId: string, step: string, attempt: number) {
-  const db = await kv();
-  await db.set(orgKey(orgId, "stats-retry", `${Date.now()}-${findingId}`), { findingId, step, attempt, ts: Date.now() }, { expireIn: DAY_MS });
+  const s = await store(RetryTracking);
+  await s.set([orgId, `${Date.now()}-${findingId}`], { findingId, step, attempt, ts: Date.now() } as any, { expireIn: DAY_MS });
 }
 
-/** Get pipeline stats. */
 export async function getStats(orgId: OrgId) {
-  const db = await kv();
+  const activeStore = await store(ActiveTracking);
+  const active = (await activeStore.list(orgId)).map((e) => {
+    const v = e.value as unknown as Record<string, unknown>;
+    return { findingId: v.findingId, ...v };
+  });
 
-  // Active (in pipe)
-  const active: any[] = [];
-  for await (const e of db.list({ prefix: orgKey(orgId, "stats-active") })) {
-    active.push({ findingId: (e.key as any[])[2], ...(e.value as any) });
-  }
-
-  // Lazy-enrich active entries missing recordId: read finding and backfill.
-  // Once written back to KV, future polls skip this work.
-  await Promise.all(active.map(async (entry) => {
+  // Lazy-enrich active entries missing recordId
+  await Promise.all(active.map(async (entry: any) => {
     if (entry.recordId) return;
     try {
       const finding = await getFinding(orgId, entry.findingId);
@@ -347,66 +286,52 @@ export async function getStats(orgId: OrgId) {
       if (!recordId) return;
       entry.recordId = recordId;
       entry.isPackage = finding.recordingIdField === "GenieNumber";
-      await db.set(orgKey(orgId, "stats-active", entry.findingId), {
+      await activeStore.set([orgId, entry.findingId], {
         step: entry.step, ts: entry.ts, recordId: entry.recordId, isPackage: entry.isPackage,
-      });
+      } as any);
     } catch { /* best-effort */ }
   }));
 
-  // Completed (24h) - collect timestamps for charting
-  const completed: any[] = [];
-  for await (const e of db.list({ prefix: orgKey(orgId, "stats-completed") })) {
-    completed.push(e.value);
-  }
+  const completedStore = await store(CompletedAuditStatDto);
+  const completed = (await completedStore.list(orgId)).map((e) => e.value);
 
-  // Errors (24h)
-  const errors: any[] = [];
-  for await (const e of db.list({ prefix: orgKey(orgId, "stats-error") })) {
-    errors.push(e.value);
-  }
+  const errorStore = await store(ErrorTracking);
+  const errors = (await errorStore.list(orgId)).map((e) => e.value);
 
-  // Retries (24h)
-  const retries: any[] = [];
-  for await (const e of db.list({ prefix: orgKey(orgId, "stats-retry") })) {
-    retries.push(e.value);
-  }
+  const retryStore = await store(RetryTracking);
+  const retries = (await retryStore.list(orgId)).map((e) => e.value);
 
   return { active, completed, completedCount: completed.length, errors, retries };
 }
 
-// -- Transcript (chunked) --
+// ── Transcript (chunked) ────────────────────────────────────────────────────
 
 export async function saveTranscript(orgId: OrgId, findingId: string, raw: string, diarized?: string, utteranceTimes?: number[]) {
-  const store = await chunked();
-  const existing = await store.get<{ raw: string; diarized: string; utteranceTimes?: number[] }>(orgKey(orgId, "audit-transcript", findingId));
-  await store.set(orgKey(orgId, "audit-transcript", findingId), {
+  const s = await store(AuditTranscript);
+  const existing = await s.getChunked([orgId, findingId]) as { raw: string; diarized: string; utteranceTimes?: number[] } | null;
+  await s.setChunked([orgId, findingId], {
     raw,
     diarized: diarized ?? existing?.diarized ?? raw,
     utteranceTimes: utteranceTimes ?? existing?.utteranceTimes,
-  });
+  } as any);
 }
 
 export async function getTranscript(orgId: OrgId, findingId: string) {
-  const store = await chunked();
-  return store.get<{ raw: string; diarized: string; utteranceTimes?: number[] }>(orgKey(orgId, "audit-transcript", findingId));
+  const s = await store(AuditTranscript);
+  return s.getChunked([orgId, findingId]) as Promise<{ raw: string; diarized: string; utteranceTimes?: number[] } | null>;
 }
 
-/** Backfill utteranceTimes for a transcript that is missing them.
- *  First tries to re-fetch from AssemblyAI. If that's not possible (no transcript ID,
- *  expired data, seed data), generates synthetic times from word counts. */
 export async function backfillUtteranceTimes(
   orgId: OrgId,
   findingId: string,
   transcript: { raw: string; diarized: string; utteranceTimes?: number[] },
 ): Promise<{ raw: string; diarized: string; utteranceTimes?: number[] }> {
-  // Already has utteranceTimes — nothing to do
   if (transcript.utteranceTimes && transcript.utteranceTimes.length > 0) return transcript;
 
   try {
     const finding = await getFinding(orgId, findingId);
     const transcriptId = (finding as Record<string, unknown>)?.assemblyAiTranscriptId as string | undefined;
 
-    // Try AssemblyAI re-fetch first
     if (transcriptId) {
       try {
         const aaiResult = await pollTranscriptOnce(transcriptId);
@@ -426,14 +351,11 @@ export async function backfillUtteranceTimes(
       }
     }
 
-    // Fallback: generate synthetic times from raw transcript line word counts.
-    // Distributes time proportionally by word count so longer utterances get more time.
     const raw = transcript.raw || "";
     const lines = raw.split("\n").filter((l: string) => l.trim().length > 0);
     if (lines.length > 0) {
       const wordCounts = lines.map((l: string) => l.split(/\s+/).length);
       const totalWords = wordCounts.reduce((a: number, b: number) => a + b, 0);
-      // Estimate total duration: ~150 words per minute for conversational speech
       const estimatedDurationMs = (totalWords / 150) * 60 * 1000;
       const times: number[] = [];
       let cumWords = 0;
@@ -452,7 +374,7 @@ export async function backfillUtteranceTimes(
   return transcript;
 }
 
-// -- Pipeline Config (admin-settable) --
+// ── Pipeline Config ─────────────────────────────────────────────────────────
 
 export interface PipelineConfig {
   maxRetries: number;
@@ -463,63 +385,45 @@ export interface PipelineConfig {
 const DEFAULT_PIPELINE_CONFIG: PipelineConfig = { maxRetries: 5, retryDelaySeconds: 10, parallelism: 20 };
 
 export async function getPipelineConfig(orgId: OrgId): Promise<PipelineConfig> {
-  const db = await kv();
-  const entry = await db.get<PipelineConfig>(orgKey(orgId, "pipeline-config"));
-  return entry.value ?? DEFAULT_PIPELINE_CONFIG;
+  const s = await store(PipelineConfigDto);
+  const v = await s.get([orgId]);
+  return (v as unknown as PipelineConfig) ?? DEFAULT_PIPELINE_CONFIG;
 }
 
 export async function setPipelineConfig(orgId: OrgId, config: Partial<PipelineConfig>): Promise<PipelineConfig> {
-  const db = await kv();
-  const current = (await db.get<PipelineConfig>(orgKey(orgId, "pipeline-config"))).value ?? DEFAULT_PIPELINE_CONFIG;
+  const s = await store(PipelineConfigDto);
+  const current = ((await s.get([orgId])) as unknown as PipelineConfig) ?? DEFAULT_PIPELINE_CONFIG;
   const merged = { ...current, ...config };
-  await db.set(orgKey(orgId, "pipeline-config"), merged);
+  await s.set([orgId], merged as any);
   return merged;
 }
 
-// -- Webhook Config --
+// ── Webhook Config ──────────────────────────────────────────────────────────
 
 export interface WebhookConfig {
   postUrl: string;
   postHeaders: Record<string, string>;
-  /** If set, all emails for this webhook kind go here instead of the real recipient (test mode). */
   testEmail?: string;
-  /** Template ID to use when sending direct emails for this webhook kind. */
   emailTemplateId?: string;
-  /** BCC recipients (comma-separated). Skipped when testEmail is set. */
   bcc?: string;
 }
 
 export type WebhookKind = "terminate" | "appeal" | "manager" | "judge" | "re-audit-receipt";
 
 export async function getWebhookConfig(orgId: OrgId, kind: WebhookKind): Promise<WebhookConfig | null> {
-  const db = await kv();
-  const entry = await db.get<WebhookConfig>(orgKey(orgId, "webhook-settings", kind));
-  if (entry.value) return entry.value;
-
-  // Legacy fallback: review settings used to live at ["review-settings"] or ["webhook-settings", "review"]
-  if (kind === "terminate") {
-    for (const legacyKey of [orgKey(orgId, "webhook-settings", "review"), ["review-settings"]] as Deno.KvKey[]) {
-      const legacy = await db.get<WebhookConfig>(legacyKey);
-      if (legacy.value) {
-        await db.set(orgKey(orgId, "webhook-settings", "terminate"), legacy.value);
-        return legacy.value;
-      }
-    }
-  }
-
-  return null;
+  const s = await store(WebhookConfigDto);
+  const v = await s.get([orgId, kind]);
+  return v as unknown as WebhookConfig | null;
 }
 
 export async function saveWebhookConfig(orgId: OrgId, kind: WebhookKind, config: WebhookConfig): Promise<void> {
-  const db = await kv();
-  await db.set(orgKey(orgId, "webhook-settings", kind), config);
+  const s = await store(WebhookConfigDto);
+  await s.set([orgId, kind], config as any);
 }
 
 export async function fireWebhook(orgId: OrgId, kind: WebhookKind, payload: unknown): Promise<void> {
   const config = await getWebhookConfig(orgId, kind);
 
-  // For each event kind, always fire the corresponding self email endpoint so
-  // email sends without requiring manual URL configuration.
   const selfEmailEndpoints: Partial<Record<WebhookKind, string>> = {
     terminate: "/webhooks/audit-complete",
     appeal: "/webhooks/appeal-filed",
@@ -576,7 +480,7 @@ export async function fireWebhook(orgId: OrgId, kind: WebhookKind, payload: unkn
   }
 }
 
-// -- Email Report Config --
+// ── Email Report Config ─────────────────────────────────────────────────────
 
 export type ReportSection = "pipeline" | "review" | "appeals" | "manager" | "tokens";
 export type DetailLevel = "low" | "medium" | "high";
@@ -593,29 +497,25 @@ export interface EmailReportConfig {
   name: string;
   recipients: string[];
   cadence: ReportCadence;
-  cadenceDay?: number; // 0-6 (Sun-Sat) for weekly/biweekly, 1-30 for monthly
+  cadenceDay?: number;
   sections: Record<ReportSection, SectionConfig>;
   createdAt: number;
   updatedAt: number;
 }
 
 export async function listEmailReportConfigs(orgId: OrgId): Promise<EmailReportConfig[]> {
-  const db = await kv();
-  const configs: EmailReportConfig[] = [];
-  for await (const entry of db.list<EmailReportConfig>({ prefix: orgKey(orgId, "email-report-config") })) {
-    if (entry.value) configs.push(entry.value);
-  }
-  return configs;
+  const s = await store(EmailReportConfigDto);
+  const results = await s.list(orgId);
+  return results.map((r) => r.value) as unknown as EmailReportConfig[];
 }
 
 export async function getEmailReportConfig(orgId: OrgId, id: string): Promise<EmailReportConfig | null> {
-  const db = await kv();
-  const entry = await db.get<EmailReportConfig>(orgKey(orgId, "email-report-config", id));
-  return entry.value ?? null;
+  const s = await store(EmailReportConfigDto);
+  return s.get([orgId, id]) as unknown as Promise<EmailReportConfig | null>;
 }
 
 export async function saveEmailReportConfig(orgId: OrgId, config: Partial<EmailReportConfig> & { name: string; recipients: string[]; sections: Record<ReportSection, SectionConfig> }): Promise<EmailReportConfig> {
-  const db = await kv();
+  const s = await store(EmailReportConfigDto);
   const now = Date.now();
   const full: EmailReportConfig = {
     id: config.id || crypto.randomUUID(),
@@ -627,16 +527,16 @@ export async function saveEmailReportConfig(orgId: OrgId, config: Partial<EmailR
     createdAt: config.createdAt || now,
     updatedAt: now,
   };
-  await db.set(orgKey(orgId, "email-report-config", full.id), full);
+  await s.set([orgId, full.id], full as any);
   return full;
 }
 
 export async function deleteEmailReportConfig(orgId: OrgId, id: string): Promise<void> {
-  const db = await kv();
-  await db.delete(orgKey(orgId, "email-report-config", id));
+  const s = await store(EmailReportConfigDto);
+  await s.delete([orgId, id]);
 }
 
-// -- Email Templates --
+// ── Email Templates ─────────────────────────────────────────────────────────
 
 export interface EmailTemplate {
   id: string;
@@ -648,22 +548,18 @@ export interface EmailTemplate {
 }
 
 export async function listEmailTemplates(orgId: OrgId): Promise<EmailTemplate[]> {
-  const db = await kv();
-  const templates: EmailTemplate[] = [];
-  for await (const entry of db.list<EmailTemplate>({ prefix: orgKey(orgId, "email-template") })) {
-    if (entry.value) templates.push(entry.value);
-  }
-  return templates;
+  const s = await store(EmailTemplateDto);
+  const results = await s.list(orgId);
+  return results.map((r) => r.value) as unknown as EmailTemplate[];
 }
 
 export async function getEmailTemplate(orgId: OrgId, id: string): Promise<EmailTemplate | null> {
-  const db = await kv();
-  const entry = await db.get<EmailTemplate>(orgKey(orgId, "email-template", id));
-  return entry.value ?? null;
+  const s = await store(EmailTemplateDto);
+  return s.get([orgId, id]) as unknown as Promise<EmailTemplate | null>;
 }
 
 export async function saveEmailTemplate(orgId: OrgId, template: Partial<EmailTemplate> & { name: string; subject: string; html: string }): Promise<EmailTemplate> {
-  const db = await kv();
+  const s = await store(EmailTemplateDto);
   const now = Date.now();
   const full: EmailTemplate = {
     id: template.id || crypto.randomUUID(),
@@ -673,16 +569,16 @@ export async function saveEmailTemplate(orgId: OrgId, template: Partial<EmailTem
     createdAt: template.createdAt || now,
     updatedAt: now,
   };
-  await db.set(orgKey(orgId, "email-template", full.id), full);
+  await s.set([orgId, full.id], full as any);
   return full;
 }
 
 export async function deleteEmailTemplate(orgId: OrgId, id: string): Promise<void> {
-  const db = await kv();
-  await db.delete(orgKey(orgId, "email-template", id));
+  const s = await store(EmailTemplateDto);
+  await s.delete([orgId, id]);
 }
 
-// -- Bad Word Config --
+// ── Bad Word Config ─────────────────────────────────────────────────────────
 
 export interface BadWordEntry {
   word: string;
@@ -692,9 +588,7 @@ export interface BadWordConfig {
   enabled: boolean;
   emails: string[];
   words: BadWordEntry[];
-  /** When true, check all offices regardless of officePatterns. */
   allOffices: boolean;
-  /** Office name substrings (case-insensitive) to monitor. Only used when allOffices is false. E.g. ["JAY"] matches JAY312, JAY222, etc. */
   officePatterns: string[];
 }
 
@@ -707,17 +601,17 @@ const DEFAULT_BAD_WORD_CONFIG: BadWordConfig = {
 };
 
 export async function getBadWordConfig(orgId: OrgId): Promise<BadWordConfig> {
-  const db = await kv();
-  const entry = await db.get<BadWordConfig>(orgKey(orgId, "bad-word-config"));
-  return entry.value ?? { ...DEFAULT_BAD_WORD_CONFIG };
+  const s = await store(BadWordConfigDto);
+  const v = await s.get([orgId]);
+  return (v as unknown as BadWordConfig) ?? { ...DEFAULT_BAD_WORD_CONFIG };
 }
 
 export async function saveBadWordConfig(orgId: OrgId, config: BadWordConfig): Promise<void> {
-  const db = await kv();
-  await db.set(orgKey(orgId, "bad-word-config"), config);
+  const s = await store(BadWordConfigDto);
+  await s.set([orgId], config as any);
 }
 
-// -- Sound Pack Metadata (S3-backed) --
+// ── Sound Pack Metadata ─────────────────────────────────────────────────────
 
 export type SoundSlot = "ping" | "double" | "triple" | "mega" | "ultra" | "rampage" | "godlike" | "levelup" | "shutdown";
 export type SoundPackId = "synth" | "smite" | "opengameart" | "mixkit-punchy" | "mixkit-epic" | (string & {});
@@ -725,43 +619,39 @@ export type SoundPackId = "synth" | "smite" | "opengameart" | "mixkit-punchy" | 
 export interface SoundPackMeta {
   id: string;
   name: string;
-  slots: Partial<Record<SoundSlot, string>>; // slot -> original filename
+  slots: Partial<Record<SoundSlot, string>>;
   createdAt: number;
   createdBy: string;
 }
 
 export async function listSoundPacks(orgId: OrgId): Promise<SoundPackMeta[]> {
-  const db = await kv();
-  const packs: SoundPackMeta[] = [];
-  for await (const entry of db.list<SoundPackMeta>({ prefix: orgKey(orgId, "sound-pack") })) {
-    if (entry.value) packs.push(entry.value);
-  }
-  return packs;
+  const s = await store(SoundPackMetaDto);
+  const results = await s.list(orgId);
+  return results.map((r) => r.value) as unknown as SoundPackMeta[];
 }
 
 export async function getSoundPack(orgId: OrgId, packId: string): Promise<SoundPackMeta | null> {
-  const db = await kv();
-  const entry = await db.get<SoundPackMeta>(orgKey(orgId, "sound-pack", packId));
-  return entry.value ?? null;
+  const s = await store(SoundPackMetaDto);
+  return s.get([orgId, packId]) as unknown as Promise<SoundPackMeta | null>;
 }
 
 export async function saveSoundPack(orgId: OrgId, pack: SoundPackMeta): Promise<void> {
-  const db = await kv();
-  await db.set(orgKey(orgId, "sound-pack", pack.id), pack);
+  const s = await store(SoundPackMetaDto);
+  await s.set([orgId, pack.id], pack as any);
 }
 
 export async function deleteSoundPack(orgId: OrgId, packId: string): Promise<void> {
-  const db = await kv();
-  await db.delete(orgKey(orgId, "sound-pack", packId));
+  const s = await store(SoundPackMetaDto);
+  await s.delete([orgId, packId]);
 }
 
-// -- Gamification Settings --
+// ── Gamification Settings ───────────────────────────────────────────────────
 
 export interface GamificationSettings {
-  threshold: number | null;       // seconds per question (0 = use flat timeout, null = inherit)
-  comboTimeoutMs: number | null;  // flat timeout fallback in ms (null = inherit, default 10000)
-  enabled: boolean | null;        // null = inherit, default true
-  sounds: Partial<Record<SoundSlot, SoundPackId>> | null; // slot -> pack ID (null = inherit = synth)
+  threshold: number | null;
+  comboTimeoutMs: number | null;
+  enabled: boolean | null;
+  sounds: Partial<Record<SoundSlot, SoundPackId>> | null;
 }
 
 const GAMIFICATION_DEFAULTS: Required<{ [K in keyof GamificationSettings]: NonNullable<GamificationSettings[K]> }> = {
@@ -772,36 +662,33 @@ const GAMIFICATION_DEFAULTS: Required<{ [K in keyof GamificationSettings]: NonNu
 };
 
 export async function getGamificationSettings(orgId: OrgId): Promise<GamificationSettings | null> {
-  const db = await kv();
-  const entry = await db.get<GamificationSettings>(orgKey(orgId, "gamification"));
-  return entry.value ?? null;
+  const s = await store(GamificationSettingsDto);
+  return s.get([orgId]) as unknown as Promise<GamificationSettings | null>;
 }
 
 export async function saveGamificationSettings(orgId: OrgId, settings: GamificationSettings): Promise<void> {
-  const db = await kv();
-  await db.set(orgKey(orgId, "gamification"), settings);
+  const s = await store(GamificationSettingsDto);
+  await s.set([orgId], settings as any);
 }
 
 export async function getJudgeGamificationOverride(orgId: OrgId, judgeEmail: string): Promise<GamificationSettings | null> {
-  const db = await kv();
-  const entry = await db.get<GamificationSettings>(orgKey(orgId, "gamification", "judge", judgeEmail));
-  return entry.value ?? null;
+  const s = await store(GamificationSettingsDto);
+  return s.get([orgId, "judge", judgeEmail]) as unknown as Promise<GamificationSettings | null>;
 }
 
 export async function saveJudgeGamificationOverride(orgId: OrgId, judgeEmail: string, settings: GamificationSettings): Promise<void> {
-  const db = await kv();
-  await db.set(orgKey(orgId, "gamification", "judge", judgeEmail), settings);
+  const s = await store(GamificationSettingsDto);
+  await s.set([orgId, "judge", judgeEmail], settings as any);
 }
 
 export async function getReviewerGamificationOverride(orgId: OrgId, email: string): Promise<GamificationSettings | null> {
-  const db = await kv();
-  const entry = await db.get<GamificationSettings>(orgKey(orgId, "gamification", "reviewer", email));
-  return entry.value ?? null;
+  const s = await store(GamificationSettingsDto);
+  return s.get([orgId, "reviewer", email]) as unknown as Promise<GamificationSettings | null>;
 }
 
 export async function saveReviewerGamificationOverride(orgId: OrgId, email: string, settings: GamificationSettings): Promise<void> {
-  const db = await kv();
-  await db.set(orgKey(orgId, "gamification", "reviewer", email), settings);
+  const s = await store(GamificationSettingsDto);
+  await s.set([orgId, "reviewer", email], settings as any);
 }
 
 function overlaySettings(
@@ -825,10 +712,6 @@ export interface ResolvedGamificationSettings {
   sounds: Partial<Record<SoundSlot, SoundPackId>>;
 }
 
-/**
- * Cascade merge: hardcoded defaults -> admin org -> judge (if reviewer) -> personal override.
- * `getUser` is imported by callers from auth/kv.ts to find the supervisor.
- */
 export async function resolveGamificationSettings(
   orgId: OrgId,
   email: string,
@@ -836,120 +719,92 @@ export async function resolveGamificationSettings(
   supervisor?: string | null,
 ): Promise<ResolvedGamificationSettings> {
   let merged: Record<string, unknown> = { ...GAMIFICATION_DEFAULTS };
-
-  // Layer 1: admin org-level settings
   const orgSettings = await getGamificationSettings(orgId);
   merged = overlaySettings(merged, orgSettings);
-
-  // Layer 2: judge override (only applies to reviewers under a judge)
   if (role === "reviewer" && supervisor) {
     const judgeOverride = await getJudgeGamificationOverride(orgId, supervisor);
     merged = overlaySettings(merged, judgeOverride);
   }
-
-  // Layer 3: personal override
   const personalOverride = await getReviewerGamificationOverride(orgId, email);
   merged = overlaySettings(merged, personalOverride);
-
   return merged as unknown as ResolvedGamificationSettings;
 }
 
-// -- Custom Store Items --
+// ── Custom Store Items ──────────────────────────────────────────────────────
 
 import type { StoreItem } from "../shared/badges.ts";
 
 export async function listCustomStoreItems(orgId: OrgId): Promise<StoreItem[]> {
-  const db = await kv();
-  const items: StoreItem[] = [];
-  for await (const entry of db.list<StoreItem>({ prefix: orgKey(orgId, "store-item") })) {
-    if (entry.value) items.push(entry.value);
-  }
-  return items;
+  const s = await store(CustomStoreItem);
+  const results = await s.list(orgId);
+  return results.map((r) => r.value) as unknown as StoreItem[];
 }
 
 export async function saveCustomStoreItem(orgId: OrgId, item: StoreItem): Promise<void> {
-  const db = await kv();
-  await db.set(orgKey(orgId, "store-item", item.id), item);
+  const s = await store(CustomStoreItem);
+  await s.set([orgId, item.id], item as any);
 }
 
 export async function deleteCustomStoreItem(orgId: OrgId, itemId: string): Promise<void> {
-  const db = await kv();
-  await db.delete(orgKey(orgId, "store-item", itemId));
+  const s = await store(CustomStoreItem);
+  await s.delete([orgId, itemId]);
 }
 
-// -- Badge + Game State --
+// ── Badge + Game State ──────────────────────────────────────────────────────
 
 import type { EarnedBadge, BadgeCheckState, GameState, BadgeDef } from "../shared/badges.ts";
 import { DEFAULT_BADGE_STATS, DEFAULT_GAME_STATE, getLevel, LEVEL_THRESHOLDS, AGENT_LEVEL_THRESHOLDS } from "../shared/badges.ts";
 
-/** Get all earned badges for a user. */
 export async function getEarnedBadges(orgId: OrgId, email: string): Promise<EarnedBadge[]> {
-  const db = await kv();
-  const badges: EarnedBadge[] = [];
-  const iter = db.list<EarnedBadge>({ prefix: orgKey(orgId, "badge", email) });
-  for await (const entry of iter) {
-    badges.push(entry.value);
-  }
-  return badges;
+  const s = await store(EarnedBadgeDto);
+  const results = await s.list(orgId, email);
+  return results.map((r) => r.value) as unknown as EarnedBadge[];
 }
 
-/** Award a badge atomically (no re-award). Returns true if newly awarded. */
 export async function awardBadge(orgId: OrgId, email: string, badge: BadgeDef): Promise<boolean> {
-  const db = await kv();
-  const key = orgKey(orgId, "badge", email, badge.id);
-  const existing = await db.get(key);
+  const s = await store(EarnedBadgeDto);
+  const key = s.toKey([orgId, email, badge.id]);
+  const existing = await s.rawDb.get(key);
   if (existing.value) return false;
-
   const earned: EarnedBadge = { badgeId: badge.id, earnedAt: Date.now() };
-  const res = await db.atomic()
+  const res = await s.rawDb.atomic()
     .check(existing)
     .set(key, earned)
     .commit();
   return res.ok;
 }
 
-/** Check if a user has a specific badge. */
 export async function hasBadge(orgId: OrgId, email: string, badgeId: string): Promise<boolean> {
-  const db = await kv();
-  const entry = await db.get(orgKey(orgId, "badge", email, badgeId));
-  return entry.value !== null;
+  const s = await store(EarnedBadgeDto);
+  const v = await s.get([orgId, email, badgeId]);
+  return v !== null;
 }
 
-/** Get running badge-check counters for a user. */
 export async function getBadgeStats(orgId: OrgId, email: string): Promise<BadgeCheckState> {
-  const db = await kv();
-  const entry = await db.get<BadgeCheckState>(orgKey(orgId, "badge-stats", email));
-  return entry.value ?? { ...DEFAULT_BADGE_STATS };
+  const s = await store(BadgeStatsDto);
+  const v = await s.get([orgId, email]);
+  return (v as unknown as BadgeCheckState) ?? { ...DEFAULT_BADGE_STATS };
 }
 
-/** Patch badge-check counters. Merges with existing state. */
 export async function updateBadgeStats(orgId: OrgId, email: string, patch: Partial<BadgeCheckState>): Promise<BadgeCheckState> {
-  const db = await kv();
-  const key = orgKey(orgId, "badge-stats", email);
-  const entry = await db.get<BadgeCheckState>(key);
-  const current = entry.value ?? { ...DEFAULT_BADGE_STATS };
+  const s = await store(BadgeStatsDto);
+  const current = ((await s.get([orgId, email])) as unknown as BadgeCheckState) ?? { ...DEFAULT_BADGE_STATS };
   const updated = { ...current, ...patch };
-  await db.set(key, updated);
+  await s.set([orgId, email], updated as any);
   return updated;
 }
 
-/** Get unified game state for a user (any role). */
 export async function getGameState(orgId: OrgId, email: string): Promise<GameState> {
-  const db = await kv();
-  const entry = await db.get<GameState>(orgKey(orgId, "game-state", email));
-  return entry.value ?? { ...DEFAULT_GAME_STATE };
+  const s = await store(GameStateDto);
+  const v = await s.get([orgId, email]);
+  return (v as unknown as GameState) ?? { ...DEFAULT_GAME_STATE };
 }
 
-/** Save unified game state. */
 export async function saveGameState(orgId: OrgId, email: string, state: GameState): Promise<void> {
-  const db = await kv();
-  await db.set(orgKey(orgId, "game-state", email), state);
+  const s = await store(GameStateDto);
+  await s.set([orgId, email], state as any);
 }
 
-/**
- * Award XP to a user. Updates totalXp, tokenBalance, level, and streak.
- * Returns the updated state and the XP gained.
- */
 export async function awardXp(
   orgId: OrgId,
   email: string,
@@ -960,61 +815,50 @@ export async function awardXp(
   const prevLevel = state.level;
   state.totalXp += xpAmount;
   state.tokenBalance += xpAmount;
-
   const thresholds = role === "agent" ? AGENT_LEVEL_THRESHOLDS : LEVEL_THRESHOLDS;
   state.level = getLevel(state.totalXp, thresholds);
-
-  // Update day streak
   const today = new Date().toISOString().slice(0, 10);
   if (state.lastActiveDate !== today) {
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     state.dayStreak = state.lastActiveDate === yesterday ? state.dayStreak + 1 : 1;
     state.lastActiveDate = today;
   }
-
   await saveGameState(orgId, email, state);
-
   const leveledUp = state.level > prevLevel;
   if (leveledUp) {
     checkAndEmitPrefab(orgId, "level_up", email, `${email.split("@")[0]} reached level ${state.level}!`)
       .catch(() => {});
   }
-
   return { state, xpGained: xpAmount, leveledUp };
 }
 
-/** Purchase a store item. Deducts tokens, records purchase. */
 export async function purchaseStoreItem(
   orgId: OrgId,
   email: string,
   itemId: string,
   price: number,
 ): Promise<{ ok: true; newBalance: number } | { ok: false; error: string }> {
-  const db = await kv();
-  const key = orgKey(orgId, "game-state", email);
-  const entry = await db.get<GameState>(key);
+  const s = await store(GameStateDto);
+  const key = s.toKey([orgId, email]);
+  const entry = await s.rawDb.get<GameState>(key);
   const state = entry.value ?? { ...DEFAULT_GAME_STATE };
-
   if (state.purchases.includes(itemId)) {
     return { ok: false, error: "already purchased" };
   }
   if (state.tokenBalance < price) {
     return { ok: false, error: "insufficient tokens" };
   }
-
   state.tokenBalance -= price;
   state.purchases.push(itemId);
-
-  const res = await db.atomic()
+  const res = await s.rawDb.atomic()
     .check(entry)
     .set(key, state)
     .commit();
-
   if (!res.ok) return { ok: false, error: "concurrent modification, try again" };
   return { ok: true, newBalance: state.tokenBalance };
 }
 
-// -- SSE Events --
+// ── SSE Events ──────────────────────────────────────────────────────────────
 
 export type EventType =
   | "audit-completed"
@@ -1030,44 +874,37 @@ export interface AppEvent {
   createdAt: number;
 }
 
-/** Emit an event for a specific user. Stored with 24h TTL. */
 export async function emitEvent(
   orgId: OrgId,
   targetEmail: string,
   type: EventType,
   payload: Record<string, unknown>,
 ): Promise<void> {
-  const db = await kv();
+  const s = await store(AppEventDto);
   const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const event: AppEvent = { id, type, payload, createdAt: Date.now() };
-  await db.set(orgKey(orgId, "event", targetEmail, id), event, { expireIn: DAY_MS });
+  await s.set([orgId, targetEmail, id], event as any, { expireIn: DAY_MS });
 }
 
-/** Get all pending events for a user (since a given timestamp). */
 export async function getEvents(
   orgId: OrgId,
   email: string,
   since = 0,
 ): Promise<AppEvent[]> {
-  const db = await kv();
-  const events: AppEvent[] = [];
-  for await (const entry of db.list<AppEvent>({ prefix: orgKey(orgId, "event", email) })) {
-    if (entry.value && entry.value.createdAt > since) {
-      events.push(entry.value);
-    }
-  }
-  return events;
+  const s = await store(AppEventDto);
+  const results = await s.list(orgId, email);
+  return (results.map((r) => r.value) as unknown as AppEvent[])
+    .filter((e) => e.createdAt > since);
 }
 
-/** Delete consumed events for a user. */
 export async function deleteEvents(orgId: OrgId, email: string, eventIds: string[]): Promise<void> {
-  const db = await kv();
+  const s = await store(AppEventDto);
   for (const id of eventIds) {
-    await db.delete(orgKey(orgId, "event", email, id));
+    await s.delete([orgId, email, id]);
   }
 }
 
-// -- Prefab Broadcast Events --
+// ── Prefab Broadcast Events ─────────────────────────────────────────────────
 
 export interface BroadcastEvent {
   id: string;
@@ -1079,20 +916,17 @@ export interface BroadcastEvent {
   ts: number;
 }
 
-/** Get prefab event subscriptions for an org. */
 export async function getPrefabSubscriptions(orgId: OrgId): Promise<Record<string, boolean>> {
-  const db = await kv();
-  const entry = await db.get<Record<string, boolean>>(orgKey(orgId, "prefab-subs"));
-  return entry.value ?? {};
+  const s = await store(PrefabSubscriptions);
+  const v = await s.get([orgId]);
+  return (v as unknown as Record<string, boolean>) ?? {};
 }
 
-/** Save prefab event subscriptions for an org. */
 export async function savePrefabSubscriptions(orgId: OrgId, subs: Record<string, boolean>): Promise<void> {
-  const db = await kv();
-  await db.set(orgKey(orgId, "prefab-subs"), subs);
+  const s = await store(PrefabSubscriptions);
+  await s.set([orgId], subs as any);
 }
 
-/** Emit a broadcast event visible to all users in an org. 24h TTL. */
 export async function emitBroadcastEvent(
   orgId: OrgId,
   prefabType: string,
@@ -1100,7 +934,7 @@ export async function emitBroadcastEvent(
   message: string,
   animationId: string | null,
 ): Promise<void> {
-  const db = await kv();
+  const s = await store(BroadcastEventDto);
   const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const event: BroadcastEvent = {
     id,
@@ -1111,25 +945,16 @@ export async function emitBroadcastEvent(
     animationId,
     ts: Date.now(),
   };
-  await db.set(orgKey(orgId, "broadcast", id), event, { expireIn: DAY_MS });
+  await s.set([orgId, id], event as any, { expireIn: DAY_MS });
 }
 
-/** Get broadcast events for an org since a given timestamp. */
 export async function getBroadcastEvents(orgId: OrgId, since = 0): Promise<BroadcastEvent[]> {
-  const db = await kv();
-  const events: BroadcastEvent[] = [];
-  for await (const entry of db.list<BroadcastEvent>({ prefix: orgKey(orgId, "broadcast") })) {
-    if (entry.value && entry.value.ts > since) {
-      events.push(entry.value);
-    }
-  }
-  return events;
+  const s = await store(BroadcastEventDto);
+  const results = await s.list(orgId);
+  return (results.map((r) => r.value) as unknown as BroadcastEvent[])
+    .filter((e) => e.ts > since);
 }
 
-/**
- * Check org subscriptions and emit a broadcast if the event type is enabled.
- * Reads the trigger user's animBindings to see if they have an animation configured.
- */
 export async function checkAndEmitPrefab(
   orgId: OrgId,
   prefabType: string,
@@ -1138,14 +963,12 @@ export async function checkAndEmitPrefab(
 ): Promise<void> {
   const subs = await getPrefabSubscriptions(orgId);
   if (!subs[prefabType]) return;
-
   const gs = await getGameState(orgId, email);
   const animationId = gs.animBindings?.[prefabType] ?? null;
-
   await emitBroadcastEvent(orgId, prefabType, email, message, animationId);
 }
 
-// -- Messaging --
+// ── Messaging ───────────────────────────────────────────────────────────────
 
 export interface Message {
   id: string;
@@ -1156,26 +979,25 @@ export interface Message {
   read: boolean;
 }
 
-/** Send a message from one user to another within an org. */
 export async function sendMessage(
   orgId: OrgId,
   from: string,
   to: string,
   body: string,
 ): Promise<Message> {
-  const db = await kv();
+  const msgStore = await store(MessageDto);
+  const unreadStore = await store(UnreadCount);
   const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const msg: Message = { id, from, to, body, ts: Date.now(), read: false };
 
-  // Store in both participants' conversation views
-  const convKey1 = orgKey(orgId, "message", from, to, id);
-  const convKey2 = orgKey(orgId, "message", to, from, id);
-  const unreadKey = orgKey(orgId, "unread-count", to);
+  const convKey1 = msgStore.toKey([orgId, from, to, id]);
+  const convKey2 = msgStore.toKey([orgId, to, from, id]);
+  const unreadKey = unreadStore.toKey([orgId, to]);
 
-  const unreadEntry = await db.get<number>(unreadKey);
+  const unreadEntry = await unreadStore.rawDb.get<number>(unreadKey);
   const currentUnread = unreadEntry.value ?? 0;
 
-  await db.atomic()
+  await msgStore.rawDb.atomic()
     .set(convKey1, msg)
     .set(convKey2, msg)
     .set(unreadKey, currentUnread + 1)
@@ -1184,73 +1006,68 @@ export async function sendMessage(
   return msg;
 }
 
-/** Get conversation history between two users, newest first. */
 export async function getConversation(
   orgId: OrgId,
   ownerEmail: string,
   otherEmail: string,
   limit = 50,
 ): Promise<Message[]> {
-  const db = await kv();
-  const messages: Message[] = [];
-  for await (const entry of db.list<Message>(
-    { prefix: orgKey(orgId, "message", ownerEmail, otherEmail) },
-    { reverse: true, limit },
-  )) {
-    if (entry.value) messages.push(entry.value);
-  }
-  return messages;
+  const s = await store(MessageDto);
+  const results = await s.listRaw([orgId, ownerEmail, otherEmail], { reverse: true, limit });
+  return results.map((r) => r.value) as unknown as Message[];
 }
 
-/** Get unread count for a user. */
 export async function getUnreadCount(orgId: OrgId, email: string): Promise<number> {
-  const db = await kv();
-  const entry = await db.get<number>(orgKey(orgId, "unread-count", email));
-  return entry.value ?? 0;
+  const s = await store(UnreadCount);
+  const v = await s.get([orgId, email]);
+  return (v as unknown as number) ?? 0;
 }
 
-/** Mark messages in a conversation as read and reset unread count. */
 export async function markConversationRead(
   orgId: OrgId,
   ownerEmail: string,
   otherEmail: string,
 ): Promise<void> {
-  const db = await kv();
+  const msgStore = await store(MessageDto);
+  const results = await msgStore.listRaw([orgId, ownerEmail, otherEmail]);
   let readCount = 0;
-  for await (const entry of db.list<Message>({ prefix: orgKey(orgId, "message", ownerEmail, otherEmail) })) {
-    if (entry.value && !entry.value.read && entry.value.from !== ownerEmail) {
-      const updated = { ...entry.value, read: true };
-      await db.set(entry.key, updated);
+  for (const entry of results) {
+    const msg = entry.value as unknown as Message;
+    if (msg && !msg.read && msg.from !== ownerEmail) {
+      const updated = { ...msg, read: true };
+      await msgStore.rawDb.set(entry.key, updated);
       readCount++;
     }
   }
   if (readCount > 0) {
-    const unreadKey = orgKey(orgId, "unread-count", ownerEmail);
-    const unreadEntry = await db.get<number>(unreadKey);
+    const unreadStore = await store(UnreadCount);
+    const unreadKey = unreadStore.toKey([orgId, ownerEmail]);
+    const unreadEntry = await unreadStore.rawDb.get<number>(unreadKey);
     const current = unreadEntry.value ?? 0;
-    await db.set(unreadKey, Math.max(0, current - readCount));
+    await unreadStore.rawDb.set(unreadKey, Math.max(0, current - readCount));
   }
 }
 
-/** Get list of recent conversations for a user (unique conversation partners). */
 export async function getConversationList(
   orgId: OrgId,
   email: string,
 ): Promise<Array<{ email: string; lastMessage: Message; unread: number }>> {
-  const db = await kv();
+  const s = await store(MessageDto);
+  const results = await s.listRaw([orgId, email]);
   const convMap = new Map<string, { lastMessage: Message; unread: number }>();
 
-  for await (const entry of db.list<Message>({ prefix: orgKey(orgId, "message", email) })) {
-    if (!entry.value) continue;
-    const otherEmail = entry.value.from === email ? entry.value.to : entry.value.from;
+  for (const entry of results) {
+    const msg = entry.value as unknown as Message;
+    if (!msg) continue;
+    const otherEmail = msg.from === email ? msg.to : msg.from;
     const existing = convMap.get(otherEmail);
-    if (!existing || entry.value.ts > existing.lastMessage.ts) {
+    if (!existing || msg.ts > existing.lastMessage.ts) {
       const unread = existing?.unread ?? 0;
       convMap.set(otherEmail, {
-        lastMessage: entry.value,
-        unread: unread + (!entry.value.read && entry.value.from !== email ? 1 : 0),
+        lastMessage: msg,
+        unread: unread + (!msg.read && msg.from !== email ? 1 : 0),
       });
-    } else if (!entry.value.read && entry.value.from !== email) {
+    } else if (!msg.read && msg.from !== email) {
       existing.unread++;
     }
   }
@@ -1258,15 +1075,4 @@ export async function getConversationList(
   return Array.from(convMap.entries())
     .map(([email, data]) => ({ email, ...data }))
     .sort((a, b) => b.lastMessage.ts - a.lastMessage.ts);
-}
-
-// -- Helpers --
-
-async function hashString(input: string): Promise<string> {
-  const data = new TextEncoder().encode(input);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 16);
 }

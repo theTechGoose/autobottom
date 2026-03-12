@@ -254,6 +254,8 @@ const postRoutes: Record<string, Handler> = {
   "/admin/pause-queues": handlePauseQueues,
   "/admin/resume-queues": handleResumeQueues,
   "/admin/clear-review-queue": handleClearReviewQueue,
+  "/admin/dump-state": handleDumpState,
+  "/admin/import-state": handleImportState,
   "/admin/queues": handleSetQueue,
   "/admin/pipeline-config": handleSetPipelineConfig,
   "/admin/settings/terminate": handleAdminSaveSettings,
@@ -2425,6 +2427,118 @@ async function handleClearReviewQueue(req: Request): Promise<Response> {
   const { cleared } = await clearReviewQueue(auth.orgId);
   console.log(`[ADMIN] ${auth.email} cleared review queue (${cleared} KV entries deleted)`);
   return json({ ok: true, cleared });
+}
+
+// -- Admin: Dump State --
+
+async function handleDumpState(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const db = await Deno.openKv();
+  const prefixes = [
+    "review-pending",
+    "review-active",
+    "review-decided",
+    "review-audit-pending",
+    "review-lock",
+    "judge-pending",
+    "judge-active",
+    "judge-decided",
+    "judge-audit-pending",
+    "manager-queue",
+    "manager-remediation",
+    "finding",
+    "transcript",
+    "appeal",
+  ];
+
+  const entries: Array<{ key: Deno.KvKeyPart[]; value: unknown }> = [];
+  for (const prefix of prefixes) {
+    const iter = db.list({ prefix: orgKey(auth.orgId, prefix) });
+    for await (const entry of iter) {
+      entries.push({
+        key: entry.key as Deno.KvKeyPart[],
+        value: entry.value,
+      });
+    }
+  }
+
+  // Also dump users for this org so staging can recreate sessions
+  const userIter = db.list({ prefix: orgKey(auth.orgId, "user") });
+  for await (const entry of userIter) {
+    entries.push({
+      key: entry.key as Deno.KvKeyPart[],
+      value: entry.value,
+    });
+  }
+
+  console.log(`[ADMIN] ${auth.email} dumped state: ${entries.length} entries`);
+  return json({ orgId: auth.orgId, entries, exportedAt: new Date().toISOString() });
+}
+
+// -- Admin: Import State --
+
+async function handleImportState(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const body = await req.json();
+  const { entries, orgId: sourceOrgId } = body as {
+    entries: Array<{ key: Deno.KvKeyPart[]; value: unknown }>;
+    orgId?: string;
+  };
+
+  if (!entries || !Array.isArray(entries)) {
+    return json({ error: "entries array required" }, 400);
+  }
+
+  const db = await Deno.openKv();
+  const targetOrgId = auth.orgId;
+
+  // Clear existing queue state on the target
+  const clearPrefixes = [
+    "review-pending",
+    "review-active",
+    "review-decided",
+    "review-audit-pending",
+    "review-lock",
+    "judge-pending",
+    "judge-active",
+    "judge-decided",
+    "judge-audit-pending",
+    "manager-queue",
+    "manager-remediation",
+  ];
+  let cleared = 0;
+  for (const prefix of clearPrefixes) {
+    const iter = db.list({ prefix: orgKey(targetOrgId, prefix) });
+    for await (const entry of iter) {
+      await db.delete(entry.key);
+      cleared++;
+    }
+  }
+
+  // Write imported entries, remapping orgId if source differs from target
+  let written = 0;
+  const BATCH = 10;
+  for (let i = 0; i < entries.length; i += BATCH) {
+    const batch = entries.slice(i, i + BATCH);
+    const atomic = db.atomic();
+    for (const entry of batch) {
+      let key = entry.key;
+      // Remap orgId: replace source orgId prefix with target orgId
+      if (sourceOrgId && key[0] === sourceOrgId && sourceOrgId !== targetOrgId) {
+        key = [targetOrgId, ...key.slice(1)];
+      }
+      atomic.set(key as Deno.KvKey, entry.value);
+      written++;
+    }
+    await atomic.commit();
+  }
+
+  console.log(`[ADMIN] ${auth.email} imported state: cleared ${cleared}, wrote ${written} entries (source org: ${sourceOrgId ?? "same"})`);
+  return json({ ok: true, cleared, written });
 }
 
 // -- Admin: Init Org --

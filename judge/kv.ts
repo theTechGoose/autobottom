@@ -1,6 +1,6 @@
 /** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
 import { checkBadges } from "../shared/badges.ts";
@@ -94,6 +94,10 @@ export async function populateJudgeQueue(
 }
 
 // -- Claim Next Item --
+// Design: items are atomically MOVED from judge-pending → judge-active/{judge}
+// on claim. Once moved, no other judge can see it.
+
+const ACTIVE_TTL = 30 * 60 * 1000; // 30 minutes
 
 export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
   current: (JudgeItem & { appealComment?: string }) | null;
@@ -104,14 +108,76 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
 }> {
   const db = await kv();
   const now = Date.now();
-  const LOCK_TTL = 30 * 60 * 1000;
-
-  let current: JudgeItem | null = null;
-  let peek: JudgeItem | null = null;
 
   // Recording re-audit types should never reach the judge queue.
-  // Auto-dispose any that leaked in from old code paths.
   const SKIP_APPEAL_TYPES = new Set(["different-recording", "additional-recording", "upload-recording"]);
+
+  // 1. Check if this judge already has an active item (page refresh / reconnect)
+  const activeIter = db.list<JudgeItem & { claimedAt: number }>({
+    prefix: orgKey(orgId, "judge-active", judge),
+  });
+  for await (const entry of activeIter) {
+    const item = entry.value;
+    // Found our active item — enrich and return it
+    let enrichedCurrent: JudgeItem & { appealComment?: string } = item;
+    const finding = await getFinding(orgId, item.findingId);
+    if (finding) {
+      const f = finding as Record<string, any>;
+      if (f.appealType && !item.appealType) enrichedCurrent = { ...item, appealType: f.appealType };
+      if (f.appealComment) enrichedCurrent = { ...enrichedCurrent, appealComment: f.appealComment };
+    }
+
+    let transcript = await getTranscript(orgId, item.findingId);
+    if (transcript && !transcript.utteranceTimes?.length) {
+      transcript = await backfillUtteranceTimes(orgId, item.findingId, transcript);
+    }
+    const counterEntry = await db.get<number>(orgKey(orgId, "judge-audit-pending", item.findingId));
+
+    let peek: JudgeItem | null = null;
+    const peekIter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
+    for await (const pe of peekIter) {
+      if (!pe.value.appealType || !SKIP_APPEAL_TYPES.has(pe.value.appealType)) {
+        peek = pe.value;
+        break;
+      }
+    }
+
+    let remaining = 0;
+    const counterIter = db.list<number>({ prefix: orgKey(orgId, "judge-audit-pending") });
+    for await (const ce of counterIter) remaining += ce.value ?? 0;
+
+    return {
+      current: enrichedCurrent,
+      transcript,
+      peek,
+      remaining,
+      auditRemaining: counterEntry.value ?? 0,
+    };
+  }
+
+  // 2. Sweep expired active claims from OTHER judges back to pending
+  const allActiveIter = db.list<JudgeItem & { claimedAt: number }>({
+    prefix: orgKey(orgId, "judge-active"),
+  });
+  for await (const entry of allActiveIter) {
+    const val = entry.value;
+    if (val.claimedAt && (now - val.claimedAt) > ACTIVE_TTL) {
+      const pendingKey = orgKey(orgId, "judge-pending", val.findingId, val.questionIndex);
+      const { claimedAt: _, ...baseItem } = val;
+      const res = await db.atomic()
+        .check(entry)
+        .delete(entry.key)
+        .set(pendingKey, baseItem as JudgeItem)
+        .commit();
+      if (res.ok) {
+        console.log(`[JUDGE] Reclaimed expired active item ${val.findingId}/${val.questionIndex}`);
+      }
+    }
+  }
+
+  // 3. Iterate pending queue and atomically dequeue
+  let current: JudgeItem | null = null;
+  let peek: JudgeItem | null = null;
 
   const iter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
   for await (const entry of iter) {
@@ -123,75 +189,49 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
       continue;
     }
 
-    const lockKey = orgKey(orgId, "judge-lock", item.findingId, item.questionIndex);
-
     if (!current) {
-      const lockEntry = await db.get<{ claimedBy: string }>(lockKey);
-
-      // Already locked by someone else — skip this item
-      if (lockEntry.value !== null && lockEntry.value.claimedBy !== judge) continue;
-
-      // Already locked by us (page refresh / reconnect) — reclaim without CAS race
-      if (lockEntry.value !== null && lockEntry.value.claimedBy === judge) {
+      const activeKey = orgKey(orgId, "judge-active", judge, item.findingId, item.questionIndex);
+      const activeValue = { ...item, claimedAt: now };
+      const res = await db.atomic()
+        .check(entry)
+        .delete(entry.key)
+        .set(activeKey, activeValue)
+        .commit();
+      if (res.ok) {
         current = item;
         continue;
       }
-
-      // Lock is null — proceed with atomic CAS
-      const res = await db.atomic()
-        .check(lockEntry)
-        .set(lockKey, { claimedBy: judge, claimedAt: now }, { expireIn: LOCK_TTL })
-        .commit();
-
-      if (res.ok) {
-        current = item;
-      }
+      continue;
     } else if (!peek) {
-      const lockEntry = await db.get(lockKey);
-      if (lockEntry.value === null) {
-        peek = item;
-        break; // Have both current and peek — no need to scan further
-      }
+      peek = item;
+      break;
     }
   }
 
-  // Get accurate remaining count from per-audit counters (one KV entry per audit, not per question)
+  // Remaining count from per-audit counters
   let remaining = 0;
   const counterIter = db.list<number>({ prefix: orgKey(orgId, "judge-audit-pending") });
   for await (const entry of counterIter) {
     remaining += entry.value ?? 0;
   }
-  if (current) remaining--; // Exclude the one we just claimed
+  if (current) remaining--;
 
   let transcript = null;
   let auditRemaining = 0;
   let enrichedCurrent: (JudgeItem & { appealComment?: string }) | null = current;
   if (current) {
     transcript = await getTranscript(orgId, current.findingId);
+    if (transcript && !transcript.utteranceTimes?.length) {
+      transcript = await backfillUtteranceTimes(orgId, current.findingId, transcript);
+    }
     const counterEntry = await db.get<number>(orgKey(orgId, "judge-audit-pending", current.findingId));
     auditRemaining = counterEntry.value ?? 0;
 
-    // Enrich with appeal metadata from finding if not already on the item
-    if (!current.appealType) {
-      const finding = await getFinding(orgId, current.findingId);
-      if (finding) {
-        const f = finding as Record<string, any>;
-        if (f.appealType) {
-          enrichedCurrent = { ...current, appealType: f.appealType };
-        }
-        if (f.appealComment) {
-          enrichedCurrent = { ...(enrichedCurrent ?? current), appealComment: f.appealComment };
-        }
-      }
-    } else {
-      // appealType is on the item, but we still need appealComment from finding
-      const finding = await getFinding(orgId, current.findingId);
-      if (finding) {
-        const f = finding as Record<string, any>;
-        if (f.appealComment) {
-          enrichedCurrent = { ...current, appealComment: f.appealComment };
-        }
-      }
+    const finding = await getFinding(orgId, current.findingId);
+    if (finding) {
+      const f = finding as Record<string, any>;
+      if (f.appealType && !current.appealType) enrichedCurrent = { ...current, appealType: f.appealType };
+      if (f.appealComment) enrichedCurrent = { ...(enrichedCurrent ?? current), appealComment: f.appealComment };
     }
   }
 
@@ -212,20 +252,37 @@ export async function recordDecision(
 ): Promise<{ success: boolean; auditComplete: boolean; newBadges: BadgeDef[] }> {
   const db = await kv();
 
-  const lockKey = orgKey(orgId, "judge-lock", findingId, questionIndex);
-  const lockEntry = await db.get<{ claimedBy: string }>(lockKey);
-  if (lockEntry.value && lockEntry.value.claimedBy !== judge) {
-    return { success: false, auditComplete: false, newBadges: [] };
-  }
+  // Load active item for this judge
+  const activeKey = orgKey(orgId, "judge-active", judge, findingId, questionIndex);
+  const activeEntry = await db.get<JudgeItem & { claimedAt: number }>(activeKey);
 
-  const pendingKey = orgKey(orgId, "judge-pending", findingId, questionIndex);
-  const pendingEntry = await db.get<JudgeItem>(pendingKey);
-  if (!pendingEntry.value) {
-    return { success: false, auditComplete: false, newBadges: [] };
+  let decidedItem: JudgeItem;
+  if (activeEntry.value) {
+    const { claimedAt: _, ...baseItem } = activeEntry.value;
+    decidedItem = baseItem as JudgeItem;
+  } else {
+    // Fallback: check pending directly (undo path / legacy)
+    const pendingKey = orgKey(orgId, "judge-pending", findingId, questionIndex);
+    const pendingEntry = await db.get<JudgeItem>(pendingKey);
+    if (!pendingEntry.value) {
+      return { success: false, auditComplete: false, newBadges: [] };
+    }
+    decidedItem = pendingEntry.value;
+    // Use pending path
+    const decided: JudgeDecision = { ...decidedItem, decision, ...(reason ? { reason } : {}), judge, decidedAt: Date.now() };
+    const counterKey = orgKey(orgId, "judge-audit-pending", findingId);
+    const counterEntry = await db.get<number>(counterKey);
+    const newCount = (counterEntry.value ?? 1) - 1;
+    const atomic = db.atomic().check(pendingEntry).delete(pendingKey).delete(orgKey(orgId, "judge-lock", findingId, questionIndex)).set(orgKey(orgId, "judge-decided", findingId, questionIndex), decided);
+    if (newCount <= 0) atomic.delete(counterKey); else atomic.set(counterKey, newCount);
+    const res = await atomic.commit();
+    if (!res.ok) return { success: false, auditComplete: false, newBadges: [] };
+    if (newCount <= 0) postJudgedAudit(orgId, findingId, judge).catch((err) => console.error(`[JUDGE] ${findingId}: Completion failed:`, err));
+    return { success: true, auditComplete: newCount <= 0, newBadges: [] };
   }
 
   const decided: JudgeDecision = {
-    ...pendingEntry.value,
+    ...decidedItem,
     decision,
     ...(reason ? { reason } : {}),
     judge,
@@ -238,9 +295,8 @@ export async function recordDecision(
   const newCount = currentCount - 1;
 
   const atomic = db.atomic()
-    .check(pendingEntry)
-    .delete(lockKey)
-    .delete(pendingKey)
+    .check(activeEntry)
+    .delete(activeKey)
     .set(orgKey(orgId, "judge-decided", findingId, questionIndex), decided);
 
   if (newCount <= 0) {
@@ -317,12 +373,17 @@ export async function undoDecision(
 }> {
   const db = await kv();
 
-  // Release any current lock held by this judge
-  const lockIter = db.list<{ claimedBy: string }>({ prefix: orgKey(orgId, "judge-lock") });
-  for await (const entry of lockIter) {
-    if (entry.value.claimedBy === judge) {
-      await db.delete(entry.key);
-    }
+  // Release any current active item held by this judge (put back in pending)
+  const activeIter = db.list<JudgeItem & { claimedAt: number }>({
+    prefix: orgKey(orgId, "judge-active", judge),
+  });
+  for await (const entry of activeIter) {
+    const { claimedAt: _, ...baseItem } = entry.value;
+    await db.atomic()
+      .check(entry)
+      .delete(entry.key)
+      .set(orgKey(orgId, "judge-pending", entry.value.findingId, entry.value.questionIndex), baseItem as JudgeItem)
+      .commit();
   }
 
   // Find the most recent decision by this judge
@@ -356,40 +417,33 @@ export async function undoDecision(
   const counterEntry = await db.get<number>(counterKey);
   const newCount = (counterEntry.value ?? 0) + 1;
 
+  // Move: decided → active (assigned to this judge)
+  const activeKey = orgKey(orgId, "judge-active", judge, findingId, questionIndex);
   const atomic = db.atomic()
     .check(latestDecided.entry)
     .check(counterEntry)
     .delete(latestDecided.entry.key)
-    .set(orgKey(orgId, "judge-pending", findingId, questionIndex), item)
-    .set(counterKey, newCount)
-    .set(
-      orgKey(orgId, "judge-lock", findingId, questionIndex),
-      { claimedBy: judge, claimedAt: Date.now() },
-      { expireIn: 30 * 60 * 1000 },
-    );
+    .set(activeKey, { ...item, claimedAt: Date.now() })
+    .set(counterKey, newCount);
 
   const res = await atomic.commit();
   if (!res.ok) {
     return { restored: null, transcript: null, peek: null, remaining: 0, auditRemaining: 0 };
   }
 
-  const transcript = await getTranscript(orgId, findingId);
-
-  let peek: JudgeItem | null = null;
-  let remaining = 0;
-  const pendingIter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
-  for await (const entry of pendingIter) {
-    remaining++;
-    if (!peek && !(entry.value.findingId === findingId && entry.value.questionIndex === questionIndex)) {
-      const lk = orgKey(orgId, "judge-lock", entry.value.findingId, entry.value.questionIndex);
-      const lkEntry = await db.get(lk);
-      if (lkEntry.value === null) {
-        peek = entry.value;
-      }
-    }
+  let transcript = await getTranscript(orgId, findingId);
+  if (transcript && !transcript.utteranceTimes?.length) {
+    transcript = await backfillUtteranceTimes(orgId, findingId, transcript);
   }
 
-  return { restored: item, transcript, peek, remaining, auditRemaining: newCount };
+  let peek: JudgeItem | null = null;
+  const pendingIter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
+  for await (const entry of pendingIter) {
+    peek = entry.value;
+    break;
+  }
+
+  return { restored: item, transcript, peek, remaining: 0, auditRemaining: newCount };
 }
 
 // -- Audit Completion --

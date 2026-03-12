@@ -2,7 +2,7 @@
 
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
 import { populateManagerQueue } from "../manager/kv.ts";
 import { checkBadges, BADGE_CATALOG } from "../shared/badges.ts";
 import type { BadgeDef } from "../shared/badges.ts";
@@ -95,7 +95,45 @@ export async function populateReviewQueue(
   console.log(`[REVIEW] ${findingId}: Queued ${noAnswers.length} items for review`);
 }
 
+// -- Badge Check Helper --
+
+async function doBadgeCheck(
+  orgId: OrgId, reviewer: string,
+  clientCombo?: number, clientLevel?: number, decisionSpeedMs?: number,
+): Promise<BadgeDef[]> {
+  const stats = await getBadgeStats(orgId, reviewer);
+  stats.totalDecisions++;
+  if (clientCombo != null && clientCombo > stats.bestCombo) stats.bestCombo = clientCombo;
+  if (clientLevel != null && clientLevel > stats.level) stats.level = clientLevel;
+  if (decisionSpeedMs != null && decisionSpeedMs > 0) {
+    const total = stats.avgSpeedMs * stats.decisionsForAvg + decisionSpeedMs;
+    stats.decisionsForAvg++;
+    stats.avgSpeedMs = Math.round(total / stats.decisionsForAvg);
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (stats.lastActiveDate !== today) {
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    stats.dayStreak = stats.lastActiveDate === yesterday ? stats.dayStreak + 1 : 1;
+    stats.lastActiveDate = today;
+  }
+  await updateBadgeStats(orgId, reviewer, stats);
+  const earned = await getEarnedBadges(orgId, reviewer);
+  const earnedSet = new Set(earned.map((b) => b.badgeId));
+  const newBadges = checkBadges("reviewer", stats, earnedSet);
+  let badgeXp = 0;
+  for (const badge of newBadges) {
+    await awardBadge(orgId, reviewer, badge);
+    badgeXp += badge.xpReward;
+  }
+  await awardXp(orgId, reviewer, 10 + badgeXp, "reviewer");
+  return newBadges;
+}
+
 // -- Claim Next Item --
+// Design: items are atomically MOVED from review-pending → review-active/{reviewer}
+// on claim. Once moved, no other reviewer can see it. No locks needed.
+
+const ACTIVE_TTL = 30 * 60 * 1000; // 30 minutes — abandoned claims expire back to available pool
 
 export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
   current: ReviewItem | null;
@@ -106,62 +144,100 @@ export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
 }> {
   const db = await kv();
   const now = Date.now();
-  const LOCK_TTL = 30 * 60 * 1000; // 30 minutes
 
-  let current: ReviewItem | null = null;
-  let peek: ReviewItem | null = null;
-  let scanned = 0;
-
-  const iter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
-  for await (const entry of iter) {
-    scanned++;
+  // 1. Check if this reviewer already has an active item (page refresh / reconnect)
+  const activeIter = db.list<ReviewItem & { claimedAt: number }>({
+    prefix: orgKey(orgId, "review-active", reviewer),
+  });
+  for await (const entry of activeIter) {
+    // Found our active item — return it
     const item = entry.value;
-    const lockKey = orgKey(orgId, "review-lock", item.findingId, item.questionIndex);
+    let transcript = await getTranscript(orgId, item.findingId);
+    if (transcript && !transcript.utteranceTimes?.length) {
+      transcript = await backfillUtteranceTimes(orgId, item.findingId, transcript);
+    }
+    const counterEntry = await db.get<number>(orgKey(orgId, "review-audit-pending", item.findingId));
 
-    if (!current) {
-      // Try to claim this item atomically — prevents two reviewers grabbing same question
-      const lockEntry = await db.get<{ claimedBy: string }>(lockKey);
+    // Find peek from pending
+    let peek: ReviewItem | null = null;
+    const peekIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
+    let peekScanned = 0;
+    for await (const pe of peekIter) {
+      if (++peekScanned > 20) break;
+      peek = pe.value;
+      break;
+    }
 
-      // Already locked by someone else — skip this item
-      if (lockEntry.value !== null && lockEntry.value.claimedBy !== reviewer) continue;
+    return {
+      current: item,
+      transcript,
+      peek,
+      remaining: 0,
+      auditRemaining: counterEntry.value ?? 0,
+    };
+  }
 
-      // Already locked by us (page refresh / reconnect) — reclaim without CAS race
-      if (lockEntry.value !== null && lockEntry.value.claimedBy === reviewer) {
-        current = item;
-        continue;
-      }
-
-      // Lock is null — proceed with atomic CAS
+  // 2. No active item — sweep expired active claims from OTHER reviewers back to pending
+  const allActiveIter = db.list<ReviewItem & { claimedAt: number }>({
+    prefix: orgKey(orgId, "review-active"),
+  });
+  for await (const entry of allActiveIter) {
+    const val = entry.value;
+    if (val.claimedAt && (now - val.claimedAt) > ACTIVE_TTL) {
+      // Expired claim — move back to pending
+      const pendingKey = orgKey(orgId, "review-pending", val.findingId, val.questionIndex);
+      const { claimedAt: _, ...baseItem } = val;
       const res = await db.atomic()
-        .check(lockEntry)
-        .set(lockKey, { claimedBy: reviewer, claimedAt: now }, { expireIn: LOCK_TTL })
+        .check(entry)
+        .delete(entry.key)
+        .set(pendingKey, baseItem as ReviewItem)
         .commit();
       if (res.ok) {
-        current = item;
-        continue;
-      }
-    } else {
-      // Peek: find next unlocked item to pre-load transcript, but stop after 20 candidates
-      if (scanned > 20) break;
-      const lockEntry = await db.get(lockKey);
-      if (lockEntry.value === null) {
-        peek = item;
-        break;
+        console.log(`[REVIEW] Reclaimed expired active item ${val.findingId}/${val.questionIndex}`);
       }
     }
   }
 
-  const remaining = 0; // no longer scanning full queue — progress bar uses /stats baseline
+  // 3. Iterate pending queue and atomically dequeue the first available item
+  let current: ReviewItem | null = null;
+  let peek: ReviewItem | null = null;
+
+  const iter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
+  for await (const entry of iter) {
+    if (!current) {
+      // Atomic dequeue: delete from pending + write to active
+      const activeKey = orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex);
+      const activeValue = { ...entry.value, claimedAt: now };
+      const res = await db.atomic()
+        .check(entry)           // fails if another reviewer already dequeued this item
+        .delete(entry.key)      // remove from shared pending queue
+        .set(activeKey, activeValue) // assign to this reviewer
+        .commit();
+      if (res.ok) {
+        current = entry.value;
+        continue;
+      }
+      // CAS failed — someone else took it, try next item
+      continue;
+    } else {
+      // Peek: first remaining pending item
+      peek = entry.value;
+      break;
+    }
+  }
 
   let transcript = null;
   let auditRemaining = 0;
   if (current) {
     transcript = await getTranscript(orgId, current.findingId);
+    if (transcript && !transcript.utteranceTimes?.length) {
+      transcript = await backfillUtteranceTimes(orgId, current.findingId, transcript);
+    }
     const counterEntry = await db.get<number>(orgKey(orgId, "review-audit-pending", current.findingId));
     auditRemaining = counterEntry.value ?? 0;
   }
 
-  return { current, transcript, peek, remaining, auditRemaining };
+  return { current, transcript, peek, remaining: 0, auditRemaining };
 }
 
 // -- Record Decision --
@@ -178,24 +254,51 @@ export async function recordDecision(
 ): Promise<{ success: boolean; auditComplete: boolean; newBadges: BadgeDef[] }> {
   const db = await kv();
 
-  // Check lock -- if owned by another reviewer, reject. Otherwise proceed.
-  const lockKey = orgKey(orgId, "review-lock", findingId, questionIndex);
-  const lockEntry = await db.get<{ claimedBy: string }>(lockKey);
-  if (lockEntry.value && lockEntry.value.claimedBy !== reviewer) {
-    console.log(`[REVIEW] recordDecision REJECTED: lock owned by ${lockEntry.value.claimedBy}, not ${reviewer}`);
-    return { success: false, auditComplete: false, newBadges: [] };
+  // Load active item for this reviewer
+  const activeKey = orgKey(orgId, "review-active", reviewer, findingId, questionIndex);
+  const activeEntry = await db.get<ReviewItem & { claimedAt: number }>(activeKey);
+  if (!activeEntry.value) {
+    // Fallback: check review-pending directly (undo path restores to pending with a lock)
+    const pendingKey = orgKey(orgId, "review-pending", findingId, questionIndex);
+    const pendingEntry = await db.get<ReviewItem>(pendingKey);
+    if (!pendingEntry.value) {
+      console.log(`[REVIEW] recordDecision REJECTED: no active/pending entry for ${findingId}/${questionIndex}`);
+      return { success: false, auditComplete: false, newBadges: [] };
+    }
+    // Use pending path (legacy compat / undo restore)
+    const decided: ReviewDecision = { ...pendingEntry.value, decision, reviewer, decidedAt: Date.now() };
+    const counterKey = orgKey(orgId, "review-audit-pending", findingId);
+    const counterEntry = await db.get<number>(counterKey);
+    const currentCount = counterEntry.value ?? 1;
+    const newCount = currentCount - 1;
+    const atomic = db.atomic()
+      .check(pendingEntry)
+      .delete(pendingKey)
+      .delete(orgKey(orgId, "review-lock", findingId, questionIndex))
+      .set(orgKey(orgId, "review-decided", findingId, questionIndex), decided);
+    if (newCount <= 0) atomic.delete(counterKey);
+    else atomic.set(counterKey, newCount);
+    const res = await atomic.commit();
+    if (!res.ok) {
+      console.log(`[REVIEW] recordDecision REJECTED: atomic commit failed (pending path) for ${findingId}/${questionIndex}`);
+      return { success: false, auditComplete: false, newBadges: [] };
+    }
+    console.log(`[REVIEW] recordDecision OK (pending path): ${findingId}/${questionIndex} = ${decision}`);
+    const auditComplete = newCount <= 0;
+    if (auditComplete) {
+      postCorrectedAudit(orgId, findingId).catch((err) => console.error(`[REVIEW] ${findingId}: Completion POST failed:`, err));
+      populateManagerQueue(orgId, findingId).catch((err) => console.error(`[REVIEW] ${findingId}: Manager queue population failed:`, err));
+    }
+    // Badge checking still runs below
+    let newBadges: BadgeDef[] = [];
+    try { newBadges = await doBadgeCheck(orgId, reviewer, clientCombo, clientLevel, decisionSpeedMs); } catch {}
+    return { success: true, auditComplete, newBadges };
   }
 
-  // Load pending item
-  const pendingKey = orgKey(orgId, "review-pending", findingId, questionIndex);
-  const pendingEntry = await db.get<ReviewItem>(pendingKey);
-  if (!pendingEntry.value) {
-    console.log(`[REVIEW] recordDecision REJECTED: no pending entry for ${findingId}/${questionIndex}`);
-    return { success: false, auditComplete: false, newBadges: [] };
-  }
-
+  // Normal active path: delete active item, write decided
+  const { claimedAt: _, ...baseItem } = activeEntry.value;
   const decided: ReviewDecision = {
-    ...pendingEntry.value,
+    ...baseItem as ReviewItem,
     decision,
     reviewer,
     decidedAt: Date.now(),
@@ -207,12 +310,10 @@ export async function recordDecision(
   const currentCount = counterEntry.value ?? 1;
   const newCount = currentCount - 1;
 
-  // Write decided + delete pending + delete lock + update counter
-  // Check pending versionstamp to prevent double-decide on concurrent requests
+  // Write decided + delete active + update counter
   const atomic = db.atomic()
-    .check(pendingEntry)
-    .delete(lockKey)
-    .delete(pendingKey)
+    .check(activeEntry)
+    .delete(activeKey)
     .set(orgKey(orgId, "review-decided", findingId, questionIndex), decided);
 
   if (newCount <= 0) {
@@ -231,7 +332,6 @@ export async function recordDecision(
 
   const auditComplete = newCount <= 0;
 
-  // Fire completion POST and populate manager queue in background if audit is complete
   if (auditComplete) {
     postCorrectedAudit(orgId, findingId).catch((err) =>
       console.error(`[REVIEW] ${findingId}: Completion POST failed:`, err)
@@ -241,38 +341,8 @@ export async function recordDecision(
     );
   }
 
-  // -- Badge checking (fire-and-forget style, but we await for newBadges) --
   let newBadges: BadgeDef[] = [];
-  try {
-    const stats = await getBadgeStats(orgId, reviewer);
-    stats.totalDecisions++;
-    if (clientCombo != null && clientCombo > stats.bestCombo) stats.bestCombo = clientCombo;
-    if (clientLevel != null && clientLevel > stats.level) stats.level = clientLevel;
-    if (decisionSpeedMs != null && decisionSpeedMs > 0) {
-      const total = stats.avgSpeedMs * stats.decisionsForAvg + decisionSpeedMs;
-      stats.decisionsForAvg++;
-      stats.avgSpeedMs = Math.round(total / stats.decisionsForAvg);
-    }
-    const today = new Date().toISOString().slice(0, 10);
-    if (stats.lastActiveDate !== today) {
-      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      stats.dayStreak = stats.lastActiveDate === yesterday ? stats.dayStreak + 1 : 1;
-      stats.lastActiveDate = today;
-    }
-    await updateBadgeStats(orgId, reviewer, stats);
-
-    const earned = await getEarnedBadges(orgId, reviewer);
-    const earnedSet = new Set(earned.map((b) => b.badgeId));
-    newBadges = checkBadges("reviewer", stats, earnedSet);
-
-    let badgeXp = 0;
-    for (const badge of newBadges) {
-      await awardBadge(orgId, reviewer, badge);
-      badgeXp += badge.xpReward;
-    }
-    // Award base XP (10 per decision) + badge bonus XP
-    await awardXp(orgId, reviewer, 10 + badgeXp, "reviewer");
-  } catch (err) {
+  try { newBadges = await doBadgeCheck(orgId, reviewer, clientCombo, clientLevel, decisionSpeedMs); } catch (err) {
     console.error(`[REVIEW] Badge check error for ${reviewer}:`, err);
   }
 
@@ -293,12 +363,17 @@ export async function undoDecision(
 }> {
   const db = await kv();
 
-  // First, release any current lock held by this reviewer
-  const lockIter = db.list<{ claimedBy: string }>({ prefix: orgKey(orgId, "review-lock") });
-  for await (const entry of lockIter) {
-    if (entry.value.claimedBy === reviewer) {
-      await db.delete(entry.key);
-    }
+  // Release any current active item held by this reviewer (put it back in pending)
+  const activeIter = db.list<ReviewItem & { claimedAt: number }>({
+    prefix: orgKey(orgId, "review-active", reviewer),
+  });
+  for await (const entry of activeIter) {
+    const { claimedAt: _, ...baseItem } = entry.value;
+    await db.atomic()
+      .check(entry)
+      .delete(entry.key)
+      .set(orgKey(orgId, "review-pending", entry.value.findingId, entry.value.questionIndex), baseItem as ReviewItem)
+      .commit();
   }
 
   // Collect all decisions by this reviewer, sorted most-recent first
@@ -311,9 +386,6 @@ export async function undoDecision(
   }
   myDecisions.sort((a, b) => b.decidedAt - a.decidedAt);
 
-  // Find the most recent decision that belongs to an unfinalized audit.
-  // When an audit is finalized (postCorrectedAudit called), its review-audit-pending
-  // counter key is deleted. Skip any entry whose counter is gone — those audits are done.
   let latestDecided: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number } | null = null;
   for (const candidate of myDecisions) {
     const counterCheck = await db.get<number>(
@@ -345,46 +417,38 @@ export async function undoDecision(
     ...(decided.recordId ? { recordId: decided.recordId } : {}),
   };
 
-  // Move back: delete decided, restore to pending, increment counter
+  // Move back: delete decided → active (assigned to this reviewer), increment counter
   const counterKey = orgKey(orgId, "review-audit-pending", findingId);
   const counterEntry = await db.get<number>(counterKey);
   const newCount = (counterEntry.value ?? 0) + 1;
 
+  const activeKey = orgKey(orgId, "review-active", reviewer, findingId, questionIndex);
   const atomic = db.atomic()
     .check(latestDecided.entry)
     .check(counterEntry)
     .delete(latestDecided.entry.key)
-    .set(orgKey(orgId, "review-pending", findingId, questionIndex), item)
-    .set(counterKey, newCount)
-    .set(
-      orgKey(orgId, "review-lock", findingId, questionIndex),
-      { claimedBy: reviewer, claimedAt: Date.now() },
-      { expireIn: 30 * 60 * 1000 },
-    );
+    .set(activeKey, { ...item, claimedAt: Date.now() })
+    .set(counterKey, newCount);
 
   const res = await atomic.commit();
   if (!res.ok) {
     return { restored: null, transcript: null, peek: null, remaining: 0, auditRemaining: 0 };
   }
 
-  const transcript = await getTranscript(orgId, findingId);
-
-  // Find peek
-  let peek: ReviewItem | null = null;
-  let remaining = 0;
-  const pendingIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
-  for await (const entry of pendingIter) {
-    remaining++;
-    if (!peek && !(entry.value.findingId === findingId && entry.value.questionIndex === questionIndex)) {
-      const lk = orgKey(orgId, "review-lock", entry.value.findingId, entry.value.questionIndex);
-      const lkEntry = await db.get(lk);
-      if (lkEntry.value === null) {
-        peek = entry.value;
-      }
-    }
+  let transcript = await getTranscript(orgId, findingId);
+  if (transcript && !transcript.utteranceTimes?.length) {
+    transcript = await backfillUtteranceTimes(orgId, findingId, transcript);
   }
 
-  return { restored: item, transcript, peek, remaining, auditRemaining: newCount };
+  // Find peek from pending
+  let peek: ReviewItem | null = null;
+  const pendingIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
+  for await (const entry of pendingIter) {
+    peek = entry.value;
+    break;
+  }
+
+  return { restored: item, transcript, peek, remaining: 0, auditRemaining: newCount };
 }
 
 // -- Audit Completion POST --
@@ -470,6 +534,14 @@ export async function getReviewStats(orgId: OrgId): Promise<{
     if (entry.value?.recordingIdField === "GenieNumber") packagePending++;
     else dateLegPending++;
   }
+  // Active items count as pending (in-progress, not yet decided)
+  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-active") })) {
+    pending++;
+    const fId = entry.value?.findingId || (entry.key[3] as string);
+    if (fId) pendingAudits.add(fId);
+    if (entry.value?.recordingIdField === "GenieNumber") packagePending++;
+    else dateLegPending++;
+  }
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-decided") })) {
     decided++;
     if (entry.value?.recordingIdField === "GenieNumber") packageDecided++;
@@ -484,12 +556,17 @@ export async function getReviewStats(orgId: OrgId): Promise<{
 export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): Promise<ReviewerDashboardData> {
   const db = await kv();
 
-  // Count pending items and unique audits
+  // Count pending + active items and unique audits
   let pending = 0;
   const dashPendingAudits = new Set<string>();
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") })) {
     pending++;
     const fId = entry.value?.findingId || (entry.key[2] as string);
+    if (fId) dashPendingAudits.add(fId);
+  }
+  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-active") })) {
+    pending++;
+    const fId = entry.value?.findingId || (entry.key[3] as string);
     if (fId) dashPendingAudits.add(fId);
   }
 
@@ -565,6 +642,7 @@ export async function clearReviewQueue(orgId: OrgId): Promise<{ cleared: number 
     orgKey(orgId, "review-pending"),
     orgKey(orgId, "review-audit-pending"),
     orgKey(orgId, "review-lock"),
+    orgKey(orgId, "review-active"),
   ];
 
   // Collect all keys first, then batch-delete in groups of 10 (Deno KV atomic limit)

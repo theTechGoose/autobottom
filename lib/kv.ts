@@ -2,6 +2,7 @@
 
 import { orgKey } from "./org.ts";
 import type { OrgId } from "./org.ts";
+import { pollTranscriptOnce, processTranscriptResult } from "../providers/assemblyai.ts";
 
 let _kv: Deno.Kv | undefined;
 
@@ -388,6 +389,67 @@ export async function saveTranscript(orgId: OrgId, findingId: string, raw: strin
 export async function getTranscript(orgId: OrgId, findingId: string) {
   const store = await chunked();
   return store.get<{ raw: string; diarized: string; utteranceTimes?: number[] }>(orgKey(orgId, "audit-transcript", findingId));
+}
+
+/** Backfill utteranceTimes for a transcript that is missing them.
+ *  First tries to re-fetch from AssemblyAI. If that's not possible (no transcript ID,
+ *  expired data, seed data), generates synthetic times from word counts. */
+export async function backfillUtteranceTimes(
+  orgId: OrgId,
+  findingId: string,
+  transcript: { raw: string; diarized: string; utteranceTimes?: number[] },
+): Promise<{ raw: string; diarized: string; utteranceTimes?: number[] }> {
+  // Already has utteranceTimes — nothing to do
+  if (transcript.utteranceTimes && transcript.utteranceTimes.length > 0) return transcript;
+
+  try {
+    const finding = await getFinding(orgId, findingId);
+    const transcriptId = (finding as Record<string, unknown>)?.assemblyAiTranscriptId as string | undefined;
+
+    // Try AssemblyAI re-fetch first
+    if (transcriptId) {
+      try {
+        const aaiResult = await pollTranscriptOnce(transcriptId);
+        if (aaiResult.status === "completed") {
+          const snipStart = (finding as Record<string, unknown>)?.snipStart as number | undefined;
+          const snipEnd = (finding as Record<string, unknown>)?.snipEnd as number | undefined;
+          const processed = processTranscriptResult(aaiResult, snipStart, snipEnd);
+          if (processed.utterances && processed.utterances.length > 0) {
+            const times = processed.utterances.map((u: { start: number }) => u.start);
+            await saveTranscript(orgId, findingId, transcript.raw, transcript.diarized, times);
+            console.log(`[BACKFILL] ${findingId}: Backfilled ${times.length} utteranceTimes from AssemblyAI`);
+            return { ...transcript, utteranceTimes: times };
+          }
+        }
+      } catch {
+        // AssemblyAI re-fetch failed — fall through to synthetic generation
+      }
+    }
+
+    // Fallback: generate synthetic times from raw transcript line word counts.
+    // Distributes time proportionally by word count so longer utterances get more time.
+    const raw = transcript.raw || "";
+    const lines = raw.split("\n").filter((l: string) => l.trim().length > 0);
+    if (lines.length > 0) {
+      const wordCounts = lines.map((l: string) => l.split(/\s+/).length);
+      const totalWords = wordCounts.reduce((a: number, b: number) => a + b, 0);
+      // Estimate total duration: ~150 words per minute for conversational speech
+      const estimatedDurationMs = (totalWords / 150) * 60 * 1000;
+      const times: number[] = [];
+      let cumWords = 0;
+      for (const wc of wordCounts) {
+        times.push(Math.round((cumWords / totalWords) * estimatedDurationMs));
+        cumWords += wc;
+      }
+      await saveTranscript(orgId, findingId, transcript.raw, transcript.diarized, times);
+      console.log(`[BACKFILL] ${findingId}: Generated ${times.length} synthetic utteranceTimes (${Math.round(estimatedDurationMs / 1000)}s estimated)`);
+      return { ...transcript, utteranceTimes: times };
+    }
+  } catch (err) {
+    console.warn(`[BACKFILL] ${findingId}: Failed to backfill utteranceTimes:`, err);
+  }
+
+  return transcript;
 }
 
 // -- Pipeline Config (admin-settable) --

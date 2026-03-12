@@ -112,13 +112,17 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
   // Recording re-audit types should never reach the judge queue.
   const SKIP_APPEAL_TYPES = new Set(["different-recording", "additional-recording", "upload-recording"]);
 
-  // 1. Check if this judge already has an active item (page refresh / reconnect)
+  // 1. Check if this judge already has active items (page refresh / reconnect)
+  const activeItems: (JudgeItem & { claimedAt: number })[] = [];
   const activeIter = db.list<JudgeItem & { claimedAt: number }>({
     prefix: orgKey(orgId, "judge-active", judge),
   });
   for await (const entry of activeIter) {
-    const item = entry.value;
-    // Found our active item — enrich and return it
+    activeItems.push(entry.value);
+  }
+
+  if (activeItems.length > 0) {
+    const item = activeItems[0];
     let enrichedCurrent: JudgeItem & { appealComment?: string } = item;
     const finding = await getFinding(orgId, item.findingId);
     if (finding) {
@@ -133,12 +137,25 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
     }
     const counterEntry = await db.get<number>(orgKey(orgId, "judge-audit-pending", item.findingId));
 
-    let peek: JudgeItem | null = null;
-    const peekIter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
-    for await (const pe of peekIter) {
-      if (!pe.value.appealType || !SKIP_APPEAL_TYPES.has(pe.value.appealType)) {
-        peek = pe.value;
-        break;
+    // Second active item is the already-claimed peek
+    let peek: JudgeItem | null = activeItems.length > 1 ? activeItems[1] : null;
+
+    // If no peek yet, claim one from pending
+    if (!peek) {
+      const peekIter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
+      for await (const pe of peekIter) {
+        if (!pe.value.appealType || !SKIP_APPEAL_TYPES.has(pe.value.appealType)) {
+          const peekActiveKey = orgKey(orgId, "judge-active", judge, pe.value.findingId, pe.value.questionIndex);
+          const peekRes = await db.atomic()
+            .check(pe)
+            .delete(pe.key)
+            .set(peekActiveKey, { ...pe.value, claimedAt: now })
+            .commit();
+          if (peekRes.ok) {
+            peek = pe.value;
+            break;
+          }
+        }
       }
     }
 
@@ -203,8 +220,17 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
       }
       continue;
     } else if (!peek) {
-      peek = item;
-      break;
+      const peekActiveKey = orgKey(orgId, "judge-active", judge, item.findingId, item.questionIndex);
+      const peekRes = await db.atomic()
+        .check(entry)
+        .delete(entry.key)
+        .set(peekActiveKey, { ...item, claimedAt: now })
+        .commit();
+      if (peekRes.ok) {
+        peek = item;
+        break;
+      }
+      // CAS failed, continue to next
     }
   }
 
@@ -439,8 +465,16 @@ export async function undoDecision(
   let peek: JudgeItem | null = null;
   const pendingIter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
   for await (const entry of pendingIter) {
-    peek = entry.value;
-    break;
+    const peekActiveKey = orgKey(orgId, "judge-active", judge, entry.value.findingId, entry.value.questionIndex);
+    const peekRes = await db.atomic()
+      .check(entry)
+      .delete(entry.key)
+      .set(peekActiveKey, { ...entry.value, claimedAt: Date.now() })
+      .commit();
+    if (peekRes.ok) {
+      peek = entry.value;
+      break;
+    }
   }
 
   return { restored: item, transcript, peek, remaining: 0, auditRemaining: newCount };

@@ -145,27 +145,41 @@ export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
   const db = await kv();
   const now = Date.now();
 
-  // 1. Check if this reviewer already has an active item (page refresh / reconnect)
+  // 1. Check if this reviewer already has active items (page refresh / reconnect)
+  const activeItems: (ReviewItem & { claimedAt: number })[] = [];
   const activeIter = db.list<ReviewItem & { claimedAt: number }>({
     prefix: orgKey(orgId, "review-active", reviewer),
   });
   for await (const entry of activeIter) {
-    // Found our active item — return it
-    const item = entry.value;
+    activeItems.push(entry.value);
+  }
+
+  if (activeItems.length > 0) {
+    const item = activeItems[0];
     let transcript = await getTranscript(orgId, item.findingId);
     if (transcript && !transcript.utteranceTimes?.length) {
       transcript = await backfillUtteranceTimes(orgId, item.findingId, transcript);
     }
     const counterEntry = await db.get<number>(orgKey(orgId, "review-audit-pending", item.findingId));
 
-    // Find peek from pending
-    let peek: ReviewItem | null = null;
-    const peekIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
-    let peekScanned = 0;
-    for await (const pe of peekIter) {
-      if (++peekScanned > 20) break;
-      peek = pe.value;
-      break;
+    // Second active item is the already-claimed peek
+    let peek: ReviewItem | null = activeItems.length > 1 ? activeItems[1] : null;
+
+    // If no peek yet, claim one from pending
+    if (!peek) {
+      const peekIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
+      for await (const pe of peekIter) {
+        const peekActiveKey = orgKey(orgId, "review-active", reviewer, pe.value.findingId, pe.value.questionIndex);
+        const peekRes = await db.atomic()
+          .check(pe)
+          .delete(pe.key)
+          .set(peekActiveKey, { ...pe.value, claimedAt: now })
+          .commit();
+        if (peekRes.ok) {
+          peek = pe.value;
+          break;
+        }
+      }
     }
 
     return {
@@ -220,9 +234,18 @@ export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
       // CAS failed — someone else took it, try next item
       continue;
     } else {
-      // Peek: first remaining pending item
-      peek = entry.value;
-      break;
+      // Peek: atomically claim from pending so no other reviewer can get it
+      const peekActiveKey = orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex);
+      const peekRes = await db.atomic()
+        .check(entry)
+        .delete(entry.key)
+        .set(peekActiveKey, { ...entry.value, claimedAt: now })
+        .commit();
+      if (peekRes.ok) {
+        peek = entry.value;
+        break;
+      }
+      // CAS failed — someone else took it, continue to next pending item
     }
   }
 
@@ -440,12 +463,20 @@ export async function undoDecision(
     transcript = await backfillUtteranceTimes(orgId, findingId, transcript);
   }
 
-  // Find peek from pending
+  // Claim peek from pending (atomic dequeue)
   let peek: ReviewItem | null = null;
   const pendingIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
   for await (const entry of pendingIter) {
-    peek = entry.value;
-    break;
+    const peekActiveKey = orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex);
+    const peekRes = await db.atomic()
+      .check(entry)
+      .delete(entry.key)
+      .set(peekActiveKey, { ...entry.value, claimedAt: Date.now() })
+      .commit();
+    if (peekRes.ok) {
+      peek = entry.value;
+      break;
+    }
   }
 
   return { restored: item, transcript, peek, remaining: 0, auditRemaining: newCount };

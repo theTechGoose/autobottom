@@ -1717,9 +1717,13 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   }
 
   // -- Decide --
+  var inflight = 0; // number of /decide requests in flight
+
   window.decide = function(decision, reason) { decide(decision, reason); };
   function decide(decision, reason) {
-    if (!currentItem || busy) return;
+    if (!currentItem) return;
+    // Only block if buffer is empty AND a request is in flight
+    if (busy && peekItems.length === 0) return;
 
     if (currentAuditRemaining === 1) {
       pendingDecision = decision;
@@ -1731,11 +1735,20 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     executeDecision(decision, reason);
   }
 
-  function executeDecision(decision, reason) {
-    if (!currentItem || busy) return;
-    busy = true;
+  function disableButtons() {
     var decideBtns = document.querySelectorAll('.decide-btn');
     for (var bi = 0; bi < decideBtns.length; bi++) { decideBtns[bi].style.opacity = '0.5'; decideBtns[bi].style.pointerEvents = 'none'; }
+  }
+
+  function enableButtons() {
+    var decideBtns = document.querySelectorAll('.decide-btn');
+    for (var bi = 0; bi < decideBtns.length; bi++) { decideBtns[bi].style.opacity = ''; decideBtns[bi].style.pointerEvents = ''; }
+  }
+
+  function executeDecision(decision, reason) {
+    if (!currentItem) return;
+    if (busy && peekItems.length === 0) return;
+
     // Optimistically hide "Final for Audit" badge
     var mLastOpt = document.getElementById('m-last');
     if (mLastOpt) mLastOpt.style.display = 'none';
@@ -1748,14 +1761,17 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     awardXp(decision === POSITIVE_DECISION ? 10 : 15);
     updateStreak();
 
-    var didSwap = false;
+    // Swap to next peek item instantly
     if (peekItems.length > 0) {
-      didSwap = true;
       currentItem = peekItems.shift();
       if (transcriptCache[currentItem.findingId]) {
         currentTranscript = transcriptCache[currentItem.findingId];
       }
       animateTransition(function() { renderCurrent(); });
+    } else {
+      // Buffer empty — block until /decide comes back
+      busy = true;
+      disableButtons();
     }
 
     ${toastDecisionJs}
@@ -1770,29 +1786,32 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     };
     if (reason) bodyObj.reason = reason;
 
+    inflight++;
     fetch(API + '/decide', {
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
       body: JSON.stringify(bodyObj),
     }).then(function(res) {
       return res.json().then(function(data) {
+        inflight--;
+
         if (res.status === 409) {
-          busy = false;
-          var reenableBtns = document.querySelectorAll('.decide-btn');
-          for (var ri = 0; ri < reenableBtns.length; ri++) { reenableBtns[ri].style.opacity = ''; reenableBtns[ri].style.pointerEvents = ''; }
-          toast('Already decided — loading next item', 'info');
-          fetch(API + '/next').then(function(r) { return r.json(); }).then(function(d) {
-            if (d.current) {
-              currentItem = d.current;
-              peekItems = d.peek || [];
-              currentTranscript = d.transcript || null;
-              currentAuditRemaining = d.auditRemaining || 0;
-              renderCurrent();
-            } else {
-              currentItem = null;
-              showEmpty();
-            }
-          });
+          // Silently absorb — item was already handled. Replenish buffer if possible.
+          if (inflight === 0 && !currentItem) {
+            fetch(API + '/next').then(function(r) { return r.json(); }).then(function(d) {
+              if (d.current) {
+                currentItem = d.current;
+                peekItems = d.peek || [];
+                currentTranscript = d.transcript || null;
+                currentAuditRemaining = d.auditRemaining || 0;
+                renderCurrent();
+              } else {
+                showEmpty();
+              }
+              busy = false;
+              enableButtons();
+            });
+          }
           return;
         }
         if (!res.ok) throw new Error(data.error || 'Request failed');
@@ -1814,45 +1833,53 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         updateProgress(remaining);
 
         if (data.next && data.next.current) {
-          currentAuditRemaining = data.next.auditRemaining || 0;
-          if (didSwap) {
-            var newPeek = data.next.peek || [];
-            for (var npi = 0; npi < newPeek.length; npi++) { peekItems.push(newPeek[npi]); }
-            // renderCurrent() already ran with the old auditRemaining — sync badge now
-            var mLastSwap = document.getElementById('m-last');
-            if (mLastSwap) mLastSwap.style.display = currentAuditRemaining === 1 ? '' : 'none';
-          } else {
+          // Push new peek items onto buffer (replenish)
+          var newPeek = data.next.peek || [];
+          for (var npi = 0; npi < newPeek.length; npi++) { peekItems.push(newPeek[npi]); }
+          if (data.next.transcript && data.next.current) {
+            transcriptCache[data.next.current.findingId] = data.next.transcript;
+          }
+
+          // If we were blocked (buffer was empty), load the current from response
+          if (busy && !currentItem) {
             currentItem = data.next.current;
-            peekItems = data.next.peek || [];
             currentTranscript = data.next.transcript;
+            currentAuditRemaining = data.next.auditRemaining || 0;
             if (currentTranscript && currentItem) {
               transcriptCache[currentItem.findingId] = currentTranscript;
             }
             renderCurrent();
-          }
-          if (data.next.transcript && data.next.current) {
-            transcriptCache[data.next.current.findingId] = data.next.transcript;
+          } else {
+            // Update auditRemaining from latest response
+            currentAuditRemaining = data.next.auditRemaining || 0;
+            var mLastSwap = document.getElementById('m-last');
+            if (mLastSwap) mLastSwap.style.display = currentAuditRemaining === 1 ? '' : 'none';
           }
           var mRem = document.getElementById('m-remaining'); if (mRem) mRem.textContent = String(remaining);
-        } else if (!didSwap) {
+        } else if (busy && !currentItem) {
+          // No more items in queue
           showEmpty();
-        } else {
-          // didSwap + no more items: the item we swapped to is the last in queue
-          peekItems = [];
+        } else if (peekItems.length === 0) {
+          // Current item is the last one
           currentAuditRemaining = 1;
           var mLastFinal = document.getElementById('m-last');
           if (mLastFinal) mLastFinal.style.display = '';
           var mRem2 = document.getElementById('m-remaining'); if (mRem2) mRem2.textContent = '0';
         }
-        busy = false;
-        var reenBtns = document.querySelectorAll('.decide-btn');
-        for (var rbi = 0; rbi < reenBtns.length; rbi++) { reenBtns[rbi].style.opacity = ''; reenBtns[rbi].style.pointerEvents = ''; }
+
+        // Only unblock if all in-flight requests are done
+        if (inflight === 0) {
+          busy = false;
+          enableButtons();
+        }
       });
     }).catch(function(err) {
+      inflight--;
       toast(err.message, 'error');
-      busy = false;
-      var reenBtns2 = document.querySelectorAll('.decide-btn');
-      for (var rbi2 = 0; rbi2 < reenBtns2.length; rbi2++) { reenBtns2[rbi2].style.opacity = ''; reenBtns2[rbi2].style.pointerEvents = ''; }
+      if (inflight === 0) {
+        busy = false;
+        enableButtons();
+      }
     });
   }
 

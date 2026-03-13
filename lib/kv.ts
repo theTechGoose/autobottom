@@ -270,48 +270,65 @@ export async function trackRetry(orgId: OrgId, findingId: string, step: string, 
 }
 
 export async function getStats(orgId: OrgId) {
-  const activeStore = await store(ActiveTracking);
-  const active = (await activeStore.list(orgId)).map((e) => {
-    const v = e.value as unknown as Record<string, unknown>;
-    // findingId is now stored in the value; fall back to key[1] for old records
-    const findingId = (v.findingId as string | undefined) || (e.key[1] as string) || "";
-    return { ...v, findingId };
-  });
+  console.log(`[getStats] 🔍 start orgId=${orgId}`);
+  try {
+    const activeStore = await store(ActiveTracking);
+    console.log(`[getStats] activeStore ready`);
+    const activeRaw = await activeStore.listRaw([orgId]);
+    console.log(`[getStats] activeRaw count=${activeRaw.length}`);
+    const active = activeRaw.map((e) => {
+      const v = e.value as unknown as Record<string, unknown>;
+      // findingId is now stored in the value; fall back to last key segment for old records
+      const findingId = (v.findingId as string | undefined) || (e.key[e.key.length - 1] as string) || "";
+      return { ...v, findingId };
+    });
 
-  // Lazy-enrich active entries missing recordId
-  await Promise.all(active.map(async (entry: any) => {
-    if (entry.recordId) return;
-    try {
-      const finding = await getFinding(orgId, entry.findingId);
-      if (!finding) return;
-      const recordId = String(finding.record?.RecordId ?? "");
-      if (!recordId) return;
-      entry.recordId = recordId;
-      entry.isPackage = finding.recordingIdField === "GenieNumber";
-      await activeStore.set([orgId, entry.findingId], {
-        step: entry.step, ts: entry.ts, recordId: entry.recordId, isPackage: entry.isPackage,
-      } as any);
-    } catch { /* best-effort */ }
-  }));
+    // Lazy-enrich active entries missing recordId
+    await Promise.all(active.map(async (entry: any) => {
+      if (entry.recordId) return;
+      try {
+        const finding = await getFinding(orgId, entry.findingId);
+        if (!finding) return;
+        const recordId = String(finding.record?.RecordId ?? "");
+        if (!recordId) return;
+        entry.recordId = recordId;
+        entry.isPackage = finding.recordingIdField === "GenieNumber";
+        await activeStore.set([orgId, entry.findingId], {
+          step: entry.step, ts: entry.ts, recordId: entry.recordId, isPackage: entry.isPackage,
+        } as any);
+      } catch (err) {
+        console.warn(`[getStats] ⚠️ enrich failed for ${entry.findingId}:`, err);
+      }
+    }));
+    console.log(`[getStats] active enriched count=${active.length}`);
 
-  const since24h = Date.now() - DAY_MS;
+    const since24h = Date.now() - DAY_MS;
 
-  const completedStore = await store(CompletedAuditStatDto);
-  const completed = (await completedStore.listRaw([orgId], { reverse: true, limit: 500 }))
-    .map((e) => e.value)
-    .filter((c: any) => c.ts > since24h);
+    const completedStore = await store(CompletedAuditStatDto);
+    console.log(`[getStats] completedStore ready`);
+    const completed = (await completedStore.listRaw([orgId], { reverse: true, limit: 500 }))
+      .map((e) => e.value)
+      .filter((c: any) => c.ts > since24h);
+    console.log(`[getStats] completed 24h count=${completed.length}`);
 
-  const errorStore = await store(ErrorTracking);
-  const errors = (await errorStore.listRaw([orgId], { reverse: true, limit: 500 }))
-    .map((e) => e.value)
-    .filter((e: any) => e.ts > since24h);
+    const errorStore = await store(ErrorTracking);
+    const errors = (await errorStore.listRaw([orgId], { reverse: true, limit: 500 }))
+      .map((e) => e.value)
+      .filter((e: any) => e.ts > since24h);
+    console.log(`[getStats] errors 24h count=${errors.length}`);
 
-  const retryStore = await store(RetryTracking);
-  const retries = (await retryStore.listRaw([orgId], { reverse: true, limit: 500 }))
-    .map((e) => e.value)
-    .filter((r: any) => r.ts > since24h);
+    const retryStore = await store(RetryTracking);
+    const retries = (await retryStore.listRaw([orgId], { reverse: true, limit: 500 }))
+      .map((e) => e.value)
+      .filter((r: any) => r.ts > since24h);
+    console.log(`[getStats] retries 24h count=${retries.length}`);
 
-  return { active, completed, completedCount: completed.length, errors, retries };
+    console.log(`[getStats] ✅ done`);
+    return { active, completed, completedCount: completed.length, errors, retries };
+  } catch (err) {
+    console.error(`[getStats] ❌ failed:`, err);
+    throw err;
+  }
 }
 
 // ── Transcript (chunked) ────────────────────────────────────────────────────

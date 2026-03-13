@@ -108,7 +108,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         <div class="cs-group-label">Playback</div>
         <div class="cs-row"><kbd>P</kbd><span>Play / Pause</span></div>
         <div class="cs-row"><kbd>&larr;</kbd> <kbd>&rarr;</kbd><span>Seek (accel)</span></div>
-        <div class="cs-row"><kbd>^&uarr;</kbd> <kbd>^&darr;</kbd><span>Speed ±0.5×</span></div>
+        <div class="cs-row"><kbd>&uarr;</kbd> <kbd>&darr;</kbd><span>Speed ±0.5×</span></div>
       </div>
       <div class="cs-section">
         <div class="cs-group-label">Search</div>
@@ -135,7 +135,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         <div class="cs-group-label">Playback</div>
         <div class="cs-row"><kbd>P</kbd><span>Play / Pause</span></div>
         <div class="cs-row"><kbd>&larr;</kbd> <kbd>&rarr;</kbd><span>Seek (accel)</span></div>
-        <div class="cs-row"><kbd>^&uarr;</kbd> <kbd>^&darr;</kbd><span>Speed ±0.5×</span></div>
+        <div class="cs-row"><kbd>&uarr;</kbd> <kbd>&darr;</kbd><span>Speed ±0.5×</span></div>
       </div>
       <div class="cs-section">
         <div class="cs-group-label">Search</div>
@@ -563,6 +563,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   /* Game settings modal */
   #game-settings-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(8px); z-index: 3000; display: none; align-items: center; justify-content: center; }
   #game-settings-overlay.open { display: flex; }
+  #back-spinner { display: none; position: fixed; inset: 0; z-index: 2000; background: rgba(10,14,20,0.55); backdrop-filter: blur(2px); align-items: center; justify-content: center; flex-direction: column; gap: 10px; pointer-events: all; }
+  #back-spinner.active { display: flex; }
+  .back-spin-ring { width: 30px; height: 30px; border: 3px solid #1e2736; border-top-color: #58a6ff; border-radius: 50%; animation: back-spin 0.65s linear infinite; }
+  @keyframes back-spin { to { transform: rotate(360deg); } }
   .gs-modal { background: #111620; border: 1px solid #1c2333; border-radius: 16px; width: 400px; max-width: 92vw; padding: 24px 28px 20px; box-shadow: 0 16px 48px rgba(0,0,0,0.4); }
   .gs-modal h3 { font-size: 15px; font-weight: 700; color: #e6edf3; margin-bottom: 16px; }
   .gs-field { margin-bottom: 14px; }
@@ -950,6 +954,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       <button id="confirm-submit-btn">Submit</button>
     </div>
   </div>
+</div>
+
+<!-- Back/undo loading spinner -->
+<div id="back-spinner">
+  <div class="back-spin-ring"></div>
+  <span style="font-size:12px;color:#6e7681;letter-spacing:0.3px;">Going back…</span>
 </div>
 
 <!-- Game settings modal -->
@@ -1916,6 +1926,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   function goBack() {
     if (busy) return;
     busy = true;
+    document.getElementById('back-spinner').classList.add('active');
     api('/back', { method: 'POST', body: '{}' }).then(function(data) {
       buffer = data.buffer || [];
       for (var i = 0; i < buffer.length; i++) {
@@ -1925,6 +1936,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       resetCombo();
       totalDecided = Math.max(0, totalDecided - 1);
       updateProgress(data.remaining);
+      document.getElementById('back-spinner').classList.remove('active');
       animateTransition(function() {
         if (buffer.length > 0) {
           showReview();
@@ -1935,6 +1947,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         busy = false;
       });
     }).catch(function(err) {
+      document.getElementById('back-spinner').classList.remove('active');
       toast(err.message, 'error');
       busy = false;
     });

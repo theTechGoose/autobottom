@@ -3003,7 +3003,7 @@ const DEFAULT_EMAIL_TEMPLATES: { name: string; subject: string; html: string }[]
   {
     name: "Audit Complete",
     subject: "Audit for: {{subjectGuest}} {{passedOrFailed}}",
-    html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Audit Result</title></head><body style="margin:0;padding:0;background:#0a0a0a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;min-height:100vh;"><tr><td align="center" style="padding:40px 16px;"><table width="560" cellpadding="0" cellspacing="0" style="max-width:100%;width:560px;background:#111111;border:1px solid #222222;border-radius:16px;overflow:hidden;"><tr><td style="padding:24px 32px;text-align:center;border-bottom:1px solid #1e1e1e;"><table cellpadding="0" cellspacing="0" style="margin:0 auto;"><tr><td style="vertical-align:middle;padding-right:10px;"><svg width="32" height="32" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="18" cy="18" r="18" fill="#1a1a1a"/><line x1="18" y1="4" x2="18" y2="9" stroke="#3fb950" stroke-width="2" stroke-linecap="round"/><circle cx="18" cy="3.5" r="1.5" fill="#3fb950"/><rect x="9" y="9" width="18" height="14" rx="4" fill="#2a2a2a" stroke="#3fb950" stroke-width="1.2"/><circle cx="14" cy="16" r="2.5" fill="#3fb950" opacity="0.9"/><circle cx="22" cy="16" r="2.5" fill="#3fb950" opacity="0.9"/><circle cx="14.8" cy="15.3" r="0.8" fill="#0a0a0a"/><circle cx="22.8" cy="15.3" r="0.8" fill="#0a0a0a"/><rect x="13" y="24" width="10" height="8" rx="2" fill="#2a2a2a" stroke="#1a1a1a" stroke-width="1"/><rect x="6" y="25" width="6" height="3" rx="1.5" fill="#2a2a2a"/><rect x="24" y="25" width="6" height="3" rx="1.5" fill="#2a2a2a"/><rect x="14" y="32" width="3" height="4" rx="1" fill="#1a1a1a"/><rect x="19" y="32" width="3" height="4" rx="1" fill="#1a1a1a"/></svg></td><td style="vertical-align:middle;"><span style="font-size:17px;font-weight:700;color:#e6edf3;letter-spacing:-0.3px;">AutoBot</span></td></tr></table></td></tr><tr><td style="padding:36px 32px 24px;text-align:center;"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2.5px;color:#555555;margin-bottom:14px;">Your Score</div><div style="font-size:80px;font-weight:800;color:{{scoreColor}};line-height:1;font-variant-numeric:tabular-nums;">{{score}}</div></td></tr><tr><td style="padding:0 32px 16px;"><p style="margin:0;font-size:13px;font-weight:600;color:{{scoreColor}};text-align:center;">{{scoreVerbiage}}</p></td></tr><tr><td style="padding:0 32px 32px;">{{notesSection}}</td></tr><tr><td style="padding:0 32px 40px;text-align:center;"><a href="{{reportUrl}}" style="display:inline-block;padding:12px 32px;background:#238636;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;border:1px solid #2ea043;">View Full Report</a></td></tr></table></td></tr></table></body></html>`,
+    html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Audit Results</title></head><body style="margin:0;padding:0;background:#0d1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;"><tr><td align="center" style="padding:32px 16px;"><table width="560" cellpadding="0" cellspacing="0" style="max-width:100%;width:560px;border:1px solid #21262d;border-radius:12px;overflow:hidden;"><tr><td style="background:#161b22;padding:24px 32px;border-bottom:1px solid #21262d;text-align:center;"><table cellpadding="0" cellspacing="0" style="margin:0 auto;"><tr><td style="vertical-align:middle;"><img src="{{logoUrl}}" width="32" height="32" alt="AutoBot" style="display:block;border-radius:6px;background:#0d1117;"></td><td style="vertical-align:middle;padding-left:10px;font-family:'Courier New',monospace;font-size:16px;font-weight:700;color:#3fb950;letter-spacing:2px;">AutoBot</td></tr></table></td></tr><tr><td style="padding:32px;text-align:center;"><p style="margin:0 0 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#8b949e;">Your Score</p><p style="margin:0;font-size:64px;font-weight:800;color:{{scoreColor}};line-height:1;">{{score}}</p></td></tr><tr><td style="padding:0 32px 28px;">{{notesSection}}</td></tr><tr><td style="padding:0 32px 32px;text-align:center;"><a href="{{reportUrl}}" style="display:inline-block;background:#238636;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 28px;border-radius:8px;border:1px solid #2ea043;">View Full Report</a></td></tr></table></td></tr></table></body></html>`,
   },
   {
     name: "Appeal Filed",
@@ -3023,25 +3023,27 @@ const DEFAULT_EMAIL_TEMPLATES: { name: string; subject: string; html: string }[]
 ];
 
 /** Seeds default email templates for an org if they don't already exist (matched by name). */
-async function seedDefaultEmailTemplates(orgId: OrgId): Promise<string[]> {
+async function seedDefaultEmailTemplates(orgId: OrgId, force = false): Promise<string[]> {
   const existing = await listEmailTemplates(orgId);
-  const existingNames = new Set(existing.map((t) => t.name));
-  const created: string[] = [];
+  const existingByName = new Map(existing.map((t) => [t.name, t]));
+  const upserted: string[] = [];
   for (const tpl of DEFAULT_EMAIL_TEMPLATES) {
-    if (!existingNames.has(tpl.name)) {
-      await saveEmailTemplate(orgId, tpl);
-      created.push(tpl.name);
-      console.log(`[SEED] Created default email template: ${tpl.name}`);
+    if (force || !existingByName.has(tpl.name)) {
+      const existing = existingByName.get(tpl.name);
+      await saveEmailTemplate(orgId, existing ? { ...existing, ...tpl } : tpl);
+      upserted.push(tpl.name);
+      console.log(`[SEED] ${force && existingByName.has(tpl.name) ? "Updated" : "Created"} default email template: ${tpl.name}`);
     }
   }
-  return created;
+  return upserted;
 }
 
 async function handleSeedEmailTemplates(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
-  const created = await seedDefaultEmailTemplates(auth.orgId);
-  return json({ ok: true, created });
+  const force = new URL(req.url).searchParams.get("force") === "1";
+  const upserted = await seedDefaultEmailTemplates(auth.orgId, force);
+  return json({ ok: true, upserted });
 }
 
 async function handleSeed(_req: Request): Promise<Response> {

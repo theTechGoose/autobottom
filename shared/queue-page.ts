@@ -1683,7 +1683,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           var tChip = document.createElement('span');
           tChip.className = 't-time';
           tChip.textContent = fmtTranscriptTime(times[timeIdx - 1]);
-          tChip.style.cssText = 'font-size:9px;color:#3d4452;font-family:monospace;margin-right:5px;flex-shrink:0;user-select:none;';
+          tChip.style.cssText = 'font-size:9px;color:#3d4452;font-family:monospace;margin-right:5px;flex-shrink:0;user-select:none;cursor:pointer;';
+          (function(chip, line) {
+            chip.addEventListener('click', function(e) { e.stopPropagation(); seekToTranscriptLine(line); });
+          })(tChip, div);
           div.appendChild(tChip);
         }
 
@@ -2054,6 +2057,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       if (searchMatches.length > 0) {
         goToSearchMatch(searchIndex < 0 ? 0 : searchIndex + 1);
       }
+      closeSearch();
     } else if (e.key === 'Escape') {
       e.preventDefault();
       closeSearch();
@@ -2081,8 +2085,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     }
 
     var amount = SKIP_TIERS[skipTier];
+    var dur = recAudio.duration;
+    if (!dur || isNaN(dur)) return;
     recAudio.currentTime = dir > 0
-      ? Math.min(recAudio.duration || 0, recAudio.currentTime + amount)
+      ? Math.min(dur, recAudio.currentTime + amount)
       : Math.max(0, recAudio.currentTime - amount);
 
     // Clear any existing decay

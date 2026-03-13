@@ -49,14 +49,19 @@ export async function getTokenUsage(hours = 1): Promise<{
   by_function: Record<string, { total_tokens: number; prompt_tokens: number; completion_tokens: number; calls: number }>;
 }> {
   const db = await tokenKv();
-  const cutoff = Date.now() - hours * 60 * 60 * 1000;
+  const now = Date.now();
+  const cutoff = now - hours * 60 * 60 * 1000;
   let total_tokens = 0, prompt_tokens = 0, completion_tokens = 0, calls = 0;
   const by_function: Record<string, { total_tokens: number; prompt_tokens: number; completion_tokens: number; calls: number }> = {};
 
-  const iter = db.list<{ fn: string; prompt_tokens: number; completion_tokens: number; total_tokens: number; ts: number }>({ prefix: ["token-usage"] });
+  // Range query: only fetch entries within the requested time window
+  const iter = db.list<{ fn: string; prompt_tokens: number; completion_tokens: number; total_tokens: number; ts: number }>({
+    start: ["token-usage", cutoff],
+    end: ["token-usage", now + 1],
+  });
   for await (const entry of iter) {
     const v = entry.value;
-    if (v.ts < cutoff) continue;
+    if (!v || v.ts < cutoff) continue;
     total_tokens += v.total_tokens;
     prompt_tokens += v.prompt_tokens;
     completion_tokens += v.completion_tokens;

@@ -222,7 +222,7 @@ export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { r
   const w = await store(WatchdogActive);
   await w.delete([findingId]);
   const c = await store(CompletedAuditStatDto);
-  await c.set([orgId, `${Date.now()}-${findingId}`], { findingId, ts: Date.now(), ...(meta ?? {}) } as any);
+  await c.set([orgId, `${Date.now()}-${findingId}`], { findingId, ts: Date.now(), ...(meta ?? {}) } as any, { expireIn: DAY_MS });
   console.log(`[TRACK-COMPLETED] ✅ ${findingId}: score=${meta?.score ?? "?"}% owner=${meta?.owner ?? "unknown"} dept=${meta?.department ?? "unknown"} type=${meta?.isPackage ? "package" : "date-leg"}`);
 }
 
@@ -294,14 +294,22 @@ export async function getStats(orgId: OrgId) {
     } catch { /* best-effort */ }
   }));
 
+  const since24h = Date.now() - DAY_MS;
+
   const completedStore = await store(CompletedAuditStatDto);
-  const completed = (await completedStore.list(orgId)).map((e) => e.value);
+  const completed = (await completedStore.listRaw([orgId], { reverse: true, limit: 500 }))
+    .map((e) => e.value)
+    .filter((c: any) => c.ts > since24h);
 
   const errorStore = await store(ErrorTracking);
-  const errors = (await errorStore.list(orgId)).map((e) => e.value);
+  const errors = (await errorStore.listRaw([orgId], { reverse: true, limit: 500 }))
+    .map((e) => e.value)
+    .filter((e: any) => e.ts > since24h);
 
   const retryStore = await store(RetryTracking);
-  const retries = (await retryStore.list(orgId)).map((e) => e.value);
+  const retries = (await retryStore.listRaw([orgId], { reverse: true, limit: 500 }))
+    .map((e) => e.value)
+    .filter((r: any) => r.ts > since24h);
 
   return { active, completed, completedCount: completed.length, errors, retries };
 }

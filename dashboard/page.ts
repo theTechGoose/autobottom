@@ -1428,6 +1428,7 @@ export function getDashboardPage(): string {
         var id = this.getAttribute('data-id');
         var idx = parseInt(this.getAttribute('data-idx'));
         var b = this;
+        if (!id || id === '--') { toast('No finding ID — cannot retry', 'error'); return; }
         b.disabled = true; b.textContent = '...';
         fetch('/admin/retry-finding?id=' + encodeURIComponent(id))
           .then(function(r) { return r.json(); })

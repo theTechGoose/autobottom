@@ -2030,20 +2030,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   function seekToTranscriptLine(el) {
     var dur = recAudio.duration;
     if (!dur || isNaN(dur)) return;
-    // Prefer real timestamp from data-time attribute (seconds)
     var timeAttr = parseFloat(el.getAttribute('data-time'));
-    if (!isNaN(timeAttr)) {
-      recAudio.currentTime = Math.min(timeAttr, dur);
-    } else {
-      // Fallback: proportional estimate based on line position
-      var lines = document.querySelectorAll('#transcript-body .t-line');
-      var idx = -1;
-      for (var i = 0; i < lines.length; i++) {
-        if (lines[i] === el) { idx = i; break; }
-      }
-      if (idx < 0) return;
-      recAudio.currentTime = (idx / Math.max(1, lines.length - 1)) * dur;
-    }
+    if (isNaN(timeAttr)) return; // no timestamp on this line, skip seek
+    recAudio.currentTime = Math.min(timeAttr, dur);
     if (recAudio.paused) recAudio.play();
   }
 
@@ -2346,7 +2335,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     if (recAudio.paused) recAudio.play();
   });
   document.getElementById('ap-back').addEventListener('click', function() { recAudio.currentTime = Math.max(0, recAudio.currentTime - 5); });
-  document.getElementById('ap-fwd').addEventListener('click', function() { recAudio.currentTime = Math.min(recAudio.duration||0, recAudio.currentTime + 5); });
+  document.getElementById('ap-fwd').addEventListener('click', function() {
+    var dur = recAudio.duration;
+    if (!dur || isNaN(dur)) return;
+    recAudio.currentTime = Math.min(dur, recAudio.currentTime + 5);
+  });
 
   // -- Init: try resuming session --
   (function() {

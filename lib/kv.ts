@@ -210,7 +210,7 @@ export async function trackActive(orgId: OrgId, findingId: string, step: string,
   const s = await store(ActiveTracking);
   const existing = await s.get([orgId, findingId]);
   const prev = (existing ?? {}) as Record<string, unknown>;
-  await s.set([orgId, findingId], { ...prev, step, ts: Date.now(), ...(meta ?? {}) } as any);
+  await s.set([orgId, findingId], { ...prev, findingId, step, ts: Date.now(), ...(meta ?? {}) } as any);
   // Global watchdog index
   const w = await store(WatchdogActive);
   await w.set([findingId], { orgId, findingId, step, ts: Date.now() } as any, { expireIn: 2 * 60 * 60 * 1000 });
@@ -273,7 +273,9 @@ export async function getStats(orgId: OrgId) {
   const activeStore = await store(ActiveTracking);
   const active = (await activeStore.list(orgId)).map((e) => {
     const v = e.value as unknown as Record<string, unknown>;
-    return { findingId: v.findingId, ...v };
+    // findingId is now stored in the value; fall back to key[1] for old records
+    const findingId = (v.findingId as string | undefined) || (e.key[1] as string) || "";
+    return { ...v, findingId };
   });
 
   // Lazy-enrich active entries missing recordId

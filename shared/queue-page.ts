@@ -900,7 +900,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       <canvas id="ap-waveform"></canvas>
       <button class="ap-seek" id="ap-fwd" title="Forward 5s (Right arrow)">5s&rarr;</button>
       <span class="ap-time" id="ap-time">0:00</span>
-      <span id="ap-speed" title="Playback speed (Ctrl+↑/↓)" style="display:none;font-size:10px;color:#6e7681;font-variant-numeric:tabular-nums;white-space:nowrap;border:1px solid #1e2736;border-radius:4px;padding:1px 5px;cursor:default;">1.0×</span>
+      <span id="ap-speed" title="Playback speed (↑/↓)" style="display:none;font-size:10px;color:#6e7681;font-variant-numeric:tabular-nums;white-space:nowrap;border:1px solid #1e2736;border-radius:4px;padding:1px 5px;cursor:default;">1.0×</span>
       <div id="skip-indicator"><span id="skip-label"></span><div id="skip-bar-wrap"><div id="skip-bar"></div></div></div>
     </div>
     <div id="bar-center">
@@ -1011,7 +1011,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   var QB_DATE_TABLE = 'bpb28qsnn';
   var QB_PKG_TABLE  = 'bttffb64u';
 
-  // Playback speed (Ctrl+↑/↓)
+  // Playback speed (↑/↓)
   var playbackRate = 1.0;
 
   // Transcript search state
@@ -1921,6 +1921,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       for (var i = 0; i < buffer.length; i++) {
         if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
       }
+      toast('Undid last decision', 'undo');
+      resetCombo();
+      totalDecided = Math.max(0, totalDecided - 1);
+      updateProgress(data.remaining);
       animateTransition(function() {
         if (buffer.length > 0) {
           showReview();
@@ -1928,12 +1932,8 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         } else {
           showEmpty();
         }
+        busy = false;
       });
-      toast('Undid last decision', 'undo');
-      resetCombo();
-      totalDecided = Math.max(0, totalDecided - 1);
-      updateProgress(data.remaining);
-      busy = false;
     }).catch(function(err) {
       toast(err.message, 'error');
       busy = false;
@@ -2159,14 +2159,14 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     if (document.getElementById('confirm-overlay').classList.contains('open')) return;
 
     // Speed controls
-    if (e.ctrlKey && e.key === 'ArrowUp') {
+    if (!e.ctrlKey && e.key === 'ArrowUp') {
       e.preventDefault();
       playbackRate = Math.min(3.0, Math.round((playbackRate + 0.5) * 10) / 10);
       recAudio.playbackRate = playbackRate;
       updateSpeedDisplay();
       return;
     }
-    if (e.ctrlKey && e.key === 'ArrowDown') {
+    if (!e.ctrlKey && e.key === 'ArrowDown') {
       e.preventDefault();
       playbackRate = Math.max(0.5, Math.round((playbackRate - 0.5) * 10) / 10);
       recAudio.playbackRate = playbackRate;

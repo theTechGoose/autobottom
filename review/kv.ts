@@ -256,11 +256,13 @@ export async function recordDecision(
     const counterEntry = await db.get<number>(counterKey);
     const currentCount = counterEntry.value ?? 1;
     const newCount = currentCount - 1;
+    const undoIdxKey = orgKey(orgId, "review-undo-idx", reviewer, String(9_000_000_000_000_000 - decided.decidedAt).padStart(16, "0"));
     const atomic = db.atomic()
       .check(pendingEntry)
       .delete(pendingKey)
       .delete(orgKey(orgId, "review-lock", findingId, questionIndex))
-      .set(orgKey(orgId, "review-decided", findingId, questionIndex), decided);
+      .set(orgKey(orgId, "review-decided", findingId, questionIndex), decided)
+      .set(undoIdxKey, { findingId, questionIndex });
     if (newCount <= 0) atomic.delete(counterKey);
     else atomic.set(counterKey, newCount);
     const res = await atomic.commit();
@@ -295,11 +297,13 @@ export async function recordDecision(
   const currentCount = counterEntry.value ?? 1;
   const newCount = currentCount - 1;
 
-  // Write decided + delete active + update counter
+  // Write decided + secondary undo index + delete active + update counter
+  const undoIdxKey = orgKey(orgId, "review-undo-idx", reviewer, String(9_000_000_000_000_000 - decided.decidedAt).padStart(16, "0"));
   const atomic = db.atomic()
     .check(activeEntry)
     .delete(activeKey)
-    .set(orgKey(orgId, "review-decided", findingId, questionIndex), decided);
+    .set(orgKey(orgId, "review-decided", findingId, questionIndex), decided)
+    .set(undoIdxKey, { findingId, questionIndex });
 
   if (newCount <= 0) {
     atomic.delete(counterKey);
@@ -358,32 +362,44 @@ export async function undoDecision(
       .commit();
   }
 
-  // Collect all decisions by this reviewer, sorted most-recent first
-  const myDecisions: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number }[] = [];
-  const decidedIter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") });
-  for await (const entry of decidedIter) {
-    if (entry.value.reviewer === reviewer) {
-      myDecisions.push({ entry, decidedAt: entry.value.decidedAt });
-    }
-  }
-  myDecisions.sort((a, b) => b.decidedAt - a.decidedAt);
+  // Fast path: use per-reviewer secondary index (negated-ts keys = newest first lexicographically)
+  let decidedEntry: Deno.KvEntry<ReviewDecision> | null = null;
+  let undoIdxEntryKey: Deno.KvKey | null = null;
 
-  let latestDecided: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number } | null = null;
-  for (const candidate of myDecisions) {
-    const counterCheck = await db.get<number>(
-      orgKey(orgId, "review-audit-pending", candidate.entry.value.findingId),
-    );
-    if (counterCheck.value !== null) {
-      latestDecided = candidate;
-      break;
-    }
+  const idxIter = db.list<{ findingId: string; questionIndex: number }>(
+    { prefix: orgKey(orgId, "review-undo-idx", reviewer) },
+    { limit: 20 },
+  );
+  for await (const idxEntry of idxIter) {
+    const { findingId: fid, questionIndex: qIdx } = idxEntry.value;
+    const counterCheck = await db.get<number>(orgKey(orgId, "review-audit-pending", fid));
+    if (counterCheck.value === null) continue;
+    const candidate = await db.get<ReviewDecision>(orgKey(orgId, "review-decided", fid, qIdx));
+    if (!candidate.value || candidate.value.reviewer !== reviewer) continue;
+    decidedEntry = candidate;
+    undoIdxEntryKey = idxEntry.key;
+    break;
   }
 
-  if (!latestDecided) {
+  // Fallback: full scan for decisions made before the index was introduced
+  if (!decidedEntry) {
+    const myDecisions: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number }[] = [];
+    const decidedIter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") });
+    for await (const entry of decidedIter) {
+      if (entry.value.reviewer === reviewer) myDecisions.push({ entry, decidedAt: entry.value.decidedAt });
+    }
+    myDecisions.sort((a, b) => b.decidedAt - a.decidedAt);
+    for (const candidate of myDecisions) {
+      const counterCheck = await db.get<number>(orgKey(orgId, "review-audit-pending", candidate.entry.value.findingId));
+      if (counterCheck.value !== null) { decidedEntry = candidate.entry; break; }
+    }
+  }
+
+  if (!decidedEntry) {
     return { buffer: [], remaining: 0 };
   }
 
-  const decided = latestDecided.entry.value;
+  const decided = decidedEntry.value;
   const { findingId, questionIndex } = decided;
   const item: ReviewItem = {
     findingId: decided.findingId,
@@ -406,11 +422,12 @@ export async function undoDecision(
 
   const activeKey = orgKey(orgId, "review-active", reviewer, findingId, questionIndex);
   const atomic = db.atomic()
-    .check(latestDecided.entry)
+    .check(decidedEntry)
     .check(counterEntry)
-    .delete(latestDecided.entry.key)
+    .delete(decidedEntry.key)
     .set(activeKey, { ...item, claimedAt: Date.now() })
     .set(counterKey, newCount);
+  if (undoIdxEntryKey) atomic.delete(undoIdxEntryKey);
 
   const res = await atomic.commit();
   if (!res.ok) {

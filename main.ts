@@ -252,6 +252,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/init-org": handleInitOrg,
   "/admin/retry-finding": handleRetryFinding,
   "/admin/terminate-all": handleTerminateAll,
+  "/admin/clear-queue": handleClearQueue,
   "/admin/pause-queues": handlePauseQueues,
   "/admin/resume-queues": handleResumeQueues,
   "/admin/clear-review-queue": handleClearReviewQueue,
@@ -2391,21 +2392,31 @@ async function handleRetryFinding(req: Request): Promise<Response> {
   return json({ ok: true, findingId, step });
 }
 
-// -- Admin: Terminate All Active --
+// -- Admin: Terminate Running Active Audits --
 
 async function handleTerminateAll(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
-  const [terminated, purged, reviewCleared, judgeCleared] = await Promise.all([
-    terminateAllActive(auth.orgId),
+  const terminated = await terminateAllActive(auth.orgId);
+  console.log(`[ADMIN] ${auth.email} terminated ${terminated} active audits`);
+  return json({ ok: true, terminated });
+}
+
+// -- Admin: Clear Waiting Queue (QStash + review + judge) --
+
+async function handleClearQueue(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const [purged, reviewCleared, judgeCleared] = await Promise.all([
     purgeAllQueues(),
     clearReviewQueue(auth.orgId),
     clearJudgeQueue(auth.orgId),
   ]);
   await pauseAllQueues();
-  console.log(`[ADMIN] ${auth.email} terminated ${terminated} active, purged ${purged} queued, cleared ${reviewCleared.cleared} review + ${judgeCleared.cleared} judge items, paused all queues`);
-  return json({ ok: true, terminated, purged, reviewCleared: reviewCleared.cleared, judgeCleared: judgeCleared.cleared });
+  console.log(`[ADMIN] ${auth.email} purged ${purged} queued, cleared ${reviewCleared.cleared} review + ${judgeCleared.cleared} judge items, paused all queues`);
+  return json({ ok: true, purged, reviewCleared: reviewCleared.cleared, judgeCleared: judgeCleared.cleared });
 }
 
 // -- Admin: Pause / Resume Queues --

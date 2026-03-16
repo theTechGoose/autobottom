@@ -600,7 +600,8 @@ export function getDashboardPage(): string {
         <span>Active Audits</span>
         <div style="display:flex;gap:6px;">
           <button class="sf-btn" id="resume-queues-btn" style="font-size:9px;padding:3px 10px;">Resume Queues</button>
-          <button class="sf-btn danger" id="terminate-all-btn" style="font-size:9px;padding:3px 10px;">Terminate All</button>
+          <button class="sf-btn danger" id="terminate-all-btn" style="font-size:9px;padding:3px 10px;">Terminate Running</button>
+          <button class="sf-btn danger" id="clear-queue-btn" style="font-size:9px;padding:3px 10px;">Clear Queue</button>
         </div>
       </div>
       <table><thead><tr><th>Finding ID</th><th>QB Record</th><th>Step</th><th>Started</th><th>Duration</th><th></th></tr></thead>
@@ -1018,23 +1019,38 @@ export function getDashboardPage(): string {
   </div>
 </div>
 
-<!-- Terminate All Confirmation Modal -->
+<!-- Terminate Running Confirmation Modal -->
 <div class="modal-overlay" id="terminate-modal">
   <div class="modal" style="width:420px;">
-    <div class="modal-title" style="color:var(--red);">Wipe Everything</div>
-    <div class="modal-sub">This will clear the entire backlog — all of the following will be wiped:</div>
+    <div class="modal-title" style="color:var(--red);">Terminate Running Audits</div>
+    <div class="modal-sub">This will mark all currently active audits as terminated. In-progress steps will bail on their next check-in.</div>
+    <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
+      <div style="font-weight:600;">The waiting queue is NOT affected — use "Clear Queue" for that.</div>
+      <div style="margin-top:6px;">This cannot be undone.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="sf-btn ghost" id="terminate-cancel">Cancel</button>
+      <button class="sf-btn danger" id="terminate-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Terminate Running</button>
+    </div>
+  </div>
+</div>
+
+<!-- Clear Queue Confirmation Modal -->
+<div class="modal-overlay" id="clear-queue-modal">
+  <div class="modal" style="width:420px;">
+    <div class="modal-title" style="color:var(--red);">Clear Waiting Queue</div>
+    <div class="modal-sub">This will purge all pending items from the queue — none of the following will run:</div>
     <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
       <ul style="margin:0;padding-left:16px;line-height:2;">
-        <li><strong>Active audits</strong> — marked terminated, steps bail on next check-in</li>
         <li><strong>Queued messages</strong> — all pending QStash pipeline messages deleted</li>
         <li><strong>Review queue</strong> — all pending reviewer items cleared</li>
         <li><strong>Judge queue</strong> — all pending judge items cleared</li>
       </ul>
-      <div style="margin-top:8px;font-weight:600;">This cannot be undone.</div>
+      <div style="margin-top:8px;font-weight:600;">Currently running audits are NOT affected. This cannot be undone.</div>
     </div>
     <div class="modal-actions">
-      <button class="sf-btn ghost" id="terminate-cancel">Cancel</button>
-      <button class="sf-btn danger" id="terminate-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Yes, Wipe Everything</button>
+      <button class="sf-btn ghost" id="clear-queue-cancel">Cancel</button>
+      <button class="sf-btn danger" id="clear-queue-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Clear Queue</button>
     </div>
   </div>
 </div>
@@ -1728,7 +1744,7 @@ export function getDashboardPage(): string {
       .finally(function() { btn.disabled = false; updateQueueBtn(); });
   });
 
-  // ===== Terminate All =====
+  // ===== Terminate Running =====
   document.getElementById('terminate-all-btn').addEventListener('click', function() {
     openModal('terminate-modal');
   });
@@ -1742,7 +1758,31 @@ export function getDashboardPage(): string {
       .then(function(d) {
         closeModal('terminate-modal');
         if (d.ok) {
-          toast('Wiped: ' + (d.terminated || 0) + ' active, ' + (d.purged || 0) + ' queued, ' + (d.reviewCleared || 0) + ' review, ' + (d.judgeCleared || 0) + ' judge', 'success');
+          toast('Terminated ' + (d.terminated || 0) + ' running audits', 'success');
+          fetchData();
+        } else {
+          toast(d.error || 'Failed', 'error');
+        }
+      })
+      .catch(function() { toast('Request failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Terminate Running'; });
+  });
+
+  // ===== Clear Queue =====
+  document.getElementById('clear-queue-btn').addEventListener('click', function() {
+    openModal('clear-queue-modal');
+  });
+  document.getElementById('clear-queue-cancel').addEventListener('click', function() { closeModal('clear-queue-modal'); });
+  backdropClose('clear-queue-modal');
+  document.getElementById('clear-queue-confirm').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Clearing...';
+    fetch('/admin/clear-queue', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        closeModal('clear-queue-modal');
+        if (d.ok) {
+          toast('Cleared: ' + (d.purged || 0) + ' queued, ' + (d.reviewCleared || 0) + ' review, ' + (d.judgeCleared || 0) + ' judge', 'success');
           queuesPaused = true; updateQueueBtn();
           fetchData();
         } else {
@@ -1750,7 +1790,7 @@ export function getDashboardPage(): string {
         }
       })
       .catch(function() { toast('Request failed', 'error'); })
-      .finally(function() { btn.disabled = false; btn.textContent = 'Yes, Wipe Everything'; });
+      .finally(function() { btn.disabled = false; btn.textContent = 'Clear Queue'; });
   });
 
   // ===== Clear Review Queue =====

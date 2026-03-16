@@ -272,7 +272,8 @@ export async function trackError(orgId: OrgId, findingId: string, step: string, 
 export async function clearErrors(orgId: OrgId): Promise<number> {
   const s = await store(ErrorTracking);
   const entries = await s.listRaw([orgId], { limit: 1000 });
-  await Promise.all(entries.map((e) => s.delete(e.key)));
+  // e.key is the full raw key [__TypeName__, ...parts]; slice(1) to drop the prefix before passing to s.delete()
+  await Promise.all(entries.map((e) => s.delete(Array.from(e.key).slice(1) as string[])));
   return entries.length;
 }
 

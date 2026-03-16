@@ -499,17 +499,13 @@ export function getDashboardPage(): string {
 
   <main class="main">
     <div class="stat-row">
-      <div class="stat-card blue">
+      <div class="stat-card yellow">
         <div class="stat-label">In Pipeline</div>
         <div class="stat-value" id="s-pipe">--</div>
       </div>
       <div class="stat-card blue">
         <div class="stat-label">Active</div>
         <div class="stat-value" id="s-active">--</div>
-      </div>
-      <div class="stat-card yellow">
-        <div class="stat-label">Queued</div>
-        <div class="stat-value" id="s-queued">--</div>
       </div>
       <div class="stat-card green">
         <div class="stat-label">Completed (24h)</div>
@@ -1322,7 +1318,6 @@ export function getDashboardPage(): string {
     lastData.pipeline = p;
     document.getElementById('s-pipe').textContent = fmt(p.inPipe);
     document.getElementById('s-active').textContent = fmt(p.activeCount);
-    document.getElementById('s-queued').textContent = fmt(p.queued);
     document.getElementById('s-completed').textContent = fmt(p.completed24h);
     document.getElementById('s-errors').textContent = fmt(p.errors24h);
     document.getElementById('s-retries').textContent = fmt(p.retries24h);

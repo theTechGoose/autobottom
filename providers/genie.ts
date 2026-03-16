@@ -29,6 +29,134 @@ function isValidAudio(bytes: Uint8Array): boolean {
   return isId3 || isMp3Frame || isRiff || isOgg;
 }
 
+// -- Async job search (fallback when sync API returns empty) --
+
+interface GenieSession {
+  sid: string;
+  obtainedAt: number;
+}
+
+const sessions: Partial<Record<AccountRole, GenieSession>> = {};
+const SESSION_TTL_MS = 23 * 60 * 60 * 1000; // 23h — refresh daily
+
+async function getSession(role: AccountRole): Promise<string | null> {
+  const cached = sessions[role];
+  if (cached && Date.now() - cached.obtainedAt < SESSION_TTL_MS) return cached.sid;
+
+  const accountId = getAccountId(role);
+  const password = role === "primary" ? env.genieSessionPassPrimary : env.genieSessionPassSecondary;
+  const apirid = `${Date.now()}-1`;
+
+  try {
+    const res = await fetch(`${env.genieBaseUrl}/loginsession.wr`, {
+      method: "POST",
+      headers: new Headers({ "Content-Type": "application/x-www-form-urlencoded" }),
+      body: new URLSearchParams({ username: String(accountId), password, apirid }).toString(),
+    });
+    if (!res.ok) {
+      console.warn(`[GENIE] ❌ login failed: role=${role} status=${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    const sid = data?.user?.session_id as string | undefined;
+    if (!sid) {
+      console.warn(`[GENIE] ❌ login no session_id: role=${role}`);
+      return null;
+    }
+    sessions[role] = { sid, obtainedAt: Date.now() };
+    console.log(`[GENIE] ✅ login ok: role=${role} accountId=${accountId}`);
+    return sid;
+  } catch (err) {
+    console.error(`[GENIE] ❌ login error: role=${role}`, err);
+    return null;
+  }
+}
+
+function cookieHeaders(sid: string): Headers {
+  return new Headers({
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Cookie": `sid=${sid}`,
+  });
+}
+
+async function searchViaJob(contract: number, role: AccountRole, tag: string): Promise<string | null> {
+  const sid = await getSession(role);
+  if (!sid) return null;
+
+  const accountId = getAccountId(role);
+
+  try {
+    // Step 1: Submit search job
+    const apirid = `${Date.now()}-1`;
+    const jobRes = await fetch(`${env.genieBaseUrl}/${accountId}/judge_makesearchresults.wr`, {
+      method: "POST",
+      headers: cookieHeaders(sid),
+      body: new URLSearchParams({ apirid, filter_contract: String(contract) }).toString(),
+    });
+    if (!jobRes.ok) {
+      // Stale session — invalidate and bail
+      delete sessions[role];
+      console.warn(`[GENIE] 🔍 job search HTTP ${jobRes.status}: contract=${contract} role=${role} ${tag}`);
+      return null;
+    }
+    const jobData = await jobRes.json();
+    const jobId = jobData?.result?.job_id as number | undefined;
+    const reportId = jobData?.result?.report_id as string | undefined;
+    if (!jobId || !reportId) {
+      console.warn(`[GENIE] 🔍 job search bad response: contract=${contract} role=${role} ${tag}`);
+      return null;
+    }
+    console.log(`[GENIE] 🔍 job created: contract=${contract} role=${role} jobId=${jobId} ${tag}`);
+
+    // Step 2: Poll for completion (up to 30s)
+    for (let i = 1; i <= 15; i++) {
+      await sleep(2000);
+      const pollApirid = `${Date.now()}-${i + 1}`;
+      const pollRes = await fetch(
+        `${env.genieBaseUrl}/${accountId}/jobqueuestatus.wr?apirid=${pollApirid}`,
+        {
+          method: "POST",
+          headers: cookieHeaders(sid),
+          body: new URLSearchParams({ apirid: pollApirid, job_id: String(jobId) }).toString(),
+        },
+      );
+      if (!pollRes.ok) continue;
+      const pollData = await pollRes.json();
+      const status = pollData?.result?.result?.status as string | undefined;
+      const urlJson = pollData?.result?.result?.result?.url_json as string | undefined;
+
+      if (status === "complete" && urlJson) {
+        // Step 3: Load result JSON
+        const resultRes = await fetch(urlJson, { headers: cookieHeaders(sid) });
+        if (!resultRes.ok) {
+          console.warn(`[GENIE] 🔍 job result HTTP ${resultRes.status}: contract=${contract} ${tag}`);
+          return null;
+        }
+        const records = await resultRes.json();
+        if (!Array.isArray(records) || records.length === 0) {
+          console.warn(`[GENIE] 🔍 job result empty array: contract=${contract} ${tag}`);
+          return null;
+        }
+        const src = records[0]?.src as string | undefined;
+        if (src && src !== `${env.genieBaseUrl}/` && src.trim() !== "") {
+          console.log(`[GENIE] 🔍 job search found: contract=${contract} role=${role} src=${src} ${tag}`);
+          return src;
+        }
+        console.warn(`[GENIE] 🔍 job search no src: contract=${contract} role=${role} ${tag}`);
+        return null;
+      }
+    }
+
+    console.warn(`[GENIE] 🔍 job search timed out: contract=${contract} role=${role} ${tag}`);
+    return null;
+  } catch (err) {
+    console.error(`[GENIE] 🔍 job search error: contract=${contract} role=${role} ${tag}`, err);
+    return null;
+  }
+}
+
+// -- Sync search (fast path, used first) --
+
 async function searchOnce(contract: number, role: AccountRole, tag: string): Promise<string | null> {
   const accountId = getAccountId(role);
   try {
@@ -133,7 +261,16 @@ async function downloadWithRetry(
 
 async function tryStrategy(role: AccountRole, contract: number, tag: string): Promise<Uint8Array | null> {
   console.log(`[GENIE] 🚀 strategy: static-${role} contract=${contract} ${tag}`);
-  const src = await searchWithRetry(contract, role, tag);
+
+  // Fast path: sync search API
+  let src = await searchWithRetry(contract, role, tag);
+
+  // Fallback: async job search (uses different index, finds recordings sync API misses)
+  if (!src) {
+    console.log(`[GENIE] 🔍 sync exhausted, trying async job fallback: contract=${contract} role=${role} ${tag}`);
+    src = await searchViaJob(contract, role, tag);
+  }
+
   if (!src) {
     console.warn(`[GENIE] ❌ no src found: role=${role} contract=${contract} ${tag}`);
     return null;
@@ -149,8 +286,8 @@ async function tryStrategy(role: AccountRole, contract: number, tag: string): Pr
 /** Find recording and download bytes. Returns bytes or null if not found.
  *
  *  Strategy cascade (in order):
- *  1. static-primary   — Bearer token, primary account
- *  2. static-secondary — Bearer token, secondary account
+ *  1. static-primary   — sync search, then async job fallback
+ *  2. static-secondary — sync search, then async job fallback
  */
 export async function downloadRecording(genieId: number, findingId?: string): Promise<Uint8Array | null> {
   const tag = findingId ?? String(genieId);

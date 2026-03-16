@@ -2025,6 +2025,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     searchIndex = -1;
     document.getElementById('search-input').value = '';
     document.getElementById('search-count').textContent = '';
+    document.getElementById('search-input').blur();
   }
   function clearSearchHighlights() {
     var els = document.querySelectorAll('.t-search-match, .t-search-active');

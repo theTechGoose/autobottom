@@ -44,6 +44,8 @@ export const env = {
   get genieBaseUrl() { return required("GENIE_BASE_URL"); },
   get geniePrimaryAccount() { return required("GENIE_PRIMARY_ACCOUNT"); },
   get genieSecondaryAccount() { return required("GENIE_SECONDARY_ACCOUNT"); },
+  get genieSessionPassPrimary() { return required("GENIE_SESSION_PASS_9152"); },
+  get genieSessionPassSecondary() { return required("GENIE_SESSION_PASS_9054"); },
 
   // App
   get selfUrl() { return required("SELF_URL"); },

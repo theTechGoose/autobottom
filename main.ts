@@ -957,9 +957,12 @@ load();
 
 const DASHBOARD_SECTIONS: Record<string, (orgId: string) => Promise<unknown>> = {
   pipeline: async (orgId) => {
-    const s = await getStats(orgId);
+    const [s, queueCounts] = await Promise.all([getStats(orgId), getQueueCounts()]);
+    const queued = Object.values(queueCounts).reduce((a, b) => a + b, 0);
     return {
-      inPipe: s.active.length,
+      inPipe: queued,
+      activeCount: s.active.length,
+      queued,
       active: s.active,
       completed24h: s.completedCount,
       completedTs: s.completed.map((c: any) => c.ts),

@@ -2403,20 +2403,16 @@ async function handleTerminateAll(req: Request): Promise<Response> {
   return json({ ok: true, terminated });
 }
 
-// -- Admin: Clear Waiting Queue (QStash + review + judge) --
+// -- Admin: Clear Waiting Queue (QStash only) --
 
 async function handleClearQueue(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
-  const [purged, reviewCleared, judgeCleared] = await Promise.all([
-    purgeAllQueues(),
-    clearReviewQueue(auth.orgId),
-    clearJudgeQueue(auth.orgId),
-  ]);
+  const purged = await purgeAllQueues();
   await pauseAllQueues();
-  console.log(`[ADMIN] ${auth.email} purged ${purged} queued, cleared ${reviewCleared.cleared} review + ${judgeCleared.cleared} judge items, paused all queues`);
-  return json({ ok: true, purged, reviewCleared: reviewCleared.cleared, judgeCleared: judgeCleared.cleared });
+  console.log(`[ADMIN] ${auth.email} purged ${purged} queued messages, paused all queues`);
+  return json({ ok: true, purged });
 }
 
 // -- Admin: Pause / Resume Queues --

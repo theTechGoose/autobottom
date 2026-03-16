@@ -1038,15 +1038,10 @@ export function getDashboardPage(): string {
 <!-- Clear Queue Confirmation Modal -->
 <div class="modal-overlay" id="clear-queue-modal">
   <div class="modal" style="width:420px;">
-    <div class="modal-title" style="color:var(--red);">Clear Waiting Queue</div>
-    <div class="modal-sub">This will purge all pending items from the queue — none of the following will run:</div>
+    <div class="modal-title" style="color:var(--red);">Clear Queue</div>
+    <div class="modal-sub">This will delete all pending QStash pipeline messages. Currently running audits are not affected.</div>
     <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
-      <ul style="margin:0;padding-left:16px;line-height:2;">
-        <li><strong>Queued messages</strong> — all pending QStash pipeline messages deleted</li>
-        <li><strong>Review queue</strong> — all pending reviewer items cleared</li>
-        <li><strong>Judge queue</strong> — all pending judge items cleared</li>
-      </ul>
-      <div style="margin-top:8px;font-weight:600;">Currently running audits are NOT affected. This cannot be undone.</div>
+      <div style="font-weight:600;">This cannot be undone.</div>
     </div>
     <div class="modal-actions">
       <button class="sf-btn ghost" id="clear-queue-cancel">Cancel</button>
@@ -1782,7 +1777,7 @@ export function getDashboardPage(): string {
       .then(function(d) {
         closeModal('clear-queue-modal');
         if (d.ok) {
-          toast('Cleared: ' + (d.purged || 0) + ' queued, ' + (d.reviewCleared || 0) + ' review, ' + (d.judgeCleared || 0) + ' judge', 'success');
+          toast('Cleared ' + (d.purged || 0) + ' queued messages', 'success');
           queuesPaused = true; updateQueueBtn();
           fetchData();
         } else {

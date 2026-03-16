@@ -13,7 +13,7 @@ function json(data: unknown, status = 200) {
   });
 }
 
-const MAX_GENIE_RETRIES = 3;
+const MAX_GENIE_RETRIES = 4; // 1 initial + 3 retries, each 10 min apart
 const GENIE_RETRY_DELAY_SEC = 600; // 10 minutes
 
 /** True for real Genie IDs: 8 digits starting with 2 or 3.
@@ -82,11 +82,31 @@ export async function stepInit(req: Request): Promise<Response> {
     const keys = results.filter((k): k is string => k !== null);
 
     if (keys.length === 0) {
+      const retryableIds = validIds.filter(isRetryableGenie);
+      const attempts = (finding.genieAttempts ?? 0) + 1;
+      if (retryableIds.length > 0 && attempts < MAX_GENIE_RETRIES) {
+        const retryAt = Date.now() + GENIE_RETRY_DELAY_SEC * 1000;
+        finding.genieAttempts = attempts;
+        finding.genieRetryAt = retryAt;
+        await saveFinding(orgId, finding);
+        await trackActive(orgId, findingId, "genie-retry", {
+          recordId: qbRecordId || undefined,
+          isPackage: finding.recordingIdField === "GenieNumber",
+          startedAt: finding.startedAt,
+          genieRetryAt: retryAt,
+          genieAttempts: attempts,
+        });
+        await enqueueStep("init", { findingId, orgId }, GENIE_RETRY_DELAY_SEC);
+        console.log(`[STEP-INIT] ${findingId}: ⏳ Multi-genie no recordings — retry ${attempts}/${MAX_GENIE_RETRIES - 1} in ${GENIE_RETRY_DELAY_SEC / 60}min (ids: ${retryableIds.join(",")})`);
+        return json({ ok: true, retrying: true, attempt: attempts, retryAt });
+      }
+      const reason = retryableIds.length > 0 ? "no recordings (retries exhausted)" : "no recordings (none retryable)";
+      console.warn(`[STEP-INIT] ${findingId}: Multi-genie ${reason}`);
       finding.rawTranscript = "Invalid Genie";
       finding.findingStatus = "finished";
       await saveFinding(orgId, finding);
       await enqueueStep("finalize", { findingId, orgId });
-      return json({ ok: true, skipped: true, reason: "no valid genies" });
+      return json({ ok: true, skipped: true, reason });
     }
 
     finding.s3RecordingKeys = keys;

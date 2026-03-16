@@ -241,10 +241,12 @@ export async function getStuckFindings(thresholdMs = 15 * 60 * 1000): Promise<Ar
 
 export async function terminateAllActive(orgId: OrgId): Promise<number> {
   const s = await store(ActiveTracking);
-  const entries = await s.list(orgId);
+  const entries = await s.listRaw([orgId]);
   await Promise.all(entries.map(async (entry) => {
     const v = entry.value as unknown as { findingId?: string };
-    const fid = v.findingId ?? "";
+    // Use value first, fall back to key segment (handles old entries without findingId in value)
+    const fid = v.findingId || (entry.key[entry.key.length - 1] as string) || "";
+    console.log(`[terminateAllActive] terminating fid=${fid} key=${JSON.stringify(entry.key)}`);
     try {
       const finding = await getFinding(orgId, fid);
       if (finding && finding.findingStatus !== "finished") {
@@ -252,9 +254,11 @@ export async function terminateAllActive(orgId: OrgId): Promise<number> {
         await saveFinding(orgId, finding);
       }
     } catch { /* best-effort */ }
-    await s.delete([orgId, fid]);
+    // Delete by the actual KV key segment, not derived fid
+    const keyFid = entry.key[entry.key.length - 1] as string;
+    await s.delete([orgId, keyFid]);
     const w = await store(WatchdogActive);
-    await w.delete([fid]);
+    await w.delete([keyFid]);
   }));
   return entries.length;
 }

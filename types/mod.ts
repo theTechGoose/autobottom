@@ -96,6 +96,10 @@ export interface AuditFinding {
   appealType?: "redo" | "different-recording" | "additional-recording" | "upload-recording";
   appealComment?: string;
   reAuditedAt?: number;
+  startedAt?: number;
+  assemblyAiUploadUrl?: string;
+  genieAttempts?: number;
+  genieRetryAt?: number;
 }
 
 export function createFinding(

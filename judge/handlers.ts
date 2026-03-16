@@ -9,7 +9,7 @@ import {
 } from "./kv.ts";
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/kv.ts";
 import type { AuthContext } from "../auth/kv.ts";
-import { resolveGamificationSettings, listSoundPacks, emitEvent } from "../lib/kv.ts";
+import { resolveGamificationSettings, listSoundPacks, emitEvent, getReviewerConfig, saveReviewerConfig } from "../lib/kv.ts";
 import type { SoundSlot } from "../lib/kv.ts";
 import { getJudgePage } from "./page.ts";
 import { getJudgeDashboardPage } from "./dashboard.ts";
@@ -191,4 +191,29 @@ export async function handleJudgeDeleteReviewer(req: Request): Promise<Response>
 
   await deleteUser(auth.orgId, email);
   return json({ ok: true, email });
+}
+
+export async function handleJudgeGetReviewerConfig(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  if (auth.role !== "judge" && auth.role !== "admin") return json({ error: "forbidden" }, 403);
+
+  const email = new URL(req.url).searchParams.get("email");
+  if (!email) return json({ error: "email required" }, 400);
+  const config = await getReviewerConfig(auth.orgId, email);
+  return json(config ?? { allowedTypes: ["date-leg", "package"] });
+}
+
+export async function handleJudgeSaveReviewerConfig(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  if (auth.role !== "judge" && auth.role !== "admin") return json({ error: "forbidden" }, 403);
+
+  const body = await req.json();
+  const { email, allowedTypes } = body;
+  if (!email || !Array.isArray(allowedTypes)) return json({ error: "email and allowedTypes required" }, 400);
+  const valid = allowedTypes.filter((t: string) => t === "date-leg" || t === "package");
+  if (valid.length === 0) return json({ error: "allowedTypes must include at least one valid type" }, 400);
+  await saveReviewerConfig(auth.orgId, email, { allowedTypes: valid });
+  return json({ ok: true });
 }

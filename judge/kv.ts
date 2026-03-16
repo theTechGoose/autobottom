@@ -657,6 +657,38 @@ export async function getJudgeDashboardData(orgId: OrgId): Promise<{
 
 // -- Appeal Record --
 
+export async function clearJudgeQueue(orgId: OrgId): Promise<{ cleared: number }> {
+  const db = await kv();
+  let cleared = 0;
+
+  const prefixes = [
+    orgKey(orgId, "judge-pending"),
+    orgKey(orgId, "judge-audit-pending"),
+    orgKey(orgId, "judge-lock"),
+    orgKey(orgId, "judge-active"),
+  ];
+
+  const keys: Deno.KvKey[] = [];
+  for (const prefix of prefixes) {
+    const iter = db.list({ prefix });
+    for await (const entry of iter) {
+      keys.push(entry.key);
+    }
+  }
+
+  const BATCH = 10;
+  for (let i = 0; i < keys.length; i += BATCH) {
+    const batch = keys.slice(i, i + BATCH);
+    const atomic = db.atomic();
+    for (const key of batch) atomic.delete(key);
+    await atomic.commit();
+    cleared += batch.length;
+  }
+
+  console.log(`[JUDGE] clearJudgeQueue: deleted ${cleared} KV entries for org ${orgId}`);
+  return { cleared };
+}
+
 export async function getAppeal(orgId: OrgId, findingId: string): Promise<AppealRecord | null> {
   const db = await kv();
   const entry = await db.get<AppealRecord>(orgKey(orgId, "appeal", findingId));

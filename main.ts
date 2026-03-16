@@ -76,8 +76,9 @@ import {
   handleDashboardData as handleJudgeDashboardData,
   handleJudgeMe,
   handleJudgeListReviewers, handleJudgeCreateReviewer, handleJudgeDeleteReviewer,
+  handleJudgeGetReviewerConfig, handleJudgeSaveReviewerConfig,
 } from "./judge/handlers.ts";
-import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision } from "./judge/kv.ts";
+import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue } from "./judge/kv.ts";
 
 // Manager (unified auth)
 import {
@@ -298,6 +299,7 @@ const postRoutes: Record<string, Handler> = {
   "/judge/api/back": handleJudgeBack,
   "/judge/api/reviewers": handleJudgeCreateReviewer,
   "/judge/api/reviewers/delete": handleJudgeDeleteReviewer,
+  "/judge/api/reviewer-config": handleJudgeSaveReviewerConfig,
   "/judge/api/gamification": handleJudgeSaveGamification,
 
   // Admin gamification
@@ -397,6 +399,7 @@ const getRoutes: Record<string, Handler> = {
   "/judge/api/stats": handleJudgeStats,
   "/judge/api/me": handleJudgeMe,
   "/judge/api/reviewers": handleJudgeListReviewers,
+  "/judge/api/reviewer-config": handleJudgeGetReviewerConfig,
   "/judge/dashboard": requireRolePageAuth(["judge"], handleJudgeDashboardPage),
   "/judge/api/dashboard": handleJudgeDashboardData,
   "/judge/api/gamification": handleJudgeGetGamification,
@@ -2394,13 +2397,15 @@ async function handleTerminateAll(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
-  const [terminated, purged] = await Promise.all([
+  const [terminated, purged, reviewCleared, judgeCleared] = await Promise.all([
     terminateAllActive(auth.orgId),
     purgeAllQueues(),
+    clearReviewQueue(auth.orgId),
+    clearJudgeQueue(auth.orgId),
   ]);
   await pauseAllQueues();
-  console.log(`[ADMIN] ${auth.email} terminated ${terminated} active audits, purged ${purged} queued messages, paused all queues`);
-  return json({ ok: true, terminated, purged });
+  console.log(`[ADMIN] ${auth.email} terminated ${terminated} active, purged ${purged} queued, cleared ${reviewCleared.cleared} review + ${judgeCleared.cleared} judge items, paused all queues`);
+  return json({ ok: true, terminated, purged, reviewCleared: reviewCleared.cleared, judgeCleared: judgeCleared.cleared });
 }
 
 // -- Admin: Pause / Resume Queues --

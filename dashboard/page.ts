@@ -1021,14 +1021,20 @@ export function getDashboardPage(): string {
 <!-- Terminate All Confirmation Modal -->
 <div class="modal-overlay" id="terminate-modal">
   <div class="modal" style="width:420px;">
-    <div class="modal-title" style="color:var(--red);">Terminate All Active Audits</div>
-    <div class="modal-sub">This will mark every currently active audit as <strong>terminated</strong>. In-flight pipeline steps will bail out when they check in. This cannot be undone.</div>
+    <div class="modal-title" style="color:var(--red);">Wipe Everything</div>
+    <div class="modal-sub">This will clear the entire backlog — all of the following will be wiped:</div>
     <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
-      Are you sure you want to terminate all active audits?
+      <ul style="margin:0;padding-left:16px;line-height:2;">
+        <li><strong>Active audits</strong> — marked terminated, steps bail on next check-in</li>
+        <li><strong>Queued messages</strong> — all pending QStash pipeline messages deleted</li>
+        <li><strong>Review queue</strong> — all pending reviewer items cleared</li>
+        <li><strong>Judge queue</strong> — all pending judge items cleared</li>
+      </ul>
+      <div style="margin-top:8px;font-weight:600;">This cannot be undone.</div>
     </div>
     <div class="modal-actions">
       <button class="sf-btn ghost" id="terminate-cancel">Cancel</button>
-      <button class="sf-btn danger" id="terminate-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Yes, Terminate All</button>
+      <button class="sf-btn danger" id="terminate-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Yes, Wipe Everything</button>
     </div>
   </div>
 </div>
@@ -1736,7 +1742,7 @@ export function getDashboardPage(): string {
       .then(function(d) {
         closeModal('terminate-modal');
         if (d.ok) {
-          toast('Terminated ' + (d.terminated || 0) + ' audit(s), purged ' + (d.purged || 0) + ' queued', 'success');
+          toast('Wiped: ' + (d.terminated || 0) + ' active, ' + (d.purged || 0) + ' queued, ' + (d.reviewCleared || 0) + ' review, ' + (d.judgeCleared || 0) + ' judge', 'success');
           queuesPaused = true; updateQueueBtn();
           fetchData();
         } else {
@@ -1744,7 +1750,7 @@ export function getDashboardPage(): string {
         }
       })
       .catch(function() { toast('Request failed', 'error'); })
-      .finally(function() { btn.disabled = false; btn.textContent = 'Yes, Terminate All'; });
+      .finally(function() { btn.disabled = false; btn.textContent = 'Yes, Wipe Everything'; });
   });
 
   // ===== Clear Review Queue =====

@@ -21,3 +21,7 @@ export class BadWordConfig {
   allOffices = false;
   officePatterns: string[] = [];
 }
+
+export class ReviewerConfig {
+  allowedTypes: ("date-leg" | "package")[] = ["date-leg", "package"];
+}

@@ -1,5 +1,21 @@
 /** QuickBase API client. */
 
+/** Strip non-numeric suffixes from a Genie ID or comma-separated list of IDs.
+ *  QB formula fields can return values like "27475188-error"; only the numeric part is valid.
+ *  Comma-separated multi-genie values like "27475188,28391234" are preserved as-is.
+ *  "27475188-error"        → "27475188"
+ *  "27475188,28391234"     → "27475188,28391234"
+ *  "27475188-error,28391" → "27475188,28391" */
+function cleanGenieId(raw: unknown): string {
+  const str = String(raw ?? "").trim();
+  if (!str) return "";
+  return str
+    .split(",")
+    .map((s) => s.trim().replace(/[^0-9].*$/, ""))
+    .filter((s) => s.length > 0)
+    .join(",");
+}
+
 function headers() {
   return {
     "QB-Realm-Hostname": `${Deno.env.get("QB_REALM")}.quickbase.com`,
@@ -120,7 +136,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
 
   return {
     RecordId: r[FIELD_RECORD_ID]?.value ?? rid,
-    VoGenie: r[FIELD_VO_GENIE]?.value ?? "",
+    VoGenie: cleanGenieId(r[FIELD_VO_GENIE]?.value),
     RelatedDestinationId: r[FIELD_RELATED_DESTINATION]?.value ?? "",
     DestinationDisplay: r[FIELD_DESTINATION_DISPLAY]?.value ?? "",
     GuestName: r[FIELD_GUEST_NAME]?.value ?? "",
@@ -164,7 +180,7 @@ export async function getPackageByRid(rid: string): Promise<Record<string, any> 
 
   return {
     RecordId: r[PKG_FIELD_RECORD_ID]?.value ?? rid,
-    GenieNumber: r[PKG_FIELD_GENIE_NUMBER]?.value ?? "",
+    GenieNumber: cleanGenieId(r[PKG_FIELD_GENIE_NUMBER]?.value),
     RelatedOfficeId: r[PKG_FIELD_RELATED_OFFICE_ID]?.value ?? 0,
     OfficeName: String(r[PKG_FIELD_OFFICE_NAME]?.value ?? ""),
     GmEmail: r[PKG_FIELD_GM_EMAIL]?.value ?? "",

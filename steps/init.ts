@@ -55,7 +55,7 @@ export async function stepInit(req: Request): Promise<Response> {
   // Multi-genie path: download all genies in parallel
   if (finding.genieIds && finding.genieIds.length > 0) {
     const validIds = finding.genieIds
-      .map((gid: any) => String(gid).trim())
+      .map((gid: any) => String(gid).trim().replace(/[^0-9].*$/, ""))
       .filter((trimmed: string) => {
         if (!trimmed || trimmed === "0" || trimmed.replace(/0/g, "") === "") {
           console.warn(`[STEP-INIT] ${findingId}: Skipping invalid genie ID "${trimmed}"`);
@@ -119,8 +119,8 @@ export async function stepInit(req: Request): Promise<Response> {
     return json({ ok: true, s3Keys: keys });
   }
 
-  // Validate genie ID
-  const rid = String(finding.recordingId ?? "").trim();
+  // Validate genie ID — strip any non-numeric suffix (e.g. "27475188-error" → "27475188")
+  const rid = String(finding.recordingId ?? "").trim().replace(/[^0-9].*$/, "");
   if (!rid || rid === "0" || rid === "00000000" || rid.replace(/0/g, "") === "") {
     console.warn(`[STEP-INIT] ${findingId}: Invalid Genie ID: "${rid}"`);
     finding.rawTranscript = "Invalid Genie";

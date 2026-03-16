@@ -904,7 +904,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       <canvas id="ap-waveform"></canvas>
       <button class="ap-seek" id="ap-fwd" title="Forward 5s (Right arrow)">5s&rarr;</button>
       <span class="ap-time" id="ap-time">0:00</span>
-      <span id="ap-speed" title="Playback speed (↑/↓)" style="display:none;font-size:10px;color:#6e7681;font-variant-numeric:tabular-nums;white-space:nowrap;border:1px solid #1e2736;border-radius:4px;padding:1px 5px;cursor:default;">1.0×</span>
+      <span id="ap-speed" title="Playback speed (↑/↓)" style="opacity:0;font-size:10px;color:#6e7681;font-variant-numeric:tabular-nums;white-space:nowrap;border:1px solid #1e2736;border-radius:4px;padding:1px 5px;cursor:default;">1.0×</span>
       <div id="skip-indicator"><span id="skip-label"></span><div id="skip-bar-wrap"><div id="skip-bar"></div></div></div>
     </div>
     <div id="bar-center">
@@ -917,6 +917,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       <span id="level-badge">Lv.1 <span id="xp-bar-wrap"><span id="xp-bar"></span></span> <span id="xp-display">0xp</span></span>
       <span id="streak-badge"></span>
       <span id="reviewer-tag"></span>
+      ${R ? `<select id="type-filter" title="Filter by audit type" style="font-size:10px;padding:2px 6px;cursor:pointer;background:var(--bg-raised,#161b22);color:#8b949e;border:1px solid #21262d;border-radius:6px;height:26px;"><option value="">All Types</option><option value="date-leg">Date Legs</option><option value="package">Packages</option></select>` : ""}
       <a class="bar-btn" href="${R ? "/review/dashboard" : "/judge/dashboard"}" style="text-decoration:none">Dashboard</a>
       <button class="bar-btn" id="chat-toggle" title="Messages" style="position:relative">${icons.messageCircle}<span id="chat-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:#ef4444;color:#fff;font-size:9px;font-weight:700;min-width:14px;height:14px;border-radius:7px;display:none;align-items:center;justify-content:center;padding:0 3px">0</span></button>
       <button class="bar-btn sound-toggle" id="sound-toggle" title="Toggle sound">${icons.volumeOff}</button>
@@ -1014,6 +1015,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   var pendingDecision = null;
   var pendingReason = null;
   var REASON_LABELS = { error: 'Error', logic: 'Logic', fragment: 'Fragment', transcript: 'Transcript' };
+  // Type filter (reviewer mode only)
+  var judgeAllowedTypes = ['date-leg', 'package']; // updated from /next response
+  var selfTypeFilter = ''; // '' = no self-filter (show all judge-allowed)
   var transcriptCache = {};
 
   // QuickBase record URL bases
@@ -1484,16 +1488,62 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     }, 120);
   }
 
+  // -- Type filter helpers (reviewer mode only) --
+  function nextUrl() {
+    var q = selfTypeFilter ? '?types=' + selfTypeFilter : '';
+    return '/next' + q;
+  }
+
+  function updateTypeFilterUI() {
+    var el = document.getElementById('type-filter');
+    if (!el) return;
+    el.disabled = judgeAllowedTypes.length <= 1;
+    // Remove options that aren't in judgeAllowedTypes
+    Array.from(el.options).forEach(function(opt) {
+      if (opt.value && !judgeAllowedTypes.includes(opt.value)) {
+        opt.disabled = true;
+        opt.style.display = 'none';
+      } else {
+        opt.disabled = false;
+        opt.style.display = '';
+      }
+    });
+    if (selfTypeFilter && !judgeAllowedTypes.includes(selfTypeFilter)) {
+      selfTypeFilter = '';
+    }
+    el.value = selfTypeFilter;
+  }
+
+  function applyNextData(data) {
+    if (data.judgeAllowedTypes) {
+      judgeAllowedTypes = data.judgeAllowedTypes;
+      updateTypeFilterUI();
+    }
+    buffer = data.buffer || [];
+    for (var i = 0; i < buffer.length; i++) {
+      if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
+    }
+  }
+
   // -- Queue --
   function loadNext() {
-    return api('/next').then(function(data) {
-      buffer = data.buffer || [];
+    return api(nextUrl()).then(function(data) {
+      applyNextData(data);
       if (buffer.length === 0) {
+        // If self-filter active and no items found, fall back to all judge-allowed types
+        if (selfTypeFilter && judgeAllowedTypes.length > 1) {
+          var prev = selfTypeFilter === 'date-leg' ? 'date legs' : 'packages';
+          selfTypeFilter = '';
+          updateTypeFilterUI();
+          toast('No more ' + prev + ' in queue — showing all types', 'info');
+          return api('/next').then(function(data2) {
+            applyNextData(data2);
+            if (buffer.length === 0) { showEmpty(); return; }
+            showReview();
+          });
+        }
         showEmpty();
         return;
-      }
-      for (var i = 0; i < buffer.length; i++) {
-        if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
       }
       showReview();
     }).catch(function(err) {
@@ -1791,6 +1841,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       speedMs: lastReviewTs > 0 ? Date.now() - lastReviewTs : undefined,
     };
     if (reason) bodyObj.reason = reason;
+    if (selfTypeFilter) bodyObj.types = selfTypeFilter;
 
     inflight++;
     fetch(API + '/decide', {
@@ -1804,12 +1855,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         if (res.status === 409) {
           // Silently absorb — item was already handled (stale). Refresh if buffer empty.
           if (inflight === 0 && buffer.length === 0) {
-            fetch(API + '/next').then(function(r) { return r.json(); }).then(function(d) {
-              buffer = d.buffer || [];
+            fetch(API + nextUrl()).then(function(r) { return r.json(); }).then(function(d) {
+              applyNextData(d);
               if (buffer.length > 0) {
-                for (var i = 0; i < buffer.length; i++) {
-                  if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
-                }
                 showReview();
               } else {
                 showEmpty();
@@ -2033,7 +2081,6 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     var timeAttr = parseFloat(el.getAttribute('data-time'));
     if (isNaN(timeAttr)) return; // no timestamp on this line, skip seek
     recAudio.currentTime = Math.min(timeAttr, dur);
-    if (recAudio.paused) recAudio.play();
   }
 
   // Search input handlers
@@ -2076,9 +2123,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     var amount = SKIP_TIERS[skipTier];
     var dur = recAudio.duration;
     if (!dur || isNaN(dur)) return;
+    var ct = recAudio.currentTime;
+    if (isNaN(ct)) ct = 0;
     recAudio.currentTime = dir > 0
-      ? Math.min(dur, recAudio.currentTime + amount)
-      : Math.max(0, recAudio.currentTime - amount);
+      ? Math.min(dur, ct + amount)
+      : Math.max(0, ct - amount);
 
     // Clear any existing decay
     if (skipDecayTimer) { clearTimeout(skipDecayTimer); skipDecayTimer = null; }
@@ -2152,11 +2201,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   function updateSpeedDisplay() {
     var el = document.getElementById('ap-speed');
     if (!el) return;
+    el.textContent = playbackRate.toFixed(1) + '\u00d7';
     if (playbackRate === 1.0) {
-      el.style.display = 'none';
+      el.style.opacity = '0';
+      el.style.color = '#6e7681';
     } else {
-      el.style.display = '';
-      el.textContent = playbackRate.toFixed(1) + '\u00d7';
+      el.style.opacity = '1';
       el.style.color = playbackRate > 1 ? '#58a6ff' : '#fbbf24';
     }
   }
@@ -2210,9 +2260,20 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       case 'h': scrollColumns(-1); break;
       case 'j': scrollColumns(1); break;
       case 'k': scrollColumns(-1); break;
-      case 'p': if (recAudio.paused) recAudio.play(); else recAudio.pause(); break;
+      case 'p':
+      case ' ': e.preventDefault(); if (recAudio.paused) recAudio.play(); else recAudio.pause(); break;
     }
   });
+
+  // -- Type filter (reviewer only) --
+  (function() {
+    var el = document.getElementById('type-filter');
+    if (!el) return;
+    el.addEventListener('change', function() {
+      selfTypeFilter = this.value;
+      loadNext();
+    });
+  })();
 
   // -- Logout --
   document.getElementById('logout-btn').addEventListener('click', function() {
@@ -2332,7 +2393,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     var dur = recAudio.duration;
     if (!dur || isNaN(dur)) return;
     recAudio.currentTime = pct * dur;
-    if (recAudio.paused) recAudio.play();
+    if (recAudio.paused) recAudio.play(); else recAudio.pause();
   });
   document.getElementById('ap-back').addEventListener('click', function() { recAudio.currentTime = Math.max(0, recAudio.currentTime - 5); });
   document.getElementById('ap-fwd').addEventListener('click', function() {
@@ -2347,7 +2408,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       var ov = document.getElementById('init-overlay');
       if (ov) { ov.style.opacity = '0'; setTimeout(function() { ov.remove(); }, 420); }
     }
-    api('/next').then(function(data) {
+    api(nextUrl()).then(function(data) {
       reviewer = data.reviewer || '${mode}';
       document.getElementById('reviewer-tag').innerHTML = '<strong>' + reviewer + '</strong>';
       loadGameState();
@@ -2356,11 +2417,8 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         totalDecided = stats.decided;
         updateProgress(stats.pending);
       }).catch(function(){});
-      buffer = data.buffer || [];
+      applyNextData(data);
       if (buffer.length > 0) {
-        for (var i = 0; i < buffer.length; i++) {
-          if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
-        }
         showReview();
       } else {
         showEmpty();

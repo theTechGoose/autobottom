@@ -13,6 +13,7 @@ import {
 } from "./storage/dtos/stats.ts";
 import {
   PipelineConfig as PipelineConfigDto, WebhookConfigDto, BadWordConfig as BadWordConfigDto,
+  ReviewerConfig as ReviewerConfigDto,
 } from "./storage/dtos/config.ts";
 import {
   EmailReportConfig as EmailReportConfigDto, EmailTemplate as EmailTemplateDto,
@@ -640,6 +641,22 @@ export async function getBadWordConfig(orgId: OrgId): Promise<BadWordConfig> {
 export async function saveBadWordConfig(orgId: OrgId, config: BadWordConfig): Promise<void> {
   const s = await store(BadWordConfigDto);
   await s.set([orgId], config as any);
+}
+
+// ── Reviewer Config (judge-assigned per-reviewer type limits) ────────────────
+
+export interface ReviewerConfig {
+  allowedTypes: ("date-leg" | "package")[];
+}
+
+export async function getReviewerConfig(orgId: OrgId, email: string): Promise<ReviewerConfig | null> {
+  const s = await store(ReviewerConfigDto);
+  return s.get([orgId, email]) as unknown as Promise<ReviewerConfig | null>;
+}
+
+export async function saveReviewerConfig(orgId: OrgId, email: string, config: ReviewerConfig): Promise<void> {
+  const s = await store(ReviewerConfigDto);
+  await s.set([orgId, email], config as any);
 }
 
 // ── Sound Pack Metadata ─────────────────────────────────────────────────────

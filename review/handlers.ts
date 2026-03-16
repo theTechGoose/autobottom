@@ -8,7 +8,7 @@ import {
   backfillFromFinished,
   getReviewerDashboardData,
 } from "./kv.ts";
-import { getWebhookConfig, saveWebhookConfig, resolveGamificationSettings, listSoundPacks, emitEvent } from "../lib/kv.ts";
+import { getWebhookConfig, saveWebhookConfig, resolveGamificationSettings, listSoundPacks, emitEvent, getReviewerConfig } from "../lib/kv.ts";
 import type { WebhookConfig, SoundSlot } from "../lib/kv.ts";
 import { resolveEffectiveAuth, getUser } from "../auth/kv.ts";
 import type { AuthContext } from "../auth/kv.ts";
@@ -63,8 +63,21 @@ export async function handleNext(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
   if (auth instanceof Response) return auth;
 
-  const result = await claimNextItem(auth.orgId, auth.email);
-  return json(result);
+  // Judge-assigned type limit (hard cap — reviewer cannot override)
+  const config = await getReviewerConfig(auth.orgId, auth.email);
+  const judgeAllowedTypes: string[] = config?.allowedTypes ?? ["date-leg", "package"];
+
+  // Reviewer self-filter (must be a subset of judgeAllowedTypes)
+  const url = new URL(req.url);
+  const typesParam = url.searchParams.get("types");
+  const selfTypes = typesParam
+    ? typesParam.split(",").filter((t) => judgeAllowedTypes.includes(t))
+    : null;
+
+  const effectiveTypes = selfTypes && selfTypes.length > 0 ? selfTypes : judgeAllowedTypes;
+
+  const result = await claimNextItem(auth.orgId, auth.email, effectiveTypes);
+  return json({ ...result, judgeAllowedTypes });
 }
 
 export async function handleDecide(req: Request): Promise<Response> {
@@ -72,7 +85,7 @@ export async function handleDecide(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
 
   const body = await req.json();
-  const { findingId, questionIndex, decision, combo, level, speedMs } = body;
+  const { findingId, questionIndex, decision, combo, level, speedMs, types: decidedTypes } = body;
 
   if (!findingId || questionIndex === undefined || !decision) {
     return json({ error: "findingId, questionIndex, and decision required" }, 400);
@@ -98,8 +111,14 @@ export async function handleDecide(req: Request): Promise<Response> {
     }).catch(() => {});
   }
 
-  // Claim next buffer for the reviewer
-  const next = await claimNextItem(auth.orgId, auth.email);
+  // Claim next buffer for the reviewer, respecting judge config + self-filter
+  const config = await getReviewerConfig(auth.orgId, auth.email);
+  const judgeAllowedTypes: string[] = config?.allowedTypes ?? ["date-leg", "package"];
+  const selfTypes = decidedTypes
+    ? [decidedTypes].flat().filter((t: string) => judgeAllowedTypes.includes(t))
+    : null;
+  const effectiveTypes = selfTypes && selfTypes.length > 0 ? selfTypes : judgeAllowedTypes;
+  const next = await claimNextItem(auth.orgId, auth.email, effectiveTypes);
 
   const newBadges = result.newBadges.map(({ check: _, ...rest }) => rest);
   return json({ decided: { findingId, questionIndex, decision }, auditComplete: result.auditComplete, buffer: next.buffer, newBadges });

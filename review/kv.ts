@@ -142,18 +142,24 @@ export interface BufferItem extends ReviewItem {
   transcript: { raw: string; diarized: string; utteranceTimes?: number[] } | null;
 }
 
-export async function claimNextItem(orgId: OrgId, reviewer: string): Promise<{
+export async function claimNextItem(orgId: OrgId, reviewer: string, allowedTypes?: string[]): Promise<{
   buffer: BufferItem[];
   remaining: number;
 }> {
   const db = await kv();
   const now = Date.now();
 
-  // Helper: atomically claim up to `count` items from pending
+  // Helper: atomically claim up to `count` items from pending, optionally filtering by type
   async function claimFromPending(count: number): Promise<ReviewItem[]> {
     const claimed: ReviewItem[] = [];
     const iter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
     for await (const entry of iter) {
+      // Type filter: "GenieNumber" = package, anything else = date-leg
+      if (allowedTypes) {
+        const isPackage = entry.value.recordingIdField === "GenieNumber";
+        const itemType = isPackage ? "package" : "date-leg";
+        if (!allowedTypes.includes(itemType)) continue;
+      }
       const activeKey = orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex);
       const res = await db.atomic()
         .check(entry)

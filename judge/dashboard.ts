@@ -334,11 +334,12 @@ export function getJudgeDashboardPage(): string {
           <tr>
             <th>Email</th>
             <th>Created</th>
+            <th>Allowed Types</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="reviewer-tbody">
-          <tr class="empty-row"><td colspan="3">No reviewers assigned</td></tr>
+          <tr class="empty-row"><td colspan="4">No reviewers assigned</td></tr>
         </tbody>
       </table>
     </div>
@@ -504,17 +505,57 @@ export function getJudgeDashboardPage(): string {
       var tbody = document.getElementById('reviewer-tbody');
       document.getElementById('reviewer-count').textContent = reviewers.length;
       if (reviewers.length === 0) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="3">No reviewers assigned</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No reviewers assigned</td></tr>';
         return;
       }
+      // Fetch configs for all reviewers in parallel
+      var configResults = await Promise.all(reviewers.map(function(r) {
+        return fetch('/judge/api/reviewer-config?email=' + encodeURIComponent(r.email))
+          .then(function(res2) { return res2.ok ? res2.json() : { allowedTypes: ['date-leg', 'package'] }; })
+          .catch(function() { return { allowedTypes: ['date-leg', 'package'] }; });
+      }));
       tbody.innerHTML = '';
       for (var i = 0; i < reviewers.length; i++) {
         var r = reviewers[i];
+        var cfg = configResults[i];
+        var allowedTypes = Array.isArray(cfg.allowedTypes) ? cfg.allowedTypes : ['date-leg', 'package'];
         var dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '--';
+        var dlChecked = allowedTypes.includes('date-leg') ? 'checked' : '';
+        var pkgChecked = allowedTypes.includes('package') ? 'checked' : '';
         var tr = document.createElement('tr');
-        tr.innerHTML = '<td><strong>' + esc(r.email) + '</strong></td><td>' + dateStr + '</td><td><button class="sf-btn danger" data-email="' + esc(r.email) + '">Remove</button></td>';
+        tr.innerHTML =
+          '<td><strong>' + esc(r.email) + '</strong></td>' +
+          '<td>' + dateStr + '</td>' +
+          '<td style="white-space:nowrap">' +
+            '<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;margin-right:10px;cursor:pointer;">' +
+              '<input type="checkbox" class="rc-datelegs" data-email="' + esc(r.email) + '" ' + dlChecked + '> Date Legs' +
+            '</label>' +
+            '<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;">' +
+              '<input type="checkbox" class="rc-packages" data-email="' + esc(r.email) + '" ' + pkgChecked + '> Packages' +
+            '</label>' +
+          '</td>' +
+          '<td><button class="sf-btn danger" data-email="' + esc(r.email) + '">Remove</button></td>';
         tbody.appendChild(tr);
       }
+      // Checkbox change → save config
+      tbody.querySelectorAll('.rc-datelegs, .rc-packages').forEach(function(chk) {
+        chk.addEventListener('change', function() {
+          var email = this.getAttribute('data-email');
+          var row = this.closest('tr');
+          var dlBox = row.querySelector('.rc-datelegs');
+          var pkgBox = row.querySelector('.rc-packages');
+          var types = [];
+          if (dlBox && dlBox.checked) types.push('date-leg');
+          if (pkgBox && pkgBox.checked) types.push('package');
+          // Prevent unchecking both
+          if (types.length === 0) { this.checked = true; return; }
+          fetch('/judge/api/reviewer-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email, allowedTypes: types })
+          }).catch(function() { alert('Failed to save reviewer config'); });
+        });
+      });
       tbody.querySelectorAll('.sf-btn.danger').forEach(function(btn) {
         btn.addEventListener('click', function() {
           var email = this.getAttribute('data-email');

@@ -2372,9 +2372,17 @@ async function handleRetryFinding(req: Request): Promise<Response> {
   }
   if (finding.findingStatus === "finished") return json({ error: "already finished" }, 400);
 
+  // Un-terminate so the step doesn't bail out immediately
+  if (finding.findingStatus === "terminated") {
+    finding.findingStatus = "active";
+    await saveFinding(auth.orgId, finding);
+  }
+
   // Pick the right step based on how far it got
   let step = "finalize";
-  if (!finding.rawTranscript) {
+  if (!finding.s3RecordingKey && !finding.s3RecordingKeys?.length) {
+    step = "init";
+  } else if (!finding.rawTranscript) {
     step = "transcribe";
   } else if (!finding.answeredQuestions?.length) {
     step = "prepare";

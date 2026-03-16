@@ -20,7 +20,7 @@ import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
 import { enqueueStep, publishStep, ALL_QUEUES, pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts } from "./lib/queue.ts";
 import {
-  trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig, getStuckFindings,
+  trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig, getStuckFindings, clearErrors,
   getFinding, saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
@@ -253,6 +253,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/retry-finding": handleRetryFinding,
   "/admin/terminate-all": handleTerminateAll,
   "/admin/clear-queue": handleClearQueue,
+  "/admin/clear-errors": handleClearErrors,
   "/admin/pause-queues": handlePauseQueues,
   "/admin/resume-queues": handleResumeQueues,
   "/admin/clear-review-queue": handleClearReviewQueue,
@@ -2418,6 +2419,15 @@ async function handleClearQueue(req: Request): Promise<Response> {
   return json({ ok: true, purged });
 }
 
+async function handleClearErrors(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const cleared = await clearErrors(auth.orgId);
+  console.log(`[ADMIN] ${auth.email} cleared ${cleared} errors`);
+  return json({ ok: true, cleared });
+}
+
 // -- Admin: Pause / Resume Queues --
 
 async function handlePauseQueues(req: Request): Promise<Response> {
@@ -3651,15 +3661,32 @@ Deno.serve(async (req) => {
             if (retryOrgId) {
               trackCompleted(retryOrgId, fid).catch(() => {});
             }
+            let genieNumber = "?";
+            let recordId = "?";
+            if (retryOrgId) {
+              try {
+                const f = await getFinding(retryOrgId, fid);
+                if (f) {
+                  genieNumber = String(f.record?.GenieNumber ?? f.genieIds?.[0] ?? "?");
+                  recordId = String(f.record?.RecordId ?? "?");
+                }
+              } catch { /* best effort */ }
+            }
             sendEmail({
               to: env.alertEmail,
               subject: `[Auto-Bot] Pipeline retries exhausted: ${stepName}`,
               htmlBody: `<h3>Pipeline Step Failed</h3>
 <p><b>Finding ID:</b> ${fid}</p>
+<p><b>Record ID:</b> ${recordId}</p>
+<p><b>Genie Number:</b> ${genieNumber}</p>
 <p><b>Step:</b> ${stepName}</p>
 <p><b>Retries:</b> ${attempt - 1}/${pipelineCfg.maxRetries}</p>
 <p><b>Error:</b></p><pre>${msg}</pre>
-<p><a href="${env.selfUrl}/audit/report?id=${fid}${retryOrgId ? `&org=${retryOrgId}` : ""}">View Report</a></p>`,
+<p>
+  <a href="${env.selfUrl}/audit/report?id=${fid}${retryOrgId ? `&org=${retryOrgId}` : ""}">View Report</a>
+  &nbsp;|&nbsp;
+  <a href="https://fly.io/apps/autobottom/monitoring/logs?search=${fid}">View Logs</a>
+</p>`,
             }).catch((emailErr) => console.error(`[${url.pathname}] Failed to send alert email:`, emailErr));
           }
           return json({ error: msg, retried: attempt <= pipelineCfg.maxRetries, attempt }, 200);

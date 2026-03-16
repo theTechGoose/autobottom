@@ -269,6 +269,13 @@ export async function trackError(orgId: OrgId, findingId: string, step: string, 
   await s.set([orgId, `${Date.now()}-${findingId}`], { findingId, step, error, ts: Date.now() } as any, { expireIn: DAY_MS });
 }
 
+export async function clearErrors(orgId: OrgId): Promise<number> {
+  const s = await store(ErrorTracking);
+  const entries = await s.listRaw([orgId], { limit: 1000 });
+  await Promise.all(entries.map((e) => s.delete(e.key)));
+  return entries.length;
+}
+
 export async function trackRetry(orgId: OrgId, findingId: string, step: string, attempt: number) {
   const s = await store(RetryTracking);
   await s.set([orgId, `${Date.now()}-${findingId}`], { findingId, step, attempt, ts: Date.now() } as any, { expireIn: DAY_MS });

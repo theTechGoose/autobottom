@@ -605,7 +605,10 @@ export function getDashboardPage(): string {
     </div>
 
     <div class="tbl">
-      <div class="tbl-title">Recent Errors (24h)</div>
+      <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>Recent Errors (24h)</span>
+        <button class="sf-btn danger" id="clear-errors-btn" style="font-size:9px;padding:3px 10px;">Clear Errors</button>
+      </div>
       <table><thead><tr><th>Finding ID</th><th>Logs</th><th>Step</th><th>Error</th><th>When</th></tr></thead>
       <tbody id="tb-errors"><tr class="empty-row"><td colspan="5">No errors</td></tr></tbody></table>
     </div>
@@ -1042,6 +1045,21 @@ export function getDashboardPage(): string {
     <div class="modal-actions">
       <button class="sf-btn ghost" id="clear-queue-cancel">Cancel</button>
       <button class="sf-btn danger" id="clear-queue-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Clear Queue</button>
+    </div>
+  </div>
+</div>
+
+<!-- Clear Errors Confirmation Modal -->
+<div class="modal-overlay" id="clear-errors-modal">
+  <div class="modal" style="width:420px;">
+    <div class="modal-title" style="color:var(--red);">Clear Errors</div>
+    <div class="modal-sub">This will delete all error records from the past 24 hours. No audits will be affected.</div>
+    <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
+      <div style="font-weight:600;">This cannot be undone.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="sf-btn ghost" id="clear-errors-cancel">Cancel</button>
+      <button class="sf-btn danger" id="clear-errors-confirm" style="padding:10px 24px;font-size:13px;border-radius:8px;background:var(--red);color:#fff;border:none;">Clear Errors</button>
     </div>
   </div>
 </div>
@@ -1781,6 +1799,30 @@ export function getDashboardPage(): string {
       })
       .catch(function() { toast('Request failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Clear Queue'; });
+  });
+
+  // ===== Clear Errors =====
+  document.getElementById('clear-errors-btn').addEventListener('click', function() {
+    openModal('clear-errors-modal');
+  });
+  document.getElementById('clear-errors-cancel').addEventListener('click', function() { closeModal('clear-errors-modal'); });
+  backdropClose('clear-errors-modal');
+  document.getElementById('clear-errors-confirm').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Clearing...';
+    fetch('/admin/clear-errors', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        closeModal('clear-errors-modal');
+        if (d.ok) {
+          toast('Cleared ' + (d.cleared || 0) + ' errors', 'success');
+          fetchData();
+        } else {
+          toast(d.error || 'Failed', 'error');
+        }
+      })
+      .catch(function() { toast('Request failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Clear Errors'; });
   });
 
   // ===== Clear Review Queue =====

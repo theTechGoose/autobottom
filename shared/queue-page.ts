@@ -2082,6 +2082,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     var timeAttr = parseFloat(el.getAttribute('data-time'));
     if (isNaN(timeAttr)) return; // no timestamp on this line, skip seek
     recAudio.currentTime = Math.min(timeAttr, dur);
+    updateApTime();
   }
 
   // Search input handlers
@@ -2129,6 +2130,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     recAudio.currentTime = dir > 0
       ? Math.min(dur, ct + amount)
       : Math.max(0, ct - amount);
+
+    // Update display immediately — timeupdate only fires during playback, not when paused
+    updateApTime();
 
     // Clear any existing decay
     if (skipDecayTimer) { clearTimeout(skipDecayTimer); skipDecayTimer = null; }

@@ -283,6 +283,7 @@ const postRoutes: Record<string, Handler> = {
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
   "/webhooks/manager-review": handleManagerReviewWebhook,
   "/admin/reset-finding": handleResetFinding,
+  "/admin/flip-answer": handleAdminFlipAnswer,
 
   // Appeal (orgId from auth/query/default)
   "/audit/appeal": withOrgId(handleFileAppeal),
@@ -742,7 +743,7 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
 .score-yellow{color:var(--yellow);font-weight:700}
 .score-red{color:var(--red);font-weight:700}
 .badge{display:inline-flex;align-items:center;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
-.badge-pkg{background:rgba(57,208,216,0.12);color:var(--cyan);border:1px solid rgba(57,208,216,0.25)}
+.badge-pkg{background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.3)}
 .badge-dl{background:rgba(88,166,255,0.12);color:var(--blue);border:1px solid rgba(88,166,255,0.25)}
 .pagination{display:flex;align-items:center;gap:8px;padding:16px 0;justify-content:center}
 .pagination button{padding:4px 12px;border-radius:5px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:var(--bg-raised);color:var(--text);transition:all 0.15s}
@@ -777,7 +778,7 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
     </div>
   </label>
   <label>Type
-    <select id="f-type"><option value="all">All Types</option><option value="date-leg">Date Leg</option><option value="package">Package</option></select>
+    <select id="f-type"><option value="all">All Types</option><option value="date-leg">Internal</option><option value="package">Partner</option></select>
   </label>
   <label>Team Member
     <select id="f-owner"><option value="">All Members</option></select>
@@ -878,7 +879,7 @@ function renderStats(d){
   var dls=items.filter(function(c){return!c.isPackage}).length;
   document.getElementById('stats-row').innerHTML=
     stat(d.total,'Total ('+windowLabel()+')')+stat(passes,'≥80% Pass')+stat(items.length-passes,'<80% Fail')+
-    stat(pkgs,'Packages')+stat(dls,'Date Legs')+stat(avgScore+'%','Avg Score (page)');
+    stat(pkgs,'Partner')+stat(dls,'Internal')+stat(avgScore+'%','Avg Score (page)');
 }
 function stat(v,l){return '<div class="stat-card"><div class="val">'+v+'</div><div class="lbl">'+l+'</div></div>'}
 
@@ -889,7 +890,7 @@ function renderTable(d){
     var logsHtml=logsBase?'<a href="'+logsBase+encodeURIComponent(fid)+'&start=now%2Fy&end=now" target="_blank" class="tbl-link">logs</a>':'--';
     var ridHtml='--';
     if(c.recordId){var u=(c.isPackage?qbPkgUrl:qbDateUrl)+encodeURIComponent(c.recordId);ridHtml='<a href="'+u+'" target="_blank" class="tbl-link">'+esc(c.recordId)+'</a>';}
-    var typeBadge=c.isPackage?'<span class="badge badge-pkg">Package</span>':'<span class="badge badge-dl">Date Leg</span>';
+    var typeBadge=c.isPackage?'<span class="badge badge-pkg">Partner</span>':'<span class="badge badge-dl">Internal</span>';
     var owner=c.owner?'<span class="mono" style="font-size:10px">'+esc(c.owner.split("@")[0])+'</span>':'--';
     var started=c.startedAt?'<span title="'+fmtTime(c.startedAt)+'">'+timeAgo(c.startedAt)+'</span>':'--';
     var finished='<span title="'+fmtTime(c.ts)+'">'+timeAgo(c.ts)+'</span>';
@@ -3354,6 +3355,27 @@ async function handleResetFinding(req: Request): Promise<Response> {
 
   console.log(`[ADMIN] Reset finding ${findingId}: ${deleted} deleted, ${queued} re-queued`);
   return json({ ok: true, deleted, queued, findingId });
+}
+
+// -- Admin: Flip Answer --
+
+async function handleAdminFlipAnswer(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const { findingId, questionIndex } = await req.json();
+  if (!findingId || questionIndex === undefined) return json({ error: "findingId and questionIndex required" }, 400);
+  const finding = await getFinding(auth.orgId, findingId);
+  if (!finding) return json({ error: "finding not found" }, 404);
+  const questions = finding.answeredQuestions as any[];
+  if (!questions || questionIndex >= questions.length) return json({ error: "question index out of range" }, 400);
+  const q = questions[questionIndex];
+  const isYes = (a: string) => { const s = String(a ?? "").trim().toLowerCase(); return s.startsWith("yes") || s === "true" || s === "y" || s === "1"; };
+  const newAnswer = isYes(q.answer) ? "No" : "Yes";
+  questions[questionIndex] = { ...q, answer: newAnswer, adminFlippedAt: Date.now(), adminFlippedBy: auth.email };
+  finding.answeredQuestions = questions;
+  await saveFinding(auth.orgId, finding);
+  console.log(`🔧 [ADMIN] ${auth.email} flipped answer for finding ${findingId} Q${questionIndex}: ${q.answer} → ${newAnswer}`);
+  return json({ ok: true });
 }
 
 // -- Admin: Wipe KV --

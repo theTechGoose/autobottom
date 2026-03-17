@@ -344,8 +344,8 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     padding: 4px 12px; font-size: 13px; color: #6e7681; white-space: nowrap;
   }
   .meta-chip strong { color: #c9d1d9; font-weight: 600; font-size: 13px; }
-  /* Package / Date Leg type badges inside meta row */
-  .badge-pkg { display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;background:rgba(20,184,166,0.12);color:#2dd4bf;border:1px solid rgba(20,184,166,0.25); }
+  /* Partner / Internal type badges inside meta row */
+  .badge-pkg { display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.3); }
   .badge-dl  { display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;background:rgba(88,166,255,0.12);color:#58a6ff;border:1px solid rgba(88,166,255,0.25); }
 
   /* ===== Transcript (right side) ===== */
@@ -822,11 +822,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         </div>
 
         <div id="meta-row">
-          <div class="meta-chip">Audit <strong id="m-finding"></strong></div>
+          <a class="meta-chip" id="m-report-link" href="#" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;" title="Open audit report">Audit <strong id="m-finding" style="color:#a371f7;"></strong></a>
           <div class="meta-chip" id="m-type-chip" style="display:none"></div>
-          <div class="meta-chip" id="m-record-id-chip" style="display:none">Record <strong id="m-record-id"></strong></div>
-          <a class="meta-chip" id="m-record-link" href="#" target="_blank" rel="noopener" style="display:none;color:#58a6ff;text-decoration:none;">View Record →</a>
-          <a class="meta-chip" id="m-report-link" href="#" target="_blank" rel="noopener" style="display:none;color:#a371f7;text-decoration:none;">View Report →</a>
+          <a class="meta-chip" id="m-record-link" href="#" target="_blank" rel="noopener" style="display:none;color:inherit;text-decoration:none;" title="Open in CRM">Record <strong id="m-record-id" style="color:#58a6ff;"></strong></a>
+          <button id="m-jump-audio" class="meta-chip" style="background:rgba(20,184,166,0.08);border-color:rgba(20,184,166,0.3);color:#2dd4bf;cursor:pointer;display:none;" title="Scroll to graded snippet and play (J)">▶ Jump to Audio</button>
+          ${!R ? `<div class="meta-chip" id="m-reviewer" style="display:none;">Reviewer <strong id="m-reviewer-name" style="color:#fbbf24;"></strong></div>` : ''}
           <div class="meta-chip last-item" id="m-last" style="display:none"><strong>${lastItemLabel}</strong></div>
         </div>
       </div>
@@ -896,7 +896,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     <button id="help-hint" title="Keyboard shortcuts"><kbd>?</kbd> Keys</button>
     <div class="ap" id="audio-player">
       <audio id="rec-audio" preload="metadata" style="display:none"></audio>
-      <button class="ap-play" id="ap-play" title="Play recording">
+      <button class="ap-play" id="ap-play" title="Play recording" tabindex="-1">
         <span id="ap-icon-play">${icons.play16}</span>
         <span id="ap-icon-pause" style="display:none">${icons.pause16}</span>
       </button>
@@ -904,7 +904,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       <canvas id="ap-waveform"></canvas>
       <button class="ap-seek" id="ap-fwd" title="Forward 5s (Right arrow)">5s&rarr;</button>
       <span class="ap-time" id="ap-time">0:00</span>
-      <span id="ap-speed" title="Playback speed (↑/↓)" style="opacity:0;font-size:10px;color:#6e7681;font-variant-numeric:tabular-nums;white-space:nowrap;border:1px solid #1e2736;border-radius:4px;padding:1px 5px;cursor:default;">1.0×</span>
+      <span id="ap-speed" title="Playback speed (↑/↓)" style="visibility:hidden;font-size:10px;color:#6e7681;font-variant-numeric:tabular-nums;white-space:nowrap;border:1px solid #1e2736;border-radius:4px;padding:1px 5px;cursor:default;width:30px;text-align:center;flex-shrink:0;">1.0×</span>
       <div id="skip-indicator"><span id="skip-label"></span><div id="skip-bar-wrap"><div id="skip-bar"></div></div></div>
     </div>
     <div id="bar-center">
@@ -917,7 +917,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       <span id="level-badge">Lv.1 <span id="xp-bar-wrap"><span id="xp-bar"></span></span> <span id="xp-display">0xp</span></span>
       <span id="streak-badge"></span>
       <span id="reviewer-tag"></span>
-      ${R ? `<select id="type-filter" title="Filter by audit type" style="font-size:10px;padding:2px 6px;cursor:pointer;background:var(--bg-raised,#161b22);color:#8b949e;border:1px solid #21262d;border-radius:6px;height:26px;"><option value="">All Types</option><option value="date-leg">Date Legs</option><option value="package">Packages</option></select>` : ""}
+      ${R ? `<select id="type-filter" title="Filter by audit type" style="font-size:10px;padding:2px 6px;cursor:pointer;background:var(--bg-raised,#161b22);color:#8b949e;border:1px solid #21262d;border-radius:6px;height:26px;"><option value="">All Types</option><option value="date-leg">Internal</option><option value="package">Partner</option></select>` : ""}
       <a class="bar-btn" href="${R ? "/review/dashboard" : "/judge/dashboard"}" style="text-decoration:none">Dashboard</a>
       <button class="bar-btn" id="chat-toggle" title="Messages" style="position:relative">${icons.messageCircle}<span id="chat-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:#ef4444;color:#fff;font-size:9px;font-weight:700;min-width:14px;height:14px;border-radius:7px;display:none;align-items:center;justify-content:center;padding:0 3px">0</span></button>
       <button class="bar-btn sound-toggle" id="sound-toggle" title="Toggle sound">${icons.volumeOff}</button>
@@ -936,6 +936,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       <div id="summary-stats"></div>
     </div>
     <div id="confetti-container"></div>
+    <a href="${mode === 'judge' ? '/judge/dashboard' : '/review/dashboard'}" style="display:inline-block;margin-top:18px;padding:8px 20px;border-radius:8px;border:1px solid #1e2736;background:#12161e;color:#8b949e;font-size:12px;font-weight:600;text-decoration:none;transition:all 0.15s;" onmouseover="this.style.borderColor='#2d333b';this.style.color='#c9d1d9';" onmouseout="this.style.borderColor='#1e2736';this.style.color='#8b949e';">← Dashboard</a>
   </div>
 </div>
 
@@ -1532,7 +1533,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       if (buffer.length === 0) {
         // If self-filter active and no items found, fall back to all judge-allowed types
         if (selfTypeFilter && judgeAllowedTypes.length > 1) {
-          var prev = selfTypeFilter === 'date-leg' ? 'date legs' : 'packages';
+          var prev = selfTypeFilter === 'date-leg' ? 'internal' : 'partner';
           selfTypeFilter = '';
           updateTypeFilterUI();
           toast('No more ' + prev + ' in queue — showing all types', 'info');
@@ -1583,43 +1584,71 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     if (typeChip) {
       var isPackage = currentItem.recordingIdField === 'GenieNumber';
       typeChip.innerHTML = isPackage
-        ? '<span class="badge-pkg">Package</span>'
-        : '<span class="badge-dl">Date Leg</span>';
+        ? '<span class="badge-pkg">Partner</span>'
+        : '<span class="badge-dl">Internal</span>';
       typeChip.style.display = '';
+    }
+
+    // Audit link (m-report-link now wraps the whole Audit chip)
+    var reportLink = document.getElementById('m-report-link');
+    if (reportLink && currentItem.findingId) {
+      reportLink.href = '/audit/report?id=' + encodeURIComponent(currentItem.findingId);
     }
 
     // Record ID + QB link
     var recId = currentItem.recordId || '';
-    var ridChip = document.getElementById('m-record-id-chip');
     var ridEl = document.getElementById('m-record-id');
     var recLink = document.getElementById('m-record-link');
-    if (recId && ridChip && ridEl && recLink) {
+    if (recId && ridEl && recLink) {
       ridEl.textContent = recId;
-      ridChip.style.display = '';
       var qbTable = (currentItem.recordingIdField === 'GenieNumber') ? QB_PKG_TABLE : QB_DATE_TABLE;
       recLink.href = 'https://' + QB_REALM + '.quickbase.com/db/' + qbTable + '?a=dr&rid=' + encodeURIComponent(recId);
       recLink.style.display = '';
-    } else if (ridChip && recLink) {
-      ridChip.style.display = 'none';
+    } else if (recLink) {
       recLink.style.display = 'none';
-    }
-
-    var reportLink = document.getElementById('m-report-link');
-    if (reportLink && currentItem.findingId) {
-      reportLink.href = '/audit/report?id=' + encodeURIComponent(currentItem.findingId);
-      reportLink.style.display = '';
     }
 
     ${verdictBadgeRenderJs}
 
     document.getElementById('m-last').style.display = currentItem.auditRemaining === 1 ? '' : 'none';
 
+    ${!R ? `
+    // Reviewer chip (judge mode only)
+    var revChip = document.getElementById('m-reviewer');
+    var revName = document.getElementById('m-reviewer-name');
+    if (revChip && revName) {
+      if (currentItem.reviewedBy) {
+        revName.textContent = currentItem.reviewedBy.split('@')[0] || currentItem.reviewedBy;
+        revChip.title = currentItem.reviewedBy;
+        revChip.style.display = '';
+      } else {
+        revChip.style.display = 'none';
+      }
+    }` : ''}
+
     document.getElementById('thinking-content').classList.remove('open');
     document.querySelector('#thinking-toggle .arrow').classList.remove('open');
 
     loadRecording(currentItem.findingId);
     renderTranscript();
+    // Show jump button only if transcript has evidence lines
+    setTimeout(function() {
+      var first = document.querySelector('.t-evidence');
+      var btn = document.getElementById('m-jump-audio');
+      if (btn) btn.style.display = first ? '' : 'none';
+    }, 0);
   }
+
+  // -- Jump to audio --
+  function jumpToAudio() {
+    var first = document.querySelector('.t-evidence');
+    if (!first) { first = document.querySelector('.t-highlight'); }
+    if (!first) return;
+    scrollToTranscriptLine(first);
+    seekToTranscriptLine(first);
+    if (recAudio.paused) recAudio.play().catch(function(){});
+  }
+  document.getElementById('m-jump-audio').addEventListener('click', jumpToAudio);
 
   // -- Thinking toggle --
   document.getElementById('thinking-toggle').addEventListener('click', toggleThinking);
@@ -1710,9 +1739,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     var evidenceSnippets = extractEvidenceSnippets(currentItem && currentItem.defense, currentItem && currentItem.thinking);
     var lines = text.split('\\n');
     var timeIdx = 0; // tracks which utteranceTimes entry to use (skip blank lines)
+    var lastLine = ''; // for dedup: skip consecutive identical lines
     for (var li = 0; li < lines.length; li++) {
       var line = lines[li];
       if (!line.trim()) continue;
+      if (line.trim() === lastLine) { if (times && timeIdx < times.length) timeIdx++; continue; } // skip duplicate
+      lastLine = line.trim();
       var div = document.createElement('div');
       div.className = 't-line';
 
@@ -1784,13 +1816,6 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     if (buffer.length === 0) return;
     // Only block if buffer is empty AND a request is in flight
     if (busy && buffer.length === 0) return;
-
-    if (buffer[0].auditRemaining === 1) {
-      pendingDecision = decision;
-      pendingReason = reason || null;
-      showConfirmModal();
-      return;
-    }
 
     executeDecision(decision, reason);
   }
@@ -2208,10 +2233,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     if (!el) return;
     el.textContent = playbackRate.toFixed(1) + '\u00d7';
     if (playbackRate === 1.0) {
-      el.style.opacity = '0';
+      el.style.visibility = 'hidden';
       el.style.color = '#6e7681';
     } else {
-      el.style.opacity = '1';
+      el.style.visibility = 'visible';
       el.style.color = playbackRate > 1 ? '#58a6ff' : '#fbbf24';
     }
   }
@@ -2244,7 +2269,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   // -- Keyboard (bubbling phase for all other keys) --
   document.addEventListener('keydown', function(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
     if (document.getElementById('confirm-overlay').classList.contains('open')) return;
     if (e.ctrlKey) return; // already handled in capture phase
 
@@ -2263,10 +2288,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       case 'backspace': e.preventDefault(); goBack(); break;
       case 'l': scrollColumns(1); break;
       case 'h': scrollColumns(-1); break;
-      case 'j': scrollColumns(1); break;
       case 'k': scrollColumns(-1); break;
       case 'p':
       case ' ': e.preventDefault(); if (recAudio.paused) recAudio.play(); else recAudio.pause(); break;
+      case 'j': e.preventDefault(); jumpToAudio(); break;
     }
   });
 

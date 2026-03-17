@@ -249,7 +249,7 @@ export function getDashboardPage(): string {
   .stat-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 16px; }
   .stat-card { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; transition: border-color 0.15s; }
   .stat-card:hover { border-color: var(--border-hover); }
-  .stat-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-bottom: 3px; }
+  .stat-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-muted); margin-bottom: 3px; }
   .stat-value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .stat-card.blue .stat-value { color: var(--blue); }
   .stat-card.green .stat-value { color: var(--green); }
@@ -259,7 +259,7 @@ export function getDashboardPage(): string {
   /* Charts row */
   .charts { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 16px; }
   .chart-panel { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 16px 16px 12px; }
-  .chart-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 10px; }
+  .chart-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 10px; }
   .chart-wrap { position: relative; }
   .chart-wrap canvas { width: 100%; height: 140px; display: block; }
 
@@ -274,7 +274,7 @@ export function getDashboardPage(): string {
   /* Panels */
   .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
   .panel { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
-  .panel-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 10px; }
+  .panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 10px; }
 
   .rq-row { display: flex; gap: 20px; align-items: center; }
   .rq-stat { text-align: center; }
@@ -294,9 +294,9 @@ export function getDashboardPage(): string {
 
   /* Tables */
   .tbl { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
-  .tbl-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 8px; }
-  table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  .tbl-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 8px; }
+table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); padding: 4px 8px; border-bottom: 1px solid var(--border); }
   td { font-size: 11px; padding: 6px 8px; border-bottom: 1px solid rgba(28,35,51,0.4); color: var(--text-muted); }
   tr:last-child td { border-bottom: none; }
   .mono { font-family: var(--mono); font-size: 10px; color: var(--text); }
@@ -549,12 +549,12 @@ export function getDashboardPage(): string {
             <div style="display:table-cell;padding:2px 0 6px;text-align:right;">Decided</div>
           </div>
           <div style="display:table-row;">
-            <div style="display:table-cell;padding:4px 0;color:var(--text-dim);font-size:10px;white-space:nowrap;">Date Legs</div>
+            <div style="display:table-cell;padding:4px 0;color:var(--text-dim);font-size:10px;white-space:nowrap;">Internal</div>
             <div style="display:table-cell;padding:4px 8px;text-align:right;font-size:16px;font-weight:700;color:var(--yellow);" id="r-dl-pending">--</div>
             <div style="display:table-cell;padding:4px 0;text-align:right;font-size:16px;font-weight:700;color:var(--green);" id="r-dl-decided">--</div>
           </div>
           <div style="display:table-row;">
-            <div style="display:table-cell;padding:4px 0;color:var(--text-dim);font-size:10px;white-space:nowrap;">Packages</div>
+            <div style="display:table-cell;padding:4px 0;color:var(--text-dim);font-size:10px;white-space:nowrap;">Partner</div>
             <div style="display:table-cell;padding:4px 8px;text-align:right;font-size:16px;font-weight:700;color:var(--yellow);" id="r-pkg-pending">--</div>
             <div style="display:table-cell;padding:4px 0;text-align:right;font-size:16px;font-weight:700;color:var(--green);" id="r-pkg-decided">--</div>
           </div>
@@ -582,8 +582,8 @@ export function getDashboardPage(): string {
       <div style="display:flex;gap:8px;padding:0 0 2px;align-items:center;">
         <input id="rid-input" class="sf-input" type="text" placeholder="Record ID..." style="flex:1;font-family:var(--mono);font-size:12px;">
         <select id="rid-type" class="sf-input" style="width:130px;font-size:12px;padding:6px 8px;">
-          <option value="dateleg">Date Leg</option>
-          <option value="package">Package</option>
+          <option value="dateleg">Internal</option>
+          <option value="package">Partner</option>
         </select>
         <button class="sf-btn secondary" id="bulk-open-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Bulk</button>
         <button class="sf-btn primary" id="rid-btn" style="padding:6px 16px;font-size:11px;white-space:nowrap;">Start Audit</button>
@@ -1077,8 +1077,8 @@ export function getDashboardPage(): string {
       <div class="sf" style="flex:1;margin-bottom:0;">
         <label class="sf-label">Audit Type</label>
         <select class="sf-input" id="bulk-type" style="font-size:12px;padding:6px 8px;">
-          <option value="dateleg">Date Leg</option>
-          <option value="package">Package</option>
+          <option value="dateleg">Internal</option>
+          <option value="package">Partner</option>
         </select>
       </div>
       <div class="sf" style="width:130px;margin-bottom:0;">
@@ -1202,14 +1202,14 @@ export function getDashboardPage(): string {
       ctx.strokeStyle = 'rgba(28,35,51,0.5)';
       ctx.lineWidth = 0.5;
       ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(W - pad.right, gy); ctx.stroke();
-      ctx.fillStyle = '#3d4452';
-      ctx.font = '9px -apple-system, sans-serif';
+      ctx.fillStyle = '#6e7681';
+      ctx.font = '11px -apple-system, sans-serif';
       ctx.fillText(String(Math.round(maxVal * g / gridLines)), pad.left - 6, gy);
     }
 
     // X-axis labels
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillStyle = '#3d4452'; ctx.font = '9px -apple-system, sans-serif';
+    ctx.fillStyle = '#6e7681'; ctx.font = '11px -apple-system, sans-serif';
     var labels = ['24h','','','20h','','','16h','','','12h','','','8h','','','4h','','','','','','','','now'];
     for (var i = 0; i < 24; i++) {
       if (labels[i]) {
@@ -1275,9 +1275,9 @@ export function getDashboardPage(): string {
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     var lx = W - pad.right;
     for (var j = series.length - 1; j >= 0; j--) {
-      ctx.font = '9px -apple-system, sans-serif';
+      ctx.font = '11px -apple-system, sans-serif';
       var tw = ctx.measureText(series[j].label).width;
-      ctx.fillStyle = '#6e7681';
+      ctx.fillStyle = '#8b949e';
       ctx.fillText(series[j].label, lx, 10);
       lx -= tw + 4;
       ctx.fillStyle = series[j].dotColor;

@@ -578,11 +578,12 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     const verdictLabel = isYes ? "Compliant" : "Non-Compliant";
     const verdictIcon = isYes ? icons.check : icons.x;
 
-    return `<div class="q-card ${isYes ? "q-card--yes" : "q-card--no"}">
+    return `<div class="q-card ${isYes ? "q-card--yes" : "q-card--no"}" id="qcard-${i}">
       <div class="q-card-top" onclick="toggleCard(${i})">
         <div class="q-card-num">${i + 1}</div>
         <div class="q-card-title">${esc(q.header ?? "")}</div>
-        <div class="q-card-answer ${isYes ? "answer-yes" : "answer-no"}">${isYes ? "Yes" : "No"}</div>
+        <div class="q-card-answer ${isYes ? "answer-yes" : "answer-no"}" id="qa-${i}">${isYes ? "Yes" : "No"}</div>
+        <button class="q-card-edit admin-only" data-idx="${i}" title="Flip answer (admin)" onclick="adminFlipAnswer(${i});event.stopPropagation();">✏</button>
         <button class="q-card-toggle" id="toggle-${i}" aria-label="Expand details">
           ${icons.chevronDown}
         </button>
@@ -679,8 +680,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     }
     .ap-play:hover { background: var(--teal); box-shadow: 0 0 12px var(--teal-bg); }
     .ap-play svg { width: 10px; height: 10px; fill: #fff; }
-    .ap-track { width: 120px; height: 3px; background: var(--border); border-radius: 2px; cursor: pointer; position: relative; }
-    .ap-fill { height: 100%; background: var(--teal); border-radius: 2px; width: 0%; pointer-events: none; transition: width 0.1s; }
+    #ap-waveform { display: block; }
     .ap-time { font-family: var(--mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
 
     /* Hero score center */
@@ -794,6 +794,16 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       color: var(--text-dim); padding: 4px; display: flex; transition: transform 0.2s;
     }
     .q-card-toggle.open { transform: rotate(180deg); }
+
+    .admin-only { display: none !important; }
+    body.is-admin .admin-only { display: flex !important; }
+    .q-card-edit {
+      flex-shrink: 0; background: none; border: 1px solid rgba(251,191,36,0.25);
+      color: var(--yellow); padding: 2px 7px; border-radius: 4px; font-size: 12px;
+      cursor: pointer; transition: all 0.15s; align-items: center; justify-content: center;
+    }
+    .q-card-edit:hover { background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.5); }
+    .q-card-edit:disabled { opacity: 0.4; cursor: not-allowed; }
 
     .q-card-body { display: none; border-top: 1px solid var(--border); padding: 0; background: var(--bg-inset); }
     .q-card-body.open { display: block; }
@@ -1035,12 +1045,12 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         ${statusBadge}
       </div>
       <div class="ap" id="audio-player">
-        <audio id="recording-audio" class="audio-native" preload="none" src="/audit/recording?id=${esc(id)}"></audio>
+        <audio id="recording-audio" class="audio-native" preload="metadata" src="/audit/recording?id=${esc(id)}"></audio>
         <button class="ap-play" id="ap-play" title="Play recording">
           <span id="ap-icon-play">${icons.play16}</span>
           <span id="ap-icon-pause" style="display:none">${icons.pause16}</span>
         </button>
-        <div class="ap-track" id="ap-track"><div class="ap-fill" id="ap-fill"></div></div>
+        <canvas id="ap-waveform" width="200" height="34" style="cursor:pointer;border-radius:4px;flex-shrink:0;"></canvas>
         <span class="ap-time" id="ap-time">0:00 / 0:00</span>
         <span class="audio-error" id="audio-error">No recording</span>
       </div>
@@ -1689,17 +1699,68 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           setTimeout(function() { btn.textContent = 'Submit Re-Audit'; btn.disabled = false; }, 2000);
         });
     }
-    // Custom audio player
+    // Custom audio player with waveform
     (function() {
       var audio = document.getElementById('recording-audio');
       var player = document.getElementById('audio-player');
       var playBtn = document.getElementById('ap-play');
       var iconPlay = document.getElementById('ap-icon-play');
       var iconPause = document.getElementById('ap-icon-pause');
-      var track = document.getElementById('ap-track');
-      var fill = document.getElementById('ap-fill');
+      var canvas = document.getElementById('ap-waveform');
+      var ctx2d = canvas ? canvas.getContext('2d') : null;
       var timeEl = document.getElementById('ap-time');
       if (!audio) return;
+
+      var wfData = null;
+      var wfProgress = 0;
+
+      function drawWaveform() {
+        if (!ctx2d || !canvas) return;
+        var W = canvas.width, H = canvas.height;
+        ctx2d.clearRect(0, 0, W, H);
+        if (!wfData) {
+          ctx2d.fillStyle = 'rgba(255,255,255,0.08)';
+          ctx2d.fillRect(0, H / 2 - 1, W, 2);
+          return;
+        }
+        var BARS = wfData.length;
+        var barW = W / BARS;
+        for (var i = 0; i < BARS; i++) {
+          var x = i * barW;
+          var amp = Math.max(2, wfData[i] * H * 0.88);
+          var y = (H - amp) / 2;
+          var played = (i / BARS) <= wfProgress;
+          ctx2d.fillStyle = played ? '#14b8a6' : 'rgba(255,255,255,0.18)';
+          ctx2d.fillRect(x + 0.5, y, Math.max(1, barW - 1.5), amp);
+        }
+        var cx = wfProgress * W;
+        ctx2d.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx2d.fillRect(cx - 1, 0, 2, H);
+      }
+
+      // Load waveform data
+      fetch('/audit/recording?id=${esc(id)}')
+        .then(function(r) { return r.arrayBuffer(); })
+        .then(function(buf) {
+          var ac = new (window.AudioContext || window.webkitAudioContext)();
+          return ac.decodeAudioData(buf);
+        })
+        .then(function(decoded) {
+          var ch = decoded.getChannelData(0);
+          var BARS = 150;
+          var block = Math.floor(ch.length / BARS);
+          var data = [];
+          for (var i = 0; i < BARS; i++) {
+            var sum = 0;
+            for (var j = 0; j < block; j++) sum += Math.abs(ch[i * block + j]);
+            data.push(sum / block);
+          }
+          var mx = Math.max.apply(null, data) || 1;
+          for (var k = 0; k < data.length; k++) data[k] /= mx;
+          wfData = data;
+          drawWaveform();
+        })
+        .catch(function() { drawWaveform(); });
 
       function fmt(s) {
         var m = Math.floor(s / 60); var sec = Math.floor(s % 60);
@@ -1708,7 +1769,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       function updateTime() {
         var cur = audio.currentTime || 0; var dur = audio.duration || 0;
         timeEl.textContent = fmt(cur) + ' / ' + fmt(dur);
-        if (dur > 0) fill.style.width = (cur / dur * 100) + '%';
+        wfProgress = dur > 0 ? cur / dur : 0;
+        drawWaveform();
       }
 
       playBtn.addEventListener('click', function() {
@@ -1716,21 +1778,47 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       });
       audio.addEventListener('play', function() { iconPlay.style.display = 'none'; iconPause.style.display = 'block'; });
       audio.addEventListener('pause', function() { iconPlay.style.display = 'block'; iconPause.style.display = 'none'; });
-      audio.addEventListener('ended', function() { iconPlay.style.display = 'block'; iconPause.style.display = 'none'; fill.style.width = '0%'; });
+      audio.addEventListener('ended', function() { iconPlay.style.display = 'block'; iconPause.style.display = 'none'; wfProgress = 0; drawWaveform(); });
       audio.addEventListener('timeupdate', updateTime);
       audio.addEventListener('loadedmetadata', updateTime);
 
-      track.addEventListener('click', function(e) {
-        var rect = track.getBoundingClientRect();
-        var pct = (e.clientX - rect.left) / rect.width;
-        if (audio.duration) audio.currentTime = pct * audio.duration;
-      });
+      if (canvas) {
+        canvas.addEventListener('click', function(e) {
+          var rect = canvas.getBoundingClientRect();
+          var pct = (e.clientX - rect.left) / rect.width;
+          if (audio.duration) audio.currentTime = pct * audio.duration;
+        });
+      }
 
       audio.addEventListener('error', function() {
         player.style.display = 'none';
         document.getElementById('audio-error').style.display = 'inline';
       });
+
+      drawWaveform(); // initial placeholder
     })();
+    // Admin mode — check if current user is admin, show pencil icons
+    (function() {
+      fetch('/admin/api/me')
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(d) { if (d && d.role === 'admin') document.body.classList.add('is-admin'); })
+        .catch(function() {});
+    })();
+    window.adminFlipAnswer = function(idx) {
+      var btn = document.querySelector('.q-card-edit[data-idx="' + idx + '"]');
+      if (btn) { btn.disabled = true; btn.textContent = '…'; }
+      fetch('/admin/flip-answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ findingId: '${esc(id)}', questionIndex: idx })
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) { window.location.reload(); }
+        else { alert(d.error || 'Failed to flip answer'); if (btn) { btn.disabled = false; btn.textContent = '✏'; } }
+      })
+      .catch(function() { if (btn) { btn.disabled = false; btn.textContent = '✏'; } });
+    };
     // Check if appeal already exists on load — disable button if so
     fetch('/audit/appeal/status?findingId=${esc(id)}')
       .then(function(r) { return r.json(); })

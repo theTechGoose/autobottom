@@ -359,7 +359,7 @@ export function getReviewDashboardPage(): string {
         var tr = document.createElement('tr');
         tr.innerHTML =
           '<td>' + formatDate(d.decidedAt) + '</td>' +
-          '<td class="mono">' + esc((d.findingId || '').slice(0, 12)) + '</td>' +
+          '<td class="mono" style="font-size:10px;">' + esc(d.findingId || '--') + '</td>' +
           '<td>' + (d.questionIndex !== undefined ? '#' + d.questionIndex : '--') + '</td>' +
           '<td><span class="pill pill-' + d.decision + '">' + esc(d.decision) + '</span></td>' +
           '<td class="truncate">' + esc(d.header || '--') + '</td>';

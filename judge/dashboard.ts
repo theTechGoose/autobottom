@@ -478,7 +478,7 @@ export function getJudgeDashboardPage(): string {
         var dateStr = new Date(h.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         var tr = document.createElement('tr');
         tr.innerHTML =
-          '<td class="mono">' + esc(h.findingId.slice(0, 12)) + '...</td>' +
+          '<td class="mono" style="font-size:10px;">' + esc(h.findingId || '--') + '</td>' +
           '<td>' + esc(h.auditor) + '</td>' +
           '<td>' + esc(h.judgedBy) + '</td>' +
           '<td class="num">' + h.originalScore + '%</td>' +
@@ -528,10 +528,10 @@ export function getJudgeDashboardPage(): string {
           '<td>' + dateStr + '</td>' +
           '<td style="white-space:nowrap">' +
             '<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;margin-right:10px;cursor:pointer;">' +
-              '<input type="checkbox" class="rc-datelegs" data-email="' + esc(r.email) + '" ' + dlChecked + '> Date Legs' +
+              '<input type="checkbox" class="rc-datelegs" data-email="' + esc(r.email) + '" ' + dlChecked + '> Internal' +
             '</label>' +
             '<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;">' +
-              '<input type="checkbox" class="rc-packages" data-email="' + esc(r.email) + '" ' + pkgChecked + '> Packages' +
+              '<input type="checkbox" class="rc-packages" data-email="' + esc(r.email) + '" ' + pkgChecked + '> Partner' +
             '</label>' +
           '</td>' +
           '<td><button class="sf-btn danger" data-email="' + esc(r.email) + '">Remove</button></td>';

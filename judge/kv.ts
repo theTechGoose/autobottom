@@ -105,6 +105,7 @@ export interface JudgeBufferItem extends JudgeItem {
   auditRemaining: number;
   transcript: { raw: string; diarized: string; utteranceTimes?: number[] } | null;
   appealComment?: string;
+  reviewedBy?: string;
 }
 
 // Recording re-audit types should never reach the judge queue.
@@ -155,12 +156,14 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
       if (f.appealType && !item.appealType) enrichedAppealType = f.appealType;
       if (f.appealComment) appealComment = f.appealComment;
     }
+    const reviewedBy = finding?.answeredQuestions?.find((q: any) => q.reviewedBy)?.reviewedBy as string | undefined;
     return {
       ...item,
       ...(enrichedAppealType ? { appealType: enrichedAppealType } : {}),
       auditRemaining: counterEntry.value ?? 0,
       transcript,
       ...(appealComment ? { appealComment } : {}),
+      ...(reviewedBy ? { reviewedBy } : {}),
     };
   }
 

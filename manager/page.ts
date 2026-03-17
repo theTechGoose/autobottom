@@ -742,7 +742,10 @@ export function getManagerPage(): string {
     </div>
     <div class="modal-field">
       <label class="modal-label">Password</label>
-      <input type="password" id="user-password" class="modal-input" placeholder="Password">
+      <div style="position:relative;display:flex;align-items:center;">
+        <input type="password" id="user-password" class="modal-input" placeholder="Password" style="flex:1;padding-right:36px;">
+        <button type="button" id="pw-toggle" onclick="(function(){var i=document.getElementById('user-password');var b=document.getElementById('pw-toggle');i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'👁':'🙈';})()" style="position:absolute;right:8px;background:none;border:none;cursor:pointer;font-size:14px;color:#6e7681;padding:0;line-height:1;" tabindex="-1">👁</button>
+      </div>
     </div>
     <div class="modal-field">
       <label class="modal-label">Role</label>

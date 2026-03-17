@@ -494,7 +494,7 @@ export async function fireWebhook(orgId: OrgId, kind: WebhookKind, payload: unkn
       const isExternalUrl = config?.postUrl && !config.postUrl.includes(selfEmailPath);
       if (!config?.postUrl || isExternalUrl) {
         console.log(`[WEBHOOK:${kind}] Firing self-email → ${selfEndpointUrl}`);
-        fetch(selfEndpointUrl, {
+        await fetch(selfEndpointUrl, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(payload),

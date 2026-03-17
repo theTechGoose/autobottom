@@ -269,7 +269,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
 
   // Invalid Genie — fire terminate immediately, no review needed
   if (isInvalid) {
-    fireWebhook(orgId, "terminate", {
+    await fireWebhook(orgId, "terminate", {
       findingId,
       finding,
       answeredQuestions: finding.answeredQuestions,
@@ -281,7 +281,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
 
   // 100% -- no failing questions, fire terminate webhook (includes recording re-audits)
   if (nos === 0 && yeses > 0) {
-    fireWebhook(orgId, "terminate", {
+    await fireWebhook(orgId, "terminate", {
       findingId,
       finding,
       answeredQuestions: finding.answeredQuestions,

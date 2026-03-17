@@ -1015,6 +1015,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   var busy = false;
   var pendingDecision = null;
   var pendingReason = null;
+  var inflightFids = {}; // findingId → count of in-flight decisions for that finding
   var REASON_LABELS = { error: 'Error', logic: 'Logic', fragment: 'Fragment', transcript: 'Transcript' };
   // Type filter (reviewer mode only)
   var judgeAllowedTypes = ['date-leg', 'package']; // updated from /next response
@@ -1817,6 +1818,15 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     // Only block if buffer is empty AND a request is in flight
     if (busy && buffer.length === 0) return;
 
+    // Show confirm dialog when deciding on the last question for an audit
+    var currentItem = buffer[0];
+    if (currentItem && currentItem.auditRemaining === 1) {
+      pendingDecision = decision;
+      pendingReason = reason || null;
+      showConfirmModal();
+      return;
+    }
+
     executeDecision(decision, reason);
   }
 
@@ -1839,6 +1849,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     if (mLastOpt) mLastOpt.style.display = 'none';
     var item = buffer.shift(); // consume from front
 
+    // Track inflight per finding — prevents racing past the last question before auditRemaining updates
+    inflightFids[item.findingId] = (inflightFids[item.findingId] || 0) + 1;
+
     trackDecision();
     tickCombo();
     sessionReviews++;
@@ -1846,9 +1859,16 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     awardXp(decision === POSITIVE_DECISION ? 10 : 15);
     updateStreak();
 
-    // Swap to next buffer item instantly
+    // Swap to next buffer item instantly, but block if next item is same finding (wait for server count)
     if (buffer.length > 0) {
-      animateTransition(function() { renderCurrent(); });
+      var nextFid = buffer[0].findingId;
+      if (inflightFids[nextFid] && inflightFids[nextFid] > 0) {
+        // Same finding still has inflight — block until server responds with updated auditRemaining
+        busy = true;
+        disableButtons();
+      } else {
+        animateTransition(function() { renderCurrent(); });
+      }
     } else {
       // Buffer empty — block until /decide comes back
       busy = true;
@@ -1876,6 +1896,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     }).then(function(res) {
       return res.json().then(function(data) {
         inflight--;
+        inflightFids[item.findingId] = Math.max(0, (inflightFids[item.findingId] || 1) - 1);
 
         if (res.status === 409) {
           // Silently absorb — item was already handled (stale). Refresh if buffer empty.
@@ -1930,21 +1951,23 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           }
         }
 
-        // If we were blocked (buffer was empty), render the first item
-        if (busy && buffer.length > 0) {
+        // If we were blocked, render next item — but only if no same-finding inflight remaining
+        var nextFidStillWaiting = buffer.length > 0 && inflightFids[buffer[0].findingId] > 0;
+        if (busy && buffer.length > 0 && !nextFidStillWaiting) {
           showReview();
         } else if (busy && buffer.length === 0) {
           showEmpty();
         }
 
-        // Only unblock if all in-flight requests are done
-        if (inflight === 0) {
+        // Only unblock if all in-flight requests are done and next item's finding is clear
+        if (inflight === 0 && !nextFidStillWaiting) {
           busy = false;
           enableButtons();
         }
       });
     }).catch(function(err) {
       inflight--;
+      inflightFids[item.findingId] = Math.max(0, (inflightFids[item.findingId] || 1) - 1);
       toast(err.message, 'error');
       if (inflight === 0) {
         busy = false;

@@ -37,6 +37,7 @@ import {
   getGameState, saveGameState,
   getPrefabSubscriptions, savePrefabSubscriptions, getBroadcastEvents,
   listCustomStoreItems, saveCustomStoreItem, deleteCustomStoreItem,
+  registerWebhookEmailHandler,
 } from "./lib/kv.ts";
 import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot } from "./lib/kv.ts";
 import { S3Ref } from "./lib/s3.ts";
@@ -3575,6 +3576,42 @@ Deno.cron("watchdog", "0 * * * *", async () => {
   } catch (err) {
     console.error("[WATCHDOG] ❌ Error:", err);
   }
+});
+
+// -- Webhook Email Handler Registration --
+// Call handlers in-process to avoid Deno Deploy 508 loop-detected on self-fetch.
+// Each handler builds a synthetic Request so the existing handler functions work as-is.
+
+function makeSyntheticReq(path: string, orgId: string, payload: unknown): Request {
+  return new Request(`${env.selfUrl}${path}?org=${encodeURIComponent(orgId)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+registerWebhookEmailHandler("terminate", async (orgId, payload) => {
+  const res = await handleAuditCompleteWebhook(makeSyntheticReq("/webhooks/audit-complete", orgId, payload));
+  const text = await res.text().catch(() => "");
+  console.log(`[WEBHOOK:terminate-email] in-process result: ${text.slice(0, 200)}`);
+});
+
+registerWebhookEmailHandler("appeal", async (orgId, payload) => {
+  const res = await handleAppealFiledWebhook(makeSyntheticReq("/webhooks/appeal-filed", orgId, payload));
+  const text = await res.text().catch(() => "");
+  console.log(`[WEBHOOK:appeal-email] in-process result: ${text.slice(0, 200)}`);
+});
+
+registerWebhookEmailHandler("judge", async (orgId, payload) => {
+  const res = await handleAppealDecidedWebhook(makeSyntheticReq("/webhooks/appeal-decided", orgId, payload));
+  const text = await res.text().catch(() => "");
+  console.log(`[WEBHOOK:judge-email] in-process result: ${text.slice(0, 200)}`);
+});
+
+registerWebhookEmailHandler("manager", async (orgId, payload) => {
+  const res = await handleManagerReviewWebhook(makeSyntheticReq("/webhooks/manager-review", orgId, payload));
+  const text = await res.text().catch(() => "");
+  console.log(`[WEBHOOK:manager-email] in-process result: ${text.slice(0, 200)}`);
 });
 
 // -- Server --

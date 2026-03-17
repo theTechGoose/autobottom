@@ -475,45 +475,43 @@ export async function saveWebhookConfig(orgId: OrgId, kind: WebhookKind, config:
   await s.set([orgId, kind], config as any);
 }
 
+// ── Webhook Email Handler Registry ──────────────────────────────────────────
+// Deno Deploy blocks HTTP self-fetches (508 Loop Detected), so email handlers
+// are registered here and called in-process instead of via fetch().
+
+type WebhookEmailHandler = (orgId: OrgId, payload: unknown) => Promise<void>;
+const _webhookEmailHandlers: Partial<Record<WebhookKind, WebhookEmailHandler>> = {};
+
+export function registerWebhookEmailHandler(kind: WebhookKind, handler: WebhookEmailHandler): void {
+  _webhookEmailHandlers[kind] = handler;
+}
+
 export async function fireWebhook(orgId: OrgId, kind: WebhookKind, payload: unknown): Promise<void> {
   const fid = (payload as Record<string, unknown>).findingId ?? "";
   console.log(`[WEBHOOK:${kind}] 🔔 Starting — org=${orgId} fid=${fid}`);
   const config = await getWebhookConfig(orgId, kind);
   console.log(`[WEBHOOK:${kind}] Config: postUrl=${config?.postUrl || "none"} emailTemplateId=${config?.emailTemplateId || "none"} fid=${fid}`);
 
-  const selfEmailEndpoints: Partial<Record<WebhookKind, string>> = {
+  // Call registered email handler directly (avoids Deno Deploy 508 loop-detected)
+  const emailHandler = _webhookEmailHandlers[kind];
+  if (emailHandler) {
+    console.log(`[WEBHOOK:${kind}] Calling in-process email handler fid=${fid}`);
+    await emailHandler(orgId, payload).catch((err) =>
+      console.error(`[WEBHOOK:${kind}] ❌ Email handler failed fid=${fid}:`, err)
+    );
+  }
+
+  // External webhook URL — skip if not set or if it points to our own endpoint
+  const selfEmailPaths: Partial<Record<WebhookKind, string>> = {
     terminate: "/webhooks/audit-complete",
     appeal: "/webhooks/appeal-filed",
     manager: "/webhooks/manager-review",
     judge: "/webhooks/appeal-decided",
   };
-  const selfEmailPath = selfEmailEndpoints[kind];
-  if (selfEmailPath) {
-    const selfUrl = Deno.env.get("SELF_URL");
-    if (!selfUrl) {
-      console.warn(`[WEBHOOK:${kind}] ⚠️ SELF_URL not set — cannot fire self-email fid=${fid}`);
-    } else {
-      const selfEndpointUrl = `${selfUrl}${selfEmailPath}?org=${orgId}`;
-      const isExternalUrl = config?.postUrl && !config.postUrl.includes(selfEmailPath);
-      if (!config?.postUrl || isExternalUrl) {
-        console.log(`[WEBHOOK:${kind}] Firing self-email → ${selfEndpointUrl} fid=${fid}`);
-        await fetch(selfEndpointUrl, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload),
-        }).then(async (r) => {
-          const text = await r.text();
-          if (!r.ok) console.error(`[WEBHOOK:${kind}-email] ❌ self-email HTTP ${r.status}: ${text} fid=${fid}`);
-          else console.log(`[WEBHOOK:${kind}-email] ✅ self-email response: ${text.slice(0, 300)} fid=${fid}`);
-        }).catch((err) => console.error(`[WEBHOOK:${kind}-email] ❌ self-email failed: ${err} fid=${fid}`));
-      } else {
-        console.log(`[WEBHOOK:${kind}] postUrl covers self-email — skipping direct call, using external fetch fid=${fid} url=${config?.postUrl}`);
-      }
-    }
-  }
-
-  if (!config?.postUrl) {
-    console.log(`[WEBHOOK:${kind}] No postUrl — done fid=${fid}`);
+  const selfPath = selfEmailPaths[kind];
+  const isSelfUrl = selfPath && config?.postUrl?.includes(selfPath);
+  if (!config?.postUrl || isSelfUrl) {
+    console.log(`[WEBHOOK:${kind}] No external postUrl — done fid=${fid}`);
     return;
   }
 

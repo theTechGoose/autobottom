@@ -1860,12 +1860,14 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const orgId = url.searchParams.get("org") as OrgId;
   if (!orgId) return json({ error: "org required" }, 400);
+  // ?testOverrideTo=a@b.com,c@d.com — forces recipients, bypasses webhook config (for test scripts)
+  const testOverrideTo = url.searchParams.get("testOverrideTo") || "";
 
   const webhookCfg = await getWebhookConfig(orgId, "terminate").catch((err) => {
     console.error(`[EMAIL] audit-complete: getWebhookConfig failed:`, err);
     return null;
   });
-  console.log(`[EMAIL] audit-complete: org=${orgId} emailTemplateId=${webhookCfg?.emailTemplateId ?? "NONE"} testEmail=${webhookCfg?.testEmail ?? ""}`);
+  console.log(`[EMAIL] audit-complete: org=${orgId} emailTemplateId=${webhookCfg?.emailTemplateId ?? "NONE"} testEmail=${webhookCfg?.testEmail ?? ""} testOverrideTo=${testOverrideTo || "none"}`);
 
   const body = await req.json();
   const { finding, score } = body;
@@ -1962,7 +1964,7 @@ async function handleAuditCompleteWebhook(req: Request): Promise<Response> {
     selfUrl: env.selfUrl,
   };
 
-  const resolvedTest = webhookCfg?.testEmail || "";
+  const resolvedTest = testOverrideTo || webhookCfg?.testEmail || "";
   // Packages: send to office GM. Date legs: send to VO/agent. Test override always wins.
   const to = resolvedTest || (isPackage ? gmEmail : (voEmail || agentEmail));
   console.log(`[EMAIL] audit-complete: to=${to} isPackage=${isPackage} cc=${supervisorEmail || "none"} bcc=${webhookCfg?.bcc || "none"} score=${scoreVal}% finding=${findingId}`);

@@ -1,6 +1,7 @@
 {
   "tasks": {
     "start": "deno run --allow-net --allow-env --allow-read main.ts",
-    "dev": "deno run --allow-net --allow-env --allow-read --watch main.ts"
+    "dev": "deno run --allow-net --allow-env --allow-read --watch main.ts",
+    "test:email": "deno run --allow-net --allow-env --allow-read --env test/email-pipeline.ts"
   }
 }

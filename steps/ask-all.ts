@@ -1,5 +1,5 @@
 /** STEP 4 (alt): Answer ALL questions in a single Promise.all — no fan-out overhead. Like OmniSource's approach. */
-import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, trackActive, getPopulatedQuestions } from "../lib/kv.ts";
+import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, trackActive, getPopulatedQuestions, terminateFinding } from "../lib/kv.ts";
 import { enqueueStep, publishStep } from "../lib/queue.ts";
 import { upload as pineconeUpload } from "../providers/pinecone.ts";
 import { askQuestion, summarize } from "../providers/groq.ts";
@@ -167,6 +167,26 @@ export async function stepAskAll(req: Request): Promise<Response> {
     return json({ ok: true, skipped: true, reason: finding.findingStatus });
   }
 
+  // Prevent infinite QStash retry loops — terminate after 3 failed attempts.
+  // adminRetry resets the counter so a human can override and try again.
+  const db = await Deno.openKv();
+  const retryKey = ["ask-all-attempt", orgId, findingId];
+  if (adminRetry) {
+    await db.delete(retryKey);
+    console.log(`[STEP-ASK-ALL] ${findingId}: Admin retry — reset attempt counter`);
+  } else {
+    const prev = await db.get<number>(retryKey);
+    const attempt = (prev.value ?? 0) + 1;
+    await db.set(retryKey, attempt, { expireIn: 30 * 60 * 1000 });
+    if (attempt > 3) {
+      console.error(`[STEP-ASK-ALL] ${findingId}: ❌ Attempt ${attempt} > 3 — auto-terminating to break QStash retry loop`);
+      await terminateFinding(orgId, findingId);
+      await db.delete(retryKey);
+      return json({ ok: true, terminated: true, reason: "max_retries_exceeded" });
+    }
+    console.log(`[STEP-ASK-ALL] ${findingId}: Attempt ${attempt}/3`);
+  }
+
   // Read from dedicated chunked KV key first (survives finding trim), fall back to finding
   const allPopulated = await getPopulatedQuestions(orgId, findingId) ?? finding.populatedQuestions ?? [];
   const questions: IQuestion[] = allPopulated;
@@ -247,6 +267,9 @@ export async function stepAskAll(req: Request): Promise<Response> {
   const dispatch = adminRetry ? publishStep : enqueueStep;
   await dispatch("finalize", { findingId, orgId, totalBatches: 1 });
   console.log(`[STEP-ASK-ALL] ${findingId}: ✅ Finalize enqueued`);
+
+  // Success — clear retry counter
+  await db.delete(retryKey);
 
   return json({ ok: true, answers: answers.length, yeses, nos, errors, elapsedSec });
 }

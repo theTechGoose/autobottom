@@ -445,7 +445,7 @@ export function getAgentPage(): string {
     if (!dateStr) return '--';
     var d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
   }
 
   function formatWeekLabel(dateStr) {

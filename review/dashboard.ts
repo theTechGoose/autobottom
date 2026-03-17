@@ -293,8 +293,8 @@ export function getReviewDashboardPage(): string {
   function formatDate(ts) {
     if (!ts) return '--';
     var d = new Date(ts);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
-           d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }) + ' ' +
+           d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' });
   }
 
   function formatDuration(ms) {

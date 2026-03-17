@@ -984,7 +984,7 @@ export function getManagerPage(): string {
       var tr = document.createElement('tr');
       var ratio = item.failedCount + '/' + item.totalQuestions;
       var ratioClass = item.failedCount > item.totalQuestions / 2 ? 'bad' : 'moderate';
-      var dateStr = item.completedAt ? new Date(item.completedAt).toLocaleDateString() : '--';
+      var dateStr = item.completedAt ? new Date(item.completedAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' }) : '--';
 
       tr.innerHTML =
         '<td>' + escHtml(item.owner || '--') + '</td>' +
@@ -1167,7 +1167,7 @@ export function getManagerPage(): string {
     // Remediation
     var remContainer = document.getElementById('remediation-container');
     if (rem) {
-      var dateStr = new Date(rem.addressedAt).toLocaleString();
+      var dateStr = new Date(rem.addressedAt).toLocaleString('en-US', { timeZone: 'America/New_York' });
       remContainer.innerHTML =
         '<div class="remediation-display">' +
         '<h3><span style="font-size:16px">${icons.check}</span> Addressed</h3>' +
@@ -1350,7 +1350,7 @@ export function getManagerPage(): string {
       tbody.innerHTML = '';
       for (var i = 0; i < users.length; i++) {
         var u = users[i];
-        var dateStr = u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '--';
+        var dateStr = u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' }) : '--';
         var roleName = u.role === 'reviewer' ? 'Reviewer' : 'Agent';
         var tr = document.createElement('tr');
         tr.innerHTML =

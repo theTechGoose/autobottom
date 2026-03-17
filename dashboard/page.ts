@@ -1409,8 +1409,8 @@ table { width: 100%; border-collapse: collapse; }
         var qbUrl = (c.isPackage ? qbPkgUrl : qbDateUrl) + encodeURIComponent(c.recordId);
         ridHtml = '<a href="' + qbUrl + '" target="_blank" class="tbl-link">' + c.recordId + '</a>';
       }
-      var startedHtml = c.startedAt ? '<span class="time-ago" title="' + new Date(c.startedAt).toLocaleTimeString() + '">' + timeAgo(c.startedAt) + '</span>' : '--';
-      var finishedHtml = '<span class="time-ago" title="' + new Date(c.ts).toLocaleTimeString() + '">' + timeAgo(c.ts) + '</span>';
+      var startedHtml = c.startedAt ? '<span class="time-ago" title="' + new Date(c.startedAt).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET">' + timeAgo(c.startedAt) + '</span>' : '--';
+      var finishedHtml = '<span class="time-ago" title="' + new Date(c.ts).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET">' + timeAgo(c.ts) + '</span>';
       var durHtml = c.durationMs ? '<span style="font-variant-numeric:tabular-nums">' + fmtDur(c.durationMs) + '</span>' : '--';
       var scoreHtml = c.score != null ? '<span style="font-variant-numeric:tabular-nums;font-weight:600;color:' + (c.score === 100 ? 'var(--green)' : c.score >= 80 ? 'var(--cyan)' : 'var(--red)') + '">' + c.score + '%</span>' : '--';
       tr.innerHTML = '<td class="mono"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">' + fid + '</a></td><td>' + logsHtml + '</td><td>' + ridHtml + '</td><td>' + scoreHtml + '</td><td>' + startedHtml + '</td><td>' + finishedHtml + '</td><td>' + durHtml + '</td>';
@@ -1440,7 +1440,7 @@ table { width: 100%; border-collapse: collapse; }
         var qbUrl = (a.isPackage ? qbPkgUrl : qbDateUrl) + encodeURIComponent(a.recordId);
         ridHtml = '<a href="' + qbUrl + '" target="_blank" class="tbl-link">' + a.recordId + '</a>';
       }
-      var startedCell = a.startedAt ? '<span title="' + new Date(a.startedAt).toLocaleTimeString() + '">' + timeAgo(a.startedAt) + '</span>' : '--';
+      var startedCell = a.startedAt ? '<span title="' + new Date(a.startedAt).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET">' + timeAgo(a.startedAt) + '</span>' : '--';
       var stepHtml;
       if (a.step === 'genie-retry' && a.genieRetryAt) {
         var secsLeft = Math.max(0, Math.round((a.genieRetryAt - Date.now()) / 1000));
@@ -2021,6 +2021,7 @@ table { width: 100%; border-collapse: collapse; }
       document.getElementById('a-headers').value = '';
       document.getElementById('a-test-email').value = '';
       document.getElementById('a-bcc').value = '';
+      document.getElementById('a-template-id').value = '';
       fetch('/admin/settings/' + kind).then(function(r){return r.json()}).then(function(d) {
         whCache[kind] = d;
         if (whKind === kind) applyWebhookData(kind, d);

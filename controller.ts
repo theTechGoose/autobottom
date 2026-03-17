@@ -270,7 +270,7 @@ export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Resp
   if (questionsToQueue.length === 0) {
     return json({ error: "no failed questions to appeal" }, 400);
   }
-  await populateJudgeQueue(orgId, findingId, questionsToQueue, "redo");
+  await populateJudgeQueue(orgId, findingId, questionsToQueue, "redo", f.recordingIdField as string | undefined);
 
   // Save appeal record
   const appealedAt = Date.now();

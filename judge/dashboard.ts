@@ -475,7 +475,7 @@ export function getJudgeDashboardPage(): string {
         var scoreDelta = h.finalScore - h.originalScore;
         var deltaClass = scoreDelta > 0 ? 'pill-green' : scoreDelta < 0 ? 'pill-red' : 'pill-teal';
         var deltaText = (scoreDelta > 0 ? '+' : '') + scoreDelta + '%';
-        var dateStr = new Date(h.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        var dateStr = new Date(h.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' });
         var tr = document.createElement('tr');
         tr.innerHTML =
           '<td class="mono" style="font-size:10px;">' + esc(h.findingId || '--') + '</td>' +
@@ -519,7 +519,7 @@ export function getJudgeDashboardPage(): string {
         var r = reviewers[i];
         var cfg = configResults[i];
         var allowedTypes = Array.isArray(cfg.allowedTypes) ? cfg.allowedTypes : ['date-leg', 'package'];
-        var dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '--';
+        var dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }) : '--';
         var dlChecked = allowedTypes.includes('date-leg') ? 'checked' : '';
         var pkgChecked = allowedTypes.includes('package') ? 'checked' : '';
         var tr = document.createElement('tr');

@@ -82,7 +82,7 @@ export function configListPage(configs: QLConfig[]): string {
     <tr>
       <td><a href="/question-lab/config/${c.id}">${esc(c.name)}</a></td>
       <td>${c.questionIds.length}</td>
-      <td>${new Date(c.createdAt).toLocaleDateString()}</td>
+      <td>${new Date(c.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })}</td>
       <td><button class="btn-sm btn-danger" onclick="deleteConfig('${c.id}')">Delete</button></td>
     </tr>`).join("");
 
@@ -195,7 +195,7 @@ export function questionEditorPage(question: QLQuestion, tests: QLTest[]): strin
   const versionItems = question.versions.map((v, i) => `
     <div class="version-item">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span class="timestamp">${new Date(v.timestamp).toLocaleString()}</span>
+        <span class="timestamp">${new Date(v.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York' })}</span>
         <button class="btn-sm btn-secondary" onclick="restoreVersion(${i})">Restore</button>
       </div>
       <div class="text">${esc(v.text.length > 200 ? v.text.slice(0, 200) + "..." : v.text)}</div>
@@ -209,7 +209,7 @@ export function questionEditorPage(question: QLQuestion, tests: QLTest[]): strin
       <td>${esc(t.snippet.length > 60 ? t.snippet.slice(0, 60) + "..." : t.snippet)}</td>
       <td><span class="badge ${t.expected === "yes" ? "badge-pass" : "badge-fail"}">${t.expected}</span></td>
       <td><span class="badge ${badgeClass}" id="badge-${t.id}">${badgeText}</span></td>
-      <td>${t.lastRunAt ? new Date(t.lastRunAt).toLocaleString() : "-"}</td>
+      <td>${t.lastRunAt ? new Date(t.lastRunAt).toLocaleString('en-US', { timeZone: 'America/New_York' }) : "-"}</td>
       <td><button class="btn-sm btn-danger" onclick="event.stopPropagation();deleteTest('${t.id}')">Delete</button></td>
     </tr>
     <tr><td colspan="5" style="padding:0;border:none;">

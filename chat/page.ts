@@ -434,7 +434,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     if (hrs < 24) return hrs + "h";
     const days = Math.floor(hrs / 24);
     if (days < 7) return days + "d";
-    return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
   }
 
   function dateLabel(ts) {
@@ -443,11 +443,11 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
     if (d.toDateString() === today.toDateString()) return "Today";
     if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-    return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/New_York" });
   }
 
   function timeStr(ts) {
-    return new Date(ts).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return new Date(ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
   }
 
   function esc(s) {

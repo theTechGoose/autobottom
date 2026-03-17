@@ -24,6 +24,7 @@ export interface JudgeItem {
   defense: string;
   answer: string; // current answer (Yes or No) so the judge sees what was decided
   appealType?: string;
+  recordingIdField?: string;
 }
 
 export interface JudgeDecision extends JudgeItem {
@@ -66,6 +67,7 @@ export async function populateJudgeQueue(
   findingId: string,
   answeredQuestions: Array<{ answer: string; header: string; populated: string; thinking: string; defense: string }>,
   appealType?: string,
+  recordingIdField?: string,
 ) {
   const db = await kv();
 
@@ -84,6 +86,7 @@ export async function populateJudgeQueue(
       defense: q.defense,
       answer: q.answer,
       ...(appealType ? { appealType } : {}),
+      ...(recordingIdField ? { recordingIdField } : {}),
     };
     atomic.set(orgKey(orgId, "judge-pending", findingId, q.index), item);
   }

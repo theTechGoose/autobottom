@@ -1,6 +1,6 @@
 /** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
 import { checkBadges } from "../shared/badges.ts";
@@ -71,8 +71,9 @@ export async function populateJudgeQueue(
 ) {
   const db = await kv();
 
-  // Queue ALL questions, not just "No" answers
-  const items = answeredQuestions.map((q, i) => ({ ...q, index: i }));
+  // Queue ALL questions, not just "No" answers.
+  // Use _origIdx if present (set by handleFileAppeal to preserve original finding position).
+  const items = answeredQuestions.map((q, i) => ({ ...q, index: (q as any)._origIdx ?? i }));
   if (items.length === 0) return;
 
   const atomic = db.atomic();
@@ -462,6 +463,14 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judgedBy: string
   // Update finding with corrected answers
   finding.answeredQuestions = correctedAnswers;
   await saveFinding(orgId, finding);
+  // Also overwrite batch KV so the report page (which reads batch keys first) sees the corrected answers.
+  await saveBatchAnswers(orgId, findingId, 0, correctedAnswers);
+  // Delete extra batch keys (1+) so getAllAnswersForFinding stops at batch 0.
+  for (let i = 1; i < 50; i++) {
+    const sentinel = await db.get([...orgKey(orgId, "audit-answers", findingId, i), "_n"]);
+    if (sentinel.value == null) break;
+    await db.delete([...orgKey(orgId, "audit-answers", findingId, i), "_n"]);
+  }
 
   // Update appeal record
   const appealEntry = await db.get<AppealRecord>(orgKey(orgId, "appeal", findingId));

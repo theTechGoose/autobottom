@@ -618,8 +618,8 @@ table { width: 100%; border-collapse: collapse; }
         <span>Recently Completed (24h)</span>
         <a href="/admin/audits" target="_blank" style="font-size:10px;color:var(--blue);text-decoration:none;font-weight:600;padding:3px 10px;border:1px solid rgba(88,166,255,0.25);border-radius:5px;background:rgba(88,166,255,0.08);">View All →</a>
       </div>
-      <table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead>
-      <tbody id="tb-recent"><tr class="empty-row"><td colspan="7">No completed audits</td></tr></tbody></table>
+      <table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th></th></tr></thead>
+      <tbody id="tb-recent"><tr class="empty-row"><td colspan="8">No completed audits</td></tr></tbody></table>
     </div>
   </main>
 </div>
@@ -1390,7 +1390,7 @@ table { width: 100%; border-collapse: collapse; }
 
   function renderRecent(items) {
     var tb = document.getElementById('tb-recent');
-    if (!items.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="7">No completed audits</td></tr>'; return; }
+    if (!items.length) { tb.innerHTML = '<tr class="empty-row"><td colspan="8">No completed audits</td></tr>'; return; }
     var logsOrgProject = null;
     var hm = window.location.hostname.match(/^([^.]+)\.([^.]+)\.deno\.net$/);
     if (hm) logsOrgProject = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/observability/logs?query=';
@@ -1413,7 +1413,8 @@ table { width: 100%; border-collapse: collapse; }
       var finishedHtml = '<span class="time-ago" title="' + new Date(c.ts).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET">' + timeAgo(c.ts) + '</span>';
       var durHtml = c.durationMs ? '<span style="font-variant-numeric:tabular-nums">' + fmtDur(c.durationMs) + '</span>' : '--';
       var scoreHtml = c.score != null ? '<span style="font-variant-numeric:tabular-nums;font-weight:600;color:' + (c.score === 100 ? 'var(--green)' : c.score >= 80 ? 'var(--cyan)' : 'var(--red)') + '">' + c.score + '%</span>' : '--';
-      tr.innerHTML = '<td class="mono"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">' + fid + '</a></td><td>' + logsHtml + '</td><td>' + ridHtml + '</td><td>' + scoreHtml + '</td><td>' + startedHtml + '</td><td>' + finishedHtml + '</td><td>' + durHtml + '</td>';
+      var reviewedBadge = c.reviewed ? '<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;background:rgba(63,185,80,0.12);color:#3fb950;border:1px solid rgba(63,185,80,0.3);">Reviewed</span>' : '';
+      tr.innerHTML = '<td class="mono"><a href="/audit/report?id=' + encodeURIComponent(fid) + '" target="_blank" class="tbl-link">' + fid + '</a></td><td>' + logsHtml + '</td><td>' + ridHtml + '</td><td>' + scoreHtml + '</td><td>' + startedHtml + '</td><td>' + finishedHtml + '</td><td>' + durHtml + '</td><td>' + reviewedBadge + '</td>';
       tb.appendChild(tr);
     }
   }

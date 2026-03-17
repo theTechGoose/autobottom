@@ -63,7 +63,7 @@ import {
   handleGetSettings, handleSaveSettings, handleStats, handleBackfill,
   handleReviewDashboardPage, handleReviewDashboardData, handleReviewMe, handlePreviewFinding,
 } from "./review/handlers.ts";
-import { getReviewStats, populateReviewQueue, clearReviewQueue } from "./review/kv.ts";
+import { getReviewStats, populateReviewQueue, clearReviewQueue, getReviewedFindingIds } from "./review/kv.ts";
 
 // Judge (unified auth)
 import {
@@ -632,14 +632,16 @@ async function handleDashboardData(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
-  const [pipelineStats, tokens, review, appeals, recentCompleted, queueCounts] = await Promise.all([
+  const [pipelineStats, tokens, review, appeals, recentCompleted, queueCounts, reviewedIds] = await Promise.all([
     getStats(auth.orgId),
     getTokenUsage(1),
     getReviewStats(auth.orgId),
     getAppealStats(auth.orgId),
     getRecentCompleted(auth.orgId, 25),
     getQueueCounts(),
+    getReviewedFindingIds(auth.orgId),
   ]);
+  const recentCompletedAnnotated = recentCompleted.map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
 
   const queued = Object.values(queueCounts).reduce((a, b) => a + b, 0);
 
@@ -660,7 +662,7 @@ async function handleDashboardData(req: Request): Promise<Response> {
     review,
     tokens,
     appeals,
-    recentCompleted,
+    recentCompleted: recentCompletedAnnotated,
   });
 }
 
@@ -700,7 +702,10 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const departments = [...new Set(windowEntries.map((c) => c.department).filter(Boolean))].sort() as string[];
   const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / limit));
-  const items = filtered.slice((page - 1) * limit, page * limit);
+  const pageItems = filtered.slice((page - 1) * limit, page * limit);
+
+  const reviewedIds = await getReviewedFindingIds(auth.orgId);
+  const items = pageItems.map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
 
   console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}`);
   return json({ items, total, pages, page, owners, departments });
@@ -895,9 +900,10 @@ function renderTable(d){
     var started=c.startedAt?'<span title="'+fmtTime(c.startedAt)+'">'+timeAgo(c.startedAt)+'</span>':'--';
     var finished='<span title="'+fmtTime(c.ts)+'">'+timeAgo(c.ts)+'</span>';
     var dur=c.durationMs?'<span style="font-variant-numeric:tabular-nums">'+fmtDur(c.durationMs)+'</span>':'--';
-    return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+typeBadge+'</td><td>'+owner+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td></tr>';
+    var reviewedBadge=c.reviewed?'<span class="badge" style="background:rgba(63,185,80,0.12);color:#3fb950;border:1px solid rgba(63,185,80,0.3);">Reviewed</span>':'';
+    return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+typeBadge+'</td><td>'+owner+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td><td>'+reviewedBadge+'</td></tr>';
   }).join('');
-  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Team Member</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Team Member</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function renderPagination(d){

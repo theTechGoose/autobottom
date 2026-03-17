@@ -1897,6 +1897,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
         if (data.auditComplete) {
           toast('${completeMsg}', 'complete');
+          // Purge any remaining buffered items from this now-completed finding
+          var completedFid = item.findingId;
+          buffer = buffer.filter(function(x) { return x.findingId !== completedFid; });
         }
 
         // Badge toasts
@@ -1908,17 +1911,20 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           }
         }
 
-        // Push new buffer items from response (replenish)
+        // Push new buffer items from response (replenish).
+        // If an item is already in the buffer, update auditRemaining so the "Final for audit"
+        // badge reflects the live counter rather than the stale value from initial load.
         var newItems = data.buffer || [];
         for (var ni = 0; ni < newItems.length; ni++) {
-          // Avoid duplicates: don't push items already in the buffer
-          var isDup = false;
+          var existingIdx = -1;
           for (var bi2 = 0; bi2 < buffer.length; bi2++) {
             if (buffer[bi2].findingId === newItems[ni].findingId && buffer[bi2].questionIndex === newItems[ni].questionIndex) {
-              isDup = true; break;
+              existingIdx = bi2; break;
             }
           }
-          if (!isDup) {
+          if (existingIdx >= 0) {
+            buffer[existingIdx].auditRemaining = newItems[ni].auditRemaining;
+          } else {
             buffer.push(newItems[ni]);
             if (newItems[ni].transcript) transcriptCache[newItems[ni].findingId] = newItems[ni].transcript;
           }

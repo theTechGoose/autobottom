@@ -264,9 +264,11 @@ export async function handleFileAppeal(orgId: OrgId, req: Request): Promise<Resp
 
   // Populate judge queue with only the disputed questions.
   // If none specified, fall back to failed (No) questions only — agents don't appeal questions they passed.
+  // Preserve original indices before filtering so populateJudgeQueue stores the correct questionIndex.
+  const questionsWithIdx = questions.map((q: any, i: number) => ({ ...q, _origIdx: i }));
   const questionsToQueue = appealedQuestions.length > 0
-    ? questions.filter((q: any) => appealedQuestions.includes(q.header ?? ""))
-    : questions.filter((q: any) => String(q.answer ?? "").toLowerCase() === "no");
+    ? questionsWithIdx.filter((q: any) => appealedQuestions.includes(q.header ?? "") && String(q.answer ?? "").toLowerCase() === "no")
+    : questionsWithIdx.filter((q: any) => String(q.answer ?? "").toLowerCase() === "no");
   if (questionsToQueue.length === 0) {
     return json({ error: "no failed questions to appeal" }, 400);
   }

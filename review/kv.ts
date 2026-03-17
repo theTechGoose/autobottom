@@ -496,6 +496,8 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
     if (sentinel.value == null) break;
     await db.delete([...orgKey(orgId, "audit-answers", findingId, i), "_n"]);
   }
+  // Mark this finding as reviewed so admin views can show a badge
+  await db.set(orgKey(orgId, "review-done", findingId), { reviewedAt });
   console.log(`[REVIEW] ${findingId}: ✅ Saved corrected finding — ${yeses}/${correctedAnswers.length} Yes = ${score}%`);
 
   await fireWebhook(orgId, "terminate", {
@@ -623,6 +625,19 @@ export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): 
     byReviewer,
     recentDecisions,
   };
+}
+
+// -- Reviewed Findings --
+
+export async function getReviewedFindingIds(orgId: OrgId): Promise<Set<string>> {
+  const db = await kv();
+  const ids = new Set<string>();
+  const iter = db.list<{ reviewedAt: string }>({ prefix: orgKey(orgId, "review-done") });
+  for await (const entry of iter) {
+    const key = entry.key as Deno.KvKeyPart[];
+    ids.add(String(key[key.length - 1]));
+  }
+  return ids;
 }
 
 // -- Clear Queue --

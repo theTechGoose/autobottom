@@ -7,6 +7,7 @@ import {
   getReviewStats,
   backfillFromFinished,
   getReviewerDashboardData,
+  previewFinding,
 } from "./kv.ts";
 import { getWebhookConfig, saveWebhookConfig, resolveGamificationSettings, listSoundPacks, emitEvent, getReviewerConfig } from "../lib/kv.ts";
 import type { WebhookConfig, SoundSlot } from "../lib/kv.ts";
@@ -198,4 +199,14 @@ export async function handleReviewMe(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
   if (auth instanceof Response) return auth;
   return json({ username: auth.email, role: auth.role });
+}
+
+export async function handlePreviewFinding(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id) return json({ error: "id required" }, 400);
+  const buffer = await previewFinding(auth.orgId, id);
+  if (!buffer) return json({ error: "finding not found or has no answered questions" }, 404);
+  return json({ buffer, preview: true, judgeAllowedTypes: ["date-leg", "package"] });
 }

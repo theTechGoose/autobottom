@@ -197,10 +197,33 @@ export async function handleGetRecording(orgId: OrgId, req: Request): Promise<Re
   const bytes = await s3.get();
   if (!bytes) return json({ error: "recording not found in S3" }, 404);
 
+  const total = (bytes as Uint8Array).byteLength;
+  const rangeHeader = req.headers.get("Range");
+
+  if (rangeHeader) {
+    const match = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+    if (match) {
+      const start = match[1] ? parseInt(match[1]) : 0;
+      const end = match[2] ? Math.min(parseInt(match[2]), total - 1) : total - 1;
+      const chunk = (bytes as Uint8Array).slice(start, end + 1);
+      return new Response(chunk, {
+        status: 206,
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Content-Range": `bytes ${start}-${end}/${total}`,
+          "Content-Length": String(chunk.byteLength),
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "public, max-age=3600",
+        },
+      });
+    }
+  }
+
   return new Response(bytes as BodyInit, {
     headers: {
       "Content-Type": "audio/mpeg",
-      "Content-Length": String(bytes.byteLength),
+      "Content-Length": String(total),
+      "Accept-Ranges": "bytes",
       "Cache-Control": "public, max-age=3600",
     },
   });

@@ -264,6 +264,20 @@ export async function terminateAllActive(orgId: OrgId): Promise<number> {
   return entries.length;
 }
 
+export async function terminateFinding(orgId: OrgId, findingId: string): Promise<void> {
+  const s = await store(ActiveTracking);
+  try {
+    const finding = await getFinding(orgId, findingId);
+    if (finding && finding.findingStatus !== "finished") {
+      finding.findingStatus = "terminated";
+      await saveFinding(orgId, finding);
+    }
+  } catch { /* best-effort */ }
+  await s.delete([orgId, findingId]);
+  const w = await store(WatchdogActive);
+  await w.delete([findingId]);
+}
+
 export async function trackError(orgId: OrgId, findingId: string, step: string, error: string) {
   const s = await store(ErrorTracking);
   await s.set([orgId, `${Date.now()}-${findingId}`], { findingId, step, error, ts: Date.now() } as any, { expireIn: DAY_MS });

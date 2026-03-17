@@ -895,7 +895,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   <div id="bottom-bar">
     <button id="help-hint" title="Keyboard shortcuts"><kbd>?</kbd> Keys</button>
     <div class="ap" id="audio-player">
-      <audio id="rec-audio" preload="none" style="display:none"></audio>
+      <audio id="rec-audio" preload="metadata" style="display:none"></audio>
       <button class="ap-play" id="ap-play" title="Play recording">
         <span id="ap-icon-play">${icons.play16}</span>
         <span id="ap-icon-pause" style="display:none">${icons.pause16}</span>
@@ -2124,12 +2124,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
     var amount = SKIP_TIERS[skipTier];
     var dur = recAudio.duration;
-    if (!dur || isNaN(dur)) return;
+    if (!dur || isNaN(dur)) { console.warn('[SKIP] skip blocked — duration=' + dur + ' readyState=' + recAudio.readyState); return; }
     var ct = recAudio.currentTime;
     if (isNaN(ct)) ct = 0;
-    recAudio.currentTime = dir > 0
-      ? Math.min(dur, ct + amount)
-      : Math.max(0, ct - amount);
+    var newTime = dir > 0 ? Math.min(dur, ct + amount) : Math.max(0, ct - amount);
+    console.log('[SKIP] dir=' + dir + ' tier=' + skipTier + ' amount=' + amount + 's ct=' + ct.toFixed(2) + ' → ' + newTime.toFixed(2) + ' (dur=' + dur.toFixed(2) + ')');
+    recAudio.currentTime = newTime;
 
     // Update display immediately — timeupdate only fires during playback, not when paused
     updateApTime();
@@ -2396,9 +2396,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     var rect = wfCanvas.getBoundingClientRect();
     var pct = (e.clientX - rect.left) / rect.width;
     var dur = recAudio.duration;
-    if (!dur || isNaN(dur)) return;
-    recAudio.currentTime = pct * dur;
-    if (recAudio.paused) recAudio.play(); else recAudio.pause();
+    if (!dur || isNaN(dur)) { console.warn('[WF-CLICK] blocked — duration=' + dur + ' readyState=' + recAudio.readyState); return; }
+    var newTime = pct * dur;
+    console.log('[WF-CLICK] pct=' + pct.toFixed(3) + ' → ' + newTime.toFixed(2) + 's (dur=' + dur.toFixed(2) + ')');
+    recAudio.currentTime = newTime;
+    updateApTime();
   });
   document.getElementById('ap-back').addEventListener('click', function() { recAudio.currentTime = Math.max(0, recAudio.currentTime - 5); });
   document.getElementById('ap-fwd').addEventListener('click', function() {
@@ -2407,21 +2409,30 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     recAudio.currentTime = Math.min(dur, recAudio.currentTime + 5);
   });
 
-  // -- Init: try resuming session --
+  // -- Init: try resuming session (or preview mode if ?id=X in URL) --
   (function() {
     function hideOverlay() {
       var ov = document.getElementById('init-overlay');
       if (ov) { ov.style.opacity = '0'; setTimeout(function() { ov.remove(); }, 420); }
     }
-    api(nextUrl()).then(function(data) {
+    var previewId = new URLSearchParams(window.location.search).get('id');
+    var initUrl = previewId ? '/preview?id=' + encodeURIComponent(previewId) : nextUrl();
+    api(initUrl).then(function(data) {
       reviewer = data.reviewer || '${mode}';
       document.getElementById('reviewer-tag').innerHTML = '<strong>' + reviewer + '</strong>';
+      if (data.preview) {
+        // Preview mode: show banner, hide decide buttons
+        var tag = document.getElementById('reviewer-tag');
+        if (tag) tag.innerHTML += ' <span style="background:rgba(255,200,50,0.2);color:var(--yellow);font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;letter-spacing:0.5px;">PREVIEW</span>';
+      }
       loadGameState();
-      api('/stats').then(function(stats) {
-        totalItems = stats.pending + stats.decided;
-        totalDecided = stats.decided;
-        updateProgress(stats.pending);
-      }).catch(function(){});
+      if (!data.preview) {
+        api('/stats').then(function(stats) {
+          totalItems = stats.pending + stats.decided;
+          totalDecided = stats.decided;
+          updateProgress(stats.pending);
+        }).catch(function(){});
+      }
       applyNextData(data);
       if (buffer.length > 0) {
         showReview();

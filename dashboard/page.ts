@@ -1450,7 +1450,7 @@ export function getDashboardPage(): string {
       } else {
         stepHtml = '<span class="step-badge">' + (a.step||'--') + '</span>';
       }
-      tr.innerHTML = '<td>' + fidHtml + '</td><td>' + ridHtml + '</td><td>' + stepHtml + '</td><td>' + startedCell + '</td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Retry</button></td>';
+      tr.innerHTML = '<td>' + fidHtml + '</td><td>' + ridHtml + '</td><td>' + stepHtml + '</td><td>' + startedCell + '</td><td class="duration">' + dur(a.ts) + '</td><td style="text-align:right;white-space:nowrap;"><button class="retry-btn sf-btn ghost" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Retry</button> <button class="terminate-btn sf-btn danger" data-id="' + fid + '" data-idx="' + i + '" style="font-size:9px;padding:2px 8px;">Stop</button></td>';
       tb.appendChild(tr);
     }
     tb.querySelectorAll('.retry-btn').forEach(function(btn) {
@@ -1471,6 +1471,25 @@ export function getDashboardPage(): string {
             } else { b.disabled = false; b.textContent = 'Retry'; toast(d.error || 'Failed', 'error'); }
           })
           .catch(function() { b.disabled = false; b.textContent = 'Retry'; toast('Request failed', 'error'); });
+      });
+    });
+    tb.querySelectorAll('.terminate-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var id = this.getAttribute('data-id');
+        var idx = parseInt(this.getAttribute('data-idx'));
+        var b = this;
+        if (!id || id === '--') { toast('No finding ID', 'error'); return; }
+        b.disabled = true; b.textContent = '...';
+        fetch('/admin/terminate-finding?id=' + encodeURIComponent(id))
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.ok) {
+              toast('Terminated ' + id, 'success');
+              active.splice(idx, 1);
+              renderActive(active);
+            } else { b.disabled = false; b.textContent = 'Stop'; toast(d.error || 'Failed', 'error'); }
+          })
+          .catch(function() { b.disabled = false; b.textContent = 'Stop'; toast('Request failed', 'error'); });
       });
     });
   }

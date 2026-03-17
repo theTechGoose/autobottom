@@ -20,7 +20,7 @@ import { getTokenUsage } from "./providers/groq.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
 import { enqueueStep, publishStep, ALL_QUEUES, pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts } from "./lib/queue.ts";
 import {
-  trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig, getStuckFindings, clearErrors,
+  trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, terminateFinding, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig, getStuckFindings, clearErrors,
   getFinding, saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
@@ -61,7 +61,7 @@ import { getSuperAdminPage } from "./shared/super-admin-page.ts";
 import {
   handleReviewPage, handleNext, handleDecide, handleBack,
   handleGetSettings, handleSaveSettings, handleStats, handleBackfill,
-  handleReviewDashboardPage, handleReviewDashboardData, handleReviewMe,
+  handleReviewDashboardPage, handleReviewDashboardData, handleReviewMe, handlePreviewFinding,
 } from "./review/handlers.ts";
 import { getReviewStats, populateReviewQueue, clearReviewQueue } from "./review/kv.ts";
 
@@ -251,6 +251,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/seed": handleSeed,
   "/admin/init-org": handleInitOrg,
   "/admin/retry-finding": handleRetryFinding,
+  "/admin/terminate-finding": handleTerminateFinding,
   "/admin/terminate-all": handleTerminateAll,
   "/admin/clear-queue": handleClearQueue,
   "/admin/clear-errors": handleClearErrors,
@@ -392,6 +393,7 @@ const getRoutes: Record<string, Handler> = {
   "/review/api/settings": handleGetSettings,
   "/review/api/stats": handleStats,
   "/review/api/me": handleReviewMe,
+  "/review/api/preview": handlePreviewFinding,
   "/review/api/dashboard": handleReviewDashboardData,
   "/review/api/gamification": handleReviewerGetGamification,
 
@@ -2413,6 +2415,20 @@ async function handleTerminateAll(req: Request): Promise<Response> {
   const terminated = await terminateAllActive(auth.orgId);
   console.log(`[ADMIN] ${auth.email} terminated ${terminated} active audits`);
   return json({ ok: true, terminated });
+}
+
+// -- Admin: Terminate Single Finding --
+
+async function handleTerminateFinding(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id) return json({ error: "id required" }, 400);
+
+  await terminateFinding(auth.orgId, id);
+  console.log(`[ADMIN] ${auth.email} terminated finding ${id}`);
+  return json({ ok: true });
 }
 
 // -- Admin: Clear Waiting Queue (QStash only) --

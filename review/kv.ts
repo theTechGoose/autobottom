@@ -724,3 +724,32 @@ export async function backfillFromFinished(orgId: OrgId) {
 
   return { queued };
 }
+
+/** Build a preview buffer for admin troubleshooting — no claiming, no locking. */
+export async function previewFinding(orgId: OrgId, findingId: string): Promise<BufferItem[] | null> {
+  const finding = await getFinding(orgId, findingId);
+  if (!finding || !finding.answeredQuestions?.length) return null;
+
+  let transcript = await getTranscript(orgId, findingId);
+  if (transcript && !transcript.utteranceTimes?.length) {
+    transcript = await backfillUtteranceTimes(orgId, findingId, transcript);
+  }
+
+  const items: BufferItem[] = finding.answeredQuestions.map((q: any, i: number) => ({
+    findingId,
+    questionIndex: i,
+    reviewIndex: i + 1,
+    totalForFinding: finding.answeredQuestions!.length,
+    header: q.header ?? "",
+    populated: q.populated ?? "",
+    thinking: q.thinking ?? "",
+    defense: q.defense ?? "",
+    answer: q.answer ?? "No",
+    recordingIdField: (finding.record as any)?.GenieNumber != null ? "GenieNumber" : undefined,
+    recordId: String((finding.record as any)?.RecordId ?? ""),
+    auditRemaining: 0,
+    transcript,
+  }));
+
+  return items;
+}

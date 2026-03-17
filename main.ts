@@ -3374,6 +3374,7 @@ async function handleAdminFlipAnswer(req: Request): Promise<Response> {
   questions[questionIndex] = { ...q, answer: newAnswer, adminFlippedAt: Date.now(), adminFlippedBy: auth.email };
   finding.answeredQuestions = questions;
   await saveFinding(auth.orgId, finding);
+  await saveBatchAnswers(auth.orgId, findingId, 0, questions);
   console.log(`🔧 [ADMIN] ${auth.email} flipped answer for finding ${findingId} Q${questionIndex}: ${q.answer} → ${newAnswer}`);
   return json({ ok: true });
 }

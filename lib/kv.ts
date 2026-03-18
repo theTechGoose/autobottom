@@ -184,6 +184,8 @@ export interface CompletedAuditStat {
   score?: number;
   owner?: string;
   department?: string;
+  voName?: string;
+  reason?: string; // "perfect_score" | "invalid_genie" | undefined
 }
 
 const DAY_MS = 86_400_000;
@@ -217,7 +219,7 @@ export async function trackActive(orgId: OrgId, findingId: string, step: string,
   await w.set([findingId], { orgId, findingId, step, ts: Date.now() } as any, { expireIn: 2 * 60 * 60 * 1000 });
 }
 
-export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number; owner?: string; department?: string }) {
+export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number; owner?: string; department?: string; voName?: string; reason?: string }) {
   const s = await store(ActiveTracking);
   await s.delete([orgId, findingId]);
   const w = await store(WatchdogActive);

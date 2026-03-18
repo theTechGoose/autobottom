@@ -897,14 +897,18 @@ function renderTable(d){
     var ridHtml='--';
     if(c.recordId){var u=(c.isPackage?qbPkgUrl:qbDateUrl)+encodeURIComponent(c.recordId);ridHtml='<a href="'+u+'" target="_blank" class="tbl-link">'+esc(c.recordId)+'</a>';}
     var typeBadge=c.isPackage?'<span class="badge badge-pkg">Partner</span>':'<span class="badge badge-dl">Internal</span>';
-    var owner=c.owner?'<span class="mono" style="font-size:10px">'+esc(c.owner.split("@")[0])+'</span>':'--';
+    var ownerLabel=c.voName||(c.owner&&c.owner!=='api'?c.owner.split('@')[0]:'');
+    var owner=ownerLabel?'<span class="mono" style="font-size:10px">'+esc(ownerLabel)+'</span>':'<span style="color:var(--text-dim);font-size:10px">api</span>';
     var started=c.startedAt?'<span title="'+fmtTime(c.startedAt)+'">'+timeAgo(c.startedAt)+'</span>':'--';
     var finished='<span title="'+fmtTime(c.ts)+'">'+timeAgo(c.ts)+'</span>';
     var dur=c.durationMs?'<span style="font-variant-numeric:tabular-nums">'+fmtDur(c.durationMs)+'</span>':'--';
-    var reviewedBadge=c.reviewed?'<span class="badge" style="background:rgba(63,185,80,0.12);color:#3fb950;border:1px solid rgba(63,185,80,0.3);">Reviewed</span>':'';
+    var reviewedBadge='';
+    if(c.reason==='perfect_score'){reviewedBadge='<span class="badge" style="background:rgba(63,185,80,0.10);color:#3fb950;border:1px solid rgba(63,185,80,0.25);" title="100% — no review needed">✓ Auto</span>';}
+    else if(c.reason==='invalid_genie'){reviewedBadge='<span class="badge" style="background:rgba(110,118,129,0.12);color:#8b949e;border:1px solid rgba(110,118,129,0.3);" title="No recording — no review needed">✓ Auto</span>';}
+    else if(c.reviewed){reviewedBadge='<span class="badge" style="background:rgba(63,185,80,0.12);color:#3fb950;border:1px solid rgba(63,185,80,0.3);">✓ Reviewed</span>';}
     return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+typeBadge+'</td><td>'+owner+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td><td>'+reviewedBadge+'</td></tr>';
   }).join('');
-  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Team Member</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Team Member</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Reviewed</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function renderPagination(d){

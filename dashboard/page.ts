@@ -1758,6 +1758,7 @@ table { width: 100%; border-collapse: collapse; }
     btn.textContent = queuesPaused ? 'Resume Queues' : 'Pause Queues';
     btn.className = 'sf-btn' + (queuesPaused ? ' primary' : '');
   }
+  updateQueueBtn(); // sync button text with initial state on load
   document.getElementById('resume-queues-btn').addEventListener('click', function() {
     var btn = this;
     var action = queuesPaused ? 'resume' : 'pause';

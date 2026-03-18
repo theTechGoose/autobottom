@@ -716,6 +716,7 @@ async function handleAuditsPage(req: Request): Promise<Response> {
   const html = `<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Audit History</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#0b0f15;--bg-raised:#111620;--bg-surface:#161c28;--border:#1c2333;--text:#c9d1d9;--text-muted:#6e7681;--text-dim:#484f58;--text-bright:#e6edf3;--blue:#58a6ff;--green:#3fb950;--red:#f85149;--yellow:#d29922;--cyan:#39d0d8;--mono:'SF Mono','Fira Code',monospace}

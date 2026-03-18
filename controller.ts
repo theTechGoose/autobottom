@@ -60,6 +60,9 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
 
   // Create finding
   const findingId = nanoid();
+  // Parse comma-separated genie IDs (e.g. "27480192,27480195") into genieIds array
+  const rawRecordingId = record[recordingIdField] ? String(record[recordingIdField]) : undefined;
+  const genieIdList = rawRecordingId ? rawRecordingId.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
   const finding: AuditFinding = {
     id: findingId,
     auditJobId: jobId,
@@ -68,7 +71,8 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
     job,
     record,
     recordingIdField,
-    recordingId: record[recordingIdField] ? String(record[recordingIdField]) : undefined,
+    recordingId: genieIdList[0] ?? rawRecordingId,
+    genieIds: genieIdList.length > 1 ? genieIdList : undefined,
     owner: job.owner,
     updateEndpoint: callbackUrl,
     qlabConfig: qlabConfig ?? body.qlabConfig,
@@ -76,6 +80,7 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
 
   if (override) {
     finding.recordingId = override;
+    finding.genieIds = undefined;
   }
 
   await saveFinding(orgId, finding);
@@ -124,6 +129,9 @@ export async function handlePackageByRid(orgId: OrgId, req: Request): Promise<Re
   await saveJob(orgId, job);
 
   const findingId = nanoid();
+  // Parse comma-separated genie IDs (e.g. "27480192,27480195") into genieIds array
+  const rawRecordingIdPkg = record[recordingIdField] ? String(record[recordingIdField]) : undefined;
+  const genieIdListPkg = rawRecordingIdPkg ? rawRecordingIdPkg.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
   const finding: AuditFinding = {
     id: findingId,
     auditJobId: jobId,
@@ -132,7 +140,8 @@ export async function handlePackageByRid(orgId: OrgId, req: Request): Promise<Re
     job,
     record,
     recordingIdField,
-    recordingId: record[recordingIdField] ? String(record[recordingIdField]) : undefined,
+    recordingId: genieIdListPkg[0] ?? rawRecordingIdPkg,
+    genieIds: genieIdListPkg.length > 1 ? genieIdListPkg : undefined,
     owner: job.owner,
     updateEndpoint: callbackUrl,
     qlabConfig: qlabConfig ?? body.qlabConfig,

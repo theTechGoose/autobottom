@@ -81,7 +81,12 @@ export async function stepPrepare(req: Request): Promise<Response> {
         questionSeeds = cached;
       } else {
         console.log(`[STEP-PREPARE] ${findingId}: Fetching questions from QuickBase for destination ${destinationId}...`);
-        const qbQuestions = await getQuestionsForDestination(destinationId);
+        const qbQuestions = await Promise.race([
+          getQuestionsForDestination(destinationId),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`QB question fetch timed out after 90s (dest=${destinationId})`)), 90_000)
+          ),
+        ]);
         console.log(`[STEP-PREPARE] ${findingId}: Got ${qbQuestions.length} questions from QuickBase`);
         questionSeeds = qbQuestions.map((q) => ({
           header: q.header,

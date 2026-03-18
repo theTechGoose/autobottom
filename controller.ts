@@ -1231,6 +1231,25 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       <div class="meta-cell"><div class="meta-label">Status</div><div class="meta-value">${esc(f.findingStatus ?? "")}</div></div>
       <div class="meta-cell"><div class="meta-label">Timestamp</div><div class="meta-value">${esc(f.job?.timestamp ?? "")}</div></div>
     </div>
+    <!-- Record details row -->
+    <div class="meta-bar" style="margin-top:6px;flex-wrap:wrap;">
+      ${isPackage ? `
+      <div class="meta-cell"><div class="meta-label">Guest Name</div><div class="meta-value">${esc(String((record as any).GuestName ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Marital Status</div><div class="meta-value">${esc(String((record as any)["67"] ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Office</div><div class="meta-value">${esc(String((record as any).OfficeName ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Total Amount</div><div class="meta-value">${(record as any)["145"] ? "$" + esc(String((record as any)["145"])) : "—"}</div></div>
+      <div class="meta-cell"><div class="meta-label">MCC</div><div class="meta-value">${(record as any)["345"] && String((record as any)["345"]) !== "0" ? "☑" : "☐"}</div></div>
+      <div class="meta-cell"><div class="meta-label">MSP</div><div class="meta-value">${(record as any)["306"] && String((record as any)["306"]) !== "0" ? "☑" : "☐"}</div></div>
+      ` : `
+      <div class="meta-cell"><div class="meta-label">Guest Name</div><div class="meta-value">${esc(String((record as any).GuestName ?? (record as any)["32"] ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Spouse Name</div><div class="meta-value">${esc(String((record as any)["33"] ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Marital Status</div><div class="meta-value">${esc(String((record as any)["49"] ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Arrival</div><div class="meta-value">${esc(String((record as any)["8"] ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Departure</div><div class="meta-value">${esc(String((record as any)["10"] ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">WGS</div><div class="meta-value">${(record as any)["460"] && String((record as any)["460"]) !== "0" ? "☑" : "☐"}</div></div>
+      <div class="meta-cell"><div class="meta-label">MCC</div><div class="meta-value">${(record as any)["594"] && String((record as any)["594"]) !== "0" ? "☑" : "☐"}</div></div>
+      `}
+    </div>
 
     <!-- Transcript -->
     <div class="section">

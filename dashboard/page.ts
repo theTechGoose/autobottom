@@ -1481,7 +1481,7 @@ table { width: 100%; border-collapse: collapse; }
         var b = this;
         if (!id || id === '--') { toast('No finding ID', 'error'); return; }
         b.disabled = true; b.textContent = '...';
-        fetch('/admin/terminate-finding?id=' + encodeURIComponent(id))
+        fetch('/admin/terminate-finding?id=' + encodeURIComponent(id), { method: 'POST' })
           .then(function(r) { return r.json(); })
           .then(function(d) {
             if (d.ok) {

@@ -567,6 +567,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   #back-spinner.active { display: flex; }
   .back-spin-ring { width: 30px; height: 30px; border: 3px solid #1e2736; border-top-color: #58a6ff; border-radius: 50%; animation: back-spin 0.65s linear infinite; }
   @keyframes back-spin { to { transform: rotate(360deg); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .gs-modal { background: #111620; border: 1px solid #1c2333; border-radius: 16px; width: 400px; max-width: 92vw; padding: 24px 28px 20px; box-shadow: 0 16px 48px rgba(0,0,0,0.4); }
   .gs-modal h3 { font-size: 15px; font-weight: 700; color: #e6edf3; margin-bottom: 16px; }
   .gs-field { margin-bottom: 14px; }
@@ -832,41 +833,49 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       </div>
     </div>
     ${R ? `
-    <div id="decision-btns">
-      <button id="btn-confirm" onclick="decide('confirm')" title="Confirm bot was right — keep as No (Y)"
+    <div id="decision-btns" style="position:relative;">
+      <div id="btn-loading-overlay" style="display:none;position:absolute;inset:0;background:rgba(10,10,15,0.82);border-radius:8px;z-index:10;align-items:center;justify-content:center;gap:8px;color:#8b949e;font-size:12px;font-weight:600;letter-spacing:0.5px;">
+        <span style="display:inline-block;animation:spin 0.7s linear infinite;font-size:16px;">⟳</span>
+        Processing...
+      </div>
+      <button id="btn-confirm" class="decide-btn" onclick="decide('confirm')" title="Confirm bot was right — keep as No (Y)"
         style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;border:1px solid rgba(139,92,246,0.35);background:rgba(139,92,246,0.1);color:#bc8cff;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
         <kbd style="background:#1a1427;border:1px solid rgba(139,92,246,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#8b5cf6;font-family:monospace;">Y</kbd>
         Confirm No
       </button>
-      <button id="btn-flip" onclick="decide('flip')" title="Flip — bot was wrong, change to Yes (N)"
+      <button id="btn-flip" class="decide-btn" onclick="decide('flip')" title="Flip — bot was wrong, change to Yes (N)"
         style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;border:1px solid rgba(34,197,94,0.35);background:rgba(34,197,94,0.08);color:#4ade80;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
         <kbd style="background:#0f1a14;border:1px solid rgba(34,197,94,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#22c55e;font-family:monospace;">N</kbd>
         Flip to Yes
       </button>
     </div>` : `
-    <div id="decision-btns" style="flex-direction:column;gap:8px;">
-      <button onclick="decide('uphold')" title="Uphold — bot was right, keep as No (Y)"
+    <div id="decision-btns" style="flex-direction:column;gap:8px;position:relative;">
+      <div id="btn-loading-overlay" style="display:none;position:absolute;inset:0;background:rgba(10,10,15,0.82);border-radius:8px;z-index:10;align-items:center;justify-content:center;gap:8px;color:#8b949e;font-size:12px;font-weight:600;letter-spacing:0.5px;">
+        <span style="display:inline-block;animation:spin 0.7s linear infinite;font-size:16px;">⟳</span>
+        Processing...
+      </div>
+      <button class="decide-btn" onclick="decide('uphold')" title="Uphold — bot was right, keep as No (Y)"
         style="display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 0;border-radius:8px;border:1px solid rgba(20,184,166,0.35);background:rgba(20,184,166,0.08);color:#2dd4bf;font-size:13px;font-weight:700;cursor:pointer;transition:all 0.15s;">
         <kbd style="background:#0a1e1c;border:1px solid rgba(20,184,166,0.4);border-radius:3px;padding:1px 5px;font-size:11px;color:#14b8a6;font-family:monospace;">Y</kbd>
         Uphold
       </button>
       <div style="display:flex;gap:8px;">
-        <button onclick="decide('overturn','error')" title="Overturn: Error (A)"
+        <button class="decide-btn" onclick="decide('overturn','error')" title="Overturn: Error (A)"
           style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-radius:8px;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.07);color:#f85149;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;">
           <kbd style="background:#1a0f0e;border:1px solid rgba(248,81,73,0.35);border-radius:3px;padding:1px 4px;font-size:10px;color:#f85149;font-family:monospace;">A</kbd>
           Error
         </button>
-        <button onclick="decide('overturn','logic')" title="Overturn: Logic (S)"
+        <button class="decide-btn" onclick="decide('overturn','logic')" title="Overturn: Logic (S)"
           style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-radius:8px;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.07);color:#f85149;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;">
           <kbd style="background:#1a0f0e;border:1px solid rgba(248,81,73,0.35);border-radius:3px;padding:1px 4px;font-size:10px;color:#f85149;font-family:monospace;">S</kbd>
           Logic
         </button>
-        <button onclick="decide('overturn','fragment')" title="Overturn: Fragment (D)"
+        <button class="decide-btn" onclick="decide('overturn','fragment')" title="Overturn: Fragment (D)"
           style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-radius:8px;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.07);color:#f85149;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;">
           <kbd style="background:#1a0f0e;border:1px solid rgba(248,81,73,0.35);border-radius:3px;padding:1px 4px;font-size:10px;color:#f85149;font-family:monospace;">D</kbd>
           Fragment
         </button>
-        <button onclick="decide('overturn','transcript')" title="Overturn: Transcript (F)"
+        <button class="decide-btn" onclick="decide('overturn','transcript')" title="Overturn: Transcript (F)"
           style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-radius:8px;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.07);color:#f85149;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;">
           <kbd style="background:#1a0f0e;border:1px solid rgba(248,81,73,0.35);border-radius:3px;padding:1px 4px;font-size:10px;color:#f85149;font-family:monospace;">F</kbd>
           Transcript
@@ -1814,15 +1823,22 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   window.decide = function(decision, reason) { decide(decision, reason); };
   function decide(decision, reason) {
-    if (buffer.length === 0) return;
-    // Only block if buffer is empty AND a request is in flight
-    if (busy && buffer.length === 0) return;
+    if (buffer.length === 0) {
+      console.log('[QUEUE] decide(' + decision + ') — buffer empty, ignoring');
+      return;
+    }
+    if (busy) {
+      console.log('[QUEUE] decide(' + decision + ') — busy=true, ignoring (inflight=' + inflight + ' inflightFids=' + JSON.stringify(inflightFids) + ' buffer=' + buffer.length + ')');
+      return;
+    }
 
     // Show confirm dialog when deciding on the last question for an audit
     var currentItem = buffer[0];
+    console.log('[QUEUE] decide(' + decision + ') — fid=' + currentItem.findingId + ' qi=' + currentItem.questionIndex + ' auditRemaining=' + currentItem.auditRemaining + ' inflight=' + inflight);
     if (currentItem && currentItem.auditRemaining === 1) {
       pendingDecision = decision;
       pendingReason = reason || null;
+      console.log('[QUEUE] decide — auditRemaining=1, showing confirm modal');
       showConfirmModal();
       return;
     }
@@ -1832,12 +1848,18 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   function disableButtons() {
     var decideBtns = document.querySelectorAll('.decide-btn');
-    for (var bi = 0; bi < decideBtns.length; bi++) { decideBtns[bi].style.opacity = '0.5'; decideBtns[bi].style.pointerEvents = 'none'; }
+    for (var bi = 0; bi < decideBtns.length; bi++) { decideBtns[bi].style.opacity = '0.4'; decideBtns[bi].style.pointerEvents = 'none'; }
+    var overlay = document.getElementById('btn-loading-overlay');
+    if (overlay) overlay.style.display = 'flex';
+    console.log('[QUEUE] disableButtons — inflight=' + inflight + ' inflightFids=' + JSON.stringify(inflightFids) + ' buffer=' + buffer.length);
   }
 
   function enableButtons() {
     var decideBtns = document.querySelectorAll('.decide-btn');
     for (var bi = 0; bi < decideBtns.length; bi++) { decideBtns[bi].style.opacity = ''; decideBtns[bi].style.pointerEvents = ''; }
+    var overlay = document.getElementById('btn-loading-overlay');
+    if (overlay) overlay.style.display = 'none';
+    console.log('[QUEUE] enableButtons — inflight=' + inflight + ' inflightFids=' + JSON.stringify(inflightFids) + ' buffer=' + buffer.length);
   }
 
   function executeDecision(decision, reason) {
@@ -1863,14 +1885,19 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     if (buffer.length > 0) {
       var nextFid = buffer[0].findingId;
       if (inflightFids[nextFid] && inflightFids[nextFid] > 0) {
-        // Same finding still has inflight — block until server responds with updated auditRemaining
+        // Same finding still has inflight — show next question but block buttons until
+        // server responds with updated auditRemaining (prevents wrong "Final for Audit" badge)
+        console.log('[QUEUE] executeDecision — same-finding inflight, rendering next but blocking buttons (inflightFids[' + nextFid + ']=' + inflightFids[nextFid] + ')');
         busy = true;
         disableButtons();
+        renderCurrent(); // advance display so user sees what's coming
       } else {
+        console.log('[QUEUE] executeDecision — advancing to next item fid=' + buffer[0].findingId + ' qi=' + buffer[0].questionIndex);
         animateTransition(function() { renderCurrent(); });
       }
     } else {
       // Buffer empty — block until /decide comes back
+      console.log('[QUEUE] executeDecision — buffer now empty, waiting for server response (inflight=' + inflight + ')');
       busy = true;
       disableButtons();
     }
@@ -1889,6 +1916,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     if (selfTypeFilter) bodyObj.types = selfTypeFilter;
 
     inflight++;
+    console.log('[QUEUE] /decide POST fid=' + item.findingId + ' qi=' + item.questionIndex + ' decision=' + decision + ' inflight=' + inflight + ' inflightFids=' + JSON.stringify(inflightFids));
     fetch(API + '/decide', {
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
@@ -1897,9 +1925,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       return res.json().then(function(data) {
         inflight--;
         inflightFids[item.findingId] = Math.max(0, (inflightFids[item.findingId] || 1) - 1);
+        console.log('[QUEUE] /decide response fid=' + item.findingId + ' qi=' + item.questionIndex + ' status=' + res.status + ' auditComplete=' + !!data.auditComplete + ' newBuffer=' + (data.buffer||[]).length + ' inflight=' + inflight + ' inflightFids=' + JSON.stringify(inflightFids));
 
         if (res.status === 409) {
           // Silently absorb — item was already handled (stale). Refresh if buffer empty.
+          console.warn('[QUEUE] 409 stale decision fid=' + item.findingId + ' qi=' + item.questionIndex + ' inflight=' + inflight + ' buffer=' + buffer.length);
           if (inflight === 0 && buffer.length === 0) {
             fetch(API + nextUrl()).then(function(r) { return r.json(); }).then(function(d) {
               applyNextData(d);
@@ -1911,6 +1941,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
               busy = false;
               enableButtons();
             });
+          } else if (inflight === 0) {
+            // Still have buffer items but all requests done — unblock
+            var nextFidCheck = buffer.length > 0 && inflightFids[buffer[0].findingId] > 0;
+            if (!nextFidCheck) { busy = false; enableButtons(); }
           }
           return;
         }
@@ -1920,7 +1954,9 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           toast('${completeMsg}', 'complete');
           // Purge any remaining buffered items from this now-completed finding
           var completedFid = item.findingId;
+          var purgeBefore = buffer.length;
           buffer = buffer.filter(function(x) { return x.findingId !== completedFid; });
+          console.log('[QUEUE] auditComplete fid=' + completedFid + ' — purged ' + (purgeBefore - buffer.length) + ' buffered items, buffer now=' + buffer.length);
         }
 
         // Badge toasts
@@ -1944,7 +1980,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
             }
           }
           if (existingIdx >= 0) {
+            var oldRemaining = buffer[existingIdx].auditRemaining;
             buffer[existingIdx].auditRemaining = newItems[ni].auditRemaining;
+            if (oldRemaining !== newItems[ni].auditRemaining) {
+              console.log('[QUEUE] updated auditRemaining fid=' + newItems[ni].findingId + ' qi=' + newItems[ni].questionIndex + ' ' + oldRemaining + ' → ' + newItems[ni].auditRemaining);
+            }
           } else {
             buffer.push(newItems[ni]);
             if (newItems[ni].transcript) transcriptCache[newItems[ni].findingId] = newItems[ni].transcript;
@@ -1953,9 +1993,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
         // If we were blocked, render next item — but only if no same-finding inflight remaining
         var nextFidStillWaiting = buffer.length > 0 && inflightFids[buffer[0].findingId] > 0;
+        console.log('[QUEUE] post-response state: busy=' + busy + ' inflight=' + inflight + ' buffer=' + buffer.length + ' nextFidStillWaiting=' + nextFidStillWaiting);
         if (busy && buffer.length > 0 && !nextFidStillWaiting) {
+          console.log('[QUEUE] unblocking — showReview fid=' + (buffer[0] && buffer[0].findingId));
           showReview();
         } else if (busy && buffer.length === 0) {
+          console.log('[QUEUE] unblocking — showEmpty');
           showEmpty();
         }
 
@@ -1968,6 +2011,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     }).catch(function(err) {
       inflight--;
       inflightFids[item.findingId] = Math.max(0, (inflightFids[item.findingId] || 1) - 1);
+      console.error('[QUEUE] /decide error fid=' + item.findingId + ' qi=' + item.questionIndex + ':', err.message);
       toast(err.message, 'error');
       if (inflight === 0) {
         busy = false;

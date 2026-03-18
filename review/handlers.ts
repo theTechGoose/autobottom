@@ -95,16 +95,22 @@ export async function handleDecide(req: Request): Promise<Response> {
     return json({ error: "decision must be 'confirm' or 'flip'" }, 400);
   }
 
+  console.log(`[DECIDE] ${auth.email} fid=${findingId} qi=${questionIndex} decision=${decision} speedMs=${speedMs ?? "n/a"}`);
+
   const result = await recordDecision(
     auth.orgId, findingId, questionIndex, decision, auth.email,
     combo ?? undefined, level ?? undefined, speedMs ?? undefined,
   );
   if (!result.success) {
+    console.warn(`[DECIDE] ⚠️ 409 stale/lock-expired fid=${findingId} qi=${questionIndex} reviewer=${auth.email}`);
     return json({ error: "failed to record decision (lock expired or not owned)" }, 409);
   }
 
+  console.log(`[DECIDE] ✅ recorded fid=${findingId} qi=${questionIndex} auditComplete=${result.auditComplete}`);
+
   // Emit review-decided event when an audit's review is fully complete
   if (result.auditComplete) {
+    console.log(`[DECIDE] 🏁 audit review complete fid=${findingId} reviewer=${auth.email}`);
     emitEvent(auth.orgId, auth.email, "review-decided", {
       findingId,
       reviewer: auth.email,
@@ -121,6 +127,7 @@ export async function handleDecide(req: Request): Promise<Response> {
   const effectiveTypes = selfTypes && selfTypes.length > 0 ? selfTypes : judgeAllowedTypes;
   const next = await claimNextItem(auth.orgId, auth.email, effectiveTypes);
 
+  console.log(`[DECIDE] buffer replenished: ${next.buffer.length} items for ${auth.email}`);
   const newBadges = result.newBadges.map(({ check: _, ...rest }) => rest);
   return json({ decided: { findingId, questionIndex, decision }, auditComplete: result.auditComplete, buffer: next.buffer, newBadges });
 }

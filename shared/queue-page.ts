@@ -283,7 +283,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   /* Question section */
   #q-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #6e7681; margin-bottom: 8px; }
   #q-header { font-size: 20px; font-weight: 700; color: #e6edf3; line-height: 1.3; margin-bottom: 10px; }
-  #q-populated { font-size: 14px; line-height: 1.6; color: #9ca3af; margin-bottom: 20px; }
+  #q-populated { display: none; }
 
   /* Verdict badge */
   ${verdictBadgeCss}
@@ -330,11 +330,52 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     max-height: 0; overflow: hidden; transition: max-height 0.25s ease;
   }
   #thinking-content.open { max-height: 500px; }
+  #prompt-toggle {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: #6e7681; cursor: pointer; user-select: none;
+    padding: 8px 0; border: none; background: none; width: 100%;
+    transition: color 0.15s;
+  }
+  #prompt-toggle:hover { color: #8b949e; }
+  #prompt-toggle .arrow { transition: transform 0.2s; font-size: 9px; }
+  #prompt-toggle .arrow.open { transform: rotate(90deg); }
+  #prompt-content {
+    max-height: 0; overflow: hidden; transition: max-height 0.25s ease;
+  }
+  #prompt-content.open { max-height: 500px; }
+  #prompt-text {
+    font-size: 12px; line-height: 1.6; color: #8b949e; white-space: pre-wrap;
+    padding: 10px 14px; background: #141820; border-radius: 10px; border: 1px solid #1a1f2b;
+  }
   #thinking-text {
     font-size: 13px; line-height: 1.6; color: #8b949e;
     padding: 10px 14px; background: #141820; border-radius: 10px; border: 1px solid #1a1f2b;
     font-style: italic; margin-bottom: 12px;
   }
+
+  /* Record Details accordion */
+  #record-details-toggle {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: #6e7681; cursor: pointer; user-select: none;
+    padding: 8px 0; border: none; background: none; width: 100%;
+    transition: color 0.15s;
+  }
+  #record-details-toggle:hover { color: #8b949e; }
+  #record-details-toggle .rd-arrow { transition: transform 0.2s; font-size: 9px; }
+  #record-details-toggle .rd-arrow.open { transform: rotate(90deg); }
+  #record-details-content {
+    max-height: 0; overflow: hidden; transition: max-height 0.3s ease;
+  }
+  #record-details-content.open { max-height: 400px; }
+  #record-details-body {
+    padding: 12px 14px; background: #141820; border-radius: 10px; border: 1px solid #1a1f2b; margin-bottom: 4px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px;
+  }
+  .rd-field { font-size: 12px; color: #8b949e; line-height: 1.5; }
+  .rd-field span { color: #c9d1d9; }
+  .rd-check { font-size: 12px; color: #8b949e; display: flex; align-items: center; gap: 5px; }
+  .rd-check.checked { color: #4ade80; }
+  .rd-full { grid-column: 1 / -1; }
 
   /* Meta chips */
   #meta-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding-top: 16px; border-top: 1px solid #1a1f2b; }
@@ -820,6 +861,22 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         </button>
         <div id="thinking-content">
           <div id="thinking-text"></div>
+        </div>
+
+        <button id="prompt-toggle">
+          <span class="arrow">${icons.chevronRight}</span>
+          <span>Question prompt</span>
+        </button>
+        <div id="prompt-content">
+          <div id="prompt-text"></div>
+        </div>
+
+        <button id="record-details-toggle">
+          <span class="rd-arrow">${icons.chevronRight}</span>
+          <span>Record Details</span>
+        </button>
+        <div id="record-details-content">
+          <div id="record-details-body"></div>
         </div>
 
         <div id="meta-row">
@@ -1638,6 +1695,51 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
     document.getElementById('thinking-content').classList.remove('open');
     document.querySelector('#thinking-toggle .arrow').classList.remove('open');
+    document.getElementById('prompt-text').textContent = currentItem.populated || '';
+    document.getElementById('prompt-content').classList.remove('open');
+    document.querySelector('#prompt-toggle .arrow').classList.remove('open');
+
+    // Record Details
+    var rdBody = document.getElementById('record-details-body');
+    var rdContent = document.getElementById('record-details-content');
+    var rdArrow = document.querySelector('#record-details-toggle .rd-arrow');
+    rdContent.classList.remove('open');
+    rdArrow.classList.remove('open');
+    var meta = currentItem.recordMeta;
+    if (meta) {
+      var isPackage = currentItem.recordingIdField === 'GenieNumber';
+      var rows = '';
+      function rdField(label, val) {
+        if (!val) return '';
+        return '<div class="rd-field">' + label + ': <span>' + val + '</span></div>';
+      }
+      function rdCheck(label, val) {
+        var checked = val && val !== '0' && val.toLowerCase() !== 'false' && val.toLowerCase() !== 'no';
+        return '<div class="rd-check' + (checked ? ' checked' : '') + '">' + (checked ? '☑' : '☐') + ' ' + label + '</div>';
+      }
+      if (isPackage) {
+        rows += rdField('Guest name', meta.guestName);
+        rows += rdField('Marital Status', meta.maritalStatus);
+        rows += rdField('Office', meta.officeName);
+        rows += rdField('Total Amount', meta.totalAmountPaid ? '$' + meta.totalAmountPaid : '');
+        rows += rdCheck('MCC', meta.hasMCC);
+        rows += rdCheck('MSP', meta.mspSubscription);
+      } else {
+        rows += rdField('Guest name', meta.guestName);
+        rows += rdField('Spouse Name', meta.spouseName);
+        rows += '<div class="rd-field rd-full">Marital Status: <span>' + (meta.maritalStatus || '—') + '</span></div>';
+        rows += '<div class="rd-field rd-full">Destination: <span>' + (meta.destination || '—') + '</span></div>';
+        rows += rdField('Arrival', meta.arrivalDate);
+        rows += rdField('Departure', meta.departureDate);
+        rows += rdCheck('WGS', meta.totalWGS);
+        rows += rdCheck('MCC', meta.totalMCC);
+      }
+      rdBody.innerHTML = rows;
+      document.getElementById('record-details-toggle').style.display = '';
+    } else {
+      rdBody.innerHTML = '';
+      document.getElementById('record-details-toggle').style.display = 'none';
+    }
 
     loadRecording(currentItem.findingId);
     renderTranscript();
@@ -1668,6 +1770,22 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     content.classList.toggle('open');
     arrow.classList.toggle('open');
   }
+
+  // -- Prompt toggle --
+  document.getElementById('prompt-toggle').addEventListener('click', function() {
+    var content = document.getElementById('prompt-content');
+    var arrow = document.querySelector('#prompt-toggle .arrow');
+    content.classList.toggle('open');
+    arrow.classList.toggle('open');
+  });
+
+  // -- Record Details toggle --
+  document.getElementById('record-details-toggle').addEventListener('click', function() {
+    var content = document.getElementById('record-details-content');
+    var arrow = document.querySelector('#record-details-toggle .rd-arrow');
+    content.classList.toggle('open');
+    arrow.classList.toggle('open');
+  });
 
   // -- Transcript --
   var colOffset = 0;

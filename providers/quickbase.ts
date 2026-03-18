@@ -159,6 +159,7 @@ const PKG_FIELD_GUEST_FULL_NAME = 57;     // Guest Full Name
 // AutoYes expression fields on package records
 const PACKAGE_AUTOYES_FIELDS = [
   67,  // MaritalStatus
+  145, // TotalAmountPaid
   306, // MSPSubscription
   345, // HasMCC
 ];

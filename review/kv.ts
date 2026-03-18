@@ -28,6 +28,22 @@ export interface ReviewItem {
   answer: string;
   recordingIdField?: string; // "GenieNumber" = package, absent/other = date leg
   recordId?: string;         // QB record ID for direct link
+  recordMeta?: {
+    // Date leg (internal)
+    guestName?: string;
+    spouseName?: string;
+    maritalStatus?: string;
+    destination?: string;
+    arrivalDate?: string;
+    departureDate?: string;
+    totalWGS?: string;
+    totalMCC?: string;
+    // Package (partner)
+    officeName?: string;
+    totalAmountPaid?: string;
+    hasMCC?: string;
+    mspSubscription?: string;
+  };
 }
 
 export interface ReviewDecision extends ReviewItem {
@@ -64,6 +80,7 @@ export async function populateReviewQueue(
   answeredQuestions: Array<{ answer: string; header: string; populated: string; thinking: string; defense: string }>,
   recordingIdField?: string,
   recordId?: string,
+  recordMeta?: ReviewItem["recordMeta"],
 ) {
   const db = await kv();
   const noAnswers = answeredQuestions
@@ -86,6 +103,7 @@ export async function populateReviewQueue(
       answer: q.answer,
       ...(recordingIdField ? { recordingIdField } : {}),
       ...(recordId ? { recordId } : {}),
+      ...(recordMeta ? { recordMeta } : {}),
     };
     atomic.set(orgKey(orgId, "review-pending", findingId, q.index), item);
   }

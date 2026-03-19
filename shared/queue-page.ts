@@ -696,7 +696,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   .ap-play:hover { background: ${btnHover}; box-shadow: 0 0 8px ${btnShadow}; }
   .ap-play svg { width: 9px; height: 9px; fill: #fff; }
   #ap-waveform { flex: 1; min-width: 0; height: 48px; cursor: pointer; border-radius: 3px; display: block; }
-  .ap-time { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 9px; color: #3d4452; white-space: nowrap; }
+  .ap-time { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: #8b949e; white-space: nowrap; }
   .ap-seek {
     background: #141820; border: 1px solid #1e2736; border-radius: 4px;
     color: #6e7681; cursor: pointer; font-size: 10px; padding: 2px 6px;

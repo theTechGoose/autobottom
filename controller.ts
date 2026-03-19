@@ -1054,6 +1054,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         <span class="hero-label">Audit Report</span>
         <span class="hero-id">${esc(id)}</span>
         ${statusBadge}
+        <span style="font-size:11px;color:#6e7681;font-weight:500;">${esc(f.findingStatus ?? "")}</span>
       </div>
       <div class="ap" id="audio-player">
         <audio id="recording-audio" class="audio-native" preload="metadata" src="/audit/recording?id=${esc(id)}"></audio>
@@ -1228,8 +1229,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       <div class="meta-cell"><div class="meta-label">Recording ID</div><div class="meta-value">${esc(String(f.recordingId ?? ""))}</div></div>
       <div class="meta-cell"><div class="meta-label">Destination</div><div class="meta-value">${esc(String((record.DestinationDisplay || record.RelatedDestinationId) ?? ""))}</div></div>
       <div class="meta-cell"><div class="meta-label">Team Member</div><div class="meta-value">${(() => { const raw = (record as any).VoName as string | undefined; const parsed = raw ? (raw.includes(" - ") ? raw.split(" - ").slice(1).join(" - ").trim() : raw.trim()) : ""; return esc(parsed || (f.owner && f.owner !== "api" ? f.owner : "") || f.owner || ""); })()}</div></div>
-      <div class="meta-cell"><div class="meta-label">Status</div><div class="meta-value">${esc(f.findingStatus ?? "")}</div></div>
-      <div class="meta-cell"><div class="meta-label">Timestamp</div><div class="meta-value">${esc(f.job?.timestamp ?? "")}</div></div>
+      <div class="meta-cell"><div class="meta-label">Date</div><div class="meta-value">${(() => { try { return new Date(f.job?.timestamp ?? "").toLocaleString("en-US", { month: "numeric", day: "numeric", year: "2-digit", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }); } catch { return esc(f.job?.timestamp ?? ""); } })()}</div></div>
     </div>
     <!-- Record details row -->
     ${(() => {

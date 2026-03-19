@@ -1081,9 +1081,9 @@ table { width: 100%; border-collapse: collapse; }
           <option value="package">Partner</option>
         </select>
       </div>
-      <div class="sf" style="width:130px;margin-bottom:0;">
-        <label class="sf-label">Stagger (ms)</label>
-        <input type="number" class="sf-input" id="bulk-stagger" value="100" min="0" max="5000" style="font-size:12px;">
+      <div class="sf" style="width:160px;margin-bottom:0;">
+        <label class="sf-label">Stagger (ms) <span style="color:var(--text-dim);font-weight:400;">5000 rec.</span></label>
+        <input type="number" class="sf-input" id="bulk-stagger" value="5000" min="0" max="30000" style="font-size:12px;">
       </div>
     </div>
     <div id="bulk-progress" style="display:none;margin-top:12px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text-muted);font-family:var(--mono);line-height:1.6;"></div>

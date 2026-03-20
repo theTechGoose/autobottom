@@ -697,9 +697,9 @@ table { width: 100%; border-collapse: collapse; }
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
         <label style="font-size:11px;color:var(--text-dim);font-weight:600;">From</label>
-        <input type="date" id="cb-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;">
+        <input type="date" id="cb-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
         <label style="font-size:11px;color:var(--text-dim);font-weight:600;">To</label>
-        <input type="date" id="cb-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;">
+        <input type="date" id="cb-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
         <button class="sf-btn primary" id="cb-fetch-btn" style="font-size:11px;">Pull Report</button>
         <select id="cb-format" class="sf-input" style="font-size:11px;padding:5px 8px;width:70px;">
           <option value="csv">CSV</option>

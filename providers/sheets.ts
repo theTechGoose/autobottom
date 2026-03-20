@@ -9,6 +9,7 @@ async function getAccessToken(email: string, privateKeyPem: string): Promise<str
   const keyData = privateKeyPem
     .replace(/-----BEGIN PRIVATE KEY-----/g, "")
     .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\\n/g, "")  // literal \n from env files
     .replace(/\s/g, "");
   const keyDer = Uint8Array.from(atob(keyData), (c) => c.charCodeAt(0));
 

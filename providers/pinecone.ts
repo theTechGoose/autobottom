@@ -1,7 +1,6 @@
 /** Pinecone vector store for RAG retrieval (manual OpenAI embeddings). */
 import OpenAI from "npm:openai";
 
-
 function getOpenAI() {
   return new OpenAI({ apiKey: Deno.env.get("OPEN_AI_KEY") });
 }
@@ -16,7 +15,10 @@ const PINECONE_HOST = () => {
 
 const PINECONE_TIMEOUT_MS = 30_000;
 
-async function timedFetch(url: string, options: RequestInit): Promise<Response> {
+async function timedFetch(
+  url: string,
+  options: RequestInit,
+): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), PINECONE_TIMEOUT_MS);
   try {
@@ -47,7 +49,12 @@ async function embed(input: string): Promise<number[]> {
   let timerId: ReturnType<typeof setTimeout>;
   const timeoutP = new Promise<never>((_, reject) => {
     timerId = setTimeout(
-      () => reject(new Error(`OpenAI embed timed out after ${PINECONE_TIMEOUT_MS / 1000}s`)),
+      () =>
+        reject(
+          new Error(
+            `OpenAI embed timed out after ${PINECONE_TIMEOUT_MS / 1000}s`,
+          ),
+        ),
       PINECONE_TIMEOUT_MS,
     );
   });
@@ -168,7 +175,6 @@ export async function query(
     .filter((m) => topScore - m.score < 0.2)
     .map((m) => m.metadata?.text ?? "")
     .filter(Boolean);
-
   return hits.join("\n\n --- \n\n");
 }
 

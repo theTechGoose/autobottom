@@ -2721,7 +2721,7 @@ table { width: 100%; border-collapse: collapse; }
     if (fmt === 'csv') {
       var csv = [headers.join(',')].concat(allRows.map(function(r) {
         return headers.map(function(h) {
-          var v = String(r[h] ?? '').replace(/"/g,'""');
+          var v = String(r[h] != null ? r[h] : '').replace(/"/g,'""');
           return '"' + v + '"';
         }).join(',');
       })).join('\n');
@@ -2731,13 +2731,12 @@ table { width: 100%; border-collapse: collapse; }
       a.download = 'chargebacks-omissions.csv';
       a.click();
     } else {
-      // XLSX via SheetJS (loaded from CDN on demand)
-      function doXlsx() {
+      var doXlsx = function() {
         var wb = XLSX.utils.book_new();
         var ws = XLSX.utils.json_to_sheet(allRows, { header: headers });
         XLSX.utils.book_append_sheet(wb, ws, 'Report');
         XLSX.writeFile(wb, 'chargebacks-omissions.xlsx');
-      }
+      };
       if (typeof XLSX !== 'undefined') { doXlsx(); return; }
       var s = document.createElement('script');
       s.src = 'https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js';

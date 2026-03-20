@@ -1248,6 +1248,7 @@ table { width: 100%; border-collapse: collapse; }
   }
   function btnLoad(b, t) { b.disabled = true; b.textContent = t || 'Saving...'; }
   function btnDone(b, t) { b.disabled = false; b.textContent = t; }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
   // ===== Charts =====
   function bucketByHour(timestamps) {

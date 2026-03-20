@@ -3779,33 +3779,33 @@ function matchesCronExpression(expression: string): boolean {
   );
 }
 
-Deno.cron("email-reports", "* * * * *", async () => {
-  try {
-    const orgs = await listOrgs();
-    for (const org of orgs) {
-      const configs = await listEmailReportConfigs(org.id);
-      for (const config of configs) {
-        if (config.disabled || !config.schedule || !config.recipients?.length) continue;
-
-        let shouldFire = false;
-        if (config.schedule.mode === "simple") {
-          shouldFire = matchesSimpleSchedule(config.schedule);
-        } else if (config.schedule.mode === "cron") {
-          shouldFire = matchesCronExpression(config.schedule.expression);
-        }
-
-        if (!shouldFire) continue;
-
-        console.log(`[EMAIL-REPORT-CRON] Firing report "${config.name}" for org=${org.id}`);
-        runReport(org.id, config).catch((err) =>
-          console.error(`[EMAIL-REPORT-CRON] ❌ Failed "${config.name}" org=${org.id}:`, err)
-        );
-      }
-    }
-  } catch (err) {
-    console.error("[EMAIL-REPORT-CRON] ❌ Error:", err);
-  }
-});
+// Deno.cron("email-reports", "* * * * *", async () => {
+//   try {
+//     const orgs = await listOrgs();
+//     for (const org of orgs) {
+//       const configs = await listEmailReportConfigs(org.id);
+//       for (const config of configs) {
+//         if (config.disabled || !config.schedule || !config.recipients?.length) continue;
+//
+//         let shouldFire = false;
+//         if (config.schedule.mode === "simple") {
+//           shouldFire = matchesSimpleSchedule(config.schedule);
+//         } else if (config.schedule.mode === "cron") {
+//           shouldFire = matchesCronExpression(config.schedule.expression);
+//         }
+//
+//         if (!shouldFire) continue;
+//
+//         console.log(`[EMAIL-REPORT-CRON] Firing report "${config.name}" for org=${org.id}`);
+//         runReport(org.id, config).catch((err) =>
+//           console.error(`[EMAIL-REPORT-CRON] ❌ Failed "${config.name}" org=${org.id}:`, err)
+//         );
+//       }
+//     }
+//   } catch (err) {
+//     console.error("[EMAIL-REPORT-CRON] ❌ Error:", err);
+//   }
+// });
 
 // -- Server --
 

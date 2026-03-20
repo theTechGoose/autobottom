@@ -56,7 +56,7 @@ export const env = {
 
   // Google Sheets (chargebacks cron) — optional, cron skips if not set
   get googleServiceAccountEmail() { return Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL") ?? ""; },
-  get googlePrivateKey() { return Deno.env.get("GOOGLE_PRIVATE_KEY") ?? ""; },
+  get googlePrivateKey() { return Deno.env.get("GOOGLE_KEY") ?? ""; },
   get chargebacksSheetId() { return Deno.env.get("CHARGEBACKS_SHEET_ID") ?? ""; },
   get chargebacksOrgId() { return Deno.env.get("CHARGEBACKS_ORG_ID") ?? ""; },
 };

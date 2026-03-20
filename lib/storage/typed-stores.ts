@@ -16,7 +16,7 @@ let _db: Deno.Kv | undefined;
 let _stores: ReturnType<typeof initStores> | undefined;
 
 async function getStore<T>(dto: new () => T): Promise<TypedStore<T>> {
-  if (!_db) _db = await Deno.openKv();
+  if (!_db) _db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   if (!_stores) _stores = initStores(_db);
   return _stores(dto);
 }

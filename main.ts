@@ -24,6 +24,7 @@ import {
   getFinding, saveFinding, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
+  getChargebackEntries,
   getBadWordConfig, saveBadWordConfig,
   getAllAnswersForFinding,
   getGamificationSettings, saveGamificationSettings,
@@ -192,7 +193,7 @@ async function resolveOrgId(req: Request): Promise<OrgId | null> {
   const url = new URL(req.url);
   const org = url.searchParams.get("org");
   if (org) return org;
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const def = await db.get<string>(["default-org"]);
   return def.value ?? null;
 }
@@ -384,6 +385,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/email-templates": handleListEmailTemplates,
   "/admin/email-templates/get": handleGetEmailTemplate,
   "/admin/bad-word-config": handleGetBadWordConfig,
+  "/admin/chargebacks": handleGetChargebacks,
   "/docs/index": () => Promise.resolve(html(getDocsIndexHtml())),
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
   "/api/openapi.json": () => Promise.resolve(json(getOpenApiSpec())),
@@ -514,7 +516,7 @@ async function handleLogoutPost(req: Request): Promise<Response> {
 // -- Demo Page --
 
 async function handleDemoPage(_req: Request): Promise<Response> {
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const defaultOrg = await db.get<string>(["default-org"]);
   const orgId = defaultOrg.value;
 
@@ -1827,6 +1829,28 @@ async function handleSaveBadWordConfig(req: Request): Promise<Response> {
   return json({ ok: true });
 }
 
+// -- Admin: Chargebacks & Omissions Report --
+
+const CHARGEBACK_QUESTIONS = new Set([
+  "Income",
+  "MCC Recurring Charges Disclosed?",
+  "Married/Cohab Qualifier Question",
+  "Single Qualifier Question",
+]);
+
+async function handleGetChargebacks(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const url = new URL(req.url);
+  const since = parseInt(url.searchParams.get("since") ?? "0", 10);
+  const until = parseInt(url.searchParams.get("until") ?? String(Date.now()), 10);
+  if (!since) return json({ error: "since required" }, 400);
+  const entries = await getChargebackEntries(auth.orgId, since, until);
+  const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
+  const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
+  return json({ chargebacks, omissions });
+}
+
 // -- Webhooks: Shared Helpers --
 
 /** Resolve template — only sends if a specific template is configured via emailTemplateId. */
@@ -2506,7 +2530,7 @@ async function handleDumpState(req: Request): Promise<Response> {
   const body = await req.json().catch(() => ({})) as { cursor?: Deno.KvKeyPart[]; limit?: number };
   const PAGE = body.limit ?? 500;
 
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const selector: Deno.KvListSelector = body.cursor
     ? { prefix: [auth.orgId], start: body.cursor as Deno.KvKey }
     : { prefix: [auth.orgId] };
@@ -2542,7 +2566,7 @@ async function handleImportState(req: Request): Promise<Response> {
     return json({ error: "entries array required" }, 400);
   }
 
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const targetOrgId = auth.orgId;
 
   // Nuke ALL existing state for this org
@@ -2591,7 +2615,7 @@ async function handlePullState(req: Request): Promise<Response> {
     return json({ error: "sourceUrl and cookie required" }, 400);
   }
 
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const targetOrgId = auth.orgId;
 
   // Nuke local state first
@@ -2667,7 +2691,7 @@ async function handleInitOrg(req: Request): Promise<Response> {
   const body = await req.json();
   const { name, email, password } = body;
   if (!name) return json({ error: "name required" }, 400);
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const existingDefault = await db.get<string>(["default-org"]);
   const orgId = existingDefault.value ?? await createOrg(name, name);
   await db.set(["default-org"], orgId);
@@ -2699,7 +2723,7 @@ async function handleSeedDryRun(_req: Request): Promise<Response> {
 
 async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeeded: number; judgeSeeded: number; qlabSeeded: number; orgId: OrgId }> {
   const findings = await loadSeedData();
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
 
   // Create admin user (ignore if already exists)
   try { await createUser(orgId, "admin@autobot.dev", "admin", "admin"); } catch { /* exists */ }
@@ -3111,7 +3135,7 @@ async function handleSeedEmailTemplates(req: Request): Promise<Response> {
 }
 
 async function handleSeed(_req: Request): Promise<Response> {
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
 
   // Create or reuse default org
   let orgId: OrgId;
@@ -3161,7 +3185,7 @@ async function routeSuperAdmin(req: Request): Promise<Response> {
 }
 
 async function handleSuperAdminListOrgs(): Promise<Response> {
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const orgs = await listOrgs();
 
   const result = [];
@@ -3197,7 +3221,7 @@ async function handleSuperAdminDeleteOrg(req: Request): Promise<Response> {
   if (!orgId) return json({ error: "orgId required" }, 400);
 
   // Wipe all org-scoped KV entries
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   let deleted = 0;
   for await (const entry of db.list({ prefix: [orgId] })) {
     await db.delete(entry.key);
@@ -3280,7 +3304,7 @@ async function handleSuperAdminWipe(req: Request): Promise<Response> {
   const { orgId } = body;
   if (!orgId) return json({ error: "orgId required" }, 400);
 
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   let deleted = 0;
   for await (const entry of db.list({ prefix: [orgId] })) {
     await db.delete(entry.key);
@@ -3324,7 +3348,7 @@ async function handleResetFinding(req: Request): Promise<Response> {
   const { findingId } = body;
   if (!findingId) return json({ error: "findingId required" }, 400);
 
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   let deleted = 0;
 
   // Prefixes with sub-keys (org-scoped)
@@ -3396,7 +3420,7 @@ async function handleAdminFlipAnswer(req: Request): Promise<Response> {
 // -- Admin: Wipe KV --
 
 async function handleWipeKv(_req: Request): Promise<Response> {
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   let deleted = 0;
   const iter = db.list({ prefix: [] });
   for await (const entry of iter) {

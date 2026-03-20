@@ -5,7 +5,7 @@ import type { OrgId } from "../lib/org.ts";
 let _kv: Deno.Kv | undefined;
 
 async function kv(): Promise<Deno.Kv> {
-  if (!_kv) _kv = await Deno.openKv();
+  if (!_kv) _kv = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   return _kv;
 }
 

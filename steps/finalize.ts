@@ -1,5 +1,5 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry } from "../lib/kv.ts";
 import { enqueueCleanup } from "../lib/queue.ts";
 
 import { generateFeedback } from "../providers/groq.ts";
@@ -125,6 +125,32 @@ export async function stepFinalize(req: Request): Promise<Response> {
     reason,
   });
   console.log(`[STEP-FINALIZE] ${findingId}: ✅ trackCompleted saved — score=${score ?? "?"}% owner=${finding.owner ?? "unknown"} dept=${department ?? "unknown"} type=${isPackage ? "package" : "date-leg"}`);
+
+  // Write chargeback/omission report entry for internal (date leg) findings with failed questions.
+  if (!isPackage && !isInvalid && qs?.length && score !== undefined && score < 100) {
+    try {
+      const rec = finding.record as any ?? {};
+      const failedQHeaders = (qs as IAnsweredQuestion[])
+        .filter((q) => q.answer === "No")
+        .map((q) => q.header)
+        .filter(Boolean);
+      if (failedQHeaders.length) {
+        await saveChargebackEntry(orgId, {
+          findingId,
+          ts: completedAt,
+          voName: voName ?? "",
+          destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
+          revenue: String(rec["706"] ?? ""),
+          recordId: String(rec.RecordId ?? ""),
+          score: score ?? 0,
+          failedQHeaders,
+        });
+        console.log(`[STEP-FINALIZE] ${findingId}: 💰 chargebackEntry saved — ${failedQHeaders.length} failed Q(s)`);
+      }
+    } catch (err) {
+      console.error(`[STEP-FINALIZE] ${findingId}: ❌ chargebackEntry save failed:`, err);
+    }
+  }
 
   // Route to review queue — skip Invalid Genie (no recording to review).
   // Formal judge appeals are handled upstream in handleFileAppeal (original finding), not here.

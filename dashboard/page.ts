@@ -377,6 +377,13 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
+      <!-- Chargebacks & Omissions (opens modal) -->
+      <div class="sb-link" id="chargebacks-open">
+        <div class="icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.clipboardList}</div>
+        <span class="title">Chargebacks &amp; Omissions</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
       <!-- Bad Words (opens modal) -->
       <div class="sb-link" id="bad-words-open">
         <div class="icon" style="background:var(--red-bg);color:var(--red);">${icons.alertTriangle}</div>
@@ -676,6 +683,70 @@ table { width: 100%; border-collapse: collapse; }
 <div class="modal-overlay" id="email-reports-modal">
   <div class="modal er-modal">
     <div id="er-content"></div>
+  </div>
+</div>
+
+<!-- Chargebacks & Omissions Modal -->
+<div class="modal-overlay" id="chargebacks-modal">
+  <div class="modal" style="width:92vw;max-width:92vw;height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:14px;">
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div>
+        <div class="modal-title" style="margin-bottom:2px;">Chargebacks &amp; Omissions</div>
+        <div class="modal-sub" style="margin-bottom:0;">Internal audit failures by date range</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;">From</label>
+        <input type="date" id="cb-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;">To</label>
+        <input type="date" id="cb-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;">
+        <button class="sf-btn primary" id="cb-fetch-btn" style="font-size:11px;">Pull Report</button>
+        <select id="cb-format" class="sf-input" style="font-size:11px;padding:5px 8px;width:70px;">
+          <option value="csv">CSV</option>
+          <option value="xlsx">XLSX</option>
+        </select>
+        <button class="sf-btn ghost" id="cb-download-btn" style="font-size:11px;" disabled>Download</button>
+        <button class="sf-btn ghost" id="chargebacks-cancel" style="font-size:11px;">Close</button>
+      </div>
+    </div>
+    <!-- Body -->
+    <div style="flex:1;overflow-y:auto;padding:20px 24px;" id="cb-body">
+      <div id="cb-empty" style="color:var(--text-dim);font-size:12px;text-align:center;padding:60px 0;">Select a date range and pull the report.</div>
+      <!-- Chargebacks block -->
+      <div id="cb-chargebacks-block" style="display:none;margin-bottom:32px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--red);margin-bottom:10px;" id="cb-cb-heading">Chargebacks (0)</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;" id="cb-cb-table">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Date</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Team Member</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Revenue</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">CRM Link</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Type</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Failed Questions</th>
+            </tr>
+          </thead>
+          <tbody id="cb-cb-body"></tbody>
+        </table>
+      </div>
+      <!-- Omissions block -->
+      <div id="cb-omissions-block" style="display:none;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--yellow);margin-bottom:10px;" id="cb-om-heading">Omissions (0)</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;" id="cb-om-table">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Date</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Team Member</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Revenue</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">CRM Link</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Type</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Failed Questions</th>
+            </tr>
+          </thead>
+          <tbody id="cb-om-body"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2521,6 +2592,159 @@ table { width: 100%; border-collapse: collapse; }
       .then(function() { etNewTemplate(); return etFetch(); })
       .then(function() { toast('Template deleted', 'success'); })
       .catch(function() { toast('Delete failed', 'error'); btn.disabled = false; });
+  });
+
+  // ===== Chargebacks & Omissions =====
+  var cbData = { chargebacks: [], omissions: [] };
+  var qbDateUrl = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=';
+
+  function cbPrevMonday() {
+    var d = new Date();
+    var day = d.getDay(); // 0=Sun,1=Mon,...6=Sat
+    var diffToLastMon = day === 0 ? 6 : day - 1;
+    var mon = new Date(d);
+    mon.setDate(d.getDate() - diffToLastMon - 7);
+    mon.setHours(0,0,0,0);
+    return mon;
+  }
+
+  function cbPrevSunday() {
+    var mon = cbPrevMonday();
+    var sun = new Date(mon);
+    sun.setDate(mon.getDate() + 6);
+    sun.setHours(23,59,59,999);
+    return sun;
+  }
+
+  function toInputDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+
+  // Set default dates
+  document.getElementById('cb-date-from').value = toInputDate(cbPrevMonday());
+  document.getElementById('cb-date-to').value = toInputDate(cbPrevSunday());
+
+  function cbFmtDate(ts) {
+    var d = new Date(ts);
+    return (d.getMonth()+1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(2) + ' ' +
+      d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  }
+
+  function cbFmtRevenue(r) {
+    if (!r) return '';
+    var n = parseFloat(r);
+    return isNaN(n) ? r : '$' + n.toFixed(2);
+  }
+
+  function cbTeamMember(entry) {
+    var dest = entry.destination || '';
+    var vo = entry.voName || '';
+    return dest && vo ? dest + ' - ' + vo : (vo || dest || '');
+  }
+
+  function cbRenderRows(tbodyId, rows, type) {
+    var tbody = document.getElementById(tbodyId);
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" style="padding:12px 10px;color:var(--text-dim);">None</td></tr>'; return; }
+    tbody.innerHTML = rows.map(function(e) {
+      var crmLink = e.recordId ? '<a href="' + qbDateUrl + encodeURIComponent(e.recordId) + '" target="_blank" style="color:var(--blue);text-decoration:none;">CRM Link</a>' : '';
+      var tm = cbTeamMember(e).replace(/</g,'&lt;');
+      var fq = (e.failedQHeaders || []).join(', ').replace(/</g,'&lt;');
+      return '<tr style="border-bottom:1px solid var(--border);">' +
+        '<td style="padding:6px 10px;color:var(--text);">' + cbFmtDate(e.ts) + '</td>' +
+        '<td style="padding:6px 10px;color:var(--text-bright);font-weight:500;">' + tm + '</td>' +
+        '<td style="padding:6px 10px;color:var(--green);">' + cbFmtRevenue(e.revenue) + '</td>' +
+        '<td style="padding:6px 10px;">' + crmLink + '</td>' +
+        '<td style="padding:6px 10px;font-weight:600;color:' + (type === 'Chargeback' ? 'var(--red)' : 'var(--yellow)') + ';">' + type + '</td>' +
+        '<td style="padding:6px 10px;color:var(--text-dim);">' + fq + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function cbRender() {
+    var cbs = cbData.chargebacks;
+    var oms = cbData.omissions;
+    document.getElementById('cb-empty').style.display = (cbs.length || oms.length) ? 'none' : '';
+    var cbBlock = document.getElementById('cb-chargebacks-block');
+    var omBlock = document.getElementById('cb-omissions-block');
+    cbBlock.style.display = cbs.length ? '' : 'none';
+    omBlock.style.display = oms.length ? '' : 'none';
+    document.getElementById('cb-cb-heading').textContent = 'Chargebacks (' + cbs.length + ')';
+    document.getElementById('cb-om-heading').textContent = 'Omissions (' + oms.length + ')';
+    cbRenderRows('cb-cb-body', cbs, 'Chargeback');
+    cbRenderRows('cb-om-body', oms, 'Omission');
+    document.getElementById('cb-download-btn').disabled = !(cbs.length || oms.length);
+  }
+
+  document.getElementById('chargebacks-open').addEventListener('click', function() {
+    openModal('chargebacks-modal');
+  });
+  document.getElementById('chargebacks-cancel').addEventListener('click', function() { closeModal('chargebacks-modal'); });
+  backdropClose('chargebacks-modal');
+
+  document.getElementById('cb-fetch-btn').addEventListener('click', function() {
+    var btn = this;
+    var fromVal = document.getElementById('cb-date-from').value;
+    var toVal = document.getElementById('cb-date-to').value;
+    if (!fromVal || !toVal) { toast('Select both dates', 'error'); return; }
+    var since = new Date(fromVal + 'T00:00:00').getTime();
+    var until = new Date(toVal + 'T23:59:59').getTime();
+    if (since > until) { toast('From date must be before To date', 'error'); return; }
+    btn.disabled = true; btn.textContent = 'Loading...';
+    fetch('/admin/chargebacks?since=' + since + '&until=' + until)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) { toast(d.error, 'error'); return; }
+        cbData = d;
+        cbRender();
+      })
+      .catch(function() { toast('Fetch failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Pull Report'; });
+  });
+
+  function cbBuildRows(entries, type) {
+    return entries.map(function(e) {
+      return {
+        Date: cbFmtDate(e.ts),
+        'Team Member': cbTeamMember(e),
+        Revenue: cbFmtRevenue(e.revenue),
+        'CRM Link': e.recordId ? (qbDateUrl + e.recordId) : '',
+        'Chargeback/Omission': type,
+        'Failed Questions': (e.failedQHeaders || []).join('; '),
+      };
+    });
+  }
+
+  document.getElementById('cb-download-btn').addEventListener('click', function() {
+    var fmt = document.getElementById('cb-format').value;
+    var allRows = cbBuildRows(cbData.chargebacks, 'Chargeback').concat(cbBuildRows(cbData.omissions, 'Omission'));
+    var headers = ['Date','Team Member','Revenue','CRM Link','Chargeback/Omission','Failed Questions'];
+    if (fmt === 'csv') {
+      var csv = [headers.join(',')].concat(allRows.map(function(r) {
+        return headers.map(function(h) {
+          var v = String(r[h] ?? '').replace(/"/g,'""');
+          return '"' + v + '"';
+        }).join(',');
+      })).join('\n');
+      var blob = new Blob([csv], { type: 'text/csv' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'chargebacks-omissions.csv';
+      a.click();
+    } else {
+      // XLSX via SheetJS (loaded from CDN on demand)
+      function doXlsx() {
+        var wb = XLSX.utils.book_new();
+        var ws = XLSX.utils.json_to_sheet(allRows, { header: headers });
+        XLSX.utils.book_append_sheet(wb, ws, 'Report');
+        XLSX.writeFile(wb, 'chargebacks-omissions.xlsx');
+      }
+      if (typeof XLSX !== 'undefined') { doXlsx(); return; }
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js';
+      s.onload = doXlsx;
+      s.onerror = function() { toast('Failed to load XLSX library', 'error'); };
+      document.head.appendChild(s);
+    }
   });
 
   // ===== Bad Words =====

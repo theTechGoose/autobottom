@@ -42,7 +42,7 @@ export interface QLTest {
 // -- KV Helpers -----------------------------------------------------------
 
 async function kv() {
-  return await Deno.openKv();
+  return await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
 }
 
 // -- Config Index ---------------------------------------------------------

@@ -169,7 +169,7 @@ export async function stepAskAll(req: Request): Promise<Response> {
 
   // Prevent infinite QStash retry loops — terminate after 3 failed attempts.
   // adminRetry resets the counter so a human can override and try again.
-  const db = await Deno.openKv();
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const retryKey = ["ask-all-attempt", orgId, findingId];
   if (adminRetry) {
     await db.delete(retryKey);

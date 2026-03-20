@@ -21,7 +21,7 @@ const MODEL = FALLBACK_MODELS[0];
 
 let _kv: Deno.Kv | undefined;
 async function tokenKv(): Promise<Deno.Kv> {
-  if (!_kv) _kv = await Deno.openKv();
+  if (!_kv) _kv = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   return _kv;
 }
 

@@ -43,3 +43,14 @@ export class RetryTracking {
   attempt = 0;
   ts = 0;
 }
+
+export class ChargebackEntry {
+  findingId = "";
+  ts = 0;
+  voName = "";
+  destination = "";
+  revenue = "";
+  recordId = "";
+  score = 0;
+  failedQHeaders: string[] = [];
+}

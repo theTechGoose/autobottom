@@ -9,7 +9,7 @@ import {
 } from "./storage/dtos/audit.ts";
 import {
   ActiveTracking, WatchdogActive, CompletedAuditStat as CompletedAuditStatDto,
-  ErrorTracking, RetryTracking,
+  ErrorTracking, RetryTracking, ChargebackEntry as ChargebackEntryDto,
 } from "./storage/dtos/stats.ts";
 import {
   PipelineConfig as PipelineConfigDto, WebhookConfigDto, BadWordConfig as BadWordConfigDto,
@@ -33,7 +33,7 @@ let _db: Deno.Kv | undefined;
 let _stores: ReturnType<typeof initStores> | undefined;
 
 async function db(): Promise<Deno.Kv> {
-  if (!_db) _db = await Deno.openKv();
+  if (!_db) _db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   return _db;
 }
 
@@ -206,6 +206,37 @@ export async function getAllCompleted(orgId: OrgId, since?: number): Promise<Com
     items.push(v);
   }
   console.log(`[KV] getAllCompleted: ${items.length} entries for org ${orgId}${since ? ` since ${new Date(since).toISOString()}` : " (all-time)"}`);
+  return items;
+}
+
+// ── Chargeback / Omission Report ─────────────────────────────────────────────
+
+export interface ChargebackEntry {
+  findingId: string;
+  ts: number;
+  voName: string;
+  destination: string;
+  revenue: string;
+  recordId: string;
+  score: number;
+  failedQHeaders: string[];
+}
+
+export async function saveChargebackEntry(orgId: OrgId, entry: ChargebackEntry): Promise<void> {
+  const s = await store(ChargebackEntryDto);
+  await s.set([orgId, `${entry.ts}-${entry.findingId}`], entry as any);
+}
+
+export async function getChargebackEntries(orgId: OrgId, since: number, until: number): Promise<ChargebackEntry[]> {
+  const s = await store(ChargebackEntryDto);
+  const results = await s.listRaw([orgId], { reverse: true });
+  const items: ChargebackEntry[] = [];
+  for (const r of results) {
+    const v = r.value as unknown as ChargebackEntry;
+    if (v.ts > until) continue;
+    if (v.ts < since) break;
+    items.push(v);
+  }
   return items;
 }
 

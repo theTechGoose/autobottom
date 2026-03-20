@@ -1,5 +1,6 @@
 /** Deno KV state management for audit findings, jobs, and counters. All keys are org-scoped. */
 
+import { orgKey } from "./org.ts";
 import type { OrgId } from "./org.ts";
 import { pollTranscriptOnce, processTranscriptResult } from "../providers/assemblyai.ts";
 import { TypedStore, initStores } from "./storage/typed-kv.ts";
@@ -575,25 +576,90 @@ export async function fireWebhook(orgId: OrgId, kind: WebhookKind, payload: unkn
 
 // ── Email Report Config ─────────────────────────────────────────────────────
 
-export type ReportSection = "pipeline" | "review" | "appeals" | "manager" | "tokens";
-export type DetailLevel = "low" | "medium" | "high";
+export type ScheduleSimpleDays = "every" | "weekdays" | "weekends";
 
-export interface SectionConfig {
-  enabled: boolean;
-  detail: DetailLevel;
+export type ScheduleConfig =
+  | { mode: "simple"; frequency: "daily";   timeOfDayEst: string; days: ScheduleSimpleDays }
+  | { mode: "simple"; frequency: "hourly" }
+  | { mode: "simple"; frequency: "monthly"; timeOfDayEst: string; dayOfMonth: number }
+  | { mode: "cron";   expression: string };
+
+export type DateRangeConfig =
+  | { mode: "rolling"; hours: number }
+  | { mode: "fixed"; from: number; to: number };
+
+export interface AuditDoneIndexEntry {
+  findingId: string;
+  completedAt: number;
+  doneAt?: number;
+  completed: boolean;
+  reason?: "perfect_score" | "invalid_genie" | "reviewed";
+  score: number;
 }
 
-export type ReportCadence = "daily" | "weekly" | "biweekly" | "monthly";
+export type CriteriaField =
+  | "questionHeader"
+  | "questionAnswer"
+  | "score"
+  | "reason"
+  | "voName"
+  | "department"
+  | "appealStatus"
+  | "auditType"        // "internal" (date-leg) | "partner" (package)
+  | "reviewed";        // "true" | "false" — was this audit touched by a human reviewer
+
+export type CriteriaOperator =
+  | "equals"
+  | "not_equals"
+  | "contains"
+  | "not_contains"
+  | "starts_with"
+  | "less_than"
+  | "greater_than";
+
+export type ReportColumnKey =
+  | "recordId"
+  | "findingId"
+  | "guestName"
+  | "voName"
+  | "department"
+  | "score"
+  | "appealStatus"
+  | "finalizedAt"
+  | "markedForReview";
+
+export interface CriteriaRule {
+  field: CriteriaField;
+  operator: CriteriaOperator;
+  value: string;
+}
+
+export interface ReportSectionDef {
+  id: string;
+  header: string;
+  criteria: CriteriaRule[];
+  columns: ReportColumnKey[];
+}
 
 export interface EmailReportConfig {
   id: string;
   name: string;
-  recipients: string[];
-  cadence: ReportCadence;
-  cadenceDay?: number;
-  sections: Record<ReportSection, SectionConfig>;
   createdAt: number;
   updatedAt: number;
+  // Master filter
+  onlyCompleted?: boolean;        // default true — filter by doneAt; false = filter by completedAt
+  dateRange?: DateRangeConfig;    // default { mode: "rolling", hours: 24 }
+  // Schedule
+  schedule?: ScheduleConfig;
+  // Recipients
+  recipients: string[];
+  cc?: string[];
+  bcc?: string[];
+  // Report definition
+  templateId?: string;
+  topLevelFilters?: CriteriaRule[];
+  reportSections?: ReportSectionDef[];
+  disabled?: boolean;
 }
 
 export async function listEmailReportConfigs(orgId: OrgId): Promise<EmailReportConfig[]> {
@@ -607,16 +673,25 @@ export async function getEmailReportConfig(orgId: OrgId, id: string): Promise<Em
   return s.get([orgId, id]) as unknown as Promise<EmailReportConfig | null>;
 }
 
-export async function saveEmailReportConfig(orgId: OrgId, config: Partial<EmailReportConfig> & { name: string; recipients: string[]; sections: Record<ReportSection, SectionConfig> }): Promise<EmailReportConfig> {
+export async function saveEmailReportConfig(
+  orgId: OrgId,
+  config: Partial<EmailReportConfig> & { name: string; recipients: string[] },
+): Promise<EmailReportConfig> {
   const s = await store(EmailReportConfigDto);
   const now = Date.now();
   const full: EmailReportConfig = {
     id: config.id || crypto.randomUUID(),
     name: config.name,
     recipients: config.recipients,
-    cadence: config.cadence || "weekly",
-    cadenceDay: config.cadenceDay,
-    sections: config.sections,
+    onlyCompleted: config.onlyCompleted ?? true,
+    ...(config.dateRange ? { dateRange: config.dateRange } : {}),
+    ...(config.cc ? { cc: config.cc } : {}),
+    ...(config.bcc ? { bcc: config.bcc } : {}),
+    ...(config.schedule ? { schedule: config.schedule } : {}),
+    ...(config.templateId ? { templateId: config.templateId } : {}),
+    ...(config.topLevelFilters ? { topLevelFilters: config.topLevelFilters } : {}),
+    ...(config.reportSections ? { reportSections: config.reportSections } : {}),
+    ...(config.disabled ? { disabled: config.disabled } : {}),
     createdAt: config.createdAt || now,
     updatedAt: now,
   };
@@ -627,6 +702,59 @@ export async function saveEmailReportConfig(orgId: OrgId, config: Partial<EmailR
 export async function deleteEmailReportConfig(orgId: OrgId, id: string): Promise<void> {
   const s = await store(EmailReportConfigDto);
   await s.delete([orgId, id]);
+}
+
+// ── Audit Done Secondary Index ───────────────────────────────────────────────
+
+function padTs(ts: number): string {
+  return String(ts).padStart(16, "0");
+}
+
+export async function writeAuditDoneIndex(
+  orgId: OrgId,
+  entry: AuditDoneIndexEntry,
+): Promise<void> {
+  const kvDb = await db();
+  const key = orgKey(orgId, "audit-done-idx", padTs(entry.completedAt), entry.findingId);
+  await kvDb.set(key, entry);
+}
+
+export async function queryAuditDoneIndex(
+  orgId: OrgId,
+  from: number,
+  to: number,
+): Promise<AuditDoneIndexEntry[]> {
+  const kvDb = await db();
+  const start = orgKey(orgId, "audit-done-idx", padTs(from));
+  const end = orgKey(orgId, "audit-done-idx", padTs(to + 1));
+  const entries: AuditDoneIndexEntry[] = [];
+  for await (const entry of kvDb.list<AuditDoneIndexEntry>({ start, end })) {
+    if (entry.value) entries.push(entry.value);
+  }
+  return entries;
+}
+
+// ── Email Report Preview Cache ───────────────────────────────────────────────
+
+export interface EmailReportPreview {
+  html: string;
+  renderedAt: number;
+}
+
+export async function getEmailReportPreview(orgId: OrgId, configId: string): Promise<EmailReportPreview | null> {
+  const kvDb = await db();
+  const entry = await kvDb.get<EmailReportPreview>(orgKey(orgId, "email-report-preview", configId));
+  return entry.value ?? null;
+}
+
+export async function saveEmailReportPreview(orgId: OrgId, configId: string, html: string): Promise<void> {
+  const kvDb = await db();
+  await kvDb.set(orgKey(orgId, "email-report-preview", configId), { html, renderedAt: Date.now() }, { expireIn: 86_400_000 });
+}
+
+export async function deleteEmailReportPreview(orgId: OrgId, configId: string): Promise<void> {
+  const kvDb = await db();
+  await kvDb.delete(orgKey(orgId, "email-report-preview", configId));
 }
 
 // ── Email Templates ─────────────────────────────────────────────────────────

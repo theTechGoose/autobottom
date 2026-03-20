@@ -2,7 +2,7 @@
 
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, writeAuditDoneIndex } from "../lib/kv.ts";
 import { populateManagerQueue } from "../manager/kv.ts";
 import { checkBadges, BADGE_CATALOG } from "../shared/badges.ts";
 import type { BadgeDef } from "../shared/badges.ts";
@@ -516,6 +516,24 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
   }
   // Mark this finding as reviewed so admin views can show a badge
   await db.set(orgKey(orgId, "review-done", findingId), { reviewedAt });
+
+  // Update secondary index — audit is now fully done
+  const completedAt = (finding as Record<string, unknown>).completedAt as number | undefined;
+  if (completedAt) {
+    try {
+      await writeAuditDoneIndex(orgId, {
+        findingId,
+        completedAt,
+        score,
+        completed: true,
+        doneAt: Date.now(),
+        reason: "reviewed",
+      });
+    } catch (err) {
+      console.error(`[REVIEW] ${findingId}: ❌ audit-done-idx update failed:`, err);
+    }
+  }
+
   console.log(`[REVIEW] ${findingId}: ✅ Saved corrected finding — ${yeses}/${correctedAnswers.length} Yes = ${score}%`);
 
   await fireWebhook(orgId, "terminate", {

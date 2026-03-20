@@ -1,5 +1,5 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, writeAuditDoneIndex } from "../lib/kv.ts";
 import { enqueueCleanup } from "../lib/queue.ts";
 
 import { generateFeedback } from "../providers/groq.ts";
@@ -125,6 +125,21 @@ export async function stepFinalize(req: Request): Promise<Response> {
     reason,
   });
   console.log(`[STEP-FINALIZE] ${findingId}: ✅ trackCompleted saved — score=${score ?? "?"}% owner=${finding.owner ?? "unknown"} dept=${department ?? "unknown"} type=${isPackage ? "package" : "date-leg"}`);
+
+  // Write secondary index entry for email reporting
+  try {
+    const isAutoComplete = isInvalid || score === 100;
+    await writeAuditDoneIndex(orgId, {
+      findingId,
+      completedAt,
+      score: score ?? 0,
+      completed: isAutoComplete,
+      ...(isAutoComplete ? { doneAt: completedAt, reason: reason! } : {}),
+    });
+    console.log(`[STEP-FINALIZE] ${findingId}: 📇 audit-done-idx written — completed=${isAutoComplete} reason=${reason ?? "pending-review"}`);
+  } catch (err) {
+    console.error(`[STEP-FINALIZE] ${findingId}: ❌ audit-done-idx write failed:`, err);
+  }
 
   // Write chargeback/omission report entry for internal (date leg) findings with failed questions.
   if (!isPackage && !isInvalid && qs?.length && score !== undefined && score < 100) {

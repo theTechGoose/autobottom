@@ -6,10 +6,10 @@ function base64url(data: Uint8Array | string): string {
 }
 
 async function getAccessToken(email: string, privateKeyPem: string): Promise<string> {
-  const keyData = privateKeyPem
+  const pem = atob(privateKeyPem);  // base64-encoded in env var
+  const keyData = pem
     .replace(/-----BEGIN PRIVATE KEY-----/g, "")
     .replace(/-----END PRIVATE KEY-----/g, "")
-    .replace(/\\n/g, "")  // literal \n from env files
     .replace(/\s/g, "");
   const keyDer = Uint8Array.from(atob(keyData), (c) => c.charCodeAt(0));
 

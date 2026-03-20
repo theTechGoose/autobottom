@@ -2724,7 +2724,7 @@ table { width: 100%; border-collapse: collapse; }
           var v = String(r[h] != null ? r[h] : '').replace(/"/g,'""');
           return '"' + v + '"';
         }).join(',');
-      })).join('\n');
+      })).join('\\n');
       var blob = new Blob([csv], { type: 'text/csv' });
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);

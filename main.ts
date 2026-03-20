@@ -43,6 +43,7 @@ import {
 import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot } from "./lib/kv.ts";
 import { S3Ref } from "./lib/s3.ts";
 import { sendEmail } from "./providers/postmark.ts";
+import { appendSheetRows } from "./providers/sheets.ts";
 import { env } from "./env.ts";
 import { orgKey } from "./lib/org.ts";
 import type { OrgId } from "./lib/org.ts";
@@ -3604,6 +3605,56 @@ Deno.cron("watchdog", "0 * * * *", async () => {
     }
   } catch (err) {
     console.error("[WATCHDOG] ❌ Error:", err);
+  }
+});
+
+// -- Chargebacks Weekly Cron --
+// Every Tuesday at 7am: append previous week (Mon–Sun) chargebacks + omissions to Google Sheets.
+Deno.cron("chargebacks-weekly", "0 7 * * 2", async () => {
+  try {
+    const saEmail = env.googleServiceAccountEmail;
+    const saKey = env.googlePrivateKey;
+    const sheetId = env.chargebacksSheetId;
+    const orgId = env.chargebacksOrgId as OrgId;
+    if (!saEmail || !saKey || !sheetId || !orgId) {
+      console.log("[CHARGEBACKS-CRON] ⚠️ Missing Google SA creds, sheet ID, or org ID — skipping");
+      return;
+    }
+
+    // Running on Tuesday — previous week is Mon (8 days ago) through Sun (yesterday)
+    const now = new Date();
+    const sunday = new Date(now);
+    sunday.setDate(sunday.getDate() - 1);
+    sunday.setHours(23, 59, 59, 999);
+    const monday = new Date(sunday);
+    monday.setDate(monday.getDate() - 6);
+    monday.setHours(0, 0, 0, 0);
+
+    console.log(`[CHARGEBACKS-CRON] 🚀 Fetching ${monday.toDateString()} – ${sunday.toDateString()}`);
+
+    const entries = await getChargebackEntries(orgId, monday.getTime(), sunday.getTime());
+    const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
+    const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
+
+    const fmtDate = (ts: number) => new Date(ts).toLocaleDateString("en-US");
+    const crmUrl = (e: { recordId: string }) =>
+      `https://${Deno.env.get("QB_REALM")}.quickbase.com/db/bpb28qsnn?a=dr&rid=${e.recordId}`;
+    const toRows = (list: typeof entries): string[][] =>
+      list.map((e) => [
+        fmtDate(e.ts),
+        e.voName,
+        e.revenue,
+        crmUrl(e),
+        e.destination,
+        e.failedQHeaders.join(", "),
+        `${e.score}%`,
+      ]);
+
+    await appendSheetRows(sheetId, "Chargebacks", toRows(chargebacks), saEmail, saKey);
+    await appendSheetRows(sheetId, "Omissions", toRows(omissions), saEmail, saKey);
+    console.log(`[CHARGEBACKS-CRON] ✅ Appended ${chargebacks.length} chargebacks, ${omissions.length} omissions`);
+  } catch (err) {
+    console.error("[CHARGEBACKS-CRON] ❌ Error:", err);
   }
 });
 

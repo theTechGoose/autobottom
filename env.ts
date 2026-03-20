@@ -53,4 +53,10 @@ export const env = {
   get denoKvUrl() { return required("KV_REPORT_URL"); },
   get alertEmail() { return required("ALERT_EMAIL"); },
   get fromEmail() { return required("FROM_EMAIL"); },
+
+  // Google Sheets (chargebacks cron) — optional, cron skips if not set
+  get googleServiceAccountEmail() { return Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL") ?? ""; },
+  get googlePrivateKey() { return Deno.env.get("GOOGLE_PRIVATE_KEY") ?? ""; },
+  get chargebacksSheetId() { return Deno.env.get("CHARGEBACKS_SHEET_ID") ?? ""; },
+  get chargebacksOrgId() { return Deno.env.get("CHARGEBACKS_ORG_ID") ?? ""; },
 };

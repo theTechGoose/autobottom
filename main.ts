@@ -43,7 +43,7 @@ import {
 import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot } from "./lib/kv.ts";
 import { S3Ref } from "./lib/s3.ts";
 import { sendEmail } from "./providers/postmark.ts";
-import { appendSheetRows } from "./providers/sheets.ts";
+import { appendSheetRows, parseSheetsServiceAccount } from "./providers/sheets.ts";
 import { env } from "./env.ts";
 import { orgKey } from "./lib/org.ts";
 import type { OrgId } from "./lib/org.ts";
@@ -3612,14 +3612,14 @@ Deno.cron("watchdog", "0 * * * *", async () => {
 // Every Tuesday at 7am: append previous week (Mon–Sun) chargebacks + omissions to Google Sheets.
 Deno.cron("chargebacks-weekly", "0 7 * * 2", async () => {
   try {
-    const saEmail = env.googleServiceAccountEmail;
-    const saKey = env.googlePrivateKey;
+    const sheetsSa = env.sheetsSa;
     const sheetId = env.chargebacksSheetId;
     const orgId = env.chargebacksOrgId as OrgId;
-    if (!saEmail || !saKey || !sheetId || !orgId) {
-      console.log("[CHARGEBACKS-CRON] ⚠️ Missing Google SA creds, sheet ID, or org ID — skipping");
+    if (!sheetsSa || !sheetId || !orgId) {
+      console.log("[CHARGEBACKS-CRON] ⚠️ Missing SHEETS_SA, sheet ID, or org ID — skipping");
       return;
     }
+    const { email: saEmail, privateKey: saKey } = parseSheetsServiceAccount(sheetsSa);
 
     // Running on Tuesday — previous week is Mon (8 days ago) through Sun (yesterday)
     const now = new Date();

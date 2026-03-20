@@ -495,6 +495,24 @@ export interface WebhookConfig {
   bcc?: string;
 }
 
+// ── Sheets Service Account (stored in KV to avoid env var secret scanning) ──
+
+export interface SheetsServiceAccount {
+  email: string;
+  privateKey: string; // base64-encoded PEM
+}
+
+export async function getSheetsServiceAccount(orgId: OrgId): Promise<SheetsServiceAccount | null> {
+  const kv = await db();
+  const v = await kv.get<SheetsServiceAccount>([orgId, "sheets-sa"]);
+  return v.value;
+}
+
+export async function saveSheetsServiceAccount(orgId: OrgId, sa: SheetsServiceAccount): Promise<void> {
+  const kv = await db();
+  await kv.set([orgId, "sheets-sa"], sa);
+}
+
 export type WebhookKind = "terminate" | "appeal" | "manager" | "judge" | "re-audit-receipt";
 
 export async function getWebhookConfig(orgId: OrgId, kind: WebhookKind): Promise<WebhookConfig | null> {

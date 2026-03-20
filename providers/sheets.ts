@@ -1,13 +1,20 @@
-/** Google Sheets API provider using service account JWT auth. */
+/** Google Sheets API provider using service account JWT auth.
+ * Credentials loaded from SHEETS_SA env var (base64 encoded service account JSON).
+ */
 
 function base64url(data: Uint8Array | string): string {
   const str = typeof data === "string" ? data : String.fromCharCode(...data);
   return btoa(str).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
+/** Parse email + private key from base64-encoded service account JSON. */
+export function parseSheetsServiceAccount(b64: string): { email: string; privateKey: string } {
+  const json = JSON.parse(atob(b64));
+  return { email: json.client_email, privateKey: json.private_key };
+}
+
 async function getAccessToken(email: string, privateKeyPem: string): Promise<string> {
-  const pem = atob(privateKeyPem);  // base64-encoded in env var
-  const keyData = pem
+  const keyData = privateKeyPem
     .replace(/-----BEGIN PRIVATE KEY-----/g, "")
     .replace(/-----END PRIVATE KEY-----/g, "")
     .replace(/\s/g, "");

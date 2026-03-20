@@ -2363,7 +2363,7 @@ table { width: 100%; border-collapse: collapse; }
     input.addEventListener('paste', function(e) {
       e.preventDefault();
       var text = (e.clipboardData || window.clipboardData).getData('text');
-      text.split(/[\n,]+/).map(function(s){return s.trim();}).filter(Boolean).forEach(function(p){
+      text.split(/[\\n,]+/).map(function(s){return s.trim();}).filter(Boolean).forEach(function(p){
         if (!chips.includes(p)) chips.push(p);
       });
       input.value = ''; renderChips();

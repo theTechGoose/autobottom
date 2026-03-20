@@ -1860,7 +1860,7 @@ async function handlePreviewViewEmailReport(req: Request): Promise<Response> {
   const previewHtml = await getEmailReportPreview(auth.orgId, id);
   if (!previewHtml) return new Response("Preview expired or not generated yet.", { status: 404, headers: { "content-type": "text/plain" } });
 
-  return new Response(previewHtml, { headers: { "content-type": "text/html; charset=utf-8" } });
+  return new Response(previewHtml.html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
 // -- Admin: Email Templates --

@@ -3612,14 +3612,23 @@ Deno.cron("watchdog", "0 * * * *", async () => {
 // Every Tuesday at 7am: append previous week (Mon–Sun) chargebacks + omissions to Google Sheets.
 Deno.cron("chargebacks-weekly", "0 7 * * 2", async () => {
   try {
-    const sheetsSa = env.sheetsSa;
+    const saS3Key = env.sheetsSaS3Key;
     const sheetId = env.chargebacksSheetId;
     const orgId = env.chargebacksOrgId as OrgId;
-    if (!sheetsSa || !sheetId || !orgId) {
-      console.log("[CHARGEBACKS-CRON] ⚠️ Missing SHEETS_SA, sheet ID, or org ID — skipping");
+    if (!saS3Key || !sheetId || !orgId) {
+      console.log("[CHARGEBACKS-CRON] ⚠️ Missing SHEETS_SA_S3_KEY, sheet ID, or org ID — skipping");
       return;
     }
-    const { email: saEmail, privateKey: saKey } = parseSheetsServiceAccount(sheetsSa);
+    console.log(`[CHARGEBACKS-CRON] 🔍 Fetching SA JSON from S3: ${saS3Key}`);
+    const saBytes = await new S3Ref(env.s3Bucket, saS3Key).get();
+    if (!saBytes) {
+      console.error(`[CHARGEBACKS-CRON] ❌ SA JSON not found in S3 at key: ${saS3Key}`);
+      return;
+    }
+    const saJson = JSON.parse(new TextDecoder().decode(saBytes));
+    const saEmail = saJson.client_email as string;
+    const saKey = saJson.private_key as string;
+    console.log(`[CHARGEBACKS-CRON] ✅ SA loaded for ${saEmail}`);
 
     // Running on Tuesday — previous week is Mon (8 days ago) through Sun (yesterday)
     const now = new Date();

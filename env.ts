@@ -55,8 +55,8 @@ export const env = {
   get fromEmail() { return required("FROM_EMAIL"); },
 
   // Google Sheets (chargebacks cron) — optional, cron skips if not set
-  // SHEETS_SA = base64 encoded service account JSON file
-  get sheetsSa() { return Deno.env.get("SHEETS_SA") ?? ""; },
+  // SHEETS_SA_S3_KEY = S3 object key where service account JSON is stored (e.g. "credentials/sheets-sa.json")
+  get sheetsSaS3Key() { return Deno.env.get("SHEETS_SA_S3_KEY") ?? ""; },
   get chargebacksSheetId() { return Deno.env.get("CHARGEBACKS_SHEET_ID") ?? ""; },
   get chargebacksOrgId() { return Deno.env.get("CHARGEBACKS_ORG_ID") ?? ""; },
 };

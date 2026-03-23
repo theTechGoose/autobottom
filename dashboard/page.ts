@@ -2741,7 +2741,9 @@ table { width: 100%; border-collapse: collapse; }
         .then(function(r){if(!r.ok)return r.json().then(function(e){throw new Error(e.error||'HTTP '+r.status);});return r.text();})
         .then(function(html){
           btnDone(pvBtn,'\uD83D\uDC41 Preview');
-          var w = window.open('','_blank'); w.document.write(html); w.document.close();
+          var w = window.open('','_blank');
+          if (!w) { toast('Allow popups for this site to view the preview','error'); return; }
+          w.document.write(html); w.document.close();
         })
         .catch(function(e){toast(e.message,'error');btnDone(pvBtn,'\uD83D\uDC41 Preview');});
     });

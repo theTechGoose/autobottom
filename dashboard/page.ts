@@ -3606,7 +3606,7 @@ table { width: 100%; border-collapse: collapse; }
   function bwRenderWordRow(w, i) {
     var excls = w.exclusions || [];
     var row = document.createElement('div');
-    row.style.cssText = 'background:#161c28;border:1px solid #1c2333;border-radius:6px;overflow:hidden;margin-bottom:2px;';
+    row.style.cssText = 'background:#161c28;border:1px solid #1c2333;border-radius:6px;overflow:hidden;flex-shrink:0;';
 
     var header = document.createElement('div');
     header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;';

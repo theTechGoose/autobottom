@@ -3831,7 +3831,10 @@ table { width: 100%; border-collapse: collapse; }
     function saveDepts() {
       fetch('/admin/audit-dimensions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ departments: obDepts, shifts: obShifts }) })
         .then(function(r){ return r.json(); })
-        .then(function(d){ if (d.error) toast(d.error, 'error'); })
+        .then(function(d){
+          if (d.error) { toast(d.error, 'error'); return; }
+          if (typeof window.loadScopesTab === 'function') window.loadScopesTab();
+        })
         .catch(function(){ toast('Save failed', 'error'); });
     }
 

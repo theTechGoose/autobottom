@@ -2478,7 +2478,8 @@ table { width: 100%; border-collapse: collapse; }
       var lbl = document.createElement('label'); lbl.className = 'er-col-check';
       if (col.value === 'markedForReview') {
         lbl.classList.add('er-status-col-lbl');
-        if (ocInput.checked) lbl.style.display = 'none';
+        var oc = document.getElementById('er-only-completed');
+        if (oc && oc.checked) lbl.style.display = 'none';
       }
       var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = col.value; cb.checked = defCols.indexOf(col.value) !== -1;
       var sp = document.createElement('span'); sp.textContent = col.label;

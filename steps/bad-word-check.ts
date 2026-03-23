@@ -22,10 +22,15 @@ export async function stepBadWordCheck(req: Request): Promise<Response> {
   const transcript = finding.rawTranscript ?? "";
   const config = await getBadWordConfig(orgId);
 
+  const rawVoName = String(finding.record?.VoName ?? "");
+  const voName = rawVoName.includes(" - ")
+    ? rawVoName.split(" - ").slice(1).join(" - ").trim()
+    : rawVoName.trim();
+
   const ctx = {
     findingId,
     recordId: String(finding.record?.RecordId ?? ""),
-    agentEmail: finding.owner,
+    agentEmail: voName || finding.owner,
     officeName: finding.record?.OfficeName ?? finding.record?.SubOfficeValue,
     guestName: finding.record?.GuestFullName,
     reservationId: String(finding.record?.ReservationId ?? finding.record?.ResPkgId ?? ""),

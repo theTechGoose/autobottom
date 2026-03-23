@@ -15,6 +15,7 @@ import {
 import {
   PipelineConfig as PipelineConfigDto, WebhookConfigDto, BadWordConfig as BadWordConfigDto,
   ReviewerConfig as ReviewerConfigDto, OfficeBypassConfig as OfficeBypassConfigDto,
+  ManagerScopeConfig as ManagerScopeConfigDto,
 } from "./storage/dtos/config.ts";
 import {
   EmailReportConfig as EmailReportConfigDto, EmailTemplate as EmailTemplateDto,
@@ -867,6 +868,35 @@ export async function getOfficeBypassConfig(orgId: OrgId): Promise<OfficeBypassC
 export async function saveOfficeBypassConfig(orgId: OrgId, config: OfficeBypassConfig): Promise<void> {
   const s = await store(OfficeBypassConfigDto);
   await s.set([orgId], config as any);
+}
+
+// ── Manager Scope (department+shift access per manager) ──────────────────────
+
+export interface ManagerScope {
+  departments: string[];
+  shifts: string[];
+}
+
+export async function getManagerScope(orgId: OrgId, managerEmail: string): Promise<ManagerScope> {
+  const s = await store(ManagerScopeConfigDto);
+  const v = await s.get([orgId, managerEmail]);
+  return (v as unknown as ManagerScope) ?? { departments: [], shifts: [] };
+}
+
+export async function saveManagerScope(orgId: OrgId, managerEmail: string, scope: ManagerScope): Promise<void> {
+  const s = await store(ManagerScopeConfigDto);
+  await s.set([orgId, managerEmail], scope as any);
+}
+
+export async function listManagerScopes(orgId: OrgId): Promise<Record<string, ManagerScope>> {
+  const s = await store(ManagerScopeConfigDto);
+  const results = await s.listRaw([orgId]);
+  const out: Record<string, ManagerScope> = {};
+  for (const r of results) {
+    const email = (r.key as string[])[2]; // [__manager-scope-config__, orgId, email]
+    if (email) out[email] = r.value as unknown as ManagerScope;
+  }
+  return out;
 }
 
 // ── Reviewer Config (judge-assigned per-reviewer type limits) ────────────────

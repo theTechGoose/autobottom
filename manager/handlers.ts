@@ -9,7 +9,7 @@ import {
 } from "./kv.ts";
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/kv.ts";
 import type { AuthContext, Role } from "../auth/kv.ts";
-import { getGameState, getEarnedBadges, emitEvent, getAllCompleted } from "../lib/kv.ts";
+import { getGameState, getEarnedBadges, emitEvent, getAllCompleted, getManagerScope } from "../lib/kv.ts";
 import { getManagerPage } from "./page.ts";
 import { getManagerAuditsPage } from "./audits-page.ts";
 
@@ -188,14 +188,6 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
   if (auth.role !== "manager" && auth.role !== "admin") return json({ error: "forbidden" }, 403);
 
-  // Build set of agent emails this manager supervises
-  const allUsers = await listUsers(auth.orgId);
-  const agentEmails = new Set(
-    auth.role === "admin"
-      ? allUsers.map((u) => u.email)
-      : allUsers.filter((u) => u.supervisor === auth.email).map((u) => u.email),
-  );
-
   const url = new URL(req.url);
   const owner = url.searchParams.get("owner") || "";
   const shift = url.searchParams.get("shift") || "";
@@ -208,22 +200,30 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
 
   const windowEntries = await getAllCompleted(auth.orgId, since);
 
-  // Scope to this manager's agents only
-  const agentEntries = windowEntries.filter((c) => agentEmails.has(c.owner ?? ""));
+  // Scope by manager's department+shift configuration; admin sees everything
+  let scopedEntries = windowEntries;
+  if (auth.role === "manager") {
+    const scope = await getManagerScope(auth.orgId, auth.email);
+    scopedEntries = windowEntries.filter((c) => {
+      if (scope.departments.length > 0 && !scope.departments.includes(c.department ?? "")) return false;
+      if (scope.shifts.length > 0 && !scope.shifts.includes(c.shift ?? "")) return false;
+      return true;
+    });
+  }
 
-  const filtered = agentEntries.filter((c) => {
+  const filtered = scopedEntries.filter((c) => {
     if (owner && c.owner !== owner) return false;
     if (shift && c.shift !== shift) return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
     return true;
   });
 
-  const owners = [...new Set(agentEntries.map((c) => c.owner).filter(Boolean))].sort() as string[];
-  const shifts = [...new Set(agentEntries.map((c) => c.shift).filter(Boolean))].sort() as string[];
+  const owners = [...new Set(scopedEntries.map((c) => c.owner).filter(Boolean))].sort() as string[];
+  const shifts = [...new Set(scopedEntries.map((c) => c.shift).filter(Boolean))].sort() as string[];
   const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageItems = filtered.slice((page - 1) * limit, page * limit);
 
-  console.log(`[MANAGER-AUDITS] 🔍 ${auth.email}: ${total}/${agentEntries.length} agent audits in window, page=${page}/${pages}`);
+  console.log(`[MANAGER-AUDITS] 🔍 ${auth.email}: ${total}/${scopedEntries.length} scoped audits in window, page=${page}/${pages}`);
   return json({ items: pageItems, total, pages, page, owners, shifts });
 }

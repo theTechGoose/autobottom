@@ -28,6 +28,7 @@ import {
   getChargebackEntries,
   getBadWordConfig, saveBadWordConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
+  getManagerScope, saveManagerScope, listManagerScopes,
   getAllAnswersForFinding,
   getGamificationSettings, saveGamificationSettings,
   getJudgeGamificationOverride, saveJudgeGamificationOverride,
@@ -287,6 +288,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/email-templates/delete": handleDeleteEmailTemplate,
   "/admin/bad-word-config": handleSaveBadWordConfig,
   "/admin/office-bypass": handleSaveOfficeBypass,
+  "/admin/manager-scopes": handleSaveManagerScope,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -394,6 +396,8 @@ const getRoutes: Record<string, Handler> = {
   "/admin/email-templates/get": handleGetEmailTemplate,
   "/admin/bad-word-config": handleGetBadWordConfig,
   "/admin/office-bypass": handleGetOfficeBypass,
+  "/admin/manager-scopes": handleGetManagerScopes,
+  "/admin/audit-dimensions": handleGetAuditDimensions,
   "/admin/chargebacks": handleGetChargebacks,
   "/docs/index": () => Promise.resolve(html(getDocsIndexHtml())),
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
@@ -1933,6 +1937,37 @@ async function handleSaveOfficeBypass(req: Request): Promise<Response> {
   const body = await req.json();
   await saveOfficeBypassConfig(auth.orgId, body);
   return json({ ok: true });
+}
+
+// -- Admin: Manager Scopes --
+
+async function handleGetManagerScopes(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const scopes = await listManagerScopes(auth.orgId);
+  return json(scopes);
+}
+
+async function handleSaveManagerScope(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  const { email, departments, shifts } = body;
+  if (!email) return json({ error: "email required" }, 400);
+  await saveManagerScope(auth.orgId, email, {
+    departments: Array.isArray(departments) ? departments : [],
+    shifts: Array.isArray(shifts) ? shifts : [],
+  });
+  return json({ ok: true });
+}
+
+async function handleGetAuditDimensions(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const completed = await getAllCompleted(auth.orgId);
+  const departments = [...new Set(completed.map((c) => c.department).filter(Boolean))].sort() as string[];
+  const shifts = [...new Set(completed.map((c) => c.shift).filter(Boolean))].sort() as string[];
+  return json({ departments, shifts });
 }
 
 // -- Admin: Chargebacks & Omissions Report --
@@ -3960,7 +3995,7 @@ Deno.serve(async (req) => {
         const rolePageMap: Record<string, string> = {
           "/judge": "judge", "/judge/dashboard": "judge",
           "/review": "reviewer", "/review/dashboard": "reviewer",
-          "/manager": "manager", "/agent": "user",
+          "/manager": "manager", "/manager/audits": "manager", "/agent": "user",
         };
         const targetRole = rolePageMap[url.pathname];
         if (targetRole && res.headers.get("content-type")?.includes("text/html")) {

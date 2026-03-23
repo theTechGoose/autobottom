@@ -216,11 +216,11 @@ export function getDashboardPage(): string {
   .er-edit-hdr-left { display: flex; align-items: center; }
   .er-edit-actions { display: flex; gap: 6px; align-items: center; }
   .er-table { width: 100%; border-collapse: collapse; }
-  .er-table th { text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); padding: 6px 10px; border-bottom: 1px solid var(--border); }
-  .er-table td { font-size: 12px; padding: 10px 10px; border-bottom: 1px solid rgba(28,35,51,0.4); color: var(--text-muted); vertical-align: middle; }
+  .er-table th { text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .er-table td { font-size: 13px; padding: 10px 10px; border-bottom: 1px solid rgba(28,35,51,0.4); color: var(--text); vertical-align: middle; }
   .er-table tr[data-idx] { cursor: pointer; }
-  .er-table tr[data-idx]:hover td { color: var(--text); background: var(--bg-surface); }
-  .er-table tr.er-disabled td { opacity: 0.45; }
+  .er-table tr[data-idx]:hover td { background: var(--bg-surface); }
+  .er-table tr.er-disabled td { opacity: 0.4; }
   .er-table tr:last-child td { border-bottom: none; }
   .er-empty { text-align: center; color: var(--text-dim); font-style: italic; padding: 32px; font-size: 11px; }
   .er-badge { display: inline-flex; align-items: center; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 7px; border-radius: 10px; margin-left: 6px; }
@@ -2603,19 +2603,19 @@ table { width: 100%; border-collapse: collapse; }
     if (!emailConfigs.length) {
       html += '<div class="er-empty">No reports yet. Click <strong>+ New Report</strong> to create one.</div>';
     } else {
-      html += '<table class="er-table"><thead><tr><th>Name</th><th>Schedule</th><th>Recipients</th><th></th></tr></thead><tbody>';
+      html += '<table class="er-table"><thead><tr><th style="width:50px;">Active</th><th>Name</th><th>Schedule</th><th>Recipients</th><th></th></tr></thead><tbody>';
       emailConfigs.forEach(function(c, i) {
         var dis = !!c.disabled;
         var sched = c.schedule ? erScheduleDesc(c.schedule) : '<span style="color:var(--text-dim);font-style:italic;">No schedule</span>';
         var rc = (c.recipients||[]).length;
         html += '<tr data-idx="'+i+'"'+(dis?' class="er-disabled"':'')+'>'+
-          '<td style="font-weight:600;color:'+(dis?'var(--text-dim)':'var(--text)')+';">'+esc(c.name)+(dis?'<span class="er-badge disabled">Disabled</span>':'')+'</td>'+
+          '<td style="text-align:center;" class="er-cb-cell"><input type="checkbox" class="er-active-cb" data-id="'+c.id+'" data-idx="'+i+'"'+(dis?'':' checked')+'></td>'+
+          '<td style="font-weight:600;">'+esc(c.name)+'</td>'+
           '<td>'+sched+'</td>'+
           '<td>'+rc+' recipient'+(rc!==1?'s':'')+'</td>'+
           '<td><div class="er-row-actions">'+
             '<button class="er-icon-btn er-sn-btn" data-id="'+c.id+'" style="color:var(--blue);">&#9654; Send</button>'+
             '<button class="er-icon-btn er-pv-btn" data-id="'+c.id+'" style="font-size:13px;">&#128065;</button>'+
-            '<button class="er-icon-btn er-tog-btn" data-id="'+c.id+'" data-disabled="'+(dis?'1':'0')+'" style="font-size:10px;font-weight:700;color:'+(dis?'var(--green)':'var(--text-dim)')+';">'+(dis?'Enable':'Disable')+'</button>'+
           '</div></td></tr>';
       });
       html += '</tbody></table>';
@@ -2623,27 +2623,27 @@ table { width: 100%; border-collapse: collapse; }
     erContent.innerHTML = html;
     document.getElementById('er-new').addEventListener('click', function() { renderEREdit(null); });
     erContent.querySelectorAll('tr[data-idx]').forEach(function(row) {
-      row.querySelectorAll('td:not(:last-child)').forEach(function(td) {
+      row.querySelectorAll('td:not(:last-child):not(.er-cb-cell)').forEach(function(td) {
         td.addEventListener('click', function() { renderEREdit(emailConfigs[parseInt(row.dataset.idx)]); });
       });
     });
-    erContent.querySelectorAll('.er-tog-btn').forEach(function(btn) {
-      btn.addEventListener('click', function(e) {
-        e.stopPropagation(); var id = this.dataset.id; var b = this;
-        var isDisabled = b.dataset.disabled === '1';
+    erContent.querySelectorAll('.er-active-cb').forEach(function(cb) {
+      cb.addEventListener('click', function(e) { e.stopPropagation(); });
+      cb.addEventListener('change', function() {
+        var id = this.dataset.id; var active = this.checked;
         var cfg = emailConfigs.find(function(c) { return c.id === id; });
         if (!cfg) return;
-        btnLoad(b, '...');
-        var updated = Object.assign({}, cfg, { disabled: !isDisabled });
+        var updated = Object.assign({}, cfg, { disabled: !active });
         fetch('/admin/email-reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(updated)})
           .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
           .then(function(saved){
             var idx = emailConfigs.findIndex(function(c){return c.id===id;});
             if (idx!==-1) emailConfigs[idx]=saved;
-            toast(isDisabled?'Report enabled':'Report disabled','info');
-            renderERList();
+            var row = cb.closest('tr');
+            if (row) { if(!active) row.classList.add('er-disabled'); else row.classList.remove('er-disabled'); }
+            toast(active?'Report enabled':'Report disabled','info');
           })
-          .catch(function(e){toast(e.message,'error');btnDone(b,isDisabled?'Enable':'Disable');});
+          .catch(function(e){ toast(e.message,'error'); cb.checked = !active; });
       });
     });
     erContent.querySelectorAll('.er-sn-btn').forEach(function(btn) {

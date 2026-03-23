@@ -694,6 +694,7 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const type = url.searchParams.get("type") || "all";
   const owner = url.searchParams.get("owner") || "";
   const department = url.searchParams.get("department") || "";
+  const shift = url.searchParams.get("shift") || "";
   const scoreMin = parseInt(url.searchParams.get("scoreMin") || "0", 10);
   const scoreMax = parseInt(url.searchParams.get("scoreMax") || "100", 10);
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
@@ -711,15 +712,17 @@ async function handleAuditsData(req: Request): Promise<Response> {
     if (until && c.ts > until) return false;
     if (type === "date-leg" && c.isPackage) return false;
     if (type === "package" && !c.isPackage) return false;
-    if (owner && c.owner !== owner) return false;
+    if (owner && (c.voName || c.owner) !== owner) return false;
     if (department && c.department !== department) return false;
+    if (shift && c.shift !== shift) return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
     return true;
   });
 
   // Dropdown options come from the full window (unfiltered), so selections stay visible
-  const owners = [...new Set(windowEntries.map((c) => c.owner).filter(Boolean))].sort() as string[];
+  const owners = [...new Set(windowEntries.map((c) => c.voName || c.owner).filter(Boolean))].sort() as string[];
   const departments = [...new Set(windowEntries.map((c) => c.department).filter(Boolean))].sort() as string[];
+  const shifts = [...new Set(windowEntries.map((c) => c.shift).filter(Boolean))].sort() as string[];
   const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageItems = filtered.slice((page - 1) * limit, page * limit);
@@ -727,8 +730,8 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const reviewedIds = await getReviewedFindingIds(auth.orgId);
   const items = pageItems.map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
 
-  console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}`);
-  return json({ items, total, pages, page, owners, departments });
+  console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}, shift=${shift || "all"}`);
+  return json({ items, total, pages, page, owners, departments, shifts });
 }
 
 async function handleAuditsPage(req: Request): Promise<Response> {
@@ -812,6 +815,9 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
   <label>Department
     <select id="f-dept"><option value="">All Departments</option></select>
   </label>
+  <label>Shift
+    <select id="f-shift"><option value="">All Shifts</option></select>
+  </label>
   <label>Min Score %
     <input type="number" id="f-score-min" value="0" min="0" max="100" style="width:70px">
   </label>
@@ -834,7 +840,7 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
 </div>
 <script>
 var WINDOW_HOURS = 24;
-var state = { page: 1, type: 'all', owner: '', department: '', scoreMin: 0, scoreMax: 100, limit: 50, customStart: null, customEnd: null };
+var state = { page: 1, type: 'all', owner: '', department: '', shift: '', scoreMin: 0, scoreMax: 100, limit: 50, customStart: null, customEnd: null };
 var logsBase = null;
 var hm = window.location.hostname.match(/^([^.]+)\\.([^.]+)\\.deno\\.net$/);
 if (hm) logsBase = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/observability/logs?query=';
@@ -865,13 +871,14 @@ function setWindow(h){
   // Reset dropdowns so they repopulate for new window
   var ow=document.getElementById('f-owner');while(ow.options.length>1)ow.remove(1);
   var dw=document.getElementById('f-dept');while(dw.options.length>1)dw.remove(1);
-  state.owner='';state.department='';state.page=1;
-  ow.value='';dw.value='';
+  var sw=document.getElementById('f-shift');while(sw.options.length>1)sw.remove(1);
+  state.owner='';state.department='';state.shift='';state.page=1;
+  ow.value='';dw.value='';sw.value='';
 }
 
 function load(){
   var since=state.customStart!==null?state.customStart:Date.now()-WINDOW_HOURS*3600000;
-  var p={type:state.type,owner:state.owner,department:state.department,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit,since:since};
+  var p={type:state.type,owner:state.owner,department:state.department,shift:state.shift,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit,since:since};
   if(state.customEnd!==null)p.until=state.customEnd;
   var params=new URLSearchParams(p);
   document.getElementById('tbl-body').innerHTML='<div class="loading">Loading...</div>';
@@ -882,13 +889,18 @@ function load(){
       var ow=document.getElementById('f-owner');
       var curO=state.owner;
       while(ow.options.length>1)ow.remove(1);
-      d.owners.forEach(function(o){var opt=document.createElement('option');opt.value=o;opt.textContent=o.split('@')[0];ow.appendChild(opt)});
+      d.owners.forEach(function(o){var opt=document.createElement('option');opt.value=o;opt.textContent=o;ow.appendChild(opt)});
       if(curO)ow.value=curO;
       var dw=document.getElementById('f-dept');
       var curD=state.department;
       while(dw.options.length>1)dw.remove(1);
       d.departments.forEach(function(dep){var opt=document.createElement('option');opt.value=dep;opt.textContent=dep;dw.appendChild(opt)});
       if(curD)dw.value=curD;
+      var sw=document.getElementById('f-shift');
+      var curS=state.shift;
+      while(sw.options.length>1)sw.remove(1);
+      (d.shifts||[]).forEach(function(s){var opt=document.createElement('option');opt.value=s;opt.textContent=s;sw.appendChild(opt)});
+      if(curS)sw.value=curS;
       renderStats(d);
       renderTable(d);
       renderPagination(d);
@@ -946,12 +958,13 @@ document.getElementById('apply-btn').onclick=function(){
   state.type=document.getElementById('f-type').value;
   state.owner=document.getElementById('f-owner').value;
   state.department=document.getElementById('f-dept').value;
+  state.shift=document.getElementById('f-shift').value;
   state.scoreMin=parseInt(document.getElementById('f-score-min').value,10)||0;
   state.scoreMax=parseInt(document.getElementById('f-score-max').value,10)||100;
   state.page=1;load();
 };
 document.getElementById('reset-btn').onclick=function(){
-  state={page:1,type:'all',owner:'',department:'',scoreMin:0,scoreMax:100,limit:50};
+  state={page:1,type:'all',owner:'',department:'',shift:'',scoreMin:0,scoreMax:100,limit:50};
   document.getElementById('f-type').value='all';
   document.getElementById('f-score-min').value=0;
   document.getElementById('f-score-max').value=100;
@@ -961,6 +974,7 @@ document.getElementById('reset-btn').onclick=function(){
 document.getElementById('f-type').onchange=function(){state.type=this.value;state.page=1;load()};
 document.getElementById('f-owner').onchange=function(){state.owner=this.value;state.page=1;load()};
 document.getElementById('f-dept').onchange=function(){state.department=this.value;state.page=1;load()};
+document.getElementById('f-shift').onchange=function(){state.shift=this.value;state.page=1;load()};
 document.querySelectorAll('.window-btn').forEach(function(btn){
   btn.addEventListener('click',function(){setWindow(+this.getAttribute('data-hours'));load();});
 });
@@ -977,7 +991,8 @@ document.getElementById('f-date-go').addEventListener('click',function(){
   document.getElementById('f-date-clear').style.display='';
   var ow=document.getElementById('f-owner');while(ow.options.length>1)ow.remove(1);
   var dw=document.getElementById('f-dept');while(dw.options.length>1)dw.remove(1);
-  state.owner='';state.department='';ow.value='';dw.value='';
+  var sw2=document.getElementById('f-shift');while(sw2.options.length>1)sw2.remove(1);
+  state.owner='';state.department='';state.shift='';ow.value='';dw.value='';sw2.value='';
   load();
 });
 document.getElementById('f-date-clear').addEventListener('click',function(){setWindow(24);load();});

@@ -228,7 +228,13 @@ export interface ChargebackEntry {
 
 export async function saveChargebackEntry(orgId: OrgId, entry: ChargebackEntry): Promise<void> {
   const s = await store(ChargebackEntryDto);
-  await s.set([orgId, `${entry.ts}-${entry.findingId}`], entry as any);
+  // Key by findingId so re-audits overwrite the previous entry for the same finding.
+  await s.set([orgId, entry.findingId], entry as any);
+}
+
+export async function deleteChargebackEntry(orgId: OrgId, findingId: string): Promise<void> {
+  const s = await store(ChargebackEntryDto);
+  await s.delete([orgId, findingId]);
 }
 
 export async function getChargebackEntries(orgId: OrgId, since: number, until: number): Promise<ChargebackEntry[]> {
@@ -237,9 +243,7 @@ export async function getChargebackEntries(orgId: OrgId, since: number, until: n
   const items: ChargebackEntry[] = [];
   for (const r of results) {
     const v = r.value as unknown as ChargebackEntry;
-    if (v.ts > until) continue;
-    if (v.ts < since) break;
-    items.push(v);
+    if (v.ts >= since && v.ts <= until) items.push(v);
   }
   return items;
 }

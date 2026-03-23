@@ -2956,7 +2956,9 @@ table { width: 100%; border-collapse: collapse; }
     erModal.classList.add('open');
     Promise.all([loadEmailConfigs(), loadERTemplates()]).then(function(){ renderERList(); }).catch(function(){ renderERList(); });
   });
-  erModal.addEventListener('click', function(e) { if (e.target === erModal) erModal.classList.remove('open'); });
+  var erModalDownOnBackdrop = false;
+  erModal.addEventListener('mousedown', function(e) { erModalDownOnBackdrop = e.target === erModal; });
+  erModal.addEventListener('click', function(e) { if (erModalDownOnBackdrop && e.target === erModal) erModal.classList.remove('open'); });
 
   // ===== Email Templates =====
   console.log('[ET] init — openModal:', typeof openModal, '| backdropClose:', typeof backdropClose, '| closeModal:', typeof closeModal);

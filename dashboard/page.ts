@@ -429,10 +429,10 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
-      <!-- Office Bypass (opens modal) -->
+      <!-- Offices (opens modal) -->
       <div class="sb-link" id="office-bypass-open">
-        <div class="icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.x}</div>
-        <span class="title">Office Bypass</span>
+        <div class="icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.clipboardList}</div>
+        <span class="title">Offices</span>
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
@@ -467,6 +467,11 @@ table { width: 100%; border-collapse: collapse; }
 
     <div class="sb-section">
       <div class="sb-label">Impersonate</div>
+      <div class="sb-link" id="impersonate-user-open">
+        <div class="icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.userCog}</div>
+        <span class="title">Specific User</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
       <div class="sb-rv-wrap" id="rv-wrap">
         <div class="sb-link">
           <div class="icon rv">${icons.users}</div>
@@ -939,50 +944,67 @@ table { width: 100%; border-collapse: collapse; }
 
 <!-- Office Bypass Modal -->
 <div class="modal-overlay" id="office-bypass-modal">
-  <div class="modal" style="width:500px;">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title">Office Bypass</div>
-        <div class="modal-sub">Offices matching these patterns skip the review queue and audit emails entirely. Case-insensitive substring match.</div>
+  <div class="modal" style="width:620px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div class="modal-title" style="margin-bottom:0;">Offices</div>
+      <div style="display:flex;gap:4px;" id="ob-tabs">
+        <button class="sf-btn ghost um-tab active" data-tab="offices" style="font-size:10px;padding:4px 10px;">Offices</button>
+        <button class="sf-btn ghost um-tab" data-tab="bypass" style="font-size:10px;padding:4px 10px;">Bypass</button>
       </div>
-      <button class="sf-btn ghost" id="office-bypass-cancel">Close</button>
     </div>
-    <div class="modal-body">
-      <div class="modal-sub" style="margin-bottom:10px;">Add an office name pattern (e.g. <strong>JAY</strong> matches JAY312, JAY-EAST, etc.)</div>
+    <div class="modal-sub">Manage known offices and configure which ones skip review and audit emails</div>
+
+    <!-- Offices Tab -->
+    <div id="ob-offices-tab">
       <div style="display:flex;gap:6px;margin-bottom:12px;">
-        <input id="ob-input" class="sf-input" type="text" placeholder="e.g. JAY" style="flex:1;">
-        <button class="sf-btn primary" id="ob-add-btn">Add</button>
+        <input id="ob-dept-input" class="sf-input" type="text" placeholder="Add office name (e.g. JAY777)" style="flex:1;font-size:12px;">
+        <button class="sf-btn primary" id="ob-dept-add-btn" style="font-size:11px;padding:8px 14px;">Add</button>
       </div>
-      <div id="ob-list" style="display:flex;flex-direction:column;gap:6px;min-height:40px;"></div>
+      <div id="ob-dept-list" style="display:flex;flex-wrap:wrap;gap:6px;min-height:40px;max-height:260px;overflow-y:auto;padding:4px 0;"></div>
     </div>
-    <div class="sf-actions" style="margin-top:16px;justify-content:flex-end;">
-      <button class="sf-btn ghost" id="office-bypass-cancel2">Cancel</button>
-      <button class="sf-btn primary" id="ob-save-btn">Save</button>
+
+    <!-- Bypass Tab -->
+    <div id="ob-bypass-tab" style="display:none;">
+      <div class="modal-sub" style="margin-bottom:10px;">Offices matching these patterns skip the review queue and audit emails. Case-insensitive substring match.</div>
+      <div style="display:flex;gap:6px;margin-bottom:12px;">
+        <input id="ob-input" class="sf-input" type="text" placeholder="e.g. JAY" style="flex:1;font-size:12px;">
+        <button class="sf-btn primary" id="ob-add-btn" style="font-size:11px;padding:8px 14px;">Add</button>
+      </div>
+      <div id="ob-list" style="display:flex;flex-direction:column;gap:6px;min-height:40px;max-height:260px;overflow-y:auto;"></div>
+      <div class="modal-actions" style="margin-top:16px;padding-top:12px;">
+        <button class="sf-btn ghost" id="office-bypass-cancel2">Cancel</button>
+        <button class="sf-btn primary" id="ob-save-btn">Save Bypass</button>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:12px;" id="ob-offices-actions">
+      <button class="sf-btn secondary" id="office-bypass-cancel">Close</button>
     </div>
   </div>
 </div>
 
 <!-- Users Modal -->
 <div class="modal-overlay" id="users-modal">
-  <div class="modal" style="width:560px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+  <div class="modal" style="width:min(900px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-shrink:0;">
       <div class="modal-title" style="margin-bottom:0;">Team</div>
       <div style="display:flex;gap:4px;" id="um-tabs">
         <button class="sf-btn ghost um-tab active" data-tab="list" style="font-size:10px;padding:4px 10px;">Members</button>
         <button class="sf-btn ghost um-tab" data-tab="add" style="font-size:10px;padding:4px 10px;">+ Add</button>
+        <button class="sf-btn ghost um-tab" data-tab="scopes" style="font-size:10px;padding:4px 10px;">Manager Scopes</button>
       </div>
     </div>
-    <div class="modal-sub">Manage your organization's users and roles</div>
+    <div class="modal-sub" style="flex-shrink:0;">Manage your organization's users, roles, and manager access scopes</div>
 
     <!-- Members List Tab -->
-    <div id="um-list-tab">
-      <div id="um-user-list" style="max-height:340px;overflow-y:auto;margin-bottom:12px;">
+    <div id="um-list-tab" style="overflow-y:auto;flex:1;min-height:0;">
+      <div id="um-user-list" style="max-height:400px;overflow-y:auto;margin-bottom:12px;">
         <div style="text-align:center;padding:24px;color:var(--text-dim);font-size:11px;">Loading...</div>
       </div>
     </div>
 
     <!-- Add User Tab -->
-    <div id="um-add-tab" style="display:none;">
+    <div id="um-add-tab" style="display:none;overflow-y:auto;flex:1;min-height:0;">
       <!-- Role Selection -->
       <div class="modal-group">
         <div class="modal-group-title">1. Choose Role</div>
@@ -1005,7 +1027,7 @@ table { width: 100%; border-collapse: collapse; }
             <span class="um-role-icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.clipboardList}</span>
             <span class="um-role-info">
               <span class="um-role-name">Manager</span>
-              <span class="um-role-desc">Remediates failures. Owns reviewers.</span>
+              <span class="um-role-desc">Remediates failures. Scoped by dept+shift.</span>
             </span>
           </button>
           <button class="um-role" data-role="reviewer">
@@ -1019,7 +1041,7 @@ table { width: 100%; border-collapse: collapse; }
             <span class="um-role-icon" style="background:var(--cyan-bg);color:var(--cyan);">${icons.headset}</span>
             <span class="um-role-info">
               <span class="um-role-name">Agent</span>
-              <span class="um-role-desc">Call center agent. Scoped to manager.</span>
+              <span class="um-role-desc">Call center agent.</span>
             </span>
           </button>
         </div>
@@ -1051,8 +1073,80 @@ table { width: 100%; border-collapse: collapse; }
       <button class="sf-btn primary" id="a-adduser" style="width:100%;padding:10px;font-size:12px;border-radius:8px;">Create&nbsp;<span id="um-btn-role">Admin</span></button>
     </div>
 
-    <div class="modal-actions" style="margin-top:12px;">
+    <!-- Manager Scopes Tab -->
+    <div id="um-scopes-tab" style="display:none;flex:1;min-height:0;overflow:hidden;">
+      <div style="display:flex;gap:16px;height:440px;">
+        <!-- Manager list (left) -->
+        <div style="width:220px;flex-shrink:0;border:1px solid var(--border);border-radius:8px;overflow-y:auto;">
+          <div style="padding:8px 12px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-raised);z-index:1;">Managers</div>
+          <div id="um-scope-manager-list">
+            <div style="padding:20px 12px;text-align:center;color:var(--text-dim);font-size:11px;">Loading...</div>
+          </div>
+        </div>
+        <!-- Scope editor (right) -->
+        <div style="flex:1;min-width:0;">
+          <div id="um-scope-editor-empty" style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:12px;">Select a manager to configure their scope</div>
+          <div id="um-scope-editor" style="display:none;height:100%;flex-direction:column;gap:16px;">
+            <div style="font-size:13px;font-weight:700;color:var(--text-bright);" id="um-scope-email-label">—</div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:-8px;">Leave a section empty to allow all values in that dimension.</div>
+
+            <div>
+              <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:8px;">Departments</div>
+              <div id="um-scope-dept-tags" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:24px;"></div>
+              <div style="display:flex;gap:6px;">
+                <select class="sf-input" id="um-scope-dept-select" style="flex:1;font-size:12px;padding:7px 10px;">
+                  <option value="">-- add department --</option>
+                </select>
+                <input type="text" class="sf-input" id="um-scope-dept-custom" placeholder="or type custom…" style="flex:1;font-size:12px;padding:7px 10px;">
+                <button class="sf-btn secondary" id="um-scope-dept-add" style="font-size:11px;padding:7px 12px;flex-shrink:0;">Add</button>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:8px;">Shifts</div>
+              <div id="um-scope-shift-tags" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:24px;"></div>
+              <div style="display:flex;gap:6px;">
+                <select class="sf-input" id="um-scope-shift-select" style="flex:1;font-size:12px;padding:7px 10px;">
+                  <option value="">-- add shift --</option>
+                </select>
+                <input type="text" class="sf-input" id="um-scope-shift-custom" placeholder="or type custom…" style="flex:1;font-size:12px;padding:7px 10px;">
+                <button class="sf-btn secondary" id="um-scope-shift-add" style="font-size:11px;padding:7px 12px;flex-shrink:0;">Add</button>
+              </div>
+            </div>
+
+            <div style="margin-top:auto;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:8px;">
+              <button class="sf-btn primary" id="um-scope-save-btn" style="font-size:12px;padding:9px 20px;">Save Scope</button>
+              <span id="um-scope-saved" style="display:none;font-size:11px;color:var(--green);align-self:center;">Saved!</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:12px;flex-shrink:0;">
       <button class="sf-btn secondary" id="users-cancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Impersonate User Modal -->
+<div class="modal-overlay" id="impersonate-modal">
+  <div class="modal" style="width:480px;">
+    <div class="modal-title">Impersonate User</div>
+    <div class="modal-sub">Navigate to that user's portal as if you are them. All API calls will use their identity.</div>
+    <div style="margin-bottom:16px;">
+      <label class="sf-label" style="margin-bottom:6px;display:block;">Select User</label>
+      <select class="sf-input" id="imp-user-select" style="width:100%;font-size:13px;">
+        <option value="">-- choose a user --</option>
+      </select>
+    </div>
+    <div id="imp-user-info" style="display:none;padding:10px 12px;border-radius:8px;background:var(--bg);border:1px solid var(--border);margin-bottom:16px;font-size:12px;color:var(--text-dim);">
+      <span id="imp-user-role-badge" style="font-weight:700;"></span>
+      <span id="imp-user-dest" style="margin-left:8px;"></span>
+    </div>
+    <div class="modal-actions" style="margin-top:0;">
+      <button class="sf-btn secondary" id="imp-cancel">Cancel</button>
+      <button class="sf-btn primary" id="imp-go-btn" disabled>Go →</button>
     </div>
   </div>
 </div>
@@ -1830,7 +1924,212 @@ table { width: 100%; border-collapse: collapse; }
     var which = tab.getAttribute('data-tab');
     document.getElementById('um-list-tab').style.display = which === 'list' ? '' : 'none';
     document.getElementById('um-add-tab').style.display = which === 'add' ? '' : 'none';
+    document.getElementById('um-scopes-tab').style.display = which === 'scopes' ? '' : 'none';
+    if (which === 'scopes') loadScopesTab();
   });
+
+  // ===== Manager Scopes Tab =====
+  (function() {
+    var allScopes = {};
+    var allDimDepts = [];
+    var allDimShifts = [];
+    var selectedManager = null;
+    var currentDepts = [];
+    var currentShifts = [];
+
+    function loadScopesTab() {
+      Promise.all([
+        fetch('/admin/manager-scopes').then(function(r){return r.json()}),
+        fetch('/admin/audit-dimensions').then(function(r){return r.json()}),
+      ]).then(function(results) {
+        allScopes = results[0] || {};
+        var dims = results[1] || {};
+        allDimDepts = dims.departments || [];
+        allDimShifts = dims.shifts || [];
+        renderManagerList();
+        populateDimDropdowns();
+      }).catch(function(e) {
+        console.error('[SCOPES] load error', e);
+      });
+    }
+    window.loadScopesTab = loadScopesTab;
+
+    function renderManagerList() {
+      var managers = allUsers.filter(function(u){ return u.role === 'manager'; });
+      var el = document.getElementById('um-scope-manager-list');
+      if (!managers.length) {
+        el.innerHTML = '<div style="padding:16px 12px;text-align:center;color:var(--text-dim);font-size:11px;">No managers yet</div>';
+        return;
+      }
+      var html = '';
+      for (var i = 0; i < managers.length; i++) {
+        var m = managers[i];
+        var hasScope = allScopes[m.email] && (allScopes[m.email].departments.length || allScopes[m.email].shifts.length);
+        html += '<div class="um-user-row scope-mgr-row" data-email="' + esc(m.email) + '" style="cursor:pointer;' + (selectedManager === m.email ? 'background:var(--bg-surface);' : '') + '">'
+          + '<div class="um-user-info"><div class="um-user-email" style="font-size:10px;">' + esc(m.email) + '</div>'
+          + '<div class="um-user-meta">' + (hasScope ? 'scope configured' : 'no scope — sees all') + '</div></div>'
+          + (hasScope ? '<div style="width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0;"></div>' : '<div style="width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0;"></div>')
+          + '</div>';
+      }
+      el.innerHTML = html;
+      el.querySelectorAll('.scope-mgr-row').forEach(function(row) {
+        row.addEventListener('click', function() {
+          selectedManager = this.getAttribute('data-email');
+          var scope = allScopes[selectedManager] || { departments: [], shifts: [] };
+          currentDepts = scope.departments.slice();
+          currentShifts = scope.shifts.slice();
+          renderManagerList();
+          showScopeEditor();
+        });
+      });
+    }
+
+    function populateDimDropdowns() {
+      var dSel = document.getElementById('um-scope-dept-select');
+      var sSel = document.getElementById('um-scope-shift-select');
+      dSel.innerHTML = '<option value="">-- add department --</option>'
+        + allDimDepts.map(function(d){ return '<option value="' + esc(d) + '">' + esc(d) + '</option>'; }).join('');
+      sSel.innerHTML = '<option value="">-- add shift --</option>'
+        + allDimShifts.map(function(s){ return '<option value="' + esc(s) + '">' + esc(s) + '</option>'; }).join('');
+    }
+
+    function renderTag(value, list, renderFn) {
+      if (!list.includes(value)) { list.push(value); renderFn(); }
+    }
+
+    function renderDeptTags() {
+      var el = document.getElementById('um-scope-dept-tags');
+      el.innerHTML = currentDepts.map(function(d) {
+        return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:var(--blue-bg);color:var(--blue);font-size:11px;font-weight:600;">'
+          + esc(d) + '<button style="background:none;border:none;cursor:pointer;color:var(--blue);font-size:12px;line-height:1;padding:0 0 0 2px;" data-val="' + esc(d) + '" class="rm-dept-tag">&times;</button></span>';
+      }).join('');
+      el.querySelectorAll('.rm-dept-tag').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          currentDepts = currentDepts.filter(function(x){ return x !== btn.getAttribute('data-val'); });
+          renderDeptTags();
+        });
+      });
+    }
+
+    function renderShiftTags() {
+      var el = document.getElementById('um-scope-shift-tags');
+      el.innerHTML = currentShifts.map(function(s) {
+        return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:var(--green-bg);color:var(--green);font-size:11px;font-weight:600;">'
+          + esc(s) + '<button style="background:none;border:none;cursor:pointer;color:var(--green);font-size:12px;line-height:1;padding:0 0 0 2px;" data-val="' + esc(s) + '" class="rm-shift-tag">&times;</button></span>';
+      }).join('');
+      el.querySelectorAll('.rm-shift-tag').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          currentShifts = currentShifts.filter(function(x){ return x !== btn.getAttribute('data-val'); });
+          renderShiftTags();
+        });
+      });
+    }
+
+    function showScopeEditor() {
+      document.getElementById('um-scope-editor-empty').style.display = 'none';
+      var editor = document.getElementById('um-scope-editor');
+      editor.style.display = 'flex';
+      document.getElementById('um-scope-email-label').textContent = selectedManager;
+      document.getElementById('um-scope-saved').style.display = 'none';
+      renderDeptTags();
+      renderShiftTags();
+    }
+
+    document.getElementById('um-scope-dept-add').addEventListener('click', function() {
+      var sel = document.getElementById('um-scope-dept-select');
+      var custom = document.getElementById('um-scope-dept-custom');
+      var val = (custom.value.trim() || sel.value).trim();
+      if (!val) return;
+      renderTag(val, currentDepts, renderDeptTags);
+      custom.value = ''; sel.value = '';
+    });
+
+    document.getElementById('um-scope-shift-add').addEventListener('click', function() {
+      var sel = document.getElementById('um-scope-shift-select');
+      var custom = document.getElementById('um-scope-shift-custom');
+      var val = (custom.value.trim() || sel.value).trim();
+      if (!val) return;
+      renderTag(val, currentShifts, renderShiftTags);
+      custom.value = ''; sel.value = '';
+    });
+
+    document.getElementById('um-scope-save-btn').addEventListener('click', function() {
+      if (!selectedManager) return;
+      var btn = this;
+      btn.disabled = true;
+      fetch('/admin/manager-scopes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: selectedManager, departments: currentDepts, shifts: currentShifts }),
+      }).then(function(r){ return r.json(); }).then(function(d) {
+        btn.disabled = false;
+        if (d.error) { toast(d.error, 'error'); return; }
+        allScopes[selectedManager] = { departments: currentDepts.slice(), shifts: currentShifts.slice() };
+        document.getElementById('um-scope-saved').style.display = 'inline';
+        setTimeout(function(){ document.getElementById('um-scope-saved').style.display = 'none'; }, 2000);
+        renderManagerList();
+      }).catch(function() { btn.disabled = false; toast('Save failed', 'error'); });
+    });
+  })();
+
+  // ===== Impersonate User Modal =====
+  (function() {
+    var roleHome = { admin: '/admin/dashboard', judge: '/judge', manager: '/manager', reviewer: '/review', user: '/agent' };
+    var roleColors = { admin: 'blue', judge: 'purple', manager: 'yellow', reviewer: 'green', user: 'cyan' };
+
+    function openImpModal() {
+      var sel = document.getElementById('imp-user-select');
+      sel.innerHTML = '<option value="">-- choose a user --</option>';
+      var order = ['admin','judge','manager','reviewer','user'];
+      var sorted = allUsers.slice().sort(function(a,b){ return order.indexOf(a.role)-order.indexOf(b.role); });
+      sorted.forEach(function(u) {
+        var opt = document.createElement('option');
+        opt.value = u.email;
+        opt.textContent = u.email + ' (' + (u.role === 'user' ? 'agent' : u.role) + ')';
+        sel.appendChild(opt);
+      });
+      document.getElementById('imp-user-info').style.display = 'none';
+      document.getElementById('imp-go-btn').disabled = true;
+      openModal('impersonate-modal');
+    }
+
+    document.getElementById('impersonate-user-open').addEventListener('click', function() {
+      if (!allUsers.length) {
+        fetchUsers().then(openImpModal);
+      } else {
+        openImpModal();
+      }
+    });
+
+    document.getElementById('imp-user-select').addEventListener('change', function() {
+      var email = this.value;
+      var info = document.getElementById('imp-user-info');
+      var badge = document.getElementById('imp-user-role-badge');
+      var dest = document.getElementById('imp-user-dest');
+      var goBtn = document.getElementById('imp-go-btn');
+      if (!email) { info.style.display = 'none'; goBtn.disabled = true; return; }
+      var u = allUsers.find(function(x){ return x.email === email; });
+      if (!u) return;
+      var c = roleColors[u.role] || 'blue';
+      info.style.display = '';
+      badge.style.color = 'var(--' + c + ')';
+      badge.textContent = u.role === 'user' ? 'Agent' : u.role.charAt(0).toUpperCase() + u.role.slice(1);
+      dest.textContent = 'Will open: ' + (roleHome[u.role] || '/') + '?as=' + email;
+      goBtn.disabled = false;
+    });
+
+    document.getElementById('imp-go-btn').addEventListener('click', function() {
+      var email = document.getElementById('imp-user-select').value;
+      if (!email) return;
+      var u = allUsers.find(function(x){ return x.email === email; });
+      var home = u ? (roleHome[u.role] || '/') : '/';
+      window.open(home + '?as=' + encodeURIComponent(email), '_blank');
+      closeModal('impersonate-modal');
+    });
+
+    document.getElementById('imp-cancel').addEventListener('click', function() { closeModal('impersonate-modal'); });
+    backdropClose('impersonate-modal');
+  })();
 
   // ===== Role Views Flyout =====
   (function() {
@@ -3397,58 +3696,119 @@ table { width: 100%; border-collapse: collapse; }
       .finally(function() { btn.disabled = false; btn.textContent = 'Save Changes'; });
   });
 
-  // ===== Office Bypass =====
-  var obPatterns = [];
+  // ===== Offices Modal (tabbed) =====
+  (function() {
+    var obPatterns = [];
+    var obDepts = [];
 
-  function obRenderList() {
-    var el = document.getElementById('ob-list');
-    if (!obPatterns.length) {
-      el.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:6px 0;">No patterns — all offices go through review and receive emails.</div>';
-      return;
+    // Tab switching
+    document.getElementById('ob-tabs').addEventListener('click', function(e) {
+      var tab = e.target.closest('.um-tab');
+      if (!tab) return;
+      this.querySelectorAll('.um-tab').forEach(function(t){t.classList.remove('active');});
+      tab.classList.add('active');
+      var which = tab.getAttribute('data-tab');
+      document.getElementById('ob-offices-tab').style.display = which === 'offices' ? '' : 'none';
+      document.getElementById('ob-bypass-tab').style.display = which === 'bypass' ? '' : 'none';
+      document.getElementById('ob-offices-actions').style.display = which === 'offices' ? '' : 'none';
+    });
+
+    function obRenderDeptList() {
+      var el = document.getElementById('ob-dept-list');
+      if (!obDepts.length) {
+        el.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:6px 0;">No offices yet. Add one above.</div>';
+        return;
+      }
+      el.innerHTML = obDepts.map(function(d) {
+        return '<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;background:var(--bg-surface);border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text);">'
+          + esc(d)
+          + '<button style="background:none;border:none;cursor:pointer;color:var(--text-dim);font-size:13px;line-height:1;padding:0 0 0 4px;" data-val="' + esc(d) + '" class="ob-rm-dept">&times;</button></span>';
+      }).join('');
+      el.querySelectorAll('.ob-rm-dept').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          obDepts = obDepts.filter(function(x){ return x !== btn.getAttribute('data-val'); });
+          obRenderDeptList();
+          saveDepts();
+        });
+      });
     }
-    el.innerHTML = obPatterns.map(function(p, i) {
-      return '<div style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;">' +
-        '<span style="flex:1;font-size:12px;font-family:var(--mono);color:var(--yellow);">' + p + '</span>' +
-        '<button class="sf-btn ghost" style="font-size:10px;padding:2px 8px;" data-idx="' + i + '">Remove</button>' +
-        '</div>';
-    }).join('');
-    el.querySelectorAll('[data-idx]').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        obPatterns.splice(parseInt(this.getAttribute('data-idx'), 10), 1);
-        obRenderList();
+
+    var obShifts = [];
+    function saveDepts() {
+      fetch('/admin/audit-dimensions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ departments: obDepts, shifts: obShifts }) })
+        .then(function(r){ return r.json(); })
+        .then(function(d){ if (d.error) toast(d.error, 'error'); })
+        .catch(function(){ toast('Save failed', 'error'); });
+    }
+
+    function obRenderBypassList() {
+      var el = document.getElementById('ob-list');
+      if (!obPatterns.length) {
+        el.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:6px 0;">No patterns — all offices go through review and receive emails.</div>';
+        return;
+      }
+      el.innerHTML = obPatterns.map(function(p, i) {
+        return '<div style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;">' +
+          '<span style="flex:1;font-size:12px;font-family:var(--mono);color:var(--yellow);">' + esc(p) + '</span>' +
+          '<button class="sf-btn ghost" style="font-size:10px;padding:2px 8px;" data-idx="' + i + '">Remove</button>' +
+          '</div>';
+      }).join('');
+      el.querySelectorAll('[data-idx]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          obPatterns.splice(parseInt(this.getAttribute('data-idx'), 10), 1);
+          obRenderBypassList();
+        });
+      });
+    }
+
+    document.getElementById('office-bypass-open').addEventListener('click', function() {
+      openModal('office-bypass-modal');
+      Promise.all([
+        fetch('/admin/audit-dimensions').then(function(r){ return r.json(); }),
+        fetch('/admin/office-bypass').then(function(r){ return r.json(); }),
+      ]).then(function(results) {
+        var dims = results[0] || {};
+        obDepts = Array.isArray(dims.departments) ? dims.departments.slice() : [];
+        obShifts = Array.isArray(dims.shifts) ? dims.shifts.slice() : [];
+        obRenderDeptList();
+        obPatterns = Array.isArray(results[1].patterns) ? results[1].patterns : [];
+        obRenderBypassList();
       });
     });
-  }
 
-  document.getElementById('office-bypass-open').addEventListener('click', function() {
-    openModal('office-bypass-modal');
-    fetch('/admin/office-bypass').then(function(r) { return r.json(); }).then(function(d) {
-      obPatterns = Array.isArray(d.patterns) ? d.patterns : [];
-      obRenderList();
+    document.getElementById('office-bypass-cancel').addEventListener('click', function() { closeModal('office-bypass-modal'); });
+    document.getElementById('office-bypass-cancel2').addEventListener('click', function() { closeModal('office-bypass-modal'); });
+    backdropClose('office-bypass-modal');
+
+    document.getElementById('ob-dept-add-btn').addEventListener('click', function() {
+      var val = document.getElementById('ob-dept-input').value.trim().toUpperCase();
+      if (!val) return;
+      if (obDepts.indexOf(val) === -1) { obDepts.push(val); obDepts.sort(); }
+      document.getElementById('ob-dept-input').value = '';
+      obRenderDeptList();
+      saveDepts();
     });
-  });
-  document.getElementById('office-bypass-cancel').addEventListener('click', function() { closeModal('office-bypass-modal'); });
-  document.getElementById('office-bypass-cancel2').addEventListener('click', function() { closeModal('office-bypass-modal'); });
-  backdropClose('office-bypass-modal');
+    document.getElementById('ob-dept-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('ob-dept-add-btn').click(); });
 
-  document.getElementById('ob-add-btn').addEventListener('click', function() {
-    var val = document.getElementById('ob-input').value.trim().toUpperCase();
-    if (!val) return;
-    if (obPatterns.indexOf(val) === -1) obPatterns.push(val);
-    document.getElementById('ob-input').value = '';
-    obRenderList();
-  });
-  document.getElementById('ob-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('ob-add-btn').click(); });
+    document.getElementById('ob-add-btn').addEventListener('click', function() {
+      var val = document.getElementById('ob-input').value.trim().toUpperCase();
+      if (!val) return;
+      if (obPatterns.indexOf(val) === -1) obPatterns.push(val);
+      document.getElementById('ob-input').value = '';
+      obRenderBypassList();
+    });
+    document.getElementById('ob-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('ob-add-btn').click(); });
 
-  document.getElementById('ob-save-btn').addEventListener('click', function() {
-    var btn = this;
-    btn.disabled = true; btn.textContent = 'Saving...';
-    fetch('/admin/office-bypass', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patterns: obPatterns }) })
-      .then(function(r) { return r.json(); })
-      .then(function() { toast('Office bypass saved', 'success'); closeModal('office-bypass-modal'); })
-      .catch(function() { toast('Save failed', 'error'); })
-      .finally(function() { btn.disabled = false; btn.textContent = 'Save'; });
-  });
+    document.getElementById('ob-save-btn').addEventListener('click', function() {
+      var btn = this;
+      btn.disabled = true; btn.textContent = 'Saving...';
+      fetch('/admin/office-bypass', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patterns: obPatterns }) })
+        .then(function(r) { return r.json(); })
+        .then(function() { toast('Bypass patterns saved', 'success'); })
+        .catch(function() { toast('Save failed', 'error'); })
+        .finally(function() { btn.disabled = false; btn.textContent = 'Save Bypass'; });
+    });
+  })();
 
 })();
 </script>

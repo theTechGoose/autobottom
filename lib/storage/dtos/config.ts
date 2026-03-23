@@ -30,3 +30,14 @@ export class OfficeBypassConfig {
   // Office name patterns (case-insensitive contains). Matching offices skip review queue + audit emails.
   patterns: string[] = [];
 }
+
+export class ManagerScopeConfig {
+  departments: string[] = [];
+  shifts: string[] = [];
+}
+
+export class AuditDimensionsConfig {
+  // Persistent index of all seen departments/shifts + manually added offices.
+  departments: string[] = [];
+  shifts: string[] = [];
+}

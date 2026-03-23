@@ -28,6 +28,8 @@ import {
   getChargebackEntries,
   getBadWordConfig, saveBadWordConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
+  getManagerScope, saveManagerScope, listManagerScopes,
+  getAuditDimensions, saveAuditDimensions,
   getAllAnswersForFinding,
   getGamificationSettings, saveGamificationSettings,
   getJudgeGamificationOverride, saveJudgeGamificationOverride,
@@ -287,6 +289,8 @@ const postRoutes: Record<string, Handler> = {
   "/admin/email-templates/delete": handleDeleteEmailTemplate,
   "/admin/bad-word-config": handleSaveBadWordConfig,
   "/admin/office-bypass": handleSaveOfficeBypass,
+  "/admin/manager-scopes": handleSaveManagerScope,
+  "/admin/audit-dimensions": handleSaveAuditDimensions,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -394,6 +398,8 @@ const getRoutes: Record<string, Handler> = {
   "/admin/email-templates/get": handleGetEmailTemplate,
   "/admin/bad-word-config": handleGetBadWordConfig,
   "/admin/office-bypass": handleGetOfficeBypass,
+  "/admin/manager-scopes": handleGetManagerScopes,
+  "/admin/audit-dimensions": handleGetAuditDimensions,
   "/admin/chargebacks": handleGetChargebacks,
   "/docs/index": () => Promise.resolve(html(getDocsIndexHtml())),
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
@@ -1932,6 +1938,45 @@ async function handleSaveOfficeBypass(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
   const body = await req.json();
   await saveOfficeBypassConfig(auth.orgId, body);
+  return json({ ok: true });
+}
+
+// -- Admin: Manager Scopes --
+
+async function handleGetManagerScopes(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const scopes = await listManagerScopes(auth.orgId);
+  return json(scopes);
+}
+
+async function handleSaveManagerScope(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  const { email, departments, shifts } = body;
+  if (!email) return json({ error: "email required" }, 400);
+  await saveManagerScope(auth.orgId, email, {
+    departments: Array.isArray(departments) ? departments : [],
+    shifts: Array.isArray(shifts) ? shifts : [],
+  });
+  return json({ ok: true });
+}
+
+async function handleGetAuditDimensions(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  return json(await getAuditDimensions(auth.orgId));
+}
+
+async function handleSaveAuditDimensions(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  await saveAuditDimensions(auth.orgId, {
+    departments: Array.isArray(body.departments) ? [...new Set(body.departments as string[])].sort() : [],
+    shifts: Array.isArray(body.shifts) ? [...new Set(body.shifts as string[])].sort() : [],
+  });
   return json({ ok: true });
 }
 
@@ -3960,7 +4005,7 @@ Deno.serve(async (req) => {
         const rolePageMap: Record<string, string> = {
           "/judge": "judge", "/judge/dashboard": "judge",
           "/review": "reviewer", "/review/dashboard": "reviewer",
-          "/manager": "manager", "/agent": "user",
+          "/manager": "manager", "/manager/audits": "manager", "/agent": "user",
         };
         const targetRole = rolePageMap[url.pathname];
         if (targetRole && res.headers.get("content-type")?.includes("text/html")) {

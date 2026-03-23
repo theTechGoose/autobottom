@@ -15,6 +15,8 @@ import {
 import {
   PipelineConfig as PipelineConfigDto, WebhookConfigDto, BadWordConfig as BadWordConfigDto,
   ReviewerConfig as ReviewerConfigDto, OfficeBypassConfig as OfficeBypassConfigDto,
+  ManagerScopeConfig as ManagerScopeConfigDto,
+  AuditDimensionsConfig as AuditDimensionsConfigDto,
 } from "./storage/dtos/config.ts";
 import {
   EmailReportConfig as EmailReportConfigDto, EmailTemplate as EmailTemplateDto,
@@ -260,6 +262,10 @@ export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { r
   const c = await store(CompletedAuditStatDto);
   await c.set([orgId, `${Date.now()}-${findingId}`], { findingId, ts: Date.now(), ...(meta ?? {}) } as any, { expireIn: DAY_MS });
   console.log(`[TRACK-COMPLETED] ✅ ${findingId}: score=${meta?.score ?? "?"}% owner=${meta?.owner ?? "unknown"} dept=${meta?.department ?? "unknown"} type=${meta?.isPackage ? "package" : "date-leg"}`);
+  // Update persistent dimensions index (fire-and-forget)
+  if (meta?.department || meta?.shift) {
+    updateAuditDimensions(orgId, meta.department, meta.shift).catch(() => {});
+  }
 }
 
 export async function getStuckFindings(thresholdMs = 15 * 60 * 1000): Promise<Array<{ orgId: string; findingId: string; step: string; ts: number; ageMs: number }>> {
@@ -867,6 +873,67 @@ export async function getOfficeBypassConfig(orgId: OrgId): Promise<OfficeBypassC
 export async function saveOfficeBypassConfig(orgId: OrgId, config: OfficeBypassConfig): Promise<void> {
   const s = await store(OfficeBypassConfigDto);
   await s.set([orgId], config as any);
+}
+
+// ── Manager Scope (department+shift access per manager) ──────────────────────
+
+export interface ManagerScope {
+  departments: string[];
+  shifts: string[];
+}
+
+export async function getManagerScope(orgId: OrgId, managerEmail: string): Promise<ManagerScope> {
+  const s = await store(ManagerScopeConfigDto);
+  const v = await s.get([orgId, managerEmail]);
+  return (v as unknown as ManagerScope) ?? { departments: [], shifts: [] };
+}
+
+export async function saveManagerScope(orgId: OrgId, managerEmail: string, scope: ManagerScope): Promise<void> {
+  const s = await store(ManagerScopeConfigDto);
+  await s.set([orgId, managerEmail], scope as any);
+}
+
+export async function listManagerScopes(orgId: OrgId): Promise<Record<string, ManagerScope>> {
+  const s = await store(ManagerScopeConfigDto);
+  const results = await s.listRaw([orgId]);
+  const out: Record<string, ManagerScope> = {};
+  for (const r of results) {
+    const email = (r.key as string[])[2]; // [__manager-scope-config__, orgId, email]
+    if (email) out[email] = r.value as unknown as ManagerScope;
+  }
+  return out;
+}
+
+// ── Persistent Audit Dimensions Index ────────────────────────────────────────
+
+export interface AuditDimensions {
+  departments: string[];
+  shifts: string[];
+}
+
+export async function getAuditDimensions(orgId: OrgId): Promise<AuditDimensions> {
+  const s = await store(AuditDimensionsConfigDto);
+  const v = await s.get([orgId]);
+  return (v as unknown as AuditDimensions) ?? { departments: [], shifts: [] };
+}
+
+export async function saveAuditDimensions(orgId: OrgId, dims: AuditDimensions): Promise<void> {
+  const s = await store(AuditDimensionsConfigDto);
+  await s.set([orgId], dims as any);
+}
+
+export async function updateAuditDimensions(orgId: OrgId, department?: string, shift?: string): Promise<void> {
+  const dims = await getAuditDimensions(orgId);
+  let changed = false;
+  if (department && !dims.departments.includes(department)) {
+    dims.departments = [...dims.departments, department].sort();
+    changed = true;
+  }
+  if (shift && !dims.shifts.includes(shift)) {
+    dims.shifts = [...dims.shifts, shift].sort();
+    changed = true;
+  }
+  if (changed) await saveAuditDimensions(orgId, dims);
 }
 
 // ── Reviewer Config (judge-assigned per-reviewer type limits) ────────────────

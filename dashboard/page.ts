@@ -3606,15 +3606,33 @@ table { width: 100%; border-collapse: collapse; }
   function bwRenderWordRow(w, i) {
     var excls = w.exclusions || [];
     var row = document.createElement('div');
-    row.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;';
+    row.style.cssText = 'background:#161c28;border:1px solid #1c2333;border-radius:6px;overflow:hidden;margin-bottom:2px;';
 
     var header = document.createElement('div');
     header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;';
-    header.innerHTML = '<span style="font-size:11px;color:var(--text-bright);flex:1;">' + w.word.replace(/</g,'&lt;') + '</span>' +
-      '<span style="font-size:9px;color:var(--text-muted);padding:2px 6px;background:var(--bg);border:1px solid var(--border);border-radius:10px;">' +
-        (excls.length ? excls.length + ' exclusion' + (excls.length > 1 ? 's' : '') : 'no exclusions') + '</span>' +
-      '<span class="bw-excl-toggle" style="font-size:10px;color:var(--blue);margin-left:2px;">▸</span>' +
-      '<button style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:0 0 0 6px;" title="Remove word">×</button>';
+
+    var wordSpan = document.createElement('span');
+    wordSpan.style.cssText = 'font-size:11px;color:#e6edf3;flex:1;';
+    wordSpan.textContent = w.word || '';
+
+    var badge = document.createElement('span');
+    badge.style.cssText = 'font-size:9px;color:#6e7681;padding:2px 6px;background:#0b0f15;border:1px solid #1c2333;border-radius:10px;white-space:nowrap;';
+    badge.textContent = excls.length ? excls.length + ' exclusion' + (excls.length > 1 ? 's' : '') : 'no exclusions';
+
+    var toggle = document.createElement('span');
+    toggle.className = 'bw-excl-toggle';
+    toggle.style.cssText = 'font-size:10px;color:#58a6ff;margin-left:2px;';
+    toggle.textContent = '▸';
+
+    var removeBtn = document.createElement('button');
+    removeBtn.style.cssText = 'background:transparent;border:none;color:#f85149;cursor:pointer;font-size:13px;padding:0 0 0 6px;';
+    removeBtn.title = 'Remove word';
+    removeBtn.textContent = '×';
+
+    header.appendChild(wordSpan);
+    header.appendChild(badge);
+    header.appendChild(toggle);
+    header.appendChild(removeBtn);
 
     var removeBtn = header.querySelector('button');
     removeBtn.addEventListener('click', function(e) { e.stopPropagation(); bwConfig.words.splice(i, 1); bwRenderLists(); });

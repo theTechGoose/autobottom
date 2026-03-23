@@ -35,3 +35,9 @@ export class ManagerScopeConfig {
   departments: string[] = [];
   shifts: string[] = [];
 }
+
+export class AuditDimensionsConfig {
+  // Persistent index of all seen departments/shifts + manually added offices.
+  departments: string[] = [];
+  shifts: string[] = [];
+}

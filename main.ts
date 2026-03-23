@@ -29,6 +29,7 @@ import {
   getBadWordConfig, saveBadWordConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
+  getAuditDimensions, saveAuditDimensions,
   getAllAnswersForFinding,
   getGamificationSettings, saveGamificationSettings,
   getJudgeGamificationOverride, saveJudgeGamificationOverride,
@@ -289,6 +290,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/bad-word-config": handleSaveBadWordConfig,
   "/admin/office-bypass": handleSaveOfficeBypass,
   "/admin/manager-scopes": handleSaveManagerScope,
+  "/admin/audit-dimensions": handleSaveAuditDimensions,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -1964,10 +1966,18 @@ async function handleSaveManagerScope(req: Request): Promise<Response> {
 async function handleGetAuditDimensions(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
-  const completed = await getAllCompleted(auth.orgId);
-  const departments = [...new Set(completed.map((c) => c.department).filter(Boolean))].sort() as string[];
-  const shifts = [...new Set(completed.map((c) => c.shift).filter(Boolean))].sort() as string[];
-  return json({ departments, shifts });
+  return json(await getAuditDimensions(auth.orgId));
+}
+
+async function handleSaveAuditDimensions(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  await saveAuditDimensions(auth.orgId, {
+    departments: Array.isArray(body.departments) ? [...new Set(body.departments as string[])].sort() : [],
+    shifts: Array.isArray(body.shifts) ? [...new Set(body.shifts as string[])].sort() : [],
+  });
+  return json({ ok: true });
 }
 
 // -- Admin: Chargebacks & Omissions Report --

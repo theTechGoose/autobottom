@@ -992,7 +992,7 @@ export function getManagerPage(): string {
       var dateStr = item.completedAt ? new Date(item.completedAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' }) : '--';
 
       tr.innerHTML =
-        '<td>' + escHtml(item.owner || '--') + '</td>' +
+        '<td>' + escHtml(item.voName || item.owner || '--') + '</td>' +
         '<td class="mono">' + escHtml(item.recordId || item.findingId.slice(0, 12)) + '</td>' +
         '<td><span class="fail-ratio ' + ratioClass + '">' + ratio + '</span></td>' +
         '<td style="color:var(--text-muted);font-size:12px">' + dateStr + '</td>' +

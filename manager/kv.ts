@@ -18,6 +18,7 @@ async function kv(): Promise<Deno.Kv> {
 export interface ManagerQueueItem {
   findingId: string;
   owner: string;
+  voName?: string;
   recordId: string;
   recordingId: string;
   totalQuestions: number;
@@ -76,9 +77,15 @@ export async function populateManagerQueue(orgId: OrgId, findingId: string) {
 
   const totalQuestions = finding.answeredQuestions?.length ?? 0;
 
+  const rawVoName = String((finding.record as any)?.VoName ?? "");
+  const voName = rawVoName.includes(" - ")
+    ? rawVoName.split(" - ").slice(1).join(" - ").trim()
+    : rawVoName.trim();
+
   const queueItem: ManagerQueueItem = {
     findingId,
     owner: finding.owner ?? "",
+    voName: voName || undefined,
     recordId: finding.record?.RecordId ?? finding.record?.id ?? "",
     recordingId: finding.recordingId ?? "",
     totalQuestions,

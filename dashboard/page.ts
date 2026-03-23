@@ -3182,13 +3182,13 @@ table { width: 100%; border-collapse: collapse; }
       return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
     }
     var drFromRow = document.createElement('div'); drFromRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
-    var drFromLbl = document.createElement('label'); drFromLbl.className = 'sf-label'; drFromLbl.style.cssText = 'margin-bottom:0;min-width:28px;'; drFromLbl.textContent = 'From';
-    var drFromInput = document.createElement('input'); drFromInput.type = 'datetime-local'; drFromInput.className = 'sf-input'; drFromInput.style.flex = '1';
+    var drFromLbl = document.createElement('label'); drFromLbl.className = 'sf-label'; drFromLbl.style.cssText = 'margin-bottom:0;min-width:36px;'; drFromLbl.textContent = 'From';
+    var drFromInput = document.createElement('input'); drFromInput.type = 'datetime-local'; drFromInput.className = 'sf-input'; drFromInput.style.cssText = 'flex:1;font-size:12px;padding:5px 8px;color-scheme:dark;';
     if (dr.mode === 'fixed' && dr.from) drFromInput.value = tsToLocal(dr.from);
     drFromRow.appendChild(drFromLbl); drFromRow.appendChild(drFromInput);
     var drToRow = document.createElement('div'); drToRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
-    var drToLbl = document.createElement('label'); drToLbl.className = 'sf-label'; drToLbl.style.cssText = 'margin-bottom:0;min-width:28px;'; drToLbl.textContent = 'To';
-    var drToInput = document.createElement('input'); drToInput.type = 'datetime-local'; drToInput.className = 'sf-input'; drToInput.style.flex = '1';
+    var drToLbl = document.createElement('label'); drToLbl.className = 'sf-label'; drToLbl.style.cssText = 'margin-bottom:0;min-width:36px;'; drToLbl.textContent = 'To';
+    var drToInput = document.createElement('input'); drToInput.type = 'datetime-local'; drToInput.className = 'sf-input'; drToInput.style.cssText = 'flex:1;font-size:12px;padding:5px 8px;color-scheme:dark;';
     if (dr.mode === 'fixed' && dr.to) drToInput.value = tsToLocal(dr.to);
     drToRow.appendChild(drToLbl); drToRow.appendChild(drToInput);
     drFixed.appendChild(drFromRow); drFixed.appendChild(drToRow);

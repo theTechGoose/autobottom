@@ -13,7 +13,7 @@ import {
 } from "./storage/dtos/stats.ts";
 import {
   PipelineConfig as PipelineConfigDto, WebhookConfigDto, BadWordConfig as BadWordConfigDto,
-  ReviewerConfig as ReviewerConfigDto,
+  ReviewerConfig as ReviewerConfigDto, OfficeBypassConfig as OfficeBypassConfigDto,
 } from "./storage/dtos/config.ts";
 import {
   EmailReportConfig as EmailReportConfigDto, EmailTemplate as EmailTemplateDto,
@@ -720,6 +720,24 @@ export async function getBadWordConfig(orgId: OrgId): Promise<BadWordConfig> {
 
 export async function saveBadWordConfig(orgId: OrgId, config: BadWordConfig): Promise<void> {
   const s = await store(BadWordConfigDto);
+  await s.set([orgId], config as any);
+}
+
+// ── Office Bypass Config ─────────────────────────────────────────────────────
+
+export interface OfficeBypassConfig {
+  // Office name patterns (case-insensitive contains). Matching offices skip review queue + audit emails.
+  patterns: string[];
+}
+
+export async function getOfficeBypassConfig(orgId: OrgId): Promise<OfficeBypassConfig> {
+  const s = await store(OfficeBypassConfigDto);
+  const v = await s.get([orgId]);
+  return (v as unknown as OfficeBypassConfig) ?? { patterns: [] };
+}
+
+export async function saveOfficeBypassConfig(orgId: OrgId, config: OfficeBypassConfig): Promise<void> {
+  const s = await store(OfficeBypassConfigDto);
   await s.set([orgId], config as any);
 }
 

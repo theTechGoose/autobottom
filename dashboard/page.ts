@@ -391,6 +391,13 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
+      <!-- Office Bypass (opens modal) -->
+      <div class="sb-link" id="office-bypass-open">
+        <div class="icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.x}</div>
+        <span class="title">Office Bypass</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
       <!-- Users (opens modal) -->
       <div class="sb-link" id="users-open">
         <div class="icon users">${icons.users}</div>
@@ -888,6 +895,31 @@ table { width: 100%; border-collapse: collapse; }
     <div class="sf-actions" style="margin-top:16px;justify-content:flex-end;">
       <button class="sf-btn ghost" id="bad-words-cancel2">Cancel</button>
       <button class="sf-btn primary" id="bw-save-btn">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Office Bypass Modal -->
+<div class="modal-overlay" id="office-bypass-modal">
+  <div class="modal" style="width:500px;">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Office Bypass</div>
+        <div class="modal-sub">Offices matching these patterns skip the review queue and audit emails entirely. Case-insensitive substring match.</div>
+      </div>
+      <button class="sf-btn ghost" id="office-bypass-cancel">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-sub" style="margin-bottom:10px;">Add an office name pattern (e.g. <strong>JAY</strong> matches JAY312, JAY-EAST, etc.)</div>
+      <div style="display:flex;gap:6px;margin-bottom:12px;">
+        <input id="ob-input" class="sf-input" type="text" placeholder="e.g. JAY" style="flex:1;">
+        <button class="sf-btn primary" id="ob-add-btn">Add</button>
+      </div>
+      <div id="ob-list" style="display:flex;flex-direction:column;gap:6px;min-height:40px;"></div>
+    </div>
+    <div class="sf-actions" style="margin-top:16px;justify-content:flex-end;">
+      <button class="sf-btn ghost" id="office-bypass-cancel2">Cancel</button>
+      <button class="sf-btn primary" id="ob-save-btn">Save</button>
     </div>
   </div>
 </div>
@@ -2850,6 +2882,59 @@ table { width: 100%; border-collapse: collapse; }
       .then(function() { toast('Bad word config saved', 'success'); })
       .catch(function() { toast('Save failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Save Changes'; });
+  });
+
+  // ===== Office Bypass =====
+  var obPatterns = [];
+
+  function obRenderList() {
+    var el = document.getElementById('ob-list');
+    if (!obPatterns.length) {
+      el.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:6px 0;">No patterns — all offices go through review and receive emails.</div>';
+      return;
+    }
+    el.innerHTML = obPatterns.map(function(p, i) {
+      return '<div style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;">' +
+        '<span style="flex:1;font-size:12px;font-family:var(--mono);color:var(--yellow);">' + p + '</span>' +
+        '<button class="sf-btn ghost" style="font-size:10px;padding:2px 8px;" data-idx="' + i + '">Remove</button>' +
+        '</div>';
+    }).join('');
+    el.querySelectorAll('[data-idx]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        obPatterns.splice(parseInt(this.getAttribute('data-idx'), 10), 1);
+        obRenderList();
+      });
+    });
+  }
+
+  document.getElementById('office-bypass-open').addEventListener('click', function() {
+    openModal('office-bypass-modal');
+    fetch('/admin/office-bypass').then(function(r) { return r.json(); }).then(function(d) {
+      obPatterns = Array.isArray(d.patterns) ? d.patterns : [];
+      obRenderList();
+    });
+  });
+  document.getElementById('office-bypass-cancel').addEventListener('click', function() { closeModal('office-bypass-modal'); });
+  document.getElementById('office-bypass-cancel2').addEventListener('click', function() { closeModal('office-bypass-modal'); });
+  backdropClose('office-bypass-modal');
+
+  document.getElementById('ob-add-btn').addEventListener('click', function() {
+    var val = document.getElementById('ob-input').value.trim().toUpperCase();
+    if (!val) return;
+    if (obPatterns.indexOf(val) === -1) obPatterns.push(val);
+    document.getElementById('ob-input').value = '';
+    obRenderList();
+  });
+  document.getElementById('ob-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('ob-add-btn').click(); });
+
+  document.getElementById('ob-save-btn').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Saving...';
+    fetch('/admin/office-bypass', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patterns: obPatterns }) })
+      .then(function(r) { return r.json(); })
+      .then(function() { toast('Office bypass saved', 'success'); closeModal('office-bypass-modal'); })
+      .catch(function() { toast('Save failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Save'; });
   });
 
 })();

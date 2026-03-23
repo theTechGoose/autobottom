@@ -26,6 +26,7 @@ import {
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
   getChargebackEntries,
   getBadWordConfig, saveBadWordConfig,
+  getOfficeBypassConfig, saveOfficeBypassConfig,
   getAllAnswersForFinding,
   getGamificationSettings, saveGamificationSettings,
   getJudgeGamificationOverride, saveJudgeGamificationOverride,
@@ -281,6 +282,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/email-templates": handleSaveEmailTemplate,
   "/admin/email-templates/delete": handleDeleteEmailTemplate,
   "/admin/bad-word-config": handleSaveBadWordConfig,
+  "/admin/office-bypass": handleSaveOfficeBypass,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -386,6 +388,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/email-templates": handleListEmailTemplates,
   "/admin/email-templates/get": handleGetEmailTemplate,
   "/admin/bad-word-config": handleGetBadWordConfig,
+  "/admin/office-bypass": handleGetOfficeBypass,
   "/admin/chargebacks": handleGetChargebacks,
   "/docs/index": () => Promise.resolve(html(getDocsIndexHtml())),
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
@@ -1829,6 +1832,22 @@ async function handleSaveBadWordConfig(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
   const body = await req.json();
   await saveBadWordConfig(auth.orgId, body);
+  return json({ ok: true });
+}
+
+// -- Admin: Office Bypass Config --
+
+async function handleGetOfficeBypass(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  return json(await getOfficeBypassConfig(auth.orgId));
+}
+
+async function handleSaveOfficeBypass(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  await saveOfficeBypassConfig(auth.orgId, body);
   return json({ ok: true });
 }
 

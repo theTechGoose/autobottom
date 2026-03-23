@@ -1,5 +1,5 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, getOfficeBypassConfig } from "../lib/kv.ts";
 import { enqueueCleanup } from "../lib/queue.ts";
 
 import { generateFeedback } from "../providers/groq.ts";
@@ -108,6 +108,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
   await saveFinding(orgId, finding);
   const isPackage = finding.recordingIdField === "GenieNumber";
   const department = String(isPackage ? (finding.record?.OfficeName ?? "") : (finding.record?.ActivatingOffice ?? "")) || undefined;
+  const bypassCfg = await getOfficeBypassConfig(orgId);
+  const isOfficeBypassed = bypassCfg.patterns.length > 0 && !!department &&
+    bypassCfg.patterns.some((p) => department.toLowerCase().includes(p.toLowerCase()));
+  if (isOfficeBypassed) console.log(`[STEP-FINALIZE] ${findingId}: ⚠️ Office "${department}" is bypassed — skipping review queue + audit email`);
   const rawVoName = (finding.record as any)?.VoName as string | undefined;
   const voName = rawVoName
     ? (rawVoName.includes(" - ") ? rawVoName.split(" - ").slice(1).join(" - ").trim() : rawVoName.trim()) || undefined
@@ -153,9 +157,9 @@ export async function stepFinalize(req: Request): Promise<Response> {
     }
   }
 
-  // Route to review queue — skip Invalid Genie (no recording to review).
+  // Route to review queue — skip Invalid Genie and bypassed offices.
   // Formal judge appeals are handled upstream in handleFileAppeal (original finding), not here.
-  if (!isInvalid && finding.answeredQuestions?.length) {
+  if (!isInvalid && !isOfficeBypassed && finding.answeredQuestions?.length) {
     try {
       const recordId = String(finding.record?.RecordId ?? "") || undefined;
       const rec = finding.record as any ?? {};
@@ -321,7 +325,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
   console.log(`[STEP-FINALIZE] ${findingId}: Complete - ${yeses} Yes, ${nos} No`);
 
   // Invalid Genie — fire terminate immediately, no review needed
-  if (isInvalid) {
+  if (isInvalid && !isOfficeBypassed) {
     console.log(`[STEP-FINALIZE] ${findingId}: 🔔 Firing terminate webhook (invalid_genie) orgId=${orgId}`);
     await fireWebhook(orgId, "terminate", {
       findingId,
@@ -334,7 +338,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
   }
 
   // 100% -- no failing questions, fire terminate webhook (includes recording re-audits)
-  if (nos === 0 && yeses > 0) {
+  if (nos === 0 && yeses > 0 && !isOfficeBypassed) {
     console.log(`[STEP-FINALIZE] ${findingId}: 🔔 Firing terminate webhook (perfect_score) orgId=${orgId}`);
     await fireWebhook(orgId, "terminate", {
       findingId,

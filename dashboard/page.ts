@@ -207,41 +207,79 @@ export function getDashboardPage(): string {
   .sf-btn.secondary:hover { background: var(--bg-surface); color: var(--text); border-color: var(--border-hover); }
 
   /* ===== Email Reports Modal ===== */
-  .er-modal { width: 540px; }
-  .er-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-  .er-header .modal-title { margin-bottom: 0; }
-  .er-back { background: none; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer; padding: 0 8px 0 0; }
+  .er-modal { width: 780px; max-height: 88vh; overflow-y: auto; }
+  .er-list-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .er-list-hdr .modal-title { margin-bottom: 0; }
+  .er-back { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; padding: 0 8px 0 0; line-height: 1; }
   .er-back:hover { color: var(--text-bright); }
+  .er-edit-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  .er-edit-hdr-left { display: flex; align-items: center; }
+  .er-edit-actions { display: flex; gap: 6px; align-items: center; }
   .er-table { width: 100%; border-collapse: collapse; }
-  .er-table th { text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  .er-table td { font-size: 11px; padding: 8px 8px; border-bottom: 1px solid rgba(28,35,51,0.4); color: var(--text-muted); cursor: pointer; }
-  .er-table tr:hover td { color: var(--text); background: var(--bg-surface); }
+  .er-table th { text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .er-table td { font-size: 13px; padding: 10px 10px; border-bottom: 1px solid rgba(28,35,51,0.4); color: var(--text); vertical-align: middle; }
+  .er-table tr[data-idx] { cursor: pointer; }
+  .er-table tr[data-idx]:hover td { background: var(--bg-surface); }
+  .er-table tr.er-disabled td { opacity: 0.4; }
   .er-table tr:last-child td { border-bottom: none; }
-  .er-empty { text-align: center; color: var(--text-dim); font-style: italic; padding: 24px; font-size: 11px; }
-  .er-trash { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 4px; }
-  .er-trash:hover { color: var(--red); background: var(--red-bg); }
-  .er-sections-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-  .er-sections-table td { padding: 6px 0; border-bottom: 1px solid rgba(28,35,51,0.3); font-size: 12px; color: var(--text); }
-  .er-sections-table tr:last-child td { border-bottom: none; }
-  .er-section-name { font-weight: 600; text-transform: capitalize; min-width: 80px; }
-  .er-section-check { width: 28px; }
-  .er-section-check input { accent-color: var(--blue); }
-  .er-pills { display: flex; gap: 3px; }
-  .er-pill { padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text-dim); font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.12s; }
-  .er-pill:hover { border-color: var(--border-hover); color: var(--text-muted); }
-  .er-pill.active { background: var(--blue-bg); border-color: rgba(88,166,255,0.3); color: var(--blue); }
-  .er-pill.disabled { opacity: 0.3; pointer-events: none; }
-  .er-cadence { display: flex; gap: 3px; margin-top: 4px; }
-  .er-cadence-pill { padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text-dim); font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.12s; }
-  .er-cadence-pill:hover { border-color: var(--border-hover); color: var(--text-muted); }
-  .er-cadence-pill.active { background: var(--blue-bg); border-color: rgba(88,166,255,0.3); color: var(--blue); }
-  .er-cadence-day { display: flex; gap: 3px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
-  .er-cadence-day-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); margin-right: 4px; }
-  .er-day-pill { padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text-dim); font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.12s; min-width: 28px; text-align: center; }
-  .er-day-pill:hover { border-color: var(--border-hover); color: var(--text-muted); }
-  .er-day-pill.active { background: var(--blue-bg); border-color: rgba(88,166,255,0.3); color: var(--blue); }
-  .er-day-input { width: 56px; padding: 3px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 11px; font-weight: 600; text-align: center; }
-  .er-day-input:focus { outline: none; border-color: var(--blue); }
+  .er-empty { text-align: center; color: var(--text-dim); font-style: italic; padding: 32px; font-size: 11px; }
+  .er-badge { display: inline-flex; align-items: center; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 7px; border-radius: 10px; margin-left: 6px; }
+  .er-badge.disabled { background: rgba(72,79,88,0.25); color: var(--text-dim); }
+  .er-row-actions { display: flex; gap: 4px; align-items: center; }
+  .er-icon-btn { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 4px 7px; border-radius: 5px; transition: all 0.12s; font-size: 11px; font-weight: 600; }
+  .er-icon-btn:hover { color: var(--text); background: var(--bg-surface); }
+  .er-icon-btn.danger:hover { color: var(--red); background: var(--red-bg); }
+  .er-chip-wrap { display: flex; flex-wrap: wrap; gap: 5px; padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; min-height: 40px; align-items: flex-start; cursor: text; transition: border-color 0.15s; }
+  .er-chip-wrap:focus-within { border-color: var(--blue); }
+  .er-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--blue-bg); border: 1px solid rgba(88,166,255,0.25); color: var(--blue); font-size: 11px; padding: 2px 8px 2px 10px; border-radius: 12px; max-width: 240px; }
+  .er-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .er-chip-x { background: none; border: none; color: var(--blue); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; opacity: 0.55; flex-shrink: 0; }
+  .er-chip-x:hover { opacity: 1; }
+  .er-chip-field { border: none; outline: none; background: transparent; color: var(--text); font-size: 12px; min-width: 140px; flex: 1; padding: 2px 0; }
+  .er-rule-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .er-rule-sel { padding: 5px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: 11px; cursor: pointer; }
+  .er-rule-sel:focus { outline: none; border-color: var(--blue); }
+  .er-rule-val { flex: 1; padding: 5px 9px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: 11px; }
+  .er-rule-val:focus { outline: none; border-color: var(--blue); }
+  .er-add-rule { background: none; border: 1px dashed var(--border); border-radius: 7px; color: var(--text-dim); font-size: 11px; padding: 5px 12px; cursor: pointer; transition: all 0.12s; width: 100%; text-align: left; margin-top: 2px; }
+  .er-add-rule:hover { border-color: var(--border-hover); color: var(--text-muted); }
+  .er-filter-block { border: 1px solid var(--border); border-left: 3px solid var(--yellow); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; background: rgba(210,153,34,0.04); }
+  .er-filter-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--yellow); margin-bottom: 4px; }
+  .er-filter-hint { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; line-height: 1.5; }
+  .er-section-card { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+  .er-section-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; cursor: pointer; background: var(--bg-raised); user-select: none; transition: background 0.1s; }
+  .er-section-head:hover { background: var(--bg-surface); }
+  .er-section-chevron { color: var(--text-dim); font-size: 11px; transition: transform 0.15s; flex-shrink: 0; display: inline-block; }
+  .er-section-card.open .er-section-chevron { transform: rotate(90deg); }
+  .er-section-title { font-size: 12px; font-weight: 600; color: var(--text); flex: 1; }
+  .er-section-body { display: none; padding: 14px 16px; border-top: 1px solid var(--border); background: var(--bg); }
+  .er-section-card.open .er-section-body { display: block; }
+  .er-sub-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 6px; margin-top: 12px; }
+  .er-col-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  .er-col-check { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); cursor: pointer; padding: 5px 7px; border-radius: 5px; border: 1px solid transparent; transition: all 0.12s; }
+  .er-col-check:hover { background: var(--bg-surface); border-color: var(--border); color: var(--text); }
+  .er-col-check input { accent-color: var(--blue); width: 13px; height: 13px; flex-shrink: 0; }
+  .er-col-check input:checked ~ span { color: var(--text); }
+  .er-sched-block { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-top: 8px; background: var(--bg-raised); }
+  .er-sched-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-muted); margin-bottom: 10px; }
+  .er-sched-tabs { display: flex; gap: 0; margin-bottom: 14px; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; }
+  .er-sched-tab { flex: 1; padding: 7px 14px; background: transparent; border: none; color: var(--text-dim); font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.12s; }
+  .er-sched-tab:hover { color: var(--text); background: var(--bg-surface); }
+  .er-sched-tab.active { background: var(--bg-surface); color: var(--text-bright); box-shadow: inset 0 -2px 0 var(--blue); }
+  .er-sched-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+  .er-sched-col { display: flex; flex-direction: column; gap: 4px; }
+  .er-sched-col-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); }
+  .er-sched-sel { padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; min-width: 130px; }
+  .er-sched-sel:focus { outline: none; border-color: var(--blue); }
+  .er-sched-preview { font-size: 11px; color: var(--text-dim); margin-top: 10px; font-style: italic; }
+  .er-status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .er-toggle { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; }
+  .er-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .er-toggle-slider { position: absolute; inset: 0; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 18px; cursor: pointer; transition: 0.2s; }
+  .er-toggle-slider:before { content: ''; position: absolute; width: 12px; height: 12px; left: 2px; top: 2px; background: var(--text-dim); border-radius: 50%; transition: 0.2s; }
+  .er-toggle input:checked + .er-toggle-slider { background: var(--green-bg); border-color: var(--green); }
+  .er-toggle input:checked + .er-toggle-slider:before { transform: translateX(16px); background: var(--green); }
+  .er-toggle-label { font-size: 12px; color: var(--text-muted); }
 
   /* ===== Main Content ===== */
   .main { flex: 1; margin-left: var(--sidebar-w); padding: 22px 24px; }
@@ -1242,6 +1280,7 @@ table { width: 100%; border-collapse: collapse; }
   }
   function btnLoad(b, t) { b.disabled = true; b.textContent = t || 'Saving...'; }
   function btnDone(b, t) { b.disabled = false; b.textContent = t; }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
   // ===== Charts =====
   function bucketByHour(timestamps) {
@@ -2271,215 +2310,687 @@ table { width: 100%; border-collapse: collapse; }
   var erModal = document.getElementById('email-reports-modal');
   var erContent = document.getElementById('er-content');
   var emailConfigs = [];
-  var SECTIONS = ['pipeline','review','appeals','manager','tokens'];
-  var SECTION_LABELS = {pipeline:'Pipeline',review:'Review',appeals:'Appeals',manager:'Manager',tokens:'Tokens'};
-  var CADENCES = ['daily','weekly','biweekly','monthly'];
-  var CADENCE_LABELS = {daily:'Daily',weekly:'Weekly',biweekly:'Biweekly',monthly:'Monthly'};
-  var WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var erTemplates = [];
 
-  function loadEmailConfigs() {
-    return fetch('/admin/email-reports').then(function(r){return r.json()}).then(function(d) {
-      emailConfigs = Array.isArray(d) ? d : [];
-      return emailConfigs;
-    });
+  var ER_FIELDS = [
+    {value:'questionHeader',label:'Question Header'},
+    {value:'questionAnswer',label:'Question Answer'},
+    {value:'score',         label:'Score'},
+    {value:'reason',        label:'Condition'},
+    {value:'voName',        label:'VO Name'},
+    {value:'department',    label:'Department'},
+    {value:'appealStatus',  label:'Appeal Status'},
+    {value:'auditType',     label:'Audit Type'},
+  ];
+  var ER_ENUM_VALS = {
+    questionAnswer: [{value:'Yes',label:'Yes'},{value:'No',label:'No'}],
+    reason:         [{value:'perfect_score',label:'Perfect Score'},{value:'invalid_genie',label:'Invalid Genie'},{value:'reviewed',label:'Reviewed'}],
+    appealStatus:   [{value:'none',label:'None'},{value:'pending',label:'Pending'},{value:'complete',label:'Complete'}],
+    auditType:      [{value:'internal',label:'Internal'},{value:'partner',label:'Partner'}],
+  };
+  var ER_OPS_TEXT    = [{value:'contains',label:'contains'},{value:'not_contains',label:'does not contain'},{value:'equals',label:'equals'},{value:'not_equals',label:'not equals'},{value:'starts_with',label:'starts with'}];
+  var ER_OPS_NUMERIC = [{value:'equals',label:'equals'},{value:'less_than',label:'less than'},{value:'greater_than',label:'greater than'}];
+  var ER_OPS_ENUM    = [{value:'equals',label:'is'},{value:'not_equals',label:'is not'}];
+  var ER_COLS = [
+    {value:'recordId',       label:'Record ID'},
+    {value:'findingId',      label:'Audit Report'},
+    {value:'guestName',      label:'Guest Name'},
+    {value:'voName',         label:'VO Name'},
+    {value:'department',     label:'Department'},
+    {value:'score',          label:'Score'},
+    {value:'appealStatus',   label:'Appeal Status'},
+    {value:'finalizedAt',    label:'Timestamp'},
+    {value:'markedForReview',label:'Status'},
+  ];
+
+  function erOpsForField(field) {
+    if (field === 'score') return ER_OPS_NUMERIC;
+    if (field === 'appealStatus' || field === 'auditType' || field === 'questionAnswer' || field === 'reason') return ER_OPS_ENUM;
+    return ER_OPS_TEXT;
   }
 
-  function saveEmailConfig(config) {
-    return fetch('/admin/email-reports', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(config)}).then(function(r){
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      return r.json();
-    });
+  function erCreateValEl(field, currentVal) {
+    var opts = ER_ENUM_VALS[field];
+    if (opts) {
+      var sel = document.createElement('select'); sel.className = 'er-rule-val er-rule-sel'; sel.style.flex = '1';
+      opts.forEach(function(o) {
+        var opt = document.createElement('option'); opt.value = o.value; opt.textContent = o.label;
+        if (currentVal === o.value) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      return sel;
+    }
+    var inp = document.createElement('input'); inp.className = 'er-rule-val'; inp.type = 'text'; inp.placeholder = 'value';
+    inp.value = currentVal || '';
+    return inp;
   }
 
-  function deleteEmailConfig(id) {
-    return fetch('/admin/email-reports/delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})}).then(function(r){
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      return r.json();
-    });
+  function erFmtTime(t) {
+    // "07:00" -> "7:00 AM"
+    if (!t) return t;
+    var p = t.split(':'); if (p.length < 2) return t;
+    var h = parseInt(p[0]), m = p[1];
+    return (h === 0 ? 12 : h > 12 ? h - 12 : h) + ':' + m + ' ' + (h < 12 ? 'AM' : 'PM');
   }
 
-  function renderEmailList() {
-    var html = '<div class="er-header"><div class="modal-title">Email Report Configs</div><button class="sf-btn primary" id="er-new">+ New</button></div>';
-    if (!emailConfigs.length) {
-      html += '<div class="er-empty">No report configs yet</div>';
-    } else {
-      html += '<table class="er-table"><thead><tr><th>Name</th><th>Cadence</th><th>Recipients</th><th>Sections</th><th></th></tr></thead><tbody>';
-      for (var i = 0; i < emailConfigs.length; i++) {
-        var c = emailConfigs[i];
-        var enabledCount = 0;
-        for (var k = 0; k < SECTIONS.length; k++) { if (c.sections[SECTIONS[k]] && c.sections[SECTIONS[k]].enabled) enabledCount++; }
-        var cadenceLabel = CADENCE_LABELS[c.cadence] || 'Weekly';
-        if (c.cadenceDay != null && c.cadence !== 'daily') {
-          if (c.cadence === 'monthly') { cadenceLabel += ' (day ' + c.cadenceDay + ')'; }
-          else { cadenceLabel += ' (' + WEEKDAYS[c.cadenceDay] + ')'; }
-        }
-        html += '<tr data-idx="'+i+'"><td>'+esc(c.name)+'</td><td>'+cadenceLabel+'</td><td>'+c.recipients.length+'</td><td>'+enabledCount+'/'+SECTIONS.length+'</td><td><button class="er-trash" data-id="'+c.id+'" title="Delete">${icons.trash}</button></td></tr>';
+  function erScheduleDesc(s) {
+    if (!s) return null;
+    if (s.mode === 'cron') return 'Cron: ' + s.expression;
+    if (s.frequency === 'hourly') return 'Top of every hour';
+    if (s.frequency === 'monthly') return 'Monthly day ' + s.dayOfMonth + ' @ ' + erFmtTime(s.timeOfDayEst) + ' EST';
+    var d = s.days === 'weekdays' ? 'Mon–Fri' : s.days === 'weekends' ? 'Sat–Sun' : 'Daily';
+    return d + ' @ ' + erFmtTime(s.timeOfDayEst) + ' EST';
+  }
+
+  // ── Tag chip input ───────────────────────────────────────────────────
+  function erChipInput(container, initialValues) {
+    var chips = (initialValues || []).slice();
+
+    function renderChips() {
+      container.querySelectorAll('.er-chip').forEach(function(c) { c.remove(); });
+      var inp = container.querySelector('.er-chip-field');
+      chips.forEach(function(v, i) {
+        var chip = document.createElement('span'); chip.className = 'er-chip';
+        var sp = document.createElement('span'); sp.title = v; sp.textContent = v;
+        var x = document.createElement('button'); x.className = 'er-chip-x'; x.tabIndex = -1; x.innerHTML = '&times;';
+        x.addEventListener('click', function(e) { e.stopPropagation(); chips.splice(i, 1); renderChips(); });
+        chip.appendChild(sp); chip.appendChild(x);
+        if (inp) container.insertBefore(chip, inp); else container.appendChild(chip);
+      });
+      if (inp) inp.placeholder = chips.length ? '' : 'Type or paste emails\u2026';
+    }
+
+    var input = document.createElement('input');
+    input.className = 'er-chip-field'; input.type = 'text'; input.placeholder = 'Type or paste emails\u2026';
+    container.appendChild(input);
+
+    function commit() {
+      var parts = input.value.split(',').map(function(s){return s.trim();}).filter(Boolean);
+      parts.forEach(function(p){ if (!chips.includes(p)) chips.push(p); });
+      if (parts.length) { input.value = ''; renderChips(); }
+    }
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
+      else if (e.key === 'Backspace' && !input.value && chips.length) { chips.pop(); renderChips(); }
+    });
+    input.addEventListener('blur', commit);
+    input.addEventListener('paste', function(e) {
+      e.preventDefault();
+      var text = (e.clipboardData || window.clipboardData).getData('text');
+      text.split(/[\\n,]+/).map(function(s){return s.trim();}).filter(Boolean).forEach(function(p){
+        if (!chips.includes(p)) chips.push(p);
+      });
+      input.value = ''; renderChips();
+    });
+    container.addEventListener('click', function() { input.focus(); });
+    renderChips();
+    return { getValues: function() { return chips.slice(); } };
+  }
+
+  // ── Rule builder ─────────────────────────────────────────────────────
+  function erBuildRuleRow(rule, rulesDiv) {
+    var row = document.createElement('div'); row.className = 'er-rule-row';
+    var fieldSel = document.createElement('select'); fieldSel.className = 'er-rule-sel'; fieldSel.style.width = '148px';
+    ER_FIELDS.forEach(function(f) {
+      var o = document.createElement('option'); o.value = f.value; o.textContent = f.label;
+      if (rule && rule.field === f.value) o.selected = true;
+      fieldSel.appendChild(o);
+    });
+    var opSel = document.createElement('select'); opSel.className = 'er-rule-sel'; opSel.style.width = '124px';
+    var del = document.createElement('button'); del.className = 'er-icon-btn danger'; del.innerHTML = '&times;'; del.title = 'Remove';
+    del.addEventListener('click', function() { row.remove(); });
+    var initialVal = rule ? (rule.value || '') : '';
+    var valEl = erCreateValEl(fieldSel.value, initialVal);
+    function refreshOps() {
+      var ops = erOpsForField(fieldSel.value); var cur = opSel.value; opSel.innerHTML = '';
+      ops.forEach(function(op) {
+        var o = document.createElement('option'); o.value = op.value; o.textContent = op.label;
+        if ((rule && rule.operator === op.value) || cur === op.value) o.selected = true;
+        opSel.appendChild(o);
+      });
+    }
+    function refreshVal() {
+      var cur = row.querySelector('.er-rule-val');
+      if (!cur) return;
+      var newEl = erCreateValEl(fieldSel.value, '');
+      row.replaceChild(newEl, cur);
+    }
+    refreshOps();
+    fieldSel.addEventListener('change', function() { refreshOps(); refreshVal(); });
+    row.appendChild(fieldSel); row.appendChild(opSel); row.appendChild(valEl); row.appendChild(del);
+    rulesDiv.appendChild(row);
+  }
+
+  function erBuildRuleList(rules, container) {
+    var rulesDiv = document.createElement('div'); container.appendChild(rulesDiv);
+    (rules || []).forEach(function(r) { erBuildRuleRow(r, rulesDiv); });
+    var addBtn = document.createElement('button'); addBtn.className = 'er-add-rule'; addBtn.textContent = '+ Add Filter';
+    addBtn.addEventListener('click', function() { erBuildRuleRow(null, rulesDiv); });
+    container.appendChild(addBtn);
+    return {
+      getRules: function() {
+        var out = [];
+        rulesDiv.querySelectorAll('.er-rule-row').forEach(function(row) {
+          var sels = row.querySelectorAll('select'); var val = row.querySelector('.er-rule-val');
+          if (val && val.value.trim()) out.push({field:sels[0].value, operator:sels[1].value, value:val.value.trim()});
+        });
+        return out;
       }
+    };
+  }
+
+  // ── Section card ─────────────────────────────────────────────────────
+  function erBuildSectionCard(sectionDef, sectionsContainer) {
+    var card = document.createElement('div'); card.className = 'er-section-card open';
+    var initName = (sectionDef && sectionDef.header) || 'New Section';
+
+    var head = document.createElement('div'); head.className = 'er-section-head';
+    var chevron = document.createElement('span'); chevron.className = 'er-section-chevron'; chevron.innerHTML = '&#9656;';
+    var titleEl = document.createElement('span'); titleEl.className = 'er-section-title'; titleEl.textContent = initName;
+    var delBtn = document.createElement('button'); delBtn.className = 'er-icon-btn danger'; delBtn.innerHTML = '&times;'; delBtn.style.fontSize = '15px'; delBtn.title = 'Remove';
+    delBtn.addEventListener('click', function(e) { e.stopPropagation(); card.remove(); });
+    head.appendChild(chevron); head.appendChild(titleEl); head.appendChild(delBtn);
+    head.addEventListener('click', function(e) { if (delBtn.contains(e.target)) return; card.classList.toggle('open'); });
+
+    var body = document.createElement('div'); body.className = 'er-section-body';
+
+    var hdrLbl = document.createElement('div'); hdrLbl.className = 'er-sub-label'; hdrLbl.style.marginTop = '0'; hdrLbl.textContent = 'Section Header';
+    var hdrInput = document.createElement('input'); hdrInput.className = 'sf-input er-sec-hdr'; hdrInput.type = 'text'; hdrInput.value = initName; hdrInput.placeholder = 'e.g. Invalid Genie Audits'; hdrInput.style.marginBottom = '12px';
+    hdrInput.addEventListener('input', function() { titleEl.textContent = hdrInput.value.trim() || 'New Section'; });
+
+    var critLbl = document.createElement('div'); critLbl.className = 'er-sub-label'; critLbl.style.color = 'var(--blue)';
+    critLbl.innerHTML = 'CRITERIA <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-dim);font-size:10px;">\u2014 further narrows the top-level set</span>';
+    var critCont = document.createElement('div'); critCont.style.marginBottom = '12px';
+    var critRules = erBuildRuleList(sectionDef && sectionDef.criteria, critCont);
+
+    var colLbl = document.createElement('div'); colLbl.className = 'er-sub-label'; colLbl.textContent = 'Columns';
+    var colGrid = document.createElement('div'); colGrid.className = 'er-col-grid er-sec-cols';
+    var defCols = (sectionDef && sectionDef.columns) || ['recordId','guestName','voName','score'];
+    ER_COLS.forEach(function(col) {
+      var lbl = document.createElement('label'); lbl.className = 'er-col-check';
+      if (col.value === 'markedForReview') {
+        lbl.classList.add('er-status-col-lbl');
+        var oc = document.getElementById('er-only-completed');
+        if (oc && oc.checked) lbl.style.display = 'none';
+      }
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = col.value; cb.checked = defCols.indexOf(col.value) !== -1;
+      var sp = document.createElement('span'); sp.textContent = col.label;
+      lbl.appendChild(cb); lbl.appendChild(sp); colGrid.appendChild(lbl);
+    });
+
+    body.appendChild(hdrLbl); body.appendChild(hdrInput);
+    body.appendChild(critLbl); body.appendChild(critCont);
+    body.appendChild(colLbl); body.appendChild(colGrid);
+    card.appendChild(head); card.appendChild(body);
+    sectionsContainer.appendChild(card);
+  }
+
+  // ── Schedule builder ─────────────────────────────────────────────────
+  function erBuildSchedule(container, schedule) {
+    var mode = (schedule && schedule.mode === 'cron') ? 'cron' : 'simple';
+    var freq = (schedule && schedule.frequency) || 'daily';
+    var tod  = (schedule && schedule.timeOfDayEst) || '07:00';
+    var days = (schedule && schedule.days) || 'every';
+    var dom  = (schedule && schedule.dayOfMonth) || 1;
+    var cronExp = (schedule && schedule.expression) || '';
+
+    function updatePreview() {
+      var p = container.querySelector('.er-sched-preview'); if (!p) return;
+      if (mode === 'cron') { p.textContent = cronExp ? 'Cron: ' + cronExp + ' (UTC)' : ''; return; }
+      if (freq === 'hourly') { p.textContent = 'Runs at the top of every hour'; return; }
+      if (freq === 'monthly') {
+        var sfx = dom===1?'st':dom===2?'nd':dom===3?'rd':'th';
+        p.textContent = 'Runs on the ' + dom + sfx + ' of each month at ' + erFmtTime(tod) + ' EST'; return;
+      }
+      var dl = days==='weekdays'?'Mon\u2013Fri':days==='weekends'?'Sat\u2013Sun':'every day';
+      p.textContent = 'Runs ' + dl + ' at ' + erFmtTime(tod) + ' EST';
+    }
+
+    function render() {
+      container.innerHTML = '';
+      var tabRow = document.createElement('div'); tabRow.className = 'er-sched-tabs';
+      ['Simple','Cron expression'].forEach(function(label, i) {
+        var tm = i === 0 ? 'simple' : 'cron';
+        var tab = document.createElement('button'); tab.className = 'er-sched-tab' + (mode===tm?' active':''); tab.textContent = label;
+        tab.addEventListener('click', function() { mode = tm; render(); });
+        tabRow.appendChild(tab);
+      });
+      container.appendChild(tabRow);
+
+      if (mode === 'simple') {
+        var row = document.createElement('div'); row.className = 'er-sched-row';
+        // Frequency
+        var fc = document.createElement('div'); fc.className = 'er-sched-col';
+        var fl = document.createElement('div'); fl.className = 'er-sched-col-label'; fl.textContent = 'FREQUENCY';
+        var fs = document.createElement('select'); fs.className = 'er-sched-sel';
+        [['daily','Daily'],['hourly','Hourly'],['monthly','Monthly']].forEach(function(opt) {
+          var o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; if (freq===opt[0]) o.selected=true; fs.appendChild(o);
+        });
+        fs.addEventListener('change', function() { freq = fs.value; render(); });
+        fc.appendChild(fl); fc.appendChild(fs); row.appendChild(fc);
+
+        if (freq !== 'hourly') {
+          var tc = document.createElement('div'); tc.className = 'er-sched-col';
+          var tl = document.createElement('div'); tl.className = 'er-sched-col-label'; tl.textContent = 'TIME OF DAY (EST)';
+          var ts = document.createElement('select'); ts.className = 'er-sched-sel';
+          for (var h = 0; h < 24; h++) {
+            for (var m = 0; m < 60; m += 10) {
+              var hh = (h < 10 ? '0' : '') + h, mm = (m < 10 ? '0' : '') + m;
+              var val24 = hh + ':' + mm;
+              var disp = (h===0?12:h>12?h-12:h) + ':' + mm + ' ' + (h<12?'AM':'PM');
+              var to = document.createElement('option'); to.value = val24; to.textContent = disp; if (tod===val24) to.selected=true; ts.appendChild(to);
+            }
+          }
+          ts.addEventListener('change', function() { tod = ts.value; updatePreview(); });
+          tc.appendChild(tl); tc.appendChild(ts); row.appendChild(tc);
+        }
+
+        if (freq === 'daily') {
+          var dc = document.createElement('div'); dc.className = 'er-sched-col';
+          var dl = document.createElement('div'); dl.className = 'er-sched-col-label'; dl.textContent = 'DAYS';
+          var ds = document.createElement('select'); ds.className = 'er-sched-sel';
+          [['every','Every day'],['weekdays','Weekdays'],['weekends','Weekends']].forEach(function(opt) {
+            var o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; if (days===opt[0]) o.selected=true; ds.appendChild(o);
+          });
+          ds.addEventListener('change', function() { days = ds.value; updatePreview(); });
+          dc.appendChild(dl); dc.appendChild(ds); row.appendChild(dc);
+        }
+
+        if (freq === 'monthly') {
+          var mc = document.createElement('div'); mc.className = 'er-sched-col';
+          var ml = document.createElement('div'); ml.className = 'er-sched-col-label'; ml.textContent = 'DAY OF MONTH';
+          var mi = document.createElement('input'); mi.className = 'er-sched-sel'; mi.type = 'number'; mi.min = '1'; mi.max = '28'; mi.value = dom; mi.style.width = '80px';
+          mi.addEventListener('change', function() { dom = Math.max(1, Math.min(28, parseInt(mi.value)||1)); updatePreview(); });
+          mc.appendChild(ml); mc.appendChild(mi); row.appendChild(mc);
+        }
+
+        container.appendChild(row);
+      } else {
+        var cc = document.createElement('div'); cc.className = 'er-sched-col'; cc.style.width = '100%';
+        var cl = document.createElement('div'); cl.className = 'er-sched-col-label'; cl.textContent = 'CRON EXPRESSION (UTC)';
+        var ci = document.createElement('input'); ci.className = 'sf-input'; ci.type = 'text'; ci.value = cronExp; ci.placeholder = '0 7 * * 1-5';
+        ci.addEventListener('input', function() { cronExp = ci.value; updatePreview(); });
+        cc.appendChild(cl); cc.appendChild(ci); container.appendChild(cc);
+      }
+
+      var prev = document.createElement('div'); prev.className = 'er-sched-preview';
+      container.appendChild(prev); updatePreview();
+    }
+
+    render();
+    return {
+      getSchedule: function() {
+        if (mode === 'simple') {
+          if (freq === 'hourly') return {mode:'simple',frequency:'hourly'};
+          if (freq === 'monthly') return {mode:'simple',frequency:'monthly',timeOfDayEst:tod,dayOfMonth:dom};
+          return {mode:'simple',frequency:'daily',timeOfDayEst:tod,days:days};
+        }
+        return {mode:'cron',expression:cronExp};
+      }
+    };
+  }
+
+  // ── List view ─────────────────────────────────────────────────────────
+  function renderERList() {
+    var html = '<div class="er-list-hdr"><div class="modal-title">Email Reports</div><button class="sf-btn primary" id="er-new" style="font-size:11px;">+ New Report</button></div>';
+    if (!emailConfigs.length) {
+      html += '<div class="er-empty">No reports yet. Click <strong>+ New Report</strong> to create one.</div>';
+    } else {
+      html += '<table class="er-table"><thead><tr><th style="width:50px;">Active</th><th>Name</th><th>Schedule</th><th>Recipients</th><th></th></tr></thead><tbody>';
+      emailConfigs.forEach(function(c, i) {
+        var dis = !!c.disabled;
+        var sched = c.schedule ? erScheduleDesc(c.schedule) : '<span style="color:var(--text-dim);font-style:italic;">No schedule</span>';
+        var rc = (c.recipients||[]).length;
+        html += '<tr data-idx="'+i+'"'+(dis?' class="er-disabled"':'')+'>'+
+          '<td style="text-align:center;" class="er-cb-cell"><input type="checkbox" class="er-active-cb" data-id="'+c.id+'" data-idx="'+i+'"'+(dis?'':' checked')+'></td>'+
+          '<td style="font-weight:600;">'+esc(c.name)+'</td>'+
+          '<td>'+sched+'</td>'+
+          '<td>'+rc+' recipient'+(rc!==1?'s':'')+'</td>'+
+          '<td><div class="er-row-actions">'+
+            '<button class="er-icon-btn er-sn-btn" data-id="'+c.id+'" style="color:var(--blue);">&#9654; Send</button>'+
+            '<button class="er-icon-btn er-pv-btn" data-id="'+c.id+'" style="font-size:13px;">&#128065;</button>'+
+          '</div></td></tr>';
+      });
       html += '</tbody></table>';
     }
     erContent.innerHTML = html;
-    document.getElementById('er-new').addEventListener('click', function() { renderEmailEdit(); });
-    erContent.querySelectorAll('.er-table tr[data-idx]').forEach(function(row) {
-      row.querySelectorAll('td:not(:last-child)').forEach(function(td) {
-        td.addEventListener('click', function() { renderEmailEdit(emailConfigs[parseInt(row.getAttribute('data-idx'))]); });
+    document.getElementById('er-new').addEventListener('click', function() { renderEREdit(null); });
+    erContent.querySelectorAll('tr[data-idx]').forEach(function(row) {
+      row.querySelectorAll('td:not(:last-child):not(.er-cb-cell)').forEach(function(td) {
+        td.addEventListener('click', function() { renderEREdit(emailConfigs[parseInt(row.dataset.idx)]); });
       });
     });
-    erContent.querySelectorAll('.er-trash').forEach(function(btn) {
-      btn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        if (!confirm('Delete this report config?')) return;
-        var id = this.getAttribute('data-id');
-        deleteEmailConfig(id).then(function() {
-          emailConfigs = emailConfigs.filter(function(c){return c.id !== id});
-          toast('Config deleted','info');
-          renderEmailList();
-        }).catch(function(err) { toast(err.message,'error'); });
-      });
-    });
-  }
-
-  function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-  function defaultSections() {
-    var s = {};
-    for (var i = 0; i < SECTIONS.length; i++) s[SECTIONS[i]] = { enabled: true, detail: 'medium' };
-    return s;
-  }
-
-  function renderEmailEdit(config) {
-    var isNew = !config;
-    var c = config || { name: '', recipients: [], sections: defaultSections() };
-    var html = '<div class="er-header"><div style="display:flex;align-items:center;gap:8px"><button class="er-back" id="er-back-btn">${icons.arrowLeft}</button><div class="modal-title">'+(isNew?'New Report Config':'Edit Report Config')+'</div></div></div>';
-    html += '<div class="sf"><label class="sf-label">Name</label><input type="text" class="sf-input" id="er-name" value="'+esc(c.name)+'" placeholder="Weekly Executive Summary"></div>';
-    html += '<div class="sf"><label class="sf-label">Recipients (one per line)</label><textarea class="sf-input" id="er-recipients" placeholder="ceo@example.com">'+(c.recipients||[]).join('\\n')+'</textarea></div>';
-    var currentCadence = c.cadence || 'weekly';
-    html += '<div class="sf"><label class="sf-label">Cadence</label><div class="er-cadence" id="er-cadence">';
-    for (var ci = 0; ci < CADENCES.length; ci++) {
-      html += '<button class="er-cadence-pill'+(currentCadence===CADENCES[ci]?' active':'')+'" data-cadence="'+CADENCES[ci]+'">'+CADENCE_LABELS[CADENCES[ci]]+'</button>';
-    }
-    html += '</div><div class="er-cadence-day" id="er-cadence-day"></div></div>';
-    html += '<div class="sf"><label class="sf-label">Sections</label><table class="er-sections-table"><tbody>';
-    for (var i = 0; i < SECTIONS.length; i++) {
-      var key = SECTIONS[i];
-      var sc = c.sections[key] || { enabled: true, detail: 'medium' };
-      var dis = !sc.enabled;
-      html += '<tr data-section="'+key+'">';
-      html += '<td class="er-section-check"><input type="checkbox" '+(sc.enabled?'checked':'')+' data-section="'+key+'"></td>';
-      html += '<td class="er-section-name">'+SECTION_LABELS[key]+'</td>';
-      html += '<td><div class="er-pills" data-section="'+key+'">';
-      var levels = ['low','medium','high'];
-      var labels = ['Low','Med','High'];
-      for (var j = 0; j < levels.length; j++) {
-        html += '<button class="er-pill'+(sc.detail===levels[j]?' active':'')+(dis?' disabled':'')+'" data-level="'+levels[j]+'">'+labels[j]+'</button>';
-      }
-      html += '</div></td></tr>';
-    }
-    html += '</tbody></table></div>';
-    html += '<div class="modal-actions"><button class="sf-btn secondary" id="er-cancel">Cancel</button><button class="sf-btn primary" id="er-save">Save</button></div>';
-    erContent.innerHTML = html;
-
-    document.getElementById('er-back-btn').addEventListener('click', function() { renderEmailList(); });
-    document.getElementById('er-cancel').addEventListener('click', function() { erModal.classList.remove('open'); });
-
-    // Checkbox toggles
-    erContent.querySelectorAll('.er-section-check input').forEach(function(cb) {
+    erContent.querySelectorAll('.er-active-cb').forEach(function(cb) {
+      cb.addEventListener('click', function(e) { e.stopPropagation(); });
       cb.addEventListener('change', function() {
-        var sec = this.getAttribute('data-section');
-        var pills = erContent.querySelector('.er-pills[data-section="'+sec+'"]').querySelectorAll('.er-pill');
-        pills.forEach(function(p) { if(cb.checked) p.classList.remove('disabled'); else p.classList.add('disabled'); });
+        var id = this.dataset.id; var active = this.checked;
+        var cfg = emailConfigs.find(function(c) { return c.id === id; });
+        if (!cfg) return;
+        var updated = Object.assign({}, cfg, { disabled: !active });
+        fetch('/admin/email-reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(updated)})
+          .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+          .then(function(saved){
+            var idx = emailConfigs.findIndex(function(c){return c.id===id;});
+            if (idx!==-1) emailConfigs[idx]=saved;
+            var row = cb.closest('tr');
+            if (row) { if(!active) row.classList.add('er-disabled'); else row.classList.remove('er-disabled'); }
+            toast(active?'Report enabled':'Report disabled','info');
+          })
+          .catch(function(e){ toast(e.message,'error'); cb.checked = !active; });
       });
     });
-
-    // Detail pills
-    erContent.querySelectorAll('.er-pills').forEach(function(group) {
-      group.addEventListener('click', function(e) {
-        var pill = e.target.closest('.er-pill');
-        if (!pill || pill.classList.contains('disabled')) return;
-        group.querySelectorAll('.er-pill').forEach(function(p){p.classList.remove('active')});
-        pill.classList.add('active');
+    erContent.querySelectorAll('.er-sn-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation(); var id = this.dataset.id; var b = this; btnLoad(b,'...');
+        fetch('/admin/email-reports/send-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})
+          .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+          .then(function(){toast('Report sent','success');btnDone(b,'\u25B6 Send');})
+          .catch(function(e){toast(e.message,'error');btnDone(b,'\u25B6 Send');});
       });
     });
+    erContent.querySelectorAll('.er-pv-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation(); var id = this.dataset.id; var b = this; btnLoad(b,'...');
+        fetch('/admin/email-reports/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})
+          .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+          .then(function(){btnDone(b,'\uD83D\uDC41');window.open('/admin/email-reports/preview-view?id='+encodeURIComponent(id),'_blank');})
+          .catch(function(e){toast(e.message,'error');btnDone(b,'\uD83D\uDC41');});
+      });
+    });
+  }
 
-    // Cadence day picker helper
-    function renderCadenceDay(cadence, selectedDay) {
-      var container = document.getElementById('er-cadence-day');
-      if (cadence === 'daily') { container.innerHTML = ''; return; }
-      var h = '<span class="er-cadence-day-label">';
-      if (cadence === 'monthly') {
-        h += 'Day of month</span>';
-        h += '<input type="number" class="er-day-input" id="er-day-num" min="1" max="30" value="'+(selectedDay || 1)+'">';
-      } else {
-        h += 'Day of week</span>';
-        for (var w = 0; w < 7; w++) {
-          h += '<button class="er-day-pill'+(w === (selectedDay != null ? selectedDay : 1) ? ' active' : '')+'" data-day="'+w+'">'+WEEKDAYS[w]+'</button>';
-        }
-      }
-      container.innerHTML = h;
-      if (cadence !== 'monthly') {
-        container.addEventListener('click', function(e) {
-          var dp = e.target.closest('.er-day-pill');
-          if (!dp) return;
-          container.querySelectorAll('.er-day-pill').forEach(function(p){p.classList.remove('active')});
-          dp.classList.add('active');
+  // ── Edit view ─────────────────────────────────────────────────────────
+  function renderEREdit(config) {
+    var isNew = !config; var c = config || {};
+    erContent.innerHTML = '';
+
+    // Header
+    var hdr = document.createElement('div'); hdr.className = 'er-edit-hdr';
+    var left = document.createElement('div'); left.className = 'er-edit-hdr-left';
+    var backBtn = document.createElement('button'); backBtn.className = 'er-back'; backBtn.innerHTML = '&#8592;';
+    backBtn.addEventListener('click', function() { renderERList(); });
+    var titleEl = document.createElement('div'); titleEl.className = 'modal-title'; titleEl.style.marginBottom = '0'; titleEl.textContent = isNew ? 'New Report' : 'Edit Report';
+    left.appendChild(backBtn); left.appendChild(titleEl);
+    var acts = document.createElement('div'); acts.className = 'er-edit-actions';
+
+    // Preview — always available, uses current form state via inline endpoint
+    var pvBtn = document.createElement('button'); pvBtn.className = 'sf-btn secondary'; pvBtn.style.fontSize = '11px'; pvBtn.textContent = '\uD83D\uDC41 Preview';
+    pvBtn.addEventListener('click', function() {
+      btnLoad(pvBtn,'...');
+      var pvSections = [];
+      secCont.querySelectorAll('.er-section-card').forEach(function(card) {
+        var hi = card.querySelector('.er-sec-hdr'); var cols = [];
+        card.querySelectorAll('.er-sec-cols input:checked').forEach(function(cb){cols.push(cb.value);});
+        var criteria = [];
+        card.querySelectorAll('.er-rule-row').forEach(function(row) {
+          var sels = row.querySelectorAll('select'); var val = row.querySelector('.er-rule-val');
+          if (val && val.value.trim()) criteria.push({field:sels[0].value,operator:sels[1].value,value:val.value.trim()});
         });
-      }
+        pvSections.push({header:(hi?hi.value.trim():'')||'Section',criteria:criteria,columns:cols});
+      });
+      var pvPayload = {
+        name: document.getElementById('er-name').value.trim() || c.name || 'Preview',
+        onlyCompleted: ocInput.checked,
+        dateRange: getDateRange(),
+        templateId: document.getElementById('er-tpl').value || undefined,
+        topLevelFilters: tlRules.getRules(),
+        reportSections: pvSections,
+      };
+      if (c.id) pvPayload.id = c.id;
+      fetch('/admin/email-reports/preview-inline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pvPayload)})
+        .then(function(r){if(!r.ok)return r.json().then(function(e){throw new Error(e.error||'HTTP '+r.status);});return r.text();})
+        .then(function(html){
+          btnDone(pvBtn,'\uD83D\uDC41 Preview');
+          var w = window.open('','_blank'); w.document.write(html); w.document.close();
+        })
+        .catch(function(e){toast(e.message,'error');btnDone(pvBtn,'\uD83D\uDC41 Preview');});
+    });
+    acts.appendChild(pvBtn);
+
+    // Send Now + Delete — only for saved configs
+    if (!isNew) {
+      var snBtn = document.createElement('button'); snBtn.className = 'sf-btn secondary'; snBtn.style.fontSize = '11px'; snBtn.textContent = '\u25B6 Send Now';
+      snBtn.addEventListener('click', function() {
+        btnLoad(snBtn,'...');
+        fetch('/admin/email-reports/send-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id})})
+          .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+          .then(function(){toast('Sent','success');btnDone(snBtn,'\u25B6 Send Now');})
+          .catch(function(e){toast(e.message,'error');btnDone(snBtn,'\u25B6 Send Now');});
+      });
+      var delBtn = document.createElement('button'); delBtn.className = 'sf-btn danger'; delBtn.style.fontSize = '11px'; delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', function() {
+        if (!confirm('Delete this report?')) return;
+        fetch('/admin/email-reports/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id})})
+          .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+          .then(function(){emailConfigs=emailConfigs.filter(function(x){return x.id!==c.id;});toast('Deleted','info');renderERList();})
+          .catch(function(e){toast(e.message,'error');});
+      });
+      acts.appendChild(snBtn); acts.appendChild(delBtn);
     }
 
-    renderCadenceDay(currentCadence, c.cadenceDay);
+    hdr.appendChild(left); hdr.appendChild(acts); erContent.appendChild(hdr);
 
-    // Cadence pills
-    document.getElementById('er-cadence').addEventListener('click', function(e) {
-      var pill = e.target.closest('.er-cadence-pill');
-      if (!pill) return;
-      this.querySelectorAll('.er-cadence-pill').forEach(function(p){p.classList.remove('active')});
-      pill.classList.add('active');
-      renderCadenceDay(pill.getAttribute('data-cadence'), null);
+    // Status toggle
+    var statusRow = document.createElement('div'); statusRow.className = 'er-status-row';
+    var toggleWrap = document.createElement('label'); toggleWrap.className = 'er-toggle';
+    var toggleInput = document.createElement('input'); toggleInput.type = 'checkbox'; toggleInput.id = 'er-enabled'; toggleInput.checked = !c.disabled;
+    var toggleSlider = document.createElement('span'); toggleSlider.className = 'er-toggle-slider';
+    toggleWrap.appendChild(toggleInput); toggleWrap.appendChild(toggleSlider);
+    var toggleLbl = document.createElement('span'); toggleLbl.className = 'er-toggle-label';
+    toggleLbl.textContent = !c.disabled ? 'Active \u2014 will send on schedule' : 'Disabled \u2014 will not auto-send';
+    toggleInput.addEventListener('change', function() {
+      toggleLbl.textContent = toggleInput.checked ? 'Active \u2014 will send on schedule' : 'Disabled \u2014 will not auto-send';
+    });
+    statusRow.appendChild(toggleWrap); statusRow.appendChild(toggleLbl); erContent.appendChild(statusRow);
+
+    // Name
+    var nameWrap = document.createElement('div'); nameWrap.className = 'sf';
+    nameWrap.innerHTML = '<label class="sf-label">Report Name</label><input type="text" class="sf-input" id="er-name" value="'+esc(c.name||'')+'" placeholder="e.g. Daily MCC Non-Compliant">';
+    erContent.appendChild(nameWrap);
+
+    // Schedule
+    var schedToggleRow = document.createElement('div'); schedToggleRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px;';
+    var schedCb = document.createElement('input'); schedCb.type = 'checkbox'; schedCb.id = 'er-sched-on'; schedCb.checked = !!c.schedule; schedCb.style.accentColor = 'var(--blue)';
+    var schedCbLbl = document.createElement('label'); schedCbLbl.htmlFor = 'er-sched-on'; schedCbLbl.className = 'sf-label'; schedCbLbl.style.cssText = 'margin-bottom:0;cursor:pointer;'; schedCbLbl.textContent = 'Enable Schedule';
+    schedToggleRow.appendChild(schedCb); schedToggleRow.appendChild(schedCbLbl); erContent.appendChild(schedToggleRow);
+    var schedBlock = document.createElement('div'); schedBlock.className = 'er-sched-block'; schedBlock.style.display = c.schedule ? 'block' : 'none';
+    var schedBlockLbl = document.createElement('div'); schedBlockLbl.className = 'er-sched-label'; schedBlockLbl.textContent = 'SCHEDULE';
+    var schedInner = document.createElement('div');
+    schedBlock.appendChild(schedBlockLbl); schedBlock.appendChild(schedInner);
+    var schedCtrl = erBuildSchedule(schedInner, c.schedule || null);
+    schedCb.addEventListener('change', function() { schedBlock.style.display = schedCb.checked ? 'block' : 'none'; });
+    erContent.appendChild(schedBlock);
+
+    // Template
+    var tplWrap = document.createElement('div'); tplWrap.className = 'sf'; tplWrap.style.marginTop = '14px';
+    var tplLbl = document.createElement('label'); tplLbl.className = 'sf-label'; tplLbl.textContent = 'Email Template';
+    var tplSel = document.createElement('select'); tplSel.className = 'sf-input'; tplSel.id = 'er-tpl';
+    var tplNone = document.createElement('option'); tplNone.value = ''; tplNone.textContent = 'None (use default dark template)'; tplSel.appendChild(tplNone);
+    erTemplates.forEach(function(t) {
+      var o = document.createElement('option'); o.value = t.id; o.textContent = t.name; if (c.templateId === t.id) o.selected = true; tplSel.appendChild(o);
+    });
+    var tplHint = document.createElement('div'); tplHint.style.cssText = 'font-size:10px;color:var(--text-dim);margin-top:4px;';
+    tplHint.innerHTML = 'Add <code style="background:var(--bg-surface);padding:1px 5px;border-radius:3px;">{{sections}}</code> in your template where the report tables should appear.';
+    tplWrap.appendChild(tplLbl); tplWrap.appendChild(tplSel); tplWrap.appendChild(tplHint); erContent.appendChild(tplWrap);
+
+    // Recipients / CC / BCC
+    var chipCtrls = {};
+    [{field:'recipients',label:'Recipients'},{field:'cc',label:'CC'},{field:'bcc',label:'BCC'}].forEach(function(item) {
+      var wrap = document.createElement('div'); wrap.className = 'sf';
+      var lbl = document.createElement('label'); lbl.className = 'sf-label'; lbl.textContent = item.label;
+      var chipWrap = document.createElement('div'); chipWrap.className = 'er-chip-wrap'; chipWrap.id = 'er-chips-'+item.field;
+      wrap.appendChild(lbl); wrap.appendChild(chipWrap); erContent.appendChild(wrap);
+      chipCtrls[item.field] = erChipInput(chipWrap, c[item.field] || []);
     });
 
-    // Save
-    document.getElementById('er-save').addEventListener('click', function() {
-      var btn = this;
+    // ── onlyCompleted toggle ───────────────────────────────────────────────
+    var ocSep = document.createElement('div'); ocSep.className = 'sf-sep'; erContent.appendChild(ocSep);
+    var ocRow = document.createElement('div'); ocRow.className = 'er-status-row';
+    var ocWrap = document.createElement('label'); ocWrap.className = 'er-toggle';
+    var ocInput = document.createElement('input'); ocInput.type = 'checkbox'; ocInput.id = 'er-only-completed';
+    ocInput.checked = c.onlyCompleted !== false;
+    var ocSlider = document.createElement('span'); ocSlider.className = 'er-toggle-slider';
+    ocWrap.appendChild(ocInput); ocWrap.appendChild(ocSlider);
+    var ocLbl = document.createElement('span'); ocLbl.className = 'er-toggle-label';
+    function updateOcLabel() {
+      ocLbl.textContent = ocInput.checked
+        ? 'Completed audits only'
+        : 'All audits \u2014 in-review rows labeled';
+    }
+    updateOcLabel();
+    ocInput.addEventListener('change', function() {
+      updateOcLabel();
+      document.querySelectorAll('.er-status-col-lbl').forEach(function(el) {
+        el.style.display = ocInput.checked ? 'none' : '';
+      });
+    });
+    ocRow.appendChild(ocWrap); ocRow.appendChild(ocLbl); erContent.appendChild(ocRow);
+
+    // ── Date range widget ──────────────────────────────────────────────────
+    var dr = c.dateRange || { mode: 'rolling', hours: 24 };
+    var drMode = dr.mode || 'rolling';
+
+    var drBlock = document.createElement('div');
+    drBlock.style.cssText = 'border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:8px;padding:14px 16px;margin-bottom:14px;background:rgba(88,166,255,0.04);';
+    var drLbl = document.createElement('div');
+    drLbl.style.cssText = 'font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--blue);margin-bottom:10px;';
+    drLbl.textContent = 'DATE RANGE';
+
+    var drModes = document.createElement('div'); drModes.style.cssText = 'display:flex;gap:6px;margin-bottom:12px;';
+    var drTabRolling = document.createElement('button'); drTabRolling.className = 'wh-tab'; drTabRolling.textContent = 'Rolling'; drTabRolling.type = 'button';
+    var drTabFixed = document.createElement('button'); drTabFixed.className = 'wh-tab'; drTabFixed.textContent = 'Fixed'; drTabFixed.type = 'button';
+    drModes.appendChild(drTabRolling); drModes.appendChild(drTabFixed);
+
+    // Rolling inputs
+    var drRolling = document.createElement('div'); drRolling.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    var drHoursInput = document.createElement('input'); drHoursInput.type = 'number'; drHoursInput.className = 'sf-input num'; drHoursInput.min = '1'; drHoursInput.step = '1';
+    var drUnitSel = document.createElement('select'); drUnitSel.className = 'sf-input'; drUnitSel.style.cssText = 'width:auto;padding:6px 9px;';
+    ['hours','days'].forEach(function(u) { var o = document.createElement('option'); o.value = u; o.textContent = u; drUnitSel.appendChild(o); });
+    var initHours = (dr.mode === 'rolling') ? (dr.hours || 24) : 24;
+    if (initHours % 24 === 0 && initHours >= 24) { drHoursInput.value = String(initHours / 24); drUnitSel.value = 'days'; }
+    else { drHoursInput.value = String(initHours); drUnitSel.value = 'hours'; }
+    drRolling.appendChild(drHoursInput); drRolling.appendChild(drUnitSel);
+
+    // Fixed inputs
+    var drFixed = document.createElement('div'); drFixed.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+    function tsToLocal(ts) {
+      if (!ts) return '';
+      var d = new Date(ts); var pad = function(n) { return n < 10 ? '0'+n : String(n); };
+      return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+    }
+    var drFromRow = document.createElement('div'); drFromRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    var drFromLbl = document.createElement('label'); drFromLbl.className = 'sf-label'; drFromLbl.style.cssText = 'margin-bottom:0;min-width:28px;'; drFromLbl.textContent = 'From';
+    var drFromInput = document.createElement('input'); drFromInput.type = 'datetime-local'; drFromInput.className = 'sf-input'; drFromInput.style.flex = '1';
+    if (dr.mode === 'fixed' && dr.from) drFromInput.value = tsToLocal(dr.from);
+    drFromRow.appendChild(drFromLbl); drFromRow.appendChild(drFromInput);
+    var drToRow = document.createElement('div'); drToRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    var drToLbl = document.createElement('label'); drToLbl.className = 'sf-label'; drToLbl.style.cssText = 'margin-bottom:0;min-width:28px;'; drToLbl.textContent = 'To';
+    var drToInput = document.createElement('input'); drToInput.type = 'datetime-local'; drToInput.className = 'sf-input'; drToInput.style.flex = '1';
+    if (dr.mode === 'fixed' && dr.to) drToInput.value = tsToLocal(dr.to);
+    drToRow.appendChild(drToLbl); drToRow.appendChild(drToInput);
+    drFixed.appendChild(drFromRow); drFixed.appendChild(drToRow);
+
+    function updateDrTabs() {
+      if (drMode === 'rolling') {
+        drTabRolling.classList.add('active'); drTabFixed.classList.remove('active');
+        drRolling.style.display = ''; drFixed.style.display = 'none';
+      } else {
+        drTabFixed.classList.add('active'); drTabRolling.classList.remove('active');
+        drFixed.style.display = ''; drRolling.style.display = 'none';
+      }
+    }
+    drTabRolling.addEventListener('click', function() { drMode = 'rolling'; updateDrTabs(); });
+    drTabFixed.addEventListener('click', function() { drMode = 'fixed'; updateDrTabs(); });
+
+    drBlock.appendChild(drLbl); drBlock.appendChild(drModes); drBlock.appendChild(drRolling); drBlock.appendChild(drFixed);
+    updateDrTabs();
+    erContent.appendChild(drBlock);
+
+    function getDateRange() {
+      if (drMode === 'rolling') {
+        var n = parseInt(drHoursInput.value, 10) || 24;
+        return { mode: 'rolling', hours: drUnitSel.value === 'days' ? n * 24 : n };
+      }
+      var fromTs = drFromInput.value ? new Date(drFromInput.value).getTime() : 0;
+      var toTs = drToInput.value ? new Date(drToInput.value).getTime() : 0;
+      if (!fromTs || !toTs) return { mode: 'rolling', hours: 24 };
+      return { mode: 'fixed', from: fromTs, to: toTs };
+    }
+
+    // Top-level filters
+    var tlBlock = document.createElement('div'); tlBlock.className = 'er-filter-block';
+    var tlLbl = document.createElement('div'); tlLbl.className = 'er-filter-label'; tlLbl.textContent = 'TOP-LEVEL FILTERS';
+    var tlHint = document.createElement('div'); tlHint.className = 'er-filter-hint'; tlHint.textContent = 'Return only audits matching all of these rules. Each section then further narrows this set.';
+    var tlCont = document.createElement('div'); var tlRules = erBuildRuleList(c.topLevelFilters, tlCont);
+    tlBlock.appendChild(tlLbl); tlBlock.appendChild(tlHint); tlBlock.appendChild(tlCont); erContent.appendChild(tlBlock);
+
+    // Report sections
+    var secHdr = document.createElement('div'); secHdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;';
+    var secHdrLbl = document.createElement('div'); secHdrLbl.className = 'sf-label'; secHdrLbl.style.marginBottom = '0'; secHdrLbl.textContent = 'Report Sections';
+    var addSecBtn = document.createElement('button'); addSecBtn.className = 'sf-btn secondary'; addSecBtn.style.fontSize = '11px'; addSecBtn.textContent = '+ Add Section';
+    secHdr.appendChild(secHdrLbl); secHdr.appendChild(addSecBtn); erContent.appendChild(secHdr);
+    var secCont = document.createElement('div'); secCont.id = 'er-sec-container'; erContent.appendChild(secCont);
+    (c.reportSections || []).forEach(function(sec) { erBuildSectionCard(sec, secCont); });
+    addSecBtn.addEventListener('click', function() { erBuildSectionCard(null, secCont); });
+
+    // Save / Cancel
+    var actBar = document.createElement('div'); actBar.className = 'modal-actions';
+    var cancelBtn = document.createElement('button'); cancelBtn.className = 'sf-btn secondary'; cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', function() { erModal.classList.remove('open'); });
+    var saveBtn = document.createElement('button'); saveBtn.className = 'sf-btn primary'; saveBtn.textContent = 'Save Report';
+    saveBtn.addEventListener('click', function() {
       var name = document.getElementById('er-name').value.trim();
-      if (!name) { toast('Name is required','error'); return; }
-      var recips = document.getElementById('er-recipients').value.split('\\n').map(function(s){return s.trim()}).filter(Boolean);
+      if (!name) { toast('Report name required','error'); return; }
+      var recips = chipCtrls.recipients.getValues();
       if (!recips.length) { toast('At least one recipient required','error'); return; }
-      var sections = {};
-      for (var i = 0; i < SECTIONS.length; i++) {
-        var key = SECTIONS[i];
-        var enabled = erContent.querySelector('.er-section-check input[data-section="'+key+'"]').checked;
-        var activePill = erContent.querySelector('.er-pills[data-section="'+key+'"] .er-pill.active');
-        var detail = activePill ? activePill.getAttribute('data-level') : 'medium';
-        sections[key] = { enabled: enabled, detail: detail };
-      }
-      var activeCadence = erContent.querySelector('.er-cadence-pill.active');
-      var cadence = activeCadence ? activeCadence.getAttribute('data-cadence') : 'weekly';
-      var cadenceDay = null;
-      if (cadence === 'monthly') {
-        var dayInput = document.getElementById('er-day-num');
-        cadenceDay = dayInput ? Math.max(1, Math.min(30, parseInt(dayInput.value) || 1)) : 1;
-      } else if (cadence === 'weekly' || cadence === 'biweekly') {
-        var activeDayPill = erContent.querySelector('.er-day-pill.active');
-        cadenceDay = activeDayPill ? parseInt(activeDayPill.getAttribute('data-day')) : 1;
-      }
-      var payload = { name: name, recipients: recips, cadence: cadence, cadenceDay: cadenceDay, sections: sections };
+      var sections = [];
+      secCont.querySelectorAll('.er-section-card').forEach(function(card) {
+        var hi = card.querySelector('.er-sec-hdr'); var cols = [];
+        card.querySelectorAll('.er-sec-cols input:checked').forEach(function(cb){cols.push(cb.value);});
+        var criteria = [];
+        card.querySelectorAll('.er-rule-row').forEach(function(row) {
+          var sels = row.querySelectorAll('select'); var val = row.querySelector('.er-rule-val');
+          if (val && val.value.trim()) criteria.push({field:sels[0].value,operator:sels[1].value,value:val.value.trim()});
+        });
+        sections.push({header:(hi?hi.value.trim():'')||'Section',criteria:criteria,columns:cols});
+      });
+      var payload = {
+        name: name, disabled: !document.getElementById('er-enabled').checked,
+        onlyCompleted: ocInput.checked,
+        dateRange: getDateRange(),
+        recipients: recips, cc: chipCtrls.cc.getValues(), bcc: chipCtrls.bcc.getValues(),
+        templateId: document.getElementById('er-tpl').value || undefined,
+        schedule: document.getElementById('er-sched-on').checked ? schedCtrl.getSchedule() : undefined,
+        topLevelFilters: tlRules.getRules(), reportSections: sections,
+      };
       if (c.id) { payload.id = c.id; payload.createdAt = c.createdAt; }
-      btnLoad(btn);
-      saveEmailConfig(payload).then(function(saved) {
-        if (c.id) {
-          for (var i = 0; i < emailConfigs.length; i++) { if (emailConfigs[i].id === saved.id) { emailConfigs[i] = saved; break; } }
-        } else { emailConfigs.push(saved); }
-        toast('Config saved','success');
-        btnDone(btn,'Save');
-        renderEmailList();
-      }).catch(function(err) { toast(err.message,'error'); btnDone(btn,'Save'); });
+      btnLoad(saveBtn,'Saving\u2026');
+      fetch('/admin/email-reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(saved){
+          if (c.id) { for(var i=0;i<emailConfigs.length;i++){if(emailConfigs[i].id===saved.id){emailConfigs[i]=saved;break;}} }
+          else { emailConfigs.push(saved); }
+          toast('Report saved','success'); btnDone(saveBtn,'Save Report'); renderERList();
+        })
+        .catch(function(e){toast(e.message,'error');btnDone(saveBtn,'Save Report');});
     });
+    actBar.appendChild(cancelBtn); actBar.appendChild(saveBtn); erContent.appendChild(actBar);
+  }
+
+  function loadEmailConfigs() {
+    return fetch('/admin/email-reports').then(function(r){return r.json();}).then(function(d){emailConfigs=Array.isArray(d)?d:[];});
+  }
+  function loadERTemplates() {
+    return fetch('/admin/email-templates').then(function(r){return r.json();}).then(function(d){erTemplates=Array.isArray(d)?d:[];}).catch(function(){erTemplates=[];});
   }
 
   document.getElementById('email-reports-open').addEventListener('click', function() {
     erModal.classList.add('open');
-    loadEmailConfigs().then(function() { renderEmailList(); }).catch(function() { renderEmailList(); });
+    Promise.all([loadEmailConfigs(), loadERTemplates()]).then(function(){ renderERList(); }).catch(function(){ renderERList(); });
   });
-  erModal.addEventListener('click', function(e) { if (e.target === erModal) erModal.classList.remove('open'); });
+  var erModalDownOnBackdrop = false;
+  erModal.addEventListener('mousedown', function(e) { erModalDownOnBackdrop = e.target === erModal; });
+  erModal.addEventListener('click', function(e) { if (erModalDownOnBackdrop && e.target === erModal) erModal.classList.remove('open'); });
 
   // ===== Email Templates =====
   console.log('[ET] init — openModal:', typeof openModal, '| backdropClose:', typeof backdropClose, '| closeModal:', typeof closeModal);

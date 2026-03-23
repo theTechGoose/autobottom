@@ -22,7 +22,8 @@ import { enqueueStep, publishStep, ALL_QUEUES, pauseAllQueues, resumeAllQueues, 
 import {
   trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, terminateFinding, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig, getStuckFindings, clearErrors,
   getFinding, saveFinding, saveTranscript, saveBatchAnswers,
-  getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
+  getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig,
+  getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
   getChargebackEntries,
   getBadWordConfig, saveBadWordConfig,
@@ -279,6 +280,9 @@ const postRoutes: Record<string, Handler> = {
   "/admin/parallelism": handleSetParallelism,
   "/admin/email-reports": handleSaveEmailReport,
   "/admin/email-reports/delete": handleDeleteEmailReport,
+  "/admin/email-reports/preview": handlePreviewEmailReport,
+  "/admin/email-reports/preview-inline": handlePreviewInlineEmailReport,
+  "/admin/email-reports/send-now": handleSendNowEmailReport,
   "/admin/email-templates": handleSaveEmailTemplate,
   "/admin/email-templates/delete": handleDeleteEmailTemplate,
   "/admin/bad-word-config": handleSaveBadWordConfig,
@@ -385,6 +389,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/parallelism": handleGetParallelism,
   "/admin/users": handleAdminListUsers,
   "/admin/email-reports": handleListEmailReports,
+  "/admin/email-reports/preview-view": handlePreviewViewEmailReport,
   "/admin/email-templates": handleListEmailTemplates,
   "/admin/email-templates/get": handleGetEmailTemplate,
   "/admin/bad-word-config": handleGetBadWordConfig,
@@ -1768,10 +1773,12 @@ async function handleSaveEmailReport(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
 
   const body = await req.json();
-  if (!body.name || !body.recipients || !body.sections) {
-    return json({ error: "name, recipients, and sections required" }, 400);
+  if (!body.name || !body.recipients?.length) {
+    return json({ error: "name and recipients required" }, 400);
   }
   const saved = await saveEmailReportConfig(auth.orgId, body);
+  // Invalidate cached preview — data or config may have changed
+  if (saved.id) await deleteEmailReportPreview(auth.orgId, saved.id);
   return json(saved);
 }
 
@@ -1783,6 +1790,83 @@ async function handleDeleteEmailReport(req: Request): Promise<Response> {
   if (!body.id) return json({ error: "id required" }, 400);
   await deleteEmailReportConfig(auth.orgId, body.id);
   return json({ ok: true });
+}
+
+async function handleSendNowEmailReport(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const body = await req.json();
+  if (!body.id) return json({ error: "id required" }, 400);
+
+  const config = await getEmailReportConfig(auth.orgId, body.id);
+  if (!config) return json({ error: "report config not found" }, 404);
+  if (!config.recipients?.length) return json({ error: "no recipients configured" }, 400);
+
+  try {
+    await runReport(auth.orgId, config);
+    return json({ ok: true });
+  } catch (err) {
+    console.error(`[SEND-NOW] ❌ org=${auth.orgId} id=${body.id}:`, err);
+    return json({ error: String(err) }, 500);
+  }
+}
+
+async function handlePreviewEmailReport(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const body = await req.json();
+  if (!body.id) return json({ error: "id required" }, 400);
+
+  const config = await getEmailReportConfig(auth.orgId, body.id);
+  if (!config) return json({ error: "report config not found" }, 404);
+
+  try {
+    const sections = await queryReportData(auth.orgId, config);
+    const template = config.templateId ? await getEmailTemplate(auth.orgId, config.templateId) : null;
+    const sectionsHtml = renderSections(sections);
+    const htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml, config.name);
+
+    await saveEmailReportPreview(auth.orgId, body.id, htmlBody);
+    return json({ ok: true });
+  } catch (err) {
+    console.error(`[PREVIEW] ❌ org=${auth.orgId} id=${body.id}:`, err);
+    return json({ error: String(err) }, 500);
+  }
+}
+
+async function handlePreviewInlineEmailReport(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const config = await req.json();
+  if (!config.name) return json({ error: "config.name required" }, 400);
+
+  try {
+    const sections = await queryReportData(auth.orgId, config);
+    const template = config.templateId ? await getEmailTemplate(auth.orgId, config.templateId) : null;
+    const sectionsHtml = renderSections(sections);
+    const htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml, config.name);
+    return new Response(htmlBody, { headers: { "content-type": "text/html; charset=utf-8" } });
+  } catch (err) {
+    console.error(`[PREVIEW-INLINE] ❌ org=${auth.orgId}:`, err);
+    return json({ error: String(err) }, 500);
+  }
+}
+
+async function handlePreviewViewEmailReport(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const url = new URL(req.url);
+  const id = url.searchParams.get("id");
+  if (!id) return json({ error: "id required" }, 400);
+
+  const previewHtml = await getEmailReportPreview(auth.orgId, id);
+  if (!previewHtml) return new Response("Preview expired or not generated yet.", { status: 404, headers: { "content-type": "text/plain" } });
+
+  return new Response(previewHtml.html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
 // -- Admin: Email Templates --
@@ -3722,6 +3806,86 @@ registerWebhookEmailHandler("manager", async (orgId, payload) => {
   const res = await handleManagerReviewWebhook(makeSyntheticReq("/webhooks/manager-review", orgId, payload));
   const text = await res.text().catch(() => "");
   console.log(`[WEBHOOK:manager-email] in-process result: ${text.slice(0, 200)}`);
+});
+
+// -- Email Report Cron --
+
+import { runReport, queryReportData } from "./lib/report-engine.ts";
+import { renderSections, renderFullEmail } from "./lib/report-renderer.ts";
+import type { ScheduleConfig } from "./lib/kv.ts";
+
+const estFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  hour: "2-digit", minute: "2-digit", hour12: false,
+  weekday: "short", day: "2-digit",
+});
+
+function getEstParts(): Record<string, string> {
+  return Object.fromEntries(
+    estFormatter.formatToParts(new Date()).map((p) => [p.type, p.value])
+  );
+}
+
+function matchesSimpleSchedule(schedule: Extract<ScheduleConfig, { mode: "simple" }>): boolean {
+  const parts = getEstParts();
+  const hhmm = `${parts.hour}:${parts.minute}`;
+  const isWeekend = parts.weekday === "Sat" || parts.weekday === "Sun";
+
+  switch (schedule.frequency) {
+    case "hourly":
+      return parts.minute === "00";
+
+    case "daily":
+      if (hhmm !== schedule.timeOfDayEst) return false;
+      if (schedule.days === "weekdays" && isWeekend) return false;
+      if (schedule.days === "weekends" && !isWeekend) return false;
+      return true;
+
+    case "monthly":
+      return hhmm === schedule.timeOfDayEst &&
+             parseInt(parts.day) === schedule.dayOfMonth;
+  }
+}
+
+function matchesCronExpression(expression: string): boolean {
+  const now = new Date();
+  const [minF, hrF, domF, monF, dowF] = expression.trim().split(/\s+/);
+  const match = (field: string, val: number) => field === "*" || parseInt(field) === val;
+  return (
+    match(minF, now.getUTCMinutes()) &&
+    match(hrF,  now.getUTCHours()) &&
+    match(domF, now.getUTCDate()) &&
+    match(monF, now.getUTCMonth() + 1) &&
+    match(dowF, now.getUTCDay())
+  );
+}
+
+Deno.cron("email-reports", "* * * * *", async () => {
+  try {
+    const orgs = await listOrgs();
+    for (const org of orgs) {
+      const configs = await listEmailReportConfigs(org.id);
+      for (const config of configs) {
+        if (config.disabled || !config.schedule || !config.recipients?.length) continue;
+
+        let shouldFire = false;
+        if (config.schedule.mode === "simple") {
+          shouldFire = matchesSimpleSchedule(config.schedule);
+        } else if (config.schedule.mode === "cron") {
+          shouldFire = matchesCronExpression(config.schedule.expression);
+        }
+
+        if (!shouldFire) continue;
+
+        console.log(`[EMAIL-REPORT-CRON] Firing report "${config.name}" for org=${org.id}`);
+        runReport(org.id, config).catch((err) =>
+          console.error(`[EMAIL-REPORT-CRON] ❌ Failed "${config.name}" org=${org.id}:`, err)
+        );
+      }
+    }
+  } catch (err) {
+    console.error("[EMAIL-REPORT-CRON] ❌ Error:", err);
+  }
 });
 
 // -- Server --

@@ -82,12 +82,20 @@ export async function queryReportData(
     rows: [],
   }));
 
-  for (const entry of candidates) {
-    const finding = await getFinding(orgId, entry.findingId);
+  // Hydrate all candidates in parallel — finding + appeal fetched simultaneously
+  const hydrated = await Promise.all(candidates.map(async (entry) => {
+    const [finding, appealRecord] = await Promise.all([
+      getFinding(orgId, entry.findingId),
+      getAppeal(orgId, entry.findingId),
+    ]);
+    return { entry, finding, appealRecord };
+  }));
+
+  const topFilters = config.topLevelFilters ?? [];
+
+  for (const { entry, finding, appealRecord } of hydrated) {
     if (!finding) continue;
 
-    // Build a stat shim so evaluateRules / extractRow can read scalar fields
-    // by the same names they used with CompletedAuditStat
     const isPackage = finding.recordingIdField === "GenieNumber";
     const rawVoName = (finding.record as any)?.VoName as string | undefined;
     const voName = rawVoName
@@ -110,26 +118,20 @@ export async function queryReportData(
       ts: entry.completedAt,
     };
 
-    // reviewed = true only when a human reviewer touched this audit
     const reviewed = entry.reason === "reviewed";
 
-    // Resolve appeal status
-    const appealRecord = await getAppeal(orgId, entry.findingId);
     const appealStatus: AppealStatus = !appealRecord
       ? "none"
       : appealRecord.status === "pending"
       ? "pending"
       : "complete";
 
-    // Apply top-level filters
-    const topFilters = config.topLevelFilters ?? [];
     if (topFilters.length > 0) {
       if (!evaluateRules(finding, stat, appealStatus, reviewed, topFilters)) continue;
     }
 
     const markedForReview = !onlyCompleted && !entry.completed && entry.score > 0;
 
-    // Evaluate each section independently
     for (let i = 0; i < sections.length; i++) {
       if (evaluateRules(finding, stat, appealStatus, reviewed, sections[i].criteria)) {
         results[i].rows.push(extractRow(finding, stat, appealStatus, sections[i].columns, markedForReview));

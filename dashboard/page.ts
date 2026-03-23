@@ -1951,7 +1951,7 @@ table { width: 100%; border-collapse: collapse; }
         var hasScope = allScopes[m.email] && (allScopes[m.email].departments.length || allScopes[m.email].shifts.length);
         html += '<div class="um-user-row scope-mgr-row" data-email="' + esc(m.email) + '" style="cursor:pointer;' + (selectedManager === m.email ? 'background:var(--bg-surface);' : '') + '">'
           + '<div class="um-user-info"><div class="um-user-email" style="font-size:10px;">' + esc(m.email) + '</div>'
-          + '<div class="um-user-meta">' + (hasScope ? 'scope configured' : 'no scope — sees nothing') + '</div></div>'
+          + '<div class="um-user-meta">' + (hasScope ? 'scope configured' : 'no scope — sees all') + '</div></div>'
           + (hasScope ? '<div style="width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0;"></div>' : '<div style="width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0;"></div>')
           + '</div>';
       }

@@ -27,13 +27,13 @@ const C = {
 
 const COLUMN_LABELS: Record<ReportColumnKey, string> = {
   recordId:        "Record ID",
-  findingId:       "Finding ID",
+  findingId:       "Audit Report",
   guestName:       "Guest Name",
   voName:          "VO Name",
   department:      "Department",
   score:           "Score",
   appealStatus:    "Appeal",
-  finalizedAt:     "Finalized",
+  finalizedAt:     "Timestamp",
   markedForReview: "Status",
 };
 

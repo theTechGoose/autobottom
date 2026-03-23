@@ -321,7 +321,23 @@ This is a test/playground environment. The approach is:
 - [x] Preview for unsaved configs (inline preview endpoint — `POST /admin/email-reports/preview-inline`)
 - [x] "Marked for review" column in rendered email rows when `onlyCompleted = false`
 
+### Pending UI improvements (next session)
+- [x] Label: "Finding ID" → "Audit Report" (renders as hyperlink to audit report)
+- [x] Label: "Finalized At" → "Timestamp"
+- [x] Operator dropdown fixed width — all three columns (field/operator/value) always align
+- [x] `Question Answer` filter → dropdown: `Yes`, `No`
+- [x] Rename `Reason` field label → `Condition`; dropdown: `Perfect Score`, `Invalid Genie`,
+      `Reviewed` (values sent as `perfect_score`, `invalid_genie`, `reviewed`)
+- [x] `Appeal Status` filter → dropdown: `None`, `Pending`, `Complete`
+      (values sent as `none`, `pending`, `complete`)
+- [x] `Audit Type` filter → dropdown: `Internal`, `Partner`
+      (values sent as `internal`, `partner`)
+- [x] Remove `Reviewed` field from the field selector entirely — superseded by `Condition`
+
 ### Future / post-launch
+- [ ] `Destination` column — add `DestinationDisplay` from finding record (e.g. `WYN - New York`), confirm field exists in QB before implementing
+- [ ] Hardcode question list for internal + partner audits — searchable dropdown for Question Header filter (see plan.md for full spec)
+- [ ] Hardcode department codes + office codes — searchable dropdown for Department filter
 - [ ] Dedicated appeal-completion timestamp — currently `reviewedAt` is used
       for appeal-complete audits. A proper `judgedAt` field written by
       `postJudgedAudit` in `judge/kv.ts` is the correct long-term solution.

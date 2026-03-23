@@ -2284,32 +2284,53 @@ table { width: 100%; border-collapse: collapse; }
     {value:'questionHeader',label:'Question Header'},
     {value:'questionAnswer',label:'Question Answer'},
     {value:'score',         label:'Score'},
-    {value:'reason',        label:'Reason'},
+    {value:'reason',        label:'Condition'},
     {value:'voName',        label:'VO Name'},
     {value:'department',    label:'Department'},
     {value:'appealStatus',  label:'Appeal Status'},
     {value:'auditType',     label:'Audit Type'},
-    {value:'reviewed',      label:'Reviewed'},
   ];
+  var ER_ENUM_VALS = {
+    questionAnswer: [{value:'Yes',label:'Yes'},{value:'No',label:'No'}],
+    reason:         [{value:'perfect_score',label:'Perfect Score'},{value:'invalid_genie',label:'Invalid Genie'},{value:'reviewed',label:'Reviewed'}],
+    appealStatus:   [{value:'none',label:'None'},{value:'pending',label:'Pending'},{value:'complete',label:'Complete'}],
+    auditType:      [{value:'internal',label:'Internal'},{value:'partner',label:'Partner'}],
+  };
   var ER_OPS_TEXT    = [{value:'contains',label:'contains'},{value:'not_contains',label:'does not contain'},{value:'equals',label:'equals'},{value:'not_equals',label:'not equals'},{value:'starts_with',label:'starts with'}];
   var ER_OPS_NUMERIC = [{value:'equals',label:'equals'},{value:'less_than',label:'less than'},{value:'greater_than',label:'greater than'}];
   var ER_OPS_ENUM    = [{value:'equals',label:'is'},{value:'not_equals',label:'is not'}];
   var ER_COLS = [
     {value:'recordId',       label:'Record ID'},
-    {value:'findingId',      label:'Finding ID'},
+    {value:'findingId',      label:'Audit Report'},
     {value:'guestName',      label:'Guest Name'},
     {value:'voName',         label:'VO Name'},
     {value:'department',     label:'Department'},
     {value:'score',          label:'Score'},
     {value:'appealStatus',   label:'Appeal Status'},
-    {value:'finalizedAt',    label:'Finalized At'},
+    {value:'finalizedAt',    label:'Timestamp'},
     {value:'markedForReview',label:'Status'},
   ];
 
   function erOpsForField(field) {
     if (field === 'score') return ER_OPS_NUMERIC;
-    if (field === 'appealStatus' || field === 'auditType' || field === 'reviewed') return ER_OPS_ENUM;
+    if (field === 'appealStatus' || field === 'auditType' || field === 'questionAnswer' || field === 'reason') return ER_OPS_ENUM;
     return ER_OPS_TEXT;
+  }
+
+  function erCreateValEl(field, currentVal) {
+    var opts = ER_ENUM_VALS[field];
+    if (opts) {
+      var sel = document.createElement('select'); sel.className = 'er-rule-val er-rule-sel'; sel.style.flex = '1';
+      opts.forEach(function(o) {
+        var opt = document.createElement('option'); opt.value = o.value; opt.textContent = o.label;
+        if (currentVal === o.value) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      return sel;
+    }
+    var inp = document.createElement('input'); inp.className = 'er-rule-val'; inp.type = 'text'; inp.placeholder = 'value';
+    inp.value = currentVal || '';
+    return inp;
   }
 
   function erFmtTime(t) {
@@ -2377,15 +2398,17 @@ table { width: 100%; border-collapse: collapse; }
   // ── Rule builder ─────────────────────────────────────────────────────
   function erBuildRuleRow(rule, rulesDiv) {
     var row = document.createElement('div'); row.className = 'er-rule-row';
-    var fieldSel = document.createElement('select'); fieldSel.className = 'er-rule-sel';
+    var fieldSel = document.createElement('select'); fieldSel.className = 'er-rule-sel'; fieldSel.style.width = '148px';
     ER_FIELDS.forEach(function(f) {
       var o = document.createElement('option'); o.value = f.value; o.textContent = f.label;
       if (rule && rule.field === f.value) o.selected = true;
       fieldSel.appendChild(o);
     });
-    var opSel = document.createElement('select'); opSel.className = 'er-rule-sel';
-    var valInput = document.createElement('input'); valInput.className = 'er-rule-val'; valInput.type = 'text'; valInput.placeholder = 'value';
-    if (rule) valInput.value = rule.value || '';
+    var opSel = document.createElement('select'); opSel.className = 'er-rule-sel'; opSel.style.width = '124px';
+    var del = document.createElement('button'); del.className = 'er-icon-btn danger'; del.innerHTML = '&times;'; del.title = 'Remove';
+    del.addEventListener('click', function() { row.remove(); });
+    var initialVal = rule ? (rule.value || '') : '';
+    var valEl = erCreateValEl(fieldSel.value, initialVal);
     function refreshOps() {
       var ops = erOpsForField(fieldSel.value); var cur = opSel.value; opSel.innerHTML = '';
       ops.forEach(function(op) {
@@ -2394,10 +2417,15 @@ table { width: 100%; border-collapse: collapse; }
         opSel.appendChild(o);
       });
     }
-    refreshOps(); fieldSel.addEventListener('change', refreshOps);
-    var del = document.createElement('button'); del.className = 'er-icon-btn danger'; del.innerHTML = '&times;'; del.title = 'Remove';
-    del.addEventListener('click', function() { row.remove(); });
-    row.appendChild(fieldSel); row.appendChild(opSel); row.appendChild(valInput); row.appendChild(del);
+    function refreshVal() {
+      var cur = row.querySelector('.er-rule-val');
+      if (!cur) return;
+      var newEl = erCreateValEl(fieldSel.value, '');
+      row.replaceChild(newEl, cur);
+    }
+    refreshOps();
+    fieldSel.addEventListener('change', function() { refreshOps(); refreshVal(); });
+    row.appendChild(fieldSel); row.appendChild(opSel); row.appendChild(valEl); row.appendChild(del);
     rulesDiv.appendChild(row);
   }
 
@@ -2760,8 +2788,8 @@ table { width: 100%; border-collapse: collapse; }
     var ocLbl = document.createElement('span'); ocLbl.className = 'er-toggle-label';
     function updateOcLabel() {
       ocLbl.textContent = ocInput.checked
-        ? 'Only completed audits \u2014 filtered by done date'
-        : 'All bot-processed audits \u2014 filtered by finalization date, in-review rows labeled';
+        ? 'Completed audits only'
+        : 'All audits \u2014 in-review rows labeled';
     }
     updateOcLabel();
     ocInput.addEventListener('change', updateOcLabel);

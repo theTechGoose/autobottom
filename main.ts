@@ -695,6 +695,7 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const owner = url.searchParams.get("owner") || "";
   const department = url.searchParams.get("department") || "";
   const shift = url.searchParams.get("shift") || "";
+  const reviewed = url.searchParams.get("reviewed") || ""; // "yes" | "no" | "auto" | ""
   const scoreMin = parseInt(url.searchParams.get("scoreMin") || "0", 10);
   const scoreMax = parseInt(url.searchParams.get("scoreMax") || "100", 10);
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
@@ -715,6 +716,9 @@ async function handleAuditsData(req: Request): Promise<Response> {
     if (owner && (c.voName || c.owner) !== owner) return false;
     if (department && c.department !== department) return false;
     if (shift && c.shift !== shift) return false;
+    if (reviewed === "yes" && !c.reviewed) return false;
+    if (reviewed === "no" && (c.reviewed || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
+    if (reviewed === "auto" && c.reason !== "perfect_score" && c.reason !== "invalid_genie") return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
     return true;
   });
@@ -808,7 +812,7 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
 <div class="filters">
   <label>Date Range
     <div class="window-btns">
-      <button class="window-btn active" data-hours="1">1h</button>
+      <button class="window-btn" data-hours="1">1h</button>
       <button class="window-btn" data-hours="4">4h</button>
       <button class="window-btn" data-hours="12">12h</button>
       <button class="window-btn active-default" data-hours="24">24h</button>
@@ -834,6 +838,9 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
   <label>Shift
     <select id="f-shift"><option value="">All Shifts</option></select>
   </label>
+  <label>Reviewed
+    <select id="f-reviewed"><option value="">All</option><option value="yes">Reviewed</option><option value="no">Not Reviewed</option><option value="auto">Auto</option></select>
+  </label>
   <label>Min Score %
     <input type="number" id="f-score-min" value="0" min="0" max="100" style="width:70px">
   </label>
@@ -856,7 +863,7 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
 </div>
 <script>
 var WINDOW_HOURS = 24;
-var state = { page: 1, type: 'all', owner: '', department: '', shift: '', scoreMin: 0, scoreMax: 100, limit: 50, customStart: null, customEnd: null };
+var state = { page: 1, type: 'all', owner: '', department: '', shift: '', reviewed: '', scoreMin: 0, scoreMax: 100, limit: 50, customStart: null, customEnd: null };
 var logsBase = null;
 var hm = window.location.hostname.match(/^([^.]+)\\.([^.]+)\\.deno\\.net$/);
 if (hm) logsBase = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/observability/logs?query=';
@@ -894,7 +901,7 @@ function setWindow(h){
 
 function load(){
   var since=state.customStart!==null?state.customStart:Date.now()-WINDOW_HOURS*3600000;
-  var p={type:state.type,owner:state.owner,department:state.department,shift:state.shift,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit,since:since};
+  var p={type:state.type,owner:state.owner,department:state.department,shift:state.shift,reviewed:state.reviewed,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit,since:since};
   if(state.customEnd!==null)p.until=state.customEnd;
   var params=new URLSearchParams(p);
   document.getElementById('tbl-body').innerHTML='<div class="loading">Loading...</div>';
@@ -928,8 +935,9 @@ function renderStats(d){
   var passes=items.filter(function(c){return(c.score??0)>=80}).length;
   var pkgs=items.filter(function(c){return c.isPackage}).length;
   var dls=items.filter(function(c){return!c.isPackage}).length;
+  var lbl=document.getElementById('hdr-window').textContent.replace(/[()]/g,'').trim();
   document.getElementById('stats-row').innerHTML=
-    stat(d.total,'Total ('+windowLabel()+')')+stat(passes,'≥80% Pass')+stat(items.length-passes,'<80% Fail')+
+    stat(d.total,'Total ('+lbl+')')+stat(passes,'≥80% Pass')+stat(items.length-passes,'<80% Fail')+
     stat(pkgs,'Partner')+stat(dls,'Internal')+stat(avgScore+'%','Avg Score (page)');
 }
 function stat(v,l){return '<div class="stat-card"><div class="val">'+v+'</div><div class="lbl">'+l+'</div></div>'}
@@ -972,12 +980,14 @@ document.getElementById('apply-btn').onclick=function(){
   state.owner=document.getElementById('f-owner').value;
   state.department=document.getElementById('f-dept').value;
   state.shift=document.getElementById('f-shift').value;
+  state.reviewed=document.getElementById('f-reviewed').value;
   state.scoreMin=parseInt(document.getElementById('f-score-min').value,10)||0;
   state.scoreMax=parseInt(document.getElementById('f-score-max').value,10)||100;
   state.page=1;load();
 };
 document.getElementById('reset-btn').onclick=function(){
-  state={page:1,type:'all',owner:'',department:'',shift:'',scoreMin:0,scoreMax:100,limit:50};
+  state={page:1,type:'all',owner:'',department:'',shift:'',reviewed:'',scoreMin:0,scoreMax:100,limit:50};
+  document.getElementById('f-reviewed').value='';
   document.getElementById('f-type').value='all';
   document.getElementById('f-score-min').value=0;
   document.getElementById('f-score-max').value=100;
@@ -988,6 +998,7 @@ document.getElementById('f-type').onchange=function(){state.type=this.value;stat
 document.getElementById('f-owner').onchange=function(){state.owner=this.value;state.page=1;load()};
 document.getElementById('f-dept').onchange=function(){state.department=this.value;state.page=1;load()};
 document.getElementById('f-shift').onchange=function(){state.shift=this.value;state.page=1;load()};
+document.getElementById('f-reviewed').onchange=function(){state.reviewed=this.value;state.page=1;load()};
 document.querySelectorAll('.window-btn').forEach(function(btn){
   btn.addEventListener('click',function(){setWindow(+this.getAttribute('data-hours'));load();});
 });

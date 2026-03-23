@@ -83,6 +83,8 @@ export interface BadWordEmailContext {
   officeId?: number;
   guestName?: string;
   reservationId?: string;
+  findingUrl?: string;
+  recordUrl?: string;
 }
 
 /** Send bad word alert email via Postmark. */
@@ -102,8 +104,8 @@ export async function sendBadWordAlert(
   const triggerList = result.violations.join(", ");
   const highlightedTranscript = buildHighlightedTranscript(transcript, result.matches);
 
-  const metaRow = (label: string, val: string | undefined) =>
-    val ? `<tr><td style="font-size:10px;color:#7f8c8d;padding:4px 0 1px;text-transform:uppercase;letter-spacing:.5px;">${escapeHtml(label)}</td><td style="font-size:14px;color:#2c3e50;padding-bottom:6px;">${escapeHtml(val)}</td></tr>` : "";
+  const metaRow = (label: string, val: string | undefined, url?: string) =>
+    val ? `<tr><td style="font-size:10px;color:#7f8c8d;padding:4px 0 1px;text-transform:uppercase;letter-spacing:.5px;">${escapeHtml(label)}</td><td style="font-size:14px;color:#2c3e50;padding-bottom:6px;">${url ? `<a href="${escapeHtml(url)}" style="color:#2980b9;text-decoration:none;font-weight:600;">${escapeHtml(val)}</a>` : escapeHtml(val)}</td></tr>` : "";
 
   const htmlBody = `<!DOCTYPE html><html><body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#ecf0f1;">
 <table width="100%" cellpadding="0" cellspacing="0" style="padding:20px 0;background:#ecf0f1;">
@@ -120,8 +122,8 @@ export async function sendBadWordAlert(
   <tr><td style="padding:22px 28px;">
     <h2 style="margin:0 0 12px;font-size:16px;color:#2c3e50;">Finding Details</h2>
     <table cellpadding="0" cellspacing="0" style="width:100%;">
-      ${metaRow("Finding ID", ctx.findingId)}
-      ${metaRow("Record ID", ctx.recordId)}
+      ${metaRow("Finding ID", ctx.findingId, ctx.findingUrl)}
+      ${metaRow("Record ID", ctx.recordId, ctx.recordUrl)}
       ${metaRow("Agent", ctx.agentEmail)}
       ${metaRow("Office", ctx.officeName ?? (ctx.officeId != null ? String(ctx.officeId) : undefined))}
       ${metaRow("Guest Name", ctx.guestName)}

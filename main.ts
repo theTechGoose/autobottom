@@ -397,6 +397,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/email-templates": handleListEmailTemplates,
   "/admin/email-templates/get": handleGetEmailTemplate,
   "/admin/bad-word-config": handleGetBadWordConfig,
+  "/admin/seed-bad-words": handleSeedBadWords,
   "/admin/office-bypass": handleGetOfficeBypass,
   "/admin/manager-scopes": handleGetManagerScopes,
   "/admin/audit-dimensions": handleGetAuditDimensions,
@@ -1963,6 +1964,78 @@ async function handleSaveBadWordConfig(req: Request): Promise<Response> {
   await saveBadWordConfig(auth.orgId, body);
   return json({ ok: true });
 }
+
+// TEMPORARY: seed bad words — DELETE after first run
+async function handleSeedBadWords(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  if (url.searchParams.get("token") !== Deno.env.get("QB_USER_TOKEN")) return json({ error: "unauthorized" }, 401);
+  const defaultOrg = await db.get<string>(["default-org"]);
+  const orgId = defaultOrg.value as OrgId;
+  if (!orgId) return json({ error: "no default org" }, 500);
+  const SEED_WORDS = [
+    { word: "resort taxes included", exclusions: [] },
+    { word: "resort taxes covered", exclusions: [] },
+    { word: "resort fees included", exclusions: [] },
+    { word: "resort fees covered", exclusions: [] },
+    { word: "taxes covered", exclusions: [] },
+    { word: "all taxes included", exclusions: [] },
+    { word: "all fees included", exclusions: [] },
+    { word: "flights included", exclusions: [] },
+    { word: "airfare included", exclusions: [] },
+    { word: "discounted flights", exclusions: [] },
+    { word: "flight discount", exclusions: [] },
+    { word: "air included", exclusions: [] },
+    { word: "air package", exclusions: [] },
+    { word: "free flights", exclusions: [] },
+    { word: "provide a code", exclusions: [] },
+    { word: "promo code", exclusions: [] },
+    { word: "discount code", exclusions: [] },
+    { word: "activation code", exclusions: [{ word: "ecg", buffer: 30, type: "suffix" }, { word: "e c g", buffer: 30, type: "suffix" }, { word: "Edward", buffer: 30, type: "suffix" }] },
+    { word: "insurance covers up to a million", exclusions: [] },
+    { word: "million dollar insurance", exclusions: [] },
+    { word: "1000000 medical coverage", exclusions: [] },
+    { word: "one million medical coverage", exclusions: [] },
+    { word: "a million medical coverage", exclusions: [] },
+    { word: "full medical coverage included", exclusions: [] },
+    { word: "no timeshare presentation", exclusions: [] },
+    { word: "no presentation", exclusions: [] },
+    { word: "no timeshare tour", exclusions: [] },
+    { word: "only an amenities tour", exclusions: [] },
+    { word: "amenities tour only", exclusions: [] },
+    { word: "no sales pitch", exclusions: [] },
+    { word: "not a timeshare", exclusions: [] },
+    { word: "upgrading to units that don't exist", exclusions: [] },
+    { word: "upgrade to unavailable room", exclusions: [] },
+    { word: "room type that doesn't exist", exclusions: [] },
+    { word: "phantom upgrade", exclusions: [] },
+    { word: "guaranteed", exclusions: [] },
+    { word: "100% guaranteed", exclusions: [] },
+    { word: "guarantee your room", exclusions: [] },
+    { word: "guarantee your dates", exclusions: [] },
+    { word: "free", exclusions: [{ word: "day", buffer: 1, type: "prefix" }, { word: "toll", buffer: 1, type: "prefix" }, { word: "months", buffer: 1, type: "prefix" }, { word: "trial", buffer: 1, type: "suffix" }, { word: "not", buffer: 1, type: "prefix" }, { word: "hassle", buffer: 1, type: "prefix" }, { word: "feel", buffer: 1, type: "prefix" }, { word: "any", buffer: 1, type: "prefix" }, { word: "nights", buffer: 1, type: "suffix" }, { word: "cancellation", buffer: 2, type: "prefix" }, { word: "cancellation", buffer: 1, type: "suffix" }, { word: "cruise", buffer: 1, type: "suffix" }, { word: "months", buffer: 10, type: "prefix" }, { word: "minute", buffer: 10, type: "prefix" }, { word: "six months", buffer: 10, type: "suffix" }] },
+    { word: "waived", exclusions: [{ word: "expiration", buffer: 5, type: "suffix" }] },
+    { word: "waive the fee", exclusions: [] },
+    { word: "free upgrade", exclusions: [] },
+    { word: "free resort fees", exclusions: [] },
+    { word: "free taxes", exclusions: [] },
+    { word: "viking", exclusions: [] },
+    { word: "msc", exclusions: [] },
+    { word: "celebrity", exclusions: [] },
+    { word: "princess cruises", exclusions: [] },
+    { word: "upgrade", exclusions: [] },
+    { word: "complimentary upgrade", exclusions: [] },
+    { word: "premium upgrade", exclusions: [] },
+    { word: "vip upgrade", exclusions: [] },
+    { word: "amenities tour", exclusions: [] },
+    { word: "amenities walkthrough", exclusions: [] },
+  ];
+  const current = await getBadWordConfig(orgId);
+  const existing = new Set(current.words.map((w) => w.word.toLowerCase()));
+  const toAdd = SEED_WORDS.filter((w) => !existing.has(w.word.toLowerCase()));
+  await saveBadWordConfig(orgId, { ...current, words: [...current.words, ...toAdd] });
+  return json({ ok: true, added: toAdd.length, total: current.words.length + toAdd.length });
+}
+// END TEMPORARY
 
 // -- Admin: Office Bypass Config --
 

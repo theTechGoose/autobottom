@@ -17,7 +17,7 @@ export class WebhookConfigDto {
 export class BadWordConfig {
   enabled = false;
   emails: string[] = [];
-  words: { word: string }[] = [];
+  words: { word: string; exclusions?: { word: string; buffer: number; type: string }[] }[] = [];
   allOffices = false;
   officePatterns: string[] = [];
 }

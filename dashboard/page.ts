@@ -2476,6 +2476,10 @@ table { width: 100%; border-collapse: collapse; }
     var defCols = (sectionDef && sectionDef.columns) || ['recordId','guestName','voName','score'];
     ER_COLS.forEach(function(col) {
       var lbl = document.createElement('label'); lbl.className = 'er-col-check';
+      if (col.value === 'markedForReview') {
+        lbl.classList.add('er-status-col-lbl');
+        if (ocInput.checked) lbl.style.display = 'none';
+      }
       var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = col.value; cb.checked = defCols.indexOf(col.value) !== -1;
       var sp = document.createElement('span'); sp.textContent = col.label;
       lbl.appendChild(cb); lbl.appendChild(sp); colGrid.appendChild(lbl);
@@ -2611,7 +2615,7 @@ table { width: 100%; border-collapse: collapse; }
           '<td><div class="er-row-actions">'+
             '<button class="er-icon-btn er-sn-btn" data-id="'+c.id+'" style="color:var(--blue);">&#9654; Send</button>'+
             '<button class="er-icon-btn er-pv-btn" data-id="'+c.id+'" style="font-size:13px;">&#128065;</button>'+
-            '<button class="er-icon-btn danger er-del-btn" data-id="'+c.id+'" style="font-size:15px;">&times;</button>'+
+            '<button class="er-icon-btn er-tog-btn" data-id="'+c.id+'" data-disabled="'+(dis?'1':'0')+'" style="font-size:10px;font-weight:700;color:'+(dis?'var(--green)':'var(--text-dim)')+';">'+(dis?'Enable':'Disable')+'</button>'+
           '</div></td></tr>';
       });
       html += '</tbody></table>';
@@ -2623,14 +2627,23 @@ table { width: 100%; border-collapse: collapse; }
         td.addEventListener('click', function() { renderEREdit(emailConfigs[parseInt(row.dataset.idx)]); });
       });
     });
-    erContent.querySelectorAll('.er-del-btn').forEach(function(btn) {
+    erContent.querySelectorAll('.er-tog-btn').forEach(function(btn) {
       btn.addEventListener('click', function(e) {
-        e.stopPropagation(); var id = this.dataset.id;
-        if (!confirm('Delete this report?')) return;
-        fetch('/admin/email-reports/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})
+        e.stopPropagation(); var id = this.dataset.id; var b = this;
+        var isDisabled = b.dataset.disabled === '1';
+        var cfg = emailConfigs.find(function(c) { return c.id === id; });
+        if (!cfg) return;
+        btnLoad(b, '...');
+        var updated = Object.assign({}, cfg, { disabled: !isDisabled });
+        fetch('/admin/email-reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(updated)})
           .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-          .then(function(){emailConfigs=emailConfigs.filter(function(c){return c.id!==id;});toast('Deleted','info');renderERList();})
-          .catch(function(e){toast(e.message,'error');});
+          .then(function(saved){
+            var idx = emailConfigs.findIndex(function(c){return c.id===id;});
+            if (idx!==-1) emailConfigs[idx]=saved;
+            toast(isDisabled?'Report enabled':'Report disabled','info');
+            renderERList();
+          })
+          .catch(function(e){toast(e.message,'error');btnDone(b,isDisabled?'Enable':'Disable');});
       });
     });
     erContent.querySelectorAll('.er-sn-btn').forEach(function(btn) {
@@ -2792,7 +2805,12 @@ table { width: 100%; border-collapse: collapse; }
         : 'All audits \u2014 in-review rows labeled';
     }
     updateOcLabel();
-    ocInput.addEventListener('change', updateOcLabel);
+    ocInput.addEventListener('change', function() {
+      updateOcLabel();
+      document.querySelectorAll('.er-status-col-lbl').forEach(function(el) {
+        el.style.display = ocInput.checked ? 'none' : '';
+      });
+    });
     ocRow.appendChild(ocWrap); ocRow.appendChild(ocLbl); erContent.appendChild(ocRow);
 
     // ── Date range widget ──────────────────────────────────────────────────

@@ -14,7 +14,7 @@ import {
 } from "./storage/dtos/stats.ts";
 import {
   PipelineConfig as PipelineConfigDto, WebhookConfigDto, BadWordConfig as BadWordConfigDto,
-  ReviewerConfig as ReviewerConfigDto,
+  ReviewerConfig as ReviewerConfigDto, OfficeBypassConfig as OfficeBypassConfigDto,
 } from "./storage/dtos/config.ts";
 import {
   EmailReportConfig as EmailReportConfigDto, EmailTemplate as EmailTemplateDto,
@@ -187,6 +187,7 @@ export interface CompletedAuditStat {
   department?: string;
   voName?: string;
   reason?: string; // "perfect_score" | "invalid_genie" | undefined
+  shift?: string;
 }
 
 const DAY_MS = 86_400_000;
@@ -251,7 +252,7 @@ export async function trackActive(orgId: OrgId, findingId: string, step: string,
   await w.set([findingId], { orgId, findingId, step, ts: Date.now() } as any, { expireIn: 2 * 60 * 60 * 1000 });
 }
 
-export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number; owner?: string; department?: string; voName?: string; reason?: string }) {
+export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; durationMs?: number; score?: number; owner?: string; department?: string; voName?: string; reason?: string; shift?: string }) {
   const s = await store(ActiveTracking);
   await s.delete([orgId, findingId]);
   const w = await store(WatchdogActive);
@@ -494,6 +495,24 @@ export interface WebhookConfig {
   testEmail?: string;
   emailTemplateId?: string;
   bcc?: string;
+}
+
+// ── Sheets Service Account (stored in KV to avoid env var secret scanning) ──
+
+export interface SheetsServiceAccount {
+  email: string;
+  privateKey: string; // base64-encoded PEM
+}
+
+export async function getSheetsServiceAccount(orgId: OrgId): Promise<SheetsServiceAccount | null> {
+  const kv = await db();
+  const v = await kv.get<SheetsServiceAccount>([orgId, "sheets-sa"]);
+  return v.value;
+}
+
+export async function saveSheetsServiceAccount(orgId: OrgId, sa: SheetsServiceAccount): Promise<void> {
+  const kv = await db();
+  await kv.set([orgId, "sheets-sa"], sa);
 }
 
 export type WebhookKind = "terminate" | "appeal" | "manager" | "judge" | "re-audit-receipt";
@@ -829,6 +848,24 @@ export async function getBadWordConfig(orgId: OrgId): Promise<BadWordConfig> {
 
 export async function saveBadWordConfig(orgId: OrgId, config: BadWordConfig): Promise<void> {
   const s = await store(BadWordConfigDto);
+  await s.set([orgId], config as any);
+}
+
+// ── Office Bypass Config ─────────────────────────────────────────────────────
+
+export interface OfficeBypassConfig {
+  // Office name patterns (case-insensitive contains). Matching offices skip review queue + audit emails.
+  patterns: string[];
+}
+
+export async function getOfficeBypassConfig(orgId: OrgId): Promise<OfficeBypassConfig> {
+  const s = await store(OfficeBypassConfigDto);
+  const v = await s.get([orgId]);
+  return (v as unknown as OfficeBypassConfig) ?? { patterns: [] };
+}
+
+export async function saveOfficeBypassConfig(orgId: OrgId, config: OfficeBypassConfig): Promise<void> {
+  const s = await store(OfficeBypassConfigDto);
   await s.set([orgId], config as any);
 }
 

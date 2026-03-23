@@ -25,3 +25,8 @@ export class BadWordConfig {
 export class ReviewerConfig {
   allowedTypes: ("date-leg" | "package")[] = ["date-leg", "package"];
 }
+
+export class OfficeBypassConfig {
+  // Office name patterns (case-insensitive contains). Matching offices skip review queue + audit emails.
+  patterns: string[] = [];
+}

@@ -27,6 +27,7 @@ import {
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
   getChargebackEntries,
   getBadWordConfig, saveBadWordConfig,
+  getOfficeBypassConfig, saveOfficeBypassConfig,
   getAllAnswersForFinding,
   getGamificationSettings, saveGamificationSettings,
   getJudgeGamificationOverride, saveJudgeGamificationOverride,
@@ -44,6 +45,7 @@ import {
 import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot } from "./lib/kv.ts";
 import { S3Ref } from "./lib/s3.ts";
 import { sendEmail } from "./providers/postmark.ts";
+import { appendSheetRows, parseSheetsServiceAccount } from "./providers/sheets.ts";
 import { env } from "./env.ts";
 import { orgKey } from "./lib/org.ts";
 import type { OrgId } from "./lib/org.ts";
@@ -88,7 +90,7 @@ import {
   handleManagerPage, handleManagerMe, handleManagerQueueList, handleManagerFinding,
   handleManagerRemediate, handleManagerStatsFetch, handleManagerBackfill,
   handleManagerListAgents, handleManagerCreateAgent, handleManagerDeleteAgent,
-  handleManagerGameState,
+  handleManagerGameState, handleManagerAuditsPage, handleManagerAuditsData,
 } from "./manager/handlers.ts";
 
 // Agent (unified auth)
@@ -284,6 +286,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/email-templates": handleSaveEmailTemplate,
   "/admin/email-templates/delete": handleDeleteEmailTemplate,
   "/admin/bad-word-config": handleSaveBadWordConfig,
+  "/admin/office-bypass": handleSaveOfficeBypass,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -390,6 +393,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/email-templates": handleListEmailTemplates,
   "/admin/email-templates/get": handleGetEmailTemplate,
   "/admin/bad-word-config": handleGetBadWordConfig,
+  "/admin/office-bypass": handleGetOfficeBypass,
   "/admin/chargebacks": handleGetChargebacks,
   "/docs/index": () => Promise.resolve(html(getDocsIndexHtml())),
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
@@ -446,12 +450,14 @@ const getRoutes: Record<string, Handler> = {
 
   // Manager (role-guarded)
   "/manager": requireRolePageAuth(["manager"], handleManagerPage),
+  "/manager/audits": requireRolePageAuth(["manager"], handleManagerAuditsPage),
   "/manager/api/queue": handleManagerQueueList,
   "/manager/api/finding": handleManagerFinding,
   "/manager/api/stats": handleManagerStatsFetch,
   "/manager/api/me": handleManagerMe,
   "/manager/api/game-state": handleManagerGameState,
   "/manager/api/agents": handleManagerListAgents,
+  "/manager/audits/data": handleManagerAuditsData,
   "/manager/api/prefab-subscriptions": handleGetPrefabSubscriptions,
 };
 
@@ -1910,6 +1916,22 @@ async function handleSaveBadWordConfig(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
   const body = await req.json();
   await saveBadWordConfig(auth.orgId, body);
+  return json({ ok: true });
+}
+
+// -- Admin: Office Bypass Config --
+
+async function handleGetOfficeBypass(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  return json(await getOfficeBypassConfig(auth.orgId));
+}
+
+async function handleSaveOfficeBypass(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  await saveOfficeBypassConfig(auth.orgId, body);
   return json({ ok: true });
 }
 
@@ -3688,6 +3710,65 @@ Deno.cron("watchdog", "0 * * * *", async () => {
     }
   } catch (err) {
     console.error("[WATCHDOG] ❌ Error:", err);
+  }
+});
+
+// -- Chargebacks Weekly Cron --
+// Every Tuesday at 7am: append previous week (Mon–Sun) chargebacks + omissions to Google Sheets.
+Deno.cron("chargebacks-weekly", "0 7 * * 2", async () => {
+  try {
+    const saS3Key = env.sheetsSaS3Key;
+    const sheetId = env.chargebacksSheetId;
+    const orgId = env.chargebacksOrgId as OrgId;
+    if (!saS3Key || !sheetId || !orgId) {
+      console.log("[CHARGEBACKS-CRON] ⚠️ Missing SHEETS_SA_S3_KEY, sheet ID, or org ID — skipping");
+      return;
+    }
+    console.log(`[CHARGEBACKS-CRON] 🔍 Fetching SA JSON from S3: ${saS3Key}`);
+    const saBytes = await new S3Ref(env.s3Bucket, saS3Key).get();
+    if (!saBytes) {
+      console.error(`[CHARGEBACKS-CRON] ❌ SA JSON not found in S3 at key: ${saS3Key}`);
+      return;
+    }
+    const saJson = JSON.parse(new TextDecoder().decode(saBytes));
+    const saEmail = saJson.client_email as string;
+    const saKey = saJson.private_key as string;
+    console.log(`[CHARGEBACKS-CRON] ✅ SA loaded for ${saEmail}`);
+
+    // Running on Tuesday — previous week is Mon (8 days ago) through Sun (yesterday)
+    const now = new Date();
+    const sunday = new Date(now);
+    sunday.setDate(sunday.getDate() - 1);
+    sunday.setHours(23, 59, 59, 999);
+    const monday = new Date(sunday);
+    monday.setDate(monday.getDate() - 6);
+    monday.setHours(0, 0, 0, 0);
+
+    console.log(`[CHARGEBACKS-CRON] 🚀 Fetching ${monday.toDateString()} – ${sunday.toDateString()}`);
+
+    const entries = await getChargebackEntries(orgId, monday.getTime(), sunday.getTime());
+    const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
+    const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
+
+    const fmtDate = (ts: number) => new Date(ts).toLocaleDateString("en-US");
+    const crmUrl = (e: { recordId: string }) =>
+      `https://${Deno.env.get("QB_REALM")}.quickbase.com/db/bpb28qsnn?a=dr&rid=${e.recordId}`;
+    const toRows = (list: typeof entries): string[][] =>
+      list.map((e) => [
+        fmtDate(e.ts),
+        e.voName,
+        e.revenue,
+        crmUrl(e),
+        e.destination,
+        e.failedQHeaders.join(", "),
+        `${e.score}%`,
+      ]);
+
+    await appendSheetRows(sheetId, "Chargebacks", toRows(chargebacks), saEmail, saKey);
+    await appendSheetRows(sheetId, "Omissions", toRows(omissions), saEmail, saKey);
+    console.log(`[CHARGEBACKS-CRON] ✅ Appended ${chargebacks.length} chargebacks, ${omissions.length} omissions`);
+  } catch (err) {
+    console.error("[CHARGEBACKS-CRON] ❌ Error:", err);
   }
 });
 

@@ -519,6 +519,11 @@ export function getManagerPage(): string {
         <span class="title">Events</span>
         <span class="arrow">${icons.chevronRight}</span>
       </div>
+      <a href="/manager/audits" class="sb-link">
+        <div class="icon accent">${icons.fileText}</div>
+        <span class="title">Audit History</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
     </div>
     <div class="sb-section">
       <div class="sb-label">More</div>

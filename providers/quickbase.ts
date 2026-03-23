@@ -99,6 +99,7 @@ const FIELD_VO_EMAIL = 839;
 const FIELD_SUPERVISOR_EMAIL = 851;
 const FIELD_DESTINATION_DISPLAY = 566;
 const FIELD_ACTIVATING_OFFICE = 140; // Activating Office (department)
+const FIELD_SHIFT = 834;             // Shift
 // AutoYes expression fields on date leg records
 const DATE_LEG_AUTOYES_FIELDS = [
   8,   // ArrivalDate
@@ -121,7 +122,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     where: `{${FIELD_RECORD_ID}.EX.'${rid}'}`,
     select: [
       FIELD_RECORD_ID, FIELD_VO_GENIE, FIELD_RELATED_DESTINATION, FIELD_DESTINATION_DISPLAY,
-      FIELD_GUEST_NAME, FIELD_VO_NAME, FIELD_VO_EMAIL, FIELD_SUPERVISOR_EMAIL, FIELD_ACTIVATING_OFFICE,
+      FIELD_GUEST_NAME, FIELD_VO_NAME, FIELD_VO_EMAIL, FIELD_SUPERVISOR_EMAIL, FIELD_ACTIVATING_OFFICE, FIELD_SHIFT,
       ...DATE_LEG_AUTOYES_FIELDS,
     ],
   });
@@ -144,6 +145,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     VoEmail: r[FIELD_VO_EMAIL]?.value ?? "",
     SupervisorEmail: r[FIELD_SUPERVISOR_EMAIL]?.value ?? "",
     ActivatingOffice: String(r[FIELD_ACTIVATING_OFFICE]?.value ?? ""),
+    Shift: String(r[FIELD_SHIFT]?.value ?? ""),
     ...autoYesValues,
   };
 }

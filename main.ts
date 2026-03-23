@@ -1969,8 +1969,7 @@ async function handleSaveBadWordConfig(req: Request): Promise<Response> {
 async function handleSeedBadWords(req: Request): Promise<Response> {
   const url = new URL(req.url);
   if (url.searchParams.get("token") !== Deno.env.get("QB_USER_TOKEN")) return json({ error: "unauthorized" }, 401);
-  const defaultOrg = await db.get<string>(["default-org"]);
-  const orgId = defaultOrg.value as OrgId;
+  const orgId = await resolveOrgId(req);
   if (!orgId) return json({ error: "no default org" }, 500);
   const SEED_WORDS = [
     { word: "resort taxes included", exclusions: [] },

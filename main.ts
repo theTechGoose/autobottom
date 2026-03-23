@@ -2005,19 +2005,18 @@ async function handleSaveManagerScope(req: Request): Promise<Response> {
 async function handleGetAuditDimensions(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
-  const dims = await getAuditDimensions(auth.orgId);
-  // Seed from live CompletedAuditStat entries if persistent store is empty
-  if (!dims.departments.length && !dims.shifts.length) {
-    const completed = await getAllCompleted(auth.orgId);
-    const depts = [...new Set(completed.map((c) => c.department).filter(Boolean))].sort() as string[];
-    const shifts = [...new Set(completed.map((c) => c.shift).filter(Boolean))].sort() as string[];
-    if (depts.length || shifts.length) {
-      const seeded = { departments: depts, shifts };
-      await saveAuditDimensions(auth.orgId, seeded);
-      return json(seeded);
-    }
-  }
-  return json(dims);
+  const [dims, completed] = await Promise.all([
+    getAuditDimensions(auth.orgId),
+    getAllCompleted(auth.orgId),
+  ]);
+  // Always merge live audit data so new offices appear automatically
+  const liveDepts = completed.map((c) => c.department).filter(Boolean) as string[];
+  const liveShifts = completed.map((c) => c.shift).filter(Boolean) as string[];
+  const mergedDepts = [...new Set([...dims.departments, ...liveDepts])].sort();
+  const mergedShifts = [...new Set([...dims.shifts, ...liveShifts])].sort();
+  const changed = mergedDepts.length !== dims.departments.length || mergedShifts.length !== dims.shifts.length;
+  if (changed) await saveAuditDimensions(auth.orgId, { departments: mergedDepts, shifts: mergedShifts });
+  return json({ departments: mergedDepts, shifts: mergedShifts });
 }
 
 async function handleSaveAuditDimensions(req: Request): Promise<Response> {

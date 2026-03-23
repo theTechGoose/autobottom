@@ -2344,7 +2344,7 @@ table { width: 100%; border-collapse: collapse; }
   function erScheduleDesc(s) {
     if (!s) return null;
     if (s.mode === 'cron') return 'Cron: ' + s.expression;
-    if (s.frequency === 'hourly') return 'Every hour';
+    if (s.frequency === 'hourly') return 'Top of every hour';
     if (s.frequency === 'monthly') return 'Monthly day ' + s.dayOfMonth + ' @ ' + erFmtTime(s.timeOfDayEst) + ' EST';
     var d = s.days === 'weekdays' ? 'Mon–Fri' : s.days === 'weekends' ? 'Sat–Sun' : 'Daily';
     return d + ' @ ' + erFmtTime(s.timeOfDayEst) + ' EST';
@@ -2505,7 +2505,7 @@ table { width: 100%; border-collapse: collapse; }
     function updatePreview() {
       var p = container.querySelector('.er-sched-preview'); if (!p) return;
       if (mode === 'cron') { p.textContent = cronExp ? 'Cron: ' + cronExp + ' (UTC)' : ''; return; }
-      if (freq === 'hourly') { p.textContent = 'Runs every hour'; return; }
+      if (freq === 'hourly') { p.textContent = 'Runs at the top of every hour'; return; }
       if (freq === 'monthly') {
         var sfx = dom===1?'st':dom===2?'nd':dom===3?'rd':'th';
         p.textContent = 'Runs on the ' + dom + sfx + ' of each month at ' + erFmtTime(tod) + ' EST'; return;

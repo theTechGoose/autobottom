@@ -115,6 +115,7 @@ export async function queryReportData(
       voName: voName ?? "",
       department: department ?? "",
       recordId: String((finding.record as any)?.RecordId ?? "") || undefined,
+      shift: String((finding.record as any)?.Shift ?? "") || undefined,
       ts: entry.completedAt,
     };
 

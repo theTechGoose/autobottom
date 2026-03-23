@@ -2620,12 +2620,14 @@ table { width: 100%; border-collapse: collapse; }
     {value:'department',    label:'Department'},
     {value:'appealStatus',  label:'Appeal Status'},
     {value:'auditType',     label:'Audit Type'},
+    {value:'shift',         label:'Shift (Internal Only)'},
   ];
   var ER_ENUM_VALS = {
     questionAnswer: [{value:'Yes',label:'Yes'},{value:'No',label:'No'}],
     reason:         [{value:'perfect_score',label:'Perfect Score'},{value:'invalid_genie',label:'Invalid Genie'},{value:'reviewed',label:'Reviewed'}],
     appealStatus:   [{value:'none',label:'None'},{value:'pending',label:'Pending'},{value:'complete',label:'Complete'}],
     auditType:      [{value:'internal',label:'Internal'},{value:'partner',label:'Partner'}],
+    shift:          [{value:'AM',label:'AM'},{value:'PM',label:'PM'},{value:'Weekend',label:'Weekend'}],
   };
   var ER_OPS_TEXT    = [{value:'contains',label:'contains'},{value:'not_contains',label:'does not contain'},{value:'equals',label:'equals'},{value:'not_equals',label:'not equals'},{value:'starts_with',label:'starts with'}];
   var ER_OPS_NUMERIC = [{value:'equals',label:'equals'},{value:'less_than',label:'less than'},{value:'greater_than',label:'greater than'}];
@@ -2644,7 +2646,7 @@ table { width: 100%; border-collapse: collapse; }
 
   function erOpsForField(field) {
     if (field === 'score') return ER_OPS_NUMERIC;
-    if (field === 'appealStatus' || field === 'auditType' || field === 'questionAnswer' || field === 'reason') return ER_OPS_ENUM;
+    if (field === 'appealStatus' || field === 'auditType' || field === 'questionAnswer' || field === 'reason' || field === 'shift') return ER_OPS_ENUM;
     return ER_OPS_TEXT;
   }
 

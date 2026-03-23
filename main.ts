@@ -1966,7 +1966,19 @@ async function handleSaveManagerScope(req: Request): Promise<Response> {
 async function handleGetAuditDimensions(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
-  return json(await getAuditDimensions(auth.orgId));
+  const dims = await getAuditDimensions(auth.orgId);
+  // Seed from live CompletedAuditStat entries if persistent store is empty
+  if (!dims.departments.length && !dims.shifts.length) {
+    const completed = await getAllCompleted(auth.orgId);
+    const depts = [...new Set(completed.map((c) => c.department).filter(Boolean))].sort() as string[];
+    const shifts = [...new Set(completed.map((c) => c.shift).filter(Boolean))].sort() as string[];
+    if (depts.length || shifts.length) {
+      const seeded = { departments: depts, shifts };
+      await saveAuditDimensions(auth.orgId, seeded);
+      return json(seeded);
+    }
+  }
+  return json(dims);
 }
 
 async function handleSaveAuditDimensions(req: Request): Promise<Response> {

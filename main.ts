@@ -88,7 +88,7 @@ import {
   handleManagerPage, handleManagerMe, handleManagerQueueList, handleManagerFinding,
   handleManagerRemediate, handleManagerStatsFetch, handleManagerBackfill,
   handleManagerListAgents, handleManagerCreateAgent, handleManagerDeleteAgent,
-  handleManagerGameState,
+  handleManagerGameState, handleManagerAuditsPage, handleManagerAuditsData,
 } from "./manager/handlers.ts";
 
 // Agent (unified auth)
@@ -442,12 +442,14 @@ const getRoutes: Record<string, Handler> = {
 
   // Manager (role-guarded)
   "/manager": requireRolePageAuth(["manager"], handleManagerPage),
+  "/manager/audits": requireRolePageAuth(["manager"], handleManagerAuditsPage),
   "/manager/api/queue": handleManagerQueueList,
   "/manager/api/finding": handleManagerFinding,
   "/manager/api/stats": handleManagerStatsFetch,
   "/manager/api/me": handleManagerMe,
   "/manager/api/game-state": handleManagerGameState,
   "/manager/api/agents": handleManagerListAgents,
+  "/manager/audits/data": handleManagerAuditsData,
   "/manager/api/prefab-subscriptions": handleGetPrefabSubscriptions,
 };
 

@@ -123,6 +123,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
     department,
     voName,
     reason,
+    shift: isPackage ? undefined : String((finding.record as any)?.Shift ?? "") || undefined,
   });
   console.log(`[STEP-FINALIZE] ${findingId}: ✅ trackCompleted saved — score=${score ?? "?"}% owner=${finding.owner ?? "unknown"} dept=${department ?? "unknown"} type=${isPackage ? "package" : "date-leg"}`);
 

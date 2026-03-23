@@ -9,8 +9,9 @@ import {
 } from "./kv.ts";
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/kv.ts";
 import type { AuthContext, Role } from "../auth/kv.ts";
-import { getGameState, getEarnedBadges, emitEvent } from "../lib/kv.ts";
+import { getGameState, getEarnedBadges, emitEvent, getAllCompleted } from "../lib/kv.ts";
 import { getManagerPage } from "./page.ts";
+import { getManagerAuditsPage } from "./audits-page.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {
@@ -174,4 +175,55 @@ export async function handleManagerDeleteAgent(req: Request): Promise<Response> 
 
   await deleteUser(auth.orgId, email);
   return json({ ok: true, email });
+}
+
+// -- Audit History --
+
+export async function handleManagerAuditsPage(_req: Request): Promise<Response> {
+  return html(getManagerAuditsPage());
+}
+
+export async function handleManagerAuditsData(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  if (auth.role !== "manager" && auth.role !== "admin") return json({ error: "forbidden" }, 403);
+
+  // Build set of agent emails this manager supervises
+  const allUsers = await listUsers(auth.orgId);
+  const agentEmails = new Set(
+    auth.role === "admin"
+      ? allUsers.map((u) => u.email)
+      : allUsers.filter((u) => u.supervisor === auth.email).map((u) => u.email),
+  );
+
+  const url = new URL(req.url);
+  const owner = url.searchParams.get("owner") || "";
+  const shift = url.searchParams.get("shift") || "";
+  const scoreMin = parseInt(url.searchParams.get("scoreMin") || "0", 10);
+  const scoreMax = parseInt(url.searchParams.get("scoreMax") || "100", 10);
+  const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
+  const limit = Math.min(100, Math.max(10, parseInt(url.searchParams.get("limit") || "50", 10)));
+  const sinceParam = url.searchParams.get("since");
+  const since = sinceParam ? parseInt(sinceParam, 10) : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
+
+  const windowEntries = await getAllCompleted(auth.orgId, since);
+
+  // Scope to this manager's agents only
+  const agentEntries = windowEntries.filter((c) => agentEmails.has(c.owner ?? ""));
+
+  const filtered = agentEntries.filter((c) => {
+    if (owner && c.owner !== owner) return false;
+    if (shift && c.shift !== shift) return false;
+    if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
+    return true;
+  });
+
+  const owners = [...new Set(agentEntries.map((c) => c.owner).filter(Boolean))].sort() as string[];
+  const shifts = [...new Set(agentEntries.map((c) => c.shift).filter(Boolean))].sort() as string[];
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const pageItems = filtered.slice((page - 1) * limit, page * limit);
+
+  console.log(`[MANAGER-AUDITS] 🔍 ${auth.email}: ${total}/${agentEntries.length} agent audits in window, page=${page}/${pages}`);
+  return json({ items: pageItems, total, pages, page, owners, shifts });
 }

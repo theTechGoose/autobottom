@@ -719,10 +719,26 @@ async function handleAuditsData(req: Request): Promise<Response> {
     return true;
   });
 
-  // Dropdown options come from the full window (unfiltered), so selections stay visible
-  const owners = [...new Set(windowEntries.map((c) => c.voName || c.owner).filter(Boolean))].sort() as string[];
-  const departments = [...new Set(windowEntries.map((c) => c.department).filter(Boolean))].sort() as string[];
-  const shifts = [...new Set(windowEntries.map((c) => c.shift).filter(Boolean))].sort() as string[];
+  // Cross-filtered dropdown options: each list filtered by the other active filters (not its own)
+  const matchesBase = (c: typeof windowEntries[0]) => {
+    if (until && c.ts > until) return false;
+    if (type === "date-leg" && c.isPackage) return false;
+    if (type === "package" && !c.isPackage) return false;
+    if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
+    return true;
+  };
+  const owners = [...new Set(
+    windowEntries.filter((c) => matchesBase(c) && (!department || c.department === department) && (!shift || c.shift === shift))
+      .map((c) => c.voName || c.owner).filter(Boolean)
+  )].sort() as string[];
+  const departments = [...new Set(
+    windowEntries.filter((c) => matchesBase(c) && (!owner || (c.voName || c.owner) === owner) && (!shift || c.shift === shift))
+      .map((c) => c.department).filter(Boolean)
+  )].sort() as string[];
+  const shifts = [...new Set(
+    windowEntries.filter((c) => matchesBase(c) && (!owner || (c.voName || c.owner) === owner) && (!department || c.department === department))
+      .map((c) => c.shift).filter(Boolean)
+  )].sort() as string[];
   const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageItems = filtered.slice((page - 1) * limit, page * limit);
@@ -885,22 +901,19 @@ function load(){
   fetch('/admin/audits/data?'+params)
     .then(function(r){return r.json()})
     .then(function(d){
-      // repopulate owner + department dropdowns
+      // Repopulate dropdowns with cross-filtered options; clear selection if no longer valid
       var ow=document.getElementById('f-owner');
-      var curO=state.owner;
       while(ow.options.length>1)ow.remove(1);
       d.owners.forEach(function(o){var opt=document.createElement('option');opt.value=o;opt.textContent=o;ow.appendChild(opt)});
-      if(curO)ow.value=curO;
+      if(state.owner&&d.owners.indexOf(state.owner)===-1){state.owner='';} ow.value=state.owner;
       var dw=document.getElementById('f-dept');
-      var curD=state.department;
       while(dw.options.length>1)dw.remove(1);
       d.departments.forEach(function(dep){var opt=document.createElement('option');opt.value=dep;opt.textContent=dep;dw.appendChild(opt)});
-      if(curD)dw.value=curD;
+      if(state.department&&d.departments.indexOf(state.department)===-1){state.department='';}dw.value=state.department;
       var sw=document.getElementById('f-shift');
-      var curS=state.shift;
       while(sw.options.length>1)sw.remove(1);
       (d.shifts||[]).forEach(function(s){var opt=document.createElement('option');opt.value=s;opt.textContent=s;sw.appendChild(opt)});
-      if(curS)sw.value=curS;
+      if(state.shift&&(d.shifts||[]).indexOf(state.shift)===-1){state.shift='';}sw.value=state.shift;
       renderStats(d);
       renderTable(d);
       renderPagination(d);

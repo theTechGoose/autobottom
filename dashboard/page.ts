@@ -913,12 +913,12 @@ table { width: 100%; border-collapse: collapse; }
 
     <!-- Tab: Words -->
     <div id="bw-tab-words" class="bw-tab-panel" style="display:none;">
-      <div class="modal-sub" style="margin-bottom:10px;">Phrases to search for in transcripts. Case-insensitive, partial phrase match.</div>
+      <div class="modal-sub" style="margin-bottom:10px;">Phrases to search for in transcripts. Case-insensitive. Expand a word to add exclusion rules (e.g. ignore "free" if "toll" precedes it).</div>
       <div style="display:flex;gap:6px;margin-bottom:10px;">
         <input id="bw-word-input" class="sf-input" type="text" placeholder="e.g. resort fees included" style="flex:1;">
         <button class="sf-btn primary" id="bw-word-add">Add</button>
       </div>
-      <div id="bw-word-list" style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;"></div>
+      <div id="bw-word-list" style="display:flex;flex-direction:column;gap:4px;max-height:340px;overflow-y:auto;"></div>
     </div>
 
     <!-- Tab: Offices -->
@@ -3601,6 +3601,80 @@ table { width: 100%; border-collapse: collapse; }
     return el;
   }
 
+  function bwRenderWordRow(w, i) {
+    var excls = w.exclusions || [];
+    var row = document.createElement('div');
+    row.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;';
+
+    var header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;';
+    header.innerHTML = '<span style="font-size:11px;color:var(--text-bright);flex:1;">' + w.word.replace(/</g,'&lt;') + '</span>' +
+      '<span style="font-size:9px;color:var(--text-muted);padding:2px 6px;background:var(--bg);border:1px solid var(--border);border-radius:10px;">' +
+        (excls.length ? excls.length + ' exclusion' + (excls.length > 1 ? 's' : '') : 'no exclusions') + '</span>' +
+      '<span class="bw-excl-toggle" style="font-size:10px;color:var(--blue);margin-left:2px;">▸</span>' +
+      '<button style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:0 0 0 6px;" title="Remove word">×</button>';
+
+    var removeBtn = header.querySelector('button');
+    removeBtn.addEventListener('click', function(e) { e.stopPropagation(); bwConfig.words.splice(i, 1); bwRenderLists(); });
+
+    var body = document.createElement('div');
+    body.style.cssText = 'display:none;padding:8px 10px 10px;border-top:1px solid var(--border);background:var(--bg);';
+
+    function renderExclusions() {
+      body.innerHTML = '';
+      if (excls.length) {
+        var exList = document.createElement('div');
+        exList.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-bottom:8px;';
+        excls.forEach(function(ex, ei) {
+          var exRow = document.createElement('div');
+          exRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-surface);border:1px solid var(--border);border-radius:5px;font-size:10px;color:var(--text-muted);';
+          exRow.innerHTML = '<span style="color:var(--yellow);font-weight:600;">' + (ex.type === 'prefix' ? 'before' : 'after') + '</span>' +
+            '<span style="color:var(--text-bright);">"' + ex.word.replace(/</g,'&lt;') + '"</span>' +
+            '<span>within ' + ex.buffer + ' word' + (ex.buffer !== 1 ? 's' : '') + '</span>' +
+            '<button style="margin-left:auto;background:transparent;border:none;color:var(--red);cursor:pointer;font-size:12px;">×</button>';
+          exRow.querySelector('button').addEventListener('click', function() { excls.splice(ei, 1); renderExclusions(); });
+          exList.appendChild(exRow);
+        });
+        body.appendChild(exList);
+      } else {
+        body.insertAdjacentHTML('beforeend', '<div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;">No exclusions — word always triggers</div>');
+      }
+      // Add exclusion form
+      var form = document.createElement('div');
+      form.style.cssText = 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;';
+      form.innerHTML = '<span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);">Add exclusion:</span>' +
+        '<select class="ex-type" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:3px 5px;">' +
+          '<option value="prefix">if word before</option><option value="suffix">if word after</option></select>' +
+        '<input class="sf-input ex-word" type="text" placeholder="e.g. toll" style="flex:1;min-width:80px;font-size:10px;padding:4px 7px;">' +
+        '<span style="font-size:10px;color:var(--text-muted);">within</span>' +
+        '<input class="ex-buf" type="number" min="1" max="20" value="1" style="width:42px;background:var(--bg-raised);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:3px 5px;">' +
+        '<span style="font-size:10px;color:var(--text-muted);">word(s)</span>' +
+        '<button class="sf-btn primary ex-add" style="font-size:10px;padding:3px 9px;">Add</button>';
+      form.querySelector('.ex-add').addEventListener('click', function() {
+        var exWord = form.querySelector('.ex-word').value.trim();
+        if (!exWord) { toast('Enter an exclusion word', 'error'); return; }
+        var buf = parseInt(form.querySelector('.ex-buf').value, 10) || 1;
+        var type = form.querySelector('.ex-type').value;
+        excls.push({ word: exWord, buffer: buf, type: type });
+        form.querySelector('.ex-word').value = '';
+        renderExclusions();
+      });
+      body.appendChild(form);
+    }
+
+    header.addEventListener('click', function(e) {
+      if (e.target === removeBtn) return;
+      var open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : '';
+      header.querySelector('.bw-excl-toggle').textContent = open ? '▸' : '▾';
+      if (!open) renderExclusions();
+    });
+
+    row.appendChild(header);
+    row.appendChild(body);
+    return row;
+  }
+
   function bwRenderLists() {
     var emailList = document.getElementById('bw-email-list');
     var wordList = document.getElementById('bw-word-list');
@@ -3614,7 +3688,7 @@ table { width: 100%; border-collapse: collapse; }
     });
     if (!bwConfig.words.length) wordList.innerHTML = '<div style="color:var(--text-dim);font-size:10px;padding:6px;">No words configured</div>';
     bwConfig.words.forEach(function(w, i) {
-      wordList.appendChild(bwRenderTag(w.word, function() { bwConfig.words.splice(i, 1); bwRenderLists(); }));
+      wordList.appendChild(bwRenderWordRow(w, i));
     });
     if (!bwConfig.officePatterns.length) officeList.innerHTML = '<div style="color:var(--text-dim);font-size:10px;padding:6px;">No patterns — add patterns or enable "all offices" above</div>';
     bwConfig.officePatterns.forEach(function(p, i) {

@@ -1,6 +1,6 @@
 /** Bad word detection — checks package transcripts for prohibited phrases and sends email alerts. */
 import { sendEmail } from "./postmark.ts";
-import type { BadWordConfig } from "../lib/kv.ts";
+import type { BadWordConfig, BadWordEntry } from "../lib/kv.ts";
 
 function normalizeText(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -27,22 +27,50 @@ export interface BadWordResult {
   matches: BadWordMatch[];
 }
 
+/** Check if an exclusion rule fires for a match at the given normalized position. */
+function isExcluded(normalized: string, matchStart: number, matchEnd: number, entry: BadWordEntry): boolean {
+  if (!entry.exclusions?.length) return false;
+  for (const rule of entry.exclusions) {
+    const normExcl = normalizeText(rule.word);
+    if (!normExcl) continue;
+    if (rule.type === "prefix") {
+      // Take `buffer` words immediately before the match
+      const before = normalized.slice(0, matchStart).trimEnd();
+      const words = before.split(/\s+/).filter(Boolean);
+      const window = words.slice(-rule.buffer).join(" ");
+      if (new RegExp(`\\b${escapeRegex(normExcl)}\\b`).test(window)) return true;
+    } else {
+      // Take `buffer` words immediately after the match
+      const after = normalized.slice(matchEnd).trimStart();
+      const words = after.split(/\s+/).filter(Boolean);
+      const window = words.slice(0, rule.buffer).join(" ");
+      if (new RegExp(`\\b${escapeRegex(normExcl)}\\b`).test(window)) return true;
+    }
+  }
+  return false;
+}
+
 /** Check transcript for configured words. Returns violations and match positions. */
-export function detectBadWords(transcript: string, words: string[]): BadWordResult {
-  if (!transcript || !words.length) return { violations: [], matches: [] };
+export function detectBadWords(transcript: string, entries: (BadWordEntry | string)[]): BadWordResult {
+  if (!transcript || !entries.length) return { violations: [], matches: [] };
 
   const normalized = normalizeText(transcript);
   const violations: string[] = [];
   const matches: BadWordMatch[] = [];
   const seen = new Set<string>();
 
-  for (const word of words) {
+  for (const entry of entries) {
+    const wordEntry: BadWordEntry = typeof entry === "string" ? { word: entry } : entry;
+    const word = wordEntry.word;
     if (!word.trim()) continue;
     const normWord = normalizeText(word);
     const regex = new RegExp(`\\b${escapeRegex(normWord)}\\b`, "gi");
     const hits = [...normalized.matchAll(regex)];
 
-    if (hits.length > 0 && !seen.has(normWord)) {
+    // Filter out hits where an exclusion rule fires
+    const nonExcluded = hits.filter((h) => !isExcluded(normalized, h.index!, h.index! + h[0].length, wordEntry));
+
+    if (nonExcluded.length > 0 && !seen.has(normWord)) {
       seen.add(normWord);
       violations.push(word);
 
@@ -182,7 +210,7 @@ export async function checkFindingForBadWords(
     }
   }
 
-  const words = config.words.map((w) => w.word).filter(Boolean);
+  const words = config.words.filter((w) => w.word?.trim());
   if (!words.length) {
     console.log(`[BAD-WORD] ${ctx.findingId}: Skipping — no words configured`);
     return false;

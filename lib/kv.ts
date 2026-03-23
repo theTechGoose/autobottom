@@ -826,8 +826,15 @@ export async function deleteEmailTemplate(orgId: OrgId, id: string): Promise<voi
 
 // ── Bad Word Config ─────────────────────────────────────────────────────────
 
+export interface ExclusionRule {
+  word: string;
+  buffer: number;
+  type: "prefix" | "suffix";
+}
+
 export interface BadWordEntry {
   word: string;
+  exclusions?: ExclusionRule[];
 }
 
 export interface BadWordConfig {

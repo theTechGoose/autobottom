@@ -1424,10 +1424,10 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         });
     }
 
-    function lockAppealBtn() {
+    function lockAppealBtn(status) {
       var btn = document.getElementById('appeal-btn');
       if (!btn) return;
-      btn.textContent = 'Appeal Filed';
+      btn.textContent = (status === 'complete') ? 'Appeal Decided' : 'Appeal Filed';
       btn.classList.add('filed');
       btn.disabled = true;
       btn.onclick = null;
@@ -1860,7 +1860,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.exists) {
-          lockAppealBtn();
+          lockAppealBtn(d.status);
           var overlay = document.getElementById('reaudit-overlay');
           if (overlay) overlay.style.display = 'none';
         }

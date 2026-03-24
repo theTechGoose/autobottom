@@ -736,65 +736,83 @@ table { width: 100%; border-collapse: collapse; }
   </div>
 </div>
 
-<!-- Chargebacks & Omissions Modal -->
+<!-- Chargebacks & Omissions / Wire Deductions Modal -->
 <div class="modal-overlay" id="chargebacks-modal">
   <div class="modal" style="width:92vw;max-width:92vw;height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:14px;">
-    <!-- Header -->
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0;">
-      <div>
-        <div class="modal-title" style="margin-bottom:2px;">Chargebacks &amp; Omissions</div>
-        <div class="modal-sub" style="margin-bottom:0;">Internal audit failures by date range</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <label style="font-size:11px;color:var(--text-dim);font-weight:600;">From</label>
-        <input type="date" id="cb-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
-        <label style="font-size:11px;color:var(--text-dim);font-weight:600;">To</label>
-        <input type="date" id="cb-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
-        <button class="sf-btn primary" id="cb-fetch-btn" style="font-size:11px;">Pull Report</button>
-        <select id="cb-format" class="sf-input" style="font-size:11px;padding:5px 8px;width:70px;">
-          <option value="csv">CSV</option>
-          <option value="xlsx">XLSX</option>
-        </select>
-        <button class="sf-btn ghost" id="cb-download-btn" style="font-size:11px;" disabled>Download</button>
-        <button class="sf-btn ghost" id="chargebacks-cancel" style="font-size:11px;">Close</button>
-      </div>
+    <!-- Tab bar -->
+    <div style="display:flex;align-items:center;gap:0;padding:0 24px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-surface);">
+      <button id="rpt-tab-cb" onclick="rptSwitchTab('cb')" style="font-size:11px;font-weight:600;padding:12px 16px;border:none;background:none;cursor:pointer;color:var(--blue);border-bottom:2px solid var(--blue);margin-bottom:-1px;">Chargebacks &amp; Omissions</button>
+      <button id="rpt-tab-wire" onclick="rptSwitchTab('wire')" style="font-size:11px;font-weight:600;padding:12px 16px;border:none;background:none;cursor:pointer;color:var(--text-dim);border-bottom:2px solid transparent;margin-bottom:-1px;">Wire Deductions</button>
+    </div>
+    <!-- Controls -->
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 24px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <label style="font-size:11px;color:var(--text-dim);font-weight:600;">From</label>
+      <input type="date" id="cb-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+      <label style="font-size:11px;color:var(--text-dim);font-weight:600;">To</label>
+      <input type="date" id="cb-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+      <button class="sf-btn primary" id="cb-fetch-btn" style="font-size:11px;">Pull Report</button>
+      <select id="cb-format" class="sf-input" style="font-size:11px;padding:5px 8px;width:70px;">
+        <option value="csv">CSV</option>
+        <option value="xlsx">XLSX</option>
+      </select>
+      <button class="sf-btn ghost" id="cb-download-btn" style="font-size:11px;" disabled>Download</button>
+      <button class="sf-btn ghost" id="cb-post-btn" style="font-size:11px;" disabled>Post to Sheet</button>
+      <button class="sf-btn ghost" id="chargebacks-cancel" style="font-size:11px;margin-left:auto;">Close</button>
     </div>
     <!-- Body -->
     <div style="flex:1;overflow-y:auto;padding:20px 24px;" id="cb-body">
-      <div id="cb-empty" style="color:var(--text-dim);font-size:12px;text-align:center;padding:60px 0;">Select a date range and pull the report.</div>
-      <!-- Chargebacks block -->
-      <div id="cb-chargebacks-block" style="display:none;margin-bottom:32px;">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--red);margin-bottom:10px;" id="cb-cb-heading">Chargebacks (0)</div>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;" id="cb-cb-table">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);">
+      <!-- Chargebacks & Omissions panel -->
+      <div id="rpt-panel-cb">
+        <div id="cb-empty" style="color:var(--text-dim);font-size:12px;text-align:center;padding:60px 0;">Select a date range and pull the report.</div>
+        <div id="cb-chargebacks-block" style="display:none;margin-bottom:32px;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--red);margin-bottom:10px;" id="cb-cb-heading">Chargebacks (0)</div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead><tr style="border-bottom:1px solid var(--border);">
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Date</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Team Member</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Revenue</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">CRM Link</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Type</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Failed Questions</th>
-            </tr>
-          </thead>
-          <tbody id="cb-cb-body"></tbody>
-        </table>
+            </tr></thead>
+            <tbody id="cb-cb-body"></tbody>
+          </table>
+        </div>
+        <div id="cb-omissions-block" style="display:none;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--yellow);margin-bottom:10px;" id="cb-om-heading">Omissions (0)</div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead><tr style="border-bottom:1px solid var(--border);">
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Date</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Team Member</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Revenue</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">CRM Link</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Type</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Failed Questions</th>
+            </tr></thead>
+            <tbody id="cb-om-body"></tbody>
+          </table>
+        </div>
       </div>
-      <!-- Omissions block -->
-      <div id="cb-omissions-block" style="display:none;">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--yellow);margin-bottom:10px;" id="cb-om-heading">Omissions (0)</div>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;" id="cb-om-table">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);">
+      <!-- Wire Deductions panel -->
+      <div id="rpt-panel-wire" style="display:none;">
+        <div id="wire-empty" style="color:var(--text-dim);font-size:12px;text-align:center;padding:60px 0;">Select a date range and pull the report.</div>
+        <div id="wire-block" style="display:none;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--cyan);margin-bottom:10px;" id="wire-heading">Wire Deductions (0)</div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead><tr style="border-bottom:1px solid var(--border);">
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Date</th>
-              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Team Member</th>
-              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Revenue</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Score</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Questions</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Passed</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">CRM Link</th>
-              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Type</th>
-              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Failed Questions</th>
-            </tr>
-          </thead>
-          <tbody id="cb-om-body"></tbody>
-        </table>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Audit Link</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Office</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Auditor</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Guest Name</th>
+            </tr></thead>
+            <tbody id="wire-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -3440,13 +3458,35 @@ table { width: 100%; border-collapse: collapse; }
       .catch(function() { toast('Delete failed', 'error'); btn.disabled = false; });
   });
 
-  // ===== Chargebacks & Omissions =====
+  // ===== Chargebacks & Omissions / Wire Deductions =====
   var cbData = { chargebacks: [], omissions: [] };
+  var wireData = { items: [] };
+  var rptActiveTab = 'cb';
   var qbDateUrl = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=';
+  var qbPkgUrl = 'https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=';
+
+  function rptSwitchTab(tab) {
+    rptActiveTab = tab;
+    document.getElementById('rpt-tab-cb').style.color = tab === 'cb' ? 'var(--blue)' : 'var(--text-dim)';
+    document.getElementById('rpt-tab-cb').style.borderBottomColor = tab === 'cb' ? 'var(--blue)' : 'transparent';
+    document.getElementById('rpt-tab-wire').style.color = tab === 'wire' ? 'var(--blue)' : 'var(--text-dim)';
+    document.getElementById('rpt-tab-wire').style.borderBottomColor = tab === 'wire' ? 'var(--blue)' : 'transparent';
+    document.getElementById('rpt-panel-cb').style.display = tab === 'cb' ? '' : 'none';
+    document.getElementById('rpt-panel-wire').style.display = tab === 'wire' ? '' : 'none';
+    rptUpdateButtons();
+  }
+
+  function rptUpdateButtons() {
+    var hasCb = cbData.chargebacks.length || cbData.omissions.length;
+    var hasWire = wireData.items.length;
+    var hasData = rptActiveTab === 'cb' ? hasCb : hasWire;
+    document.getElementById('cb-download-btn').disabled = !hasData;
+    document.getElementById('cb-post-btn').disabled = !hasData;
+  }
 
   function cbPrevMonday() {
     var d = new Date();
-    var day = d.getDay(); // 0=Sun,1=Mon,...6=Sat
+    var day = d.getDay();
     var diffToLastMon = day === 0 ? 6 : day - 1;
     var mon = new Date(d);
     mon.setDate(d.getDate() - diffToLastMon - 7);
@@ -3466,7 +3506,6 @@ table { width: 100%; border-collapse: collapse; }
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
   }
 
-  // Set default dates
   document.getElementById('cb-date-from').value = toInputDate(cbPrevMonday());
   document.getElementById('cb-date-to').value = toInputDate(cbPrevSunday());
 
@@ -3490,7 +3529,7 @@ table { width: 100%; border-collapse: collapse; }
     var tbody = document.getElementById(tbodyId);
     if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" style="padding:12px 10px;color:var(--text-dim);">None</td></tr>'; return; }
     tbody.innerHTML = rows.map(function(e) {
-      var crmLink = e.recordId ? '<a href="' + qbDateUrl + encodeURIComponent(e.recordId) + '" target="_blank" style="color:var(--blue);text-decoration:none;">CRM Link</a>' : '';
+      var crmLink = e.recordId ? '<a href="' + qbDateUrl + encodeURIComponent(e.recordId) + '" target="_blank" style="color:var(--blue);text-decoration:none;">CRM</a>' : '';
       var tm = cbTeamMember(e).replace(/</g,'&lt;');
       var fq = (e.failedQHeaders || []).join(', ').replace(/</g,'&lt;');
       return '<tr style="border-bottom:1px solid var(--border);">' +
@@ -3508,15 +3547,38 @@ table { width: 100%; border-collapse: collapse; }
     var cbs = cbData.chargebacks;
     var oms = cbData.omissions;
     document.getElementById('cb-empty').style.display = (cbs.length || oms.length) ? 'none' : '';
-    var cbBlock = document.getElementById('cb-chargebacks-block');
-    var omBlock = document.getElementById('cb-omissions-block');
-    cbBlock.style.display = cbs.length ? '' : 'none';
-    omBlock.style.display = oms.length ? '' : 'none';
+    document.getElementById('cb-chargebacks-block').style.display = cbs.length ? '' : 'none';
+    document.getElementById('cb-omissions-block').style.display = oms.length ? '' : 'none';
     document.getElementById('cb-cb-heading').textContent = 'Chargebacks (' + cbs.length + ')';
     document.getElementById('cb-om-heading').textContent = 'Omissions (' + oms.length + ')';
     cbRenderRows('cb-cb-body', cbs, 'Chargeback');
     cbRenderRows('cb-om-body', oms, 'Omission');
-    document.getElementById('cb-download-btn').disabled = !(cbs.length || oms.length);
+    rptUpdateButtons();
+  }
+
+  function wireRender() {
+    var items = wireData.items;
+    document.getElementById('wire-empty').style.display = items.length ? 'none' : '';
+    document.getElementById('wire-block').style.display = items.length ? '' : 'none';
+    document.getElementById('wire-heading').textContent = 'Wire Deductions (' + items.length + ')';
+    var tbody = document.getElementById('wire-body');
+    if (!items.length) { tbody.innerHTML = ''; rptUpdateButtons(); return; }
+    tbody.innerHTML = items.map(function(e) {
+      var crmLink = e.recordId ? '<a href="' + qbPkgUrl + encodeURIComponent(e.recordId) + '" target="_blank" style="color:var(--blue);text-decoration:none;">CRM</a>' : '';
+      var auditLink = e.findingId ? '<a href="/audit/report?id=' + encodeURIComponent(e.findingId) + '" target="_blank" style="color:var(--blue);text-decoration:none;">Audit</a>' : '';
+      return '<tr style="border-bottom:1px solid var(--border);">' +
+        '<td style="padding:6px 10px;color:var(--text);">' + cbFmtDate(e.ts) + '</td>' +
+        '<td style="padding:6px 10px;color:var(--text-bright);font-weight:500;">' + e.score + '%</td>' +
+        '<td style="padding:6px 10px;color:var(--text);">' + e.questionsAudited + '</td>' +
+        '<td style="padding:6px 10px;color:var(--green);">' + e.totalSuccess + '</td>' +
+        '<td style="padding:6px 10px;">' + crmLink + '</td>' +
+        '<td style="padding:6px 10px;">' + auditLink + '</td>' +
+        '<td style="padding:6px 10px;color:var(--text);">' + (e.office||'').replace(/</g,'&lt;') + '</td>' +
+        '<td style="padding:6px 10px;color:var(--text-dim);">' + (e.excellenceAuditor||'').replace(/</g,'&lt;') + '</td>' +
+        '<td style="padding:6px 10px;color:var(--text-dim);">' + (e.guestName||'').replace(/</g,'&lt;') + '</td>' +
+        '</tr>';
+    }).join('');
+    rptUpdateButtons();
   }
 
   document.getElementById('chargebacks-open').addEventListener('click', function() {
@@ -3534,12 +3596,15 @@ table { width: 100%; border-collapse: collapse; }
     var until = new Date(toVal + 'T23:59:59').getTime();
     if (since > until) { toast('From date must be before To date', 'error'); return; }
     btn.disabled = true; btn.textContent = 'Loading...';
-    fetch('/admin/chargebacks?since=' + since + '&until=' + until)
+    var url = rptActiveTab === 'cb'
+      ? '/admin/chargebacks?since=' + since + '&until=' + until
+      : '/admin/wire-deductions?since=' + since + '&until=' + until;
+    fetch(url)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.error) { toast(d.error, 'error'); return; }
-        cbData = d;
-        cbRender();
+        if (rptActiveTab === 'cb') { cbData = d; cbRender(); }
+        else { wireData = d; wireRender(); }
       })
       .catch(function() { toast('Fetch failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Pull Report'; });
@@ -3558,36 +3623,88 @@ table { width: 100%; border-collapse: collapse; }
     });
   }
 
+  function wireBuildRows(items) {
+    return items.map(function(e) {
+      return {
+        Timestamp: cbFmtDate(e.ts),
+        Score: e.score + '%',
+        'Questions Audited': e.questionsAudited,
+        'Total Success': e.totalSuccess,
+        'CRM Hyperlink': e.recordId ? (qbPkgUrl + e.recordId) : '',
+        'Recording Hyperlink': e.findingId ? ('/audit/report?id=' + e.findingId) : '',
+        Office: e.office || '',
+        'Excellence Auditor': e.excellenceAuditor || '',
+        'Date of Booking': '',
+        'Guest Name': e.guestName || '',
+      };
+    });
+  }
+
+  function rptDownloadCsv(rows, headers, filename) {
+    var csv = [headers.join(',')].concat(rows.map(function(r) {
+      return headers.map(function(h) {
+        var v = String(r[h] != null ? r[h] : '').replace(/"/g,'""');
+        return '"' + v + '"';
+      }).join(',');
+    })).join('\\n');
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+  }
+
+  function rptDownloadXlsx(rows, headers, filename) {
+    var doIt = function() {
+      var wb = XLSX.utils.book_new();
+      var ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+      XLSX.utils.book_append_sheet(wb, ws, 'Report');
+      XLSX.writeFile(wb, filename);
+    };
+    if (typeof XLSX !== 'undefined') { doIt(); return; }
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js';
+    s.onload = doIt;
+    s.onerror = function() { toast('Failed to load XLSX library', 'error'); };
+    document.head.appendChild(s);
+  }
+
   document.getElementById('cb-download-btn').addEventListener('click', function() {
     var fmt = document.getElementById('cb-format').value;
-    var allRows = cbBuildRows(cbData.chargebacks, 'Chargeback').concat(cbBuildRows(cbData.omissions, 'Omission'));
-    var headers = ['Date','Team Member','Revenue','CRM Link','Chargeback/Omission','Failed Questions'];
-    if (fmt === 'csv') {
-      var csv = [headers.join(',')].concat(allRows.map(function(r) {
-        return headers.map(function(h) {
-          var v = String(r[h] != null ? r[h] : '').replace(/"/g,'""');
-          return '"' + v + '"';
-        }).join(',');
-      })).join('\\n');
-      var blob = new Blob([csv], { type: 'text/csv' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'chargebacks-omissions.csv';
-      a.click();
+    if (rptActiveTab === 'cb') {
+      var rows = cbBuildRows(cbData.chargebacks, 'Chargeback').concat(cbBuildRows(cbData.omissions, 'Omission'));
+      var headers = ['Date','Team Member','Revenue','CRM Link','Chargeback/Omission','Failed Questions'];
+      if (fmt === 'csv') rptDownloadCsv(rows, headers, 'chargebacks-omissions.csv');
+      else rptDownloadXlsx(rows, headers, 'chargebacks-omissions.xlsx');
     } else {
-      var doXlsx = function() {
-        var wb = XLSX.utils.book_new();
-        var ws = XLSX.utils.json_to_sheet(allRows, { header: headers });
-        XLSX.utils.book_append_sheet(wb, ws, 'Report');
-        XLSX.writeFile(wb, 'chargebacks-omissions.xlsx');
-      };
-      if (typeof XLSX !== 'undefined') { doXlsx(); return; }
-      var s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js';
-      s.onload = doXlsx;
-      s.onerror = function() { toast('Failed to load XLSX library', 'error'); };
-      document.head.appendChild(s);
+      var wrows = wireBuildRows(wireData.items);
+      var wheaders = ['Timestamp','Score','Questions Audited','Total Success','CRM Hyperlink','Recording Hyperlink','Office','Excellence Auditor','Date of Booking','Guest Name'];
+      if (fmt === 'csv') rptDownloadCsv(wrows, wheaders, 'wire-deductions.csv');
+      else rptDownloadXlsx(wrows, wheaders, 'wire-deductions.xlsx');
     }
+  });
+
+  document.getElementById('cb-post-btn').addEventListener('click', function() {
+    var btn = this;
+    var fromVal = document.getElementById('cb-date-from').value;
+    var toVal = document.getElementById('cb-date-to').value;
+    if (!fromVal || !toVal) { toast('Select both dates', 'error'); return; }
+    var since = new Date(fromVal + 'T00:00:00').getTime();
+    var until = new Date(toVal + 'T23:59:59').getTime();
+    var tabs = rptActiveTab === 'cb' ? 'chargebacks,omissions' : 'wire';
+    btn.disabled = true; btn.textContent = 'Posting...';
+    fetch('/admin/post-to-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since: since, until: until, tabs: tabs }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) { toast(d.error, 'error'); return; }
+        toast('Posted to sheet ✓', 'success');
+      })
+      .catch(function() { toast('Post failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Post to Sheet'; });
   });
 
   // ===== Bad Words =====

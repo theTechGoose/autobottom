@@ -291,6 +291,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/office-bypass": handleSaveOfficeBypass,
   "/admin/manager-scopes": handleSaveManagerScope,
   "/admin/audit-dimensions": handleSaveAuditDimensions,
+  "/admin/post-to-sheet": handlePostToSheet,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -401,6 +402,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/manager-scopes": handleGetManagerScopes,
   "/admin/audit-dimensions": handleGetAuditDimensions,
   "/admin/chargebacks": handleGetChargebacks,
+  "/admin/wire-deductions": handleGetWireDeductions,
   "/admin/trigger-weekly-sheets": handleTriggerWeeklySheets,
   "/docs/index": () => Promise.resolve(html(getDocsIndexHtml())),
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
@@ -2052,6 +2054,61 @@ async function handleGetChargebacks(req: Request): Promise<Response> {
   const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
   const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
   return json({ chargebacks, omissions });
+}
+
+async function handleGetWireDeductions(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const url = new URL(req.url);
+  const since = parseInt(url.searchParams.get("since") ?? "0", 10);
+  const until = parseInt(url.searchParams.get("until") ?? String(Date.now()), 10);
+  if (!since) return json({ error: "since required" }, 400);
+  const orgId = env.chargebacksOrgId as OrgId;
+  if (!orgId) return json({ error: "org not configured" }, 500);
+  const items = await getWireDeductionEntries(orgId, since, until);
+  return json({ items });
+}
+
+async function handlePostToSheet(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  const { since, until, tabs } = body as { since: number; until: number; tabs: string };
+  if (!since || !until || !tabs) return json({ error: "since, until, tabs required" }, 400);
+  const saS3Key = env.sheetsSaS3Key;
+  const sheetId = env.chargebacksSheetId;
+  const orgId = env.chargebacksOrgId as OrgId;
+  if (!saS3Key || !sheetId || !orgId) return json({ error: "sheets not configured" }, 500);
+  const saBytes = await new S3Ref(env.s3Bucket, saS3Key).get();
+  if (!saBytes) return json({ error: "SA credentials not found" }, 500);
+  const saJson = JSON.parse(new TextDecoder().decode(saBytes));
+  const saEmail = saJson.client_email as string;
+  const saKey = saJson.private_key as string;
+  const tabList = tabs.split(",").map((t: string) => t.trim());
+  const fmtDate = (ts: number) => new Date(ts).toLocaleDateString("en-US");
+  const realm = Deno.env.get("QB_REALM");
+  const crmUrl = (e: { recordId: string }) => `https://${realm}.quickbase.com/db/bpb28qsnn?a=dr&rid=${e.recordId}`;
+  const pkgCrmUrl = (e: { recordId: string }) => `https://${realm}.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=${e.recordId}`;
+  const auditUrl = (e: { findingId: string }) => `${env.selfUrl}/audit/report?id=${e.findingId}`;
+  const posted: string[] = [];
+  if (tabList.includes("chargebacks") || tabList.includes("omissions")) {
+    const entries = await getChargebackEntries(orgId, since, until);
+    const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
+    const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
+    const toRows = (list: typeof entries): string[][] =>
+      list.map((e) => [fmtDate(e.ts), e.voName, e.revenue, crmUrl(e), e.destination, e.failedQHeaders.join(", "), `${e.score}%`]);
+    if (tabList.includes("chargebacks")) { await appendSheetRows(sheetId, "Chargebacks", toRows(chargebacks), saEmail, saKey); posted.push("Chargebacks"); }
+    if (tabList.includes("omissions")) { await appendSheetRows(sheetId, "Omissions", toRows(omissions), saEmail, saKey); posted.push("Omissions"); }
+  }
+  if (tabList.includes("wire")) {
+    const wireEntries = await getWireDeductionEntries(orgId, since, until);
+    const toWireRows = (list: typeof wireEntries): string[][] =>
+      list.map((e) => [fmtDate(e.ts), `${e.score}%`, String(e.questionsAudited), String(e.totalSuccess), pkgCrmUrl(e), auditUrl(e), e.office, e.excellenceAuditor, "", e.guestName]);
+    await appendSheetRows(sheetId, "Wire Deductions", toWireRows(wireEntries), saEmail, saKey);
+    posted.push("Wire Deductions");
+  }
+  console.log(`[POST-TO-SHEET] ✅ Posted by ${auth.email}: ${posted.join(", ")}`);
+  return json({ ok: true, posted });
 }
 
 async function handleTriggerWeeklySheets(req: Request): Promise<Response> {

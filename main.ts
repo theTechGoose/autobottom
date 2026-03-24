@@ -25,7 +25,7 @@ import {
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig,
   getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
-  getChargebackEntries, getWireDeductionEntries, purgeOldEntries,
+  getChargebackEntries, getWireDeductionEntries, purgeOldEntries, backfillReviewScores,
   getBadWordConfig, saveBadWordConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
@@ -293,6 +293,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/audit-dimensions": handleSaveAuditDimensions,
   "/admin/post-to-sheet": handlePostToSheet,
   "/admin/purge-old-audits": handlePurgeOldAudits,
+  "/admin/backfill-review-scores": handleBackfillReviewScores,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -3706,6 +3707,17 @@ async function handleWipeKv(_req: Request): Promise<Response> {
   }
   console.log(`[ADMIN] Wiped ${deleted} KV entries`);
   return json({ ok: true, deleted });
+}
+
+async function handleBackfillReviewScores(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  const { since, until } = body as { since: number; until: number };
+  if (!since || !until) return json({ error: "since and until required" }, 400);
+  const result = await backfillReviewScores(auth.orgId, since, until);
+  console.log(`[ADMIN] 🔧 Backfill review scores by ${auth.email}: scanned=${result.scanned} updated=${result.updated}`);
+  return json({ ok: true, ...result });
 }
 
 async function handlePurgeOldAudits(req: Request): Promise<Response> {

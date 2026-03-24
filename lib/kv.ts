@@ -325,6 +325,39 @@ export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { r
   }
 }
 
+export async function updateCompletedStatScore(orgId: OrgId, findingId: string, score: number): Promise<void> {
+  const c = await store(CompletedAuditStatDto);
+  const results = await c.listRaw([orgId]);
+  for (const r of results) {
+    const v = r.value as unknown as CompletedAuditStat;
+    if (v.findingId === findingId) {
+      await c.rawDb.set(r.key, { ...v, score }, { expireIn: DAY_MS });
+      console.log(`[TRACK-COMPLETED] ✅ Updated score for ${findingId} → ${score}%`);
+      return;
+    }
+  }
+}
+
+export async function backfillReviewScores(orgId: OrgId, since: number, until: number): Promise<{ scanned: number; updated: number }> {
+  const c = await store(CompletedAuditStatDto);
+  const results = await c.listRaw([orgId]);
+  let scanned = 0, updated = 0;
+  for (const r of results) {
+    const v = r.value as unknown as CompletedAuditStat;
+    if (v.ts < since || v.ts > until) continue;
+    scanned++;
+    const finding = await getFinding(orgId, v.findingId);
+    const reviewScore = (finding as Record<string, unknown>)?.reviewScore as number | undefined;
+    if (reviewScore !== undefined && reviewScore !== v.score) {
+      const remaining = (r.key as unknown as { expireIn?: number });
+      await c.rawDb.set(r.key, { ...v, score: reviewScore }, { expireIn: DAY_MS });
+      updated++;
+      console.log(`[BACKFILL-REVIEW-SCORES] Updated ${v.findingId}: ${v.score}% → ${reviewScore}%`);
+    }
+  }
+  return { scanned, updated };
+}
+
 export async function getStuckFindings(thresholdMs = 15 * 60 * 1000): Promise<Array<{ orgId: string; findingId: string; step: string; ts: number; ageMs: number }>> {
   const w = await store(WatchdogActive);
   const now = Date.now();

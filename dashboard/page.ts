@@ -429,6 +429,13 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
+      <!-- Backfill Review Scores (opens modal) -->
+      <div class="sb-link" id="backfill-scores-open">
+        <div class="icon" style="background:var(--blue-bg);color:var(--blue);">${icons.settings}</div>
+        <span class="title">Backfill Review Scores</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
       <!-- Bad Words (opens modal) -->
       <div class="sb-link" id="bad-words-open">
         <div class="icon" style="background:var(--red-bg);color:var(--red);">${icons.alertTriangle}</div>
@@ -840,6 +847,25 @@ table { width: 100%; border-collapse: collapse; }
     <div class="modal-actions">
       <button class="sf-btn secondary" id="purge-cancel">Cancel</button>
       <button class="sf-btn danger" id="purge-confirm-btn">Purge</button>
+    </div>
+  </div>
+</div>
+
+<!-- Backfill Review Scores Modal -->
+<div class="modal-overlay" id="backfill-scores-modal">
+  <div class="modal" style="width:480px;max-width:95vw;">
+    <div class="modal-title">Backfill Review Scores</div>
+    <div class="modal-sub" style="margin-bottom:20px;">Re-apply finalized review scores to audit history entries for a date range. Use this to fix scores that show the pre-review value.</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
+      <input type="date" id="bfrs-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
+      <input type="date" id="bfrs-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+    </div>
+    <div id="bfrs-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
+    <div class="modal-actions">
+      <button class="sf-btn secondary" id="bfrs-cancel">Cancel</button>
+      <button class="sf-btn primary" id="bfrs-run-btn">Run Backfill</button>
     </div>
   </div>
 </div>
@@ -3764,6 +3790,42 @@ table { width: 100%; border-collapse: collapse; }
       })
       .catch(function() { toast('Purge failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Purge'; });
+  });
+
+  // ===== Backfill Review Scores =====
+  (function() {
+    var today = toInputDate(new Date());
+    document.getElementById('bfrs-date-from').value = today;
+    document.getElementById('bfrs-date-to').value = today;
+  })();
+  document.getElementById('backfill-scores-open').addEventListener('click', function() { openModal('backfill-scores-modal'); });
+  document.getElementById('bfrs-cancel').addEventListener('click', function() { closeModal('backfill-scores-modal'); });
+  backdropClose('backfill-scores-modal');
+
+  document.getElementById('bfrs-run-btn').addEventListener('click', function() {
+    var fromVal = document.getElementById('bfrs-date-from').value;
+    var toVal = document.getElementById('bfrs-date-to').value;
+    if (!fromVal || !toVal) { toast('Select both dates', 'error'); return; }
+    var since = new Date(fromVal + 'T00:00:00').getTime();
+    var until = new Date(toVal + 'T23:59:59.999').getTime();
+    if (since > until) { toast('From must be before To', 'error'); return; }
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Running...';
+    document.getElementById('bfrs-msg').textContent = '';
+    fetch('/admin/backfill-review-scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since: since, until: until }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) { toast(d.error, 'error'); return; }
+        var msg = 'Scanned ' + d.scanned + ' audits, updated ' + d.updated + ' scores';
+        document.getElementById('bfrs-msg').textContent = msg;
+        toast(msg, 'success');
+      })
+      .catch(function() { toast('Backfill failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Run Backfill'; });
   });
 
   // ===== Bad Words =====

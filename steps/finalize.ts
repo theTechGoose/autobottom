@@ -222,6 +222,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
         guestName: rec.GuestName ? String(rec.GuestName) : (rec["32"] ? String(rec["32"]) : undefined),
         spouseName: rec["33"] ? String(rec["33"]) : undefined,
         maritalStatus: rec["49"] ? String(rec["49"]) : undefined,
+        roomTypeMaxOccupancy: rec["297"] ? String(rec["297"]) : undefined,
         destination: rec.DestinationDisplay ? String(rec.DestinationDisplay) : (rec["314"] ? String(rec["314"]) : undefined),
         arrivalDate: rec["8"] ? String(rec["8"]) : undefined,
         departureDate: rec["10"] ? String(rec["10"]) : undefined,

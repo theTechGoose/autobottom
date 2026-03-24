@@ -33,6 +33,7 @@ export interface ReviewItem {
     guestName?: string;
     spouseName?: string;
     maritalStatus?: string;
+    roomTypeMaxOccupancy?: string;
     destination?: string;
     arrivalDate?: string;
     departureDate?: string;

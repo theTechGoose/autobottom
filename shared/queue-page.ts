@@ -1030,12 +1030,12 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
 ${!R ? `<!-- Add Genie modal (judge only) -->
 <div id="add-genie-overlay" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.75);align-items:center;justify-content:center;">
-  <div style="background:#161b22;border:1px solid #2d333b;border-radius:12px;padding:24px;width:420px;max-width:90vw;">
+  <div style="background:#161b22;border:1px solid #2d333b;border-radius:12px;padding:24px;width:440px;max-width:90vw;">
     <h3 style="font-size:15px;font-weight:700;margin-bottom:8px;color:#c9d1d9;">Add 2nd Genie / Different Recording</h3>
-    <p style="font-size:12px;color:#8b949e;margin-bottom:16px;">Enter one or more Genie IDs (comma-separated) to re-audit with a different or additional recording.</p>
+    <p style="font-size:12px;color:#8b949e;margin-bottom:16px;">First row is pre-filled with the original Genie ID. Add a second row to include an additional or replacement recording.</p>
     <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Genie ID(s)</div>
-    <input type="text" id="add-genie-input" autocomplete="off" spellcheck="false" placeholder="e.g. 12345678, 87654321"
-      style="width:100%;padding:10px 14px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:14px;margin-bottom:12px;outline:none;box-sizing:border-box;">
+    <div id="add-genie-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;"></div>
+    <button id="add-genie-add-row" onclick="addGenieRow()" style="font-size:11px;color:#14b8a6;background:none;border:none;cursor:pointer;padding:2px 0;margin-bottom:12px;text-align:left;">+ Add Another</button>
     <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Comment (optional)</div>
     <input type="text" id="add-genie-comment" autocomplete="off" spellcheck="false" placeholder="Reason for re-audit..."
       style="width:100%;padding:10px 14px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:14px;margin-bottom:16px;outline:none;box-sizing:border-box;">
@@ -1754,6 +1754,7 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
         rows += '<div class="rd-field rd-full">Destination: <span>' + (meta.destination || '—') + '</span></div>';
         rows += rdField('Arrival', meta.arrivalDate);
         rows += rdField('Departure', meta.departureDate);
+        rows += rdField('Room Type / Max Occ.', meta.roomTypeMaxOccupancy);
         rows += rdCheck('WGS', meta.totalWGS);
         rows += rdCheck('MCC', meta.totalMCC);
       }
@@ -1918,7 +1919,7 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
           tChip.textContent = fmtTranscriptTime(times[timeIdx - 1]);
           tChip.style.cssText = 'font-size:9px;color:#3d4452;font-family:monospace;margin-right:5px;flex-shrink:0;user-select:none;cursor:pointer;';
           (function(chip, line) {
-            chip.addEventListener('click', function(e) { e.stopPropagation(); seekToTranscriptLine(line); });
+            chip.addEventListener('click', function(e) { e.stopPropagation(); seekToTranscriptLine(line); if (recAudio.paused) recAudio.play().catch(function(){}); });
           })(tChip, div);
           div.appendChild(tChip);
         }
@@ -1939,6 +1940,14 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
               break;
             }
           }
+        }
+
+        // Click anywhere on the line to seek + play audio
+        if (div.getAttribute('data-time') !== null) {
+          div.style.cursor = 'pointer';
+          (function(d) {
+            d.addEventListener('click', function() { seekToTranscriptLine(d); if (recAudio.paused) recAudio.play().catch(function(){}); });
+          })(div);
         }
 
         if (isEvidence) {
@@ -2303,6 +2312,7 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     document.getElementById('search-count').textContent = (searchIndex + 1) + '/' + searchMatches.length;
     scrollToTranscriptLine(el);
     seekToTranscriptLine(el);
+    if (recAudio.paused) recAudio.play().catch(function(){});
   }
   function scrollToTranscriptLine(el) {
     var body = document.getElementById('transcript-body');
@@ -2334,7 +2344,7 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
       if (searchMatches.length > 0) {
         goToSearchMatch(searchIndex < 0 ? 0 : searchIndex + 1);
       }
-      closeSearch();
+      this.blur(); // unfocus input so outer Enter handler can navigate queue items
     } else if (e.key === 'Escape') {
       e.preventDefault();
       closeSearch();
@@ -2513,8 +2523,15 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   (function() {
     var el = document.getElementById('type-filter');
     if (!el) return;
+    // Restore persisted preference so the initial buffer respects it
+    var saved = localStorage.getItem(STORAGE_PREFIX + '_typefilter');
+    if (saved && (saved === 'date-leg' || saved === 'package')) {
+      selfTypeFilter = saved;
+      el.value = saved;
+    }
     el.addEventListener('change', function() {
       selfTypeFilter = this.value;
+      localStorage.setItem(STORAGE_PREFIX + '_typefilter', this.value);
       loadNext();
     });
   })();
@@ -2653,16 +2670,70 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   window.openAddGenieModal = function() { openAddGenieModal(); };
   window.closeAddGenieModal = function() { closeAddGenieModal(); };
   window.submitAddGenie = function() { submitAddGenie(); };
+  window.addGenieRow = function() { addGenieRow(); };
+
+  function makeGenieRowInput(value, removable) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;';
+    var inp = document.createElement('input');
+    inp.type = 'text';
+    inp.autocomplete = 'off';
+    inp.spellcheck = false;
+    inp.placeholder = '8-digit Genie ID';
+    inp.maxLength = 8;
+    inp.value = value || '';
+    inp.style.cssText = 'flex:1;padding:10px 14px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:14px;outline:none;box-sizing:border-box;';
+    inp.addEventListener('keydown', function(e) { e.stopPropagation(); });
+    var removeBtn = document.createElement('button');
+    removeBtn.textContent = '×';
+    removeBtn.style.cssText = 'background:none;border:none;color:#6e7681;font-size:18px;cursor:pointer;line-height:1;padding:0 4px;flex-shrink:0;';
+    removeBtn.style.visibility = removable ? 'visible' : 'hidden';
+    removeBtn.disabled = !removable;
+    removeBtn.addEventListener('click', function() {
+      row.remove();
+      // show remove btn on first row if only one remains
+      var rows = document.getElementById('add-genie-rows');
+      if (rows && rows.children.length === 1) {
+        var firstRemove = rows.children[0].querySelector('button');
+        if (firstRemove) { firstRemove.style.visibility = 'hidden'; firstRemove.disabled = true; }
+      }
+    });
+    row.appendChild(inp);
+    row.appendChild(removeBtn);
+    return row;
+  }
+
+  function addGenieRow(value) {
+    var rows = document.getElementById('add-genie-rows');
+    if (!rows) return;
+    // If we're adding a second row, make the first one's remove button visible
+    if (rows.children.length === 1) {
+      var firstRemove = rows.children[0].querySelector('button');
+      if (firstRemove) { firstRemove.style.visibility = 'visible'; firstRemove.disabled = false; }
+    }
+    var row = makeGenieRowInput(value || '', true);
+    rows.appendChild(row);
+    row.querySelector('input').focus();
+  }
+
   function openAddGenieModal() {
     if (!buffer[0]) return;
-    document.getElementById('add-genie-input').value = '';
+    var rows = document.getElementById('add-genie-rows');
+    rows.innerHTML = '';
+    var originalId = buffer[0].recordingId || '';
+    rows.appendChild(makeGenieRowInput(originalId, false));
     document.getElementById('add-genie-comment').value = '';
     document.getElementById('add-genie-error').style.display = 'none';
     document.getElementById('add-genie-submit').disabled = false;
     document.getElementById('add-genie-submit').textContent = 'Submit';
-    var overlay = document.getElementById('add-genie-overlay');
-    overlay.style.display = 'flex';
-    document.getElementById('add-genie-input').focus();
+    document.getElementById('add-genie-overlay').style.display = 'flex';
+    // Focus the first input if empty, otherwise add a blank row ready for the 2nd ID
+    var firstInput = rows.querySelector('input');
+    if (originalId) {
+      addGenieRow('');
+    } else {
+      firstInput.focus();
+    }
   }
   function closeAddGenieModal() {
     document.getElementById('add-genie-overlay').style.display = 'none';
@@ -2670,13 +2741,14 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   function submitAddGenie() {
     var currentItem = buffer[0];
     if (!currentItem) return;
-    var idsRaw = document.getElementById('add-genie-input').value.trim();
-    if (!idsRaw) {
+    var inputs = document.getElementById('add-genie-rows').querySelectorAll('input');
+    var ids = [];
+    inputs.forEach(function(inp) { var v = inp.value.trim(); if (v) ids.push(v); });
+    if (ids.length === 0) {
       document.getElementById('add-genie-error').textContent = 'Please enter at least one Genie ID.';
       document.getElementById('add-genie-error').style.display = '';
       return;
     }
-    var ids = idsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
     var comment = document.getElementById('add-genie-comment').value.trim();
     var btn = document.getElementById('add-genie-submit');
     btn.disabled = true;
@@ -2707,7 +2779,6 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   document.getElementById('add-genie-overlay').addEventListener('click', function(e) {
     if (e.target === this) closeAddGenieModal();
   });
-  document.getElementById('add-genie-input').addEventListener('keydown', function(e) { e.stopPropagation(); });
   document.getElementById('add-genie-comment').addEventListener('keydown', function(e) {
     e.stopPropagation();
     if (e.key === 'Enter') submitAddGenie();

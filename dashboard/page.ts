@@ -3531,6 +3531,7 @@ table { width: 100%; border-collapse: collapse; }
     document.getElementById('rpt-panel-wire').style.display = tab === 'wire' ? '' : 'none';
     rptUpdateButtons();
   }
+  window.rptSwitchTab = function(tab) { rptSwitchTab(tab); };
 
   function rptUpdateButtons() {
     var hasCb = cbData.chargebacks.length || cbData.omissions.length;

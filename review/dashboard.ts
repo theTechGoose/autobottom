@@ -165,6 +165,17 @@ export function getReviewDashboardPage(): string {
         <span class="arrow">${icons.chevronRight}</span>
       </a>
     </div>
+    <div class="sb-section">
+      <div class="sb-label">Queue Preference</div>
+      <div style="padding:4px 4px 8px;">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;">Filter which audit types you review. Saved automatically.</div>
+        <select id="dash-type-filter" style="width:100%;font-size:11px;padding:7px 10px;cursor:pointer;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;appearance:none;-webkit-appearance:none;">
+          <option value="">All Types (Internal + Partner)</option>
+          <option value="date-leg">Internal only (Date Legs)</option>
+          <option value="package">Partner only (Packages)</option>
+        </select>
+      </div>
+    </div>
     <div class="sb-footer">
       <div class="sb-user">
         <div class="sb-avatar" id="user-avatar"></div>
@@ -433,6 +444,19 @@ export function getReviewDashboardPage(): string {
       renderBadgeShowcase(data.earned || []);
     } catch(e) {}
   }
+
+  // -- Queue type preference (persisted to localStorage, read by queue-page on load) --
+  (function() {
+    var STORAGE_KEY = 'review_typefilter';
+    var sel = document.getElementById('dash-type-filter');
+    if (!sel) return;
+    // Restore saved preference
+    var saved = localStorage.getItem(STORAGE_KEY);
+    if (saved === 'date-leg' || saved === 'package') sel.value = saved;
+    sel.addEventListener('change', function() {
+      localStorage.setItem(STORAGE_KEY, this.value);
+    });
+  })();
 
   load();
   loadBadges();

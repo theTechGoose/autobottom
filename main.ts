@@ -85,7 +85,7 @@ import {
   handleJudgeListReviewers, handleJudgeCreateReviewer, handleJudgeDeleteReviewer,
   handleJudgeGetReviewerConfig, handleJudgeSaveReviewerConfig,
 } from "./judge/handlers.ts";
-import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries } from "./judge/kv.ts";
+import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries, pruneBypassedFromQueues } from "./judge/kv.ts";
 
 // Manager (unified auth)
 import {
@@ -1986,7 +1986,10 @@ async function handleSaveOfficeBypass(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
   const body = await req.json();
   await saveOfficeBypassConfig(auth.orgId, body);
-  return json({ ok: true });
+  const patterns: string[] = body.patterns ?? [];
+  const pruned = await pruneBypassedFromQueues(auth.orgId, patterns);
+  console.log(`[ADMIN] OfficeBypass saved by ${auth.email}: reviewPruned=${pruned.reviewPruned} judgePruned=${pruned.judgePruned}`);
+  return json({ ok: true, ...pruned });
 }
 
 // -- Admin: Manager Scopes --
@@ -3182,7 +3185,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
       auditor,
     });
 
-    await populateJudgeQueue(orgId, finding.id, finding.answeredQuestions);
+    await populateJudgeQueue(orgId, finding.id, finding.answeredQuestions, undefined, finding.recordingIdField as string | undefined, finding.recordingId ? String(finding.recordingId) : undefined);
 
     if (isComplete) {
       const judge = judges[i % judges.length];

@@ -2766,8 +2766,16 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
         btn.disabled = false;
         btn.textContent = 'Submit';
       } else {
-        closeAddGenieModal();
-        toast('Re-audit submitted', 'pos');
+        // Dismiss all judge queue items for this finding so it clears out of the queue
+        return fetch('/judge/api/dismiss-finding', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ findingId: currentItem.findingId }),
+        }).catch(function(){}).then(function() {
+          closeAddGenieModal();
+          toast('Re-audit submitted — removed from judge queue', 'pos');
+          loadNext();
+        });
       }
     }).catch(function(err) {
       document.getElementById('add-genie-error').textContent = err.message || 'Request failed';

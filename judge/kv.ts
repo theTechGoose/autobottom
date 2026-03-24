@@ -706,6 +706,35 @@ export async function getJudgeDashboardData(orgId: OrgId): Promise<{
   };
 }
 
+// -- Dismiss a single finding from the judge queue --
+
+export async function dismissFindingFromJudgeQueue(orgId: OrgId, findingId: string): Promise<{ dismissed: number }> {
+  const db = await kv();
+  const keys: Deno.KvKey[] = [];
+
+  // All pending questions for this finding
+  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-pending", findingId) })) {
+    keys.push(entry.key);
+  }
+  // Audit pending count
+  keys.push(orgKey(orgId, "judge-audit-pending", findingId));
+  // All active items for this finding (any judge)
+  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-active") })) {
+    const val = entry.value as JudgeItem & { claimedAt: number };
+    if (val?.findingId === findingId) keys.push(entry.key);
+  }
+
+  for (let i = 0; i < keys.length; i += 10) {
+    const batch = keys.slice(i, i + 10);
+    const atomic = db.atomic();
+    for (const key of batch) atomic.delete(key);
+    await atomic.commit();
+  }
+
+  console.log(`[JUDGE] dismissFinding: removed ${keys.length} KV entries for findingId=${findingId} org=${orgId}`);
+  return { dismissed: keys.length };
+}
+
 // -- Appeal Record --
 
 export async function clearJudgeQueue(orgId: OrgId): Promise<{ cleared: number }> {

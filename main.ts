@@ -84,6 +84,7 @@ import {
   handleJudgeMe,
   handleJudgeListReviewers, handleJudgeCreateReviewer, handleJudgeDeleteReviewer,
   handleJudgeGetReviewerConfig, handleJudgeSaveReviewerConfig,
+  handleJudgeDismissFinding,
 } from "./judge/handlers.ts";
 import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries, pruneBypassedFromQueues } from "./judge/kv.ts";
 
@@ -321,6 +322,7 @@ const postRoutes: Record<string, Handler> = {
   "/judge/api/reviewers": handleJudgeCreateReviewer,
   "/judge/api/reviewers/delete": handleJudgeDeleteReviewer,
   "/judge/api/reviewer-config": handleJudgeSaveReviewerConfig,
+  "/judge/api/dismiss-finding": handleJudgeDismissFinding,
   "/judge/api/gamification": handleJudgeSaveGamification,
 
   // Admin gamification

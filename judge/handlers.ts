@@ -6,6 +6,7 @@ import {
   undoDecision,
   getJudgeStats,
   getJudgeDashboardData,
+  dismissFindingFromJudgeQueue,
 } from "./kv.ts";
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/kv.ts";
 import type { AuthContext } from "../auth/kv.ts";
@@ -216,4 +217,18 @@ export async function handleJudgeSaveReviewerConfig(req: Request): Promise<Respo
   if (valid.length === 0) return json({ error: "allowedTypes must include at least one valid type" }, 400);
   await saveReviewerConfig(auth.orgId, email, { allowedTypes: valid });
   return json({ ok: true });
+}
+
+
+export async function handleJudgeDismissFinding(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  if (auth.role !== "judge" && auth.role !== "admin") return json({ error: "forbidden" }, 403);
+
+  const body = await req.json();
+  const { findingId } = body;
+  if (!findingId) return json({ error: "findingId required" }, 400);
+
+  const result = await dismissFindingFromJudgeQueue(auth.orgId, findingId);
+  return json({ ok: true, ...result });
 }

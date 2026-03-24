@@ -499,7 +499,12 @@ export function getManagerPage(): string {
     </div>
     <div class="sb-section">
       <div class="sb-label">Navigation</div>
-      <div class="sb-link active" data-screen="queue">
+      <a href="/manager/audits" class="sb-link">
+        <div class="icon accent">${icons.fileText}</div>
+        <span class="title">Audit History</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </a>
+      <div class="sb-link" data-screen="queue">
         <div class="icon accent">${icons.clipboardList}</div>
         <span class="title">Queue</span>
         <span class="arrow">${icons.chevronRight}</span>
@@ -519,11 +524,6 @@ export function getManagerPage(): string {
         <span class="title">Events</span>
         <span class="arrow">${icons.chevronRight}</span>
       </div>
-      <a href="/manager/audits" class="sb-link">
-        <div class="icon accent">${icons.fileText}</div>
-        <span class="title">Audit History</span>
-        <span class="arrow">${icons.chevronRight}</span>
-      </a>
     </div>
     <div class="sb-section">
       <div class="sb-label">More</div>

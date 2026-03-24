@@ -41,7 +41,7 @@ export async function stepBadWordCheck(req: Request): Promise<Response> {
   const ctx = {
     findingId,
     recordId,
-    agentEmail: voName || finding.owner,
+    agentEmail: voName || undefined,
     officeName: finding.record?.OfficeName ?? finding.record?.SubOfficeValue,
     guestName: finding.record?.GuestFullName ?? finding.record?.GuestName,
     reservationId: String(finding.record?.ReservationId ?? finding.record?.ResPkgId ?? ""),

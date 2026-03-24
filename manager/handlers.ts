@@ -10,6 +10,7 @@ import {
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/kv.ts";
 import type { AuthContext, Role } from "../auth/kv.ts";
 import { getGameState, getEarnedBadges, emitEvent, getAllCompleted, getManagerScope } from "../lib/kv.ts";
+import { getReviewedFindingIds } from "../review/kv.ts";
 import { getManagerPage } from "./page.ts";
 import { getManagerAuditsPage } from "./audits-page.ts";
 
@@ -35,7 +36,7 @@ async function requireAuth(req: Request): Promise<AuthContext | Response> {
 // -- Page --
 
 export async function handleManagerPage(_req: Request): Promise<Response> {
-  return html(getManagerPage());
+  return new Response(null, { status: 302, headers: { Location: "/manager/audits" } });
 }
 
 // -- Me --
@@ -191,12 +192,16 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const owner = url.searchParams.get("owner") || "";
   const shift = url.searchParams.get("shift") || "";
+  const department = url.searchParams.get("department") || "";
+  const reviewed = url.searchParams.get("reviewed") || "";
   const scoreMin = parseInt(url.searchParams.get("scoreMin") || "0", 10);
   const scoreMax = parseInt(url.searchParams.get("scoreMax") || "100", 10);
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
   const limit = Math.min(100, Math.max(10, parseInt(url.searchParams.get("limit") || "50", 10)));
   const sinceParam = url.searchParams.get("since");
+  const untilParam = url.searchParams.get("until");
   const since = sinceParam ? parseInt(sinceParam, 10) : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
+  const until = untilParam ? parseInt(untilParam, 10) : undefined;
 
   const windowEntries = await getAllCompleted(auth.orgId, since);
 
@@ -211,19 +216,28 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
     });
   }
 
-  const filtered = scopedEntries.filter((c) => {
-    if (owner && c.owner !== owner) return false;
+  const reviewedIds = await getReviewedFindingIds(auth.orgId);
+
+  const inWindow = scopedEntries.filter((c) => !until || c.ts <= until);
+
+  const filtered = inWindow.filter((c) => {
+    if (owner && (c.voName || c.owner) !== owner) return false;
     if (shift && c.shift !== shift) return false;
+    if (department && c.department !== department) return false;
+    if (reviewed === "yes" && !reviewedIds.has(c.findingId)) return false;
+    if (reviewed === "no" && (reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
+    if (reviewed === "auto" && c.reason !== "perfect_score" && c.reason !== "invalid_genie") return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
     return true;
   });
 
-  const owners = [...new Set(scopedEntries.map((c) => c.owner).filter(Boolean))].sort() as string[];
-  const shifts = [...new Set(scopedEntries.map((c) => c.shift).filter(Boolean))].sort() as string[];
+  const owners = [...new Set(inWindow.map((c) => c.voName || c.owner).filter(Boolean))].sort() as string[];
+  const shifts = [...new Set(inWindow.map((c) => c.shift).filter(Boolean))].sort() as string[];
+  const departments = [...new Set(inWindow.map((c) => c.department).filter(Boolean))].sort() as string[];
   const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / limit));
-  const pageItems = filtered.slice((page - 1) * limit, page * limit);
+  const pageItems = filtered.slice((page - 1) * limit, page * limit).map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
 
-  console.log(`[MANAGER-AUDITS] 🔍 ${auth.email}: ${total}/${scopedEntries.length} scoped audits in window, page=${page}/${pages}`);
-  return json({ items: pageItems, total, pages, page, owners, shifts });
+  console.log(`[MANAGER-AUDITS] 🔍 ${auth.email}: ${total}/${inWindow.length} scoped audits in window, page=${page}/${pages}`);
+  return json({ items: pageItems, total, pages, page, owners, shifts, departments });
 }

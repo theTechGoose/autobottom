@@ -2870,6 +2870,9 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
 
   ${!R ? `
   // -- Add 2nd Genie / Different Recording (judge only) --
+  window.openAddGenieModal = function() { openAddGenieModal(); };
+  window.closeAddGenieModal = function() { closeAddGenieModal(); };
+  window.submitAddGenie = function() { submitAddGenie(); };
   function openAddGenieModal() {
     if (!buffer[0]) return;
     document.getElementById('add-genie-input').value = '';

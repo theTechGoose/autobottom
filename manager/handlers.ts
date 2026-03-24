@@ -35,8 +35,9 @@ async function requireAuth(req: Request): Promise<AuthContext | Response> {
 
 // -- Page --
 
-export async function handleManagerPage(_req: Request): Promise<Response> {
-  return new Response(null, { status: 302, headers: { Location: "/manager/audits" } });
+export async function handleManagerPage(req: Request): Promise<Response> {
+  const qs = new URL(req.url).search;
+  return new Response(null, { status: 302, headers: { Location: "/manager/audits" + qs } });
 }
 
 // -- Me --

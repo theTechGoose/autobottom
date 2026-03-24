@@ -480,7 +480,9 @@ export async function handleAppealStatus(orgId: OrgId, req: Request): Promise<Re
   const findingId = url.searchParams.get("findingId");
   if (!findingId) return json({ error: "findingId required" }, 400);
   const existing = await getAppeal(orgId, findingId);
-  return json({ exists: !!existing, status: existing?.status ?? null });
+  const finding = await getFinding(orgId, findingId);
+  const reAuditedAt = (finding as any)?.reAuditedAt ?? null;
+  return json({ exists: !!existing, status: existing?.status ?? null, reAuditedAt });
 }
 
 /**
@@ -1160,9 +1162,10 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           <div class="fork-label">Provide corrected or additional Recording IDs</div>
           <div class="recording-inputs" id="recording-inputs">
             <div class="recording-row">
-              <input type="text" class="recording-input" id="recording-input-first" value="${esc(String(f.recordingId ?? ""))}" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onblur="validateRecordingInput(this)" onpaste="onRecordingPaste(event, this)" />
+              <input type="text" class="recording-input" id="recording-input-first" value="${esc(String((f as any).genieIds?.[0] ?? f.recordingId ?? ""))}" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onblur="validateRecordingInput(this)" onpaste="onRecordingPaste(event, this)" />
               <button class="recording-remove" style="visibility:hidden;" disabled>&times;</button>
             </div>
+            ${Array.isArray((f as any).genieIds) && (f as any).genieIds.length > 1 ? (f as any).genieIds.slice(1).map((gid: string) => `<div class="recording-row"><input type="text" class="recording-input" value="${esc(gid)}" placeholder="8-digit Genie ID" maxlength="8" oninput="onRecordingInput(this)" onblur="validateRecordingInput(this)" onpaste="onRecordingPaste(event, this)" /><button class="recording-remove" onclick="this.parentElement.remove()">&times;</button></div>`).join('') : ''}
           </div>
           <button class="fork-add-btn" onclick="addRecordingInput()">+ Add Another</button>
           <textarea class="appeal-comment" id="recording-comment" placeholder="Optional comment for the judge..."></textarea>
@@ -1226,7 +1229,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     <!-- Compact metadata strip -->
     <div class="meta-bar">
       <div class="meta-cell"><div class="meta-label">Record ID</div><div class="meta-value">${crmUrl ? `<a href="${crmUrl}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;border-bottom:1px solid #30363d;" onmouseover="this.style.borderBottomColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderBottomColor='#30363d';this.style.color=''">${esc(recordId)}</a>` : esc(recordId)}</div></div>
-      <div class="meta-cell"><div class="meta-label">Recording ID</div><div class="meta-value">${esc(String(f.recordingId ?? ""))}</div></div>
+      <div class="meta-cell"><div class="meta-label">Recording ID${Array.isArray((f as any).genieIds) && (f as any).genieIds.length > 1 ? 's' : ''}</div><div class="meta-value">${Array.isArray((f as any).genieIds) && (f as any).genieIds.length > 1 ? (f as any).genieIds.map((id: string) => esc(id)).join(', ') : esc(String(f.recordingId ?? ""))}</div></div>
       <div class="meta-cell"><div class="meta-label">Destination</div><div class="meta-value">${esc(String((record.DestinationDisplay || record.RelatedDestinationId) ?? ""))}</div></div>
       <div class="meta-cell"><div class="meta-label">Team Member</div><div class="meta-value">${(() => { const raw = (record as any).VoName as string | undefined; const parsed = raw ? (raw.includes(" - ") ? raw.split(" - ").slice(1).join(" - ").trim() : raw.trim()) : ""; return esc(parsed || (f.owner && f.owner !== "api" ? f.owner : "") || f.owner || ""); })()}</div></div>
       <div class="meta-cell"><div class="meta-label">Date</div><div class="meta-value">${(() => { try { return new Date(f.job?.timestamp ?? "").toLocaleString("en-US", { month: "numeric", day: "numeric", year: "2-digit", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }); } catch { return esc(f.job?.timestamp ?? ""); } })()}</div></div>
@@ -1859,7 +1862,12 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     fetch('/audit/appeal/status?findingId=${esc(id)}')
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        if (d.exists) {
+        if (d.reAuditedAt) {
+          var btn = document.getElementById('appeal-btn');
+          if (btn) { btn.textContent = 'Re-Audited'; btn.classList.add('filed'); btn.disabled = true; btn.onclick = null; }
+          var overlay = document.getElementById('reaudit-overlay');
+          if (overlay) overlay.style.display = 'none';
+        } else if (d.exists) {
           lockAppealBtn(d.status);
           var overlay = document.getElementById('reaudit-overlay');
           if (overlay) overlay.style.display = 'none';

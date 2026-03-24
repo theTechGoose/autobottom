@@ -288,15 +288,15 @@ export async function purgeOldEntries(orgId: OrgId, since: number, before: numbe
   let cbDeleted = 0, wireDeleted = 0, completedDeleted = 0;
   for (const r of cbResults) {
     const v = r.value as unknown as ChargebackEntry;
-    if (v.ts >= since && v.ts < before) { await cbStore.rawDb.delete(r.key); cbDeleted++; }
+    if (v.ts >= since && v.ts <= before) { await cbStore.rawDb.delete(r.key); cbDeleted++; }
   }
   for (const r of wireResults) {
     const v = r.value as unknown as WireDeductionEntry;
-    if (v.ts >= since && v.ts < before) { await wireStore.rawDb.delete(r.key); wireDeleted++; }
+    if (v.ts >= since && v.ts <= before) { await wireStore.rawDb.delete(r.key); wireDeleted++; }
   }
   for (const r of completedResults) {
     const v = r.value as unknown as CompletedAuditStat;
-    if (v.ts >= since && v.ts < before) { await completedStore.rawDb.delete(r.key); completedDeleted++; }
+    if (v.ts >= since && v.ts <= before) { await completedStore.rawDb.delete(r.key); completedDeleted++; }
   }
   return { completed: completedDeleted, chargebacks: cbDeleted, wire: wireDeleted };
 }

@@ -833,7 +833,7 @@ table { width: 100%; border-collapse: collapse; }
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
       <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
       <input type="date" id="purge-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
-      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (exclusive)</label>
+      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
       <input type="date" id="purge-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
     </div>
     <div id="purge-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
@@ -3743,7 +3743,7 @@ table { width: 100%; border-collapse: collapse; }
     var toVal = document.getElementById('purge-date-to').value;
     if (!toVal) { toast('Select at least a To date', 'error'); return; }
     var since = fromVal ? new Date(fromVal + 'T00:00:00').getTime() : 0;
-    var before = new Date(toVal + 'T00:00:00').getTime(); // exclusive: midnight of To date
+    var before = new Date(toVal + 'T23:59:59.999').getTime(); // inclusive: end of To date
     if (since && since >= before) { toast('From must be before To', 'error'); return; }
     var rangeLabel = (fromVal || 'epoch') + ' to ' + toVal;
     if (!confirm('Permanently delete ALL audit data from ' + rangeLabel + '? This cannot be undone.')) return;

@@ -276,14 +276,16 @@ export async function getWireDeductionEntries(orgId: OrgId, since: number, until
   return items;
 }
 
-export async function purgeOldEntries(orgId: OrgId, since: number, before: number): Promise<{ chargebacks: number; wire: number }> {
-  const [cbStore, wireStore] = await Promise.all([store(ChargebackEntryDto), store(WireDeductionEntryDto)]);
-  const [cbResults, wireResults] = await Promise.all([
+export async function purgeOldEntries(orgId: OrgId, since: number, before: number): Promise<{ completed: number; chargebacks: number; wire: number }> {
+  const [cbStore, wireStore, completedStore] = await Promise.all([
+    store(ChargebackEntryDto), store(WireDeductionEntryDto), store(CompletedAuditStatDto),
+  ]);
+  const [cbResults, wireResults, completedResults] = await Promise.all([
     cbStore.listRaw([orgId]),
     wireStore.listRaw([orgId]),
+    completedStore.listRaw([orgId]),
   ]);
-  let cbDeleted = 0;
-  let wireDeleted = 0;
+  let cbDeleted = 0, wireDeleted = 0, completedDeleted = 0;
   for (const r of cbResults) {
     const v = r.value as unknown as ChargebackEntry;
     if (v.ts >= since && v.ts < before) { await cbStore.rawDb.delete(r.key); cbDeleted++; }
@@ -292,7 +294,11 @@ export async function purgeOldEntries(orgId: OrgId, since: number, before: numbe
     const v = r.value as unknown as WireDeductionEntry;
     if (v.ts >= since && v.ts < before) { await wireStore.rawDb.delete(r.key); wireDeleted++; }
   }
-  return { chargebacks: cbDeleted, wire: wireDeleted };
+  for (const r of completedResults) {
+    const v = r.value as unknown as CompletedAuditStat;
+    if (v.ts >= since && v.ts < before) { await completedStore.rawDb.delete(r.key); completedDeleted++; }
+  }
+  return { completed: completedDeleted, chargebacks: cbDeleted, wire: wireDeleted };
 }
 
 export async function trackActive(orgId: OrgId, findingId: string, step: string, meta?: { recordId?: string; isPackage?: boolean; startedAt?: number; genieRetryAt?: number; genieAttempts?: number }) {

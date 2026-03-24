@@ -829,7 +829,7 @@ table { width: 100%; border-collapse: collapse; }
 <div class="modal-overlay" id="purge-modal">
   <div class="modal" style="width:480px;max-width:95vw;">
     <div class="modal-title">Purge Audit Data</div>
-    <div class="modal-sub" style="margin-bottom:20px;">Permanently delete chargeback &amp; wire deduction records within a date range. Cannot be undone.</div>
+    <div class="modal-sub" style="margin-bottom:20px;">Permanently delete all audit history, chargeback &amp; wire deduction records within a date range. Cannot be undone.</div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
       <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
       <input type="date" id="purge-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
@@ -3746,7 +3746,7 @@ table { width: 100%; border-collapse: collapse; }
     var before = new Date(toVal + 'T00:00:00').getTime(); // exclusive: midnight of To date
     if (since && since >= before) { toast('From must be before To', 'error'); return; }
     var rangeLabel = (fromVal || 'epoch') + ' to ' + toVal;
-    if (!confirm('Permanently delete chargeback & wire deduction records from ' + rangeLabel + '? This cannot be undone.')) return;
+    if (!confirm('Permanently delete ALL audit data from ' + rangeLabel + '? This cannot be undone.')) return;
     var btn = this;
     btn.disabled = true; btn.textContent = 'Purging...';
     document.getElementById('purge-msg').textContent = '';
@@ -3758,7 +3758,7 @@ table { width: 100%; border-collapse: collapse; }
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.error) { toast(d.error, 'error'); return; }
-        var msg = 'Purged: ' + d.chargebacks + ' chargeback/omission, ' + d.wire + ' wire deduction records';
+        var msg = 'Purged: ' + d.completed + ' audit history, ' + d.chargebacks + ' chargeback/omission, ' + d.wire + ' wire deduction records';
         document.getElementById('purge-msg').textContent = msg;
         toast(msg, 'success');
       })

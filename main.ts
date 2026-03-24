@@ -711,7 +711,10 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const until = untilParam ? parseInt(untilParam, 10) : undefined;
 
   // getAllCompleted does an efficient reverse KV scan with early-break at `since`
-  const windowEntries = await getAllCompleted(auth.orgId, since);
+  const [windowEntries, reviewedIds] = await Promise.all([
+    getAllCompleted(auth.orgId, since),
+    getReviewedFindingIds(auth.orgId),
+  ]);
 
   const filtered = windowEntries.filter((c) => {
     if (until && c.ts > until) return false;
@@ -720,8 +723,8 @@ async function handleAuditsData(req: Request): Promise<Response> {
     if (owner && (c.voName || c.owner) !== owner) return false;
     if (department && c.department !== department) return false;
     if (shift && c.shift !== shift) return false;
-    if (reviewed === "yes" && !c.reviewed) return false;
-    if (reviewed === "no" && (c.reviewed || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
+    if (reviewed === "yes" && !reviewedIds.has(c.findingId)) return false;
+    if (reviewed === "no" && (reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
     if (reviewed === "auto" && c.reason !== "perfect_score" && c.reason !== "invalid_genie") return false;
     if (reviewed === "invalid_genie" && c.reason !== "invalid_genie") return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
@@ -752,7 +755,6 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageItems = filtered.slice((page - 1) * limit, page * limit);
 
-  const reviewedIds = await getReviewedFindingIds(auth.orgId);
   const items = pageItems.map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
 
   console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}, shift=${shift || "all"}`);
@@ -3713,7 +3715,7 @@ async function handlePurgeOldAudits(req: Request): Promise<Response> {
   const { since, before } = body as { since?: number; before?: number };
   if (!before) return json({ error: "before required" }, 400);
   const result = await purgeOldEntries(auth.orgId, since ?? 0, before);
-  console.log(`[ADMIN] 🗑️ Purged audits in range [${since ? new Date(since).toISOString() : "epoch"}, ${new Date(before).toISOString()}] by ${auth.email}: ${JSON.stringify(result)}`);
+  console.log(`[ADMIN] 🗑️ Purged audits [${since ? new Date(since).toISOString() : "epoch"} – ${new Date(before).toISOString()}] by ${auth.email}: completed=${result.completed} cb=${result.chargebacks} wire=${result.wire}`);
   return json({ ok: true, since: since ?? 0, before, ...result });
 }
 

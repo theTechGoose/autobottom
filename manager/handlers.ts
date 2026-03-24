@@ -219,7 +219,11 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
 
   const reviewedIds = await getReviewedFindingIds(auth.orgId);
 
-  const inWindow = scopedEntries.filter((c) => !until || c.ts <= until);
+  // Managers only see reviewed audits (manually reviewed, auto-pass, or invalid genie)
+  const isReviewed = (c: typeof scopedEntries[0]) =>
+    reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie";
+
+  const inWindow = scopedEntries.filter((c) => (!until || c.ts <= until) && (auth.role !== "manager" || isReviewed(c)));
 
   const filtered = inWindow.filter((c) => {
     if (owner && (c.voName || c.owner) !== owner) return false;
@@ -228,6 +232,7 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
     if (reviewed === "yes" && !reviewedIds.has(c.findingId)) return false;
     if (reviewed === "no" && (reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
     if (reviewed === "auto" && c.reason !== "perfect_score" && c.reason !== "invalid_genie") return false;
+    if (reviewed === "invalid_genie" && c.reason !== "invalid_genie") return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
     return true;
   });

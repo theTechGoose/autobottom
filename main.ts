@@ -720,6 +720,7 @@ async function handleAuditsData(req: Request): Promise<Response> {
     if (reviewed === "yes" && !c.reviewed) return false;
     if (reviewed === "no" && (c.reviewed || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
     if (reviewed === "auto" && c.reason !== "perfect_score" && c.reason !== "invalid_genie") return false;
+    if (reviewed === "invalid_genie" && c.reason !== "invalid_genie") return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
     return true;
   });
@@ -840,7 +841,7 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
     <select id="f-shift"><option value="">All Shifts</option></select>
   </label>
   <label>Reviewed
-    <select id="f-reviewed"><option value="">All</option><option value="yes">Reviewed</option><option value="no">Not Reviewed</option><option value="auto">Auto</option></select>
+    <select id="f-reviewed"><option value="">All</option><option value="yes">Reviewed</option><option value="no">Not Reviewed</option><option value="auto">Auto</option><option value="invalid_genie">Invalid Genie</option></select>
   </label>
   <label>Min Score %
     <input type="number" id="f-score-min" value="0" min="0" max="100" style="width:70px">

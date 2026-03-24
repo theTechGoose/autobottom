@@ -3745,8 +3745,8 @@ table { width: 100%; border-collapse: collapse; }
     var since = fromVal ? new Date(fromVal + 'T00:00:00').getTime() : 0;
     var before = new Date(toVal + 'T00:00:00').getTime(); // exclusive: midnight of To date
     if (since && since >= before) { toast('From must be before To', 'error'); return; }
-    var rangeLabel = (fromVal || 'epoch') + ' → ' + toVal + ' (exclusive)';
-    if (!confirm('Permanently delete chargeback & wire deduction records from ' + rangeLabel + '?\n\nThis cannot be undone.')) return;
+    var rangeLabel = (fromVal || 'epoch') + ' to ' + toVal;
+    if (!confirm('Permanently delete chargeback & wire deduction records from ' + rangeLabel + '? This cannot be undone.')) return;
     var btn = this;
     btn.disabled = true; btn.textContent = 'Purging...';
     document.getElementById('purge-msg').textContent = '';

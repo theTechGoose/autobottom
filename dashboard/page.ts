@@ -3483,9 +3483,7 @@ table { width: 100%; border-collapse: collapse; }
   }
 
   function cbTeamMember(entry) {
-    var dest = entry.destination || '';
-    var vo = entry.voName || '';
-    return dest && vo ? dest + ' - ' + vo : (vo || dest || '');
+    return entry.voName || entry.destination || '';
   }
 
   function cbRenderRows(tbodyId, rows, type) {

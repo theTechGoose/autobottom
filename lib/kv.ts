@@ -10,7 +10,7 @@ import {
 } from "./storage/dtos/audit.ts";
 import {
   ActiveTracking, WatchdogActive, CompletedAuditStat as CompletedAuditStatDto,
-  ErrorTracking, RetryTracking, ChargebackEntry as ChargebackEntryDto,
+  ErrorTracking, RetryTracking, ChargebackEntry as ChargebackEntryDto, WireDeductionEntry as WireDeductionEntryDto,
 } from "./storage/dtos/stats.ts";
 import {
   PipelineConfig as PipelineConfigDto, WebhookConfigDto, BadWordConfig as BadWordConfigDto,
@@ -243,6 +243,34 @@ export async function getChargebackEntries(orgId: OrgId, since: number, until: n
   const items: ChargebackEntry[] = [];
   for (const r of results) {
     const v = r.value as unknown as ChargebackEntry;
+    if (v.ts >= since && v.ts <= until) items.push(v);
+  }
+  return items;
+}
+
+export interface WireDeductionEntry {
+  findingId: string;
+  ts: number;
+  score: number;
+  questionsAudited: number;
+  totalSuccess: number;
+  recordId: string;
+  office: string;
+  excellenceAuditor: string;
+  guestName: string;
+}
+
+export async function saveWireDeductionEntry(orgId: OrgId, entry: WireDeductionEntry): Promise<void> {
+  const s = await store(WireDeductionEntryDto);
+  await s.set([orgId, entry.findingId], entry as any);
+}
+
+export async function getWireDeductionEntries(orgId: OrgId, since: number, until: number): Promise<WireDeductionEntry[]> {
+  const s = await store(WireDeductionEntryDto);
+  const results = await s.listRaw([orgId], { reverse: true });
+  const items: WireDeductionEntry[] = [];
+  for (const r of results) {
+    const v = r.value as unknown as WireDeductionEntry;
     if (v.ts >= since && v.ts <= until) items.push(v);
   }
   return items;

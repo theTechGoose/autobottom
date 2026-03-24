@@ -54,3 +54,15 @@ export class ChargebackEntry {
   score = 0;
   failedQHeaders: string[] = [];
 }
+
+export class WireDeductionEntry {
+  findingId = "";
+  ts = 0;
+  score = 0;
+  questionsAudited = 0;
+  totalSuccess = 0;
+  recordId = "";
+  office = "";
+  excellenceAuditor = "";
+  guestName = "";
+}

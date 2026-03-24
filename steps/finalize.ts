@@ -1,5 +1,5 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, getOfficeBypassConfig } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, getOfficeBypassConfig, saveWireDeductionEntry } from "../lib/kv.ts";
 import { enqueueCleanup } from "../lib/queue.ts";
 
 import { generateFeedback } from "../providers/groq.ts";
@@ -178,6 +178,29 @@ export async function stepFinalize(req: Request): Promise<Response> {
       }
     } catch (err) {
       console.error(`[STEP-FINALIZE] ${findingId}: ❌ chargebackEntry update failed:`, err);
+    }
+  }
+
+  // Write wire deduction entry for partner (package) findings.
+  if (isPackage && score !== undefined) {
+    try {
+      const rec = finding.record as any ?? {};
+      const questionsAudited = qs?.length ?? 0;
+      const totalSuccess = qs ? (qs as IAnsweredQuestion[]).filter((q) => q.answer === "Yes").length : 0;
+      await saveWireDeductionEntry(orgId, {
+        findingId,
+        ts: completedAt,
+        score: score ?? 0,
+        questionsAudited,
+        totalSuccess,
+        recordId: String(rec.RecordId ?? ""),
+        office: department ?? "",
+        excellenceAuditor: voName ?? "",
+        guestName: String(rec.GuestName ?? ""),
+      });
+      console.log(`[STEP-FINALIZE] ${findingId}: 📋 wireDeductionEntry saved — score=${score}% qs=${questionsAudited}`);
+    } catch (err) {
+      console.error(`[STEP-FINALIZE] ${findingId}: ❌ wireDeductionEntry save failed:`, err);
     }
   }
 

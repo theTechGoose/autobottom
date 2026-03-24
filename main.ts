@@ -25,7 +25,7 @@ import {
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig,
   getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
-  getChargebackEntries,
+  getChargebackEntries, getWireDeductionEntries,
   getBadWordConfig, saveBadWordConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
@@ -401,6 +401,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/manager-scopes": handleGetManagerScopes,
   "/admin/audit-dimensions": handleGetAuditDimensions,
   "/admin/chargebacks": handleGetChargebacks,
+  "/admin/trigger-weekly-sheets": handleTriggerWeeklySheets,
   "/docs/index": () => Promise.resolve(html(getDocsIndexHtml())),
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
   "/api/openapi.json": () => Promise.resolve(json(getOpenApiSpec())),
@@ -3809,63 +3810,68 @@ Deno.cron("watchdog", "0 * * * *", async () => {
 });
 
 // -- Chargebacks Weekly Cron --
-// Every Tuesday at 7am: append previous week (Mon–Sun) chargebacks + omissions to Google Sheets.
+// Every Tuesday at 7am: append previous week (Mon–Sun) chargebacks + omissions + wire deductions to Google Sheets.
+async function runWeeklySheets(since: number, until: number): Promise<void> {
+  const saS3Key = env.sheetsSaS3Key;
+  const sheetId = env.chargebacksSheetId;
+  const orgId = env.chargebacksOrgId as OrgId;
+  if (!saS3Key || !sheetId || !orgId) {
+    console.log("[SHEETS] ⚠️ Missing SHEETS_SA_S3_KEY, sheet ID, or org ID — skipping");
+    return;
+  }
+  const saBytes = await new S3Ref(env.s3Bucket, saS3Key).get();
+  if (!saBytes) { console.error(`[SHEETS] ❌ SA JSON not found in S3: ${saS3Key}`); return; }
+  const saJson = JSON.parse(new TextDecoder().decode(saBytes));
+  const saEmail = saJson.client_email as string;
+  const saKey = saJson.private_key as string;
+  console.log(`[SHEETS] ✅ SA loaded for ${saEmail}`);
+
+  const entries = await getChargebackEntries(orgId, since, until);
+  const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
+  const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
+  const wireEntries = await getWireDeductionEntries(orgId, since, until);
+
+  const fmtDate = (ts: number) => new Date(ts).toLocaleDateString("en-US");
+  const realm = Deno.env.get("QB_REALM");
+  const crmUrl = (e: { recordId: string }) => `https://${realm}.quickbase.com/db/bpb28qsnn?a=dr&rid=${e.recordId}`;
+  const pkgCrmUrl = (e: { recordId: string }) => `https://${realm}.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=${e.recordId}`;
+  const auditUrl = (e: { findingId: string }) => `${env.selfUrl}/audit/report?id=${e.findingId}`;
+  const toRows = (list: typeof entries): string[][] =>
+    list.map((e) => [fmtDate(e.ts), e.voName, e.revenue, crmUrl(e), e.destination, e.failedQHeaders.join(", "), `${e.score}%`]);
+  const toWireRows = (list: typeof wireEntries): string[][] =>
+    list.map((e) => [fmtDate(e.ts), `${e.score}%`, String(e.questionsAudited), String(e.totalSuccess), pkgCrmUrl(e), auditUrl(e), e.office, e.excellenceAuditor, "", e.guestName]);
+
+  await appendSheetRows(sheetId, "Chargebacks", toRows(chargebacks), saEmail, saKey);
+  await appendSheetRows(sheetId, "Omissions", toRows(omissions), saEmail, saKey);
+  await appendSheetRows(sheetId, "Wire Deductions", toWireRows(wireEntries), saEmail, saKey);
+  console.log(`[SHEETS] ✅ Appended ${chargebacks.length} chargebacks, ${omissions.length} omissions, ${wireEntries.length} wire deductions`);
+}
+
 Deno.cron("chargebacks-weekly", "0 7 * * 2", async () => {
   try {
-    const saS3Key = env.sheetsSaS3Key;
-    const sheetId = env.chargebacksSheetId;
-    const orgId = env.chargebacksOrgId as OrgId;
-    if (!saS3Key || !sheetId || !orgId) {
-      console.log("[CHARGEBACKS-CRON] ⚠️ Missing SHEETS_SA_S3_KEY, sheet ID, or org ID — skipping");
-      return;
-    }
-    console.log(`[CHARGEBACKS-CRON] 🔍 Fetching SA JSON from S3: ${saS3Key}`);
-    const saBytes = await new S3Ref(env.s3Bucket, saS3Key).get();
-    if (!saBytes) {
-      console.error(`[CHARGEBACKS-CRON] ❌ SA JSON not found in S3 at key: ${saS3Key}`);
-      return;
-    }
-    const saJson = JSON.parse(new TextDecoder().decode(saBytes));
-    const saEmail = saJson.client_email as string;
-    const saKey = saJson.private_key as string;
-    console.log(`[CHARGEBACKS-CRON] ✅ SA loaded for ${saEmail}`);
-
-    // Running on Tuesday — previous week is Mon (8 days ago) through Sun (yesterday)
     const now = new Date();
-    const sunday = new Date(now);
-    sunday.setDate(sunday.getDate() - 1);
-    sunday.setHours(23, 59, 59, 999);
-    const monday = new Date(sunday);
-    monday.setDate(monday.getDate() - 6);
-    monday.setHours(0, 0, 0, 0);
-
-    console.log(`[CHARGEBACKS-CRON] 🚀 Fetching ${monday.toDateString()} – ${sunday.toDateString()}`);
-
-    const entries = await getChargebackEntries(orgId, monday.getTime(), sunday.getTime());
-    const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
-    const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
-
-    const fmtDate = (ts: number) => new Date(ts).toLocaleDateString("en-US");
-    const crmUrl = (e: { recordId: string }) =>
-      `https://${Deno.env.get("QB_REALM")}.quickbase.com/db/bpb28qsnn?a=dr&rid=${e.recordId}`;
-    const toRows = (list: typeof entries): string[][] =>
-      list.map((e) => [
-        fmtDate(e.ts),
-        e.voName,
-        e.revenue,
-        crmUrl(e),
-        e.destination,
-        e.failedQHeaders.join(", "),
-        `${e.score}%`,
-      ]);
-
-    await appendSheetRows(sheetId, "Chargebacks", toRows(chargebacks), saEmail, saKey);
-    await appendSheetRows(sheetId, "Omissions", toRows(omissions), saEmail, saKey);
-    console.log(`[CHARGEBACKS-CRON] ✅ Appended ${chargebacks.length} chargebacks, ${omissions.length} omissions`);
+    const sunday = new Date(now); sunday.setDate(sunday.getDate() - 1); sunday.setHours(23, 59, 59, 999);
+    const monday = new Date(sunday); monday.setDate(monday.getDate() - 6); monday.setHours(0, 0, 0, 0);
+    console.log(`[SHEETS-CRON] 🚀 Running for ${monday.toDateString()} – ${sunday.toDateString()}`);
+    await runWeeklySheets(monday.getTime(), sunday.getTime());
   } catch (err) {
-    console.error("[CHARGEBACKS-CRON] ❌ Error:", err);
+    console.error("[SHEETS-CRON] ❌ Error:", err);
   }
 });
+
+// TEST: fire immediately on this deploy to verify Wire Deductions tab — remove after confirming
+(async () => {
+  try {
+    const now = new Date();
+    const until = now.getTime();
+    const since = until - 7 * 24 * 3600 * 1000;
+    console.log("[SHEETS-TEST] 🚀 Firing test run for last 7 days");
+    await runWeeklySheets(since, until);
+    console.log("[SHEETS-TEST] ✅ Done");
+  } catch (err) {
+    console.error("[SHEETS-TEST] ❌", err);
+  }
+})();
 
 // -- Webhook Email Handler Registration --
 // Call handlers in-process to avoid Deno Deploy 508 loop-detected on self-fetch.

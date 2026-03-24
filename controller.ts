@@ -1108,7 +1108,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
               <div style="font-size:11px;color:#6e7681;line-height:1.5;">Submit for a human to review the flagged questions</div>
             </button>
             <button id="choice-reaudit-btn" onclick="chooseReAudit()" style="flex:1;text-align:left;padding:18px;border-radius:10px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;cursor:pointer;transition:border-color 0.15s;" onmouseover="this.style.borderColor='var(--teal)'" onmouseout="this.style.borderColor='#30363d'">
-              <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:var(--teal);">Re-Audit Recording</div>
+              <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:var(--teal);">Add 2nd Genie / Different Recording</div>
               <div style="font-size:11px;color:#6e7681;line-height:1.5;">Run the audit again using a different or additional recording</div>
             </button>
           </div>

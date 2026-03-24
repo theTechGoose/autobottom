@@ -862,6 +862,10 @@ table { width: 100%; border-collapse: collapse; }
       <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
       <input type="date" id="bfrs-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
     </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);margin-bottom:16px;cursor:pointer;">
+      <input type="checkbox" id="bfrs-also-chargeback" style="accent-color:var(--teal);">
+      Also update chargeback/omission &amp; wire deduction entries
+    </label>
     <div id="bfrs-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
     <div class="modal-actions">
       <button class="sf-btn secondary" id="bfrs-cancel">Cancel</button>
@@ -3809,20 +3813,36 @@ table { width: 100%; border-collapse: collapse; }
     var since = new Date(fromVal + 'T00:00:00').getTime();
     var until = new Date(toVal + 'T23:59:59.999').getTime();
     if (since > until) { toast('From must be before To', 'error'); return; }
+    var alsoChargeback = document.getElementById('bfrs-also-chargeback').checked;
     var btn = this;
     btn.disabled = true; btn.textContent = 'Running...';
     document.getElementById('bfrs-msg').textContent = '';
+    var payload = JSON.stringify({ since: since, until: until });
     fetch('/admin/backfill-review-scores', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ since: since, until: until }),
+      body: payload,
     })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.error) { toast(d.error, 'error'); return; }
-        var msg = 'Scanned ' + d.scanned + ' audits, updated ' + d.updated + ' scores';
-        document.getElementById('bfrs-msg').textContent = msg;
-        toast(msg, 'success');
+        var msg = 'Scores: scanned ' + d.scanned + ', updated ' + d.updated;
+        if (!alsoChargeback) {
+          document.getElementById('bfrs-msg').textContent = msg;
+          toast(msg, 'success');
+          return;
+        }
+        document.getElementById('bfrs-msg').textContent = msg + ' — updating chargeback entries...';
+        return fetch('/admin/backfill-chargeback-entries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+        }).then(function(r2) { return r2.json(); }).then(function(d2) {
+          if (d2.error) { toast(d2.error, 'error'); return; }
+          var fullMsg = msg + ' | Chargebacks: scanned ' + d2.scanned + ', updated ' + (d2.cbUpdated + d2.wireUpdated) + ', cleared ' + d2.cbDeleted;
+          document.getElementById('bfrs-msg').textContent = fullMsg;
+          toast('Backfill complete', 'success');
+        });
       })
       .catch(function() { toast('Backfill failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Run Backfill'; });

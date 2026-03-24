@@ -85,7 +85,7 @@ import {
   handleJudgeListReviewers, handleJudgeCreateReviewer, handleJudgeDeleteReviewer,
   handleJudgeGetReviewerConfig, handleJudgeSaveReviewerConfig,
 } from "./judge/handlers.ts";
-import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue } from "./judge/kv.ts";
+import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries } from "./judge/kv.ts";
 
 // Manager (unified auth)
 import {
@@ -294,6 +294,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/post-to-sheet": handlePostToSheet,
   "/admin/purge-old-audits": handlePurgeOldAudits,
   "/admin/backfill-review-scores": handleBackfillReviewScores,
+  "/admin/backfill-chargeback-entries": handleBackfillChargebackEntries,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -3717,6 +3718,17 @@ async function handleBackfillReviewScores(req: Request): Promise<Response> {
   if (!since || !until) return json({ error: "since and until required" }, 400);
   const result = await backfillReviewScores(auth.orgId, since, until);
   console.log(`[ADMIN] 🔧 Backfill review scores by ${auth.email}: scanned=${result.scanned} updated=${result.updated}`);
+  return json({ ok: true, ...result });
+}
+
+async function handleBackfillChargebackEntries(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  const { since, until } = body as { since: number; until: number };
+  if (!since || !until) return json({ error: "since and until required" }, 400);
+  const result = await backfillChargebackEntries(auth.orgId, since, until);
+  console.log(`[ADMIN] 🔧 Backfill chargeback entries by ${auth.email}: scanned=${result.scanned} cbUpdated=${result.cbUpdated} cbDeleted=${result.cbDeleted} wireUpdated=${result.wireUpdated}`);
   return json({ ok: true, ...result });
 }
 

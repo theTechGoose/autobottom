@@ -248,6 +248,11 @@ export async function getChargebackEntries(orgId: OrgId, since: number, until: n
   return items;
 }
 
+export async function getChargebackEntry(orgId: OrgId, findingId: string): Promise<ChargebackEntry | null> {
+  const s = await store(ChargebackEntryDto);
+  return await s.get([orgId, findingId]) as unknown as ChargebackEntry | null;
+}
+
 export interface WireDeductionEntry {
   findingId: string;
   ts: number;
@@ -274,6 +279,11 @@ export async function getWireDeductionEntries(orgId: OrgId, since: number, until
     if (v.ts >= since && v.ts <= until) items.push(v);
   }
   return items;
+}
+
+export async function getWireDeductionEntry(orgId: OrgId, findingId: string): Promise<WireDeductionEntry | null> {
+  const s = await store(WireDeductionEntryDto);
+  return await s.get([orgId, findingId]) as unknown as WireDeductionEntry | null;
 }
 
 export async function purgeOldEntries(orgId: OrgId, since: number, before: number): Promise<{ completed: number; chargebacks: number; wire: number }> {

@@ -1,6 +1,6 @@
 /** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getWireDeductionEntry, saveWireDeductionEntry } from "../lib/kv.ts";
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
 import { checkBadges } from "../shared/badges.ts";
@@ -507,6 +507,35 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judgedBy: string
 
   console.log(`[JUDGE] ${findingId}: Appeal complete - ${overturns} overturns, score ${originalScore}% -> ${finalScore}%`);
 
+  // Update ChargebackEntry with corrected score and failed question headers
+  try {
+    const cbEntry = await getChargebackEntry(orgId, findingId);
+    if (cbEntry) {
+      const correctedFailedQs = correctedAnswers.filter((a: any) => !isYes(a.answer)).map((a: any) => a.header).filter(Boolean);
+      if (correctedFailedQs.length === 0) {
+        await deleteChargebackEntry(orgId, findingId);
+        console.log(`[JUDGE] ${findingId}: Deleted ChargebackEntry — no more failures after review`);
+      } else {
+        await saveChargebackEntry(orgId, { ...cbEntry, score: finalScore, failedQHeaders: correctedFailedQs });
+        console.log(`[JUDGE] ${findingId}: Updated ChargebackEntry score → ${finalScore}%`);
+      }
+    }
+  } catch (err) {
+    console.error(`[JUDGE] ${findingId}: Failed to update ChargebackEntry:`, err);
+  }
+
+  // Update WireDeductionEntry with corrected score
+  try {
+    const wireEntry = await getWireDeductionEntry(orgId, findingId);
+    if (wireEntry) {
+      const correctedSuccess = correctedAnswers.filter((a: any) => isYes(a.answer)).length;
+      await saveWireDeductionEntry(orgId, { ...wireEntry, score: finalScore, totalSuccess: correctedSuccess });
+      console.log(`[JUDGE] ${findingId}: Updated WireDeductionEntry score → ${finalScore}%`);
+    }
+  } catch (err) {
+    console.error(`[JUDGE] ${findingId}: Failed to update WireDeductionEntry:`, err);
+  }
+
   fireWebhook(orgId, "judge", {
     findingId,
     finding,
@@ -533,7 +562,9 @@ export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; de
   let pending = 0;
   let decided = 0;
 
-  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-pending") })) pending++;
+  for await (const entry of db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") })) {
+    if (!entry.value?.appealType || !SKIP_APPEAL_TYPES.has(entry.value.appealType)) pending++;
+  }
   for await (const _ of db.list({ prefix: orgKey(orgId, "judge-decided") })) decided++;
 
   return { pending, decided };
@@ -602,7 +633,9 @@ export async function getJudgeDashboardData(orgId: OrgId): Promise<{
   // Queue stats
   let pending = 0;
   let decided = 0;
-  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-pending") })) pending++;
+  for await (const entry of db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") })) {
+    if (!entry.value?.appealType || !SKIP_APPEAL_TYPES.has(entry.value.appealType)) pending++;
+  }
   for await (const _ of db.list({ prefix: orgKey(orgId, "judge-decided") })) decided++;
 
   // Appeal records
@@ -713,4 +746,65 @@ export async function getAppeal(orgId: OrgId, findingId: string): Promise<Appeal
 export async function saveAppeal(orgId: OrgId, record: AppealRecord) {
   const db = await kv();
   await db.set(orgKey(orgId, "appeal", record.findingId), record);
+}
+
+// -- Backfill Chargeback / Wire Deduction Entries --
+
+export async function backfillChargebackEntries(
+  orgId: OrgId,
+  since: number,
+  until: number,
+): Promise<{ scanned: number; cbUpdated: number; cbDeleted: number; wireUpdated: number }> {
+  const db = await kv();
+  let scanned = 0;
+  let cbUpdated = 0;
+  let cbDeleted = 0;
+  let wireUpdated = 0;
+
+  const isYes = (a: string) => {
+    const s = String(a ?? "").trim().toLowerCase();
+    return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
+  };
+
+  // Iterate appeal history entries — only judged findings have corrected answers
+  const iter = db.list<AppealHistory>({ prefix: orgKey(orgId, "appeal-history") });
+  for await (const entry of iter) {
+    const history = entry.value;
+    if (history.timestamp < since || history.timestamp > until) continue;
+    scanned++;
+
+    const findingId = history.findingId;
+    const finding = await getFinding(orgId, findingId);
+    if (!finding) continue;
+
+    const answers = finding.answeredQuestions ?? [];
+    if (answers.length === 0) continue;
+
+    const total = answers.length;
+    const finalYes = answers.filter((a: any) => isYes(a.answer)).length;
+    const finalScore = total > 0 ? Math.round((finalYes / total) * 100) : 0;
+
+    // Update ChargebackEntry
+    const cbEntry = await getChargebackEntry(orgId, findingId);
+    if (cbEntry) {
+      const failedQHeaders = answers.filter((a: any) => !isYes(a.answer)).map((a: any) => a.header).filter(Boolean);
+      if (failedQHeaders.length === 0) {
+        await deleteChargebackEntry(orgId, findingId);
+        cbDeleted++;
+      } else {
+        await saveChargebackEntry(orgId, { ...cbEntry, score: finalScore, failedQHeaders });
+        cbUpdated++;
+      }
+    }
+
+    // Update WireDeductionEntry
+    const wireEntry = await getWireDeductionEntry(orgId, findingId);
+    if (wireEntry) {
+      const totalSuccess = answers.filter((a: any) => isYes(a.answer)).length;
+      await saveWireDeductionEntry(orgId, { ...wireEntry, score: finalScore, totalSuccess });
+      wireUpdated++;
+    }
+  }
+
+  return { scanned, cbUpdated, cbDeleted, wireUpdated };
 }

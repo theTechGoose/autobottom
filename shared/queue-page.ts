@@ -938,6 +938,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           Transcript
         </button>
       </div>
+      <button id="btn-add-genie" onclick="openAddGenieModal()" title="Submit additional or different Genie recording"
+        style="display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 0;border-radius:8px;border:1px solid rgba(251,191,36,0.3);background:rgba(251,191,36,0.06);color:#fbbf24;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.15s;width:100%;">
+        + Add 2nd Genie / Different Recording
+      </button>
     </div>`}
   </div>
 
@@ -1023,6 +1027,25 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     </div>
   </div>
 </div>
+
+${!R ? `<!-- Add Genie modal (judge only) -->
+<div id="add-genie-overlay" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.75);align-items:center;justify-content:center;">
+  <div style="background:#161b22;border:1px solid #2d333b;border-radius:12px;padding:24px;width:420px;max-width:90vw;">
+    <h3 style="font-size:15px;font-weight:700;margin-bottom:8px;color:#c9d1d9;">Add 2nd Genie / Different Recording</h3>
+    <p style="font-size:12px;color:#8b949e;margin-bottom:16px;">Enter one or more Genie IDs (comma-separated) to re-audit with a different or additional recording.</p>
+    <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Genie ID(s)</div>
+    <input type="text" id="add-genie-input" autocomplete="off" spellcheck="false" placeholder="e.g. 12345678, 87654321"
+      style="width:100%;padding:10px 14px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:14px;margin-bottom:12px;outline:none;box-sizing:border-box;">
+    <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Comment (optional)</div>
+    <input type="text" id="add-genie-comment" autocomplete="off" spellcheck="false" placeholder="Reason for re-audit..."
+      style="width:100%;padding:10px 14px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:14px;margin-bottom:16px;outline:none;box-sizing:border-box;">
+    <div id="add-genie-error" style="display:none;color:#f85149;font-size:12px;margin-bottom:12px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button onclick="closeAddGenieModal()" style="padding:8px 20px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:transparent;border:1px solid #1e2736;color:#6e7681;">Cancel</button>
+      <button id="add-genie-submit" onclick="submitAddGenie()" style="padding:8px 20px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:#14b8a6;border:none;color:#fff;">Submit</button>
+    </div>
+  </div>
+</div>` : ''}
 
 <!-- Back/undo loading spinner -->
 <div id="back-spinner">
@@ -2844,6 +2867,71 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   }
   pollUnread();
   setInterval(pollUnread, 10000);
+
+  ${!R ? `
+  // -- Add 2nd Genie / Different Recording (judge only) --
+  function openAddGenieModal() {
+    if (!buffer[0]) return;
+    document.getElementById('add-genie-input').value = '';
+    document.getElementById('add-genie-comment').value = '';
+    document.getElementById('add-genie-error').style.display = 'none';
+    document.getElementById('add-genie-submit').disabled = false;
+    document.getElementById('add-genie-submit').textContent = 'Submit';
+    var overlay = document.getElementById('add-genie-overlay');
+    overlay.style.display = 'flex';
+    document.getElementById('add-genie-input').focus();
+  }
+  function closeAddGenieModal() {
+    document.getElementById('add-genie-overlay').style.display = 'none';
+  }
+  function submitAddGenie() {
+    var currentItem = buffer[0];
+    if (!currentItem) return;
+    var idsRaw = document.getElementById('add-genie-input').value.trim();
+    if (!idsRaw) {
+      document.getElementById('add-genie-error').textContent = 'Please enter at least one Genie ID.';
+      document.getElementById('add-genie-error').style.display = '';
+      return;
+    }
+    var ids = idsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    var comment = document.getElementById('add-genie-comment').value.trim();
+    var btn = document.getElementById('add-genie-submit');
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+    var payload = { findingId: currentItem.findingId, recordingIds: ids };
+    if (comment) payload.comment = comment;
+    fetch('/audit/appeal/different-recording', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (d.error) {
+        document.getElementById('add-genie-error').textContent = d.error;
+        document.getElementById('add-genie-error').style.display = '';
+        btn.disabled = false;
+        btn.textContent = 'Submit';
+      } else {
+        closeAddGenieModal();
+        toast('Re-audit submitted', 'pos');
+      }
+    }).catch(function(err) {
+      document.getElementById('add-genie-error').textContent = err.message || 'Request failed';
+      document.getElementById('add-genie-error').style.display = '';
+      btn.disabled = false;
+      btn.textContent = 'Submit';
+    });
+  }
+  // Close modal on overlay click
+  document.getElementById('add-genie-overlay').addEventListener('click', function(e) {
+    if (e.target === this) closeAddGenieModal();
+  });
+  // Prevent keyboard shortcuts while modal is open
+  document.getElementById('add-genie-input').addEventListener('keydown', function(e) { e.stopPropagation(); });
+  document.getElementById('add-genie-comment').addEventListener('keydown', function(e) {
+    e.stopPropagation();
+    if (e.key === 'Enter') submitAddGenie();
+  });
+  ` : ''}
 })();
 </script>
 </body>

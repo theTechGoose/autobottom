@@ -3840,7 +3840,8 @@ table { width: 100%; border-collapse: collapse; }
   }
 
   function bwRenderWordRow(w, i) {
-    var excls = w.exclusions || [];
+    if (!w.exclusions) w.exclusions = [];
+    var excls = w.exclusions;
     var row = document.createElement('div');
     row.style.cssText = 'background:#161c28;border:1px solid #1c2333;border-radius:6px;overflow:hidden;flex-shrink:0;';
 

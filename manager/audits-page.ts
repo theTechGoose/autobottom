@@ -143,6 +143,8 @@ function load(){
   if(state.customEnd!==null)p.until=state.customEnd;
   var params=new URLSearchParams(p);
   document.getElementById('tbl-body').innerHTML='<div class="loading">Loading...</div>';
+  var asParam=new URLSearchParams(window.location.search).get('as');
+  if(asParam)params.set('as',asParam);
   fetch('/manager/audits/data?'+params)
     .then(function(r){return r.json()})
     .then(function(d){

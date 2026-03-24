@@ -2054,6 +2054,20 @@ async function handleGetChargebacks(req: Request): Promise<Response> {
   return json({ chargebacks, omissions });
 }
 
+async function handleTriggerWeeklySheets(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const now = Date.now();
+  const since = now - 7 * 24 * 3600 * 1000;
+  console.log("[TRIGGER-WEEKLY-SHEETS] 🚀 Manual trigger by", auth.email);
+  runWeeklySheets(since, now).then(() => {
+    console.log("[TRIGGER-WEEKLY-SHEETS] ✅ Done");
+  }).catch((err) => {
+    console.error("[TRIGGER-WEEKLY-SHEETS] ❌", err);
+  });
+  return json({ ok: true, message: "Weekly sheets job started" });
+}
+
 // -- Webhooks: Shared Helpers --
 
 /** Resolve template — only sends if a specific template is configured via emailTemplateId. */

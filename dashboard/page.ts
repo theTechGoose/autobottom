@@ -422,6 +422,13 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
+      <!-- Purge Audit Data (opens modal) -->
+      <div class="sb-link" id="purge-open">
+        <div class="icon" style="background:var(--red-bg);color:var(--red);">${icons.trash}</div>
+        <span class="title">Purge Audit Data</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
       <!-- Bad Words (opens modal) -->
       <div class="sb-link" id="bad-words-open">
         <div class="icon" style="background:var(--red-bg);color:var(--red);">${icons.alertTriangle}</div>
@@ -814,6 +821,25 @@ table { width: 100%; border-collapse: collapse; }
           </table>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Purge Audit Data Modal -->
+<div class="modal-overlay" id="purge-modal">
+  <div class="modal" style="width:480px;max-width:95vw;">
+    <div class="modal-title">Purge Audit Data</div>
+    <div class="modal-sub" style="margin-bottom:20px;">Permanently delete chargeback &amp; wire deduction records within a date range. Cannot be undone.</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
+      <input type="date" id="purge-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (exclusive)</label>
+      <input type="date" id="purge-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+    </div>
+    <div id="purge-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
+    <div class="modal-actions">
+      <button class="sf-btn secondary" id="purge-cancel">Cancel</button>
+      <button class="sf-btn danger" id="purge-confirm-btn">Purge</button>
     </div>
   </div>
 </div>
@@ -3705,6 +3731,39 @@ table { width: 100%; border-collapse: collapse; }
       })
       .catch(function() { toast('Post failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Post to Sheet'; });
+  });
+
+  // ===== Purge Audit Data =====
+  document.getElementById('purge-open').addEventListener('click', function() { openModal('purge-modal'); });
+  document.getElementById('purge-cancel').addEventListener('click', function() { closeModal('purge-modal'); });
+  backdropClose('purge-modal');
+
+  document.getElementById('purge-confirm-btn').addEventListener('click', function() {
+    var fromVal = document.getElementById('purge-date-from').value;
+    var toVal = document.getElementById('purge-date-to').value;
+    if (!toVal) { toast('Select at least a To date', 'error'); return; }
+    var since = fromVal ? new Date(fromVal + 'T00:00:00').getTime() : 0;
+    var before = new Date(toVal + 'T00:00:00').getTime(); // exclusive: midnight of To date
+    if (since && since >= before) { toast('From must be before To', 'error'); return; }
+    var rangeLabel = (fromVal || 'epoch') + ' → ' + toVal + ' (exclusive)';
+    if (!confirm('Permanently delete chargeback & wire deduction records from ' + rangeLabel + '?\n\nThis cannot be undone.')) return;
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Purging...';
+    document.getElementById('purge-msg').textContent = '';
+    fetch('/admin/purge-old-audits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since: since || undefined, before: before }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) { toast(d.error, 'error'); return; }
+        var msg = 'Purged: ' + d.chargebacks + ' chargeback/omission, ' + d.wire + ' wire deduction records';
+        document.getElementById('purge-msg').textContent = msg;
+        toast(msg, 'success');
+      })
+      .catch(function() { toast('Purge failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Purge'; });
   });
 
   // ===== Bad Words =====

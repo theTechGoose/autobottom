@@ -25,7 +25,7 @@ import {
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig,
   getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
-  getChargebackEntries, getWireDeductionEntries,
+  getChargebackEntries, getWireDeductionEntries, purgeOldEntries,
   getBadWordConfig, saveBadWordConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
@@ -292,6 +292,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/manager-scopes": handleSaveManagerScope,
   "/admin/audit-dimensions": handleSaveAuditDimensions,
   "/admin/post-to-sheet": handlePostToSheet,
+  "/admin/purge-old-audits": handlePurgeOldAudits,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -3703,6 +3704,17 @@ async function handleWipeKv(_req: Request): Promise<Response> {
   }
   console.log(`[ADMIN] Wiped ${deleted} KV entries`);
   return json({ ok: true, deleted });
+}
+
+async function handlePurgeOldAudits(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  const { since, before } = body as { since?: number; before?: number };
+  if (!before) return json({ error: "before required" }, 400);
+  const result = await purgeOldEntries(auth.orgId, since ?? 0, before);
+  console.log(`[ADMIN] 🗑️ Purged audits in range [${since ? new Date(since).toISOString() : "epoch"}, ${new Date(before).toISOString()}] by ${auth.email}: ${JSON.stringify(result)}`);
+  return json({ ok: true, since: since ?? 0, before, ...result });
 }
 
 // -- SSE Events Endpoint --

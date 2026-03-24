@@ -2648,6 +2648,72 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     recAudio.currentTime = Math.min(dur, recAudio.currentTime + 5);
   });
 
+  ${!R ? `
+  // -- Add 2nd Genie / Different Recording (judge only) --
+  window.openAddGenieModal = function() { openAddGenieModal(); };
+  window.closeAddGenieModal = function() { closeAddGenieModal(); };
+  window.submitAddGenie = function() { submitAddGenie(); };
+  function openAddGenieModal() {
+    if (!buffer[0]) return;
+    document.getElementById('add-genie-input').value = '';
+    document.getElementById('add-genie-comment').value = '';
+    document.getElementById('add-genie-error').style.display = 'none';
+    document.getElementById('add-genie-submit').disabled = false;
+    document.getElementById('add-genie-submit').textContent = 'Submit';
+    var overlay = document.getElementById('add-genie-overlay');
+    overlay.style.display = 'flex';
+    document.getElementById('add-genie-input').focus();
+  }
+  function closeAddGenieModal() {
+    document.getElementById('add-genie-overlay').style.display = 'none';
+  }
+  function submitAddGenie() {
+    var currentItem = buffer[0];
+    if (!currentItem) return;
+    var idsRaw = document.getElementById('add-genie-input').value.trim();
+    if (!idsRaw) {
+      document.getElementById('add-genie-error').textContent = 'Please enter at least one Genie ID.';
+      document.getElementById('add-genie-error').style.display = '';
+      return;
+    }
+    var ids = idsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    var comment = document.getElementById('add-genie-comment').value.trim();
+    var btn = document.getElementById('add-genie-submit');
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+    var payload = { findingId: currentItem.findingId, recordingIds: ids };
+    if (comment) payload.comment = comment;
+    fetch('/audit/appeal/different-recording', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (d.error) {
+        document.getElementById('add-genie-error').textContent = d.error;
+        document.getElementById('add-genie-error').style.display = '';
+        btn.disabled = false;
+        btn.textContent = 'Submit';
+      } else {
+        closeAddGenieModal();
+        toast('Re-audit submitted', 'pos');
+      }
+    }).catch(function(err) {
+      document.getElementById('add-genie-error').textContent = err.message || 'Request failed';
+      document.getElementById('add-genie-error').style.display = '';
+      btn.disabled = false;
+      btn.textContent = 'Submit';
+    });
+  }
+  document.getElementById('add-genie-overlay').addEventListener('click', function(e) {
+    if (e.target === this) closeAddGenieModal();
+  });
+  document.getElementById('add-genie-input').addEventListener('keydown', function(e) { e.stopPropagation(); });
+  document.getElementById('add-genie-comment').addEventListener('keydown', function(e) {
+    e.stopPropagation();
+    if (e.key === 'Enter') submitAddGenie();
+  });
+  ` : ''}
+
   // -- Init: try resuming session (or preview mode if ?id=X in URL) --
   (function() {
     function hideOverlay() {
@@ -2867,74 +2933,6 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   }
   pollUnread();
   setInterval(pollUnread, 10000);
-
-  ${!R ? `
-  // -- Add 2nd Genie / Different Recording (judge only) --
-  window.openAddGenieModal = function() { openAddGenieModal(); };
-  window.closeAddGenieModal = function() { closeAddGenieModal(); };
-  window.submitAddGenie = function() { submitAddGenie(); };
-  function openAddGenieModal() {
-    if (!buffer[0]) return;
-    document.getElementById('add-genie-input').value = '';
-    document.getElementById('add-genie-comment').value = '';
-    document.getElementById('add-genie-error').style.display = 'none';
-    document.getElementById('add-genie-submit').disabled = false;
-    document.getElementById('add-genie-submit').textContent = 'Submit';
-    var overlay = document.getElementById('add-genie-overlay');
-    overlay.style.display = 'flex';
-    document.getElementById('add-genie-input').focus();
-  }
-  function closeAddGenieModal() {
-    document.getElementById('add-genie-overlay').style.display = 'none';
-  }
-  function submitAddGenie() {
-    var currentItem = buffer[0];
-    if (!currentItem) return;
-    var idsRaw = document.getElementById('add-genie-input').value.trim();
-    if (!idsRaw) {
-      document.getElementById('add-genie-error').textContent = 'Please enter at least one Genie ID.';
-      document.getElementById('add-genie-error').style.display = '';
-      return;
-    }
-    var ids = idsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
-    var comment = document.getElementById('add-genie-comment').value.trim();
-    var btn = document.getElementById('add-genie-submit');
-    btn.disabled = true;
-    btn.textContent = 'Submitting...';
-    var payload = { findingId: currentItem.findingId, recordingIds: ids };
-    if (comment) payload.comment = comment;
-    fetch('/audit/appeal/different-recording', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).then(function(r) { return r.json(); }).then(function(d) {
-      if (d.error) {
-        document.getElementById('add-genie-error').textContent = d.error;
-        document.getElementById('add-genie-error').style.display = '';
-        btn.disabled = false;
-        btn.textContent = 'Submit';
-      } else {
-        closeAddGenieModal();
-        toast('Re-audit submitted', 'pos');
-      }
-    }).catch(function(err) {
-      document.getElementById('add-genie-error').textContent = err.message || 'Request failed';
-      document.getElementById('add-genie-error').style.display = '';
-      btn.disabled = false;
-      btn.textContent = 'Submit';
-    });
-  }
-  // Close modal on overlay click
-  document.getElementById('add-genie-overlay').addEventListener('click', function(e) {
-    if (e.target === this) closeAddGenieModal();
-  });
-  // Prevent keyboard shortcuts while modal is open
-  document.getElementById('add-genie-input').addEventListener('keydown', function(e) { e.stopPropagation(); });
-  document.getElementById('add-genie-comment').addEventListener('keydown', function(e) {
-    e.stopPropagation();
-    if (e.key === 'Enter') submitAddGenie();
-  });
-  ` : ''}
 })();
 </script>
 </body>

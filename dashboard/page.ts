@@ -908,7 +908,7 @@ table { width: 100%; border-collapse: collapse; }
 
     <!-- Wire Cleanup panel -->
     <div id="maint-panel-wire" style="display:none;">
-      <div class="modal-sub" style="margin-bottom:16px;">Removes all wire deduction report entries <em>and</em> clears any pending review/judge queue items from bypassed offices (e.g. JAY, GUN). Cannot be undone.</div>
+      <div class="modal-sub" style="margin-bottom:16px;">Removes wire deduction entries, audit history records, and pending review/judge queue items from bypassed offices (e.g. JAY, GUN). Cannot be undone.</div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:12px;color:var(--text-dim);margin-bottom:16px;">
         Bypass patterns are managed under <strong style="color:var(--text);">Offices → Bypass</strong>. Only entries whose office name contains a bypass pattern will be removed.
       </div>
@@ -4241,8 +4241,10 @@ table { width: 100%; border-collapse: collapse; }
                   else if (d.phase === 'queues') { appendLine('[' + elapsed() + '] 📋 Scanning review & judge queues...'); }
                   else if (d.phase === 'review') { appendLine('[' + elapsed() + '] 🔄 Review queue — ' + d.office + ' (#' + d.pruned + ')'); }
                   else if (d.phase === 'judge') { appendLine('[' + elapsed() + '] ⚖️  Judge queue — ' + d.office + ' (#' + d.pruned + ')'); }
+                  else if (d.phase === 'history' && d.status) { appendLine('[' + elapsed() + '] 📋 Scanning audit history...'); }
+                  else if (d.phase === 'history' && d.department) { appendLine('[' + elapsed() + '] 🗂️  Audit history — ' + d.department + ' / ' + (d.voName || '?') + ' (#' + d.deleted + ')'); }
                   else if (d.done) {
-                    var summary = '✅ Done in ' + (d.elapsed / 1000).toFixed(1) + 's — wire: ' + d.wireDeleted + ' removed, ' + d.wireKept + ' kept | review queue: ' + d.reviewPruned + ' removed | judge queue: ' + d.judgePruned + ' removed';
+                    var summary = '✅ Done in ' + (d.elapsed / 1000).toFixed(1) + 's — wire: ' + d.wireDeleted + ' removed, ' + d.wireKept + ' kept | review queue: ' + d.reviewPruned + ' | judge queue: ' + d.judgePruned + ' | audit history: ' + d.historyDeleted + ' removed';
                     appendLine(summary, 'var(--green)');
                     toast('Bypass cleanup complete', 'success');
                     btn.disabled = false; btn.textContent = 'Remove Bypassed Entries';

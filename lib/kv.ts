@@ -337,6 +337,27 @@ export async function purgeBypassedWireDeductions(
   return { deleted, kept };
 }
 
+export async function purgeBypassedAuditHistory(
+  orgId: OrgId,
+  patterns: string[],
+  onProgress?: (event: { department: string; voName: string; deleted: number }) => void,
+): Promise<{ deleted: number; kept: number }> {
+  const s = await store(CompletedAuditStatDto);
+  const results = await s.listRaw([orgId]);
+  let deleted = 0, kept = 0;
+  for (const r of results) {
+    const v = r.value as unknown as CompletedAuditStat;
+    const dept = (v.department ?? "").toLowerCase();
+    const isBypassed = patterns.length > 0 && patterns.some((p) => dept.includes(p.toLowerCase()));
+    if (isBypassed) {
+      await s.rawDb.delete(r.key);
+      deleted++;
+      onProgress?.({ department: v.department ?? "", voName: v.voName ?? "", deleted });
+    } else { kept++; }
+  }
+  return { deleted, kept };
+}
+
 export async function purgeOldEntries(orgId: OrgId, since: number, before: number): Promise<{ completed: number; chargebacks: number; wire: number }> {
   const [cbStore, wireStore, completedStore] = await Promise.all([
     store(ChargebackEntryDto), store(WireDeductionEntryDto), store(CompletedAuditStatDto),

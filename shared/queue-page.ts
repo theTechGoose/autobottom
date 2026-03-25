@@ -2344,7 +2344,6 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     document.getElementById('search-count').textContent = (searchIndex + 1) + '/' + searchMatches.length;
     scrollToTranscriptLine(el);
     seekToTranscriptLine(el);
-    if (recAudio.paused) recAudio.play().catch(function(){});
   }
   function scrollToTranscriptLine(el) {
     var body = document.getElementById('transcript-body');

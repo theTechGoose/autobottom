@@ -25,7 +25,7 @@ import {
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig,
   getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
-  getChargebackEntries, getWireDeductionEntries, purgeOldEntries, purgeBypassedWireDeductions, backfillReviewScores,
+  getChargebackEntries, getWireDeductionEntries, purgeOldEntries, purgeBypassedWireDeductions, purgeBypassedAuditHistory, backfillReviewScores,
   getBadWordConfig, saveBadWordConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
@@ -3844,8 +3844,12 @@ async function handlePurgeBypassedWireDeductions(req: Request): Promise<Response
       const pruneResult = await pruneBypassedFromQueues(auth.orgId, bypassCfg.patterns, (evt) => {
         send({ phase: evt.queue, office: evt.office, pruned: evt.pruned, elapsed: Date.now() - startMs });
       });
-      console.log(`[ADMIN] 🧹 Bypass purge by ${auth.email}: wireDeleted=${wireResult.deleted} reviewPruned=${pruneResult.reviewPruned} judgePruned=${pruneResult.judgePruned}`);
-      send({ done: true, wireDeleted: wireResult.deleted, wireKept: wireResult.kept, reviewPruned: pruneResult.reviewPruned, judgePruned: pruneResult.judgePruned, patterns: bypassCfg.patterns, elapsed: Date.now() - startMs });
+      send({ phase: "history", status: "starting" });
+      const historyResult = await purgeBypassedAuditHistory(auth.orgId, bypassCfg.patterns, (evt) => {
+        send({ phase: "history", department: evt.department, voName: evt.voName, deleted: evt.deleted, elapsed: Date.now() - startMs });
+      });
+      console.log(`[ADMIN] 🧹 Bypass purge by ${auth.email}: wireDeleted=${wireResult.deleted} reviewPruned=${pruneResult.reviewPruned} judgePruned=${pruneResult.judgePruned} historyDeleted=${historyResult.deleted}`);
+      send({ done: true, wireDeleted: wireResult.deleted, wireKept: wireResult.kept, reviewPruned: pruneResult.reviewPruned, judgePruned: pruneResult.judgePruned, historyDeleted: historyResult.deleted, patterns: bypassCfg.patterns, elapsed: Date.now() - startMs });
     } catch (err) {
       send({ error: String(err) });
     } finally {

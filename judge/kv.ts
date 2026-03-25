@@ -928,7 +928,7 @@ export interface DedupCandidate {
   id: string;
   recordKey: string;
   ts: number;
-  reviewedAt: number;
+  reviewed: boolean;
   keep: boolean; // true = winner, false = will be deleted
 }
 
@@ -952,39 +952,47 @@ export async function findDuplicates(orgId: OrgId, since: number, until: number)
   const indexEntries = await queryAuditDoneIndex(orgId, since, until);
   console.log(`[DEDUP] index scan: ${indexEntries.length} entries in range`);
 
-  // reviewedAt from index (doneAt when reason === "reviewed", else use completedAt as fallback)
-  const reviewedAtMap = new Map<string, number>();
-  for (const e of indexEntries) {
-    if (e.reason === "reviewed" && e.doneAt) reviewedAtMap.set(e.findingId, e.doneAt);
-  }
-
-  // Step 2: batch parallel fetch of chunk-0 for each finding (50 at a time)
-  function extractRecordingId(raw: string): string {
-    return raw.match(/"recordingId"\s*:\s*"([^"]+)"/)?.[1]
-      || raw.match(/"RecordId"\s*:\s*(\d+)/)?.[1]
+  // Step 2: resolve recordId for each entry.
+  // New entries have recordId stored directly in the index.
+  // For older entries missing it, fall back to regex scan of chunk-0.
+  function extractRecordId(raw: string): string {
+    return raw.match(/"RecordId"\s*:\s*(\d+)/)?.[1]
+      || raw.match(/"recordingId"\s*:\s*"([^"]+)"/)?.[1]
       || "";
   }
 
-  type Entry = { id: string; recordKey: string; ts: number; reviewedAt: number };
+  // Separate entries that already have recordId from those that need chunk-0 lookup
+  const needChunk: typeof indexEntries = [];
+  type Entry = { id: string; recordKey: string; ts: number; reviewed: boolean };
   const inRange: Entry[] = [];
-  const BATCH = 50;
 
-  for (let i = 0; i < indexEntries.length; i += BATCH) {
-    const batch = indexEntries.slice(i, i + BATCH);
+  for (const e of indexEntries) {
+    if (e.recordId) {
+      inRange.push({ id: e.findingId, recordKey: e.recordId, ts: e.completedAt, reviewed: e.reason === "reviewed" });
+    } else {
+      needChunk.push(e);
+    }
+  }
+
+  // Batch parallel chunk-0 reads for entries without index recordId (legacy)
+  const BATCH = 50;
+  for (let i = 0; i < needChunk.length; i += BATCH) {
+    const batch = needChunk.slice(i, i + BATCH);
     const chunk0s = await Promise.all(
       batch.map((e) => db.get<string>(["__audit-finding__", orgId, e.findingId, 0])),
     );
     for (let j = 0; j < batch.length; j++) {
       const raw = chunk0s[j].value;
       if (!raw) continue;
-      const recordKey = extractRecordingId(raw);
+      const recordKey = extractRecordId(raw);
       if (!recordKey) continue;
       const idx = batch[j];
-      inRange.push({ id: idx.findingId, recordKey, ts: idx.completedAt, reviewedAt: reviewedAtMap.get(idx.findingId) ?? 0 });
+      inRange.push({ id: idx.findingId, recordKey, ts: idx.completedAt, reviewed: idx.reason === "reviewed" });
     }
   }
 
-  // Group by recordKey, mark winners and losers
+  // Group by QB RecordId, mark winners and losers
+  // Winner: reviewed beats unreviewed; tie-break by most recent completedAt
   const groups = new Map<string, Entry[]>();
   for (const e of inRange) {
     const g = groups.get(e.recordKey) ?? [];
@@ -999,8 +1007,8 @@ export async function findDuplicates(orgId: OrgId, since: number, until: number)
     if (group.length <= 1) continue;
     dupGroups++;
     group.sort((a, b) => {
-      if (a.reviewedAt !== b.reviewedAt) return b.reviewedAt - a.reviewedAt;
-      return b.ts - a.ts;
+      if (a.reviewed !== b.reviewed) return a.reviewed ? -1 : 1; // reviewed first
+      return b.ts - a.ts; // then most recent
     });
     toDelete.push({ ...group[0], keep: true });
     for (const dup of group.slice(1)) toDelete.push({ ...dup, keep: false });

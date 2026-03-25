@@ -746,6 +746,7 @@ export interface AuditDoneIndexEntry {
   completed: boolean;
   reason?: "perfect_score" | "invalid_genie" | "reviewed";
   score: number;
+  recordId?: string; // QB RecordId (date-leg or package) — for dedup grouping
 }
 
 export type CriteriaField =

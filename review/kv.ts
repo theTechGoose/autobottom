@@ -529,6 +529,7 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
         completed: true,
         doneAt: Date.now(),
         reason: "reviewed",
+        recordId: String((finding as any)?.record?.RecordId ?? "") || undefined,
       });
     } catch (err) {
       console.error(`[REVIEW] ${findingId}: ❌ audit-done-idx update failed:`, err);

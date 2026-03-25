@@ -4078,8 +4078,10 @@ table { width: 100%; border-collapse: collapse; }
               if (line.indexOf('data: ') !== 0) continue;
               try {
                 var d = JSON.parse(line.slice(6));
-                if (d.error) { toast('Backfill error: ' + d.error, 'error'); }
-                else if (d.done) {
+                if (d.error) { toast('Backfill error: ' + d.error, 'error'); btn.disabled = false; btn.textContent = 'Run Backfill'; }
+                else if (d.progress !== undefined) {
+                  msgEl.textContent = 'Processing... ' + d.progress + (d.total ? ' / ' + d.total : '') + ' entries';
+                } else if (d.done) {
                   var msg = 'Updated ' + d.wireUpdated + ' wire deduction' + (d.wireUpdated !== 1 ? 's' : '') +
                     ', ' + (d.cbUpdated + d.cbDeleted) + ' chargeback/omission entries (' + d.cbDeleted + ' cleared) — ' + d.scanned + ' scanned';
                   msgEl.textContent = msg;

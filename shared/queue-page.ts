@@ -1030,12 +1030,40 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
 ${!R ? `<!-- Add Genie modal (judge only) -->
 <div id="add-genie-overlay" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.75);align-items:center;justify-content:center;">
-  <div style="background:#161b22;border:1px solid #2d333b;border-radius:12px;padding:24px;width:440px;max-width:90vw;">
-    <h3 style="font-size:15px;font-weight:700;margin-bottom:8px;color:#c9d1d9;">Add 2nd Genie / Different Recording</h3>
-    <p style="font-size:12px;color:#8b949e;margin-bottom:16px;">First row is pre-filled with the original Genie ID. Add a second row to include an additional or replacement recording.</p>
-    <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Genie ID(s)</div>
-    <div id="add-genie-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;"></div>
-    <button id="add-genie-add-row" onclick="addGenieRow()" style="font-size:11px;color:#14b8a6;background:none;border:none;cursor:pointer;padding:2px 0;margin-bottom:12px;text-align:left;">+ Add Another</button>
+  <div style="background:#161b22;border:1px solid #2d333b;border-radius:12px;padding:24px;width:460px;max-width:90vw;">
+    <h3 style="font-size:15px;font-weight:700;margin-bottom:12px;color:#c9d1d9;">Add 2nd Genie / Different Recording</h3>
+    <!-- Mode toggle -->
+    <div style="display:flex;background:#0a0e14;border:1px solid #1e2736;border-radius:6px;padding:3px;gap:3px;margin-bottom:16px;">
+      <button id="add-genie-mode-genie" onclick="setAddGenieMode('genie')" style="flex:1;background:#161b22;border:none;border-radius:4px;color:#c9d1d9;font-size:11px;font-weight:600;padding:5px 0;cursor:pointer;">Genie ID(s)</button>
+      <button id="add-genie-mode-upload" onclick="setAddGenieMode('upload')" style="flex:1;background:none;border:none;border-radius:4px;color:#6e7681;font-size:11px;font-weight:600;padding:5px 0;cursor:pointer;">Upload Recording</button>
+    </div>
+    <!-- Genie ID panel -->
+    <div id="add-genie-panel-genie">
+      <p style="font-size:12px;color:#8b949e;margin-bottom:10px;">First row is pre-filled with the original Genie ID. Add a second row to include an additional or replacement recording.</p>
+      <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Genie ID(s)</div>
+      <div id="add-genie-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;"></div>
+      <button id="add-genie-add-row" onclick="addGenieRow()" style="font-size:11px;color:#14b8a6;background:none;border:none;cursor:pointer;padding:2px 0;margin-bottom:12px;text-align:left;">+ Add Another</button>
+    </div>
+    <!-- Upload panel -->
+    <div id="add-genie-panel-upload" style="display:none;">
+      <p style="font-size:12px;color:#8b949e;margin-bottom:10px;">Upload an MP3 recording to re-audit against. Optionally trim the audio with start/end markers.</p>
+      <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Recording File (MP3)</div>
+      <input type="file" id="add-genie-file" accept="audio/mpeg,audio/mp3,.mp3"
+        style="width:100%;padding:8px 10px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:12px;margin-bottom:10px;box-sizing:border-box;cursor:pointer;">
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <div style="flex:1;">
+          <div style="font-size:11px;color:#6e7681;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Snip Start (mm:ss)</div>
+          <input type="text" id="add-genie-snip-start" placeholder="e.g. 0:30" autocomplete="off"
+            style="width:100%;padding:8px 10px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:13px;box-sizing:border-box;outline:none;">
+        </div>
+        <div style="flex:1;">
+          <div style="font-size:11px;color:#6e7681;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Snip End (mm:ss)</div>
+          <input type="text" id="add-genie-snip-end" placeholder="e.g. 5:00" autocomplete="off"
+            style="width:100%;padding:8px 10px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:13px;box-sizing:border-box;outline:none;">
+        </div>
+      </div>
+    </div>
+    <!-- Shared comment + actions -->
     <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Comment (optional)</div>
     <input type="text" id="add-genie-comment" autocomplete="off" spellcheck="false" placeholder="Reason for re-audit..."
       style="width:100%;padding:10px 14px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:14px;margin-bottom:16px;outline:none;box-sizing:border-box;">
@@ -2672,6 +2700,32 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   window.closeAddGenieModal = function() { closeAddGenieModal(); };
   window.submitAddGenie = function() { submitAddGenie(); };
   window.addGenieRow = function() { addGenieRow(); };
+  window.setAddGenieMode = function(m) { setAddGenieMode(m); };
+
+  var addGenieMode = 'genie';
+  function setAddGenieMode(mode) {
+    addGenieMode = mode;
+    var gPanel = document.getElementById('add-genie-panel-genie');
+    var uPanel = document.getElementById('add-genie-panel-upload');
+    var gBtn = document.getElementById('add-genie-mode-genie');
+    var uBtn = document.getElementById('add-genie-mode-upload');
+    if (mode === 'upload') {
+      gPanel.style.display = 'none';
+      uPanel.style.display = '';
+      gBtn.style.background = 'none';
+      gBtn.style.color = '#6e7681';
+      uBtn.style.background = '#161b22';
+      uBtn.style.color = '#c9d1d9';
+    } else {
+      uPanel.style.display = 'none';
+      gPanel.style.display = '';
+      uBtn.style.background = 'none';
+      uBtn.style.color = '#6e7681';
+      gBtn.style.background = '#161b22';
+      gBtn.style.color = '#c9d1d9';
+    }
+    document.getElementById('add-genie-error').style.display = 'none';
+  }
 
   function makeGenieRowInput(value, removable) {
     var row = document.createElement('div');
@@ -2724,9 +2778,13 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     var originalId = buffer[0].recordingId || '';
     rows.appendChild(makeGenieRowInput(originalId, false));
     document.getElementById('add-genie-comment').value = '';
+    document.getElementById('add-genie-file').value = '';
+    document.getElementById('add-genie-snip-start').value = '';
+    document.getElementById('add-genie-snip-end').value = '';
     document.getElementById('add-genie-error').style.display = 'none';
     document.getElementById('add-genie-submit').disabled = false;
     document.getElementById('add-genie-submit').textContent = 'Submit';
+    setAddGenieMode('genie');
     document.getElementById('add-genie-overlay').style.display = 'flex';
     // Focus the first input if empty, otherwise add a blank row ready for the 2nd ID
     var firstInput = rows.querySelector('input');
@@ -2739,19 +2797,85 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   function closeAddGenieModal() {
     document.getElementById('add-genie-overlay').style.display = 'none';
   }
+  function parseMmSs(val) {
+    if (!val) return null;
+    var parts = val.trim().split(':');
+    if (parts.length === 2) {
+      var m = parseInt(parts[0], 10);
+      var s = parseFloat(parts[1]);
+      if (!isNaN(m) && !isNaN(s)) return Math.round((m * 60 + s) * 1000);
+    }
+    var s2 = parseFloat(val);
+    if (!isNaN(s2)) return Math.round(s2 * 1000);
+    return null;
+  }
+
+  function afterGenieSuccess(currentItem) {
+    return fetch('/judge/api/dismiss-finding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ findingId: currentItem.findingId }),
+    }).catch(function(){}).then(function() {
+      closeAddGenieModal();
+      toast('Re-audit submitted — removed from judge queue', 'pos');
+      loadNext();
+    });
+  }
+
   function submitAddGenie() {
     var currentItem = buffer[0];
     if (!currentItem) return;
+    var btn = document.getElementById('add-genie-submit');
+    var errEl = document.getElementById('add-genie-error');
+    errEl.style.display = 'none';
+    var comment = document.getElementById('add-genie-comment').value.trim();
+
+    if (addGenieMode === 'upload') {
+      var fileInput = document.getElementById('add-genie-file');
+      var file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        errEl.textContent = 'Please select an MP3 file to upload.';
+        errEl.style.display = '';
+        return;
+      }
+      var snipStart = parseMmSs(document.getElementById('add-genie-snip-start').value);
+      var snipEnd = parseMmSs(document.getElementById('add-genie-snip-end').value);
+      var fd = new FormData();
+      fd.append('findingId', currentItem.findingId);
+      fd.append('file', file);
+      if (snipStart !== null) fd.append('snipStart', String(snipStart));
+      if (snipEnd !== null) fd.append('snipEnd', String(snipEnd));
+      if (comment) fd.append('comment', comment);
+      btn.disabled = true;
+      btn.textContent = 'Uploading...';
+      fetch('/audit/appeal/upload-recording', { method: 'POST', body: fd })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.error) {
+            errEl.textContent = d.error;
+            errEl.style.display = '';
+            btn.disabled = false;
+            btn.textContent = 'Submit';
+          } else {
+            afterGenieSuccess(currentItem);
+          }
+        }).catch(function(err) {
+          errEl.textContent = err.message || 'Upload failed';
+          errEl.style.display = '';
+          btn.disabled = false;
+          btn.textContent = 'Submit';
+        });
+      return;
+    }
+
     var inputs = document.getElementById('add-genie-rows').querySelectorAll('input');
     var ids = [];
     inputs.forEach(function(inp) { var v = inp.value.trim(); if (v) ids.push(v); });
     if (ids.length === 0) {
-      document.getElementById('add-genie-error').textContent = 'Please enter at least one Genie ID.';
-      document.getElementById('add-genie-error').style.display = '';
+      errEl.textContent = 'Please enter at least one Genie ID.';
+      errEl.style.display = '';
       return;
     }
-    var comment = document.getElementById('add-genie-comment').value.trim();
-    var btn = document.getElementById('add-genie-submit');
     btn.disabled = true;
     btn.textContent = 'Submitting...';
     var payload = { findingId: currentItem.findingId, recordingIds: ids };
@@ -2762,25 +2886,16 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
       body: JSON.stringify(payload),
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (d.error) {
-        document.getElementById('add-genie-error').textContent = d.error;
-        document.getElementById('add-genie-error').style.display = '';
+        errEl.textContent = d.error;
+        errEl.style.display = '';
         btn.disabled = false;
         btn.textContent = 'Submit';
       } else {
-        // Dismiss all judge queue items for this finding so it clears out of the queue
-        return fetch('/judge/api/dismiss-finding', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ findingId: currentItem.findingId }),
-        }).catch(function(){}).then(function() {
-          closeAddGenieModal();
-          toast('Re-audit submitted — removed from judge queue', 'pos');
-          loadNext();
-        });
+        afterGenieSuccess(currentItem);
       }
     }).catch(function(err) {
-      document.getElementById('add-genie-error').textContent = err.message || 'Request failed';
-      document.getElementById('add-genie-error').style.display = '';
+      errEl.textContent = err.message || 'Request failed';
+      errEl.style.display = '';
       btn.disabled = false;
       btn.textContent = 'Submit';
     });
@@ -2791,6 +2906,9 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   document.getElementById('add-genie-comment').addEventListener('keydown', function(e) {
     e.stopPropagation();
     if (e.key === 'Enter') submitAddGenie();
+  });
+  ['add-genie-snip-start', 'add-genie-snip-end'].forEach(function(id) {
+    document.getElementById(id).addEventListener('keydown', function(e) { e.stopPropagation(); });
   });
   ` : ''}
 

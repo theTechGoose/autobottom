@@ -786,6 +786,7 @@ export async function backfillChargebackEntries(
   orgId: OrgId,
   since: number,
   until: number,
+  onProgress?: (scanned: number, total: number) => void,
 ): Promise<{ scanned: number; cbUpdated: number; cbDeleted: number; wireUpdated: number }> {
   let scanned = 0;
   let cbUpdated = 0;
@@ -799,30 +800,32 @@ export async function backfillChargebackEntries(
 
   // Backfill wire deduction entries — iterate wire entries directly so review-queue
   // decisions are included (not just judge appeal history).
-  const wireEntries = await getWireDeductionEntries(orgId, since, until);
-  for (const wireEntry of wireEntries.items) {
+  const wireResult = await getWireDeductionEntries(orgId, since, until);
+  const cbEntries = await getChargebackEntries(orgId, since, until);
+  const total = wireResult.items.length + cbEntries.length;
+
+  for (const wireEntry of wireResult.items) {
     scanned++;
+    if (onProgress && scanned % 10 === 0) onProgress(scanned, total);
     const finding = await getFinding(orgId, wireEntry.findingId);
     if (!finding) continue;
     const answers = finding.answeredQuestions ?? [];
     if (answers.length === 0) continue;
-    const total = answers.length;
     const finalYes = answers.filter((a: any) => isYes(a.answer)).length;
-    const finalScore = total > 0 ? Math.round((finalYes / total) * 100) : 0;
-    await saveWireDeductionEntry(orgId, { ...wireEntry, score: finalScore, totalSuccess: finalYes, questionsAudited: total });
+    const finalScore = answers.length > 0 ? Math.round((finalYes / answers.length) * 100) : 0;
+    await saveWireDeductionEntry(orgId, { ...wireEntry, score: finalScore, totalSuccess: finalYes, questionsAudited: answers.length });
     wireUpdated++;
   }
 
-  // Backfill chargeback entries — same approach, iterate entries directly.
-  const cbEntries = await getChargebackEntries(orgId, since, until);
   for (const cbEntry of cbEntries) {
+    scanned++;
+    if (onProgress && scanned % 10 === 0) onProgress(scanned, total);
     const finding = await getFinding(orgId, cbEntry.findingId);
     if (!finding) continue;
     const answers = finding.answeredQuestions ?? [];
     if (answers.length === 0) continue;
-    const total = answers.length;
     const finalYes = answers.filter((a: any) => isYes(a.answer)).length;
-    const finalScore = total > 0 ? Math.round((finalYes / total) * 100) : 0;
+    const finalScore = answers.length > 0 ? Math.round((finalYes / answers.length) * 100) : 0;
     const failedQHeaders = answers.filter((a: any) => !isYes(a.answer)).map((a: any) => a.header).filter(Boolean);
     if (failedQHeaders.length === 0) {
       await deleteChargebackEntry(orgId, cbEntry.findingId);

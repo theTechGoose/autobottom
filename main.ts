@@ -3783,14 +3783,21 @@ async function handleBackfillChargebackEntries(req: Request): Promise<Response> 
   const send = (data: unknown) => writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)).catch(() => {});
 
   (async () => {
+    // Heartbeat every 10s so Deno Deploy doesn't kill the idle connection
+    const heartbeat = setInterval(() => {
+      writer.write(encoder.encode(": heartbeat\n\n")).catch(() => {});
+    }, 10_000);
     try {
-      const result = await backfillChargebackEntries(auth.orgId, since, until);
+      const result = await backfillChargebackEntries(auth.orgId, since, until, (scanned, total) => {
+        send({ progress: scanned, total });
+      });
       console.log(`[ADMIN] 🔧 Backfill chargeback entries by ${auth.email}: scanned=${result.scanned} cbUpdated=${result.cbUpdated} cbDeleted=${result.cbDeleted} wireUpdated=${result.wireUpdated}`);
       send({ done: true, ...result });
     } catch (err) {
       console.error(`[ADMIN] ❌ Backfill chargeback entries error:`, err);
       send({ error: String(err) });
     } finally {
+      clearInterval(heartbeat);
       await writer.close().catch(() => {});
     }
   })();

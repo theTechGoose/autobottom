@@ -296,15 +296,19 @@ export async function saveWireDeductionEntry(orgId: OrgId, entry: WireDeductionE
   await s.set([orgId, entry.findingId], entry as any);
 }
 
-export async function getWireDeductionEntries(orgId: OrgId, since: number, until: number): Promise<WireDeductionEntry[]> {
+export async function getWireDeductionEntries(orgId: OrgId, since: number, until: number): Promise<{ items: WireDeductionEntry[]; totalCount: number; newestTs: number | null }> {
   const s = await store(WireDeductionEntryDto);
   const results = await s.listRaw([orgId], { reverse: true });
   const items: WireDeductionEntry[] = [];
+  let totalCount = 0;
+  let newestTs: number | null = null;
   for (const r of results) {
     const v = r.value as unknown as WireDeductionEntry;
+    totalCount++;
+    if (newestTs === null || v.ts > newestTs) newestTs = v.ts;
     if (v.ts >= since && v.ts <= until) items.push(v);
   }
-  return items;
+  return { items, totalCount, newestTs };
 }
 
 export async function getWireDeductionEntry(orgId: OrgId, findingId: string): Promise<WireDeductionEntry | null> {

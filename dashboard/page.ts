@@ -3798,6 +3798,16 @@ table { width: 100%; border-collapse: collapse; }
 
   function wireRender() {
     var items = wireData.items;
+    var dbg = wireData._debug;
+    var emptyEl = document.getElementById('wire-empty');
+    if (!items.length && dbg) {
+      var newestStr = dbg.newestTs ? new Date(dbg.newestTs).toLocaleString() : 'none';
+      emptyEl.innerHTML = 'No entries in range. Total stored: <strong>' + dbg.totalCount + '</strong>' +
+        (dbg.totalCount > 0 ? ' &mdash; newest: <strong>' + newestStr + '</strong>' : '') +
+        ' (orgId: ' + dbg.orgId + ')';
+    } else {
+      emptyEl.innerHTML = 'No wire deduction entries in the selected date range.';
+    }
     document.getElementById('wire-empty').style.display = items.length ? 'none' : '';
     document.getElementById('wire-block').style.display = items.length ? '' : 'none';
     document.getElementById('wire-heading').textContent = 'Wire Deductions (' + items.length + ')';

@@ -45,7 +45,7 @@ import {
   listCustomStoreItems, saveCustomStoreItem, deleteCustomStoreItem,
   registerWebhookEmailHandler,
 } from "./lib/kv.ts";
-import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot } from "./lib/kv.ts";
+import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot, WireDeductionEntry } from "./lib/kv.ts";
 import { S3Ref } from "./lib/s3.ts";
 import { sendEmail } from "./providers/postmark.ts";
 import { appendSheetRows, parseSheetsServiceAccount } from "./providers/sheets.ts";
@@ -2119,8 +2119,9 @@ async function handleGetWireDeductions(req: Request): Promise<Response> {
   if (!since) return json({ error: "since required" }, 400);
   const orgId = env.chargebacksOrgId as OrgId;
   if (!orgId) return json({ error: "org not configured" }, 500);
-  const items = await getWireDeductionEntries(orgId, since, until);
-  return json({ items });
+  const result = await getWireDeductionEntries(orgId, since, until);
+  console.log(`[WIRE-DEDUCTIONS] orgId=${orgId} since=${since} until=${until} found=${result.items.length} total=${result.totalCount} newestTs=${result.newestTs}`);
+  return json({ items: result.items, _debug: { totalCount: result.totalCount, newestTs: result.newestTs, orgId } });
 }
 
 async function handlePostToSheet(req: Request): Promise<Response> {
@@ -2155,10 +2156,10 @@ async function handlePostToSheet(req: Request): Promise<Response> {
     if (tabList.includes("omissions")) { await appendSheetRows(sheetId, "Omissions", toRows(omissions), saEmail, saKey); posted.push("Omissions"); }
   }
   if (tabList.includes("wire")) {
-    const wireEntries = await getWireDeductionEntries(orgId, since, until);
-    const toWireRows = (list: typeof wireEntries): string[][] =>
+    const wireResult = await getWireDeductionEntries(orgId, since, until);
+    const toWireRows = (list: WireDeductionEntry[]): string[][] =>
       list.map((e) => [fmtDate(e.ts), `${e.score}%`, String(e.questionsAudited), String(e.totalSuccess), pkgCrmUrl(e), auditUrl(e), e.office, e.excellenceAuditor, "", e.guestName]);
-    await appendSheetRows(sheetId, "Wire Deductions", toWireRows(wireEntries), saEmail, saKey);
+    await appendSheetRows(sheetId, "Wire Deductions", toWireRows(wireResult.items), saEmail, saKey);
     posted.push("Wire Deductions");
   }
   console.log(`[POST-TO-SHEET] ✅ Posted by ${auth.email}: ${posted.join(", ")}`);
@@ -4035,7 +4036,8 @@ async function runWeeklySheets(since: number, until: number): Promise<void> {
   const entries = await getChargebackEntries(orgId, since, until);
   const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
   const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
-  const wireEntries = await getWireDeductionEntries(orgId, since, until);
+  const wireResult = await getWireDeductionEntries(orgId, since, until);
+  const wireEntries = wireResult.items;
 
   const fmtDate = (ts: number) => new Date(ts).toLocaleDateString("en-US");
   const realm = Deno.env.get("QB_REALM");
@@ -4044,7 +4046,7 @@ async function runWeeklySheets(since: number, until: number): Promise<void> {
   const auditUrl = (e: { findingId: string }) => `${env.selfUrl}/audit/report?id=${e.findingId}`;
   const toRows = (list: typeof entries): string[][] =>
     list.map((e) => [fmtDate(e.ts), e.voName, e.revenue, crmUrl(e), e.destination, e.failedQHeaders.join(", "), `${e.score}%`]);
-  const toWireRows = (list: typeof wireEntries): string[][] =>
+  const toWireRows = (list: WireDeductionEntry[]): string[][] =>
     list.map((e) => [fmtDate(e.ts), `${e.score}%`, String(e.questionsAudited), String(e.totalSuccess), pkgCrmUrl(e), auditUrl(e), e.office, e.excellenceAuditor, "", e.guestName]);
 
   await appendSheetRows(sheetId, "Chargebacks", toRows(chargebacks), saEmail, saKey);

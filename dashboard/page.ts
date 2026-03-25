@@ -4226,15 +4226,15 @@ table { width: 100%; border-collapse: collapse; }
         function read() {
           return reader.read().then(function(chunk) {
             if (chunk.done) return;
-            buf += decoder.decode(chunk.value, { stream: true });
-            var parts = buf.split('\n\n');
+            buf += decoder.decode(chunk.value);
+            var parts = buf.split('\\n\\n');
             buf = parts.pop();
             for (var i = 0; i < parts.length; i++) {
-              var line = parts[i];
-              if (line.startsWith(': ')) continue; // heartbeat
-              if (line.startsWith('data: ')) {
+              var line = parts[i].trim();
+              if (!line || line.indexOf(': ') === 0) continue;
+              if (line.indexOf('data: ') === 0) {
                 try {
-                  var d = JSON.parse(line.slice(6));
+                  var d = JSON.parse(line.slice(6).trim());
                   if (d.error) { appendLine('❌ ' + d.error, 'var(--red)'); }
                   else if (d.phase === 'wire' && d.office) { appendLine('[' + elapsed() + '] 🗑️  Wire entry — ' + d.office + ' / ' + (d.guestName || '?') + ' (#' + d.deleted + ')'); }
                   else if (d.phase === 'wire' && d.status) { appendLine('[' + elapsed() + '] 📋 Scanning wire deduction entries...'); }

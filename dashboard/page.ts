@@ -4045,19 +4045,55 @@ table { width: 100%; border-collapse: collapse; }
     btn.disabled = true; btn.textContent = 'Running...';
     document.getElementById('bfrs-msg').textContent = '';
     var payload = JSON.stringify({ since: since, until: until });
-    var endpoint = bfrsModeVal === 'wire' ? '/admin/backfill-chargeback-entries' : '/admin/backfill-review-scores';
-    fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.error) { toast(d.error, 'error'); return; }
-        var msg = bfrsModeVal === 'wire'
-          ? 'Chargebacks: scanned ' + d.scanned + ', updated ' + (d.cbUpdated + d.wireUpdated) + ', cleared ' + d.cbDeleted
-          : 'Scores: scanned ' + d.scanned + ', updated ' + d.updated;
-        document.getElementById('bfrs-msg').textContent = msg;
-        toast('Backfill complete', 'success');
+    var msgEl = document.getElementById('bfrs-msg');
+    if (bfrsModeVal !== 'wire') {
+      // Scores backfill: simple JSON response
+      fetch('/admin/backfill-review-scores', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.error) { toast(d.error, 'error'); return; }
+          var msg = 'Scores: scanned ' + d.scanned + ', updated ' + d.updated;
+          msgEl.textContent = msg;
+          toast('Backfill complete', 'success');
+        })
+        .catch(function() { toast('Backfill failed', 'error'); })
+        .finally(function() { btn.disabled = false; btn.textContent = 'Run Backfill'; });
+      return;
+    }
+    // Wire/chargeback backfill: SSE stream (can take a while)
+    msgEl.textContent = 'Running — this may take a moment...';
+    fetch('/admin/backfill-chargeback-entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload })
+      .then(function(r) {
+        var reader = r.body.getReader();
+        var dec = new TextDecoder();
+        var buf = '';
+        function pump() {
+          return reader.read().then(function(res) {
+            if (res.done) return;
+            buf += dec.decode(res.value);
+            var lines = buf.split('\\n');
+            buf = lines.pop() || '';
+            for (var li = 0; li < lines.length; li++) {
+              var line = lines[li];
+              if (line.indexOf('data: ') !== 0) continue;
+              try {
+                var d = JSON.parse(line.slice(6));
+                if (d.error) { toast('Backfill error: ' + d.error, 'error'); }
+                else if (d.done) {
+                  var msg = 'Updated ' + d.wireUpdated + ' wire deduction' + (d.wireUpdated !== 1 ? 's' : '') +
+                    ', ' + (d.cbUpdated + d.cbDeleted) + ' chargeback/omission entries (' + d.cbDeleted + ' cleared) — ' + d.scanned + ' scanned';
+                  msgEl.textContent = msg;
+                  toast('Backfill complete', 'success');
+                  btn.disabled = false; btn.textContent = 'Run Backfill';
+                }
+              } catch (_e) {}
+            }
+            return pump();
+          });
+        }
+        return pump();
       })
-      .catch(function() { toast('Backfill failed', 'error'); })
-      .finally(function() { btn.disabled = false; btn.textContent = 'Run Backfill'; });
+      .catch(function() { toast('Backfill failed', 'error'); btn.disabled = false; btn.textContent = 'Run Backfill'; });
   });
 
   // ===== Deduplicate Findings =====

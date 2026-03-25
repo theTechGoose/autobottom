@@ -3776,9 +3776,28 @@ async function handleBackfillChargebackEntries(req: Request): Promise<Response> 
   const body = await req.json();
   const { since, until } = body as { since: number; until: number };
   if (!since || !until) return json({ error: "since and until required" }, 400);
-  const result = await backfillChargebackEntries(auth.orgId, since, until);
-  console.log(`[ADMIN] 🔧 Backfill chargeback entries by ${auth.email}: scanned=${result.scanned} cbUpdated=${result.cbUpdated} cbDeleted=${result.cbDeleted} wireUpdated=${result.wireUpdated}`);
-  return json({ ok: true, ...result });
+
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const send = (data: unknown) => writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)).catch(() => {});
+
+  (async () => {
+    try {
+      const result = await backfillChargebackEntries(auth.orgId, since, until);
+      console.log(`[ADMIN] 🔧 Backfill chargeback entries by ${auth.email}: scanned=${result.scanned} cbUpdated=${result.cbUpdated} cbDeleted=${result.cbDeleted} wireUpdated=${result.wireUpdated}`);
+      send({ done: true, ...result });
+    } catch (err) {
+      console.error(`[ADMIN] ❌ Backfill chargeback entries error:`, err);
+      send({ error: String(err) });
+    } finally {
+      await writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(readable, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
 }
 
 async function handlePurgeOldAudits(req: Request): Promise<Response> {

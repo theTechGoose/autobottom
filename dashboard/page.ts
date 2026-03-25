@@ -3945,7 +3945,7 @@ table { width: 100%; border-collapse: collapse; }
           return reader.read().then(function(res) {
             if (res.done) return;
             buf += dec.decode(res.value);
-            var lines = buf.split('\n');
+            var lines = buf.split('\\n');
             buf = lines.pop() || '';
             for (var li = 0; li < lines.length; li++) {
               var line = lines[li];

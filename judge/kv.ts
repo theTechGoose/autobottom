@@ -1,6 +1,6 @@
 /** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry, queryAuditDoneIndex, deleteCompletedStat, deleteAuditDoneIndexEntry } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getChargebackEntries, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry, getWireDeductionEntries, queryAuditDoneIndex, deleteCompletedStat, deleteAuditDoneIndexEntry } from "../lib/kv.ts";
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
 import { checkBadges } from "../shared/badges.ts";
@@ -787,7 +787,6 @@ export async function backfillChargebackEntries(
   since: number,
   until: number,
 ): Promise<{ scanned: number; cbUpdated: number; cbDeleted: number; wireUpdated: number }> {
-  const db = await kv();
   let scanned = 0;
   let cbUpdated = 0;
   let cbDeleted = 0;
@@ -798,43 +797,39 @@ export async function backfillChargebackEntries(
     return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
   };
 
-  // Iterate appeal history entries — only judged findings have corrected answers
-  const iter = db.list<AppealHistory>({ prefix: orgKey(orgId, "appeal-history") });
-  for await (const entry of iter) {
-    const history = entry.value;
-    if (history.timestamp < since || history.timestamp > until) continue;
+  // Backfill wire deduction entries — iterate wire entries directly so review-queue
+  // decisions are included (not just judge appeal history).
+  const wireEntries = await getWireDeductionEntries(orgId, since, until);
+  for (const wireEntry of wireEntries.items) {
     scanned++;
-
-    const findingId = history.findingId;
-    const finding = await getFinding(orgId, findingId);
+    const finding = await getFinding(orgId, wireEntry.findingId);
     if (!finding) continue;
-
     const answers = finding.answeredQuestions ?? [];
     if (answers.length === 0) continue;
-
     const total = answers.length;
     const finalYes = answers.filter((a: any) => isYes(a.answer)).length;
     const finalScore = total > 0 ? Math.round((finalYes / total) * 100) : 0;
+    await saveWireDeductionEntry(orgId, { ...wireEntry, score: finalScore, totalSuccess: finalYes, questionsAudited: total });
+    wireUpdated++;
+  }
 
-    // Update ChargebackEntry
-    const cbEntry = await getChargebackEntry(orgId, findingId);
-    if (cbEntry) {
-      const failedQHeaders = answers.filter((a: any) => !isYes(a.answer)).map((a: any) => a.header).filter(Boolean);
-      if (failedQHeaders.length === 0) {
-        await deleteChargebackEntry(orgId, findingId);
-        cbDeleted++;
-      } else {
-        await saveChargebackEntry(orgId, { ...cbEntry, score: finalScore, failedQHeaders });
-        cbUpdated++;
-      }
-    }
-
-    // Update WireDeductionEntry
-    const wireEntry = await getWireDeductionEntry(orgId, findingId);
-    if (wireEntry) {
-      const totalSuccess = answers.filter((a: any) => isYes(a.answer)).length;
-      await saveWireDeductionEntry(orgId, { ...wireEntry, score: finalScore, totalSuccess });
-      wireUpdated++;
+  // Backfill chargeback entries — same approach, iterate entries directly.
+  const cbEntries = await getChargebackEntries(orgId, since, until);
+  for (const cbEntry of cbEntries) {
+    const finding = await getFinding(orgId, cbEntry.findingId);
+    if (!finding) continue;
+    const answers = finding.answeredQuestions ?? [];
+    if (answers.length === 0) continue;
+    const total = answers.length;
+    const finalYes = answers.filter((a: any) => isYes(a.answer)).length;
+    const finalScore = total > 0 ? Math.round((finalYes / total) * 100) : 0;
+    const failedQHeaders = answers.filter((a: any) => !isYes(a.answer)).map((a: any) => a.header).filter(Boolean);
+    if (failedQHeaders.length === 0) {
+      await deleteChargebackEntry(orgId, cbEntry.findingId);
+      cbDeleted++;
+    } else {
+      await saveChargebackEntry(orgId, { ...cbEntry, score: finalScore, failedQHeaders });
+      cbUpdated++;
     }
   }
 

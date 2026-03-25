@@ -4099,8 +4099,8 @@ table { width: 100%; border-collapse: collapse; }
           var started = a.startedAt ? timeAgo(a.startedAt) : '—';
           var rev = a.reviewed ? '<span style="color:var(--green);font-size:9px;font-weight:700;">✓</span>' : '';
           html += '<tr style="border-top:1px solid var(--border);cursor:pointer;transition:background 0.1s;" '
-            + 'onmouseover="this.style.background=\'var(--bg-surface)\'" onmouseout="this.style.background=\'\'" '
-            + 'onclick="window.open(\'/audit/report?id=' + a.findingId + '\',\'_blank\')">'
+            + 'onmouseover="this.style.background=\\'var(--bg-surface)\\'" onmouseout="this.style.background=\\'\\'" '
+            + 'onclick="window.open(\\'/audit/report?id=' + a.findingId + '\\',\\'_blank\\')">'
             + '<td style="padding:8px 8px 8px 0;font-family:var(--mono);font-size:11px;color:var(--blue);">' + (a.recordId || '—') + '</td>'
             + '<td style="padding:8px;color:var(--text-bright);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (a.voName || a.owner || '—') + '</td>'
             + '<td style="padding:8px;text-align:right;font-weight:700;color:' + scoreColor + ';">' + score + '</td>'

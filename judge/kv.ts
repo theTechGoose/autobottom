@@ -924,48 +924,73 @@ export async function pruneBypassedFromQueues(
 
 // -- Deduplicate Findings --
 
+export interface DedupCandidate {
+  id: string;
+  recordKey: string;
+  ts: number;
+  reviewedAt: number;
+  keep: boolean; // true = winner, false = will be deleted
+}
+
+export interface DedupPlan {
+  scanned: number;
+  groups: number;
+  toDelete: DedupCandidate[];
+}
+
 /**
- * Scan all findings in the date range, group by recordingId, and delete duplicates.
- * Keeps: most recently reviewed (latest reviewedAt), then most recently created (latest job.timestamp).
- * Cleans up: finding chunks, review/judge queue items, chargeback/wire entries, review-done.
+ * Phase 1 (dry-run): scan all findings, return the dedup plan without deleting anything.
+ * Fast path: reads chunk-0 data directly from the list scan — no per-finding KV reads.
+ * Falls back to getFinding only for multi-chunk findings (rare).
  */
-export async function deduplicateFindings(
-  orgId: OrgId,
-  since: number,
-  until: number,
-): Promise<{ scanned: number; groups: number; deleted: number }> {
+export async function findDuplicates(orgId: OrgId, since: number, until: number): Promise<DedupPlan> {
   const db = await kv();
 
-  // Step 1: collect all finding IDs by scanning for chunk-count metadata keys
-  const findingIds: string[] = [];
-  const iter = db.list({ prefix: ["__audit-finding__", orgId] });
-  for await (const entry of iter) {
+  // Single scan — collect chunk-0 JSON strings and _n counts
+  const chunk0 = new Map<string, string>(); // findingId -> raw JSON (chunk 0)
+  const nCount = new Map<string, number>();  // findingId -> chunk count
+
+  const scanIter = db.list({ prefix: ["__audit-finding__", orgId] });
+  for await (const entry of scanIter) {
     const key = entry.key as (string | number)[];
-    // key = ["__audit-finding__", orgId, findingId, "_n" | chunkIndex]
-    if (key.length === 4 && key[3] === "_n" && (entry.value as number) > 0) {
-      findingIds.push(key[2] as string);
-    }
+    if (key.length !== 4) continue;
+    const findingId = key[2] as string;
+    const sub = key[3];
+    if (sub === "_n") nCount.set(findingId, entry.value as number);
+    else if (sub === 0) chunk0.set(findingId, entry.value as string);
   }
 
-  // Step 2: load each finding, filter by date range, build dedup map
+  // Scan review-done for reviewedAt timestamps (one list, no per-finding reads)
+  const reviewedAtMap = new Map<string, number>();
+  const reviewDoneIter = db.list<{ reviewedAt: string }>({ prefix: orgKey(orgId, "review-done") });
+  for await (const entry of reviewDoneIter) {
+    const key = entry.key as string[];
+    const fid = key[key.length - 1];
+    if (entry.value?.reviewedAt) reviewedAtMap.set(fid, new Date(entry.value.reviewedAt).getTime());
+  }
+
+  // Parse findings in date range
   type Entry = { id: string; recordKey: string; ts: number; reviewedAt: number };
   const inRange: Entry[] = [];
 
-  for (const fid of findingIds) {
-    const f = await getFinding(orgId, fid) as Record<string, any> | null;
-    if (!f) continue;
-    const ts = f.job?.timestamp ? new Date(f.job.timestamp).getTime() : 0;
+  for (const [findingId, n] of nCount) {
+    if (n === 0) continue;
+    let parsed: Record<string, any> | null = null;
+    if (n === 1) {
+      const raw = chunk0.get(findingId);
+      if (raw) { try { parsed = JSON.parse(raw); } catch { continue; } }
+    } else {
+      parsed = await getFinding(orgId, findingId) as Record<string, any> | null;
+    }
+    if (!parsed) continue;
+    const ts = parsed.job?.timestamp ? new Date(parsed.job.timestamp).getTime() : 0;
     if (ts < since || ts > until) continue;
-    const recordKey = f.recordingId || String(f.record?.RecordId ?? "");
+    const recordKey = parsed.recordingId || String(parsed.record?.RecordId ?? "");
     if (!recordKey) continue;
-    const rawReviewedAt = (f as Record<string, any>).reviewedAt;
-    const reviewedAt = rawReviewedAt ? new Date(rawReviewedAt).getTime() : 0;
-    inRange.push({ id: fid, recordKey, ts, reviewedAt });
+    inRange.push({ id: findingId, recordKey, ts, reviewedAt: reviewedAtMap.get(findingId) ?? 0 });
   }
 
-  const scanned = inRange.length;
-
-  // Step 3: group by recordKey, pick winner, delete losers
+  // Group by recordKey, mark winners and losers
   const groups = new Map<string, Entry[]>();
   for (const e of inRange) {
     const g = groups.get(e.recordKey) ?? [];
@@ -973,53 +998,60 @@ export async function deduplicateFindings(
     groups.set(e.recordKey, g);
   }
 
+  const toDelete: DedupCandidate[] = [];
   let dupGroups = 0;
-  let deleted = 0;
 
   for (const [, group] of groups) {
     if (group.length <= 1) continue;
     dupGroups++;
-
-    // Sort: latest reviewedAt first, then latest creation ts
     group.sort((a, b) => {
       if (a.reviewedAt !== b.reviewedAt) return b.reviewedAt - a.reviewedAt;
       return b.ts - a.ts;
     });
-
-    const toDelete = group.slice(1);
-    for (const dup of toDelete) {
-      await _deleteFindingAndRelated(orgId, dup.id, db);
-      deleted++;
-    }
+    toDelete.push({ ...group[0], keep: true });
+    for (const dup of group.slice(1)) toDelete.push({ ...dup, keep: false });
   }
 
-  console.log(`[DEDUP] org=${orgId} since=${since} until=${until} scanned=${scanned} dupGroups=${dupGroups} deleted=${deleted}`);
-  return { scanned, groups: dupGroups, deleted };
+  console.log(`[DEDUP] dry-run org=${orgId} scanned=${inRange.length} dupGroups=${dupGroups} toDelete=${toDelete.filter(d => !d.keep).length}`);
+  return { scanned: inRange.length, groups: dupGroups, toDelete };
+}
+
+/**
+ * Phase 2: delete the duplicates identified by findDuplicates, streaming progress via onProgress callback.
+ */
+export async function deleteDuplicates(
+  orgId: OrgId,
+  toDelete: DedupCandidate[],
+  onProgress: (deleted: number, total: number, findingId: string) => void,
+): Promise<{ deleted: number }> {
+  const db = await kv();
+  const losers = toDelete.filter((d) => !d.keep);
+  let deleted = 0;
+  for (const dup of losers) {
+    await _deleteFindingAndRelated(orgId, dup.id, db);
+    deleted++;
+    onProgress(deleted, losers.length, dup.id);
+  }
+  console.log(`[DEDUP] ✅ done org=${orgId} deleted=${deleted}/${losers.length}`);
+  return { deleted };
 }
 
 async function _deleteFindingAndRelated(orgId: OrgId, findingId: string, db: Deno.Kv): Promise<void> {
   const keys: Deno.KvKey[] = [];
 
-  // Finding chunks: scan ["__audit-finding__", orgId, findingId, *]
-  const chunkIter = db.list({ prefix: ["__audit-finding__", orgId, findingId] });
-  for await (const entry of chunkIter) keys.push(entry.key);
+  // Finding chunks
+  for await (const entry of db.list({ prefix: ["__audit-finding__", orgId, findingId] })) keys.push(entry.key);
 
-  // Review queue entries
-  const reviewPrefixes = [
-    orgKey(orgId, "review-pending", findingId),
-    orgKey(orgId, "review-decided", findingId),
-    orgKey(orgId, "review-active"),
-  ];
+  // Review queue
   for await (const entry of db.list({ prefix: orgKey(orgId, "review-pending", findingId) })) keys.push(entry.key);
   for await (const entry of db.list({ prefix: orgKey(orgId, "review-decided", findingId) })) keys.push(entry.key);
-  // Scan review-active for items belonging to this finding
   for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "review-active") })) {
     if (entry.value?.findingId === findingId) keys.push(entry.key);
   }
   keys.push(orgKey(orgId, "review-audit-pending", findingId));
   keys.push(orgKey(orgId, "review-done", findingId));
 
-  // Judge queue entries
+  // Judge queue
   for await (const entry of db.list({ prefix: orgKey(orgId, "judge-pending", findingId) })) keys.push(entry.key);
   for await (const entry of db.list({ prefix: orgKey(orgId, "judge-decided", findingId) })) keys.push(entry.key);
   for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "judge-active") })) {
@@ -1035,9 +1067,9 @@ async function _deleteFindingAndRelated(orgId: OrgId, findingId: string, db: Den
     await atomic.commit();
   }
 
-  // Chargeback / wire deduction
+  // Chargeback / wire deduction entries
   await deleteChargebackEntry(orgId, findingId);
   await deleteWireDeductionEntry(orgId, findingId);
 
-  console.log(`[DEDUP] deleted finding ${findingId}: ${keys.length} KV entries + cb/wire`);
+  console.log(`[DEDUP] 🗑️ deleted ${findingId}: ${keys.length} KV entries + cb/wire`);
 }

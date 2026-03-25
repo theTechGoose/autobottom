@@ -86,7 +86,7 @@ import {
   handleJudgeGetReviewerConfig, handleJudgeSaveReviewerConfig,
   handleJudgeDismissFinding,
 } from "./judge/handlers.ts";
-import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries, pruneBypassedFromQueues, deduplicateFindings } from "./judge/kv.ts";
+import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries, pruneBypassedFromQueues, findDuplicates, deleteDuplicates } from "./judge/kv.ts";
 
 // Manager (unified auth)
 import {
@@ -3754,11 +3754,47 @@ async function handleDeduplicateFindings(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
   const body = await req.json();
-  const { since, until } = body as { since: number; until: number };
+  const { since, until, dryRun, plan } = body as { since: number; until: number; dryRun?: boolean; plan?: unknown };
+
   if (!since || !until) return json({ error: "since and until required" }, 400);
-  const result = await deduplicateFindings(auth.orgId, since, until);
-  console.log(`[ADMIN] 🧹 Deduplicate findings by ${auth.email}: scanned=${result.scanned} groups=${result.groups} deleted=${result.deleted}`);
-  return json({ ok: true, ...result });
+
+  // Phase 1: dry-run — scan and return the plan without deleting
+  if (dryRun) {
+    const result = await findDuplicates(auth.orgId, since, until);
+    console.log(`[ADMIN] 🔍 Dedup dry-run by ${auth.email}: scanned=${result.scanned} groups=${result.groups} toDelete=${result.toDelete.filter(d => !d.keep).length}`);
+    return json({ ok: true, scanned: result.scanned, groups: result.groups, toDelete: result.toDelete });
+  }
+
+  // Phase 2: stream deletion progress as SSE
+  if (!plan || !Array.isArray(plan)) return json({ error: "plan required for deletion" }, 400);
+
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+
+  const send = (data: unknown) => writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)).catch(() => {});
+
+  // Run deletion in background — response streams back
+  (async () => {
+    try {
+      console.log(`[ADMIN] 🧹 Dedup deletion started by ${auth.email}: ${plan.filter((d: any) => !d.keep).length} to delete`);
+      await deleteDuplicates(auth.orgId, plan as any[], (deleted, total, findingId) => {
+        console.log(`[ADMIN] 🧹 Dedup progress: ${deleted}/${total} findingId=${findingId}`);
+        send({ deleted, total, findingId });
+      });
+      console.log(`[ADMIN] 🧹 Dedup done by ${auth.email}`);
+      send({ done: true });
+    } catch (err) {
+      console.error(`[ADMIN] ❌ Dedup error:`, err);
+      send({ error: String(err) });
+    } finally {
+      await writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(readable, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
 }
 
 // -- SSE Events Endpoint --

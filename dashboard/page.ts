@@ -888,7 +888,7 @@ table { width: 100%; border-collapse: collapse; }
 <div class="modal-overlay" id="dedup-modal">
   <div class="modal" style="width:480px;max-width:95vw;">
     <div class="modal-title">Deduplicate Findings</div>
-    <div class="modal-sub" style="margin-bottom:20px;">Within the date range, keep only the best finding per recording ID — most recently reviewed wins, then most recently created. Deletes duplicate findings and all related queue/chargeback entries. Cannot be undone.</div>
+    <div class="modal-sub" style="margin-bottom:20px;">Scan first to see how many duplicates exist, then confirm to delete. Keeps the best finding per recording ID — most recently reviewed wins, then most recently created. Removes duplicate findings and all related queue/chargeback entries. Cannot be undone.</div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
       <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
       <input type="date" id="dedup-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
@@ -3897,8 +3897,18 @@ table { width: 100%; border-collapse: collapse; }
   });
 
   // ===== Deduplicate Findings =====
-  document.getElementById('dedup-open').addEventListener('click', function() { openModal('dedup-modal'); });
-  document.getElementById('dedup-cancel').addEventListener('click', function() { closeModal('dedup-modal'); });
+  var dedupPlan = null;
+  document.getElementById('dedup-open').addEventListener('click', function() {
+    dedupPlan = null;
+    document.getElementById('dedup-msg').textContent = '';
+    document.getElementById('dedup-confirm-btn').textContent = 'Scan for Duplicates';
+    openModal('dedup-modal');
+  });
+  document.getElementById('dedup-cancel').addEventListener('click', function() {
+    dedupPlan = null;
+    document.getElementById('dedup-confirm-btn').textContent = 'Scan for Duplicates';
+    closeModal('dedup-modal');
+  });
   document.getElementById('dedup-confirm-btn').addEventListener('click', function() {
     var fromVal = document.getElementById('dedup-date-from').value;
     var toVal = document.getElementById('dedup-date-to').value;
@@ -3906,24 +3916,93 @@ table { width: 100%; border-collapse: collapse; }
     var since = new Date(fromVal + 'T00:00:00').getTime();
     var until = new Date(toVal + 'T23:59:59.999').getTime();
     if (since > until) { toast('From must be before To', 'error'); return; }
-    if (!confirm('Deduplicate findings from ' + fromVal + ' to ' + toVal + '? This will permanently delete duplicate findings. Cannot be undone.')) return;
     var btn = this;
-    btn.disabled = true; btn.textContent = 'Running...';
-    document.getElementById('dedup-msg').textContent = 'Scanning findings...';
+    var msgEl = document.getElementById('dedup-msg');
+
+    // Phase 2: execute deletion with streaming progress
+    if (dedupPlan) {
+      var toDelete = dedupPlan.filter(function(d) { return !d.keep; });
+      var total = toDelete.length;
+      if (total === 0) { toast('Nothing to delete', 'success'); return; }
+      btn.disabled = true; btn.textContent = 'Deleting...';
+      var startTs = Date.now();
+      var timerEl = document.createElement('span');
+      var timerInterval = setInterval(function() {
+        var elapsed = Math.floor((Date.now() - startTs) / 1000);
+        var m = Math.floor(elapsed / 60), s = elapsed % 60;
+        timerEl.textContent = ' (' + m + ':' + (s < 10 ? '0' : '') + s + ' elapsed)';
+      }, 1000);
+
+      fetch('/admin/deduplicate-findings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ since: since, until: until, plan: dedupPlan }),
+      }).then(function(r) {
+        var reader = r.body.getReader();
+        var dec = new TextDecoder();
+        var buf = '';
+        function pump() {
+          return reader.read().then(function(chunk) {
+            if (chunk.done) return;
+            buf += dec.decode(chunk.value, { stream: true });
+            var lines = buf.split('\n');
+            buf = lines.pop();
+            lines.forEach(function(line) {
+              if (!line.startsWith('data: ')) return;
+              try {
+                var d = JSON.parse(line.slice(6));
+                if (d.error) { toast('Dedup error: ' + d.error, 'error'); return; }
+                if (d.done) {
+                  clearInterval(timerInterval);
+                  var msg = 'Done — deleted ' + total + ' duplicate' + (total !== 1 ? 's' : '');
+                  msgEl.textContent = msg;
+                  toast(msg, 'success');
+                  btn.disabled = false; btn.textContent = 'Scan for Duplicates';
+                  dedupPlan = null;
+                } else {
+                  var remaining = total - d.deleted;
+                  msgEl.innerHTML = 'Deleting... <strong>' + remaining + '</strong> remaining of ' + total;
+                  msgEl.appendChild(timerEl);
+                }
+              } catch (e) {}
+            });
+            return pump();
+          });
+        }
+        return pump();
+      }).catch(function(e) {
+        clearInterval(timerInterval);
+        toast('Dedup failed', 'error');
+        btn.disabled = false; btn.textContent = 'Delete ' + total + ' Duplicates';
+      });
+      return;
+    }
+
+    // Phase 1: dry-run scan
+    btn.disabled = true; btn.textContent = 'Scanning...';
+    msgEl.textContent = 'Scanning findings...';
     fetch('/admin/deduplicate-findings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ since: since, until: until }),
+      body: JSON.stringify({ since: since, until: until, dryRun: true }),
     })
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        if (d.error) { toast(d.error, 'error'); document.getElementById('dedup-msg').textContent = d.error; return; }
-        var msg = 'Scanned ' + d.scanned + ' findings in ' + d.groups + ' duplicate groups — deleted ' + d.deleted;
-        document.getElementById('dedup-msg').textContent = msg;
-        toast(msg, 'success');
+        if (d.error) { toast(d.error, 'error'); msgEl.textContent = d.error; return; }
+        var count = d.toDelete.filter(function(x) { return !x.keep; }).length;
+        if (count === 0) {
+          msgEl.textContent = 'Scanned ' + d.scanned + ' findings — no duplicates found in this date range.';
+          toast('No duplicates found', 'success');
+          btn.disabled = false; btn.textContent = 'Scan for Duplicates';
+          return;
+        }
+        dedupPlan = d.toDelete;
+        msgEl.textContent = 'Found ' + count + ' duplicate' + (count !== 1 ? 's' : '') + ' across ' + d.groups + ' group' + (d.groups !== 1 ? 's' : '') + ' (' + d.scanned + ' findings scanned). Click to delete.';
+        btn.disabled = false;
+        btn.textContent = 'Delete ' + count + ' Duplicates';
       })
-      .catch(function() { toast('Deduplication failed', 'error'); })
-      .finally(function() { btn.disabled = false; btn.textContent = 'Deduplicate'; });
+      .catch(function() { toast('Scan failed', 'error'); msgEl.textContent = 'Scan failed'; })
+      .finally(function() { if (!dedupPlan) btn.disabled = false; });
   });
 
   // ===== Bad Words =====

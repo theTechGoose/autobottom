@@ -3941,20 +3941,21 @@ table { width: 100%; border-collapse: collapse; }
         var reader = r.body.getReader();
         var dec = new TextDecoder();
         var buf = '';
-        function pump() {
-          return reader.read().then(function(chunk) {
-            if (chunk.done) return;
-            buf += dec.decode(chunk.value, { stream: true });
+        var pump = function() {
+          return reader.read().then(function(res) {
+            if (res.done) return;
+            buf += dec.decode(res.value);
             var lines = buf.split('\n');
-            buf = lines.pop();
-            lines.forEach(function(line) {
-              if (!line.startsWith('data: ')) return;
+            buf = lines.pop() || '';
+            for (var li = 0; li < lines.length; li++) {
+              var line = lines[li];
+              if (line.indexOf('data: ') !== 0) continue;
               try {
                 var d = JSON.parse(line.slice(6));
-                if (d.error) { toast('Dedup error: ' + d.error, 'error'); return; }
-                if (d.done) {
+                if (d.error) { toast('Dedup error: ' + d.error, 'error'); }
+                else if (d.done) {
                   clearInterval(timerInterval);
-                  var msg = 'Done — deleted ' + total + ' duplicate' + (total !== 1 ? 's' : '');
+                  var msg = 'Done - deleted ' + total + ' duplicate' + (total !== 1 ? 's' : '');
                   msgEl.textContent = msg;
                   toast(msg, 'success');
                   btn.disabled = false; btn.textContent = 'Scan for Duplicates';
@@ -3964,13 +3965,13 @@ table { width: 100%; border-collapse: collapse; }
                   msgEl.innerHTML = 'Deleting... <strong>' + remaining + '</strong> remaining of ' + total;
                   msgEl.appendChild(timerEl);
                 }
-              } catch (e) {}
-            });
+              } catch (_e) {}
+            }
             return pump();
           });
-        }
+        };
         return pump();
-      }).catch(function(e) {
+      }).catch(function() {
         clearInterval(timerInterval);
         toast('Dedup failed', 'error');
         btn.disabled = false; btn.textContent = 'Delete ' + total + ' Duplicates';

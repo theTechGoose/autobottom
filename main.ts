@@ -30,6 +30,7 @@ import {
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
   getAuditDimensions, saveAuditDimensions,
+  getPartnerDimensions, backfillPartnerDimensions,
   getAllAnswersForFinding,
   findAuditsByRecordId,
   getGamificationSettings, saveGamificationSettings,
@@ -298,6 +299,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/purge-bypassed-wire-deductions": handlePurgeBypassedWireDeductions,
   "/admin/backfill-review-scores": handleBackfillReviewScores,
   "/admin/backfill-chargeback-entries": handleBackfillChargebackEntries,
+  "/admin/backfill-partner-dimensions": handleBackfillPartnerDimensions,
   "/admin/deduplicate-findings": handleDeduplicateFindings,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
@@ -409,6 +411,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/office-bypass": handleGetOfficeBypass,
   "/admin/manager-scopes": handleGetManagerScopes,
   "/admin/audit-dimensions": handleGetAuditDimensions,
+  "/admin/partner-dimensions": handleGetPartnerDimensions,
   "/admin/chargebacks": handleGetChargebacks,
   "/admin/wire-deductions": handleGetWireDeductions,
   "/admin/trigger-weekly-sheets": handleTriggerWeeklySheets,
@@ -2092,6 +2095,46 @@ async function handleSaveAuditDimensions(req: Request): Promise<Response> {
     shifts: Array.isArray(body.shifts) ? [...new Set(body.shifts as string[])].sort() : [],
   });
   return json({ ok: true });
+}
+
+async function handleGetPartnerDimensions(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const dims = await getPartnerDimensions(auth.orgId);
+  return json(dims);
+}
+
+async function handleBackfillPartnerDimensions(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const send = (data: unknown) => writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)).catch(() => {});
+
+  (async () => {
+    const heartbeat = setInterval(() => {
+      writer.write(encoder.encode(": heartbeat\n\n")).catch(() => {});
+    }, 10_000);
+    try {
+      const result = await backfillPartnerDimensions(auth.orgId, (scanned, saved) => {
+        send({ progress: scanned, saved });
+      });
+      console.log(`[ADMIN] 🔧 Backfill partner dimensions by ${auth.email}: scanned=${result.scanned} saved=${result.saved}`);
+      send({ done: true, ...result });
+    } catch (err) {
+      console.error(`[ADMIN] ❌ Backfill partner dimensions error:`, err);
+      send({ error: String(err) });
+    } finally {
+      clearInterval(heartbeat);
+      await writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(readable, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
 }
 
 // -- Admin: Chargebacks & Omissions Report --

@@ -1,5 +1,5 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, getOfficeBypassConfig, saveWireDeductionEntry } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, getOfficeBypassConfig, saveWireDeductionEntry, updatePartnerDimensions } from "../lib/kv.ts";
 import { enqueueCleanup } from "../lib/queue.ts";
 
 import { generateFeedback } from "../providers/groq.ts";
@@ -201,6 +201,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
         guestName: String(rec.GuestName ?? ""),
       });
       console.log(`[STEP-FINALIZE] ${findingId}: 📋 wireDeductionEntry saved — score=${score}% qs=${questionsAudited}`);
+      // Accumulate partner office/GM email dimensions (fire-and-forget)
+      if (rec.OfficeName && rec.GmEmail) {
+        updatePartnerDimensions(orgId, String(rec.OfficeName), String(rec.GmEmail)).catch(() => {});
+      }
     } catch (err) {
       console.error(`[STEP-FINALIZE] ${findingId}: ❌ wireDeductionEntry save failed:`, err);
     }

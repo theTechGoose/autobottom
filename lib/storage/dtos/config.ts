@@ -41,3 +41,8 @@ export class AuditDimensionsConfig {
   departments: string[] = [];
   shifts: string[] = [];
 }
+
+export class PartnerDimensionsConfig {
+  // Persistent index of partner offices and their GM emails.
+  offices: Record<string, string[]> = {};
+}

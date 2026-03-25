@@ -17,6 +17,7 @@ import {
   ReviewerConfig as ReviewerConfigDto, OfficeBypassConfig as OfficeBypassConfigDto,
   ManagerScopeConfig as ManagerScopeConfigDto,
   AuditDimensionsConfig as AuditDimensionsConfigDto,
+  PartnerDimensionsConfig as PartnerDimensionsConfigDto,
 } from "./storage/dtos/config.ts";
 import {
   EmailReportConfig as EmailReportConfigDto, EmailTemplate as EmailTemplateDto,
@@ -1144,6 +1145,80 @@ export async function updateAuditDimensions(orgId: OrgId, department?: string, s
     changed = true;
   }
   if (changed) await saveAuditDimensions(orgId, dims);
+}
+
+// ── Persistent Partner Dimensions Index ──────────────────────────────────────
+
+export interface PartnerDimensions {
+  offices: Record<string, string[]>; // OfficeName → GmEmail[]
+}
+
+export async function getPartnerDimensions(orgId: OrgId): Promise<PartnerDimensions> {
+  const s = await store(PartnerDimensionsConfigDto);
+  const v = await s.get([orgId]);
+  return (v as unknown as PartnerDimensions) ?? { offices: {} };
+}
+
+export async function savePartnerDimensions(orgId: OrgId, dims: PartnerDimensions): Promise<void> {
+  const s = await store(PartnerDimensionsConfigDto);
+  await s.set([orgId], dims as any);
+}
+
+export async function updatePartnerDimensions(orgId: OrgId, officeName: string, gmEmail: string): Promise<void> {
+  const dims = await getPartnerDimensions(orgId);
+  const incoming = gmEmail.split(";").map(e => e.trim()).filter(Boolean);
+  const existing = dims.offices[officeName] ?? [];
+  const merged = [...existing];
+  let changed = false;
+  for (const email of incoming) {
+    if (!merged.includes(email)) {
+      merged.push(email);
+      changed = true;
+    }
+  }
+  if (changed) {
+    dims.offices[officeName] = merged.sort();
+    await savePartnerDimensions(orgId, dims);
+  }
+}
+
+export async function backfillPartnerDimensions(
+  orgId: OrgId,
+  onProgress?: (scanned: number, saved: number) => void,
+): Promise<{ scanned: number; saved: number }> {
+  const s = await store(AuditFinding);
+  // Collect unique finding IDs by scanning only _n (chunk count) markers
+  const findingIds: string[] = [];
+  for await (const entry of s.rawDb.list({ prefix: [`__audit-finding__`, orgId] })) {
+    const key = entry.key as string[];
+    if (key.at(-1) === "_n") findingIds.push(key[2]);
+  }
+
+  const dims = await getPartnerDimensions(orgId);
+  let scanned = 0;
+  let saved = 0;
+
+  for (const findingId of findingIds) {
+    const finding = await getFinding(orgId, findingId);
+    scanned++;
+    if (!finding || finding.recordingIdField !== "GenieNumber") continue;
+    const rec = finding.record as any ?? {};
+    if (!rec.OfficeName || !rec.GmEmail) continue;
+
+    const officeName = String(rec.OfficeName);
+    const incoming = String(rec.GmEmail).split(";").map((e: string) => e.trim()).filter(Boolean);
+    const existing = dims.offices[officeName] ?? [];
+    const merged = [...existing];
+    let changed = false;
+    for (const email of incoming) {
+      if (!merged.includes(email)) { merged.push(email); changed = true; }
+    }
+    if (changed) { dims.offices[officeName] = merged.sort(); saved++; }
+    if (onProgress && scanned % 10 === 0) onProgress(scanned, saved);
+  }
+
+  await savePartnerDimensions(orgId, dims);
+  return { scanned, saved };
 }
 
 // ── Reviewer Config (judge-assigned per-reviewer type limits) ────────────────

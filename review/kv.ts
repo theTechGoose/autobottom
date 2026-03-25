@@ -368,6 +368,7 @@ export async function recordDecision(
 export async function undoDecision(
   orgId: OrgId,
   reviewer: string,
+  allowedTypes?: string[],
 ): Promise<{
   buffer: BufferItem[];
   remaining: number;
@@ -460,7 +461,7 @@ export async function undoDecision(
   }
 
   // Now use claimNextItem to get the full buffer (restored item is first active)
-  return claimNextItem(orgId, reviewer);
+  return claimNextItem(orgId, reviewer, allowedTypes);
 }
 
 // -- Audit Completion POST --

@@ -656,6 +656,7 @@ table { width: 100%; border-collapse: collapse; }
       <div style="display:flex;gap:8px;padding:0 0 2px;">
         <input id="search-input" class="sf-input" type="text" placeholder="Finding ID..." style="flex:1;font-family:var(--mono);font-size:12px;">
         <button class="sf-btn primary" id="search-btn" style="padding:6px 16px;font-size:11px;">View Report</button>
+        <button class="sf-btn danger" id="delete-audit-btn" style="padding:6px 14px;font-size:11px;">Delete</button>
       </div>
     </div>
 
@@ -901,6 +902,19 @@ table { width: 100%; border-collapse: collapse; }
     <div class="modal-actions">
       <button class="sf-btn secondary" id="dedup-cancel">Cancel</button>
       <button class="sf-btn danger" id="dedup-confirm-btn">Deduplicate</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Audit Modal -->
+<div class="modal-overlay" id="delete-audit-modal">
+  <div class="modal" style="width:440px;max-width:95vw;">
+    <div class="modal-title" style="color:var(--red);">Delete Audit</div>
+    <div class="modal-sub" style="margin-bottom:16px;">This will permanently delete the finding and all associated data — review queue entries, judge queue entries, chargeback/wire entries, and audit history. <strong style="color:var(--text-bright);">This cannot be undone.</strong></div>
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-family:var(--mono);font-size:12px;color:var(--yellow);margin-bottom:20px;word-break:break-all;" id="delete-audit-id-display"></div>
+    <div class="modal-actions">
+      <button class="sf-btn secondary" id="delete-audit-cancel">Cancel</button>
+      <button class="sf-btn danger" id="delete-audit-confirm">Delete Permanently</button>
     </div>
   </div>
 </div>
@@ -1738,7 +1752,7 @@ table { width: 100%; border-collapse: collapse; }
     document.getElementById('r-dl-decided').textContent = fmt(r.dateLegDecided ?? r.decided);
     document.getElementById('r-pkg-pending').textContent = fmt(r.packagePendingFindings ?? r.packagePending ?? 0);
     document.getElementById('r-pkg-decided').textContent = fmt(r.packageDecided ?? 0);
-    var totalPending = (r.dateLegPending ?? r.pending ?? 0) + (r.packagePending ?? 0);
+    var totalPending = (r.dateLegPendingFindings ?? r.dateLegPending ?? r.pending ?? 0) + (r.packagePendingFindings ?? r.packagePending ?? 0);
     var totalDecided = (r.dateLegDecided ?? r.decided ?? 0) + (r.packageDecided ?? 0);
     drawDonut(totalPending, totalDecided);
   }
@@ -1955,6 +1969,34 @@ table { width: 100%; border-collapse: collapse; }
   }
   document.getElementById('search-btn').addEventListener('click', doSearch);
   document.getElementById('search-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doSearch(); });
+
+  // ===== Delete Audit =====
+  document.getElementById('delete-audit-btn').addEventListener('click', function() {
+    var id = document.getElementById('search-input').value.trim();
+    if (!id) { toast('Enter a Finding ID first', 'warning'); return; }
+    document.getElementById('delete-audit-id-display').textContent = id;
+    openModal('delete-audit-modal');
+  });
+  document.getElementById('delete-audit-cancel').addEventListener('click', function() { closeModal('delete-audit-modal'); });
+  document.getElementById('delete-audit-confirm').addEventListener('click', function() {
+    var id = document.getElementById('delete-audit-id-display').textContent.trim();
+    if (!id) return;
+    var btn = document.getElementById('delete-audit-confirm');
+    btn.disabled = true; btn.textContent = 'Deleting...';
+    fetch('/admin/delete-finding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ findingId: id }) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        closeModal('delete-audit-modal');
+        if (d.ok) {
+          toast('Deleted ' + id, 'success');
+          document.getElementById('search-input').value = '';
+        } else {
+          toast('Delete failed: ' + (d.error || 'unknown error'), 'error');
+        }
+      })
+      .catch(function() { toast('Delete failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Delete Permanently'; });
+  });
 
   // Redraw charts on resize
   var resizeTimer;

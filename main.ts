@@ -86,7 +86,7 @@ import {
   handleJudgeGetReviewerConfig, handleJudgeSaveReviewerConfig,
   handleJudgeDismissFinding,
 } from "./judge/handlers.ts";
-import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries, pruneBypassedFromQueues, findDuplicates, deleteDuplicates } from "./judge/kv.ts";
+import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries, pruneBypassedFromQueues, findDuplicates, deleteDuplicates, adminDeleteFinding } from "./judge/kv.ts";
 
 // Manager (unified auth)
 import {
@@ -454,6 +454,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/audits": requireRolePageAuth(["admin"], handleAuditsPage),
   "/admin/audits/data": handleAuditsData,
   "/admin/review-queue/data": handleReviewQueueData,
+  "/admin/delete-finding": handleDeleteFinding,
   "/admin/api/me": handleAdminMe,
   "/admin/retry-finding": handleRetryFinding,
 
@@ -766,6 +767,18 @@ async function handleAuditsData(req: Request): Promise<Response> {
 
   console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}, shift=${shift || "all"}`);
   return json({ items, total, pages, page, owners, departments, shifts });
+}
+
+async function handleDeleteFinding(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  if (req.method !== "POST") return json({ error: "POST required" }, 405);
+  const { findingId } = await req.json();
+  if (!findingId || typeof findingId !== "string") return json({ error: "findingId required" }, 400);
+  console.log(`[ADMIN] 🗑️ ${auth.email} deleting finding ${findingId}`);
+  await adminDeleteFinding(auth.orgId, findingId);
+  console.log(`[ADMIN] ✅ finding ${findingId} deleted by ${auth.email}`);
+  return json({ ok: true });
 }
 
 async function handleReviewQueueData(req: Request): Promise<Response> {

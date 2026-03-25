@@ -2226,7 +2226,8 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     if (busy) return;
     busy = true;
     document.getElementById('back-spinner').classList.add('active');
-    api('/back', { method: 'POST', body: '{}' }).then(function(data) {
+    var backUrl = '/back' + (selfTypeFilter ? '?types=' + encodeURIComponent(selfTypeFilter) : '');
+    api(backUrl, { method: 'POST', body: '{}' }).then(function(data) {
       buffer = data.buffer || [];
       for (var i = 0; i < buffer.length; i++) {
         if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;

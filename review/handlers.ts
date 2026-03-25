@@ -136,7 +136,17 @@ export async function handleBack(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
   if (auth instanceof Response) return auth;
 
-  const result = await undoDecision(auth.orgId, auth.email);
+  // Preserve the reviewer's type filter so buffer replenishment respects it
+  const config = await getReviewerConfig(auth.orgId, auth.email);
+  const judgeAllowedTypes: string[] = config?.allowedTypes ?? ["date-leg", "package"];
+  const url = new URL(req.url);
+  const typesParam = url.searchParams.get("types");
+  const selfTypes = typesParam
+    ? typesParam.split(",").filter((t) => judgeAllowedTypes.includes(t))
+    : null;
+  const effectiveTypes = selfTypes && selfTypes.length > 0 ? selfTypes : judgeAllowedTypes;
+
+  const result = await undoDecision(auth.orgId, auth.email, effectiveTypes);
   if (result.buffer.length === 0) {
     return json({ error: "nothing to undo" }, 404);
   }

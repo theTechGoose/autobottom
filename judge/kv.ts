@@ -1086,3 +1086,15 @@ async function _deleteFindingAndRelated(orgId: OrgId, findingId: string, complet
 
   console.log(`[DEDUP] 🗑️ deleted ${findingId}: ${keys.length} KV entries + cb/wire/history`);
 }
+
+/** Admin: delete a single finding and all related data by finding ID. */
+export async function adminDeleteFinding(orgId: OrgId, findingId: string): Promise<void> {
+  const db = await kv();
+  // Scan audit-done-idx (up to 7 days) to find the exact completedAt timestamp for index cleanup
+  const since7d = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  let completedAt = Date.now();
+  for await (const entry of db.list<{ findingId: string; completedAt: number }>({ prefix: orgKey(orgId, "audit-done-idx") })) {
+    if (entry.value?.findingId === findingId) { completedAt = entry.value.completedAt; break; }
+  }
+  await _deleteFindingAndRelated(orgId, findingId, completedAt, db);
+}

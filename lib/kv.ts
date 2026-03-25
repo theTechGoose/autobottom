@@ -517,7 +517,7 @@ export async function getStats(orgId: OrgId) {
 
     const completedStore = await store(CompletedAuditStatDto);
     console.log(`[getStats] completedStore ready`);
-    const completed = (await completedStore.listRaw([orgId], { reverse: true, limit: 500 }))
+    const completed = (await completedStore.listRaw([orgId], { reverse: true, limit: 5000 }))
       .map((e) => e.value)
       .filter((c: any) => c.ts > since24h);
     console.log(`[getStats] completed 24h count=${completed.length}`);

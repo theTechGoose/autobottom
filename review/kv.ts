@@ -68,6 +68,12 @@ export interface ReviewerDashboardData {
     confirmCount: number;
     flipCount: number;
     avgDecisionSpeedMs: number;
+    internalDecisions: number;
+    internalConfirms: number;
+    internalFlips: number;
+    partnerDecisions: number;
+    partnerConfirms: number;
+    partnerFlips: number;
   };
   byReviewer: ReviewerLeaderboardEntry[];
   recentDecisions: ReviewDecision[];
@@ -684,6 +690,13 @@ export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): 
   const confirmCount = myDecisions.filter((d) => d.decision === "confirm").length;
   const flipCount = myDecisions.filter((d) => d.decision === "flip").length;
 
+  const internalDecisions = myDecisions.filter((d) => d.recordingIdField !== "GenieNumber");
+  const partnerDecisions = myDecisions.filter((d) => d.recordingIdField === "GenieNumber");
+  const internalConfirms = internalDecisions.filter((d) => d.decision === "confirm").length;
+  const internalFlips = internalDecisions.filter((d) => d.decision === "flip").length;
+  const partnerConfirms = partnerDecisions.filter((d) => d.decision === "confirm").length;
+  const partnerFlips = partnerDecisions.filter((d) => d.decision === "flip").length;
+
   let avgDecisionSpeedMs = 0;
   if (myDecisions.length >= 2) {
     let totalGap = 0;
@@ -712,7 +725,11 @@ export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): 
 
   return {
     queue: { pending, decided, pendingAuditCount: dashPendingAudits.size },
-    personal: { totalDecisions, confirmCount, flipCount, avgDecisionSpeedMs },
+    personal: {
+      totalDecisions, confirmCount, flipCount, avgDecisionSpeedMs,
+      internalDecisions: internalDecisions.length, internalConfirms, internalFlips,
+      partnerDecisions: partnerDecisions.length, partnerConfirms, partnerFlips,
+    },
     byReviewer,
     recentDecisions,
   };

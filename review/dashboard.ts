@@ -212,16 +212,19 @@ export function getReviewDashboardPage(): string {
         <div class="stat-card">
           <div class="stat-label">My Decisions</div>
           <div class="stat-value purple" id="s-my-total">0</div>
+          <div class="stat-sub" id="s-my-split"></div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Confirm Rate</div>
           <div class="stat-value" id="s-confirm">--</div>
           <div class="stat-sub" id="s-confirm-sub"></div>
+          <div class="stat-sub" id="s-confirm-split"></div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Flip Rate</div>
           <div class="stat-value" id="s-flip">--</div>
           <div class="stat-sub" id="s-flip-sub"></div>
+          <div class="stat-sub" id="s-flip-split"></div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Avg Speed</div>
@@ -327,15 +330,25 @@ export function getReviewDashboardPage(): string {
     // Personal stats
     var p = data.personal;
     document.getElementById('s-my-total').textContent = p.totalDecisions;
+    document.getElementById('s-my-split').textContent = p.internalDecisions + ' internal  ·  ' + p.partnerDecisions + ' partner';
 
     var confirmRate = p.totalDecisions > 0 ? Math.round(p.confirmCount / p.totalDecisions * 100) : 0;
     var flipRate = p.totalDecisions > 0 ? Math.round(p.flipCount / p.totalDecisions * 100) : 0;
+    var intConfirmRate = p.internalDecisions > 0 ? Math.round(p.internalConfirms / p.internalDecisions * 100) : 0;
+    var ptConfirmRate = p.partnerDecisions > 0 ? Math.round(p.partnerConfirms / p.partnerDecisions * 100) : 0;
+    var intFlipRate = p.internalDecisions > 0 ? Math.round(p.internalFlips / p.internalDecisions * 100) : 0;
+    var ptFlipRate = p.partnerDecisions > 0 ? Math.round(p.partnerFlips / p.partnerDecisions * 100) : 0;
+
     document.getElementById('s-confirm').textContent = confirmRate + '%';
     document.getElementById('s-confirm').className = 'stat-value ' + (confirmRate > 60 ? 'red' : 'green');
     document.getElementById('s-confirm-sub').textContent = p.confirmCount + ' confirmed';
+    document.getElementById('s-confirm-split').textContent = 'internal ' + intConfirmRate + '%  ·  partner ' + ptConfirmRate + '%';
+
     document.getElementById('s-flip').textContent = flipRate + '%';
     document.getElementById('s-flip').className = 'stat-value ' + (flipRate > 40 ? 'green' : '');
     document.getElementById('s-flip-sub').textContent = p.flipCount + ' flipped';
+    document.getElementById('s-flip-split').textContent = 'internal ' + intFlipRate + '%  ·  partner ' + ptFlipRate + '%';
+
     document.getElementById('s-speed').textContent = formatDuration(p.avgDecisionSpeedMs);
 
     // Reviewer performance table

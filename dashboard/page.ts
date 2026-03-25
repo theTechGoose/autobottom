@@ -3992,15 +3992,18 @@ table { width: 100%; border-collapse: collapse; }
         if (d.error) { toast(d.error, 'error'); msgEl.textContent = d.error; return; }
         var count = d.toDelete.filter(function(x) { return !x.keep; }).length;
         if (count === 0) {
-          msgEl.textContent = 'Scanned ' + d.scanned + ' findings — no duplicates found in this date range.';
+          msgEl.textContent = 'Scanned ' + d.scanned + ' findings — no duplicates or orphaned history entries found.';
           toast('No duplicates found', 'success');
           btn.disabled = false; btn.textContent = 'Scan for Duplicates';
           return;
         }
         dedupPlan = d.toDelete;
-        msgEl.textContent = 'Found ' + count + ' duplicate' + (count !== 1 ? 's' : '') + ' across ' + d.groups + ' group' + (d.groups !== 1 ? 's' : '') + ' (' + d.scanned + ' findings scanned). Click to delete.';
+        var msgParts = [];
+        if (d.groups > 0) msgParts.push(count - (d.orphaned || 0) + ' duplicate' + ((count - (d.orphaned || 0)) !== 1 ? 's' : '') + ' across ' + d.groups + ' group' + (d.groups !== 1 ? 's' : ''));
+        if (d.orphaned > 0) msgParts.push(d.orphaned + ' orphaned history entr' + (d.orphaned !== 1 ? 'ies' : 'y'));
+        msgEl.textContent = 'Found ' + msgParts.join(' + ') + ' (' + d.scanned + ' findings scanned). Click to delete.';
         btn.disabled = false;
-        btn.textContent = 'Delete ' + count + ' Duplicates';
+        btn.textContent = 'Delete ' + count + (d.orphaned > 0 ? ' Items' : ' Duplicates');
       })
       .catch(function() { toast('Scan failed', 'error'); msgEl.textContent = 'Scan failed'; })
       .finally(function() { if (!dedupPlan) btn.disabled = false; });

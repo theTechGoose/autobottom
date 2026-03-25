@@ -935,6 +935,7 @@ export interface DedupCandidate {
 export interface DedupPlan {
   scanned: number;
   groups: number;
+  orphaned: number; // index entries whose finding data is already gone
   toDelete: DedupCandidate[];
 }
 
@@ -975,6 +976,7 @@ export async function findDuplicates(orgId: OrgId, since: number, until: number)
   }
 
   // Batch parallel chunk-0 reads for entries without index recordId (legacy)
+  const orphanedEntries: typeof needChunk = []; // finding data already deleted
   const BATCH = 50;
   for (let i = 0; i < needChunk.length; i += BATCH) {
     const batch = needChunk.slice(i, i + BATCH);
@@ -983,10 +985,10 @@ export async function findDuplicates(orgId: OrgId, since: number, until: number)
     );
     for (let j = 0; j < batch.length; j++) {
       const raw = chunk0s[j].value;
-      if (!raw) continue;
+      const idx = batch[j];
+      if (!raw) { orphanedEntries.push(idx); continue; }
       const recordKey = extractRecordId(raw);
       if (!recordKey) continue;
-      const idx = batch[j];
       inRange.push({ id: idx.findingId, recordKey, ts: idx.completedAt, reviewed: idx.reason === "reviewed" });
     }
   }
@@ -1014,8 +1016,13 @@ export async function findDuplicates(orgId: OrgId, since: number, until: number)
     for (const dup of group.slice(1)) toDelete.push({ ...dup, keep: false });
   }
 
-  console.log(`[DEDUP] dry-run org=${orgId} scanned=${inRange.length} dupGroups=${dupGroups} toDelete=${toDelete.filter(d => !d.keep).length}`);
-  return { scanned: inRange.length, groups: dupGroups, toDelete };
+  // Orphaned entries: finding data already gone but history indexes remain — include for cleanup
+  for (const e of orphanedEntries) {
+    toDelete.push({ id: e.findingId, recordKey: e.findingId, ts: e.completedAt, reviewed: false, keep: false });
+  }
+
+  console.log(`[DEDUP] dry-run org=${orgId} scanned=${inRange.length} dupGroups=${dupGroups} toDelete=${toDelete.filter(d => !d.keep).length} orphaned=${orphanedEntries.length}`);
+  return { scanned: inRange.length, groups: dupGroups, orphaned: orphanedEntries.length, toDelete };
 }
 
 /**

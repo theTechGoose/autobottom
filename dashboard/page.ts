@@ -871,17 +871,18 @@ table { width: 100%; border-collapse: collapse; }
 
     <!-- Backfill panel -->
     <div id="maint-panel-backfill" style="display:none;">
-      <div class="modal-sub" style="margin-bottom:16px;">Re-apply finalized review scores to audit history entries for a date range. Use this to fix scores that show the pre-review value.</div>
+      <!-- Mode toggle -->
+      <div style="display:flex;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:3px;gap:3px;margin-bottom:16px;">
+        <button id="bfrs-mode-scores" onclick="bfrsMode('scores')" style="flex:1;background:var(--card);border:none;border-radius:4px;color:var(--text-bright);font-size:11px;font-weight:600;padding:5px 0;cursor:pointer;">Audit History Scores</button>
+        <button id="bfrs-mode-wire" onclick="bfrsMode('wire')" style="flex:1;background:none;border:none;border-radius:4px;color:var(--text-dim);font-size:11px;font-weight:600;padding:5px 0;cursor:pointer;">Chargeback &amp; Wire Deductions</button>
+      </div>
+      <div id="bfrs-sub" class="modal-sub" style="margin-bottom:16px;">Re-apply finalized review scores to audit history entries for a date range. Fixes scores that still show the pre-review value.</div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
         <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
         <input type="date" id="bfrs-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
         <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
         <input type="date" id="bfrs-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
       </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);margin-bottom:16px;cursor:pointer;">
-        <input type="checkbox" id="bfrs-also-chargeback" style="accent-color:var(--teal);">
-        Also update chargeback/omission &amp; wire deduction entries
-      </label>
       <div id="bfrs-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
       <div class="modal-actions">
         <button class="sf-btn secondary" id="maintenance-close-2">Close</button>
@@ -4011,7 +4012,22 @@ table { width: 100%; border-collapse: collapse; }
       .finally(function() { btn.disabled = false; btn.textContent = 'Purge'; });
   });
 
-  // ===== Backfill Review Scores =====
+  // ===== Backfill =====
+  var bfrsModeVal = 'scores';
+  function bfrsMode(mode) {
+    bfrsModeVal = mode;
+    var scoresBtn = document.getElementById('bfrs-mode-scores');
+    var wireBtn = document.getElementById('bfrs-mode-wire');
+    scoresBtn.style.background = mode === 'scores' ? 'var(--card)' : 'none';
+    scoresBtn.style.color = mode === 'scores' ? 'var(--text-bright)' : 'var(--text-dim)';
+    wireBtn.style.background = mode === 'wire' ? 'var(--card)' : 'none';
+    wireBtn.style.color = mode === 'wire' ? 'var(--text-bright)' : 'var(--text-dim)';
+    document.getElementById('bfrs-sub').textContent = mode === 'scores'
+      ? 'Re-apply finalized review scores to audit history entries for a date range. Fixes scores that still show the pre-review value.'
+      : 'Re-apply finalized review scores to chargeback, omission, and wire deduction report entries for a date range. Fixes report scores that reflect pre-review values.';
+    document.getElementById('bfrs-msg').textContent = '';
+  }
+  window.bfrsMode = bfrsMode;
   (function() {
     var today = toInputDate(new Date());
     document.getElementById('bfrs-date-from').value = today;
@@ -4025,36 +4041,20 @@ table { width: 100%; border-collapse: collapse; }
     var since = new Date(fromVal + 'T00:00:00').getTime();
     var until = new Date(toVal + 'T23:59:59.999').getTime();
     if (since > until) { toast('From must be before To', 'error'); return; }
-    var alsoChargeback = document.getElementById('bfrs-also-chargeback').checked;
     var btn = this;
     btn.disabled = true; btn.textContent = 'Running...';
     document.getElementById('bfrs-msg').textContent = '';
     var payload = JSON.stringify({ since: since, until: until });
-    fetch('/admin/backfill-review-scores', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: payload,
-    })
+    var endpoint = bfrsModeVal === 'wire' ? '/admin/backfill-chargeback-entries' : '/admin/backfill-review-scores';
+    fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.error) { toast(d.error, 'error'); return; }
-        var msg = 'Scores: scanned ' + d.scanned + ', updated ' + d.updated;
-        if (!alsoChargeback) {
-          document.getElementById('bfrs-msg').textContent = msg;
-          toast(msg, 'success');
-          return;
-        }
-        document.getElementById('bfrs-msg').textContent = msg + ' — updating chargeback entries...';
-        return fetch('/admin/backfill-chargeback-entries', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: payload,
-        }).then(function(r2) { return r2.json(); }).then(function(d2) {
-          if (d2.error) { toast(d2.error, 'error'); return; }
-          var fullMsg = msg + ' | Chargebacks: scanned ' + d2.scanned + ', updated ' + (d2.cbUpdated + d2.wireUpdated) + ', cleared ' + d2.cbDeleted;
-          document.getElementById('bfrs-msg').textContent = fullMsg;
-          toast('Backfill complete', 'success');
-        });
+        var msg = bfrsModeVal === 'wire'
+          ? 'Chargebacks: scanned ' + d.scanned + ', updated ' + (d.cbUpdated + d.wireUpdated) + ', cleared ' + d.cbDeleted
+          : 'Scores: scanned ' + d.scanned + ', updated ' + d.updated;
+        document.getElementById('bfrs-msg').textContent = msg;
+        toast('Backfill complete', 'success');
       })
       .catch(function() { toast('Backfill failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Run Backfill'; });

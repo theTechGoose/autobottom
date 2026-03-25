@@ -11,7 +11,8 @@ import type {
   ReportColumnKey,
 } from "./kv.ts";
 import { getAppeal } from "../judge/kv.ts";
-import { renderSections, renderFullEmail } from "./report-renderer.ts";
+import { renderSections, renderFullEmail, renderWeeklySummary } from "./report-renderer.ts";
+import type { WeeklySummaryData } from "./report-renderer.ts";
 import { sendEmail } from "../providers/postmark.ts";
 
 export type AppealStatus = "none" | "pending" | "complete";
@@ -48,6 +49,18 @@ export function resolveDateRange(dateRange: DateRangeConfig | undefined): { from
     const to = Date.now();
     return { from: to - dateRange.hours * 3_600_000, to };
   }
+  if (dateRange.mode === "weekly") {
+    const now = new Date();
+    const day = now.getDay(); // 0=Sun, 1=Mon, ...
+    const diff = (day - dateRange.startDay + 7) % 7;
+    const start = new Date(now);
+    start.setDate(now.getDate() - diff);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    end.setHours(23, 59, 59, 999);
+    return { from: start.getTime(), to: end.getTime() };
+  }
   // fixed
   return { from: dateRange.from, to: dateRange.to };
 }
@@ -70,11 +83,16 @@ export async function queryReportData(
   const indexEntries = await queryAuditDoneIndex(orgId, from, to);
 
   // Apply master filter
-  const candidates: AuditDoneIndexEntry[] = onlyCompleted
+  let candidates: AuditDoneIndexEntry[] = onlyCompleted
     ? indexEntries.filter(
         (e) => e.completed && e.doneAt !== undefined && e.doneAt >= from && e.doneAt <= to,
       )
     : indexEntries;
+
+  // Weekly: only failed audits
+  if (config.failedOnly) {
+    candidates = candidates.filter((e) => e.score < 100);
+  }
 
   const results: SectionResult[] = sections.map((s) => ({
     header: s.header,
@@ -300,11 +318,28 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
     ? await getEmailTemplate(orgId, config.templateId)
     : null;
 
+  // Build weekly summary block if applicable
+  let summaryHtml: string | undefined;
+  if (config.weeklyType) {
+    const { from, to } = resolveDateRange(config.dateRange);
+    const allRows = sections.flatMap(s => s.rows);
+    const scores = allRows.map(r => r.score ?? 0);
+    const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+    const failedCount = scores.filter(s => s < 100).length;
+    const summaryData: WeeklySummaryData = { from, to, totalAudits: allRows.length, avgScore, failedCount };
+    summaryHtml = renderWeeklySummary(summaryData);
+  }
+
+  // Merge weeklyAutoRecipients with regular recipients
+  const allRecipients = config.weeklyType
+    ? [...new Set([...config.recipients, ...(config.weeklyAutoRecipients ?? [])])]
+    : config.recipients;
+
   const sectionsHtml = renderSections(sections);
-  const htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml, config.name);
+  const htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml, config.name, summaryHtml);
 
   await sendEmail({
-    to: config.recipients,
+    to: allRecipients,
     ...(config.cc?.length ? { cc: config.cc } : {}),
     ...(config.bcc?.length ? { bcc: config.bcc } : {}),
     subject: config.name,

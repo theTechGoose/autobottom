@@ -154,12 +154,51 @@ export function renderSections(sections: SectionResult[]): string {
   return sections.map(renderSection).join("\n");
 }
 
+// ── Weekly summary block ───────────────────────────────────────────────────────
+
+export interface WeeklySummaryData {
+  from: number;
+  to: number;
+  totalAudits: number;
+  avgScore: number;
+  failedCount: number;
+}
+
+export function renderWeeklySummary(data: WeeklySummaryData): string {
+  const dayFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const fromLabel = dayFmt.format(new Date(data.from));
+  const toLabel = dayFmt.format(new Date(data.to));
+  const failedPct = data.totalAudits > 0 ? Math.round((data.failedCount / data.totalAudits) * 100) : 0;
+  const avgColor = data.avgScore === 100 ? C.green : data.avgScore >= 80 ? C.blue : data.avgScore >= 60 ? C.yellow : C.red;
+
+  return `
+<div style="margin-bottom:28px;padding:20px 24px;background:${C.cardAlt};border:1px solid ${C.border};border-radius:8px;">
+  <p style="margin:0 0 12px 0;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:${C.textMuted};">Weekly Summary</p>
+  <p style="margin:0 0 16px 0;font-size:15px;font-weight:600;color:${C.textBright};">Week of ${esc(fromLabel)} &ndash; ${esc(toLabel)}</p>
+  <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+    <tr>
+      <td style="padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Total Audits</td>
+      <td style="padding:6px 0;font-size:13px;font-weight:600;color:${C.textBright};">${data.totalAudits}</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Average Score</td>
+      <td style="padding:6px 0;font-size:13px;font-weight:600;color:${avgColor};">${data.avgScore}%</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Failed Audits</td>
+      <td style="padding:6px 0;font-size:13px;font-weight:600;color:${data.failedCount > 0 ? C.red : C.green};">${data.failedCount} (${failedPct}%)</td>
+    </tr>
+  </table>
+</div>`.trim();
+}
+
 // ── Public: render full email ─────────────────────────────────────────────────
 
 export function renderFullEmail(
   templateHtml: string | null,
   sectionsHtml: string,
   reportName?: string,
+  summaryHtml?: string,
 ): string {
   if (templateHtml) {
     return templateHtml.replace("{{sections}}", sectionsHtml);
@@ -195,6 +234,9 @@ export function renderFullEmail(
           <tr>
             <td style="padding:0 0 28px 0;border-top:1px solid ${C.border};"></td>
           </tr>
+
+          <!-- Weekly summary (optional) -->
+          ${summaryHtml ? `<tr><td style="padding:0 0 0 0;">${summaryHtml}</td></tr>` : ""}
 
           <!-- Sections -->
           <tr>

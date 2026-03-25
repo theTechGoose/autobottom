@@ -1880,6 +1880,18 @@ async function handleSaveEmailReport(req: Request): Promise<Response> {
   if (!body.name || !body.recipients?.length) {
     return json({ error: "name and recipients required" }, 400);
   }
+
+  // Enforce hardcoded defaults for weekly configs — not user-editable
+  if (body.weeklyType) {
+    body.dateRange = { mode: "weekly", startDay: 1 };
+    body.onlyCompleted = true;
+    body.schedule = { mode: "cron", expression: "0 21 * * *" };
+    body.topLevelFilters = [
+      ...(body.topLevelFilters ?? []),
+      { field: "appealStatus", operator: "not_equals", value: "pending" },
+    ];
+  }
+
   const saved = await saveEmailReportConfig(auth.orgId, body);
   // Invalidate cached preview — data or config may have changed
   if (saved.id) await deleteEmailReportPreview(auth.orgId, saved.id);
@@ -2107,34 +2119,11 @@ async function handleGetPartnerDimensions(req: Request): Promise<Response> {
 async function handleBackfillPartnerDimensions(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
-
-  const encoder = new TextEncoder();
-  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-  const writer = writable.getWriter();
-  const send = (data: unknown) => writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)).catch(() => {});
-
-  (async () => {
-    const heartbeat = setInterval(() => {
-      writer.write(encoder.encode(": heartbeat\n\n")).catch(() => {});
-    }, 10_000);
-    try {
-      const result = await backfillPartnerDimensions(auth.orgId, (scanned, saved) => {
-        send({ progress: scanned, saved });
-      });
-      console.log(`[ADMIN] 🔧 Backfill partner dimensions by ${auth.email}: scanned=${result.scanned} saved=${result.saved}`);
-      send({ done: true, ...result });
-    } catch (err) {
-      console.error(`[ADMIN] ❌ Backfill partner dimensions error:`, err);
-      send({ error: String(err) });
-    } finally {
-      clearInterval(heartbeat);
-      await writer.close().catch(() => {});
-    }
-  })();
-
-  return new Response(readable, {
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-  });
+  const body = await req.json().catch(() => ({}));
+  const cursor = typeof body.cursor === "string" ? body.cursor : undefined;
+  const result = await backfillPartnerDimensions(auth.orgId, cursor);
+  console.log(`[ADMIN] 🔧 Backfill partner dimensions by ${auth.email}: scanned=${result.scanned} saved=${result.saved} done=${result.done}`);
+  return json(result);
 }
 
 // -- Admin: Chargebacks & Omissions Report --

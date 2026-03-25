@@ -801,7 +801,8 @@ export type ScheduleConfig =
 
 export type DateRangeConfig =
   | { mode: "rolling"; hours: number }
-  | { mode: "fixed"; from: number; to: number };
+  | { mode: "fixed"; from: number; to: number }
+  | { mode: "weekly"; startDay: number }; // 0=Sun, 1=Mon — resolves to most recent startDay→startDay+6
 
 export interface AuditDoneIndexEntry {
   findingId: string;
@@ -865,6 +866,7 @@ export interface EmailReportConfig {
   // Master filter
   onlyCompleted?: boolean;        // default true — filter by doneAt; false = filter by completedAt
   dateRange?: DateRangeConfig;    // default { mode: "rolling", hours: 24 }
+  failedOnly?: boolean;           // if true, only audits with score < 100 (weekly reports)
   // Schedule
   schedule?: ScheduleConfig;
   // Recipients
@@ -876,6 +878,12 @@ export interface EmailReportConfig {
   topLevelFilters?: CriteriaRule[];
   reportSections?: ReportSectionDef[];
   disabled?: boolean;
+  // Weekly report fields (set by questionnaire, not editable in regular UI)
+  weeklyType?: "internal" | "partner" | "both";
+  weeklyDepartment?: string;
+  weeklyShift?: string;
+  weeklyOffice?: string;
+  weeklyAutoRecipients?: string[];
 }
 
 export async function listEmailReportConfigs(orgId: OrgId): Promise<EmailReportConfig[]> {
@@ -1182,17 +1190,27 @@ export async function updatePartnerDimensions(orgId: OrgId, officeName: string, 
   }
 }
 
+const PARTNER_BACKFILL_BATCH = 50;
+
 export async function backfillPartnerDimensions(
   orgId: OrgId,
-  onProgress?: (scanned: number, saved: number) => void,
-): Promise<{ scanned: number; saved: number }> {
+  cursor?: string,
+): Promise<{ scanned: number; saved: number; cursor: string | null; done: boolean }> {
   const s = await store(AuditFinding);
-  // Collect unique finding IDs by scanning only _n (chunk count) markers
+  const prefix = [`__audit-finding__`, orgId];
+
   const findingIds: string[] = [];
-  for await (const entry of s.rawDb.list({ prefix: [`__audit-finding__`, orgId] })) {
+  const iter = s.rawDb.list({ prefix }, cursor ? { cursor } : {});
+  for await (const entry of iter) {
     const key = entry.key as string[];
-    if (key.at(-1) === "_n") findingIds.push(key[2]);
+    if (key.at(-1) === "_n") {
+      findingIds.push(key[2]);
+      if (findingIds.length >= PARTNER_BACKFILL_BATCH) break;
+    }
   }
+
+  const done = findingIds.length < PARTNER_BACKFILL_BATCH;
+  const nextCursor = done ? null : iter.cursor;
 
   const dims = await getPartnerDimensions(orgId);
   let scanned = 0;
@@ -1214,11 +1232,10 @@ export async function backfillPartnerDimensions(
       if (!merged.includes(email)) { merged.push(email); changed = true; }
     }
     if (changed) { dims.offices[officeName] = merged.sort(); saved++; }
-    if (onProgress && scanned % 10 === 0) onProgress(scanned, saved);
   }
 
   await savePartnerDimensions(orgId, dims);
-  return { scanned, saved };
+  return { scanned, saved, cursor: nextCursor, done };
 }
 
 // ── Reviewer Config (judge-assigned per-reviewer type limits) ────────────────

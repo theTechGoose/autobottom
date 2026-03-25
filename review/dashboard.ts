@@ -330,10 +330,10 @@ export function getReviewDashboardPage(): string {
     // Queue stats
     var q = data.queue;
     document.getElementById('s-q-pending').textContent = q.pending;
-    document.getElementById('s-q-pending-sub').textContent = q.pending + ' questions across ' + (q.pendingAuditCount || 0) + ' audits';
-    document.getElementById('s-q-pending-split').textContent = 'Internal: ' + q.pendingInternal + '  ·  Partner: ' + q.pendingPartner;
+    document.getElementById('s-q-pending-sub').innerHTML = q.pending + ' questions<br>across ' + (q.pendingAuditCount || 0) + ' audits';
+    document.getElementById('s-q-pending-split').innerHTML = 'Internal: ' + q.pendingInternal + '<br>Partner: ' + q.pendingPartner;
     document.getElementById('s-q-decided').textContent = q.decided;
-    document.getElementById('s-q-decided-split').textContent = 'Internal: ' + q.decidedInternal + '  ·  Partner: ' + q.decidedPartner;
+    document.getElementById('s-q-decided-split').innerHTML = 'Internal: ' + q.decidedInternal + '<br>Partner: ' + q.decidedPartner;
 
     // Personal stats
     var p = data.personal;

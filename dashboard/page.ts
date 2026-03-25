@@ -931,7 +931,20 @@ table { width: 100%; border-collapse: collapse; }
       </select>
     </div>
     <div id="rq-drill-msg" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;min-height:16px;"></div>
-    <div id="rq-drill-table"></div>
+    <div style="max-height:400px;overflow-y:auto;">
+      <table id="rq-drill-table" style="width:100%;border-collapse:collapse;">
+        <thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:.6px;position:sticky;top:0;background:var(--bg-raised);">
+          <th id="rq-th-record" style="text-align:left;padding:4px 8px 6px 0;font-weight:700;cursor:pointer;user-select:none;">QB Record <span id="rq-sort-ind"></span></th>
+          <th style="text-align:left;padding:4px 8px 6px;font-weight:700;">Team Member</th>
+          <th style="text-align:right;padding:4px 8px 6px;font-weight:700;">Score</th>
+          <th style="text-align:right;padding:4px 8px 6px;font-weight:700;">Started</th>
+          <th style="text-align:right;padding:4px 8px 6px;font-weight:700;">Finished</th>
+          <th style="text-align:right;padding:4px 0 6px;font-weight:700;">Reviewed</th>
+        </tr></thead>
+        <tbody id="rq-drill-tbody"></tbody>
+      </table>
+      <div id="rq-drill-empty" style="display:none;color:var(--text-dim);padding:16px 0;text-align:center;font-size:11px;"></div>
+    </div>
     <div style="margin-top:10px;text-align:right;">
       <a id="rq-drill-viewall" href="/admin/audits" target="_blank" style="font-size:11px;color:var(--blue);text-decoration:none;">View all in Audit History →</a>
     </div>
@@ -4051,24 +4064,62 @@ table { width: 100%; border-collapse: collapse; }
   // ===== Review Queue Drill-down =====
   var rqDrillType = 'date-leg';
   var rqDrillHours = 24;
+  var rqAllItems = [];
+  var rqSortDir = 1;
+
+  function renderRQDrillRows() {
+    var tbody = document.getElementById('rq-drill-tbody');
+    var emptyEl = document.getElementById('rq-drill-empty');
+    if (!rqAllItems.length) {
+      tbody.innerHTML = '';
+      emptyEl.style.display = '';
+      emptyEl.textContent = 'No audits in this range';
+      return;
+    }
+    emptyEl.style.display = 'none';
+    var items = rqAllItems.slice().sort(function(a, b) {
+      var ar = parseInt(a.recordId || '0', 10);
+      var br = parseInt(b.recordId || '0', 10);
+      return (ar - br) * rqSortDir;
+    });
+    var html = '';
+    items.forEach(function(a) {
+      var score = a.score != null ? a.score + '%' : '—';
+      var scoreColor = a.score >= 80 ? 'var(--green)' : (a.score < 80 && a.score != null ? 'var(--red)' : 'var(--text-dim)');
+      var finished = a.ts ? timeAgo(a.ts) : '—';
+      var started = a.startedAt ? timeAgo(a.startedAt) : '—';
+      var rev = a.reviewed ? '<span style="color:var(--green);font-size:9px;font-weight:700;">✓</span>' : '';
+      html += '<tr style="border-top:1px solid var(--border);cursor:pointer;transition:background 0.1s;" '
+        + 'onmouseover="this.style.background=\\'var(--bg-surface)\\'" onmouseout="this.style.background=\\'\\'" '
+        + 'onclick="window.open(\\'/audit/report?id=' + a.findingId + '\\',\\'_blank\\')">'
+        + '<td style="padding:8px 8px 8px 0;font-family:var(--mono);font-size:11px;color:var(--blue);">' + (a.recordId || '—') + '</td>'
+        + '<td style="padding:8px;color:var(--text-bright);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (a.voName || a.owner || '—') + '</td>'
+        + '<td style="padding:8px;text-align:right;font-weight:700;color:' + scoreColor + ';">' + score + '</td>'
+        + '<td style="padding:8px;text-align:right;color:var(--text-dim);font-size:10px;">' + started + '</td>'
+        + '<td style="padding:8px;text-align:right;color:var(--text-dim);font-size:10px;">' + finished + '</td>'
+        + '<td style="padding:8px 0 8px 8px;text-align:right;">' + rev + '</td>'
+        + '</tr>';
+    });
+    tbody.innerHTML = html;
+  }
 
   function loadRQDrill() {
     var since = Date.now() - rqDrillHours * 3600000;
     var reviewedVal = document.getElementById('rq-drill-reviewed').value;
     var ownerVal = document.getElementById('rq-drill-owner').value;
-    var params = 'since=' + since + '&type=' + rqDrillType + '&limit=6';
+    var params = 'since=' + since + '&type=' + rqDrillType + '&limit=100';
     if (reviewedVal) params += '&reviewed=' + reviewedVal;
     if (ownerVal) params += '&owner=' + encodeURIComponent(ownerVal);
     var msgEl = document.getElementById('rq-drill-msg');
-    var tblEl = document.getElementById('rq-drill-table');
     msgEl.textContent = 'Loading...';
-    tblEl.innerHTML = '';
+    document.getElementById('rq-drill-tbody').innerHTML = '';
+    document.getElementById('rq-drill-empty').style.display = 'none';
     fetch('/admin/audits/data?' + params)
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        var items = d.items || [];
-        var total = d.total || items.length;
-        msgEl.textContent = 'Showing ' + items.length + ' of ' + total + ' audits';
+        rqAllItems = d.items || [];
+        var total = d.total || rqAllItems.length;
+        msgEl.textContent = 'Showing ' + rqAllItems.length + ' of ' + total + ' audits';
         // Populate owner dropdown
         var ownerSel = document.getElementById('rq-drill-owner');
         var curOwner = ownerSel.value;
@@ -4079,40 +4130,9 @@ table { width: 100%; border-collapse: collapse; }
           if (o === curOwner) opt.selected = true;
           ownerSel.appendChild(opt);
         });
-        if (!items.length) {
-          tblEl.innerHTML = '<div style="color:var(--text-dim);padding:16px 0;text-align:center;font-size:11px;">No audits in this range</div>';
-          return;
-        }
-        var html = '<table style="width:100%;border-collapse:collapse;">'
-          + '<thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:.6px;">'
-          + '<th style="text-align:left;padding:4px 8px 6px 0;font-weight:700;">QB Record</th>'
-          + '<th style="text-align:left;padding:4px 8px 6px;font-weight:700;">Team Member</th>'
-          + '<th style="text-align:right;padding:4px 8px 6px;font-weight:700;">Score</th>'
-          + '<th style="text-align:right;padding:4px 8px 6px;font-weight:700;">Started</th>'
-          + '<th style="text-align:right;padding:4px 8px 6px;font-weight:700;">Finished</th>'
-          + '<th style="text-align:right;padding:4px 0 6px;font-weight:700;">Reviewed</th>'
-          + '</tr></thead><tbody>';
-        items.forEach(function(a) {
-          var score = a.score != null ? a.score + '%' : '—';
-          var scoreColor = a.score >= 80 ? 'var(--green)' : (a.score < 80 && a.score != null ? 'var(--red)' : 'var(--text-dim)');
-          var finished = a.ts ? timeAgo(a.ts) : '—';
-          var started = a.startedAt ? timeAgo(a.startedAt) : '—';
-          var rev = a.reviewed ? '<span style="color:var(--green);font-size:9px;font-weight:700;">✓</span>' : '';
-          html += '<tr style="border-top:1px solid var(--border);cursor:pointer;transition:background 0.1s;" '
-            + 'onmouseover="this.style.background=\\'var(--bg-surface)\\'" onmouseout="this.style.background=\\'\\'" '
-            + 'onclick="window.open(\\'/audit/report?id=' + a.findingId + '\\',\\'_blank\\')">'
-            + '<td style="padding:8px 8px 8px 0;font-family:var(--mono);font-size:11px;color:var(--blue);">' + (a.recordId || '—') + '</td>'
-            + '<td style="padding:8px;color:var(--text-bright);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (a.voName || a.owner || '—') + '</td>'
-            + '<td style="padding:8px;text-align:right;font-weight:700;color:' + scoreColor + ';">' + score + '</td>'
-            + '<td style="padding:8px;text-align:right;color:var(--text-dim);font-size:10px;">' + started + '</td>'
-            + '<td style="padding:8px;text-align:right;color:var(--text-dim);font-size:10px;">' + finished + '</td>'
-            + '<td style="padding:8px 0 8px 8px;text-align:right;">' + rev + '</td>'
-            + '</tr>';
-        });
-        html += '</tbody></table>';
-        tblEl.innerHTML = html;
+        renderRQDrillRows();
         // Update view-all link
-        var viewAllUrl = '/admin/audits?type=' + rqDrillType;
+        var viewAllUrl = '/admin/audits?type=' + rqDrillType + '&hours=' + rqDrillHours;
         if (reviewedVal) viewAllUrl += '&reviewed=' + reviewedVal;
         if (ownerVal) viewAllUrl += '&owner=' + encodeURIComponent(ownerVal);
         document.getElementById('rq-drill-viewall').href = viewAllUrl;
@@ -4153,6 +4173,11 @@ table { width: 100%; border-collapse: collapse; }
   document.getElementById('rq-drill-close').addEventListener('click', function() { closeModal('rq-drill-modal'); });
   document.getElementById('rq-row-internal').addEventListener('click', function() { openRQDrill('date-leg'); });
   document.getElementById('rq-row-partner').addEventListener('click', function() { openRQDrill('package'); });
+  document.getElementById('rq-th-record').addEventListener('click', function() {
+    rqSortDir = -rqSortDir;
+    document.getElementById('rq-sort-ind').textContent = rqSortDir === 1 ? ' ▲' : ' ▼';
+    renderRQDrillRows();
+  });
 
   // ===== Bad Words =====
   var bwConfig = { enabled: false, allOffices: false, emails: [], words: [], officePatterns: [] };

@@ -1033,8 +1033,15 @@ document.getElementById('f-date-go').addEventListener('click',function(){
   load();
 });
 document.getElementById('f-date-clear').addEventListener('click',function(){setWindow(24);load();});
-// Set default 24h active
+// Set default 24h active, then apply any URL params (e.g. from drill-down "View all" link)
 setWindow(24);
+(function(){
+  var p=new URLSearchParams(window.location.search);
+  var h=parseInt(p.get('hours')||'',10);if(h>0)setWindow(h);
+  var t=p.get('type');if(t&&t!=='all'){state.type=t;document.getElementById('f-type').value=t;}
+  var rv=p.get('reviewed');if(rv){state.reviewed=rv;document.getElementById('f-reviewed').value=rv;}
+  var ow=p.get('owner');if(ow){state.owner=ow;}
+})();
 
 load();
 </script>

@@ -1,6 +1,6 @@
 /** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getWireDeductionEntry, saveWireDeductionEntry } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry } from "../lib/kv.ts";
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
 import { checkBadges } from "../shared/badges.ts";
@@ -920,4 +920,124 @@ export async function pruneBypassedFromQueues(
 
   console.log(`[BYPASS-PRUNE] org=${orgId} reviewPruned=${reviewPruned} judgePruned=${judgePruned}`);
   return { reviewPruned, judgePruned };
+}
+
+// -- Deduplicate Findings --
+
+/**
+ * Scan all findings in the date range, group by recordingId, and delete duplicates.
+ * Keeps: most recently reviewed (latest reviewedAt), then most recently created (latest job.timestamp).
+ * Cleans up: finding chunks, review/judge queue items, chargeback/wire entries, review-done.
+ */
+export async function deduplicateFindings(
+  orgId: OrgId,
+  since: number,
+  until: number,
+): Promise<{ scanned: number; groups: number; deleted: number }> {
+  const db = await kv();
+
+  // Step 1: collect all finding IDs by scanning for chunk-count metadata keys
+  const findingIds: string[] = [];
+  const iter = db.list({ prefix: ["__audit-finding__", orgId] });
+  for await (const entry of iter) {
+    const key = entry.key as (string | number)[];
+    // key = ["__audit-finding__", orgId, findingId, "_n" | chunkIndex]
+    if (key.length === 4 && key[3] === "_n" && (entry.value as number) > 0) {
+      findingIds.push(key[2] as string);
+    }
+  }
+
+  // Step 2: load each finding, filter by date range, build dedup map
+  type Entry = { id: string; recordKey: string; ts: number; reviewedAt: number };
+  const inRange: Entry[] = [];
+
+  for (const fid of findingIds) {
+    const f = await getFinding(orgId, fid) as Record<string, any> | null;
+    if (!f) continue;
+    const ts = f.job?.timestamp ? new Date(f.job.timestamp).getTime() : 0;
+    if (ts < since || ts > until) continue;
+    const recordKey = f.recordingId || String(f.record?.RecordId ?? "");
+    if (!recordKey) continue;
+    const rawReviewedAt = (f as Record<string, any>).reviewedAt;
+    const reviewedAt = rawReviewedAt ? new Date(rawReviewedAt).getTime() : 0;
+    inRange.push({ id: fid, recordKey, ts, reviewedAt });
+  }
+
+  const scanned = inRange.length;
+
+  // Step 3: group by recordKey, pick winner, delete losers
+  const groups = new Map<string, Entry[]>();
+  for (const e of inRange) {
+    const g = groups.get(e.recordKey) ?? [];
+    g.push(e);
+    groups.set(e.recordKey, g);
+  }
+
+  let dupGroups = 0;
+  let deleted = 0;
+
+  for (const [, group] of groups) {
+    if (group.length <= 1) continue;
+    dupGroups++;
+
+    // Sort: latest reviewedAt first, then latest creation ts
+    group.sort((a, b) => {
+      if (a.reviewedAt !== b.reviewedAt) return b.reviewedAt - a.reviewedAt;
+      return b.ts - a.ts;
+    });
+
+    const toDelete = group.slice(1);
+    for (const dup of toDelete) {
+      await _deleteFindingAndRelated(orgId, dup.id, db);
+      deleted++;
+    }
+  }
+
+  console.log(`[DEDUP] org=${orgId} since=${since} until=${until} scanned=${scanned} dupGroups=${dupGroups} deleted=${deleted}`);
+  return { scanned, groups: dupGroups, deleted };
+}
+
+async function _deleteFindingAndRelated(orgId: OrgId, findingId: string, db: Deno.Kv): Promise<void> {
+  const keys: Deno.KvKey[] = [];
+
+  // Finding chunks: scan ["__audit-finding__", orgId, findingId, *]
+  const chunkIter = db.list({ prefix: ["__audit-finding__", orgId, findingId] });
+  for await (const entry of chunkIter) keys.push(entry.key);
+
+  // Review queue entries
+  const reviewPrefixes = [
+    orgKey(orgId, "review-pending", findingId),
+    orgKey(orgId, "review-decided", findingId),
+    orgKey(orgId, "review-active"),
+  ];
+  for await (const entry of db.list({ prefix: orgKey(orgId, "review-pending", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list({ prefix: orgKey(orgId, "review-decided", findingId) })) keys.push(entry.key);
+  // Scan review-active for items belonging to this finding
+  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "review-active") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+  keys.push(orgKey(orgId, "review-audit-pending", findingId));
+  keys.push(orgKey(orgId, "review-done", findingId));
+
+  // Judge queue entries
+  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-pending", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-decided", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "judge-active") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+  keys.push(orgKey(orgId, "judge-audit-pending", findingId));
+
+  // Delete in batches of 10
+  const BATCH = 10;
+  for (let i = 0; i < keys.length; i += BATCH) {
+    const atomic = db.atomic();
+    for (const key of keys.slice(i, i + BATCH)) atomic.delete(key);
+    await atomic.commit();
+  }
+
+  // Chargeback / wire deduction
+  await deleteChargebackEntry(orgId, findingId);
+  await deleteWireDeductionEntry(orgId, findingId);
+
+  console.log(`[DEDUP] deleted finding ${findingId}: ${keys.length} KV entries + cb/wire`);
 }

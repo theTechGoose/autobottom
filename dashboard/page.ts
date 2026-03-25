@@ -293,6 +293,7 @@ export function getDashboardPage(): string {
   .stat-card.green .stat-value { color: var(--green); }
   .stat-card.red .stat-value { color: var(--red); }
   .stat-card.yellow .stat-value { color: var(--yellow); }
+  .stat-sub { font-size: 10px; color: var(--text-muted); margin-top: 4px; line-height: 1.4; }
 
   /* Charts row */
   .charts { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 16px; }
@@ -436,6 +437,13 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
+      <!-- Deduplicate Findings (opens modal) -->
+      <div class="sb-link" id="dedup-open">
+        <div class="icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.alertTriangle}</div>
+        <span class="title">Deduplicate Findings</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
       <!-- Bad Words (opens modal) -->
       <div class="sb-link" id="bad-words-open">
         <div class="icon" style="background:var(--red-bg);color:var(--red);">${icons.alertTriangle}</div>
@@ -573,10 +581,12 @@ table { width: 100%; border-collapse: collapse; }
       <div class="stat-card yellow">
         <div class="stat-label">In Pipeline</div>
         <div class="stat-value" id="s-pipe">--</div>
+        <div class="stat-sub" id="s-pipe-detail"></div>
       </div>
       <div class="stat-card blue">
         <div class="stat-label">Active</div>
         <div class="stat-value" id="s-active">--</div>
+        <div class="stat-sub" id="s-active-detail"></div>
       </div>
       <div class="stat-card green">
         <div class="stat-label">Completed (24h)</div>
@@ -870,6 +880,25 @@ table { width: 100%; border-collapse: collapse; }
     <div class="modal-actions">
       <button class="sf-btn secondary" id="bfrs-cancel">Cancel</button>
       <button class="sf-btn primary" id="bfrs-run-btn">Run Backfill</button>
+    </div>
+  </div>
+</div>
+
+<!-- Deduplicate Findings Modal -->
+<div class="modal-overlay" id="dedup-modal">
+  <div class="modal" style="width:480px;max-width:95vw;">
+    <div class="modal-title">Deduplicate Findings</div>
+    <div class="modal-sub" style="margin-bottom:20px;">Within the date range, keep only the best finding per recording ID — most recently reviewed wins, then most recently created. Deletes duplicate findings and all related queue/chargeback entries. Cannot be undone.</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
+      <input type="date" id="dedup-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
+      <input type="date" id="dedup-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+    </div>
+    <div id="dedup-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
+    <div class="modal-actions">
+      <button class="sf-btn secondary" id="dedup-cancel">Cancel</button>
+      <button class="sf-btn danger" id="dedup-confirm-btn">Deduplicate</button>
     </div>
   </div>
 </div>
@@ -1649,6 +1678,24 @@ table { width: 100%; border-collapse: collapse; }
     document.getElementById('s-completed').textContent = fmt(p.completed24h);
     document.getElementById('s-errors').textContent = fmt(p.errors24h);
     document.getElementById('s-retries').textContent = fmt(p.retries24h);
+
+    // Active: per-step breakdown
+    var stepCounts = {};
+    (p.active || []).forEach(function(a) { var s = a.step || 'unknown'; stepCounts[s] = (stepCounts[s] || 0) + 1; });
+    var stepKeys = Object.keys(stepCounts).sort();
+    var activeDetailEl = document.getElementById('s-active-detail');
+    activeDetailEl.textContent = stepKeys.length ? stepKeys.map(function(s) { return s + ': ' + stepCounts[s]; }).join(' · ') : '';
+
+    // In Pipeline: per-queue breakdown from QStash
+    var qb = p.queueBreakdown || {};
+    var qKeys = Object.keys(qb).sort();
+    var pipeDetailEl = document.getElementById('s-pipe-detail');
+    var qParts = qKeys.filter(function(q) { return qb[q] > 0; }).map(function(q) {
+      var label = q.replace('audit-', '');
+      return label + ': ' + qb[q];
+    });
+    pipeDetailEl.textContent = qParts.length ? 'queued — ' + qParts.join(' · ') : '';
+
     renderActive(p.active || []);
     renderErrors(p.errors || []);
     drawActivityChart(p.completedTs, p.errorsTs, p.retriesTs);
@@ -3847,6 +3894,36 @@ table { width: 100%; border-collapse: collapse; }
       })
       .catch(function() { toast('Backfill failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Run Backfill'; });
+  });
+
+  // ===== Deduplicate Findings =====
+  document.getElementById('dedup-open').addEventListener('click', function() { openModal('dedup-modal'); });
+  document.getElementById('dedup-cancel').addEventListener('click', function() { closeModal('dedup-modal'); });
+  document.getElementById('dedup-confirm-btn').addEventListener('click', function() {
+    var fromVal = document.getElementById('dedup-date-from').value;
+    var toVal = document.getElementById('dedup-date-to').value;
+    if (!fromVal || !toVal) { toast('Select both dates', 'error'); return; }
+    var since = new Date(fromVal + 'T00:00:00').getTime();
+    var until = new Date(toVal + 'T23:59:59.999').getTime();
+    if (since > until) { toast('From must be before To', 'error'); return; }
+    if (!confirm('Deduplicate findings from ' + fromVal + ' to ' + toVal + '? This will permanently delete duplicate findings. Cannot be undone.')) return;
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Running...';
+    document.getElementById('dedup-msg').textContent = 'Scanning findings...';
+    fetch('/admin/deduplicate-findings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since: since, until: until }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) { toast(d.error, 'error'); document.getElementById('dedup-msg').textContent = d.error; return; }
+        var msg = 'Scanned ' + d.scanned + ' findings in ' + d.groups + ' duplicate groups — deleted ' + d.deleted;
+        document.getElementById('dedup-msg').textContent = msg;
+        toast(msg, 'success');
+      })
+      .catch(function() { toast('Deduplication failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Deduplicate'; });
   });
 
   // ===== Bad Words =====

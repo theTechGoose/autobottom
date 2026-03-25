@@ -61,6 +61,27 @@ export async function saveFinding(orgId: OrgId, finding: Record<string, any>) {
   await s.setChunked([orgId, finding.id], finding as any);
 }
 
+// ── Audit Deduplication ─────────────────────────────────────────────────────
+
+const DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Atomically claim a dedup slot for this rid.
+ * Returns true if this caller is the first (should proceed).
+ * Returns false if a recent audit for this rid already exists (duplicate — skip).
+ */
+export async function claimAuditDedup(orgId: OrgId, rid: string): Promise<boolean> {
+  const kv = await db();
+  const key = orgKey(orgId, "audit-dedup", rid);
+  const existing = await kv.get(key);
+  if (existing.value !== null) return false; // already claimed
+  const res = await kv.atomic()
+    .check(existing) // only set if still null
+    .set(key, { rid, claimedAt: Date.now() }, { expireIn: DEDUP_TTL_MS })
+    .commit();
+  return res.ok; // false = race condition, another request beat us
+}
+
 // ── Job CRUD ────────────────────────────────────────────────────────────────
 
 export async function getJob(orgId: OrgId, id: string) {
@@ -234,6 +255,11 @@ export async function saveChargebackEntry(orgId: OrgId, entry: ChargebackEntry):
 
 export async function deleteChargebackEntry(orgId: OrgId, findingId: string): Promise<void> {
   const s = await store(ChargebackEntryDto);
+  await s.delete([orgId, findingId]);
+}
+
+export async function deleteWireDeductionEntry(orgId: OrgId, findingId: string): Promise<void> {
+  const s = await store(WireDeductionEntryDto);
   await s.delete([orgId, findingId]);
 }
 

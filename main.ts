@@ -86,7 +86,7 @@ import {
   handleJudgeGetReviewerConfig, handleJudgeSaveReviewerConfig,
   handleJudgeDismissFinding,
 } from "./judge/handlers.ts";
-import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries, pruneBypassedFromQueues } from "./judge/kv.ts";
+import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries, pruneBypassedFromQueues, deduplicateFindings } from "./judge/kv.ts";
 
 // Manager (unified auth)
 import {
@@ -296,6 +296,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/purge-old-audits": handlePurgeOldAudits,
   "/admin/backfill-review-scores": handleBackfillReviewScores,
   "/admin/backfill-chargeback-entries": handleBackfillChargebackEntries,
+  "/admin/deduplicate-findings": handleDeduplicateFindings,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
   "/webhooks/appeal-decided": handleAppealDecidedWebhook,
@@ -678,6 +679,7 @@ async function handleDashboardData(req: Request): Promise<Response> {
       inPipe: pipelineStats.active.length + queued,
       activeCount: pipelineStats.active.length,
       queued,
+      queueBreakdown: queueCounts,
       active: pipelineStats.active,
       completed24h: pipelineStats.completedCount,
       completedTs: pipelineStats.completed.map((c: any) => c.ts),
@@ -3746,6 +3748,17 @@ async function handlePurgeOldAudits(req: Request): Promise<Response> {
   const result = await purgeOldEntries(auth.orgId, since ?? 0, before);
   console.log(`[ADMIN] 🗑️ Purged audits [${since ? new Date(since).toISOString() : "epoch"} – ${new Date(before).toISOString()}] by ${auth.email}: completed=${result.completed} cb=${result.chargebacks} wire=${result.wire}`);
   return json({ ok: true, since: since ?? 0, before, ...result });
+}
+
+async function handleDeduplicateFindings(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  const { since, until } = body as { since: number; until: number };
+  if (!since || !until) return json({ error: "since and until required" }, 400);
+  const result = await deduplicateFindings(auth.orgId, since, until);
+  console.log(`[ADMIN] 🧹 Deduplicate findings by ${auth.email}: scanned=${result.scanned} groups=${result.groups} deleted=${result.deleted}`);
+  return json({ ok: true, ...result });
 }
 
 // -- SSE Events Endpoint --

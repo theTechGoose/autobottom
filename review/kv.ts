@@ -59,10 +59,18 @@ export interface ReviewerLeaderboardEntry {
   confirms: number;
   flips: number;
   flipRate: string;
+  internalDecisions: number;
+  internalConfirms: number;
+  internalFlips: number;
+  partnerDecisions: number;
+  partnerConfirms: number;
+  partnerFlips: number;
+  internalFlipRate: string;
+  partnerFlipRate: string;
 }
 
 export interface ReviewerDashboardData {
-  queue: { pending: number; decided: number; pendingAuditCount: number };
+  queue: { pending: number; decided: number; pendingAuditCount: number; pendingInternal: number; pendingPartner: number; decidedInternal: number; decidedPartner: number };
   personal: {
     totalDecisions: number;
     confirmCount: number;
@@ -649,39 +657,46 @@ export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): 
   const db = await kv();
 
   // Count pending + active items and unique audits
-  let pending = 0;
+  let pending = 0, pendingInternal = 0, pendingPartner = 0;
   const dashPendingAudits = new Set<string>();
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") })) {
     pending++;
+    if (entry.value?.recordingIdField === "GenieNumber") pendingPartner++; else pendingInternal++;
     const fId = entry.value?.findingId || (entry.key[2] as string);
     if (fId) dashPendingAudits.add(fId);
   }
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-active") })) {
     pending++;
+    if (entry.value?.recordingIdField === "GenieNumber") pendingPartner++; else pendingInternal++;
     const fId = entry.value?.findingId || (entry.key[3] as string);
     if (fId) dashPendingAudits.add(fId);
   }
 
   // Scan all decided items -- build personal list + per-reviewer map
   const myDecisions: ReviewDecision[] = [];
-  const byReviewerMap = new Map<string, { confirms: number; flips: number }>();
-  let decided = 0;
+  const byReviewerMap = new Map<string, { confirms: number; flips: number; internalConfirms: number; internalFlips: number; partnerConfirms: number; partnerFlips: number }>();
+  let decided = 0, decidedInternal = 0, decidedPartner = 0;
 
   const iter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") });
   for await (const entry of iter) {
     decided++;
     const d = entry.value;
+    const isPartner = d.recordingIdField === "GenieNumber";
+    if (isPartner) decidedPartner++; else decidedInternal++;
 
     // Per-reviewer aggregation
     let stats = byReviewerMap.get(d.reviewer);
-    if (!stats) { stats = { confirms: 0, flips: 0 }; byReviewerMap.set(d.reviewer, stats); }
-    if (d.decision === "confirm") stats.confirms++;
-    else stats.flips++;
+    if (!stats) { stats = { confirms: 0, flips: 0, internalConfirms: 0, internalFlips: 0, partnerConfirms: 0, partnerFlips: 0 }; byReviewerMap.set(d.reviewer, stats); }
+    if (d.decision === "confirm") {
+      stats.confirms++;
+      if (isPartner) stats.partnerConfirms++; else stats.internalConfirms++;
+    } else {
+      stats.flips++;
+      if (isPartner) stats.partnerFlips++; else stats.internalFlips++;
+    }
 
     // Personal decisions
-    if (d.reviewer === reviewer) {
-      myDecisions.push(d);
-    }
+    if (d.reviewer === reviewer) myDecisions.push(d);
   }
 
   // Personal stats
@@ -710,12 +725,22 @@ export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): 
   const byReviewer: ReviewerLeaderboardEntry[] = [];
   for (const [name, stats] of byReviewerMap) {
     const total = stats.confirms + stats.flips;
+    const intTotal = stats.internalConfirms + stats.internalFlips;
+    const ptTotal = stats.partnerConfirms + stats.partnerFlips;
     byReviewer.push({
       reviewer: name,
       decisions: total,
       confirms: stats.confirms,
       flips: stats.flips,
       flipRate: total > 0 ? ((stats.flips / total) * 100).toFixed(1) + "%" : "0.0%",
+      internalDecisions: intTotal,
+      internalConfirms: stats.internalConfirms,
+      internalFlips: stats.internalFlips,
+      partnerDecisions: ptTotal,
+      partnerConfirms: stats.partnerConfirms,
+      partnerFlips: stats.partnerFlips,
+      internalFlipRate: intTotal > 0 ? ((stats.internalFlips / intTotal) * 100).toFixed(1) + "%" : "0.0%",
+      partnerFlipRate: ptTotal > 0 ? ((stats.partnerFlips / ptTotal) * 100).toFixed(1) + "%" : "0.0%",
     });
   }
   byReviewer.sort((a, b) => b.decisions - a.decisions);
@@ -724,7 +749,7 @@ export async function getReviewerDashboardData(orgId: OrgId, reviewer: string): 
   const recentDecisions = myDecisions.slice().reverse().slice(0, 50);
 
   return {
-    queue: { pending, decided, pendingAuditCount: dashPendingAudits.size },
+    queue: { pending, decided, pendingAuditCount: dashPendingAudits.size, pendingInternal, pendingPartner, decidedInternal, decidedPartner },
     personal: {
       totalDecisions, confirmCount, flipCount, avgDecisionSpeedMs,
       internalDecisions: internalDecisions.length, internalConfirms, internalFlips,

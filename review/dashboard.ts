@@ -72,6 +72,8 @@ export function getReviewDashboardPage(): string {
   .stat-value.red { color: var(--red); }
   .stat-value.yellow { color: var(--yellow); }
   .stat-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .th-sub { font-size: 9px; color: var(--text-muted, #444d56); font-weight: 500; text-transform: none; letter-spacing: 0; margin-top: 2px; }
+  .td-sub { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
 
   /* Section */
   .section { margin-bottom: 28px; }
@@ -204,11 +206,13 @@ export function getReviewDashboardPage(): string {
           <div class="stat-label">Queue Pending</div>
           <div class="stat-value yellow" id="s-q-pending">0</div>
           <div class="stat-sub" id="s-q-pending-sub">awaiting review</div>
+          <div class="stat-sub" id="s-q-pending-split"></div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Queue Decided</div>
           <div class="stat-value green" id="s-q-decided">0</div>
           <div class="stat-sub">total decisions</div>
+          <div class="stat-sub" id="s-q-decided-split"></div>
         </div>
         <div class="stat-card">
           <div class="stat-label">My Decisions</div>
@@ -245,10 +249,10 @@ export function getReviewDashboardPage(): string {
             <thead>
               <tr>
                 <th>Reviewer</th>
-                <th class="num">Decisions</th>
-                <th class="num">Confirms</th>
-                <th class="num">Flips</th>
-                <th class="num">Flip Rate</th>
+                <th class="num">Decisions<div class="th-sub">Int · Prt</div></th>
+                <th class="num">Confirms<div class="th-sub">Int · Prt</div></th>
+                <th class="num">Flips<div class="th-sub">Int · Prt</div></th>
+                <th class="num">Flip Rate<div class="th-sub">Int · Prt</div></th>
               </tr>
             </thead>
             <tbody id="reviewer-tbody">
@@ -324,9 +328,12 @@ export function getReviewDashboardPage(): string {
     document.getElementById('dashboard').style.display = 'block';
 
     // Queue stats
-    document.getElementById('s-q-pending').textContent = data.queue.pending;
-    document.getElementById('s-q-pending-sub').textContent = data.queue.pending + ' questions across ' + (data.queue.pendingAuditCount || 0) + ' audits';
-    document.getElementById('s-q-decided').textContent = data.queue.decided;
+    var q = data.queue;
+    document.getElementById('s-q-pending').textContent = q.pending;
+    document.getElementById('s-q-pending-sub').textContent = q.pending + ' questions across ' + (q.pendingAuditCount || 0) + ' audits';
+    document.getElementById('s-q-pending-split').textContent = 'Internal: ' + q.pendingInternal + '  ·  Partner: ' + q.pendingPartner;
+    document.getElementById('s-q-decided').textContent = q.decided;
+    document.getElementById('s-q-decided-split').textContent = 'Internal: ' + q.decidedInternal + '  ·  Partner: ' + q.decidedPartner;
 
     // Personal stats
     var p = data.personal;
@@ -361,10 +368,10 @@ export function getReviewDashboardPage(): string {
         if (isMe) tr.className = 'me';
         tr.innerHTML =
           '<td><strong>' + esc(r.reviewer) + '</strong>' + (isMe ? ' <span class="pill pill-purple">you</span>' : '') + '</td>' +
-          '<td class="num">' + r.decisions + '</td>' +
-          '<td class="num"><span class="pill pill-green">' + r.confirms + '</span></td>' +
-          '<td class="num"><span class="pill pill-red">' + r.flips + '</span></td>' +
-          '<td class="num">' + esc(r.flipRate) + '</td>';
+          '<td class="num">' + r.decisions + '<div class="td-sub">' + r.internalDecisions + ' · ' + r.partnerDecisions + '</div></td>' +
+          '<td class="num"><span class="pill pill-green">' + r.confirms + '</span><div class="td-sub">' + r.internalConfirms + ' · ' + r.partnerConfirms + '</div></td>' +
+          '<td class="num"><span class="pill pill-red">' + r.flips + '</span><div class="td-sub">' + r.internalFlips + ' · ' + r.partnerFlips + '</div></td>' +
+          '<td class="num">' + esc(r.flipRate) + '<div class="td-sub">' + esc(r.internalFlipRate) + ' · ' + esc(r.partnerFlipRate) + '</div></td>';
         rTbody.appendChild(tr);
       }
     }

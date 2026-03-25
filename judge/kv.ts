@@ -113,6 +113,22 @@ export interface JudgeBufferItem extends JudgeItem {
   transcript: { raw: string; diarized: string; utteranceTimes?: number[] } | null;
   appealComment?: string;
   reviewedBy?: string;
+  recordId?: string;
+  recordMeta?: {
+    guestName?: string;
+    spouseName?: string;
+    maritalStatus?: string;
+    roomTypeMaxOccupancy?: string;
+    destination?: string;
+    arrivalDate?: string;
+    departureDate?: string;
+    totalWGS?: string;
+    totalMCC?: string;
+    officeName?: string;
+    totalAmountPaid?: string;
+    hasMCC?: string;
+    mspSubscription?: string;
+  };
 }
 
 // Recording re-audit types should never reach the judge queue.
@@ -164,6 +180,31 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
       if (f.appealComment) appealComment = f.appealComment;
     }
     const reviewedBy = finding?.answeredQuestions?.find((q: any) => q.reviewedBy)?.reviewedBy as string | undefined;
+    let recordId: string | undefined;
+    let recordMeta: JudgeBufferItem["recordMeta"] | undefined;
+    if (finding) {
+      const rec = (finding as any).record as Record<string, unknown> ?? {};
+      recordId = String(rec.RecordId ?? "") || undefined;
+      const isPackage = item.recordingIdField === "GenieNumber";
+      recordMeta = isPackage ? {
+        guestName: rec.GuestName ? String(rec.GuestName) : undefined,
+        maritalStatus: rec["67"] ? String(rec["67"]) : undefined,
+        officeName: rec.OfficeName ? String(rec.OfficeName) : undefined,
+        totalAmountPaid: rec["145"] ? String(rec["145"]) : undefined,
+        hasMCC: rec["345"] ? String(rec["345"]) : undefined,
+        mspSubscription: rec["306"] ? String(rec["306"]) : undefined,
+      } : {
+        guestName: rec.GuestName ? String(rec.GuestName) : (rec["32"] ? String(rec["32"]) : undefined),
+        spouseName: rec["33"] ? String(rec["33"]) : undefined,
+        maritalStatus: rec["49"] ? String(rec["49"]) : undefined,
+        roomTypeMaxOccupancy: rec["297"] ? String(rec["297"]) : undefined,
+        destination: rec.DestinationDisplay ? String(rec.DestinationDisplay) : (rec["314"] ? String(rec["314"]) : undefined),
+        arrivalDate: rec["8"] ? String(rec["8"]) : undefined,
+        departureDate: rec["10"] ? String(rec["10"]) : undefined,
+        totalWGS: rec["460"] ? String(rec["460"]) : undefined,
+        totalMCC: rec["594"] ? String(rec["594"]) : undefined,
+      };
+    }
     return {
       ...item,
       ...(enrichedAppealType ? { appealType: enrichedAppealType } : {}),
@@ -171,6 +212,8 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
       transcript,
       ...(appealComment ? { appealComment } : {}),
       ...(reviewedBy ? { reviewedBy } : {}),
+      ...(recordId ? { recordId } : {}),
+      ...(recordMeta ? { recordMeta } : {}),
     };
   }
 

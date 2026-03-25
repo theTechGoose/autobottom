@@ -423,24 +423,10 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
-      <!-- Purge Audit Data (opens modal) -->
-      <div class="sb-link" id="purge-open">
+      <!-- Data Maintenance (opens unified modal) -->
+      <div class="sb-link" id="maintenance-open">
         <div class="icon" style="background:var(--red-bg);color:var(--red);">${icons.trash}</div>
-        <span class="title">Purge Audit Data</span>
-        <span class="arrow">${icons.chevronRight}</span>
-      </div>
-
-      <!-- Backfill Review Scores (opens modal) -->
-      <div class="sb-link" id="backfill-scores-open">
-        <div class="icon" style="background:var(--blue-bg);color:var(--blue);">${icons.settings}</div>
-        <span class="title">Backfill Review Scores</span>
-        <span class="arrow">${icons.chevronRight}</span>
-      </div>
-
-      <!-- Deduplicate Findings (opens modal) -->
-      <div class="sb-link" id="dedup-open">
-        <div class="icon" style="background:var(--yellow-bg);color:var(--yellow);">${icons.alertTriangle}</div>
-        <span class="title">Deduplicate Findings</span>
+        <span class="title">Data Maintenance</span>
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
@@ -855,63 +841,81 @@ table { width: 100%; border-collapse: collapse; }
   </div>
 </div>
 
-<!-- Purge Audit Data Modal -->
-<div class="modal-overlay" id="purge-modal">
-  <div class="modal" style="width:480px;max-width:95vw;">
-    <div class="modal-title">Purge Audit Data</div>
-    <div class="modal-sub" style="margin-bottom:20px;">Permanently delete all audit history, chargeback &amp; wire deduction records within a date range. Cannot be undone.</div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
-      <input type="date" id="purge-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
-      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
-      <input type="date" id="purge-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+<!-- Data Maintenance Modal -->
+<div class="modal-overlay" id="maintenance-modal">
+  <div class="modal" style="width:540px;max-width:95vw;">
+    <div class="modal-title">Data Maintenance</div>
+    <!-- Tab bar -->
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px;margin-top:4px;">
+      <button id="maint-tab-purge" onclick="maintTab('purge')" style="background:none;border:none;border-bottom:2px solid var(--red);color:var(--red);font-size:11px;font-weight:700;padding:6px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;">Purge Data</button>
+      <button id="maint-tab-backfill" onclick="maintTab('backfill')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);font-size:11px;font-weight:700;padding:6px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;">Backfill Scores</button>
+      <button id="maint-tab-dedup" onclick="maintTab('dedup')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);font-size:11px;font-weight:700;padding:6px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;">Deduplicate</button>
+      <button id="maint-tab-wire" onclick="maintTab('wire')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);font-size:11px;font-weight:700;padding:6px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;">Wire Cleanup</button>
     </div>
-    <div id="purge-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
-    <div class="modal-actions">
-      <button class="sf-btn secondary" id="purge-cancel">Cancel</button>
-      <button class="sf-btn danger" id="purge-confirm-btn">Purge</button>
-    </div>
-  </div>
-</div>
 
-<!-- Backfill Review Scores Modal -->
-<div class="modal-overlay" id="backfill-scores-modal">
-  <div class="modal" style="width:480px;max-width:95vw;">
-    <div class="modal-title">Backfill Review Scores</div>
-    <div class="modal-sub" style="margin-bottom:20px;">Re-apply finalized review scores to audit history entries for a date range. Use this to fix scores that show the pre-review value.</div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
-      <input type="date" id="bfrs-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
-      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
-      <input type="date" id="bfrs-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+    <!-- Purge panel -->
+    <div id="maint-panel-purge">
+      <div class="modal-sub" style="margin-bottom:16px;">Permanently delete all audit history, chargeback &amp; wire deduction records within a date range. Cannot be undone.</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
+        <input type="date" id="purge-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
+        <input type="date" id="purge-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+      </div>
+      <div id="purge-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
+      <div class="modal-actions">
+        <button class="sf-btn secondary" id="maintenance-close">Close</button>
+        <button class="sf-btn danger" id="purge-confirm-btn">Purge</button>
+      </div>
     </div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);margin-bottom:16px;cursor:pointer;">
-      <input type="checkbox" id="bfrs-also-chargeback" style="accent-color:var(--teal);">
-      Also update chargeback/omission &amp; wire deduction entries
-    </label>
-    <div id="bfrs-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
-    <div class="modal-actions">
-      <button class="sf-btn secondary" id="bfrs-cancel">Cancel</button>
-      <button class="sf-btn primary" id="bfrs-run-btn">Run Backfill</button>
-    </div>
-  </div>
-</div>
 
-<!-- Deduplicate Findings Modal -->
-<div class="modal-overlay" id="dedup-modal">
-  <div class="modal" style="width:480px;max-width:95vw;">
-    <div class="modal-title">Deduplicate Findings</div>
-    <div class="modal-sub" style="margin-bottom:20px;">Scan first to see how many duplicates exist, then confirm to delete. Keeps the best finding per recording ID — most recently reviewed wins, then most recently created. Removes duplicate findings and all related queue/chargeback entries. Cannot be undone.</div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
-      <input type="date" id="dedup-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
-      <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
-      <input type="date" id="dedup-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+    <!-- Backfill panel -->
+    <div id="maint-panel-backfill" style="display:none;">
+      <div class="modal-sub" style="margin-bottom:16px;">Re-apply finalized review scores to audit history entries for a date range. Use this to fix scores that show the pre-review value.</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
+        <input type="date" id="bfrs-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
+        <input type="date" id="bfrs-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);margin-bottom:16px;cursor:pointer;">
+        <input type="checkbox" id="bfrs-also-chargeback" style="accent-color:var(--teal);">
+        Also update chargeback/omission &amp; wire deduction entries
+      </label>
+      <div id="bfrs-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
+      <div class="modal-actions">
+        <button class="sf-btn secondary" id="maintenance-close-2">Close</button>
+        <button class="sf-btn primary" id="bfrs-run-btn">Run Backfill</button>
+      </div>
     </div>
-    <div id="dedup-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
-    <div class="modal-actions">
-      <button class="sf-btn secondary" id="dedup-cancel">Cancel</button>
-      <button class="sf-btn danger" id="dedup-confirm-btn">Deduplicate</button>
+
+    <!-- Deduplicate panel -->
+    <div id="maint-panel-dedup" style="display:none;">
+      <div class="modal-sub" style="margin-bottom:16px;">Scan first to see how many duplicates exist, then confirm to delete. Keeps the best finding per recording ID — most recently reviewed wins, then most recently created. Removes duplicate findings and all related queue/chargeback entries. Cannot be undone.</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">From</label>
+        <input type="date" id="dedup-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;">To (inclusive)</label>
+        <input type="date" id="dedup-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;cursor:pointer;" onclick="this.showPicker()">
+      </div>
+      <div id="dedup-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
+      <div class="modal-actions">
+        <button class="sf-btn secondary" id="maintenance-close-3">Close</button>
+        <button class="sf-btn danger" id="dedup-confirm-btn">Scan for Duplicates</button>
+      </div>
+    </div>
+
+    <!-- Wire Cleanup panel -->
+    <div id="maint-panel-wire" style="display:none;">
+      <div class="modal-sub" style="margin-bottom:16px;">Delete all wire deduction report entries from offices that match the current bypass patterns (e.g. JAY, GUN). These offices are excluded from audits, so their entries should not appear in reports. Cannot be undone.</div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:12px;color:var(--text-dim);margin-bottom:16px;">
+        Bypass patterns are managed under <strong style="color:var(--text);">Offices → Bypass</strong>. Only entries whose office name contains a bypass pattern will be removed.
+      </div>
+      <div id="wire-cleanup-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:16px;min-height:18px;"></div>
+      <div class="modal-actions">
+        <button class="sf-btn secondary" id="maintenance-close-4">Close</button>
+        <button class="sf-btn danger" id="wire-cleanup-btn">Remove Bypassed Entries</button>
+      </div>
     </div>
   </div>
 </div>
@@ -3957,11 +3961,28 @@ table { width: 100%; border-collapse: collapse; }
       .finally(function() { btn.disabled = false; btn.textContent = 'Post to Sheet'; });
   });
 
-  // ===== Purge Audit Data =====
-  document.getElementById('purge-open').addEventListener('click', function() { openModal('purge-modal'); });
-  document.getElementById('purge-cancel').addEventListener('click', function() { closeModal('purge-modal'); });
-  backdropClose('purge-modal');
+  // ===== Data Maintenance Modal =====
+  function maintTab(tab) {
+    var tabs = ['purge','backfill','dedup','wire'];
+    var colors = { purge: 'var(--red)', backfill: 'var(--blue)', dedup: 'var(--yellow)', wire: 'var(--cyan)' };
+    tabs.forEach(function(t) {
+      var btn = document.getElementById('maint-tab-' + t);
+      var panel = document.getElementById('maint-panel-' + t);
+      var active = t === tab;
+      btn.style.color = active ? colors[t] : 'var(--text-dim)';
+      btn.style.borderBottomColor = active ? colors[t] : 'transparent';
+      panel.style.display = active ? '' : 'none';
+    });
+  }
+  window.maintTab = maintTab;
 
+  document.getElementById('maintenance-open').addEventListener('click', function() { openModal('maintenance-modal'); });
+  ['maintenance-close','maintenance-close-2','maintenance-close-3','maintenance-close-4'].forEach(function(id) {
+    document.getElementById(id).addEventListener('click', function() { closeModal('maintenance-modal'); });
+  });
+  backdropClose('maintenance-modal');
+
+  // ===== Purge =====
   document.getElementById('purge-confirm-btn').addEventListener('click', function() {
     var fromVal = document.getElementById('purge-date-from').value;
     var toVal = document.getElementById('purge-date-to').value;
@@ -3996,9 +4017,6 @@ table { width: 100%; border-collapse: collapse; }
     document.getElementById('bfrs-date-from').value = today;
     document.getElementById('bfrs-date-to').value = today;
   })();
-  document.getElementById('backfill-scores-open').addEventListener('click', function() { openModal('backfill-scores-modal'); });
-  document.getElementById('bfrs-cancel').addEventListener('click', function() { closeModal('backfill-scores-modal'); });
-  backdropClose('backfill-scores-modal');
 
   document.getElementById('bfrs-run-btn').addEventListener('click', function() {
     var fromVal = document.getElementById('bfrs-date-from').value;
@@ -4044,17 +4062,6 @@ table { width: 100%; border-collapse: collapse; }
 
   // ===== Deduplicate Findings =====
   var dedupPlan = null;
-  document.getElementById('dedup-open').addEventListener('click', function() {
-    dedupPlan = null;
-    document.getElementById('dedup-msg').textContent = '';
-    document.getElementById('dedup-confirm-btn').textContent = 'Scan for Duplicates';
-    openModal('dedup-modal');
-  });
-  document.getElementById('dedup-cancel').addEventListener('click', function() {
-    dedupPlan = null;
-    document.getElementById('dedup-confirm-btn').textContent = 'Scan for Duplicates';
-    closeModal('dedup-modal');
-  });
   document.getElementById('dedup-confirm-btn').addEventListener('click', function() {
     var fromVal = document.getElementById('dedup-date-from').value;
     var toVal = document.getElementById('dedup-date-to').value;
@@ -4153,6 +4160,25 @@ table { width: 100%; border-collapse: collapse; }
       })
       .catch(function() { toast('Scan failed', 'error'); msgEl.textContent = 'Scan failed'; })
       .finally(function() { if (!dedupPlan) btn.disabled = false; });
+  });
+
+  // ===== Wire Cleanup =====
+  document.getElementById('wire-cleanup-btn').addEventListener('click', function() {
+    var btn = this;
+    var msgEl = document.getElementById('wire-cleanup-msg');
+    if (!confirm('Delete all wire deduction entries from bypassed offices (JAY, GUN, etc.)? This cannot be undone.')) return;
+    btn.disabled = true; btn.textContent = 'Removing...';
+    msgEl.textContent = '';
+    fetch('/admin/purge-bypassed-wire-deductions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) { toast(d.error, 'error'); msgEl.textContent = d.error; return; }
+        var msg = 'Removed ' + d.deleted + ' entr' + (d.deleted !== 1 ? 'ies' : 'y') + ' from bypassed offices (' + d.patterns.join(', ') + '). ' + d.kept + ' kept.';
+        msgEl.textContent = msg;
+        toast(msg, 'success');
+      })
+      .catch(function() { toast('Cleanup failed', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Remove Bypassed Entries'; });
   });
 
   // ===== Review Queue Drill-down =====

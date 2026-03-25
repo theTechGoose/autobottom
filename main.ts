@@ -25,7 +25,7 @@ import {
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig,
   getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
-  getChargebackEntries, getWireDeductionEntries, purgeOldEntries, backfillReviewScores,
+  getChargebackEntries, getWireDeductionEntries, purgeOldEntries, purgeBypassedWireDeductions, backfillReviewScores,
   getBadWordConfig, saveBadWordConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
@@ -295,6 +295,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/audit-dimensions": handleSaveAuditDimensions,
   "/admin/post-to-sheet": handlePostToSheet,
   "/admin/purge-old-audits": handlePurgeOldAudits,
+  "/admin/purge-bypassed-wire-deductions": handlePurgeBypassedWireDeductions,
   "/admin/backfill-review-scores": handleBackfillReviewScores,
   "/admin/backfill-chargeback-entries": handleBackfillChargebackEntries,
   "/admin/deduplicate-findings": handleDeduplicateFindings,
@@ -3789,6 +3790,16 @@ async function handlePurgeOldAudits(req: Request): Promise<Response> {
   const result = await purgeOldEntries(auth.orgId, since ?? 0, before);
   console.log(`[ADMIN] 🗑️ Purged audits [${since ? new Date(since).toISOString() : "epoch"} – ${new Date(before).toISOString()}] by ${auth.email}: completed=${result.completed} cb=${result.chargebacks} wire=${result.wire}`);
   return json({ ok: true, since: since ?? 0, before, ...result });
+}
+
+async function handlePurgeBypassedWireDeductions(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const bypassCfg = await getOfficeBypassConfig(auth.orgId);
+  if (!bypassCfg.patterns.length) return json({ error: "no bypass patterns configured" }, 400);
+  const result = await purgeBypassedWireDeductions(auth.orgId, bypassCfg.patterns);
+  console.log(`[ADMIN] 🧹 Purged bypassed wire deductions by ${auth.email}: deleted=${result.deleted} kept=${result.kept} patterns=${bypassCfg.patterns.join(",")}`);
+  return json({ ok: true, deleted: result.deleted, kept: result.kept, patterns: bypassCfg.patterns });
 }
 
 async function handleDeduplicateFindings(req: Request): Promise<Response> {

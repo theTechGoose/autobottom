@@ -316,6 +316,19 @@ export async function getWireDeductionEntry(orgId: OrgId, findingId: string): Pr
   return await s.get([orgId, findingId]) as unknown as WireDeductionEntry | null;
 }
 
+export async function purgeBypassedWireDeductions(orgId: OrgId, patterns: string[]): Promise<{ deleted: number; kept: number }> {
+  const s = await store(WireDeductionEntryDto);
+  const results = await s.listRaw([orgId]);
+  let deleted = 0, kept = 0;
+  for (const r of results) {
+    const v = r.value as unknown as WireDeductionEntry;
+    const office = (v.office ?? "").toLowerCase();
+    const isBypassed = patterns.length > 0 && patterns.some((p) => office.includes(p.toLowerCase()));
+    if (isBypassed) { await s.rawDb.delete(r.key); deleted++; } else { kept++; }
+  }
+  return { deleted, kept };
+}
+
 export async function purgeOldEntries(orgId: OrgId, since: number, before: number): Promise<{ completed: number; chargebacks: number; wire: number }> {
   const [cbStore, wireStore, completedStore] = await Promise.all([
     store(ChargebackEntryDto), store(WireDeductionEntryDto), store(CompletedAuditStatDto),

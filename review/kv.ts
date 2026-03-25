@@ -2,7 +2,7 @@
 
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, writeAuditDoneIndex, updateCompletedStatScore } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, writeAuditDoneIndex, updateCompletedStatScore, getWireDeductionEntry, saveWireDeductionEntry } from "../lib/kv.ts";
 import { populateManagerQueue } from "../manager/kv.ts";
 import { checkBadges, BADGE_CATALOG } from "../shared/badges.ts";
 import type { BadgeDef } from "../shared/badges.ts";
@@ -539,6 +539,22 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
 
   // Update the audit history stat so the score reflects the reviewed result
   await updateCompletedStatScore(orgId, findingId, score);
+
+  // Update wire deduction entry if this is a package (partner) audit
+  const isPackage = (finding as any).recordingIdField === "GenieNumber";
+  if (isPackage) {
+    try {
+      const wireEntry = await getWireDeductionEntry(orgId, findingId);
+      if (wireEntry) {
+        const totalSuccess = correctedAnswers.filter((a: any) => a.answer === "Yes").length;
+        await saveWireDeductionEntry(orgId, { ...wireEntry, score, totalSuccess, questionsAudited: correctedAnswers.length });
+        console.log(`[REVIEW] ${findingId}: 📋 wireDeductionEntry updated — score=${score}% totalSuccess=${totalSuccess}`);
+      }
+    } catch (err) {
+      console.error(`[REVIEW] ${findingId}: ❌ wireDeductionEntry update failed:`, err);
+    }
+  }
+
   console.log(`[REVIEW] ${findingId}: ✅ Saved corrected finding — ${yeses}/${correctedAnswers.length} Yes = ${score}%`);
 
   await fireWebhook(orgId, "terminate", {

@@ -183,7 +183,8 @@ export async function stepFinalize(req: Request): Promise<Response> {
   }
 
   // Write wire deduction entry for partner (package) findings.
-  if (isPackage && score !== undefined) {
+  // Skip bypassed offices (e.g. JAY, GUN) — same logic as review queue bypass.
+  if (isPackage && score !== undefined && !isOfficeBypassed) {
     try {
       const rec = finding.record as any ?? {};
       const questionsAudited = qs?.length ?? 0;

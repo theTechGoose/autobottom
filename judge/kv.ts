@@ -1,6 +1,6 @@
 /** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry, queryAuditDoneIndex } from "../lib/kv.ts";
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
 import { checkBadges } from "../shared/badges.ts";
@@ -939,55 +939,49 @@ export interface DedupPlan {
 }
 
 /**
- * Phase 1 (dry-run): scan all findings, return the dedup plan without deleting anything.
- * Fast path: reads chunk-0 data directly from the list scan — no per-finding KV reads.
- * Falls back to getFinding only for multi-chunk findings (rare).
+ * Phase 1 (dry-run): scan all findings in the date range, return the dedup plan without deleting.
+ *
+ * Uses audit-done-idx (persistent date-indexed secondary index) to get findingIds in range —
+ * avoids a full table scan of all findings. Then batch-parallel fetches chunk-0 for each to
+ * extract recordingId via regex (works on partial JSON, no full finding load needed).
  */
 export async function findDuplicates(orgId: OrgId, since: number, until: number): Promise<DedupPlan> {
   const db = await kv();
 
-  // Single scan — collect chunk-0 JSON strings and _n counts
-  const chunk0 = new Map<string, string>(); // findingId -> raw JSON (chunk 0)
-  const nCount = new Map<string, number>();  // findingId -> chunk count
+  // Step 1: query date-indexed secondary index — only reads entries in the date range
+  const indexEntries = await queryAuditDoneIndex(orgId, since, until);
+  console.log(`[DEDUP] index scan: ${indexEntries.length} entries in range`);
 
-  const scanIter = db.list({ prefix: ["__audit-finding__", orgId] });
-  for await (const entry of scanIter) {
-    const key = entry.key as (string | number)[];
-    if (key.length !== 4) continue;
-    const findingId = key[2] as string;
-    const sub = key[3];
-    if (sub === "_n") nCount.set(findingId, entry.value as number);
-    else if (sub === 0) chunk0.set(findingId, entry.value as string);
-  }
-
-  // Scan review-done for reviewedAt timestamps (one list, no per-finding reads)
+  // reviewedAt from index (doneAt when reason === "reviewed", else use completedAt as fallback)
   const reviewedAtMap = new Map<string, number>();
-  const reviewDoneIter = db.list<{ reviewedAt: string }>({ prefix: orgKey(orgId, "review-done") });
-  for await (const entry of reviewDoneIter) {
-    const key = entry.key as string[];
-    const fid = key[key.length - 1];
-    if (entry.value?.reviewedAt) reviewedAtMap.set(fid, new Date(entry.value.reviewedAt).getTime());
+  for (const e of indexEntries) {
+    if (e.reason === "reviewed" && e.doneAt) reviewedAtMap.set(e.findingId, e.doneAt);
   }
 
-  // Parse findings in date range
+  // Step 2: batch parallel fetch of chunk-0 for each finding (50 at a time)
+  function extractRecordingId(raw: string): string {
+    return raw.match(/"recordingId"\s*:\s*"([^"]+)"/)?.[1]
+      || raw.match(/"RecordId"\s*:\s*(\d+)/)?.[1]
+      || "";
+  }
+
   type Entry = { id: string; recordKey: string; ts: number; reviewedAt: number };
   const inRange: Entry[] = [];
+  const BATCH = 50;
 
-  for (const [findingId, n] of nCount) {
-    if (n === 0) continue;
-    let parsed: Record<string, any> | null = null;
-    if (n === 1) {
-      const raw = chunk0.get(findingId);
-      if (raw) { try { parsed = JSON.parse(raw); } catch { continue; } }
-    } else {
-      parsed = await getFinding(orgId, findingId) as Record<string, any> | null;
+  for (let i = 0; i < indexEntries.length; i += BATCH) {
+    const batch = indexEntries.slice(i, i + BATCH);
+    const chunk0s = await Promise.all(
+      batch.map((e) => db.get<string>(["__audit-finding__", orgId, e.findingId, 0])),
+    );
+    for (let j = 0; j < batch.length; j++) {
+      const raw = chunk0s[j].value;
+      if (!raw) continue;
+      const recordKey = extractRecordingId(raw);
+      if (!recordKey) continue;
+      const idx = batch[j];
+      inRange.push({ id: idx.findingId, recordKey, ts: idx.completedAt, reviewedAt: reviewedAtMap.get(idx.findingId) ?? 0 });
     }
-    if (!parsed) continue;
-    const ts = parsed.job?.timestamp ? new Date(parsed.job.timestamp).getTime() : 0;
-    if (ts < since || ts > until) continue;
-    const recordKey = parsed.recordingId || String(parsed.record?.RecordId ?? "");
-    if (!recordKey) continue;
-    inRange.push({ id: findingId, recordKey, ts, reviewedAt: reviewedAtMap.get(findingId) ?? 0 });
   }
 
   // Group by recordKey, mark winners and losers

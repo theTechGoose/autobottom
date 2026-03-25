@@ -907,14 +907,15 @@ table { width: 100%; border-collapse: collapse; }
 
 <!-- Review Queue Drill-down Modal -->
 <div class="modal-overlay" id="rq-drill-modal">
-  <div class="modal" style="width:780px;max-width:95vw;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div class="modal-title" id="rq-drill-title">Audits</div>
+  <div class="modal" id="rq-drill-inner" style="width:780px;max-width:95vw;transition:width 0.2s,max-width 0.2s,max-height 0.2s;display:flex;flex-direction:column;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-shrink:0;">
+      <div class="modal-title" id="rq-drill-title" style="flex:1;">Audits</div>
+      <input id="rq-drill-search" type="text" placeholder="Filter by record or name…" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:4px 8px;width:200px;">
+      <button id="rq-drill-expand" class="sf-btn secondary" style="font-size:11px;padding:4px 10px;" title="Expand to full screen">⤢</button>
       <button class="sf-btn secondary" id="rq-drill-close" style="font-size:11px;padding:4px 12px;">Close</button>
     </div>
-    <div style="font-size:10px;color:var(--text-dim);margin-bottom:12px;">All pending audits awaiting human review — sorted by QB Record ID</div>
-    <div id="rq-drill-msg" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;min-height:16px;"></div>
-    <div style="max-height:400px;overflow-y:auto;">
+    <div id="rq-drill-msg" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;min-height:16px;flex-shrink:0;"></div>
+    <div id="rq-drill-scroll" style="overflow-y:auto;flex:1;min-height:0;max-height:400px;transition:max-height 0.2s;">
       <table id="rq-drill-table" style="width:100%;border-collapse:collapse;">
         <thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:.6px;position:sticky;top:0;background:var(--bg-raised);">
           <th id="rq-th-record" style="text-align:left;padding:4px 8px 6px 0;font-weight:700;cursor:pointer;user-select:none;">QB Record <span id="rq-sort-ind"></span></th>
@@ -924,9 +925,6 @@ table { width: 100%; border-collapse: collapse; }
         <tbody id="rq-drill-tbody"></tbody>
       </table>
       <div id="rq-drill-empty" style="display:none;color:var(--text-dim);padding:16px 0;text-align:center;font-size:11px;"></div>
-    </div>
-    <div style="margin-top:10px;text-align:right;">
-      <a id="rq-drill-viewall" href="/admin/audits" target="_blank" style="font-size:11px;color:var(--blue);text-decoration:none;">View all in Audit History →</a>
     </div>
   </div>
 </div>
@@ -4043,27 +4041,35 @@ table { width: 100%; border-collapse: collapse; }
 
   // ===== Review Queue Drill-down =====
   var rqDrillType = 'date-leg';
-  var rqDrillHours = 24;
   var rqAllItems = [];
   var rqSortDir = 1;
+  var rqExpanded = false;
 
   function renderRQDrillRows() {
     var tbody = document.getElementById('rq-drill-tbody');
     var emptyEl = document.getElementById('rq-drill-empty');
-    if (!rqAllItems.length) {
-      tbody.innerHTML = '';
-      emptyEl.style.display = '';
-      emptyEl.textContent = 'No audits in this range';
-      return;
+    var searchVal = (document.getElementById('rq-drill-search').value || '').toLowerCase().trim();
+    var filtered = rqAllItems.slice();
+    if (searchVal) {
+      filtered = filtered.filter(function(a) {
+        return (a.recordId || '').toLowerCase().indexOf(searchVal) !== -1
+          || (a.voName || '').toLowerCase().indexOf(searchVal) !== -1;
+      });
     }
-    emptyEl.style.display = 'none';
-    var items = rqAllItems.slice().sort(function(a, b) {
+    filtered.sort(function(a, b) {
       var ar = parseInt(a.recordId || '0', 10);
       var br = parseInt(b.recordId || '0', 10);
       return (ar - br) * rqSortDir;
     });
+    if (!filtered.length) {
+      tbody.innerHTML = '';
+      emptyEl.style.display = '';
+      emptyEl.textContent = searchVal ? 'No matches for "' + searchVal + '"' : 'No pending audits';
+      return;
+    }
+    emptyEl.style.display = 'none';
     var html = '';
-    items.forEach(function(a) {
+    filtered.forEach(function(a) {
       var name = (a.voName || '—');
       html += '<tr style="border-top:1px solid var(--border);transition:background 0.1s;" '
         + 'onmouseover="this.style.background=\\'var(--bg-surface)\\'" onmouseout="this.style.background=\\'\\'">'
@@ -4075,6 +4081,8 @@ table { width: 100%; border-collapse: collapse; }
         + '</tr>';
     });
     tbody.innerHTML = html;
+    var msgEl = document.getElementById('rq-drill-msg');
+    if (searchVal) msgEl.textContent = 'Showing ' + filtered.length + ' of ' + rqAllItems.length + ' pending audits';
   }
 
   function loadRQDrill() {
@@ -4098,12 +4106,23 @@ table { width: 100%; border-collapse: collapse; }
 
   function openRQDrill(type) {
     rqDrillType = type;
+    rqSortDir = 1;
+    document.getElementById('rq-sort-ind').textContent = '';
+    document.getElementById('rq-drill-search').value = '';
     document.getElementById('rq-drill-title').textContent = (type === 'date-leg' ? 'Internal' : 'Partner') + ' Pending Audits';
     openModal('rq-drill-modal');
     loadRQDrill();
   }
 
-  document.getElementById('rq-drill-close').addEventListener('click', function() { closeModal('rq-drill-modal'); });
+  document.getElementById('rq-drill-close').addEventListener('click', function() {
+    if (rqExpanded) { rqExpanded = false; applyRQExpand(); }
+    closeModal('rq-drill-modal');
+  });
+  document.getElementById('rq-drill-expand').addEventListener('click', function() {
+    rqExpanded = !rqExpanded;
+    applyRQExpand();
+  });
+  document.getElementById('rq-drill-search').addEventListener('input', renderRQDrillRows);
   document.getElementById('rq-row-internal').addEventListener('click', function() { openRQDrill('date-leg'); });
   document.getElementById('rq-row-partner').addEventListener('click', function() { openRQDrill('package'); });
   document.getElementById('rq-th-record').addEventListener('click', function() {
@@ -4111,6 +4130,23 @@ table { width: 100%; border-collapse: collapse; }
     document.getElementById('rq-sort-ind').textContent = rqSortDir === 1 ? ' ▲' : ' ▼';
     renderRQDrillRows();
   });
+
+  function applyRQExpand() {
+    var inner = document.getElementById('rq-drill-inner');
+    var scroll = document.getElementById('rq-drill-scroll');
+    var btn = document.getElementById('rq-drill-expand');
+    if (rqExpanded) {
+      inner.style.width = '95vw'; inner.style.maxWidth = '95vw'; inner.style.height = '90vh';
+      scroll.style.maxHeight = 'none';
+      btn.textContent = '⤡';
+      btn.title = 'Collapse';
+    } else {
+      inner.style.width = '780px'; inner.style.maxWidth = '95vw'; inner.style.height = '';
+      scroll.style.maxHeight = '400px';
+      btn.textContent = '⤢';
+      btn.title = 'Expand to full screen';
+    }
+  }
 
   // ===== Bad Words =====
   var bwConfig = { enabled: false, allOffices: false, emails: [], words: [], officePatterns: [] };

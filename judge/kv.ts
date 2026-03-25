@@ -1,6 +1,6 @@
 /** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry, queryAuditDoneIndex } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry, queryAuditDoneIndex, deleteCompletedStat, deleteAuditDoneIndexEntry } from "../lib/kv.ts";
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
 import { checkBadges } from "../shared/badges.ts";
@@ -1030,7 +1030,7 @@ export async function deleteDuplicates(
   const losers = toDelete.filter((d) => !d.keep);
   let deleted = 0;
   for (const dup of losers) {
-    await _deleteFindingAndRelated(orgId, dup.id, db);
+    await _deleteFindingAndRelated(orgId, dup.id, dup.ts, db);
     deleted++;
     onProgress(deleted, losers.length, dup.id);
   }
@@ -1038,7 +1038,7 @@ export async function deleteDuplicates(
   return { deleted };
 }
 
-async function _deleteFindingAndRelated(orgId: OrgId, findingId: string, db: Deno.Kv): Promise<void> {
+async function _deleteFindingAndRelated(orgId: OrgId, findingId: string, completedAt: number, db: Deno.Kv): Promise<void> {
   const keys: Deno.KvKey[] = [];
 
   // Finding chunks
@@ -1073,5 +1073,9 @@ async function _deleteFindingAndRelated(orgId: OrgId, findingId: string, db: Den
   await deleteChargebackEntry(orgId, findingId);
   await deleteWireDeductionEntry(orgId, findingId);
 
-  console.log(`[DEDUP] 🗑️ deleted ${findingId}: ${keys.length} KV entries + cb/wire`);
+  // Audit history indexes
+  await deleteCompletedStat(orgId, findingId);
+  await deleteAuditDoneIndexEntry(orgId, findingId, completedAt);
+
+  console.log(`[DEDUP] 🗑️ deleted ${findingId}: ${keys.length} KV entries + cb/wire/history`);
 }

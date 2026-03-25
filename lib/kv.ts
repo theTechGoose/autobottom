@@ -374,6 +374,23 @@ export async function updateCompletedStatScore(orgId: OrgId, findingId: string, 
   }
 }
 
+export async function deleteCompletedStat(orgId: OrgId, findingId: string): Promise<void> {
+  const c = await store(CompletedAuditStatDto);
+  const results = await c.listRaw([orgId]);
+  for (const r of results) {
+    const v = r.value as unknown as CompletedAuditStat;
+    if (v.findingId === findingId) {
+      await c.rawDb.delete(r.key);
+      return;
+    }
+  }
+}
+
+export async function deleteAuditDoneIndexEntry(orgId: OrgId, findingId: string, completedAt: number): Promise<void> {
+  const kvDb = await db();
+  await kvDb.delete(orgKey(orgId, "audit-done-idx", padTs(completedAt), findingId));
+}
+
 export async function backfillReviewScores(orgId: OrgId, since: number, until: number): Promise<{ scanned: number; updated: number }> {
   const c = await store(CompletedAuditStatDto);
   const results = await c.listRaw([orgId]);

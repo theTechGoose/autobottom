@@ -2117,11 +2117,9 @@ async function handleGetWireDeductions(req: Request): Promise<Response> {
   const since = parseInt(url.searchParams.get("since") ?? "0", 10);
   const until = parseInt(url.searchParams.get("until") ?? String(Date.now()), 10);
   if (!since) return json({ error: "since required" }, 400);
-  const orgId = env.chargebacksOrgId as OrgId;
-  if (!orgId) return json({ error: "org not configured" }, 500);
-  const result = await getWireDeductionEntries(orgId, since, until);
-  console.log(`[WIRE-DEDUCTIONS] orgId=${orgId} since=${since} until=${until} found=${result.items.length} total=${result.totalCount} newestTs=${result.newestTs}`);
-  return json({ items: result.items, _debug: { totalCount: result.totalCount, newestTs: result.newestTs, orgId } });
+  const result = await getWireDeductionEntries(auth.orgId, since, until);
+  console.log(`[WIRE-DEDUCTIONS] orgId=${auth.orgId} since=${since} until=${until} found=${result.items.length} total=${result.totalCount} newestTs=${result.newestTs}`);
+  return json({ items: result.items, _debug: { totalCount: result.totalCount, newestTs: result.newestTs, orgId: auth.orgId } });
 }
 
 async function handlePostToSheet(req: Request): Promise<Response> {

@@ -3195,7 +3195,7 @@ table { width: 100%; border-collapse: collapse; }
 
   // ── List view ─────────────────────────────────────────────────────────
   function renderERList() {
-    var html = '<div class="er-list-hdr"><div class="modal-title">Email Reports</div><button class="sf-btn primary" id="er-new" style="font-size:11px;">+ New Report</button></div>';
+    var html = '<div class="er-list-hdr"><div class="modal-title">Email Reports</div><div style="display:flex;gap:8px;"><button class="sf-btn" id="er-new-weekly" style="font-size:11px;background:#238636;border-color:#238636;color:#fff;">+ Weekly Report</button><button class="sf-btn primary" id="er-new" style="font-size:11px;">+ New Report</button></div></div>';
     if (!emailConfigs.length) {
       html += '<div class="er-empty">No reports yet. Click <strong>+ New Report</strong> to create one.</div>';
     } else {
@@ -3218,6 +3218,7 @@ table { width: 100%; border-collapse: collapse; }
     }
     erContent.innerHTML = html;
     document.getElementById('er-new').addEventListener('click', function() { renderEREdit(null); });
+    document.getElementById('er-new-weekly').addEventListener('click', function() { renderERWeekly(); });
     erContent.querySelectorAll('tr[data-idx]').forEach(function(row) {
       row.querySelectorAll('td:not(:last-child):not(.er-cb-cell)').forEach(function(td) {
         td.addEventListener('click', function() { renderEREdit(emailConfigs[parseInt(row.dataset.idx)]); });
@@ -3540,6 +3541,238 @@ table { width: 100%; border-collapse: collapse; }
         .catch(function(e){toast(e.message,'error');btnDone(saveBtn,'Save Report');});
     });
     actBar.appendChild(cancelBtn); actBar.appendChild(saveBtn); erContent.appendChild(actBar);
+  }
+
+  // ── Weekly report creation view ──────────────────────────────────────────
+  function renderERWeekly() {
+    erContent.innerHTML = '';
+    var wState = { type: null, department: null, shift: null, office: null };
+    var wDims = null, wPartnerDims = null, wScopes = null;
+    var recipChipWrap, ccChipWrap, bccChipWrap;
+    var weeklyChipCtrls = {};
+    var secCont, nameInput, failedOnlyInput, tplSel, editForm;
+
+    // Header
+    var hdr = document.createElement('div'); hdr.className = 'er-edit-hdr';
+    var left = document.createElement('div'); left.className = 'er-edit-hdr-left';
+    var backBtn = document.createElement('button'); backBtn.className = 'er-back'; backBtn.innerHTML = '&#8592;';
+    backBtn.addEventListener('click', function() { renderERList(); });
+    var titleEl = document.createElement('div'); titleEl.className = 'modal-title'; titleEl.style.marginBottom = '0'; titleEl.textContent = 'New Weekly Report';
+    left.appendChild(backBtn); left.appendChild(titleEl);
+    var acts = document.createElement('div'); acts.className = 'er-edit-actions';
+    var pvBtn = document.createElement('button'); pvBtn.className = 'sf-btn secondary'; pvBtn.style.fontSize = '11px'; pvBtn.textContent = '\uD83D\uDC41 Preview';
+    pvBtn.addEventListener('click', function() {
+      if (!wState.type) { toast('Select an audit type first','error'); return; }
+      if (!editForm || editForm.style.display === 'none') { toast('Complete the setup first','error'); return; }
+      btnLoad(pvBtn,'...');
+      var pvPayload = { name: nameInput.value.trim()||'Weekly Preview', weeklyType: wState.type, onlyCompleted: true, dateRange: {mode:'weekly',startDay:1}, failedOnly: failedOnlyInput.checked, topLevelFilters: buildTopLevelFilters(), reportSections: collectSections() };
+      fetch('/admin/email-reports/preview-inline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pvPayload)})
+        .then(function(r){if(!r.ok)return r.json().then(function(e){throw new Error(e.error||'HTTP '+r.status);});return r.text();})
+        .then(function(html){btnDone(pvBtn,'\uD83D\uDC41 Preview');var w=window.open('','_blank');if(!w){toast('Allow popups','error');return;}w.document.write(html);w.document.close();})
+        .catch(function(e){toast(e.message,'error');btnDone(pvBtn,'\uD83D\uDC41 Preview');});
+    });
+    acts.appendChild(pvBtn); hdr.appendChild(left); hdr.appendChild(acts); erContent.appendChild(hdr);
+
+    // Step 1: Type
+    var step1 = document.createElement('div'); step1.style.marginBottom = '20px';
+    var s1Lbl = document.createElement('div'); s1Lbl.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin-bottom:10px;'; s1Lbl.textContent = 'What type of audit?';
+    var typeBtnRow = document.createElement('div'); typeBtnRow.style.cssText = 'display:flex;gap:8px;';
+    ['internal','partner','both'].forEach(function(t) {
+      var btn = document.createElement('button'); btn.className = 'wh-tab'; btn.type = 'button';
+      btn.textContent = t.charAt(0).toUpperCase()+t.slice(1); btn.dataset.type = t;
+      btn.addEventListener('click', function() {
+        typeBtnRow.querySelectorAll('.wh-tab').forEach(function(b){b.classList.remove('active');}); btn.classList.add('active');
+        wState.type = t; wState.department = null; wState.shift = null; wState.office = null;
+        updateStep2();
+      });
+      typeBtnRow.appendChild(btn);
+    });
+    step1.appendChild(s1Lbl); step1.appendChild(typeBtnRow); erContent.appendChild(step1);
+
+    // Step 2a: Internal
+    var step2Int = document.createElement('div'); step2Int.style.cssText = 'display:none;margin-bottom:20px;';
+    var s2IntLbl = document.createElement('div'); s2IntLbl.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin-bottom:10px;'; s2IntLbl.textContent = 'Department & Shift';
+    var deptShiftRow = document.createElement('div'); deptShiftRow.style.cssText = 'display:flex;gap:10px;';
+    var deptSel = document.createElement('select'); deptSel.className = 'sf-input'; deptSel.style.flex = '1'; deptSel.innerHTML = '<option value="">Loading...</option>';
+    var shiftSel = document.createElement('select'); shiftSel.className = 'sf-input'; shiftSel.style.flex = '1'; shiftSel.innerHTML = '<option value="">Any shift</option>';
+    deptShiftRow.appendChild(deptSel); deptShiftRow.appendChild(shiftSel);
+    step2Int.appendChild(s2IntLbl); step2Int.appendChild(deptShiftRow); erContent.appendChild(step2Int);
+
+    // Step 2b: Partner
+    var step2Part = document.createElement('div'); step2Part.style.cssText = 'display:none;margin-bottom:20px;';
+    var s2PartLbl = document.createElement('div'); s2PartLbl.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin-bottom:10px;'; s2PartLbl.textContent = 'Office';
+    var officeSel = document.createElement('select'); officeSel.className = 'sf-input'; officeSel.innerHTML = '<option value="">Loading...</option>';
+    step2Part.appendChild(s2PartLbl); step2Part.appendChild(officeSel); erContent.appendChild(step2Part);
+
+    // Edit form (hidden until step 2 answered)
+    editForm = document.createElement('div'); editForm.style.display = 'none'; erContent.appendChild(editForm);
+    // Hidden er-only-completed (always true for weekly, needed for erBuildSectionCard compat)
+    var hiddenOC = document.createElement('input'); hiddenOC.type = 'checkbox'; hiddenOC.id = 'er-only-completed'; hiddenOC.checked = true; hiddenOC.style.display = 'none'; editForm.appendChild(hiddenOC);
+
+    // failedOnly toggle
+    var foSep = document.createElement('div'); foSep.className = 'sf-sep'; editForm.appendChild(foSep);
+    var foRow = document.createElement('div'); foRow.className = 'er-status-row';
+    var foWrap = document.createElement('label'); foWrap.className = 'er-toggle';
+    failedOnlyInput = document.createElement('input'); failedOnlyInput.type = 'checkbox'; failedOnlyInput.id = 'er-weekly-failed-only';
+    var foSlider = document.createElement('span'); foSlider.className = 'er-toggle-slider';
+    foWrap.appendChild(failedOnlyInput); foWrap.appendChild(foSlider);
+    var foLbl = document.createElement('span'); foLbl.className = 'er-toggle-label'; foLbl.textContent = 'Failed audits only (score < 100)';
+    foRow.appendChild(foWrap); foRow.appendChild(foLbl); editForm.appendChild(foRow);
+
+    // Name
+    var nameWrap = document.createElement('div'); nameWrap.className = 'sf';
+    var nameLblEl = document.createElement('label'); nameLblEl.className = 'sf-label'; nameLblEl.textContent = 'Report Name';
+    nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.className = 'sf-input'; nameInput.placeholder = 'Auto-generated from selections';
+    nameWrap.appendChild(nameLblEl); nameWrap.appendChild(nameInput); editForm.appendChild(nameWrap);
+
+    // Recipients / CC / BCC
+    [{field:'recipients',label:'Recipients'},{field:'cc',label:'CC'},{field:'bcc',label:'BCC'}].forEach(function(item) {
+      var wrap = document.createElement('div'); wrap.className = 'sf';
+      var lbl = document.createElement('label'); lbl.className = 'sf-label'; lbl.textContent = item.label;
+      var chipWrap = document.createElement('div'); chipWrap.className = 'er-chip-wrap';
+      if (item.field==='recipients') recipChipWrap = chipWrap;
+      else if (item.field==='cc') ccChipWrap = chipWrap;
+      else bccChipWrap = chipWrap;
+      wrap.appendChild(lbl); wrap.appendChild(chipWrap); editForm.appendChild(wrap);
+      weeklyChipCtrls[item.field] = erChipInput(chipWrap, []);
+    });
+
+    // Template
+    var tplWrap = document.createElement('div'); tplWrap.className = 'sf'; tplWrap.style.marginTop = '14px';
+    var tplLblEl = document.createElement('label'); tplLblEl.className = 'sf-label'; tplLblEl.textContent = 'Email Template';
+    tplSel = document.createElement('select'); tplSel.className = 'sf-input';
+    var tplNone = document.createElement('option'); tplNone.value = ''; tplNone.textContent = 'None (use default dark template)'; tplSel.appendChild(tplNone);
+    erTemplates.forEach(function(t){var o=document.createElement('option');o.value=t.id;o.textContent=t.name;tplSel.appendChild(o);});
+    tplWrap.appendChild(tplLblEl); tplWrap.appendChild(tplSel); editForm.appendChild(tplWrap);
+
+    // Report sections
+    var secHdrDiv = document.createElement('div'); secHdrDiv.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;margin-top:14px;';
+    var secHdrLbl = document.createElement('div'); secHdrLbl.className = 'sf-label'; secHdrLbl.style.marginBottom = '0'; secHdrLbl.textContent = 'Report Sections';
+    var addSecBtn = document.createElement('button'); addSecBtn.className = 'sf-btn secondary'; addSecBtn.style.fontSize = '11px'; addSecBtn.textContent = '+ Add Section';
+    addSecBtn.addEventListener('click', function(){erBuildSectionCard(null, secCont);});
+    secHdrDiv.appendChild(secHdrLbl); secHdrDiv.appendChild(addSecBtn); editForm.appendChild(secHdrDiv);
+    secCont = document.createElement('div'); editForm.appendChild(secCont);
+
+    // Save / Cancel
+    var actBar = document.createElement('div'); actBar.className = 'modal-actions';
+    var cancelBtn = document.createElement('button'); cancelBtn.className = 'sf-btn secondary'; cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', function(){erModal.classList.remove('open');});
+    var saveBtn = document.createElement('button'); saveBtn.className = 'sf-btn primary'; saveBtn.textContent = 'Save Report';
+    saveBtn.addEventListener('click', function() {
+      var name = nameInput.value.trim();
+      if (!name) { toast('Report name required','error'); return; }
+      var recips = weeklyChipCtrls.recipients.getValues();
+      if (!recips.length) { toast('At least one recipient required','error'); return; }
+      var payload = {
+        name: name, weeklyType: wState.type,
+        weeklyDepartment: wState.type==='internal' ? (wState.department||undefined) : undefined,
+        weeklyShift: wState.type==='internal' ? (wState.shift||undefined) : undefined,
+        weeklyOffice: wState.type==='partner' ? (wState.office||undefined) : undefined,
+        weeklyAutoRecipients: deriveAutoRecipients(),
+        failedOnly: failedOnlyInput.checked,
+        recipients: recips, cc: weeklyChipCtrls.cc.getValues(), bcc: weeklyChipCtrls.bcc.getValues(),
+        templateId: tplSel.value||undefined, topLevelFilters: buildTopLevelFilters(), reportSections: collectSections(), disabled: false,
+      };
+      btnLoad(saveBtn,'Saving\u2026');
+      fetch('/admin/email-reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(saved){emailConfigs.push(saved);toast('Weekly report saved','success');btnDone(saveBtn,'Save Report');renderERList();})
+        .catch(function(e){toast(e.message,'error');btnDone(saveBtn,'Save Report');});
+    });
+    actBar.appendChild(cancelBtn); actBar.appendChild(saveBtn); editForm.appendChild(actBar);
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+    function buildTopLevelFilters() {
+      var f = [];
+      if (wState.type==='internal') {
+        f.push({field:'auditType',operator:'equals',value:'internal'});
+        if (wState.department) f.push({field:'department',operator:'equals',value:wState.department});
+        if (wState.shift) f.push({field:'shift',operator:'equals',value:wState.shift});
+      } else if (wState.type==='partner') {
+        f.push({field:'auditType',operator:'equals',value:'partner'});
+        if (wState.office) f.push({field:'department',operator:'equals',value:wState.office});
+      }
+      return f;
+    }
+    function autoName() {
+      if (!wState.type) return '';
+      if (wState.type==='both') return 'All Audits \u2014 Weekly';
+      if (wState.type==='partner') return (wState.office||'Partner')+' \u2014 Weekly';
+      var parts=[]; if(wState.department)parts.push(wState.department); if(wState.shift)parts.push(wState.shift);
+      return (parts.length?parts.join(' \u2014 '):'Internal')+' \u2014 Weekly';
+    }
+    function deriveAutoRecipients() {
+      if (wState.type==='partner' && wPartnerDims && wState.office) return (wPartnerDims.offices||{})[wState.office]||[];
+      if (wState.type==='internal' && wScopes && wState.department) {
+        var r=[];
+        Object.keys(wScopes).forEach(function(email){
+          var s=wScopes[email];
+          if (s.departments&&s.departments.includes(wState.department)&&(!wState.shift||!s.shifts||s.shifts.includes(wState.shift))) r.push(email);
+        });
+        return r;
+      }
+      return [];
+    }
+    function resetRecipients() { recipChipWrap.innerHTML=''; weeklyChipCtrls.recipients=erChipInput(recipChipWrap, deriveAutoRecipients()); }
+    function collectSections() {
+      var sections=[];
+      secCont.querySelectorAll('.er-section-card').forEach(function(card){
+        var hi=card.querySelector('.er-sec-hdr'); var cols=[];
+        card.querySelectorAll('.er-sec-cols input:checked').forEach(function(cb){cols.push(cb.value);});
+        var criteria=[];
+        card.querySelectorAll('.er-rule-row').forEach(function(row){
+          var sels=row.querySelectorAll('select'); var val=row.querySelector('.er-rule-val');
+          if(val&&val.value.trim()) criteria.push({field:sels[0].value,operator:sels[1].value,value:val.value.trim()});
+        });
+        sections.push({header:(hi?hi.value.trim():'')||'Section',criteria:criteria,columns:cols});
+      });
+      return sections;
+    }
+    function populateEditForm() {
+      if (!nameInput.value.trim()) nameInput.value = autoName();
+      resetRecipients();
+      if (secCont.children.length===0) {
+        erBuildSectionCard({header:autoName(),columns:['finalizedAt','voName','department','score','recordId','findingId'],criteria:[]}, secCont);
+      }
+      editForm.style.display = '';
+    }
+    function updateStep2() {
+      step2Int.style.display='none'; step2Part.style.display='none'; editForm.style.display='none';
+      if (secCont) secCont.innerHTML='';
+      if (nameInput) nameInput.value='';
+      if (recipChipWrap) { recipChipWrap.innerHTML=''; weeklyChipCtrls.recipients=erChipInput(recipChipWrap,[]); }
+      if (wState.type==='internal') { step2Int.style.display=''; loadInternalDims(); }
+      else if (wState.type==='partner') { step2Part.style.display=''; loadPartnerDims(); }
+      else if (wState.type==='both') { populateEditForm(); }
+    }
+    function loadInternalDims() {
+      if (wDims) { renderDeptOpts(); return; }
+      deptSel.innerHTML='<option value="">Loading...</option>';
+      Promise.all([
+        fetch('/admin/audit-dimensions').then(function(r){return r.json();}),
+        fetch('/admin/manager-scopes').then(function(r){return r.json();}).catch(function(){return {};})
+      ]).then(function(res){wDims=res[0];wScopes=res[1];renderDeptOpts();}).catch(function(){deptSel.innerHTML='<option value="">Failed to load</option>';});
+    }
+    function renderDeptOpts() {
+      var dims=wDims||{departments:[],shifts:[]};
+      deptSel.innerHTML='<option value="">Select department...</option>';
+      (dims.departments||[]).forEach(function(d){var o=document.createElement('option');o.value=d;o.textContent=d;deptSel.appendChild(o);});
+      shiftSel.innerHTML='<option value="">Any shift</option>';
+      (dims.shifts||[]).forEach(function(s){var o=document.createElement('option');o.value=s;o.textContent=s;shiftSel.appendChild(o);});
+      deptSel.onchange=function(){wState.department=deptSel.value||null;wState.shift=shiftSel.value||null;if(wState.department){nameInput.value=autoName();populateEditForm();}else{editForm.style.display='none';}};
+      shiftSel.onchange=function(){wState.shift=shiftSel.value||null;if(wState.department){nameInput.value=autoName();resetRecipients();}};
+    }
+    function loadPartnerDims() {
+      if (wPartnerDims) { renderOfficeOpts(); return; }
+      officeSel.innerHTML='<option value="">Loading...</option>';
+      fetch('/admin/partner-dimensions').then(function(r){return r.json();}).then(function(dims){wPartnerDims=dims;renderOfficeOpts();}).catch(function(){officeSel.innerHTML='<option value="">Failed to load</option>';});
+    }
+    function renderOfficeOpts() {
+      var offices=Object.keys((wPartnerDims||{}).offices||{}).sort();
+      officeSel.innerHTML='<option value="">Select office...</option>';
+      offices.forEach(function(o){var opt=document.createElement('option');opt.value=o;opt.textContent=o;officeSel.appendChild(opt);});
+      officeSel.onchange=function(){wState.office=officeSel.value||null;if(wState.office){nameInput.value=autoName();populateEditForm();}else{editForm.style.display='none';}};
+    }
   }
 
   function loadEmailConfigs() {

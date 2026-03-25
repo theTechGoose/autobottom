@@ -555,27 +555,30 @@ export async function getReviewStats(orgId: OrgId): Promise<{
   pendingAuditCount: number;
   dateLegPending: number; packagePending: number;
   dateLegDecided: number; packageDecided: number;
+  dateLegPendingFindings: number; packagePendingFindings: number;
 }> {
   const db = await kv();
   let pending = 0, decided = 0;
   let dateLegPending = 0, packagePending = 0;
   let dateLegDecided = 0, packageDecided = 0;
   const pendingAudits = new Set<string>();
+  const dateLegPendingFindingSet = new Set<string>();
+  const packagePendingFindingSet = new Set<string>();
 
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") })) {
     pending++;
     const fId = entry.value?.findingId || (entry.key[2] as string);
     if (fId) pendingAudits.add(fId);
-    if (entry.value?.recordingIdField === "GenieNumber") packagePending++;
-    else dateLegPending++;
+    if (entry.value?.recordingIdField === "GenieNumber") { packagePending++; if (fId) packagePendingFindingSet.add(fId); }
+    else { dateLegPending++; if (fId) dateLegPendingFindingSet.add(fId); }
   }
   // Active items count as pending (in-progress, not yet decided)
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-active") })) {
     pending++;
     const fId = entry.value?.findingId || (entry.key[3] as string);
     if (fId) pendingAudits.add(fId);
-    if (entry.value?.recordingIdField === "GenieNumber") packagePending++;
-    else dateLegPending++;
+    if (entry.value?.recordingIdField === "GenieNumber") { packagePending++; if (fId) packagePendingFindingSet.add(fId); }
+    else { dateLegPending++; if (fId) dateLegPendingFindingSet.add(fId); }
   }
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-decided") })) {
     decided++;
@@ -583,7 +586,38 @@ export async function getReviewStats(orgId: OrgId): Promise<{
     else dateLegDecided++;
   }
 
-  return { pending, decided, pendingAuditCount: pendingAudits.size, dateLegPending, packagePending, dateLegDecided, packageDecided };
+  return {
+    pending, decided, pendingAuditCount: pendingAudits.size,
+    dateLegPending, packagePending, dateLegDecided, packageDecided,
+    dateLegPendingFindings: dateLegPendingFindingSet.size,
+    packagePendingFindings: packagePendingFindingSet.size,
+  };
+}
+
+export async function listReviewQueueFindings(
+  orgId: OrgId,
+  type?: "date-leg" | "package",
+  limit = 200,
+): Promise<{ items: Array<{ findingId: string; recordId?: string; voName?: string }>; total: number }> {
+  const db = await kv();
+  const seen = new Map<string, { findingId: string; recordId?: string; voName?: string }>();
+
+  const addEntry = (item: ReviewItem | null | undefined) => {
+    if (!item?.findingId) return;
+    const isPackage = item.recordingIdField === "GenieNumber";
+    if (type === "date-leg" && isPackage) return;
+    if (type === "package" && !isPackage) return;
+    if (!seen.has(item.findingId)) {
+      const name = item.recordMeta?.guestName || item.recordMeta?.officeName;
+      seen.set(item.findingId, { findingId: item.findingId, recordId: item.recordId, voName: name });
+    }
+  };
+
+  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") })) addEntry(entry.value);
+  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-active") })) addEntry(entry.value);
+
+  const items = Array.from(seen.values());
+  return { items: items.slice(0, limit), total: items.length };
 }
 
 // -- Reviewer Dashboard --

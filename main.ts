@@ -70,7 +70,7 @@ import {
   handleGetSettings, handleSaveSettings, handleStats, handleBackfill,
   handleReviewDashboardPage, handleReviewDashboardData, handleReviewMe, handlePreviewFinding,
 } from "./review/handlers.ts";
-import { getReviewStats, populateReviewQueue, clearReviewQueue, getReviewedFindingIds } from "./review/kv.ts";
+import { getReviewStats, populateReviewQueue, clearReviewQueue, getReviewedFindingIds, listReviewQueueFindings } from "./review/kv.ts";
 
 // Judge (unified auth)
 import {
@@ -453,6 +453,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/dashboard/section": handleDashboardSection,
   "/admin/audits": requireRolePageAuth(["admin"], handleAuditsPage),
   "/admin/audits/data": handleAuditsData,
+  "/admin/review-queue/data": handleReviewQueueData,
   "/admin/api/me": handleAdminMe,
   "/admin/retry-finding": handleRetryFinding,
 
@@ -765,6 +766,16 @@ async function handleAuditsData(req: Request): Promise<Response> {
 
   console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}, shift=${shift || "all"}`);
   return json({ items, total, pages, page, owners, departments, shifts });
+}
+
+async function handleReviewQueueData(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const url = new URL(req.url);
+  const typeParam = url.searchParams.get("type") ?? "";
+  const type = typeParam === "date-leg" ? "date-leg" : typeParam === "package" ? "package" : undefined;
+  const { items, total } = await listReviewQueueFindings(auth.orgId, type, 200);
+  return json({ items, total });
 }
 
 async function handleAuditsPage(req: Request): Promise<Response> {

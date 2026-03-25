@@ -908,7 +908,7 @@ table { width: 100%; border-collapse: collapse; }
 
     <!-- Wire Cleanup panel -->
     <div id="maint-panel-wire" style="display:none;">
-      <div class="modal-sub" style="margin-bottom:16px;">Delete all wire deduction report entries from offices that match the current bypass patterns (e.g. JAY, GUN). These offices are excluded from audits, so their entries should not appear in reports. Cannot be undone.</div>
+      <div class="modal-sub" style="margin-bottom:16px;">Removes all wire deduction report entries <em>and</em> clears any pending review/judge queue items from bypassed offices (e.g. JAY, GUN). Cannot be undone.</div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:12px;color:var(--text-dim);margin-bottom:16px;">
         Bypass patterns are managed under <strong style="color:var(--text);">Offices → Bypass</strong>. Only entries whose office name contains a bypass pattern will be removed.
       </div>
@@ -4204,19 +4204,61 @@ table { width: 100%; border-collapse: collapse; }
   document.getElementById('wire-cleanup-btn').addEventListener('click', function() {
     var btn = this;
     var msgEl = document.getElementById('wire-cleanup-msg');
-    if (!confirm('Delete all wire deduction entries from bypassed offices (JAY, GUN, etc.)? This cannot be undone.')) return;
-    btn.disabled = true; btn.textContent = 'Removing...';
-    msgEl.textContent = '';
+    if (!confirm('Delete all wire deduction entries + remove bypassed offices from review/judge queues? Cannot be undone.')) return;
+    btn.disabled = true; btn.textContent = 'Running...';
+    msgEl.innerHTML = '';
+    var startMs = Date.now();
+    function elapsed() { return ((Date.now() - startMs) / 1000).toFixed(1) + 's'; }
+    function appendLine(text, color) {
+      var line = document.createElement('div');
+      line.style.cssText = 'font-size:11px;font-family:monospace;color:' + (color || 'var(--text-dim)') + ';line-height:1.6;';
+      line.textContent = text;
+      msgEl.appendChild(line);
+      msgEl.scrollTop = msgEl.scrollHeight;
+    }
+    msgEl.style.cssText = 'max-height:180px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:16px;';
+    appendLine('Starting cleanup...');
     fetch('/admin/purge-bypassed-wire-deductions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.error) { toast(d.error, 'error'); msgEl.textContent = d.error; return; }
-        var msg = 'Removed ' + d.deleted + ' entr' + (d.deleted !== 1 ? 'ies' : 'y') + ' from bypassed offices (' + d.patterns.join(', ') + '). ' + d.kept + ' kept.';
-        msgEl.textContent = msg;
-        toast(msg, 'success');
+      .then(function(r) {
+        var reader = r.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+        function read() {
+          return reader.read().then(function(chunk) {
+            if (chunk.done) return;
+            buf += decoder.decode(chunk.value, { stream: true });
+            var parts = buf.split('\n\n');
+            buf = parts.pop();
+            for (var i = 0; i < parts.length; i++) {
+              var line = parts[i];
+              if (line.startsWith(': ')) continue; // heartbeat
+              if (line.startsWith('data: ')) {
+                try {
+                  var d = JSON.parse(line.slice(6));
+                  if (d.error) { appendLine('❌ ' + d.error, 'var(--red)'); }
+                  else if (d.phase === 'wire' && d.office) { appendLine('[' + elapsed() + '] 🗑️  Wire entry — ' + d.office + ' / ' + (d.guestName || '?') + ' (#' + d.deleted + ')'); }
+                  else if (d.phase === 'wire' && d.status) { appendLine('[' + elapsed() + '] 📋 Scanning wire deduction entries...'); }
+                  else if (d.phase === 'queues') { appendLine('[' + elapsed() + '] 📋 Scanning review & judge queues...'); }
+                  else if (d.phase === 'review') { appendLine('[' + elapsed() + '] 🔄 Review queue — ' + d.office + ' (#' + d.pruned + ')'); }
+                  else if (d.phase === 'judge') { appendLine('[' + elapsed() + '] ⚖️  Judge queue — ' + d.office + ' (#' + d.pruned + ')'); }
+                  else if (d.done) {
+                    var summary = '✅ Done in ' + (d.elapsed / 1000).toFixed(1) + 's — wire: ' + d.wireDeleted + ' removed, ' + d.wireKept + ' kept | review queue: ' + d.reviewPruned + ' removed | judge queue: ' + d.judgePruned + ' removed';
+                    appendLine(summary, 'var(--green)');
+                    toast('Bypass cleanup complete', 'success');
+                    btn.disabled = false; btn.textContent = 'Remove Bypassed Entries';
+                  }
+                } catch (_) {}
+              }
+            }
+            return read();
+          });
+        }
+        return read();
       })
-      .catch(function() { toast('Cleanup failed', 'error'); })
-      .finally(function() { btn.disabled = false; btn.textContent = 'Remove Bypassed Entries'; });
+      .catch(function(err) {
+        appendLine('❌ ' + (err.message || 'Request failed'), 'var(--red)');
+        btn.disabled = false; btn.textContent = 'Remove Bypassed Entries';
+      });
   });
 
   // ===== Review Queue Drill-down =====

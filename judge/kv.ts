@@ -849,6 +849,7 @@ export async function backfillChargebackEntries(
 export async function pruneBypassedFromQueues(
   orgId: OrgId,
   patterns: string[],
+  onProgress?: (event: { queue: "review" | "judge"; office: string; pruned: number }) => void,
 ): Promise<{ reviewPruned: number; judgePruned: number }> {
   if (patterns.length === 0) return { reviewPruned: 0, judgePruned: 0 };
   const db = await kv();
@@ -877,44 +878,36 @@ export async function pruneBypassedFromQueues(
 
   // Prune review-pending
   const reviewIter = db.list<{ findingId: string }>({ prefix: orgKey(orgId, "review-pending") });
-  const reviewToDelete: Deno.KvKey[] = [];
+  const reviewToDelete: Array<{ key: Deno.KvKey; office: string }> = [];
   for await (const entry of reviewIter) {
     const findingId = entry.value?.findingId;
     if (!findingId) continue;
     const office = await getOffice(findingId);
-    if (office && matchesPattern(office)) reviewToDelete.push(entry.key);
+    if (office && matchesPattern(office)) reviewToDelete.push({ key: entry.key, office });
   }
-  // Also prune review-audit-pending counts for affected findingIds
-  const prunedFindingIds = new Set(reviewToDelete.map((k) => String(k[k.length - 2])));
+  const prunedFindingIds = new Set(reviewToDelete.map((r) => String(r.key[r.key.length - 2])));
   for (const fid of prunedFindingIds) {
-    const auditKey = orgKey(orgId, "review-audit-pending", fid);
-    reviewToDelete.push(auditKey);
+    reviewToDelete.push({ key: orgKey(orgId, "review-audit-pending", fid), office: "" });
   }
-  for (let i = 0; i < reviewToDelete.length; i += 10) {
-    const batch = reviewToDelete.slice(i, i + 10);
-    const atomic = db.atomic();
-    for (const key of batch) atomic.delete(key);
-    await atomic.commit();
+  for (const { key, office } of reviewToDelete) {
+    await db.delete(key);
+    if (office) { reviewPruned++; onProgress?.({ queue: "review", office, pruned: reviewPruned }); }
   }
-  reviewPruned = prunedFindingIds.size;
 
   // Prune judge-pending
   const judgeIter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
-  const judgeToDelete: Deno.KvKey[] = [];
+  const judgeToDelete: Array<{ key: Deno.KvKey; office: string }> = [];
   for await (const entry of judgeIter) {
     const findingId = entry.value?.findingId;
     if (!findingId) continue;
     const office = await getOffice(findingId);
-    if (office && matchesPattern(office)) judgeToDelete.push(entry.key);
+    if (office && matchesPattern(office)) judgeToDelete.push({ key: entry.key, office });
   }
-  const judgePrunedFids = new Set(judgeToDelete.map((k) => String(k[k.length - 2])));
-  for (let i = 0; i < judgeToDelete.length; i += 10) {
-    const batch = judgeToDelete.slice(i, i + 10);
-    const atomic = db.atomic();
-    for (const key of batch) atomic.delete(key);
-    await atomic.commit();
+  for (const { key, office } of judgeToDelete) {
+    await db.delete(key);
+    judgePruned++;
+    onProgress?.({ queue: "judge", office, pruned: judgePruned });
   }
-  judgePruned = judgePrunedFids.size;
 
   console.log(`[BYPASS-PRUNE] org=${orgId} reviewPruned=${reviewPruned} judgePruned=${judgePruned}`);
   return { reviewPruned, judgePruned };

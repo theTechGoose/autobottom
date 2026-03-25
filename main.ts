@@ -3828,9 +3828,32 @@ async function handlePurgeBypassedWireDeductions(req: Request): Promise<Response
   if (auth instanceof Response) return auth;
   const bypassCfg = await getOfficeBypassConfig(auth.orgId);
   if (!bypassCfg.patterns.length) return json({ error: "no bypass patterns configured" }, 400);
-  const result = await purgeBypassedWireDeductions(auth.orgId, bypassCfg.patterns);
-  console.log(`[ADMIN] 🧹 Purged bypassed wire deductions by ${auth.email}: deleted=${result.deleted} kept=${result.kept} patterns=${bypassCfg.patterns.join(",")}`);
-  return json({ ok: true, deleted: result.deleted, kept: result.kept, patterns: bypassCfg.patterns });
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const send = (data: unknown) => writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)).catch(() => {});
+  const startMs = Date.now();
+  (async () => {
+    const heartbeat = setInterval(() => { writer.write(encoder.encode(": heartbeat\n\n")).catch(() => {}); }, 10_000);
+    try {
+      send({ phase: "wire", status: "starting" });
+      const wireResult = await purgeBypassedWireDeductions(auth.orgId, bypassCfg.patterns, (evt) => {
+        send({ phase: "wire", office: evt.office, guestName: evt.guestName, deleted: evt.deleted, elapsed: Date.now() - startMs });
+      });
+      send({ phase: "queues", status: "starting" });
+      const pruneResult = await pruneBypassedFromQueues(auth.orgId, bypassCfg.patterns, (evt) => {
+        send({ phase: evt.queue, office: evt.office, pruned: evt.pruned, elapsed: Date.now() - startMs });
+      });
+      console.log(`[ADMIN] 🧹 Bypass purge by ${auth.email}: wireDeleted=${wireResult.deleted} reviewPruned=${pruneResult.reviewPruned} judgePruned=${pruneResult.judgePruned}`);
+      send({ done: true, wireDeleted: wireResult.deleted, wireKept: wireResult.kept, reviewPruned: pruneResult.reviewPruned, judgePruned: pruneResult.judgePruned, patterns: bypassCfg.patterns, elapsed: Date.now() - startMs });
+    } catch (err) {
+      send({ error: String(err) });
+    } finally {
+      clearInterval(heartbeat);
+      await writer.close().catch(() => {});
+    }
+  })();
+  return new Response(readable, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
 }
 
 async function handleDeduplicateFindings(req: Request): Promise<Response> {

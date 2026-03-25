@@ -31,6 +31,7 @@ import {
   getManagerScope, saveManagerScope, listManagerScopes,
   getAuditDimensions, saveAuditDimensions,
   getAllAnswersForFinding,
+  findAuditsByRecordId,
   getGamificationSettings, saveGamificationSettings,
   getJudgeGamificationOverride, saveJudgeGamificationOverride,
   getReviewerGamificationOverride, saveReviewerGamificationOverride,
@@ -455,6 +456,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/audits/data": handleAuditsData,
   "/admin/review-queue/data": handleReviewQueueData,
   "/admin/delete-finding": handleDeleteFinding,
+  "/admin/audits-by-record": handleAuditsByRecord,
   "/admin/api/me": handleAdminMe,
   "/admin/retry-finding": handleRetryFinding,
 
@@ -767,6 +769,15 @@ async function handleAuditsData(req: Request): Promise<Response> {
 
   console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}, shift=${shift || "all"}`);
   return json({ items, total, pages, page, owners, departments, shifts });
+}
+
+async function handleAuditsByRecord(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const recordId = new URL(req.url).searchParams.get("recordId")?.trim();
+  if (!recordId) return json({ error: "recordId required" }, 400);
+  const entries = await findAuditsByRecordId(auth.orgId, recordId);
+  return json({ items: entries, total: entries.length });
 }
 
 async function handleDeleteFinding(req: Request): Promise<Response> {

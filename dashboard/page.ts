@@ -660,6 +660,16 @@ table { width: 100%; border-collapse: collapse; }
       </div>
     </div>
 
+    <!-- Find by QB Record -->
+    <div class="tbl" style="margin-bottom:16px;">
+      <div class="tbl-title">Find by QB Record</div>
+      <div style="display:flex;gap:8px;padding:0 0 2px;">
+        <input id="record-search-input" class="sf-input" type="text" placeholder="QB Record ID..." style="flex:1;font-family:var(--mono);font-size:12px;">
+        <button class="sf-btn primary" id="record-search-btn" style="padding:6px 16px;font-size:11px;">Search</button>
+      </div>
+      <div id="record-search-results" style="margin-top:8px;display:none;"></div>
+    </div>
+
     <!-- Test by RID -->
     <div class="tbl" style="margin-bottom:16px;">
       <div class="tbl-title">Test Audit by RID</div>
@@ -1970,6 +1980,57 @@ table { width: 100%; border-collapse: collapse; }
   document.getElementById('search-btn').addEventListener('click', doSearch);
   document.getElementById('search-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doSearch(); });
 
+  // ===== Find by QB Record =====
+  function doRecordSearch() {
+    var rid = document.getElementById('record-search-input').value.trim();
+    if (!rid) return;
+    var resultsEl = document.getElementById('record-search-results');
+    resultsEl.style.display = '';
+    resultsEl.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:6px 0;">Searching...</div>';
+    fetch('/admin/audits-by-record?recordId=' + encodeURIComponent(rid))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var items = d.items || [];
+        if (!items.length) {
+          resultsEl.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:6px 0;">No audits found for record ' + rid + '</div>';
+          return;
+        }
+        var html = '<div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;">' + items.length + ' audit' + (items.length !== 1 ? 's' : '') + ' found</div>'
+          + '<table style="width:100%;border-collapse:collapse;">'
+          + '<thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:.6px;">'
+          + '<th style="text-align:left;padding:3px 8px 5px 0;font-weight:700;">Finding ID</th>'
+          + '<th style="text-align:right;padding:3px 8px 5px;font-weight:700;">Score</th>'
+          + '<th style="text-align:right;padding:3px 8px 5px;font-weight:700;">Completed</th>'
+          + '<th style="text-align:right;padding:3px 0 5px;font-weight:700;"></th>'
+          + '</tr></thead><tbody>';
+        items.forEach(function(item) {
+          var score = item.score != null ? item.score + '%' : '—';
+          var scoreColor = item.score >= 80 ? 'var(--green)' : (item.score < 80 && item.score != null ? 'var(--red)' : 'var(--text-dim)');
+          var when = item.completedAt ? timeAgo(item.completedAt) : '—';
+          html += '<tr style="border-top:1px solid var(--border);">'
+            + '<td style="padding:6px 8px 6px 0;font-family:var(--mono);font-size:10px;color:var(--text-muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + item.findingId + '</td>'
+            + '<td style="padding:6px 8px;text-align:right;font-size:11px;font-weight:700;color:' + scoreColor + ';">' + score + '</td>'
+            + '<td style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text-dim);">' + when + '</td>'
+            + '<td style="padding:6px 0;text-align:right;white-space:nowrap;">'
+            + '<a href="/audit/report?id=' + item.findingId + '" target="_blank" style="color:var(--blue);font-size:10px;text-decoration:none;margin-right:10px;">open →</a>'
+            + '<button onclick="deleteFindingFromRecord(\\'' + item.findingId + '\\')" style="background:transparent;border:none;color:var(--red);font-size:10px;cursor:pointer;padding:0;">delete</button>'
+            + '</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table>';
+        resultsEl.innerHTML = html;
+      })
+      .catch(function() { resultsEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:6px 0;">Search failed</div>'; });
+  }
+  document.getElementById('record-search-btn').addEventListener('click', doRecordSearch);
+  document.getElementById('record-search-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doRecordSearch(); });
+
+  window.deleteFindingFromRecord = function(findingId) {
+    document.getElementById('search-input').value = findingId;
+    document.getElementById('delete-audit-id-display').textContent = findingId;
+    openModal('delete-audit-modal');
+  };
+
   // ===== Delete Audit =====
   document.getElementById('delete-audit-btn').addEventListener('click', function() {
     var id = document.getElementById('search-input').value.trim();
@@ -1990,6 +2051,9 @@ table { width: 100%; border-collapse: collapse; }
         if (d.ok) {
           toast('Deleted ' + id, 'success');
           document.getElementById('search-input').value = '';
+          // Re-run record search if visible, to remove the deleted row
+          var rrid = document.getElementById('record-search-input').value.trim();
+          if (rrid && document.getElementById('record-search-results').style.display !== 'none') doRecordSearch();
         } else {
           toast('Delete failed: ' + (d.error || 'unknown error'), 'error');
         }

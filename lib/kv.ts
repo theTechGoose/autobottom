@@ -888,6 +888,19 @@ export async function writeAuditDoneIndex(
   await kvDb.set(key, entry);
 }
 
+export async function findAuditsByRecordId(
+  orgId: OrgId,
+  recordId: string,
+): Promise<AuditDoneIndexEntry[]> {
+  const kvDb = await db();
+  const matches: AuditDoneIndexEntry[] = [];
+  for await (const entry of kvDb.list<AuditDoneIndexEntry>({ prefix: orgKey(orgId, "audit-done-idx") })) {
+    if (entry.value?.recordId === recordId) matches.push(entry.value);
+  }
+  // Sort newest first
+  return matches.sort((a, b) => b.completedAt - a.completedAt);
+}
+
 export async function queryAuditDoneIndex(
   orgId: OrgId,
   from: number,

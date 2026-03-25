@@ -585,8 +585,10 @@ table { width: 100%; border-collapse: collapse; }
       </div>
       <div class="stat-card blue">
         <div class="stat-label">Active</div>
-        <div class="stat-value" id="s-active">--</div>
-        <div class="stat-sub" id="s-active-detail"></div>
+        <div style="display:flex;align-items:flex-start;gap:12px;">
+          <div class="stat-value" id="s-active">--</div>
+          <div id="s-active-detail" style="font-size:10px;line-height:1.8;color:var(--text-dim);padding-top:8px;"></div>
+        </div>
       </div>
       <div class="stat-card green">
         <div class="stat-label">Completed (24h)</div>
@@ -629,12 +631,12 @@ table { width: 100%; border-collapse: collapse; }
             <div style="display:table-cell;padding:2px 8px 6px;text-align:right;">Pending</div>
             <div style="display:table-cell;padding:2px 0 6px;text-align:right;">Decided</div>
           </div>
-          <div style="display:table-row;">
+          <div id="rq-row-internal" style="display:table-row;cursor:pointer;" title="Click to inspect internal audits">
             <div style="display:table-cell;padding:4px 0;color:var(--text-dim);font-size:10px;white-space:nowrap;">Internal</div>
             <div style="display:table-cell;padding:4px 8px;text-align:right;font-size:16px;font-weight:700;color:var(--yellow);" id="r-dl-pending">--</div>
             <div style="display:table-cell;padding:4px 0;text-align:right;font-size:16px;font-weight:700;color:var(--green);" id="r-dl-decided">--</div>
           </div>
-          <div style="display:table-row;">
+          <div id="rq-row-partner" style="display:table-row;cursor:pointer;" title="Click to inspect partner audits">
             <div style="display:table-cell;padding:4px 0;color:var(--text-dim);font-size:10px;white-space:nowrap;">Partner</div>
             <div style="display:table-cell;padding:4px 8px;text-align:right;font-size:16px;font-weight:700;color:var(--yellow);" id="r-pkg-pending">--</div>
             <div style="display:table-cell;padding:4px 0;text-align:right;font-size:16px;font-weight:700;color:var(--green);" id="r-pkg-decided">--</div>
@@ -899,6 +901,39 @@ table { width: 100%; border-collapse: collapse; }
     <div class="modal-actions">
       <button class="sf-btn secondary" id="dedup-cancel">Cancel</button>
       <button class="sf-btn danger" id="dedup-confirm-btn">Deduplicate</button>
+    </div>
+  </div>
+</div>
+
+<!-- Review Queue Drill-down Modal -->
+<div class="modal-overlay" id="rq-drill-modal">
+  <div class="modal" style="width:780px;max-width:95vw;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div class="modal-title" id="rq-drill-title">Audits</div>
+      <button class="sf-btn secondary" id="rq-drill-close" style="font-size:11px;padding:4px 12px;">Close</button>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <div style="display:flex;gap:3px;">
+        <button class="sf-btn secondary rq-range-btn" data-h="1" style="font-size:10px;padding:3px 8px;">1h</button>
+        <button class="sf-btn secondary rq-range-btn" data-h="4" style="font-size:10px;padding:3px 8px;">4h</button>
+        <button class="sf-btn secondary rq-range-btn" data-h="12" style="font-size:10px;padding:3px 8px;">12h</button>
+        <button class="sf-btn secondary rq-range-btn rq-range-active" data-h="24" style="font-size:10px;padding:3px 8px;">24h</button>
+        <button class="sf-btn secondary rq-range-btn" data-h="72" style="font-size:10px;padding:3px 8px;">3d</button>
+        <button class="sf-btn secondary rq-range-btn" data-h="168" style="font-size:10px;padding:3px 8px;">7d</button>
+      </div>
+      <select id="rq-drill-reviewed" class="sf-input" style="font-size:11px;padding:4px 8px;">
+        <option value="">All</option>
+        <option value="yes">Reviewed</option>
+        <option value="no">Not Reviewed</option>
+      </select>
+      <select id="rq-drill-owner" class="sf-input" style="font-size:11px;padding:4px 8px;max-width:160px;">
+        <option value="">All Members</option>
+      </select>
+    </div>
+    <div id="rq-drill-msg" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;min-height:16px;"></div>
+    <div id="rq-drill-table"></div>
+    <div style="margin-top:10px;text-align:right;">
+      <a id="rq-drill-viewall" href="/admin/audits" target="_blank" style="font-size:11px;color:var(--blue);text-decoration:none;">View all in Audit History →</a>
     </div>
   </div>
 </div>
@@ -1679,12 +1714,16 @@ table { width: 100%; border-collapse: collapse; }
     document.getElementById('s-errors').textContent = fmt(p.errors24h);
     document.getElementById('s-retries').textContent = fmt(p.retries24h);
 
-    // Active: per-step breakdown
+    // Active: per-step breakdown (always visible, known steps default to 0)
+    var PIPELINE_STEPS = ['transcribe', 'ask-all', 'cleanup'];
     var stepCounts = {};
+    PIPELINE_STEPS.forEach(function(s) { stepCounts[s] = 0; });
     (p.active || []).forEach(function(a) { var s = a.step || 'unknown'; stepCounts[s] = (stepCounts[s] || 0) + 1; });
-    var stepKeys = Object.keys(stepCounts).sort();
     var activeDetailEl = document.getElementById('s-active-detail');
-    activeDetailEl.textContent = stepKeys.length ? stepKeys.map(function(s) { return s + ': ' + stepCounts[s]; }).join(' · ') : '';
+    activeDetailEl.innerHTML = Object.keys(stepCounts).sort().map(function(s) {
+      var c = stepCounts[s];
+      return '<div style="white-space:nowrap' + (c > 0 ? ';color:var(--blue)' : '') + '">' + s + ': ' + c + '</div>';
+    }).join('');
 
     // In Pipeline: per-queue breakdown from QStash
     var qb = p.queueBreakdown || {};
@@ -4008,6 +4047,112 @@ table { width: 100%; border-collapse: collapse; }
       .catch(function() { toast('Scan failed', 'error'); msgEl.textContent = 'Scan failed'; })
       .finally(function() { if (!dedupPlan) btn.disabled = false; });
   });
+
+  // ===== Review Queue Drill-down =====
+  var rqDrillType = 'date-leg';
+  var rqDrillHours = 24;
+
+  function loadRQDrill() {
+    var since = Date.now() - rqDrillHours * 3600000;
+    var reviewedVal = document.getElementById('rq-drill-reviewed').value;
+    var ownerVal = document.getElementById('rq-drill-owner').value;
+    var params = 'since=' + since + '&type=' + rqDrillType + '&limit=6';
+    if (reviewedVal) params += '&reviewed=' + reviewedVal;
+    if (ownerVal) params += '&owner=' + encodeURIComponent(ownerVal);
+    var msgEl = document.getElementById('rq-drill-msg');
+    var tblEl = document.getElementById('rq-drill-table');
+    msgEl.textContent = 'Loading...';
+    tblEl.innerHTML = '';
+    fetch('/admin/audits/data?' + params)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var items = d.items || [];
+        var total = d.total || items.length;
+        msgEl.textContent = 'Showing ' + items.length + ' of ' + total + ' audits';
+        // Populate owner dropdown
+        var ownerSel = document.getElementById('rq-drill-owner');
+        var curOwner = ownerSel.value;
+        ownerSel.innerHTML = '<option value="">All Members</option>';
+        (d.owners || []).forEach(function(o) {
+          var opt = document.createElement('option');
+          opt.value = o; opt.textContent = o;
+          if (o === curOwner) opt.selected = true;
+          ownerSel.appendChild(opt);
+        });
+        if (!items.length) {
+          tblEl.innerHTML = '<div style="color:var(--text-dim);padding:16px 0;text-align:center;font-size:11px;">No audits in this range</div>';
+          return;
+        }
+        var html = '<table style="width:100%;border-collapse:collapse;">'
+          + '<thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:.6px;">'
+          + '<th style="text-align:left;padding:4px 8px 6px 0;font-weight:700;">QB Record</th>'
+          + '<th style="text-align:left;padding:4px 8px 6px;font-weight:700;">Team Member</th>'
+          + '<th style="text-align:right;padding:4px 8px 6px;font-weight:700;">Score</th>'
+          + '<th style="text-align:right;padding:4px 8px 6px;font-weight:700;">Started</th>'
+          + '<th style="text-align:right;padding:4px 8px 6px;font-weight:700;">Finished</th>'
+          + '<th style="text-align:right;padding:4px 0 6px;font-weight:700;">Reviewed</th>'
+          + '</tr></thead><tbody>';
+        items.forEach(function(a) {
+          var score = a.score != null ? a.score + '%' : '—';
+          var scoreColor = a.score >= 80 ? 'var(--green)' : (a.score < 80 && a.score != null ? 'var(--red)' : 'var(--text-dim)');
+          var finished = a.ts ? timeAgo(a.ts) : '—';
+          var started = a.startedAt ? timeAgo(a.startedAt) : '—';
+          var rev = a.reviewed ? '<span style="color:var(--green);font-size:9px;font-weight:700;">✓</span>' : '';
+          html += '<tr style="border-top:1px solid var(--border);cursor:pointer;transition:background 0.1s;" '
+            + 'onmouseover="this.style.background=\'var(--bg-surface)\'" onmouseout="this.style.background=\'\'" '
+            + 'onclick="window.open(\'/audit/report?id=' + a.findingId + '\',\'_blank\')">'
+            + '<td style="padding:8px 8px 8px 0;font-family:var(--mono);font-size:11px;color:var(--blue);">' + (a.recordId || '—') + '</td>'
+            + '<td style="padding:8px;color:var(--text-bright);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (a.voName || a.owner || '—') + '</td>'
+            + '<td style="padding:8px;text-align:right;font-weight:700;color:' + scoreColor + ';">' + score + '</td>'
+            + '<td style="padding:8px;text-align:right;color:var(--text-dim);font-size:10px;">' + started + '</td>'
+            + '<td style="padding:8px;text-align:right;color:var(--text-dim);font-size:10px;">' + finished + '</td>'
+            + '<td style="padding:8px 0 8px 8px;text-align:right;">' + rev + '</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table>';
+        tblEl.innerHTML = html;
+        // Update view-all link
+        var viewAllUrl = '/admin/audits?type=' + rqDrillType;
+        if (reviewedVal) viewAllUrl += '&reviewed=' + reviewedVal;
+        if (ownerVal) viewAllUrl += '&owner=' + encodeURIComponent(ownerVal);
+        document.getElementById('rq-drill-viewall').href = viewAllUrl;
+      })
+      .catch(function() { msgEl.textContent = 'Failed to load'; });
+  }
+
+  function openRQDrill(type) {
+    rqDrillType = type;
+    rqDrillHours = 24;
+    document.getElementById('rq-drill-title').textContent = (type === 'date-leg' ? 'Internal' : 'Partner') + ' Audits';
+    document.querySelectorAll('.rq-range-btn').forEach(function(b) {
+      var isActive = b.getAttribute('data-h') === '24';
+      b.style.background = isActive ? 'rgba(88,166,255,0.15)' : '';
+      b.style.borderColor = isActive ? 'rgba(88,166,255,0.5)' : '';
+      b.style.color = isActive ? 'var(--blue)' : '';
+    });
+    document.getElementById('rq-drill-reviewed').value = '';
+    document.getElementById('rq-drill-owner').innerHTML = '<option value="">All Members</option>';
+    openModal('rq-drill-modal');
+    loadRQDrill();
+  }
+
+  document.querySelectorAll('.rq-range-btn').forEach(function(b) {
+    b.addEventListener('click', function() {
+      rqDrillHours = parseInt(b.getAttribute('data-h'));
+      document.querySelectorAll('.rq-range-btn').forEach(function(x) {
+        x.style.background = ''; x.style.borderColor = ''; x.style.color = '';
+      });
+      b.style.background = 'rgba(88,166,255,0.15)';
+      b.style.borderColor = 'rgba(88,166,255,0.5)';
+      b.style.color = 'var(--blue)';
+      loadRQDrill();
+    });
+  });
+  document.getElementById('rq-drill-reviewed').addEventListener('change', loadRQDrill);
+  document.getElementById('rq-drill-owner').addEventListener('change', loadRQDrill);
+  document.getElementById('rq-drill-close').addEventListener('click', function() { closeModal('rq-drill-modal'); });
+  document.getElementById('rq-row-internal').addEventListener('click', function() { openRQDrill('date-leg'); });
+  document.getElementById('rq-row-partner').addEventListener('click', function() { openRQDrill('package'); });
 
   // ===== Bad Words =====
   var bwConfig = { enabled: false, allOffices: false, emails: [], words: [], officePatterns: [] };

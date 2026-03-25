@@ -937,7 +937,7 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       border: 2px dashed var(--border); border-radius: 8px; padding: 28px 16px;
       text-align: center; cursor: pointer; transition: border-color 0.15s;
     }
-    .upload-area:hover { border-color: var(--teal); }
+    .upload-area:hover, .upload-area.drag-over { border-color: var(--teal); background: rgba(20,184,166,0.05); }
     .upload-area.has-file { display: none; }
     .upload-icon { font-size: 28px; color: var(--text-dim); margin-bottom: 6px; }
     .upload-text { font-size: 12px; color: var(--text-muted); }
@@ -1594,6 +1594,20 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
       return (b / 1048576).toFixed(1) + ' MB';
     }
+
+    (function() {
+      var area = document.getElementById('upload-area');
+      area.addEventListener('dragover', function(e) { e.preventDefault(); area.classList.add('drag-over'); });
+      area.addEventListener('dragleave', function(e) { if (!area.contains(e.relatedTarget)) area.classList.remove('drag-over'); });
+      area.addEventListener('drop', function(e) {
+        e.preventDefault(); area.classList.remove('drag-over');
+        var file = e.dataTransfer.files[0];
+        if (!file) return;
+        var inp = document.getElementById('file-input');
+        var dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files;
+        handleFileSelect(inp);
+      });
+    })();
 
     function handleFileSelect(input) {
       var file = input.files[0];

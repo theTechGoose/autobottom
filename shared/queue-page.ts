@@ -1048,8 +1048,11 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     <div id="add-genie-panel-upload" style="display:none;">
       <p style="font-size:12px;color:#8b949e;margin-bottom:10px;">Upload an MP3 recording to re-audit against. Optionally trim the audio with start/end markers.</p>
       <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Recording File (MP3)</div>
-      <input type="file" id="add-genie-file" accept="audio/mpeg,audio/mp3,.mp3"
-        style="width:100%;padding:8px 10px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:12px;margin-bottom:10px;box-sizing:border-box;cursor:pointer;">
+      <div id="add-genie-dropzone" onclick="document.getElementById('add-genie-file').click()"
+        style="width:100%;padding:18px;background:#0a0e14;border:2px dashed #1e2736;border-radius:8px;color:#6e7681;font-size:12px;margin-bottom:10px;box-sizing:border-box;cursor:pointer;text-align:center;transition:border-color 0.15s,background 0.15s;">
+        <div id="add-genie-dropzone-label">Drop MP3 here or click to browse</div>
+      </div>
+      <input type="file" id="add-genie-file" accept="audio/mpeg,audio/mp3,.mp3" style="display:none;">
       <div style="display:flex;gap:8px;margin-bottom:12px;">
         <div style="flex:1;">
           <div style="font-size:11px;color:#6e7681;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Snip Start (mm:ss)</div>
@@ -2779,6 +2782,9 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     rows.appendChild(makeGenieRowInput(originalId, false));
     document.getElementById('add-genie-comment').value = '';
     document.getElementById('add-genie-file').value = '';
+    document.getElementById('add-genie-dropzone-label').textContent = 'Drop MP3 here or click to browse';
+    document.getElementById('add-genie-dropzone').style.borderColor = '#1e2736';
+    document.getElementById('add-genie-dropzone').style.color = '#6e7681';
     document.getElementById('add-genie-snip-start').value = '';
     document.getElementById('add-genie-snip-end').value = '';
     document.getElementById('add-genie-error').style.display = 'none';
@@ -2910,6 +2916,26 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   ['add-genie-snip-start', 'add-genie-snip-end'].forEach(function(id) {
     document.getElementById(id).addEventListener('keydown', function(e) { e.stopPropagation(); });
   });
+  (function() {
+    var dz = document.getElementById('add-genie-dropzone');
+    var fi = document.getElementById('add-genie-file');
+    function setDropFile(file) {
+      if (!file) return;
+      document.getElementById('add-genie-dropzone-label').textContent = file.name;
+      dz.style.borderColor = '#14b8a6';
+      dz.style.color = '#c9d1d9';
+    }
+    fi.addEventListener('change', function() { setDropFile(fi.files[0]); });
+    dz.addEventListener('dragover', function(e) { e.preventDefault(); dz.style.borderColor = '#14b8a6'; dz.style.background = 'rgba(20,184,166,0.05)'; });
+    dz.addEventListener('dragleave', function(e) { if (!dz.contains(e.relatedTarget)) { dz.style.borderColor = '#1e2736'; dz.style.background = '#0a0e14'; } });
+    dz.addEventListener('drop', function(e) {
+      e.preventDefault(); dz.style.borderColor = '#1e2736'; dz.style.background = '#0a0e14';
+      var file = e.dataTransfer.files[0];
+      if (!file) return;
+      var dt = new DataTransfer(); dt.items.add(file); fi.files = dt.files;
+      setDropFile(file);
+    });
+  })();
   ` : ''}
 
   // -- Init: try resuming session (or preview mode if ?id=X in URL) --

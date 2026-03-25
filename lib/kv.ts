@@ -823,7 +823,8 @@ export type CriteriaField =
   | "department"
   | "appealStatus"
   | "auditType"        // "internal" (date-leg) | "partner" (package)
-  | "reviewed";        // "true" | "false" — was this audit touched by a human reviewer
+  | "reviewed"         // "true" | "false" — was this audit touched by a human reviewer
+  | "shift";           // internal only — AM / PM / Weekend
 
 export type CriteriaOperator =
   | "equals"

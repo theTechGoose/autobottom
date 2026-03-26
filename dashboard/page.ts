@@ -3645,6 +3645,15 @@ table { width: 100%; border-collapse: collapse; }
     erTemplates.forEach(function(t){var o=document.createElement('option');o.value=t.id;o.textContent=t.name;tplSel.appendChild(o);});
     tplWrap.appendChild(tplLblEl); tplWrap.appendChild(tplSel); editForm.appendChild(tplWrap);
 
+    // Send schedule description + time picker
+    var schedWrap = document.createElement('div'); schedWrap.style.cssText = 'margin-top:16px;padding:12px 14px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.2);border-radius:8px;font-size:12px;color:#c9d1d9;line-height:1.6;';
+    var sendTimeInput = document.createElement('input'); sendTimeInput.type = 'time'; sendTimeInput.value = '20:00';
+    sendTimeInput.style.cssText = 'background:#0a0e14;border:1px solid #1e2736;border-radius:5px;color:#c9d1d9;font-size:12px;padding:2px 6px;margin:0 4px;';
+    var schedPre = document.createTextNode('This report covers all audits within the current pay period (Mon\u2013Sun) and sends nightly at');
+    var schedPost = document.createTextNode('EST');
+    schedWrap.appendChild(schedPre); schedWrap.appendChild(sendTimeInput); schedWrap.appendChild(schedPost);
+    editForm.appendChild(schedWrap);
+
     // Report sections
     var secHdrDiv = document.createElement('div'); secHdrDiv.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;margin-top:14px;';
     var secHdrLbl = document.createElement('div'); secHdrLbl.className = 'sf-label'; secHdrLbl.style.marginBottom = '0'; secHdrLbl.textContent = 'Report Sections';
@@ -3670,6 +3679,7 @@ table { width: 100%; border-collapse: collapse; }
         weeklyOffice: wState.type==='partner' ? (wState.office||undefined) : undefined,
         weeklyAutoRecipients: deriveAutoRecipients(),
         failedOnly: failedOnlyInput.checked,
+        sendTimeEst: sendTimeInput.value || '20:00',
         recipients: recips, cc: weeklyChipCtrls.cc.getValues(), bcc: weeklyChipCtrls.bcc.getValues(),
         templateId: tplSel.value||undefined, topLevelFilters: buildTopLevelFilters(), reportSections: collectSections(), disabled: false,
       };

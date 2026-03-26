@@ -1883,9 +1883,11 @@ async function handleSaveEmailReport(req: Request): Promise<Response> {
 
   // Enforce hardcoded defaults for weekly configs — not user-editable
   if (body.weeklyType) {
+    const [hEst, mEst] = (body.sendTimeEst || "20:00").split(":").map(Number);
+    const hUtc = (hEst + 5) % 24;
     body.dateRange = { mode: "weekly", startDay: 1 };
     body.onlyCompleted = true;
-    body.schedule = { mode: "cron", expression: "0 21 * * *" };
+    body.schedule = { mode: "cron", expression: `${mEst} ${hUtc} * * *` };
     body.topLevelFilters = [
       ...(body.topLevelFilters ?? []),
       { field: "appealStatus", operator: "not_equals", value: "pending" },

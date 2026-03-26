@@ -332,41 +332,44 @@ export async function handleUpdateTestEmails(req: Request): Promise<Response> {
   return result ? json(result) : json({ error: "not found" }, 404);
 }
 
-// ── CSV Import ──────────────────────────────────────────────────────
-
-interface ImportConfig {
-  name: string;
-  type: "internal" | "partner";
-  questions: Array<{ name: string; text: string; autoYesExp: string }>;
-}
+// ── CSV Import (one config per request to avoid Deploy timeouts) ────
 
 export async function handleImport(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
   if (auth instanceof Response) return auth;
-  const { configs } = await req.json() as { configs: ImportConfig[] };
-  if (!Array.isArray(configs) || configs.length === 0) return json({ error: "configs array required" }, 400);
+  const body = await req.json() as {
+    name: string;
+    type: "internal" | "partner";
+    questions: Array<{ name: string; text: string; autoYesExp: string }>;
+    skipDuplicates?: boolean;
+  };
+  const { name, type, questions, skipDuplicates } = body;
+  if (!name || !Array.isArray(questions)) return json({ error: "name and questions required" }, 400);
 
-  let configCount = 0;
-  let questionCount = 0;
-
-  for (const cfg of configs) {
-    if (!cfg.name || !Array.isArray(cfg.questions)) continue;
-    const configType: "internal" | "partner" = cfg.type === "partner" ? "partner" : "internal";
-    const config = await createConfig(auth.orgId, cfg.name, configType);
-    configCount++;
-
-    for (const q of cfg.questions) {
-      if (!q.name || !q.text) continue;
-      const question = await createQuestion(auth.orgId, config.id, q.name, q.text);
-      if (question && q.autoYesExp) {
-        await updateQuestion(auth.orgId, question.id, { autoYesExp: q.autoYesExp });
-      }
-      if (question) questionCount++;
+  // Check for duplicate config name
+  if (skipDuplicates) {
+    const existing = await listConfigs(auth.orgId);
+    if (existing.some((c) => c.name === name)) {
+      console.log(`[QLAB] 📦 Import skipped duplicate config: "${name}"`);
+      return json({ ok: true, skipped: true, configName: name });
     }
   }
 
-  console.log(`[QLAB] 📦 CSV import: ${configCount} configs, ${questionCount} questions by ${auth.orgId}`);
-  return json({ ok: true, created: { configs: configCount, questions: questionCount } });
+  const configType: "internal" | "partner" = type === "partner" ? "partner" : "internal";
+  const config = await createConfig(auth.orgId, name, configType);
+  let questionCount = 0;
+
+  for (const q of questions) {
+    if (!q.name || !q.text) continue;
+    const question = await createQuestion(auth.orgId, config.id, q.name, q.text);
+    if (question && q.autoYesExp) {
+      await updateQuestion(auth.orgId, question.id, { autoYesExp: q.autoYesExp });
+    }
+    if (question) questionCount++;
+  }
+
+  console.log(`[QLAB] 📦 Imported config "${name}" with ${questionCount} questions by ${auth.orgId}`);
+  return json({ ok: true, skipped: false, configName: name, questions: questionCount });
 }
 
 // ── Serve Config ─────────────────────────────────────────────────────

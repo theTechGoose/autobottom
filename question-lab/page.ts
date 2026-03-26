@@ -245,9 +245,25 @@ export function configListPage(configs: QLConfig[]): string {
       <div id="import-step-preview" style="display:none;">
         <div id="preview-summary" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
         <div id="preview-table" style="max-height:300px;overflow:auto;"></div>
+        <div style="margin-top:12px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;font-weight:400;letter-spacing:0;">
+            <input type="checkbox" id="skip-dupes" checked style="width:14px;height:14px;accent-color:var(--green);" />
+            Skip configs that already exist (match by name)
+          </label>
+        </div>
+        <div id="import-progress" style="display:none;margin-top:12px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+            <span id="import-progress-text" style="font-size:12px;color:var(--text);font-weight:500;"></span>
+            <span id="import-progress-pct" style="font-size:11px;color:var(--muted);"></span>
+          </div>
+          <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden;border:1px solid var(--border);">
+            <div id="import-progress-bar" style="height:100%;background:var(--green);width:0%;transition:width 0.2s;border-radius:3px;"></div>
+          </div>
+          <div id="import-log" style="margin-top:8px;max-height:120px;overflow:auto;font-size:11px;font-family:monospace;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;"></div>
+        </div>
         <div class="actions" style="margin-top:12px;">
-          <button class="btn-green" onclick="runImport()">Import</button>
-          <button class="btn-ghost" onclick="showStep('map')">Back</button>
+          <button class="btn-green" id="import-btn" onclick="runImport()">Import</button>
+          <button class="btn-ghost" id="import-back-btn" onclick="showStep('map')">Back</button>
         </div>
       </div>
       <div id="import-step-done" style="display:none;">
@@ -392,27 +408,78 @@ export function configListPage(configs: QLConfig[]): string {
         showStep('preview');
       }
 
+      function importLog(msg) {
+        console.log('[CSV Import] ' + msg);
+        var el = document.getElementById('import-log');
+        el.textContent += msg + '\\n';
+        el.scrollTop = el.scrollHeight;
+      }
+
       async function runImport() {
-        if (!importPayload) return;
-        var btn = event.target;
+        if (!importPayload || !importPayload.length) return;
+        var btn = document.getElementById('import-btn');
+        var backBtn = document.getElementById('import-back-btn');
         btn.disabled = true; btn.textContent = 'Importing...';
-        try {
-          var res = await fetch('/question-lab/api/import', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ configs: importPayload })
-          });
-          var d = await res.json();
-          if (d.ok) {
-            document.getElementById('import-result').textContent = 'Imported ' + d.created.configs + ' configs with ' + d.created.questions + ' questions.';
-            showStep('done');
-          } else {
-            alert(d.error || 'Import failed');
-            btn.disabled = false; btn.textContent = 'Import';
+        backBtn.disabled = true;
+        var progressEl = document.getElementById('import-progress');
+        progressEl.style.display = '';
+        document.getElementById('import-log').textContent = '';
+
+        var skipDupes = document.getElementById('skip-dupes').checked;
+        var total = importPayload.length;
+        var created = 0;
+        var skipped = 0;
+        var totalQ = 0;
+        var errors = 0;
+
+        importLog('Starting import of ' + total + ' configs (skip duplicates: ' + skipDupes + ')');
+
+        for (var i = 0; i < total; i++) {
+          var cfg = importPayload[i];
+          var pct = Math.round(((i + 1) / total) * 100);
+          document.getElementById('import-progress-text').textContent = (i + 1) + ' / ' + total + ' — ' + cfg.name;
+          document.getElementById('import-progress-pct').textContent = pct + '%';
+          document.getElementById('import-progress-bar').style.width = pct + '%';
+
+          try {
+            var res = await fetch('/question-lab/api/import', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: cfg.name,
+                type: cfg.type,
+                questions: cfg.questions,
+                skipDuplicates: skipDupes
+              })
+            });
+            var d = await res.json();
+            if (d.ok) {
+              if (d.skipped) {
+                skipped++;
+                importLog('Skipped (duplicate): ' + cfg.name);
+              } else {
+                created++;
+                totalQ += d.questions || 0;
+                importLog('Created: ' + cfg.name + ' (' + (d.questions || 0) + ' questions)');
+              }
+            } else {
+              errors++;
+              importLog('ERROR: ' + cfg.name + ' — ' + (d.error || 'unknown'));
+            }
+          } catch (e) {
+            errors++;
+            importLog('ERROR: ' + cfg.name + ' — ' + e.message);
           }
-        } catch(e) {
-          alert('Request failed: ' + e.message);
-          btn.disabled = false; btn.textContent = 'Import';
         }
+
+        importLog('');
+        importLog('Done! Created: ' + created + ', Skipped: ' + skipped + ', Errors: ' + errors + ', Questions: ' + totalQ);
+
+        document.getElementById('import-result').textContent =
+          'Created ' + created + ' configs with ' + totalQ + ' questions' +
+          (skipped > 0 ? ' (' + skipped + ' skipped as duplicates)' : '') +
+          (errors > 0 ? ' (' + errors + ' errors)' : '');
+        showStep('done');
       }
     </script>`, []);
 }

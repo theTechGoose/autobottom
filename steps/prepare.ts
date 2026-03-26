@@ -72,7 +72,19 @@ export async function stepPrepare(req: Request): Promise<Response> {
         const officeName = String(finding.record?.OfficeName ?? "");
         if (officeName) {
           const assignments = await getPartnerAssignments(orgId);
+          // Exact match first
           qlabConfig = assignments[officeName] ?? null;
+          // Prefix fallback: "JAY" matches "JAY777", "JAY321", etc. (longest prefix wins)
+          if (!qlabConfig) {
+            const lower = officeName.toLowerCase();
+            let bestKey = "";
+            for (const key of Object.keys(assignments)) {
+              if (lower.startsWith(key.toLowerCase()) && key.length > bestKey.length) {
+                bestKey = key;
+              }
+            }
+            if (bestKey) qlabConfig = assignments[bestKey];
+          }
           if (qlabConfig) console.log(`[STEP-PREPARE] ${findingId}: Partner assignment for office "${officeName}" → "${qlabConfig}"`);
         }
       } else {

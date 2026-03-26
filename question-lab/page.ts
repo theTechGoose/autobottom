@@ -185,7 +185,10 @@ export function configListPage(configs: QLConfig[]): string {
     <div class="card">
       <div class="card-hd">
         <h2>Configurations</h2>
-        <button onclick="document.getElementById('new-config-form').classList.toggle('active')">+ New Config</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-ghost btn-sm" onclick="document.getElementById('import-card').style.display='';showStep('upload');">Import CSV</button>
+          <button onclick="document.getElementById('new-config-form').classList.toggle('active')">+ New Config</button>
+        </div>
       </div>
       <div id="new-config-form" class="inline-form">
         <div class="form-row">
@@ -208,6 +211,52 @@ export function configListPage(configs: QLConfig[]): string {
         ? '<div class="empty">No configurations yet. Create one to get started.</div>'
         : `<table><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Questions</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`}
     </div>
+    <div class="card" id="import-card" style="display:none;">
+      <div class="card-hd">
+        <h2>Import from CSV</h2>
+        <button class="btn-ghost btn-sm" onclick="document.getElementById('import-card').style.display='none';">Close</button>
+      </div>
+      <div id="import-step-upload">
+        <div class="form-row">
+          <label>CSV File</label>
+          <input type="file" id="csv-file" accept=".csv" style="padding:6px 0;" onchange="handleCsvFile()" />
+        </div>
+        <div id="csv-file-info" style="font-size:12px;color:var(--muted);margin-top:4px;"></div>
+      </div>
+      <div id="import-step-map" style="display:none;">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Map CSV columns to question fields.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="form-row" style="margin:0;"><label>Question Text *</label><select id="map-text" class="sf-input" style="font-size:12px;"></select></div>
+          <div class="form-row" style="margin:0;"><label>Report Label / Name *</label><select id="map-name" class="sf-input" style="font-size:12px;"></select></div>
+          <div class="form-row" style="margin:0;"><label>Auto-Yes Expression</label><select id="map-autoyes" class="sf-input" style="font-size:12px;"></select></div>
+          <div class="form-row" style="margin:0;"><label>Group By (Config Name) *</label><select id="map-group" class="sf-input" style="font-size:12px;"></select></div>
+        </div>
+        <div class="form-row" style="margin-top:12px;">
+          <label>Config Type</label>
+          <div class="toggle-group" style="margin-top:4px;">
+            <button id="imp-type-internal" class="active" onclick="setImpType('internal')">Internal</button>
+            <button id="imp-type-partner" onclick="setImpType('partner')">Partner</button>
+          </div>
+        </div>
+        <div class="actions" style="margin-top:12px;">
+          <button onclick="buildPreview()">Preview</button>
+        </div>
+      </div>
+      <div id="import-step-preview" style="display:none;">
+        <div id="preview-summary" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
+        <div id="preview-table" style="max-height:300px;overflow:auto;"></div>
+        <div class="actions" style="margin-top:12px;">
+          <button class="btn-green" onclick="runImport()">Import</button>
+          <button class="btn-ghost" onclick="showStep('map')">Back</button>
+        </div>
+      </div>
+      <div id="import-step-done" style="display:none;">
+        <div id="import-result" style="font-size:14px;color:var(--green);padding:20px 0;text-align:center;"></div>
+        <div class="actions" style="justify-content:center;">
+          <button onclick="location.reload()">Reload Page</button>
+        </div>
+      </div>
+    </div>
     <script>
       var newConfigType = 'internal';
       function setNewType(t) {
@@ -225,6 +274,145 @@ export function configListPage(configs: QLConfig[]): string {
         if (!confirm('Delete this config and all its questions?')) return;
         await fetch('/question-lab/api/configs/' + id, { method: 'DELETE' });
         location.reload();
+      }
+
+      // ── CSV Import ──
+      var csvRows = [];
+      var csvHeaders = [];
+      var importType = 'internal';
+      var importPayload = null;
+
+      function setImpType(t) {
+        importType = t;
+        document.getElementById('imp-type-internal').classList.toggle('active', t === 'internal');
+        document.getElementById('imp-type-partner').classList.toggle('active', t === 'partner');
+      }
+
+      function showStep(step) {
+        ['upload','map','preview','done'].forEach(function(s) {
+          document.getElementById('import-step-' + s).style.display = s === step ? '' : 'none';
+        });
+      }
+
+      function parseCsv(text) {
+        text = text.replace(/^\\uFEFF/, '');
+        var rows = []; var row = []; var field = ''; var inQuote = false;
+        for (var i = 0; i < text.length; i++) {
+          var c = text[i];
+          if (inQuote) {
+            if (c === '"' && text[i+1] === '"') { field += '"'; i++; }
+            else if (c === '"') { inQuote = false; }
+            else { field += c; }
+          } else {
+            if (c === '"') { inQuote = true; }
+            else if (c === ',') { row.push(field); field = ''; }
+            else if (c === '\\n' || (c === '\\r' && text[i+1] === '\\n')) {
+              if (c === '\\r') i++;
+              row.push(field); field = '';
+              if (row.some(function(f) { return f.trim(); })) rows.push(row);
+              row = [];
+            } else { field += c; }
+          }
+        }
+        row.push(field);
+        if (row.some(function(f) { return f.trim(); })) rows.push(row);
+        return rows;
+      }
+
+      function handleCsvFile() {
+        var file = document.getElementById('csv-file').files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function(e) {
+          var all = parseCsv(e.target.result);
+          if (all.length < 2) { document.getElementById('csv-file-info').textContent = 'CSV must have a header + at least 1 row.'; return; }
+          csvHeaders = all[0].map(function(h) { return h.trim(); });
+          csvRows = all.slice(1);
+          document.getElementById('csv-file-info').textContent = csvHeaders.length + ' columns, ' + csvRows.length + ' rows detected.';
+          populateMapSelects();
+          showStep('map');
+        };
+        reader.readAsText(file);
+      }
+
+      function populateMapSelects() {
+        var ids = ['map-text','map-name','map-autoyes','map-group'];
+        var defaults = { 'map-text': 'question', 'map-name': 'reportlabel', 'map-autoyes': 'autoyes', 'map-group': 'destination' };
+        ids.forEach(function(id) {
+          var sel = document.getElementById(id);
+          sel.innerHTML = '<option value="">-- select --</option>';
+          csvHeaders.forEach(function(h, i) {
+            var opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = h;
+            if (h.toLowerCase().replace(/[^a-z]/g, '') === defaults[id].replace(/[^a-z]/g, '')) opt.selected = true;
+            sel.appendChild(opt);
+          });
+        });
+      }
+
+      function buildPreview() {
+        var ti = parseInt(document.getElementById('map-text').value);
+        var ni = parseInt(document.getElementById('map-name').value);
+        var ai = document.getElementById('map-autoyes').value ? parseInt(document.getElementById('map-autoyes').value) : -1;
+        var gi = parseInt(document.getElementById('map-group').value);
+        if (isNaN(ti) || isNaN(ni) || isNaN(gi)) { alert('Map all required fields.'); return; }
+
+        var groups = {};
+        var totalDupes = 0;
+        csvRows.forEach(function(row) {
+          var group = (row[gi] || '').trim();
+          var text = (row[ti] || '').trim();
+          var name = (row[ni] || '').trim();
+          var autoYes = ai >= 0 ? (row[ai] || '').trim() : '';
+          if (!group || !text || !name) return;
+          if (!groups[group]) groups[group] = {};
+          var key = text;
+          if (groups[group][key]) { totalDupes++; return; }
+          groups[group][key] = { name: name, text: text, autoYesExp: autoYes };
+        });
+
+        var configs = Object.keys(groups).map(function(g) {
+          var qs = Object.values(groups[g]);
+          return { name: g, type: importType, questions: qs };
+        });
+
+        var totalQ = configs.reduce(function(s, c) { return s + c.questions.length; }, 0);
+        document.getElementById('preview-summary').textContent =
+          configs.length + ' configs, ' + totalQ + ' unique questions' + (totalDupes > 0 ? ' (' + totalDupes + ' duplicates removed)' : '');
+
+        var html = '<table><thead><tr><th>Config Name</th><th>Questions</th><th>Sample</th></tr></thead><tbody>';
+        configs.forEach(function(c) {
+          html += '<tr><td style="font-weight:600;">' + c.name.replace(/</g,'&lt;') + '</td><td>' + c.questions.length + '</td><td style="color:var(--muted);font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (c.questions[0] ? c.questions[0].name.replace(/</g,'&lt;') : '') + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        document.getElementById('preview-table').innerHTML = html;
+
+        importPayload = configs;
+        showStep('preview');
+      }
+
+      async function runImport() {
+        if (!importPayload) return;
+        var btn = event.target;
+        btn.disabled = true; btn.textContent = 'Importing...';
+        try {
+          var res = await fetch('/question-lab/api/import', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ configs: importPayload })
+          });
+          var d = await res.json();
+          if (d.ok) {
+            document.getElementById('import-result').textContent = 'Imported ' + d.created.configs + ' configs with ' + d.created.questions + ' questions.';
+            showStep('done');
+          } else {
+            alert(d.error || 'Import failed');
+            btn.disabled = false; btn.textContent = 'Import';
+          }
+        } catch(e) {
+          alert('Request failed: ' + e.message);
+          btn.disabled = false; btn.textContent = 'Import';
+        }
       }
     </script>`, []);
 }
@@ -491,7 +679,35 @@ export function questionEditorPage(question: QLQuestion, tests: QLTest[]): strin
       <div class="card-hd"><h2>Question Editor</h2></div>
       <div class="form-row"><label>Name</label><input type="text" id="q-name" value="${esc(question.name)}" /></div>
       <div class="form-row"><label>Question Text</label><textarea id="q-text" style="min-height:180px;">${esc(question.text)}</textarea></div>
-      <div class="form-row"><label>Auto-Yes Expression <span style="font-weight:400;text-transform:none;">(optional)</span></label><input type="text" id="q-autoyes" value="${esc(question.autoYesExp)}" placeholder="e.g. ~49:Married" /></div>
+      <div class="form-row">
+        <label>Auto-Yes / Skip Expression <span style="font-weight:400;text-transform:none;">(optional — when true, question is auto-answered Yes and skipped)</span></label>
+        <input type="text" id="q-autoyes" value="${esc(question.autoYesExp)}" placeholder="e.g. {{594!0}}=0::Guest didn't get MCC" />
+        <details style="margin-top:8px;font-size:12px;color:var(--muted);">
+          <summary style="cursor:pointer;color:var(--blue);font-weight:500;">Expression reference</summary>
+          <div style="margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;line-height:1.8;">
+            <div style="margin-bottom:8px;">Format: <code style="background:var(--bg-raised);padding:2px 6px;border-radius:3px;font-size:11px;">condition::reason message</code></div>
+            <table style="width:100%;font-size:11px;border-collapse:collapse;">
+              <thead><tr>
+                <th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--muted);">Operator</th>
+                <th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--muted);">Meaning</th>
+                <th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--muted);">Example</th>
+              </tr></thead>
+              <tbody>
+                <tr><td style="padding:4px 8px;font-family:monospace;color:var(--green);">~</td><td style="padding:4px 8px;">Contains</td><td style="padding:4px 8px;font-family:monospace;">{{49}}~single::Guest is single</td></tr>
+                <tr><td style="padding:4px 8px;font-family:monospace;color:var(--red);">/</td><td style="padding:4px 8px;">Does NOT contain</td><td style="padding:4px 8px;font-family:monospace;">{{49}}/single::Guest is married</td></tr>
+                <tr><td style="padding:4px 8px;font-family:monospace;color:var(--blue);">=</td><td style="padding:4px 8px;">Equals</td><td style="padding:4px 8px;font-family:monospace;">{{594!0}}=0::Guest didn't get MCC</td></tr>
+                <tr><td style="padding:4px 8px;font-family:monospace;color:var(--orange);">#</td><td style="padding:4px 8px;">Does NOT equal</td><td style="padding:4px 8px;font-family:monospace;">{{553}}#yes::Not activated</td></tr>
+                <tr><td style="padding:4px 8px;font-family:monospace;color:var(--muted);">&lt;</td><td style="padding:4px 8px;">Less than (numeric)</td><td style="padding:4px 8px;font-family:monospace;">{{706}}&lt;1::Revenue not collected</td></tr>
+              </tbody>
+            </table>
+            <div style="margin-top:8px;color:var(--muted);font-size:11px;">
+              <strong>{{fieldId}}</strong> is replaced with the record's field value at audit time.<br>
+              <strong>{{fieldId!default}}</strong> uses "default" if field is empty (e.g. <code style="background:var(--bg-raised);padding:1px 4px;border-radius:2px;">{{594!0}}</code> = field 594, default 0).<br>
+              <strong>::reason</strong> is the message shown when the skip fires (e.g. "Guest didn't get MCC").
+            </div>
+          </div>
+        </details>
+      </div>
       <div class="actions"><button onclick="saveQuestion()">Save Changes</button></div>
     </div>
 

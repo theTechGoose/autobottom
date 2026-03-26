@@ -1,2 +1,5 @@
 .env
 seed-data.json
+.worktrees/
+node_modules/
+deno.lock

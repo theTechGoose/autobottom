@@ -10,11 +10,20 @@ export interface QLVersion {
   timestamp: string;
 }
 
+export interface QLTestRun {
+  findingId: string;
+  rid: string;
+  type: "internal" | "partner";
+  startedAt: string;
+}
+
 export interface QLConfig {
   id: string;
   name: string;
   createdAt: string;
   questionIds: string[];
+  testEmailRecipients?: string[];
+  testRuns?: QLTestRun[];
 }
 
 export interface QLQuestion {
@@ -307,6 +316,27 @@ export async function setPartnerAssignment(orgId: OrgId, officeName: string, con
     assignments[officeName] = configName;
   }
   await db.set(orgKey(orgId, "qlab", "partner-assignments"), assignments);
+}
+
+// -- Test Audit Helpers --------------------------------------------------
+
+export async function addTestRun(orgId: OrgId, configId: string, run: QLTestRun): Promise<void> {
+  const config = await getConfig(orgId, configId);
+  if (!config) return;
+  if (!config.testRuns) config.testRuns = [];
+  config.testRuns.unshift(run);
+  if (config.testRuns.length > 10) config.testRuns = config.testRuns.slice(0, 10);
+  const db = await kv();
+  await db.set(orgKey(orgId, "qlab", "config", configId), config);
+}
+
+export async function updateTestEmailRecipients(orgId: OrgId, configId: string, emails: string[]): Promise<QLConfig | null> {
+  const config = await getConfig(orgId, configId);
+  if (!config) return null;
+  config.testEmailRecipients = emails;
+  const db = await kv();
+  await db.set(orgKey(orgId, "qlab", "config", configId), config);
+  return config;
 }
 
 // -- Serve ----------------------------------------------------------------

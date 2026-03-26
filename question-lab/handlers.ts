@@ -3,13 +3,18 @@ import {
   listConfigs, getConfig, createConfig, updateConfig, deleteConfig,
   getQuestion, getQuestionsForConfig, createQuestion, updateQuestion, deleteQuestion, restoreVersion,
   getTest, getTestsForQuestion, createTest, updateTest, deleteTest, updateTestResult,
-  serveConfig,
+  serveConfig, addTestRun, updateTestEmailRecipients,
 } from "./kv.ts";
 import { configListPage, configDetailPage, questionEditorPage } from "./page.ts";
 import { askQuestion, type LlmAnswer } from "../providers/groq.ts";
 import { query as vectorQuery } from "../providers/pinecone.ts";
 import { resolveEffectiveAuth } from "../auth/kv.ts";
 import type { AuthContext } from "../auth/kv.ts";
+import { nanoid } from "npm:nanoid";
+import { getDateLegByRid, getPackageByRid } from "../providers/quickbase.ts";
+import { saveFinding, saveJob } from "../lib/kv.ts";
+import { enqueueStep } from "../lib/queue.ts";
+import type { AuditFinding, AuditJob } from "../types/mod.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -240,6 +245,88 @@ export async function handleGetSnippet(req: Request): Promise<Response> {
   }
 }
 
+// ── Test Audit ───────────────────────────────────────────────────────
+
+export async function handleRunTestAudit(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const { configId, rid, type } = await req.json() as { configId: string; rid: string; type: "internal" | "partner" };
+  if (!configId || !rid || !type) return json({ error: "configId, rid, type required" }, 400);
+
+  const config = await getConfig(auth.orgId, configId);
+  if (!config) return json({ error: "config not found" }, 404);
+
+  const recipients = config.testEmailRecipients ?? ["ai@monsterrg.com"];
+  const record = type === "partner"
+    ? (await getPackageByRid(rid) ?? { RecordId: rid })
+    : (await getDateLegByRid(rid) ?? { RecordId: rid });
+  const recordingIdField = type === "partner" ? "GenieNumber" : "VoGenie";
+
+  const jobId = nanoid();
+  const job: AuditJob = {
+    id: jobId,
+    doneAuditIds: [],
+    status: "running",
+    timestamp: new Date().toISOString(),
+    owner: "question-lab-test",
+    updateEndpoint: "none",
+    recordsToAudit: [rid],
+  };
+  await saveJob(auth.orgId, job);
+
+  const findingId = nanoid();
+  const rawRecordingId = record[recordingIdField] ? String(record[recordingIdField]) : undefined;
+  const finding: AuditFinding = {
+    id: findingId,
+    auditJobId: jobId,
+    findingStatus: "pending",
+    feedback: { heading: "", text: "", viewUrl: "" },
+    job,
+    record,
+    recordingIdField,
+    recordingId: rawRecordingId,
+    owner: "question-lab-test",
+    updateEndpoint: "none",
+    qlabConfig: config.name,
+    isTest: true,
+    testEmailRecipients: recipients,
+  };
+  await saveFinding(auth.orgId, finding);
+  await enqueueStep("init", { findingId, orgId: auth.orgId });
+
+  await addTestRun(auth.orgId, configId, {
+    findingId,
+    rid,
+    type,
+    startedAt: new Date().toISOString(),
+  });
+
+  console.log(`[QLAB] Test audit started: config=${config.name} rid=${rid} type=${type} finding=${findingId}`);
+  return json({ findingId });
+}
+
+export async function handleGetTestRuns(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const parts = new URL(req.url).pathname.split("/");
+  const configId = parts[parts.length - 1];
+  const config = await getConfig(auth.orgId, configId);
+  if (!config) return json({ error: "not found" }, 404);
+  return json(config.testRuns ?? []);
+}
+
+export async function handleUpdateTestEmails(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const parts = new URL(req.url).pathname.split("/");
+  // /question-lab/api/configs/:id/test-emails → id is parts[-2]
+  const configId = parts[parts.length - 2];
+  const { emails } = await req.json() as { emails: string[] };
+  if (!Array.isArray(emails)) return json({ error: "emails array required" }, 400);
+  const result = await updateTestEmailRecipients(auth.orgId, configId, emails);
+  return result ? json(result) : json({ error: "not found" }, 404);
+}
+
 // ── Serve Config ─────────────────────────────────────────────────────
 
 export async function handleServeConfig(req: Request): Promise<Response> {
@@ -287,6 +374,11 @@ const routes = [
   // Snippet + Serve
   route("GET", "/question-lab/api/snippet", handleGetSnippet),
   route("GET", "/question-lab/api/serve/:configNameOrId", handleServeConfig),
+
+  // Test Audit
+  route("POST", "/question-lab/api/run-test-audit", handleRunTestAudit),
+  route("GET", "/question-lab/api/test-runs/:configId", handleGetTestRuns),
+  route("PUT", "/question-lab/api/configs/:id/test-emails", handleUpdateTestEmails),
 ];
 
 export async function routeQuestionLab(req: Request): Promise<Response> {

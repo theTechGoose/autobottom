@@ -76,6 +76,8 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
     owner: job.owner,
     updateEndpoint: callbackUrl,
     qlabConfig: qlabConfig ?? body.qlabConfig ?? undefined,
+    isTest: body.isTest ?? undefined,
+    testEmailRecipients: body.testEmailRecipients ?? undefined,
   };
 
   if (override) {
@@ -145,6 +147,8 @@ export async function handlePackageByRid(orgId: OrgId, req: Request): Promise<Re
     owner: job.owner,
     updateEndpoint: callbackUrl,
     qlabConfig: qlabConfig ?? body.qlabConfig ?? undefined,
+    isTest: body.isTest ?? undefined,
+    testEmailRecipients: body.testEmailRecipients ?? undefined,
   };
 
   await saveFinding(orgId, finding);

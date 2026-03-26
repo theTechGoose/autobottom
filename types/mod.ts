@@ -100,6 +100,8 @@ export interface AuditFinding {
   assemblyAiUploadUrl?: string;
   genieAttempts?: number;
   genieRetryAt?: number;
+  isTest?: boolean;
+  testEmailRecipients?: string[];
 }
 
 export function createFinding(

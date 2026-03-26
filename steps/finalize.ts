@@ -9,6 +9,7 @@ import { populateReviewQueue } from "../review/kv.ts";
 import { populateJudgeQueue, saveAppeal, getAppeal } from "../judge/kv.ts";
 import { checkBadges } from "../shared/badges.ts";
 import { env } from "../env.ts";
+import { sendEmail } from "../providers/postmark.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -106,6 +107,29 @@ export async function stepFinalize(req: Request): Promise<Response> {
   finding.findingStatus = "finished";
   (finding as Record<string, any>).completedAt = completedAt;
   await saveFinding(orgId, finding);
+
+  // Test audits: skip ALL live writes; send result email; only keep job updated.
+  if ((finding as Record<string, any>).isTest) {
+    console.log(`[STEP-FINALIZE] ${findingId}: 🧪 Test audit — skipping live writes, sending result email`);
+    sendTestAuditEmail(finding, score).catch((err) =>
+      console.error(`[STEP-FINALIZE] ${findingId}: ❌ Test email failed:`, err)
+    );
+    try {
+      const job = await getJob(orgId, finding.auditJobId);
+      if (job) {
+        const recordId = finding.record?.RecordId ?? finding.recordingId ?? findingId;
+        if (!job.doneAuditIds) job.doneAuditIds = [];
+        if (!job.doneAuditIds.some((a: any) => a.auditId === findingId)) {
+          job.doneAuditIds.push({ auditId: findingId, auditRecord: String(recordId) });
+        }
+        if (job.doneAuditIds.length >= (job.recordsToAudit?.length ?? 0)) job.status = "finished";
+        await saveJob(orgId, job);
+      }
+    } catch {}
+    await enqueueCleanup({ findingId, orgId, pineconeNamespace: findingId }, 86400);
+    return json({ ok: true, test: true });
+  }
+
   const isPackage = finding.recordingIdField === "GenieNumber";
   const department = String(isPackage ? (finding.record?.OfficeName ?? "") : (finding.record?.ActivatingOffice ?? "")) || undefined;
   const bypassCfg = await getOfficeBypassConfig(orgId);
@@ -472,4 +496,48 @@ async function postToDeno(finding: Record<string, any>) {
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+function escHtml(str: string) {
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+async function sendTestAuditEmail(finding: Record<string, any>, score: number | undefined) {
+  const recipients: string[] = finding.testEmailRecipients ?? ["ai@monsterrg.com"];
+  const qs = (finding.answeredQuestions ?? []) as any[];
+  const total = qs.length;
+  const passed = qs.filter((q: any) => q.answer === "Yes").length;
+  const pct = total > 0 ? score ?? Math.round((passed / total) * 100) : 0;
+  const rid = String(finding.record?.RecordId ?? finding.recordingId ?? "?");
+  const configName = escHtml(finding.qlabConfig ?? "Unknown Config");
+  const reportUrl = `${env.selfUrl}/audit/report?id=${finding.id}`;
+  const scoreColor = pct === 100 ? "#3fb950" : pct >= 80 ? "#d29922" : "#f85149";
+
+  const qRows = qs.map((q: any) => {
+    const pass = q.answer === "Yes";
+    return `<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #30363d;font-size:13px;">${pass ? "✅" : "❌"} ${escHtml(q.header ?? q.populated ?? "")}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #30363d;font-size:13px;color:${pass ? "#3fb950" : "#f85149"};">${escHtml(q.answer)}</td>
+    </tr>`}).join("");
+
+  const htmlBody = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;background:#0d1117;color:#e6edf3;padding:24px;border-radius:12px;">
+  <h2 style="margin:0 0 8px;font-size:20px;">🧪 Test Audit Complete</h2>
+  <p style="color:#8b949e;margin:0 0 20px;font-size:14px;">Config: <strong style="color:#e6edf3;">${configName}</strong> &nbsp;|&nbsp; RID: <strong style="color:#e6edf3;">${escHtml(rid)}</strong></p>
+  <div style="background:#21262d;border:1px solid #30363d;border-radius:8px;padding:20px;margin-bottom:20px;text-align:center;">
+    <div style="font-size:44px;font-weight:700;color:${scoreColor};">${pct}%</div>
+    <div style="font-size:13px;color:#8b949e;margin-top:4px;">${passed} / ${total} questions passed</div>
+  </div>
+  ${total > 0 ? `<table style="width:100%;border-collapse:collapse;background:#21262d;border:1px solid #30363d;border-radius:8px;overflow:hidden;margin-bottom:20px;"><thead><tr><th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#8b949e;border-bottom:1px solid #30363d;">Question</th><th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#8b949e;border-bottom:1px solid #30363d;">Answer</th></tr></thead><tbody>${qRows}</tbody></table>` : ""}
+  <div style="text-align:center;">
+    <a href="${reportUrl}" style="display:inline-block;background:#388bfd;color:#fff;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:500;font-size:14px;">View Full Report →</a>
+  </div>
+  <p style="color:#8b949e;font-size:12px;margin-top:24px;text-align:center;">This is a test audit. No live data was affected.</p>
+</div>`;
+
+  await sendEmail({
+    to: recipients,
+    subject: `[Test Audit] ${finding.qlabConfig ?? "Config"} | RID: ${rid} | Score: ${pct}%`,
+    htmlBody,
+  });
+  console.log(`[STEP-FINALIZE] ${finding.id}: 📧 Test email sent to ${recipients.join(", ")}`);
 }

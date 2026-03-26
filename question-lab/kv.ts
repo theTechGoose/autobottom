@@ -269,6 +269,25 @@ export async function deleteTest(orgId: OrgId, id: string): Promise<void> {
   }
 }
 
+// -- Active Config Setting ------------------------------------------------
+
+/** Get the org-level active Question Lab config name (null = production/QB mode). */
+export async function getActiveQlabConfig(orgId: OrgId): Promise<string | null> {
+  const db = await kv();
+  const entry = await db.get<string>(orgKey(orgId, "qlab", "active-config"));
+  return entry.value ?? null;
+}
+
+/** Set or clear the org-level active Question Lab config. Pass null to revert to production. */
+export async function setActiveQlabConfig(orgId: OrgId, configName: string | null): Promise<void> {
+  const db = await kv();
+  if (configName === null) {
+    await db.delete(orgKey(orgId, "qlab", "active-config"));
+  } else {
+    await db.set(orgKey(orgId, "qlab", "active-config"), configName);
+  }
+}
+
 // -- Serve ----------------------------------------------------------------
 
 export async function serveConfig(orgId: OrgId, configNameOrId: string) {

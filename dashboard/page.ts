@@ -656,6 +656,22 @@ table { width: 100%; border-collapse: collapse; }
       <div id="record-search-results" style="margin-top:8px;display:none;"></div>
     </div>
 
+    <!-- Question Lab Mode -->
+    <div class="tbl" style="margin-bottom:16px;" id="qlab-mode-panel">
+      <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>Audit Question Mode</span>
+        <span id="qlab-mode-badge" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:12px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);">Loading...</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;padding:0 0 2px;">
+        <select id="qlab-config-select" class="sf-input" style="flex:1;font-size:12px;padding:6px 8px;">
+          <option value="">-- select a Question Lab config --</option>
+        </select>
+        <button class="sf-btn primary" id="qlab-enable-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Use Question Lab</button>
+        <button class="sf-btn secondary" id="qlab-disable-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Use Production</button>
+      </div>
+      <div id="qlab-mode-msg" style="font-size:10px;margin-top:6px;min-height:14px;color:var(--text-dim);"></div>
+    </div>
+
     <!-- Test by RID -->
     <div class="tbl" style="margin-bottom:16px;">
       <div class="tbl-title">Test Audit by RID</div>
@@ -2572,6 +2588,77 @@ table { width: 100%; border-collapse: collapse; }
       .catch(function() { toast('Request failed', 'error'); })
       .finally(function() { btn.disabled = false; btn.textContent = 'Yes, Clear Queue'; });
   });
+
+  // ===== Question Lab Mode =====
+  (function() {
+    var badge = document.getElementById('qlab-mode-badge');
+    var select = document.getElementById('qlab-config-select');
+    var msgEl = document.getElementById('qlab-mode-msg');
+    var enableBtn = document.getElementById('qlab-enable-btn');
+    var disableBtn = document.getElementById('qlab-disable-btn');
+
+    function setBadge(active) {
+      if (active) {
+        badge.textContent = 'Question Lab: ' + active;
+        badge.style.background = 'rgba(63,185,80,0.12)';
+        badge.style.borderColor = 'var(--green)';
+        badge.style.color = 'var(--green)';
+      } else {
+        badge.textContent = 'Production (QuickBase)';
+        badge.style.background = 'var(--bg)';
+        badge.style.borderColor = 'var(--border)';
+        badge.style.color = 'var(--text-dim)';
+      }
+    }
+
+    function loadQlabMode() {
+      fetch('/api/qlab-mode')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          setBadge(d.active);
+          var opts = '<option value="">-- select a Question Lab config --</option>';
+          (d.configs || []).forEach(function(c) {
+            opts += '<option value="' + c.name + '"' + (d.active === c.name ? ' selected' : '') + '>' + c.name + '</option>';
+          });
+          select.innerHTML = opts;
+          msgEl.textContent = '';
+        })
+        .catch(function() { badge.textContent = 'Error loading'; });
+    }
+
+    function setQlabMode(configName) {
+      enableBtn.disabled = true; disableBtn.disabled = true;
+      msgEl.textContent = 'Saving...';
+      fetch('/api/qlab-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ configName: configName || null })
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.ok) {
+            setBadge(d.active);
+            msgEl.style.color = 'var(--green)';
+            msgEl.textContent = d.active ? ('Switched to Question Lab: ' + d.active) : 'Switched to Production (QuickBase)';
+            toast(d.active ? ('Question Lab active: ' + d.active) : 'Reverted to Production mode', 'success');
+          } else {
+            msgEl.style.color = 'var(--red)';
+            msgEl.textContent = d.error || 'Failed to update mode';
+          }
+        })
+        .catch(function() { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Request failed'; })
+        .finally(function() { enableBtn.disabled = false; disableBtn.disabled = false; });
+    }
+
+    enableBtn.addEventListener('click', function() {
+      var val = select.value;
+      if (!val) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Select a config first.'; return; }
+      setQlabMode(val);
+    });
+    disableBtn.addEventListener('click', function() { setQlabMode(null); });
+
+    loadQlabMode();
+  })();
 
   // ===== Test by RID =====
   function doRidAudit() {

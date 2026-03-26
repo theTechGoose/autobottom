@@ -10,6 +10,7 @@ import { populateJudgeQueue, saveAppeal, getAppeal } from "./judge/kv.ts";
 import type { AuditFinding, AuditJob } from "./types/mod.ts";
 import { createJob } from "./types/mod.ts";
 import type { OrgId } from "./lib/org.ts";
+import { getActiveQlabConfig } from "./question-lab/kv.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -75,7 +76,7 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
     genieIds: genieIdList.length > 1 ? genieIdList : undefined,
     owner: job.owner,
     updateEndpoint: callbackUrl,
-    qlabConfig: qlabConfig ?? body.qlabConfig,
+    qlabConfig: qlabConfig ?? body.qlabConfig ?? await getActiveQlabConfig(orgId) ?? undefined,
   };
 
   if (override) {
@@ -88,7 +89,7 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
   // Kick off pipeline
   await enqueueStep("init", { findingId, orgId });
 
-  console.log(`[CONTROLLER] Audit started: job=${jobId} finding=${findingId} rid=${rid}`);
+  console.log(`[CONTROLLER] Audit started: job=${jobId} finding=${findingId} rid=${rid} qlab=${finding.qlabConfig ?? "off"}`);
   return json({ jobId, findingId, status: "queued" });
 }
 
@@ -144,13 +145,13 @@ export async function handlePackageByRid(orgId: OrgId, req: Request): Promise<Re
     genieIds: genieIdListPkg.length > 1 ? genieIdListPkg : undefined,
     owner: job.owner,
     updateEndpoint: callbackUrl,
-    qlabConfig: qlabConfig ?? body.qlabConfig,
+    qlabConfig: qlabConfig ?? body.qlabConfig ?? await getActiveQlabConfig(orgId) ?? undefined,
   };
 
   await saveFinding(orgId, finding);
   await enqueueStep("init", { findingId, orgId });
 
-  console.log(`[CONTROLLER] Package audit started: job=${jobId} finding=${findingId} rid=${rid}`);
+  console.log(`[CONTROLLER] Package audit started: job=${jobId} finding=${findingId} rid=${rid} qlab=${finding.qlabConfig ?? "off"}`);
   return json({ jobId, findingId, status: "queued" });
 }
 

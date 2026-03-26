@@ -107,6 +107,7 @@ import { getChatPage } from "./chat/page.ts";
 // Dashboard + Question Lab
 import { getDashboardPage } from "./dashboard/page.ts";
 import { routeQuestionLab } from "./question-lab/handlers.ts";
+import { listConfigs, getActiveQlabConfig, setActiveQlabConfig } from "./question-lab/kv.ts";
 
 // Sound
 import { getSoundEngineJs } from "./shared/sound-engine.ts";
@@ -343,6 +344,9 @@ const postRoutes: Record<string, Handler> = {
   "/gamification/api/upload-sound": handleUploadSound,
   "/gamification/api/seed": handleSeedSoundPacks,
   "/gamification/api/settings": handleGamificationPageSaveSettings,
+
+  // Question Lab mode toggle (admin)
+  "/api/qlab-mode": withOrgId(handleQlabMode),
 
   // Store (unified, all roles)
   "/api/store/buy": handleAgentStoreBuy,
@@ -3937,6 +3941,29 @@ async function handleDeduplicateFindings(req: Request): Promise<Response> {
   return new Response(readable, {
     headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
   });
+}
+
+// -- Question Lab Mode Toggle --
+
+async function handleQlabMode(orgId: OrgId, req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+
+  if (req.method === "GET") {
+    const active = await getActiveQlabConfig(orgId);
+    const configs = await listConfigs(orgId);
+    return json({ active, configs });
+  }
+
+  if (req.method === "POST") {
+    const body = await req.json() as { configName?: string | null };
+    const configName = body.configName ?? null;
+    await setActiveQlabConfig(orgId, configName);
+    console.log(`[QLAB] 🔬 Mode set to ${configName ? `"${configName}"` : "production"} by ${auth.email}`);
+    return json({ ok: true, active: configName });
+  }
+
+  return json({ error: "method not allowed" }, 405);
 }
 
 // -- SSE Events Endpoint --

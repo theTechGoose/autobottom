@@ -127,6 +127,36 @@ export async function deleteConfig(orgId: OrgId, id: string): Promise<void> {
 
 // -- Bulk Import ----------------------------------------------------------
 
+/** Fast delete: wipe a config + all its questions in batched atomics. No per-question read. */
+export async function bulkDeleteConfig(orgId: OrgId, id: string): Promise<void> {
+  const db = await kv();
+  const config = await getConfig(orgId, id);
+  if (!config) return;
+
+  // Batch-delete all questions (no need to read each one, just delete keys)
+  const keys = config.questionIds.map((qId) => orgKey(orgId, "qlab", "question", qId));
+  for (let i = 0; i < keys.length; i += 8) {
+    const batch = keys.slice(i, i + 8);
+    let atomic = db.atomic();
+    for (const k of batch) atomic = atomic.delete(k);
+    await atomic.commit();
+  }
+
+  // Delete config + update index
+  await db.delete(orgKey(orgId, "qlab", "config", id));
+  const index = await getConfigIndex(orgId);
+  await setConfigIndex(orgId, index.filter((i) => i !== id));
+}
+
+/** Get just config names quickly — reads index + configs but returns only id+name. */
+export async function listConfigNames(orgId: OrgId): Promise<Array<{ id: string; name: string }>> {
+  const db = await kv();
+  const ids = await getConfigIndex(orgId);
+  // Parallel reads
+  const entries = await Promise.all(ids.map((id) => db.get<QLConfig>(orgKey(orgId, "qlab", "config", id))));
+  return entries.filter((e) => e.value).map((e) => ({ id: e.value!.id, name: e.value!.name }));
+}
+
 /** Create a config with all its questions in minimal KV operations. */
 export async function bulkImportConfig(
   orgId: OrgId,
@@ -151,16 +181,16 @@ export async function bulkImportConfig(
 
   const config: QLConfig = { id: configId, name, createdAt: new Date().toISOString(), questionIds, type, active: false };
 
-  // Write config
-  await db.set(orgKey(orgId, "qlab", "config", configId), config);
-
-  // Write questions in batches of 8 (Deno KV atomic limit is ~10 mutations)
-  for (let i = 0; i < questionObjects.length; i += 8) {
-    const batch = questionObjects.slice(i, i + 8);
+  // Write config + questions in one pass of batched atomics
+  // First batch: config + first few questions
+  const allSets: Array<{ key: Deno.KvKey; value: unknown }> = [
+    { key: orgKey(orgId, "qlab", "config", configId), value: config },
+    ...questionObjects,
+  ];
+  for (let i = 0; i < allSets.length; i += 8) {
+    const batch = allSets.slice(i, i + 8);
     let atomic = db.atomic();
-    for (const q of batch) {
-      atomic = atomic.set(q.key, q.value);
-    }
+    for (const item of batch) atomic = atomic.set(item.key, item.value);
     await atomic.commit();
   }
 

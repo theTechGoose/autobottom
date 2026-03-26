@@ -3,7 +3,7 @@ import {
   listConfigs, getConfig, createConfig, updateConfig, deleteConfig,
   getQuestion, getQuestionsForConfig, createQuestion, updateQuestion, deleteQuestion, restoreVersion,
   getTest, getTestsForQuestion, createTest, updateTest, deleteTest, updateTestResult,
-  serveConfig, addTestRun, updateTestEmailRecipients, bulkImportConfig,
+  serveConfig, addTestRun, updateTestEmailRecipients, bulkImportConfig, bulkDeleteConfig, listConfigNames,
 } from "./kv.ts";
 import { configListPage, configDetailPage, questionEditorPage } from "./page.ts";
 import { askQuestion, type LlmAnswer } from "../providers/groq.ts";
@@ -347,31 +347,28 @@ export async function handleImport(req: Request): Promise<Response> {
   if (!name || !Array.isArray(questions)) return json({ error: "name and questions required" }, 400);
 
   const configType: "internal" | "partner" = type === "partner" ? "partner" : "internal";
-  const existing = await listConfigs(auth.orgId);
+  const existing = await listConfigNames(auth.orgId);
   const match = existing.find((c) => c.name === name);
 
   if (match) {
     if (dupeMode === "skip") {
-      console.log(`[QLAB] 📦 Import skipped duplicate: "${name}"`);
       return json({ ok: true, skipped: true, configName: name });
     }
 
     if (dupeMode === "overwrite") {
-      // Delete existing config + its questions, then create fresh
-      await deleteConfig(auth.orgId, match.id);
+      await bulkDeleteConfig(auth.orgId, match.id);
       const result = await bulkImportConfig(auth.orgId, name, configType, questions);
-      console.log(`[QLAB] 📦 Overwritten config "${name}" with ${result.questionCount} questions by ${auth.orgId}`);
+      console.log(`[QLAB] 📦 Overwritten "${name}" (${result.questionCount}q)`);
       return json({ ok: true, skipped: false, overwritten: true, configName: name, questions: result.questionCount });
     }
 
     if (dupeMode === "duplicate") {
-      // Find next available number: "Config", "Config (2)", "Config (3)", ...
       let num = 2;
       const names = new Set(existing.map((c) => c.name));
       while (names.has(`${name} (${num})`)) num++;
       const newName = `${name} (${num})`;
       const result = await bulkImportConfig(auth.orgId, newName, configType, questions);
-      console.log(`[QLAB] 📦 Imported duplicate config "${newName}" with ${result.questionCount} questions by ${auth.orgId}`);
+      console.log(`[QLAB] 📦 Duplicate "${newName}" (${result.questionCount}q)`);
       return json({ ok: true, skipped: false, overwritten: false, configName: newName, questions: result.questionCount });
     }
   }

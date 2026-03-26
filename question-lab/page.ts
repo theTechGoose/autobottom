@@ -487,38 +487,46 @@ export function configListPage(configs: QLConfig[]): string {
           document.getElementById('import-progress-pct').textContent = pct + '%';
           document.getElementById('import-progress-bar').style.width = pct + '%';
 
-          try {
-            var res = await fetch('/question-lab/api/import', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                name: cfg.name,
-                type: cfg.type,
-                questions: cfg.questions,
-                dupeMode: mode
-              })
-            });
-            var d = await res.json();
-            if (d.ok) {
-              if (d.skipped) {
-                skipped++;
-                importLog('Skipped: ' + cfg.name);
-              } else if (d.overwritten) {
-                overwritten++;
-                totalQ += d.questions || 0;
-                importLog('Overwritten: ' + cfg.name + ' (' + (d.questions || 0) + ' questions)');
-              } else {
-                created++;
-                totalQ += d.questions || 0;
-                importLog('Created: ' + (d.configName || cfg.name) + ' (' + (d.questions || 0) + ' questions)');
+          var ok = false;
+          for (var attempt = 0; attempt < 3 && !ok; attempt++) {
+            try {
+              if (attempt > 0) {
+                importLog('  Retry ' + attempt + '/2 for ' + cfg.name + '...');
+                await new Promise(function(r) { setTimeout(r, 1500 * attempt); });
               }
-            } else {
-              errors++;
-              importLog('ERROR: ' + cfg.name + ' \\u2014 ' + (d.error || 'unknown'));
+              var res = await fetch('/question-lab/api/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  name: cfg.name,
+                  type: cfg.type,
+                  questions: cfg.questions,
+                  dupeMode: mode
+                })
+              });
+              if (res.status === 503) { importLog('  503 on ' + cfg.name + ', retrying...'); continue; }
+              var d = await res.json();
+              ok = true;
+              if (d.ok) {
+                if (d.skipped) {
+                  skipped++;
+                  importLog('Skipped: ' + cfg.name);
+                } else if (d.overwritten) {
+                  overwritten++;
+                  totalQ += d.questions || 0;
+                  importLog('Overwritten: ' + cfg.name + ' (' + (d.questions || 0) + 'q)');
+                } else {
+                  created++;
+                  totalQ += d.questions || 0;
+                  importLog('Created: ' + (d.configName || cfg.name) + ' (' + (d.questions || 0) + 'q)');
+                }
+              } else {
+                errors++;
+                importLog('ERROR: ' + cfg.name + ' \\u2014 ' + (d.error || 'unknown'));
+              }
+            } catch (e) {
+              if (attempt === 2) { errors++; importLog('FAILED: ' + cfg.name + ' \\u2014 ' + e.message); }
             }
-          } catch (e) {
-            errors++;
-            importLog('ERROR: ' + cfg.name + ' \\u2014 ' + e.message);
           }
         }
 

@@ -1,5 +1,5 @@
 /** Inline HTML/CSS/JS for the Question Lab UI. */
-import type { QLConfig, QLQuestion, QLTest } from "./kv.ts";
+import type { QLConfig, QLQuestion, QLTest } from "../src/domain/coordinators/question-lab/mod.ts";
 
 function esc(str: string) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

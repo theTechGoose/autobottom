@@ -1,7 +1,7 @@
 /** STEP 2b: Diarize the raw transcript using Groq LLM. */
-import { getFinding, saveFinding, saveTranscript, trackActive } from "../../../../../../lib/kv.ts";
-import { enqueueStep } from "../../../../../../lib/queue.ts";
-import { diarize } from "../../../../../../providers/groq.ts";
+import { getFinding, saveFinding, saveTranscript, trackActive } from "../../../data/kv/mod.ts";
+import { enqueueStep } from "../../../data/queue/mod.ts";
+import { diarize } from "../../../data/groq/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

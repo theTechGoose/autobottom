@@ -1,5 +1,5 @@
-import type { AuditFinding, FeedbackCardData } from "../../../../../dto/audit-finding.ts";
-import type { AuditJob } from "../../../../../dto/audit-job.ts";
+import type { AuditFinding, FeedbackCardData } from "../../../../dto/audit-finding.ts";
+import type { AuditJob } from "../../../../dto/audit-job.ts";
 import { nanoid } from "nanoid";
 
 export class AuditFindingService {

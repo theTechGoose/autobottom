@@ -1,11 +1,11 @@
 /** STEP 3: Fetch questions from QuickBase (or Question Lab), embed transcript in Pinecone, fan-out question batches. */
-import { getFinding, saveFinding, setBatchCounter, getCachedQuestions, cacheQuestions, trackActive, savePopulatedQuestions } from "../../../../../../lib/kv.ts";
-import { enqueueStep } from "../../../../../../lib/queue.ts";
-import { getQuestionsForDestination } from "../../../../../../providers/quickbase.ts";
-import { upload } from "../../../../../../providers/pinecone.ts";
-import { populateQuestions } from "../../../../../../providers/question-expr.ts";
-import { serveConfig } from "../../../../../../question-lab/kv.ts";
-import type { IQuestionSeed } from "../../../../../../types/mod.ts";
+import { getFinding, saveFinding, setBatchCounter, getCachedQuestions, cacheQuestions, trackActive, savePopulatedQuestions } from "../../../data/kv/mod.ts";
+import { enqueueStep } from "../../../data/queue/mod.ts";
+import { getQuestionsForDestination } from "../../../data/quickbase/mod.ts";
+import { upload } from "../../../data/pinecone/mod.ts";
+import { populateQuestions } from "../../../business/question-expr/mod.ts";
+import { serveConfig } from "../../question-lab/mod.ts";
+import type { IQuestionSeed } from "../../../../../types/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

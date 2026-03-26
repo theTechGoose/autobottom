@@ -1,19 +1,19 @@
-import * as icons from "./shared/icons.ts";
-import { stepInit } from "./steps/init.ts";
-import { stepTranscribe } from "./steps/transcribe.ts";
-import { stepTranscribeCb } from "./steps/transcribe-cb.ts";
-import { stepPrepare } from "./steps/prepare.ts";
-import { stepAskBatch } from "./steps/ask-batch.ts";
-import { stepFinalize } from "./steps/finalize.ts";
-import { stepCleanup } from "./steps/cleanup.ts";
+import * as icons from "./pages/icons.ts";
+import { stepInit } from "./src/domain/coordinators/pipeline/init/mod.ts";
+import { stepTranscribe } from "./src/domain/coordinators/pipeline/transcribe/mod.ts";
+import { stepTranscribeCb } from "./src/domain/coordinators/pipeline/diarize/mod.ts";
+import { stepPrepare } from "./src/domain/coordinators/pipeline/prepare/mod.ts";
+import { stepAskBatch } from "./src/domain/coordinators/pipeline/ask-batch/mod.ts";
+import { stepFinalize } from "./src/domain/coordinators/pipeline/finalize/mod.ts";
+import { stepCleanup } from "./src/domain/coordinators/pipeline/cleanup/mod.ts";
 import {
   handleAuditByRid, handlePackageByRid, handleGetFinding, handleGetReport,
   handleGetStats, handleGetRecording, handleFileAppeal, handleAppealStatus,
   handleAppealDifferentRecording, handleAppealUploadRecording,
-} from "./controller.ts";
-import { getTokenUsage } from "./providers/groq.ts";
+} from "./src/entrypoints/api.ts";
+import { getTokenUsage } from "./src/domain/data/groq/mod.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
-import { enqueueStep } from "./lib/queue.ts";
+import { enqueueStep } from "./src/domain/data/queue/mod.ts";
 import {
   trackError, trackRetry, trackCompleted, getStats, getPipelineConfig, setPipelineConfig,
   saveFinding, saveTranscript, saveBatchAnswers,
@@ -30,10 +30,10 @@ import {
   getGameState, saveGameState,
   getPrefabSubscriptions, savePrefabSubscriptions, getBroadcastEvents,
   listCustomStoreItems, saveCustomStoreItem, deleteCustomStoreItem,
-} from "./lib/kv.ts";
-import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot } from "./lib/kv.ts";
-import { S3Ref } from "./lib/s3.ts";
-import { sendEmail } from "./providers/postmark.ts";
+} from "./src/domain/data/kv/mod.ts";
+import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot } from "./src/domain/data/kv/mod.ts";
+import { S3Ref } from "./src/domain/data/s3/mod.ts";
+import { sendEmail } from "./src/domain/data/postmark/mod.ts";
 import { env } from "./env.ts";
 import { orgKey } from "./lib/org.ts";
 import type { OrgId } from "./lib/org.ts";
@@ -43,20 +43,20 @@ import {
   authenticate, resolveEffectiveAuth, createOrg, createUser, deleteUser, getUser, verifyUser,
   createSession, deleteSession, listUsers, listOrgs, getOrg, deleteOrg,
   parseCookie, sessionCookie, clearSessionCookie,
-} from "./auth/kv.ts";
-import type { AuthContext } from "./auth/kv.ts";
-import { getRegisterPage, getLoginPage } from "./auth/page.ts";
+} from "./src/domain/coordinators/auth/mod.ts";
+import type { AuthContext } from "./src/domain/coordinators/auth/mod.ts";
+import { getRegisterPage, getLoginPage } from "./pages/auth.ts";
 
 // Super Admin
-import { getSuperAdminPage } from "./shared/super-admin-page.ts";
+import { getSuperAdminPage } from "./pages/super-admin.ts";
 
 // Review (unified auth)
 import {
   handleReviewPage, handleNext, handleDecide, handleBack,
   handleGetSettings, handleSaveSettings, handleStats, handleBackfill,
   handleReviewDashboardPage, handleReviewDashboardData, handleReviewMe,
-} from "./review/handlers.ts";
-import { getReviewStats, populateReviewQueue } from "./review/kv.ts";
+} from "./src/domain/coordinators/review/handlers.ts";
+import { getReviewStats, populateReviewQueue } from "./src/domain/coordinators/review/mod.ts";
 
 // Judge (unified auth)
 import {
@@ -69,8 +69,8 @@ import {
   handleDashboardData as handleJudgeDashboardData,
   handleJudgeMe,
   handleJudgeListReviewers, handleJudgeCreateReviewer, handleJudgeDeleteReviewer,
-} from "./judge/handlers.ts";
-import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision } from "./judge/kv.ts";
+} from "./src/domain/coordinators/judge/handlers.ts";
+import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision } from "./src/domain/coordinators/judge/mod.ts";
 
 // Manager (unified auth)
 import {
@@ -78,28 +78,28 @@ import {
   handleManagerRemediate, handleManagerStatsFetch, handleManagerBackfill,
   handleManagerListAgents, handleManagerCreateAgent, handleManagerDeleteAgent,
   handleManagerGameState,
-} from "./manager/handlers.ts";
+} from "./src/domain/coordinators/manager/handlers.ts";
 
 // Agent (unified auth)
-import { handleAgentPage, handleAgentDashboardData, handleAgentMe, handleAgentGameState, handleAgentStore, handleAgentStoreBuy } from "./agent/handlers.ts";
+import { handleAgentPage, handleAgentDashboardData, handleAgentMe, handleAgentGameState, handleAgentStore, handleAgentStoreBuy } from "./src/domain/coordinators/agent/handlers.ts";
 
 // Chat
-import { getChatPage } from "./chat/page.ts";
+import { getChatPage } from "./pages/chat.ts";
 
 // Dashboard + Question Lab
-import { getDashboardPage } from "./dashboard/page.ts";
-import { routeQuestionLab } from "./question-lab/handlers.ts";
+import { getDashboardPage } from "./pages/dashboard.ts";
+import { routeQuestionLab } from "./src/domain/coordinators/question-lab/handlers.ts";
 
 // Sound
-import { getSoundEngineJs } from "./shared/sound-engine.ts";
-import { getGamificationPage } from "./shared/gamification-page.ts";
-import { getStorePage } from "./shared/store-page.ts";
-import { getBadgeEditorPage } from "./shared/badge-editor-page.ts";
-import { STORE_CATALOG, PREFAB_EVENTS, rarityFromPrice } from "./shared/badges.ts";
-import type { StoreItem } from "./shared/badges.ts";
+import { getSoundEngineJs } from "./pages/sound-engine.ts";
+import { getGamificationPage } from "./pages/gamification.ts";
+import { getStorePage } from "./pages/store.ts";
+import { getBadgeEditorPage } from "./pages/badge-editor.ts";
+import { STORE_CATALOG, PREFAB_EVENTS, rarityFromPrice } from "./src/domain/business/gamification/badges/mod.ts";
+import type { StoreItem } from "./src/domain/business/gamification/badges/mod.ts";
 
 // Impersonation
-import { getImpersonateSnippet } from "./shared/impersonate-bar.ts";
+import { getImpersonateSnippet } from "./pages/impersonate-bar.ts";
 
 // KV factory
 import { kvFactory } from "./kv-factory.ts";
@@ -1342,7 +1342,7 @@ async function handleForceNos(req: Request): Promise<Response> {
   const findingId = url.searchParams.get("id");
   if (!findingId) return json({ error: "id required" }, 400);
 
-  const { getFinding: getF } = await import("./lib/kv.ts");
+  const { getFinding: getF } = await import("./src/domain/data/kv/mod.ts");
   const finding = await getF(auth.orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
   if (!finding.answeredQuestions?.length) return json({ error: "no answered questions yet" }, 400);
@@ -1434,7 +1434,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
     }
   }
 
-  const { populateManagerQueue, submitRemediation } = await import("./manager/kv.ts");
+  const { populateManagerQueue, submitRemediation } = await import("./src/domain/coordinators/manager/mod.ts");
   let seeded = 0;
 
   for (const finding of findings) {
@@ -1578,7 +1578,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
   console.log(`[SEED] Judge seeded: ${judgeSeeded} appeals`);
 
   // -- Question Lab seed --
-  const qlabKv = await import("./question-lab/kv.ts");
+  const qlabKv = await import("./src/domain/coordinators/question-lab/mod.ts");
 
   const config = await qlabKv.createConfig(orgId, "Verification Audit");
 
@@ -2120,7 +2120,7 @@ async function handleSendMessage(req: Request): Promise<Response> {
   const recipient = await getUser(auth.orgId, to);
   if (!recipient) return json({ error: "recipient not found" }, 404);
 
-  const { emitEvent } = await import("./lib/kv.ts");
+  const { emitEvent } = await import("./src/domain/data/kv/mod.ts");
   const msg = await sendMessage(auth.orgId, auth.email, to, msgBody.trim());
 
   // Emit event for the recipient

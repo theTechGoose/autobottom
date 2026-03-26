@@ -1,5 +1,5 @@
 /** STEP 7: Cleanup - delete Pinecone namespace and clean up KV state. */
-import { deleteNamespace } from "../../../../../../providers/pinecone.ts";
+import { deleteNamespace } from "../../../data/pinecone/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { answerQuestion, createQuestion, QuestionService } from "./mod.ts";
-import type { ILlmQuestionAnswer, IQuestionSeed } from "../../../../../dto/question.ts";
+import type { ILlmQuestionAnswer, IQuestionSeed } from "../../../../dto/question.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers

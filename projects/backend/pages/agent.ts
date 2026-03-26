@@ -1,6 +1,6 @@
 /** Inline HTML/CSS/JS for the agent dashboard -- personal audit results & trends. */
 
-import * as icons from "../shared/icons.ts";
+import * as icons from "./icons.ts";
 
 export function getAgentPage(): string {
   return `<!DOCTYPE html>

@@ -1,8 +1,8 @@
 /** Seed script: creates a test org, reviewer user, and review queue items with transcripts for local testing. */
 
-import { createOrg, createUser } from "./auth/kv.ts";
-import { populateReviewQueue } from "./review/kv.ts";
-import { saveTranscript } from "./lib/kv.ts";
+import { createOrg, createUser } from "../src/domain/coordinators/auth/mod.ts";
+import { populateReviewQueue } from "../src/domain/coordinators/review/mod.ts";
+import { saveTranscript } from "../src/domain/data/kv/mod.ts";
 
 const orgId = await createOrg("test-org", "seed");
 console.log("Created org:", orgId);

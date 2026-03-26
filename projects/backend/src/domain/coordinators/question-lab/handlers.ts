@@ -5,9 +5,9 @@ import {
   getTest, getTestsForQuestion, createTest, updateTest, deleteTest, updateTestResult,
   serveConfig,
 } from "./mod.ts";
-import { configListPage, configDetailPage, questionEditorPage } from "../../../../../question-lab/page.ts";
-import { askQuestion, type LlmAnswer } from "../../../../../providers/groq.ts";
-import { query as vectorQuery } from "../../../../../providers/pinecone.ts";
+import { configListPage, configDetailPage, questionEditorPage } from "../../../../pages/question-lab.ts";
+import { askQuestion, type LlmAnswer } from "../../data/groq/mod.ts";
+import { query as vectorQuery } from "../../data/pinecone/mod.ts";
 import { resolveEffectiveAuth } from "../auth/mod.ts";
 import type { AuthContext } from "../auth/mod.ts";
 

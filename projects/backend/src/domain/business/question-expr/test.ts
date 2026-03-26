@@ -1,7 +1,7 @@
 /** Unit tests for QuestionExprService / question-expr functions. */
 import { assertEquals } from "@std/assert";
 import { populateQuestions, parseAst, QuestionExprService } from "./mod.ts";
-import type { IQuestionSeed, IQuestion } from "../../../../../types/mod.ts";
+import type { IQuestionSeed, IQuestion } from "../../../../types/mod.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers

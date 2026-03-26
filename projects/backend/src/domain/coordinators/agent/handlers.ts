@@ -3,9 +3,9 @@
 import { resolveEffectiveAuth } from "../auth/mod.ts";
 import type { AuthContext } from "../auth/mod.ts";
 import { getAgentDashboardData } from "./mod.ts";
-import { getGameState, getEarnedBadges, purchaseStoreItem, listCustomStoreItems } from "../../../../../lib/kv.ts";
-import { STORE_CATALOG } from "../../../../../shared/badges.ts";
-import { getAgentPage } from "../../../../../agent/page.ts";
+import { getGameState, getEarnedBadges, purchaseStoreItem, listCustomStoreItems } from "../../data/kv/mod.ts";
+import { STORE_CATALOG } from "../../business/gamification/badges/mod.ts";
+import { getAgentPage } from "../../../../pages/agent.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

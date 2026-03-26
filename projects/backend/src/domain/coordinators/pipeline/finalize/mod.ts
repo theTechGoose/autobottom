@@ -1,14 +1,14 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab } from "../../../../../../lib/kv.ts";
-import { enqueueCleanup } from "../../../../../../lib/queue.ts";
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab } from "../../../data/kv/mod.ts";
+import { enqueueCleanup } from "../../../data/queue/mod.ts";
 
-import { generateFeedback } from "../../../../../../providers/groq.ts";
-import { answerQuestion } from "../../../../../../types/mod.ts";
-import type { IAnsweredQuestion } from "../../../../../../types/mod.ts";
-import { populateReviewQueue } from "../../../../../../review/kv.ts";
-import { populateJudgeQueue, saveAppeal } from "../../../../../../judge/kv.ts";
-import { checkBadges } from "../../../../../../shared/badges.ts";
-import { env } from "../../../../../../env.ts";
+import { generateFeedback } from "../../../data/groq/mod.ts";
+import { answerQuestion } from "../../../../../types/mod.ts";
+import type { IAnsweredQuestion } from "../../../../../types/mod.ts";
+import { populateReviewQueue } from "../../review/mod.ts";
+import { populateJudgeQueue, saveAppeal } from "../../judge/mod.ts";
+import { checkBadges } from "../../../business/gamification/badges/mod.ts";
+import { env } from "../../../../../env.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

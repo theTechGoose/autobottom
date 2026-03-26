@@ -1,4 +1,4 @@
-import type { IAnsweredQuestion, ILlmQuestionAnswer, IQuestion, IQuestionSeed } from "../../../../../dto/question.ts";
+import type { IAnsweredQuestion, ILlmQuestionAnswer, IQuestion, IQuestionSeed } from "../../../../dto/question.ts";
 
 export class QuestionService {
   private normalizeAnswer(raw: unknown): string {

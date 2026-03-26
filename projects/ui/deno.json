@@ -1,0 +1,7 @@
+{
+  "name": "@autobottom/ui",
+  "tasks": {
+    "dev": "echo 'Sprig UI — not yet implemented'",
+    "build": "echo 'Sprig UI — not yet implemented'"
+  }
+}

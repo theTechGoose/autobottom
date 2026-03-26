@@ -1,7 +1,7 @@
 /** Unified auth: orgs, users, sessions. Replaces review/judge/manager auth. */
 
-import type { OrgId } from "../../../../../lib/org.ts";
-import { kvFactory } from "../../../../../kv-factory.ts";
+import type { OrgId } from "../../../../lib/org.ts";
+import { kvFactory } from "../../../../kv-factory.ts";
 
 async function kv(): Promise<Deno.Kv> {
   return await kvFactory();

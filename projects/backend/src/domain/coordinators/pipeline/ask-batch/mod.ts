@@ -1,11 +1,11 @@
 /** STEP 4: Answer a batch of questions via RAG + Groq LLM. */
-import { getFinding, saveFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, decrementBatchCounter, trackActive, getPopulatedQuestions } from "../../../../../../lib/kv.ts";
-import { enqueueStep } from "../../../../../../lib/queue.ts";
-import { askQuestion } from "../../../../../../providers/groq.ts";
-import { query as vectorQuery } from "../../../../../../providers/pinecone.ts";
-import { parseAst } from "../../../../../../providers/question-expr.ts";
-import { answerQuestion } from "../../../../../../types/mod.ts";
-import type { IQuestion, IAnsweredQuestion, ILlmQuestionAnswer } from "../../../../../../types/mod.ts";
+import { getFinding, saveFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, decrementBatchCounter, trackActive, getPopulatedQuestions } from "../../../data/kv/mod.ts";
+import { enqueueStep } from "../../../data/queue/mod.ts";
+import { askQuestion } from "../../../data/groq/mod.ts";
+import { query as vectorQuery } from "../../../data/pinecone/mod.ts";
+import { parseAst } from "../../../business/question-expr/mod.ts";
+import { answerQuestion } from "../../../../../types/mod.ts";
+import type { IQuestion, IAnsweredQuestion, ILlmQuestionAnswer } from "../../../../../types/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

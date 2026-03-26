@@ -1,5 +1,5 @@
 /** Inline HTML/CSS/JS for the admin dashboard. */
-import * as icons from "../shared/icons.ts";
+import * as icons from "./icons.ts";
 
 export function getDashboardPage(): string {
   return `<!DOCTYPE html>

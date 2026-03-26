@@ -1,8 +1,8 @@
 /** Deno KV state management for audit findings, jobs, and counters. All keys are org-scoped. */
 
-import { orgKey } from "../../../../../lib/org.ts";
-import type { OrgId } from "../../../../../lib/org.ts";
-import { kvFactory } from "../../../../../kv-factory.ts";
+import { orgKey } from "../../../../lib/org.ts";
+import type { OrgId } from "../../../../lib/org.ts";
+import { kvFactory } from "../../../../kv-factory.ts";
 
 async function kv(): Promise<Deno.Kv> {
   return await kvFactory();
@@ -547,7 +547,7 @@ export async function resolveGamificationSettings(
 
 // -- Custom Store Items --
 
-import type { StoreItem } from "../../../../../shared/badges.ts";
+import type { StoreItem } from "../../business/gamification/badges/mod.ts";
 
 export async function listCustomStoreItems(orgId: OrgId): Promise<StoreItem[]> {
   const db = await kv();
@@ -570,8 +570,8 @@ export async function deleteCustomStoreItem(orgId: OrgId, itemId: string): Promi
 
 // -- Badge + Game State --
 
-import type { EarnedBadge, BadgeCheckState, GameState, BadgeDef } from "../../../../../shared/badges.ts";
-import { DEFAULT_BADGE_STATS, DEFAULT_GAME_STATE, getLevel, LEVEL_THRESHOLDS, AGENT_LEVEL_THRESHOLDS } from "../../../../../shared/badges.ts";
+import type { EarnedBadge, BadgeCheckState, GameState, BadgeDef } from "../../business/gamification/badges/mod.ts";
+import { DEFAULT_BADGE_STATS, DEFAULT_GAME_STATE, getLevel, LEVEL_THRESHOLDS, AGENT_LEVEL_THRESHOLDS } from "../../business/gamification/badges/mod.ts";
 
 /** Get all earned badges for a user. */
 export async function getEarnedBadges(orgId: OrgId, email: string): Promise<EarnedBadge[]> {

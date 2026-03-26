@@ -1,5 +1,5 @@
 /** Genie recording provider - fetches recording URLs and downloads audio. */
-import { env } from "../../../../../env.ts";
+import { env } from "../../../../env.ts";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 

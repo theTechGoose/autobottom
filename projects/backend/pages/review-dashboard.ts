@@ -1,6 +1,6 @@
 /** Inline HTML/CSS/JS for the reviewer dashboard -- queue stats, leaderboard & personal history. */
 
-import * as icons from "../shared/icons.ts";
+import * as icons from "./icons.ts";
 
 export function getReviewDashboardPage(): string {
   return `<!DOCTYPE html>

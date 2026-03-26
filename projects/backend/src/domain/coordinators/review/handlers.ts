@@ -8,12 +8,12 @@ import {
   backfillFromFinished,
   getReviewerDashboardData,
 } from "./mod.ts";
-import { getWebhookConfig, saveWebhookConfig, resolveGamificationSettings, listSoundPacks, emitEvent } from "../../../../../lib/kv.ts";
-import type { WebhookConfig, SoundSlot } from "../../../../../lib/kv.ts";
+import { getWebhookConfig, saveWebhookConfig, resolveGamificationSettings, listSoundPacks, emitEvent } from "../../data/kv/mod.ts";
+import type { WebhookConfig, SoundSlot } from "../../data/kv/mod.ts";
 import { resolveEffectiveAuth, getUser } from "../auth/mod.ts";
 import type { AuthContext } from "../auth/mod.ts";
-import { getReviewPage } from "../../../../../review/page.ts";
-import { getReviewDashboardPage } from "../../../../../review/dashboard.ts";
+import { getReviewPage } from "../../../../pages/review.ts";
+import { getReviewDashboardPage } from "../../../../pages/review-dashboard.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {

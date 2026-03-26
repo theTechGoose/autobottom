@@ -1,6 +1,6 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { AuditJobService, createJob, markAuditDone, pickRecords } from "./mod.ts";
-import type { AuditJob } from "../../../../../dto/audit-job.ts";
+import type { AuditJob } from "../../../../dto/audit-job.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers

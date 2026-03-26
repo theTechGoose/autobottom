@@ -9,8 +9,8 @@ import {
 } from "./mod.ts";
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/mod.ts";
 import type { AuthContext, Role } from "../auth/mod.ts";
-import { getGameState, getEarnedBadges, emitEvent } from "../../../../../lib/kv.ts";
-import { getManagerPage } from "../../../../../manager/page.ts";
+import { getGameState, getEarnedBadges, emitEvent } from "../../data/kv/mod.ts";
+import { getManagerPage } from "../../../../pages/manager.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {

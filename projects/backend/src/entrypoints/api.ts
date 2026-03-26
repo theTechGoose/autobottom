@@ -1,15 +1,15 @@
 /** API controller - creates audit jobs and kicks off the QStash pipeline. */
-import * as icons from "../../../shared/icons.ts";
+import * as icons from "../../pages/icons.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
-import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook } from "../../../lib/kv.ts";
-import { enqueueStep } from "../../../lib/queue.ts";
-import { getDateLegByRid } from "../../../providers/quickbase.ts";
-import { S3Ref } from "../../../lib/s3.ts";
-import { env } from "../../../env.ts";
-import { populateJudgeQueue, saveAppeal, getAppeal } from "../../../judge/kv.ts";
-import type { AuditFinding, AuditJob } from "../../../types/mod.ts";
-import { createJob } from "../../../types/mod.ts";
-import type { OrgId } from "../../../lib/org.ts";
+import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getTranscript, getStats, fireWebhook } from "../domain/data/kv/mod.ts";
+import { enqueueStep } from "../domain/data/queue/mod.ts";
+import { getDateLegByRid } from "../domain/data/quickbase/mod.ts";
+import { S3Ref } from "../domain/data/s3/mod.ts";
+import { env } from "../../env.ts";
+import { populateJudgeQueue, saveAppeal, getAppeal } from "../domain/coordinators/judge/mod.ts";
+import type { AuditFinding, AuditJob } from "../../types/mod.ts";
+import { createJob } from "../../types/mod.ts";
+import type { OrgId } from "../../lib/org.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

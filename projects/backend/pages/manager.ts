@@ -1,6 +1,6 @@
 /** Inline HTML/CSS/JS for the manager portal UI. */
-import * as icons from "../shared/icons.ts";
-import { getPrefabEventsJson } from "../shared/badges.ts";
+import * as icons from "./icons.ts";
+import { getPrefabEventsJson } from "../src/domain/business/gamification/badges/mod.ts";
 
 export function getManagerPage(): string {
   const prefabEventsJson = getPrefabEventsJson();

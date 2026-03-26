@@ -1,4 +1,4 @@
-import type { AuditJob, AuditStub } from "../../../../../dto/audit-job.ts";
+import type { AuditJob, AuditStub } from "../../../../dto/audit-job.ts";
 import { nanoid } from "nanoid";
 
 export class AuditJobService {

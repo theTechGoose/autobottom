@@ -9,10 +9,10 @@ import {
 } from "./mod.ts";
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/mod.ts";
 import type { AuthContext } from "../auth/mod.ts";
-import { resolveGamificationSettings, listSoundPacks, emitEvent } from "../../../../../lib/kv.ts";
-import type { SoundSlot } from "../../../../../lib/kv.ts";
-import { getJudgePage } from "../../../../../judge/page.ts";
-import { getJudgeDashboardPage } from "../../../../../judge/dashboard.ts";
+import { resolveGamificationSettings, listSoundPacks, emitEvent } from "../../data/kv/mod.ts";
+import type { SoundSlot } from "../../data/kv/mod.ts";
+import { getJudgePage } from "../../../../pages/judge.ts";
+import { getJudgeDashboardPage } from "../../../../pages/judge-dashboard.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {

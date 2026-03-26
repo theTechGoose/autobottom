@@ -118,6 +118,28 @@ const STYLES = `
   .toggle-group button:last-child { border-radius: 0 6px 6px 0; margin-right: 0; }
   .toggle-group button.active { background: var(--blue); color: #fff; border-color: var(--blue); z-index: 1; }
 
+  /* Modal overlay */
+  .modal-overlay { display: none; position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.6); backdrop-filter: blur(2px); justify-content: center; align-items: flex-start; padding: 60px 20px; overflow-y: auto; }
+  .modal-overlay.open { display: flex; }
+  .modal-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); width: 100%; max-width: 680px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+  .modal-hd { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .modal-hd h2 { font-size: 16px; font-weight: 600; margin: 0; }
+  .modal-body { padding: 20px; }
+  .modal-foot { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* Dupe mode selector */
+  .dupe-opts { display: flex; gap: 0; margin-top: 4px; }
+  .dupe-opt { flex: 1; padding: 10px 8px; text-align: center; border: 1px solid var(--border); background: var(--bg-raised); color: var(--muted); cursor: pointer; transition: all 0.15s; font-size: 12px; margin-right: -1px; }
+  .dupe-opt:first-child { border-radius: 6px 0 0 6px; }
+  .dupe-opt:last-child { border-radius: 0 6px 6px 0; margin-right: 0; }
+  .dupe-opt:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+  .dupe-opt.active { z-index: 1; position: relative; }
+  .dupe-opt.active[data-mode="skip"] { background: var(--green-dim); color: var(--green); border-color: rgba(63,185,80,0.4); }
+  .dupe-opt.active[data-mode="overwrite"] { background: var(--orange-dim); color: var(--orange); border-color: rgba(210,153,34,0.4); }
+  .dupe-opt.active[data-mode="duplicate"] { background: var(--blue-dim); color: var(--blue); border-color: rgba(56,139,253,0.4); }
+  .dupe-opt .dupe-label { font-weight: 600; display: block; margin-bottom: 2px; }
+  .dupe-opt .dupe-desc { font-size: 10px; opacity: 0.7; }
+
   /* Spinner */
   .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -186,7 +208,7 @@ export function configListPage(configs: QLConfig[]): string {
       <div class="card-hd">
         <h2>Configurations</h2>
         <div style="display:flex;gap:8px;">
-          <button class="btn-ghost btn-sm" onclick="document.getElementById('import-card').style.display='';showStep('upload');">Import CSV</button>
+          <button class="btn-ghost btn-sm" onclick="openImportModal()">Import CSV</button>
           <button onclick="document.getElementById('new-config-form').classList.toggle('active')">+ New Config</button>
         </div>
       </div>
@@ -211,73 +233,73 @@ export function configListPage(configs: QLConfig[]): string {
         ? '<div class="empty">No configurations yet. Create one to get started.</div>'
         : `<table><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Questions</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`}
     </div>
-    <div class="card" id="import-card" style="display:none;">
-      <div class="card-hd">
-        <h2>Import from CSV</h2>
-        <button class="btn-ghost btn-sm" onclick="document.getElementById('import-card').style.display='none';">Close</button>
-      </div>
-      <div id="import-step-upload">
-        <div class="form-row">
-          <label>CSV File</label>
-          <input type="file" id="csv-file" accept=".csv" style="padding:6px 0;" onchange="handleCsvFile()" />
-        </div>
-        <div id="csv-file-info" style="font-size:12px;color:var(--muted);margin-top:4px;"></div>
-      </div>
-      <div id="import-step-map" style="display:none;">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Map CSV columns to question fields.</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-          <div class="form-row" style="margin:0;"><label>Question Text *</label><select id="map-text" class="sf-input" style="font-size:12px;"></select></div>
-          <div class="form-row" style="margin:0;"><label>Report Label / Name *</label><select id="map-name" class="sf-input" style="font-size:12px;"></select></div>
-          <div class="form-row" style="margin:0;"><label>Auto-Yes Expression</label><select id="map-autoyes" class="sf-input" style="font-size:12px;"></select></div>
-          <div class="form-row" style="margin:0;"><label>Group By (Config Name) *</label><select id="map-group" class="sf-input" style="font-size:12px;"></select></div>
-        </div>
-        <div class="form-row" style="margin-top:12px;">
-          <label>Config Type</label>
-          <div class="toggle-group" style="margin-top:4px;">
-            <button id="imp-type-internal" class="active" onclick="setImpType('internal')">Internal</button>
-            <button id="imp-type-partner" onclick="setImpType('partner')">Partner</button>
+    <div class="modal-overlay" id="import-modal" onclick="if(event.target===this)closeImportModal();">
+      <div class="modal-box">
+        <!-- Step: Upload -->
+        <div id="import-step-upload">
+          <div class="modal-hd"><h2>Import from CSV</h2><button class="btn-ghost btn-sm" onclick="closeImportModal()">Close</button></div>
+          <div class="modal-body">
+            <div class="form-row">
+              <label>CSV File</label>
+              <input type="file" id="csv-file" accept=".csv" style="padding:6px 0;" onchange="handleCsvFile()" />
+            </div>
+            <div id="csv-file-info" style="font-size:12px;color:var(--muted);margin-top:4px;"></div>
           </div>
         </div>
-        <div class="actions" style="margin-top:12px;">
-          <button onclick="buildPreview()">Preview</button>
-        </div>
-      </div>
-      <div id="import-step-preview" style="display:none;">
-        <div id="preview-summary" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
-        <div id="preview-table" style="max-height:300px;overflow:auto;"></div>
-        <div style="margin-top:12px;">
-          <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;">When a config with the same name exists</label>
-          <div style="display:flex;flex-direction:column;gap:6px;">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;font-weight:400;letter-spacing:0;">
-              <input type="radio" name="dupe-mode" value="skip" checked style="accent-color:var(--green);" /> Skip — don't import, keep existing
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;font-weight:400;letter-spacing:0;">
-              <input type="radio" name="dupe-mode" value="overwrite" style="accent-color:var(--orange);" /> Overwrite — delete existing, import new
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;font-weight:400;letter-spacing:0;">
-              <input type="radio" name="dupe-mode" value="duplicate" style="accent-color:var(--blue);" /> Duplicate — create with numbered suffix (e.g. "Config (2)")
-            </label>
+        <!-- Step: Map Columns -->
+        <div id="import-step-map" style="display:none;">
+          <div class="modal-hd"><h2>Map Columns</h2><button class="btn-ghost btn-sm" onclick="showStep('upload')">Back</button></div>
+          <div class="modal-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div class="form-row" style="margin:0;"><label>Question Text *</label><select id="map-text" style="font-size:12px;"></select></div>
+              <div class="form-row" style="margin:0;"><label>Report Label / Name *</label><select id="map-name" style="font-size:12px;"></select></div>
+              <div class="form-row" style="margin:0;"><label>Auto-Yes Expression</label><select id="map-autoyes" style="font-size:12px;"></select></div>
+              <div class="form-row" style="margin:0;"><label>Group By (Config Name) *</label><select id="map-group" style="font-size:12px;"></select></div>
+            </div>
+            <div class="form-row" style="margin-top:12px;">
+              <label>Config Type</label>
+              <div class="toggle-group" style="margin-top:4px;">
+                <button id="imp-type-internal" class="active" onclick="setImpType('internal')">Internal</button>
+                <button id="imp-type-partner" onclick="setImpType('partner')">Partner</button>
+              </div>
+            </div>
           </div>
+          <div class="modal-foot"><button onclick="buildPreview()">Preview Import</button></div>
         </div>
-        <div id="import-progress" style="display:none;margin-top:12px;">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-            <span id="import-progress-text" style="font-size:12px;color:var(--text);font-weight:500;"></span>
-            <span id="import-progress-pct" style="font-size:11px;color:var(--muted);"></span>
+        <!-- Step: Preview + Import -->
+        <div id="import-step-preview" style="display:none;">
+          <div class="modal-hd"><h2>Preview</h2><button class="btn-ghost btn-sm" id="import-back-btn" onclick="showStep('map')">Back</button></div>
+          <div class="modal-body">
+            <div id="preview-summary" style="font-size:13px;color:var(--text);margin-bottom:14px;font-weight:500;"></div>
+            <div id="preview-table" style="max-height:240px;overflow:auto;margin-bottom:16px;"></div>
+            <div class="form-row" style="margin:0;">
+              <label>If config name already exists</label>
+              <div class="dupe-opts" style="margin-top:6px;">
+                <div class="dupe-opt active" data-mode="skip" onclick="setDupeMode('skip')"><span class="dupe-label">Skip</span><span class="dupe-desc">Keep existing</span></div>
+                <div class="dupe-opt" data-mode="overwrite" onclick="setDupeMode('overwrite')"><span class="dupe-label">Overwrite</span><span class="dupe-desc">Replace existing</span></div>
+                <div class="dupe-opt" data-mode="duplicate" onclick="setDupeMode('duplicate')"><span class="dupe-label">Duplicate</span><span class="dupe-desc">Add numbered copy</span></div>
+              </div>
+            </div>
+            <div id="import-progress" style="display:none;margin-top:16px;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                <span id="import-progress-text" style="font-size:12px;color:var(--text);font-weight:500;"></span>
+                <span id="import-progress-pct" style="font-size:11px;color:var(--muted);"></span>
+              </div>
+              <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden;border:1px solid var(--border);">
+                <div id="import-progress-bar" style="height:100%;background:var(--green);width:0%;transition:width 0.2s;border-radius:3px;"></div>
+              </div>
+              <div id="import-log" style="margin-top:8px;max-height:120px;overflow:auto;font-size:11px;font-family:monospace;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;"></div>
+            </div>
           </div>
-          <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden;border:1px solid var(--border);">
-            <div id="import-progress-bar" style="height:100%;background:var(--green);width:0%;transition:width 0.2s;border-radius:3px;"></div>
+          <div class="modal-foot"><button class="btn-green" id="import-btn" onclick="runImport()">Import</button></div>
+        </div>
+        <!-- Step: Done -->
+        <div id="import-step-done" style="display:none;">
+          <div class="modal-hd"><h2>Import Complete</h2></div>
+          <div class="modal-body">
+            <div id="import-result" style="font-size:14px;color:var(--green);padding:16px 0;text-align:center;"></div>
           </div>
-          <div id="import-log" style="margin-top:8px;max-height:120px;overflow:auto;font-size:11px;font-family:monospace;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;"></div>
-        </div>
-        <div class="actions" style="margin-top:12px;">
-          <button class="btn-green" id="import-btn" onclick="runImport()">Import</button>
-          <button class="btn-ghost" id="import-back-btn" onclick="showStep('map')">Back</button>
-        </div>
-      </div>
-      <div id="import-step-done" style="display:none;">
-        <div id="import-result" style="font-size:14px;color:var(--green);padding:20px 0;text-align:center;"></div>
-        <div class="actions" style="justify-content:center;">
-          <button onclick="location.reload()">Reload Page</button>
+          <div class="modal-foot"><button onclick="location.reload()">Done</button></div>
         </div>
       </div>
     </div>
@@ -305,6 +327,21 @@ export function configListPage(configs: QLConfig[]): string {
       var csvHeaders = [];
       var importType = 'internal';
       var importPayload = null;
+      var dupeMode = 'skip';
+
+      function openImportModal() {
+        document.getElementById('import-modal').classList.add('open');
+        showStep('upload');
+      }
+      function closeImportModal() {
+        document.getElementById('import-modal').classList.remove('open');
+      }
+      function setDupeMode(mode) {
+        dupeMode = mode;
+        document.querySelectorAll('.dupe-opt').forEach(function(el) {
+          el.classList.toggle('active', el.dataset.mode === mode);
+        });
+      }
 
       function setImpType(t) {
         importType = t;
@@ -433,7 +470,7 @@ export function configListPage(configs: QLConfig[]): string {
         progressEl.style.display = '';
         document.getElementById('import-log').textContent = '';
 
-        var dupeMode = document.querySelector('input[name="dupe-mode"]:checked').value;
+        var mode = dupeMode;
         var total = importPayload.length;
         var created = 0;
         var skipped = 0;
@@ -441,7 +478,7 @@ export function configListPage(configs: QLConfig[]): string {
         var totalQ = 0;
         var errors = 0;
 
-        importLog('Starting import of ' + total + ' configs (duplicate mode: ' + dupeMode + ')');
+        importLog('Starting import of ' + total + ' configs (duplicate mode: ' + mode + ')');
 
         for (var i = 0; i < total; i++) {
           var cfg = importPayload[i];
@@ -458,7 +495,7 @@ export function configListPage(configs: QLConfig[]): string {
                 name: cfg.name,
                 type: cfg.type,
                 questions: cfg.questions,
-                dupeMode: dupeMode
+                dupeMode: mode
               })
             });
             var d = await res.json();

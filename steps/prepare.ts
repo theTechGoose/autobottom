@@ -3,7 +3,7 @@ import { getFinding, saveFinding, getCachedQuestions, cacheQuestions, trackActiv
 import { enqueueStep, publishStep } from "../lib/queue.ts";
 import { getQuestionsForDestination } from "../providers/quickbase.ts";
 import { populateQuestions } from "../providers/question-expr.ts";
-import { serveConfig } from "../question-lab/kv.ts";
+import { serveConfig, getInternalAssignments, getPartnerAssignments } from "../question-lab/kv.ts";
 import type { IQuestionSeed } from "../types/mod.ts";
 
 function json(data: unknown, status = 200) {
@@ -37,7 +37,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
     await saveFinding(orgId, finding);
 
     // 1. Fetch questions from Question Lab config or QuickBase
-    const qlabConfig = finding.qlabConfig;
+    let qlabConfig = finding.qlabConfig;
     let questionSeeds: IQuestionSeed[];
 
     // For package audits (GenieNumber field), synthesize RelatedDestinationId from RelatedOfficeId
@@ -63,6 +63,26 @@ export async function stepPrepare(req: Request): Promise<Response> {
       }
       finding.record = { ...finding.record, RelatedDestinationId: destId };
       console.log(`[STEP-PREPARE] ${findingId}: Package — mapped officeId=${officeId} → destinationId=${destId}`);
+    }
+
+    // If no explicit qlabConfig set, check per-destination / per-office assignments
+    if (!qlabConfig) {
+      const isPartner = finding.recordingIdField === "GenieNumber";
+      if (isPartner) {
+        const officeName = String(finding.record?.OfficeName ?? "");
+        if (officeName) {
+          const assignments = await getPartnerAssignments(orgId);
+          qlabConfig = assignments[officeName] ?? null;
+          if (qlabConfig) console.log(`[STEP-PREPARE] ${findingId}: Partner assignment for office "${officeName}" → "${qlabConfig}"`);
+        }
+      } else {
+        const destinationId = String(finding.record?.RelatedDestinationId ?? "");
+        if (destinationId) {
+          const assignments = await getInternalAssignments(orgId);
+          qlabConfig = assignments[destinationId] ?? null;
+          if (qlabConfig) console.log(`[STEP-PREPARE] ${findingId}: Internal assignment for dest "${destinationId}" → "${qlabConfig}"`);
+        }
+      }
     }
 
     if (qlabConfig) {

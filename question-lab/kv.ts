@@ -269,23 +269,44 @@ export async function deleteTest(orgId: OrgId, id: string): Promise<void> {
   }
 }
 
-// -- Active Config Setting ------------------------------------------------
+// -- Destination / Office Assignments ------------------------------------
 
-/** Get the org-level active Question Lab config name (null = production/QB mode). */
-export async function getActiveQlabConfig(orgId: OrgId): Promise<string | null> {
+/** Get all internal (date-leg) assignments: destinationId → configName */
+export async function getInternalAssignments(orgId: OrgId): Promise<Record<string, string>> {
   const db = await kv();
-  const entry = await db.get<string>(orgKey(orgId, "qlab", "active-config"));
-  return entry.value ?? null;
+  const entry = await db.get<Record<string, string>>(orgKey(orgId, "qlab", "internal-assignments"));
+  return entry.value ?? {};
 }
 
-/** Set or clear the org-level active Question Lab config. Pass null to revert to production. */
-export async function setActiveQlabConfig(orgId: OrgId, configName: string | null): Promise<void> {
+/** Set or clear a destination's Question Lab config assignment. */
+export async function setInternalAssignment(orgId: OrgId, destinationId: string, configName: string | null): Promise<void> {
   const db = await kv();
+  const assignments = await getInternalAssignments(orgId);
   if (configName === null) {
-    await db.delete(orgKey(orgId, "qlab", "active-config"));
+    delete assignments[destinationId];
   } else {
-    await db.set(orgKey(orgId, "qlab", "active-config"), configName);
+    assignments[destinationId] = configName;
   }
+  await db.set(orgKey(orgId, "qlab", "internal-assignments"), assignments);
+}
+
+/** Get all partner (package) assignments: officeName → configName */
+export async function getPartnerAssignments(orgId: OrgId): Promise<Record<string, string>> {
+  const db = await kv();
+  const entry = await db.get<Record<string, string>>(orgKey(orgId, "qlab", "partner-assignments"));
+  return entry.value ?? {};
+}
+
+/** Set or clear an office's Question Lab config assignment. */
+export async function setPartnerAssignment(orgId: OrgId, officeName: string, configName: string | null): Promise<void> {
+  const db = await kv();
+  const assignments = await getPartnerAssignments(orgId);
+  if (configName === null) {
+    delete assignments[officeName];
+  } else {
+    assignments[officeName] = configName;
+  }
+  await db.set(orgKey(orgId, "qlab", "partner-assignments"), assignments);
 }
 
 // -- Serve ----------------------------------------------------------------

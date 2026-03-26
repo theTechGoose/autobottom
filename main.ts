@@ -107,7 +107,7 @@ import { getChatPage } from "./chat/page.ts";
 // Dashboard + Question Lab
 import { getDashboardPage } from "./dashboard/page.ts";
 import { routeQuestionLab } from "./question-lab/handlers.ts";
-import { listConfigs, getActiveQlabConfig, setActiveQlabConfig } from "./question-lab/kv.ts";
+import { listConfigs, getInternalAssignments, setInternalAssignment, getPartnerAssignments, setPartnerAssignment } from "./question-lab/kv.ts";
 
 // Sound
 import { getSoundEngineJs } from "./shared/sound-engine.ts";
@@ -345,8 +345,8 @@ const postRoutes: Record<string, Handler> = {
   "/gamification/api/seed": handleSeedSoundPacks,
   "/gamification/api/settings": handleGamificationPageSaveSettings,
 
-  // Question Lab mode toggle (admin)
-  "/api/qlab-mode": withOrgId(handleQlabMode),
+  // Question Lab assignments (admin)
+  "/api/qlab-assignments": withOrgId(handleQlabAssignments),
 
   // Store (unified, all roles)
   "/api/store/buy": handleAgentStoreBuy,
@@ -3943,24 +3943,35 @@ async function handleDeduplicateFindings(req: Request): Promise<Response> {
   });
 }
 
-// -- Question Lab Mode Toggle --
+// -- Question Lab Assignments --
 
-async function handleQlabMode(orgId: OrgId, req: Request): Promise<Response> {
+async function handleQlabAssignments(orgId: OrgId, req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
 
   if (req.method === "GET") {
-    const active = await getActiveQlabConfig(orgId);
-    const configs = await listConfigs(orgId);
-    return json({ active, configs });
+    const [internal, partner, configs, dims] = await Promise.all([
+      getInternalAssignments(orgId),
+      getPartnerAssignments(orgId),
+      listConfigs(orgId),
+      getPartnerDimensions(orgId),
+    ]);
+    return json({ internal, partner, configs, offices: Object.keys(dims.offices) });
   }
 
   if (req.method === "POST") {
-    const body = await req.json() as { configName?: string | null };
-    const configName = body.configName ?? null;
-    await setActiveQlabConfig(orgId, configName);
-    console.log(`[QLAB] 🔬 Mode set to ${configName ? `"${configName}"` : "production"} by ${auth.email}`);
-    return json({ ok: true, active: configName });
+    const body = await req.json() as { type: "internal" | "partner"; key: string; configName: string | null };
+    const { type, key, configName } = body;
+    if (!key) return json({ error: "key required" }, 400);
+    if (type === "internal") {
+      await setInternalAssignment(orgId, key, configName ?? null);
+    } else if (type === "partner") {
+      await setPartnerAssignment(orgId, key, configName ?? null);
+    } else {
+      return json({ error: "type must be internal or partner" }, 400);
+    }
+    console.log(`[QLAB] 🔬 ${type} assignment: "${key}" → ${configName ? `"${configName}"` : "none"} by ${auth.email}`);
+    return json({ ok: true });
   }
 
   return json({ error: "method not allowed" }, 405);

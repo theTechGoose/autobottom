@@ -2631,9 +2631,9 @@ table { width: 100%; border-collapse: collapse; }
 
     function xesc(s) { var d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 
-    function configOpts(selected) {
+    function configOpts(type, selected) {
       var o = '<option value="">\\u2014 Production (QB) \\u2014</option>';
-      (qlabData.configs || []).forEach(function(c) {
+      (qlabData.configs || []).filter(function(c) { return c.active && (c.type || 'internal') === type; }).forEach(function(c) {
         o += '<option value="' + xesc(c.name) + '"' + (selected === c.name ? ' selected' : '') + '>' + xesc(c.name) + '</option>';
       });
       return o;
@@ -2717,8 +2717,8 @@ table { width: 100%; border-collapse: collapse; }
         .then(function(d) {
           if (!d || d.error) { console.warn('[qlab] assignments fetch error:', d && d.error); return; }
           qlabData = d;
-          document.getElementById('qlab-internal-config-sel').innerHTML = configOpts('');
-          document.getElementById('qlab-partner-config-sel').innerHTML = configOpts('');
+          document.getElementById('qlab-internal-config-sel').innerHTML = configOpts('internal', '');
+          document.getElementById('qlab-partner-config-sel').innerHTML = configOpts('partner', '');
           renderInternalList(); renderPartnerList(); updateSbBadge();
         })
         .catch(function(e) { console.warn('[qlab] assignments fetch failed:', e); });

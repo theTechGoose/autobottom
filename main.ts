@@ -393,6 +393,9 @@ const getRoutes: Record<string, Handler> = {
   "/audit/appeal/status": withOrgId(handleAppealStatus),
   "/audit/report-sse": withOrgId(handleReportSSE),
 
+  // Question Lab assignments (admin)
+  "/api/qlab-assignments": withOrgId(handleQlabAssignments),
+
   // Admin
   "/admin/seed": handleSeedDryRun,
   "/admin/token-usage": handleTokenUsage,

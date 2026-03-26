@@ -159,13 +159,23 @@ function shell(title: string, body: string, crumbs: CrumbItem[] = []): string {
 // ── Config List Page ─────────────────────────────────────────────────
 
 export function configListPage(configs: QLConfig[]): string {
-  const rows = configs.map((c) => `
+  const rows = configs.map((c) => {
+    const typeColor = c.type === "partner" ? "var(--orange)" : "var(--blue)";
+    const typeBg = c.type === "partner" ? "var(--orange-dim)" : "var(--blue-dim)";
+    const typeBorder = c.type === "partner" ? "rgba(210,153,34,0.3)" : "rgba(56,139,253,0.2)";
+    const activeColor = c.active ? "var(--green)" : "var(--muted)";
+    const activeBg = c.active ? "var(--green-dim)" : "rgba(139,148,158,0.1)";
+    const activeBorder = c.active ? "rgba(63,185,80,0.3)" : "rgba(139,148,158,0.2)";
+    return `
     <tr>
       <td><a href="/question-lab/config/${c.id}">${esc(c.name)}</a></td>
+      <td><span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${typeBg};color:${typeColor};border:1px solid ${typeBorder};">${c.type ?? "internal"}</span></td>
+      <td><span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${activeBg};color:${activeColor};border:1px solid ${activeBorder};">${c.active ? "active" : "inactive"}</span></td>
       <td style="color:var(--muted);">${c.questionIds.length} question${c.questionIds.length === 1 ? "" : "s"}</td>
       <td style="color:var(--muted);font-size:13px;">${new Date(c.createdAt).toLocaleDateString("en-US", { timeZone: "America/New_York" })}</td>
       <td style="text-align:right;"><button class="btn-sm btn-danger" onclick="deleteConfig('${c.id}')">Delete</button></td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   return shell("Configurations", `
     <div class="page-hd">
@@ -182,6 +192,13 @@ export function configListPage(configs: QLConfig[]): string {
           <label>Config Name</label>
           <input type="text" id="config-name" placeholder="e.g. VO Audit Questions v2" />
         </div>
+        <div class="form-row">
+          <label>Type</label>
+          <div class="toggle-group" style="margin-top:4px;">
+            <button id="new-type-internal" class="active" onclick="setNewType('internal')">Internal</button>
+            <button id="new-type-partner" onclick="setNewType('partner')">Partner</button>
+          </div>
+        </div>
         <div class="actions">
           <button onclick="createConfig()">Create</button>
           <button class="btn-ghost" onclick="document.getElementById('new-config-form').classList.remove('active')">Cancel</button>
@@ -189,13 +206,19 @@ export function configListPage(configs: QLConfig[]): string {
       </div>
       ${configs.length === 0
         ? '<div class="empty">No configurations yet. Create one to get started.</div>'
-        : `<table><thead><tr><th>Name</th><th>Questions</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`}
+        : `<table><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Questions</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`}
     </div>
     <script>
+      var newConfigType = 'internal';
+      function setNewType(t) {
+        newConfigType = t;
+        document.getElementById('new-type-internal').classList.toggle('active', t === 'internal');
+        document.getElementById('new-type-partner').classList.toggle('active', t === 'partner');
+      }
       async function createConfig() {
         const name = document.getElementById('config-name').value.trim();
         if (!name) return;
-        await fetch('/question-lab/api/configs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+        await fetch('/question-lab/api/configs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, type: newConfigType }) });
         location.reload();
       }
       async function deleteConfig(id) {
@@ -243,6 +266,24 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
         <div style="display:flex;gap:8px;">
           <input type="text" id="config-name" value="${esc(config.name)}" />
           <button onclick="renameConfig()">Save</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:4px;">
+        <div class="form-row" style="margin:0;">
+          <label>Type</label>
+          <div class="toggle-group" style="margin-top:5px;">
+            <button id="cfg-type-internal" class="${config.type !== "partner" ? "active" : ""}" onclick="setConfigType('internal')">Internal</button>
+            <button id="cfg-type-partner" class="${config.type === "partner" ? "active" : ""}" onclick="setConfigType('partner')">Partner</button>
+          </div>
+        </div>
+        <div class="form-row" style="margin:0;">
+          <label>Active</label>
+          <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;font-size:14px;font-weight:400;color:var(--text);">
+              <input type="checkbox" id="cfg-active" ${config.active ? "checked" : ""} onchange="saveActive()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green);" />
+              ${config.active ? '<span style="color:var(--green);font-weight:600;">Active</span>' : '<span style="color:var(--muted);">Inactive</span>'}
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -303,7 +344,24 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
 
     <script>
       const configId = '${config.id}';
-      let auditType = 'internal';
+      let auditType = '${config.type ?? "internal"}';
+      let cfgType = '${config.type ?? "internal"}';
+
+      function setConfigType(t) {
+        cfgType = t;
+        document.getElementById('cfg-type-internal').classList.toggle('active', t === 'internal');
+        document.getElementById('cfg-type-partner').classList.toggle('active', t === 'partner');
+        fetch('/question-lab/api/configs/' + configId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: t }) })
+          .then(function(r) { return r.json(); })
+          .then(function(d) { if (d.id) console.log('[qlab] type saved:', t); });
+      }
+
+      function saveActive() {
+        const active = document.getElementById('cfg-active').checked;
+        fetch('/question-lab/api/configs/' + configId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) })
+          .then(function(r) { return r.json(); })
+          .then(function(d) { if (d.id) console.log('[qlab] active saved:', active); });
+      }
 
       function setAuditType(t) {
         auditType = t;

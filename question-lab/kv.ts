@@ -22,6 +22,8 @@ export interface QLConfig {
   name: string;
   createdAt: string;
   questionIds: string[];
+  type: "internal" | "partner";
+  active: boolean;
   testEmailRecipients?: string[];
   testRuns?: QLTestRun[];
 }
@@ -85,9 +87,9 @@ export async function getConfig(orgId: OrgId, id: string): Promise<QLConfig | nu
   return entry.value ?? null;
 }
 
-export async function createConfig(orgId: OrgId, name: string): Promise<QLConfig> {
+export async function createConfig(orgId: OrgId, name: string, type: "internal" | "partner" = "internal"): Promise<QLConfig> {
   const id = nanoid();
-  const config: QLConfig = { id, name, createdAt: new Date().toISOString(), questionIds: [] };
+  const config: QLConfig = { id, name, createdAt: new Date().toISOString(), questionIds: [], type, active: false };
   const db = await kv();
   await db.set(orgKey(orgId, "qlab", "config", id), config);
   const index = await getConfigIndex(orgId);
@@ -96,10 +98,16 @@ export async function createConfig(orgId: OrgId, name: string): Promise<QLConfig
   return config;
 }
 
-export async function updateConfig(orgId: OrgId, id: string, name: string): Promise<QLConfig | null> {
+export async function updateConfig(
+  orgId: OrgId,
+  id: string,
+  updates: { name?: string; type?: "internal" | "partner"; active?: boolean },
+): Promise<QLConfig | null> {
   const config = await getConfig(orgId, id);
   if (!config) return null;
-  config.name = name;
+  if (updates.name !== undefined) config.name = updates.name;
+  if (updates.type !== undefined) config.type = updates.type;
+  if (updates.active !== undefined) config.active = updates.active;
   const db = await kv();
   await db.set(orgKey(orgId, "qlab", "config", id), config);
   return config;

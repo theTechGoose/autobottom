@@ -70,18 +70,23 @@ export async function handleListConfigs(req: Request): Promise<Response> {
 export async function handleCreateConfig(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
   if (auth instanceof Response) return auth;
-  const { name } = await req.json();
+  const body = await req.json();
+  const { name, type } = body;
   if (!name) return json({ error: "name required" }, 400);
-  return json(await createConfig(auth.orgId, name));
+  const configType: "internal" | "partner" = type === "partner" ? "partner" : "internal";
+  return json(await createConfig(auth.orgId, name, configType));
 }
 
 export async function handleUpdateConfig(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
   if (auth instanceof Response) return auth;
   const id = new URL(req.url).pathname.split("/").pop()!;
-  const { name } = await req.json();
-  if (!name) return json({ error: "name required" }, 400);
-  const result = await updateConfig(auth.orgId, id, name);
+  const body = await req.json();
+  const updates: { name?: string; type?: "internal" | "partner"; active?: boolean } = {};
+  if (body.name !== undefined) updates.name = body.name;
+  if (body.type === "internal" || body.type === "partner") updates.type = body.type;
+  if (body.active !== undefined) updates.active = Boolean(body.active);
+  const result = await updateConfig(auth.orgId, id, updates);
   return result ? json(result) : json({ error: "not found" }, 404);
 }
 

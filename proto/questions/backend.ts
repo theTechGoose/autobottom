@@ -294,6 +294,73 @@ const SEED: Question[] = [
     ],
     testCases: [],
   },
+  {
+    id: "q4",
+    name: "Guest Verification",
+    description: "Verifies guest eligibility by confirming address match and marriage certificate.",
+    status: "active",
+    version: "v1",
+    fields: [],
+    groups: [],
+    conditions: [
+      {
+        id: "c20",
+        text: "Does the guest confirm that both they and their spouse share the same address on their driver's licenses? Any affirmative reply counts as Yes.",
+        type: "boolean",
+        negated: false,
+        strategy: "ai",
+        category: "Verification",
+        confidence: 0.92,
+        evaluation: "Did the guest confirm same address on licenses?",
+        versions: [
+          { text: "Does the guest confirm that both they and their spouse share the same address on their driver's licenses? Any affirmative reply counts as Yes.", ts: Date.now() - 86400000 },
+        ],
+      },
+      {
+        id: "c21",
+        text: "Does the guest confirm that they can bring a marriage certificate? Any affirmative reply counts as Yes.",
+        type: "boolean",
+        negated: false,
+        strategy: "ai",
+        category: "Verification",
+        confidence: 0.90,
+        evaluation: "Did the guest confirm they can bring a marriage certificate?",
+        versions: [
+          { text: "Does the guest confirm that they can bring a marriage certificate? Any affirmative reply counts as Yes.", ts: Date.now() - 86400000 },
+        ],
+      },
+    ],
+    testCases: [
+      {
+        id: "t10",
+        name: "Both confirmed",
+        transcript: "Agent: Do you and your spouse share the same address on your driver's licenses?\nGuest: Yes we do, same address.\nAgent: Great. And can you bring your marriage certificate?\nGuest: Absolutely, I have it ready.",
+        expected: "pass",
+        lastResult: null,
+      },
+      {
+        id: "t11",
+        name: "Address denied",
+        transcript: "Agent: Do you and your spouse share the same address on your driver's licenses?\nGuest: No, we have different addresses actually.\nAgent: Can you bring your marriage certificate?\nGuest: Yes I can bring it.",
+        expected: "fail",
+        lastResult: null,
+      },
+      {
+        id: "t12",
+        name: "No certificate",
+        transcript: "Agent: Do you and your spouse share the same address on your driver's licenses?\nGuest: Yes, same address on both.\nAgent: Can you bring your marriage certificate?\nGuest: I don't think I can find it, no.",
+        expected: "fail",
+        lastResult: null,
+      },
+      {
+        id: "t13",
+        name: "Both denied",
+        transcript: "Agent: Do you and your spouse share the same address on your driver's licenses?\nGuest: No, different addresses.\nAgent: Can you bring your marriage certificate?\nGuest: No I lost it.",
+        expected: "fail",
+        lastResult: null,
+      },
+    ],
+  },
 ];
 
 // --- Helpers ---
@@ -328,6 +395,7 @@ const CATEGORIES: [RegExp, string][] = [
   [/\b(clos|goodbye|summary|recap|anything else|thank|wrap)\b/i, "Closing"],
   [/\b(upsell|offer|product|promot|recommend|cross.sell)\b/i, "Sales"],
   [/\b(empathy|apolog|understand|patient|rude|tone|polite|dismiss|courte)\b/i, "Soft Skills"],
+  [/\b(address|license|certificate|marriage|spouse|eligib|verif.*guest)\b/i, "Verification"],
 ];
 
 function categorize(text: string): string {
@@ -512,6 +580,10 @@ function evaluateCondition(cond: Condition, transcript: string): "pass" | "fail"
     passes = /\b(thank|thanks|appreciate)\b/i.test(lower);
   } else if (cond.text.toLowerCase().includes("optional") || cond.text.toLowerCase().includes("disclos")) {
     passes = /\b(optional|not required|you don't have to|no obligation)\b/i.test(lower);
+  } else if (cond.text.toLowerCase().includes("same address") && cond.text.toLowerCase().includes("license")) {
+    passes = /\b(yes|yep|yeah|correct|same address|we do|that's right|affirmative)\b/i.test(lower) && !/\b(no|different address|not the same|don't share)\b/i.test(lower);
+  } else if (cond.text.toLowerCase().includes("marriage certificate")) {
+    passes = /\b(yes|absolutely|sure|of course|I have it|I can|bring it)\b/i.test(lower) && !/\b(no|can't find|lost it|don't have|don't think)\b/i.test(lower);
   } else {
     passes = Math.random() > 0.3;
   }

@@ -610,7 +610,9 @@ document.getElementById("panels").addEventListener("click", e => {
 // ── Init ──
 async function init() {
   const questions = await api.get("questions");
-  state.question = questions[0] || null;
+  const params = new URLSearchParams(location.search);
+  const qid = params.get("q");
+  state.question = (qid && questions.find(q => q.id === qid)) || questions[0] || null;
   renderHeader();
   renderComposer();
   renderConditions();

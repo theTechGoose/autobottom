@@ -1,0 +1,3 @@
+[     194ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://localhost:8888/api/questions:0
+[     199ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[     303ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://localhost:8888/favicon.ico:0

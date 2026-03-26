@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Question Lab</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,300&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f4f2ed;--surface:#ffffff;--surface-hover:#faf9f7;--surface-inset:#efeee9;
+  --border:#dfdcd4;--border-subtle:#e9e6e0;
+  --text:#1a1816;--text-secondary:#5e5953;--text-muted:#98938b;
+  --accent:#c2410c;--accent-hover:#9a3412;--accent-soft:#fff7ed;--accent-glow:rgba(194,65,12,.12);
+  --green:#047857;--green-soft:#ecfdf5;
+  --orange:#b45309;--orange-soft:#fffbeb;
+  --red:#dc2626;--red-soft:#fef2f2;
+  --radius:4px;--radius-lg:6px;
+  --shadow-xs:0 1px 2px rgba(0,0,0,.03);
+  --shadow:0 1px 3px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.03);
+  --font:'Outfit',system-ui,sans-serif;
+  --mono:'JetBrains Mono',monospace;
+  --serif:'Fraunces',Georgia,serif;
+  --ease:cubic-bezier(.4,0,.2,1);
+}
+html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--text);font-size:12px;line-height:1.5;-webkit-font-smoothing:antialiased}
+#app{height:100vh;display:flex;flex-direction:column;overflow:hidden;max-width:1280px;margin:0 auto}
+#app::before{content:'';display:block;height:3px;background:linear-gradient(90deg,var(--accent),#ea580c);flex-shrink:0}
+.page-header{display:flex;align-items:center;gap:12px;padding:10px 24px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.03)}
+.page-header h1{font-family:var(--serif);font-size:21px;font-weight:300;font-style:italic;color:var(--text);line-height:1.1;white-space:nowrap}
+.page-header p{font-size:11px;color:var(--text-muted);flex:1}
+.header-pills{display:flex;gap:4px;flex-shrink:0}
+.pill{font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:.06em;text-transform:uppercase}
+.pill.version{background:var(--surface-inset);color:var(--text-secondary);border:1px solid var(--border)}
+.pill.active{background:var(--green-soft);color:var(--green);border:1px solid #a7f3d0}
+.main-grid{flex:1;display:grid;grid-template-columns:1fr 340px;min-height:0;overflow:hidden}
+.left-col{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--border);overflow-y:auto}
+.right-col{display:flex;flex-direction:column;min-height:0;background:var(--surface);overflow-y:auto}
+.composer{padding:12px 20px 0;flex-shrink:0}
+.composer-box{position:relative;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius);padding:8px 12px;box-shadow:var(--shadow-xs);transition:border-color .2s,box-shadow .2s}
+.composer-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.composer-box textarea{width:100%;border:none;outline:none;resize:none;font-family:var(--font);font-size:13px;line-height:1.5;color:var(--text);background:transparent;min-height:18px;max-height:72px}
+.composer-box textarea::placeholder{color:var(--text-muted)}
+.composer-hint{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
+.composer-hint span{font-size:10px;color:var(--text-muted)}
+#conditions{flex:1;overflow-y:auto;padding:8px 20px 20px;min-height:0}
+.section-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--text-muted);margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:space-between}
+.cond-list{display:flex;flex-direction:column;gap:2px}
+.cond-card{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:var(--surface);border:1px solid var(--border);border-left:2.5px solid var(--border-subtle);border-radius:0 var(--radius) var(--radius) 0;cursor:pointer;transition:all .15s;box-shadow:var(--shadow-xs)}
+.cond-card:hover{box-shadow:var(--shadow);transform:translateX(1px)}
+.cond-card.selected{border-left-color:var(--accent);background:var(--accent-soft)}
+.cond-icon{width:20px;height:20px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:1px}
+.cond-icon.ai{background:var(--orange-soft);color:var(--orange)}
+.cond-body{flex:1;min-width:0}
+.cond-text{font-size:12px;font-weight:500;color:var(--text);line-height:1.4}
+.cond-meta{font-size:10px;color:var(--text-muted);margin-top:2px}
+.cond-x{width:18px;height:18px;border:none;background:transparent;border-radius:3px;cursor:pointer;font-size:9px;color:var(--text-muted);display:flex;align-items:center;justify-content:center;opacity:0;transition:all .12s;flex-shrink:0}
+.cond-card:hover .cond-x{opacity:1}
+.cond-x:hover{background:var(--red-soft);color:var(--red)}
+.or-divider{text-align:center;font-size:9px;color:var(--text-muted);font-weight:700;padding:4px 0;letter-spacing:.04em}
+.and-group{border:1.5px solid var(--border);border-radius:var(--radius-lg);padding:8px;margin-bottom:2px;background:var(--surface)}
+.and-group .cond-card{border:none;box-shadow:none;padding:6px 8px;margin:0}
+.and-group .cond-card:hover{transform:none;box-shadow:none;background:var(--surface-hover)}
+.and-divider{text-align:center;font-size:8px;color:var(--text-muted);font-weight:700;padding:1px 0;letter-spacing:.06em;opacity:.6}
+.panel-section{border-bottom:1px solid var(--border-subtle)}
+.panel-section:last-child{border-bottom:none}
+.panel-section-head{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);padding:12px 16px 6px;display:flex;align-items:center;gap:6px}
+.panel-section-head .badge{font-size:9px;background:var(--accent-soft);color:var(--accent);padding:1px 5px;border-radius:3px;font-weight:700}
+.panel-section-body{padding:0 16px 12px}
+.test-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.test-summary{font-size:11px;font-weight:600}
+.test-summary .pass{color:var(--green)}
+.test-summary .fail{color:var(--red)}
+.run-btn{font-size:11px;padding:4px 10px;border-radius:var(--radius);border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:600;margin-left:auto;font-family:var(--font)}
+.run-btn:hover{background:var(--accent-hover)}
+.test-list{display:flex;flex-direction:column;gap:2px}
+.test-row{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:var(--radius);background:var(--surface-hover);font-size:11px;cursor:pointer;transition:background .1s}
+.test-row:hover{background:var(--surface-inset)}
+.test-dot{width:5px;height:5px;border-radius:1px;flex-shrink:0}
+.test-dot.pass{background:var(--green)}
+.test-dot.fail{background:var(--red)}
+.test-dot.pending{background:var(--border)}
+.test-name{font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.test-expect{font-size:9px;color:var(--text-muted);font-family:var(--mono)}
+.test-detail{padding:8px 8px 8px 20px;background:var(--surface-inset);border-radius:var(--radius);margin:2px 0;font-size:11px}
+.test-detail textarea{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-family:var(--mono);font-size:10px;color:var(--text);background:var(--surface);min-height:50px;resize:vertical}
+.test-detail textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.test-detail-row{display:flex;align-items:center;gap:6px;margin-top:4px}
+.toggle-group{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.toggle-group button{font-size:9px;padding:2px 8px;border:none;background:var(--surface);color:var(--text-muted);cursor:pointer;font-weight:600;font-family:var(--font)}
+.toggle-group button.active-yes{background:var(--green);color:#fff}
+.toggle-group button.active-no{background:var(--red);color:#fff}
+.add-test-form{padding:8px;border:1.5px dashed var(--border);border-radius:var(--radius-lg);margin-top:6px}
+.add-test-form textarea{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-family:var(--mono);font-size:10px;min-height:50px;resize:vertical}
+.add-test-form textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.btn-sm{font-size:10px;padding:3px 8px;border-radius:var(--radius);border:none;cursor:pointer;font-weight:600;font-family:var(--font)}
+.btn-accent{background:var(--accent);color:#fff}
+.btn-accent:hover{background:var(--accent-hover)}
+.btn-muted{background:var(--surface-inset);color:var(--text-secondary);border:1px solid var(--border)}
+.btn-muted:hover{border-color:var(--accent);color:var(--accent)}
+.empty{text-align:center;padding:24px 12px;color:var(--text-muted)}
+.empty p{font-size:12px;margin-bottom:2px}
+.empty small{font-size:11px}
+.back-link{font-size:10px;color:var(--accent);cursor:pointer;padding:8px 20px 0}
+.back-link:hover{text-decoration:underline}
+.seed-btn{position:fixed;bottom:12px;right:12px;opacity:.4;font-size:10px;padding:3px 8px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface);color:var(--text-muted);cursor:pointer}
+.seed-btn:hover{opacity:1}
+.op-toggle{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-left:8px}
+.op-toggle button{font-size:9px;padding:2px 8px;border:none;background:var(--surface);color:var(--text-muted);cursor:pointer;font-weight:700;font-family:var(--font)}
+.op-toggle button.active{background:var(--accent);color:#fff}
+@keyframes slideIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
+.slide-in{animation:slideIn .2s var(--ease)}
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(0,0,0,.08);border-radius:2px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="page-header" id="pageHeader"></div>
+  <div class="main-grid">
+    <div class="left-col" id="leftCol"></div>
+    <div class="right-col" id="rightCol"></div>
+  </div>
+</div>
+<button class="seed-btn" onclick="doSeed()">Seed</button>
+
+<script>
+const state = { view: "configs", configId: null, questionId: null, fragmentId: null, data: null, composerText: "", parseResult: null, expandedTestId: null, showAddTest: false };
+
+// Lookup caches for name↔id resolution
+let _configs = [];
+let _questions = [];
+let _fragments = [];
+
+const api = {
+  async get(p) { return (await fetch(`/api/${p}`)).json(); },
+  async post(p, b) { return (await fetch(`/api/${p}`, { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(b) })).json(); },
+  async put(p, b) { return (await fetch(`/api/${p}`, { method:"PUT", headers:{"content-type":"application/json"}, body:JSON.stringify(b) })).json(); },
+  async del(p) { return (await fetch(`/api/${p}`, { method:"DELETE" })).json(); },
+};
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+function slug(s) { return encodeURIComponent(s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/,"")); }
+
+async function doSeed() { await fetch("/seed", { method: "POST" }); goto("/question-lab"); }
+
+function goto(url, replace) {
+  if (replace) history.replaceState(null, "", url);
+  else history.pushState(null, "", url);
+  route();
+}
+
+async function route() {
+  state.composerText = "";
+  state.parseResult = null;
+  state.expandedTestId = null;
+  state.showAddTest = false;
+
+  const path = location.pathname.replace(/\/+$/, "") || "/question-lab";
+  const parts = path.split("/").filter(Boolean); // ["question-lab", "question-name", "fragment-text"]
+
+  if (parts.length <= 1) {
+    // /question-lab → all questions (flattened across configs)
+    state.view = "configs";
+    const configs = await api.get("configs");
+    _configs = configs;
+    // Flatten all questions from all configs
+    const allQuestions = [];
+    for (const c of configs) {
+      const full = await api.get(`configs/${c.id}`);
+      for (const q of (full.questions || [])) {
+        allQuestions.push({ ...q, configId: c.id, configName: c.name });
+      }
+    }
+    state.data = { configs, questions: allQuestions };
+    if (configs.length === 1) state.configId = configs[0].id;
+  } else if (parts.length === 2) {
+    // /question-lab/<question-name> → question detail (find by name)
+    state.view = "question";
+    // Need to find the question by slug — load all configs to search
+    const configs = await api.get("configs");
+    _configs = configs;
+    let found = null;
+    for (const c of configs) {
+      const full = await api.get(`configs/${c.id}`);
+      for (const q of (full.questions || [])) {
+        if (slug(q.name) === parts[1]) {
+          found = q;
+          state.configId = c.id;
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (found) {
+      state.questionId = found.id;
+      state.data = await api.get(`questions/${found.id}`);
+    } else {
+      // Question not found, redirect home
+      history.replaceState(null, "", "/question-lab");
+      return route();
+    }
+  } else if (parts.length >= 3) {
+    // /question-lab/<question-name>/<fragment-slug> → fragment detail
+    state.view = "fragment";
+    const configs = await api.get("configs");
+    _configs = configs;
+    let foundQ = null;
+    for (const c of configs) {
+      const full = await api.get(`configs/${c.id}`);
+      for (const q of (full.questions || [])) {
+        if (slug(q.name) === parts[1]) { foundQ = q; state.configId = c.id; break; }
+      }
+      if (foundQ) break;
+    }
+    if (foundQ) {
+      state.questionId = foundQ.id;
+      const qData = await api.get(`questions/${foundQ.id}`);
+      let foundF = null;
+      for (const f of (qData.fragments || [])) {
+        if (slug(f.text.slice(0, 40)) === parts[2] || f.id === parts[2]) { foundF = f; break; }
+      }
+      if (foundF) {
+        state.fragmentId = foundF.id;
+        state.data = await api.get(`fragments/${foundF.id}`);
+        state.data._question = qData;
+      } else {
+        // Fragment not found, redirect to question URL
+        state.view = "question";
+        state.data = qData;
+        history.replaceState(null, "", `/question-lab/${parts[1]}`);
+      }
+    } else {
+      // Question not found, redirect home
+      history.replaceState(null, "", "/question-lab");
+      return route();
+    }
+  }
+  render();
+}
+
+window.addEventListener("popstate", () => route());
+
+// URL builders
+function questionUrl(qName) { return `/question-lab/${slug(qName)}`; }
+function fragmentUrl(qName, fText) { return `/question-lab/${slug(qName)}/${slug(fText.slice(0,40))}`; }
+function currentQuestionUrl() { return state.data ? questionUrl(state.data.name || state.data._question?.name || "") : "/question-lab"; }
+function currentFragmentUrl() { return state.data && state.data._question ? fragmentUrl(state.data._question.name, state.data.text) : "/question-lab"; }
+
+// Reload current view without changing URL
+async function reload() { await route(); }
+
+function render() { renderHeader(); renderLeft(); renderRight(); }
+
+// ── Header ──
+function renderHeader() {
+  const el = document.getElementById("pageHeader");
+  if (state.view === "configs") {
+    const count = (state.data.questions || []).length;
+    el.innerHTML = `<h1>Question Lab</h1><p>${count} question${count !== 1 ? 's' : ''}</p>`;
+  } else if (state.view === "question") {
+    el.innerHTML = `<h1>${esc(state.data.name)}</h1><p>${state.data.fragments.length} fragments</p>
+      <div class="header-pills"><span class="pill active">active</span></div>`;
+  } else if (state.view === "fragment") {
+    el.innerHTML = `<h1>Fragment</h1><p>${esc(state.data.text.slice(0, 80))}</p>`;
+  }
+}
+
+// ── Left Column ──
+function renderLeft() {
+  const el = document.getElementById("leftCol");
+
+  if (state.view === "configs") {
+    const qs = state.data.questions || [];
+    let html = "";
+    for (const q of qs) {
+      html += `<div class="cond-card slide-in" onclick="goto(questionUrl('${esc(q.name)}'))">
+        <div class="cond-icon ai">&#10024;</div>
+        <div class="cond-body">
+          <div class="cond-text">${esc(q.name)}</div>
+          <div class="cond-meta">${q.fragmentIds.length} fragments &middot; ${q.testIds.length} tests</div>
+        </div>
+        <button class="cond-x" onclick="event.stopPropagation();delQuestion('${q.id}')">&#10005;</button>
+      </div>`;
+    }
+    el.innerHTML = `
+      <div class="composer"><div class="composer-box">
+        <textarea rows="1" placeholder="New question name..." id="composerInput"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addQuestion()}">${esc(state.composerText)}</textarea>
+        <div class="composer-hint"><span>Enter to add question</span></div>
+      </div></div>
+      <div id="conditions"><div class="section-label">Questions &middot; ${qs.length}</div>
+        <div class="cond-list">${html || '<div class="empty"><p>No questions yet</p><small>Type above or click Seed</small></div>'}</div>
+      </div>`;
+
+  } else if (state.view === "question") {
+    const q = state.data;
+    const frags = q.fragments || [];
+    // Group fragments: AND'd fragments go in same group, OR starts new group
+    const groups = [];
+    let currentGroup = [];
+    for (let i = 0; i < frags.length; i++) {
+      if (i > 0 && frags[i].operator === "OR") {
+        groups.push(currentGroup);
+        currentGroup = [];
+      }
+      currentGroup.push(frags[i]);
+    }
+    if (currentGroup.length) groups.push(currentGroup);
+
+    let fragHtml = "";
+    for (let gi = 0; gi < groups.length; gi++) {
+      const group = groups[gi];
+      if (gi > 0) {
+        // OR divider between groups — clickable to switch to AND
+        const firstInGroup = group[0];
+        fragHtml += `<div class="or-divider">
+          <span class="op-toggle">
+            <button onclick="event.stopPropagation();setFragOp('${firstInGroup.id}','AND')">AND</button>
+            <button class="active" onclick="event.stopPropagation();setFragOp('${firstInGroup.id}','OR')">OR</button>
+          </span>
+        </div>`;
+      }
+
+      if (group.length === 1) {
+        const f = group[0];
+        fragHtml += `<div class="cond-card slide-in" onclick="goto('/question-lab/${slug(q.name)}/${f.id}')">
+          <div class="cond-icon ai">&#10024;</div>
+          <div class="cond-body">
+            <div class="cond-text">${esc(f.text)}</div>
+            <div class="cond-meta">${f.parsedType === 'number' ? 'AI number check' : f.parsedType === 'open-ended' ? 'AI open-ended' : f.parsedType === 'scope' ? 'Scope filter' : 'AI boolean check'} &middot; ${f.parsedCategory || 'General'} &middot; ${f.testIds.length} tests</div>
+          </div>
+          <button class="cond-x" onclick="event.stopPropagation();delFragment('${f.id}')">&#10005;</button>
+        </div>`;
+      } else {
+        // Multiple AND'd fragments in one group card
+        fragHtml += `<div class="and-group slide-in">`;
+        for (let fi = 0; fi < group.length; fi++) {
+          const f = group[fi];
+          if (fi > 0) {
+            fragHtml += `<div class="and-divider">
+              <span class="op-toggle">
+                <button class="active" onclick="event.stopPropagation();setFragOp('${f.id}','AND')">AND</button>
+                <button onclick="event.stopPropagation();setFragOp('${f.id}','OR')">OR</button>
+              </span>
+            </div>`;
+          }
+          fragHtml += `<div class="cond-card" onclick="goto('/question-lab/${slug(q.name)}/${f.id}')">
+            <div class="cond-icon ai">&#10024;</div>
+            <div class="cond-body">
+              <div class="cond-text">${esc(f.text)}</div>
+              <div class="cond-meta">${f.parsedType === 'number' ? 'AI number check' : f.parsedType === 'open-ended' ? 'AI open-ended' : f.parsedType === 'scope' ? 'Scope filter' : 'AI boolean check'} &middot; ${f.parsedCategory || 'General'} &middot; ${f.testIds.length} tests</div>
+            </div>
+            <button class="cond-x" onclick="event.stopPropagation();delFragment('${f.id}')">&#10005;</button>
+          </div>`;
+        }
+        fragHtml += `</div>`;
+      }
+    }
+
+    const previewHtml = `<div id="composerPreview" style="margin-top:6px"></div>`;
+
+    el.innerHTML = `
+      <div class="back-link" onclick="goto('/question-lab')">&larr; Back to questions</div>
+      <div class="composer"><div class="composer-box">
+        <textarea rows="1" placeholder="What should this question check for?" id="composerInput"
+          oninput="onComposer(this.value)"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addFragment()}">${esc(state.composerText)}</textarea>
+        <div class="composer-hint"><span>Add a fragment</span><span>Enter to add</span></div>
+      </div>${previewHtml}</div>
+      <div id="conditions">
+        <div class="section-label">Fragments &middot; ${frags.length}</div>
+        <div class="cond-list">${fragHtml || '<div class="empty"><p>No fragments yet</p><small>Type above to add checks</small></div>'}</div>
+      </div>`;
+
+  } else if (state.view === "fragment") {
+    const f = state.data;
+    const q = state.data._question;
+    el.innerHTML = `
+      <div class="back-link" onclick="goto(questionUrl('${esc(q.name)}'))">&larr; Back to ${esc(q.name)}</div>
+      <div class="composer"><div class="composer-box">
+        <textarea rows="2" id="fragText">${esc(f.text)}</textarea>
+        <div class="composer-hint"><span>Fragment text</span><button class="btn-sm btn-accent" onclick="saveFragment()">Save</button></div>
+      </div></div>
+      <div id="conditions">
+        <div class="section-label">Version History</div>
+        <div class="cond-list">${f.versions.length === 0 ? '<div class="empty" style="padding:12px"><small>No previous versions</small></div>' :
+          f.versions.map((v, i) => `<div class="cond-card" onclick="restoreVersion(${i})" title="Click to restore">
+            <div class="cond-icon ai" style="opacity:.4">&#128196;</div>
+            <div class="cond-body">
+              <div class="cond-text" style="color:var(--text-muted);font-size:11px">${esc(v.text.slice(0, 120))}</div>
+              <div class="cond-meta">${new Date(v.timestamp).toLocaleString()}</div>
+            </div>
+          </div>`).join("")}
+        </div>
+      </div>`;
+  }
+}
+
+// ── Right Column (Tests) ──
+function renderRight() {
+  const el = document.getElementById("rightCol");
+
+  if (state.view === "configs" || state.view === "questions") {
+    el.innerHTML = `<div class="empty" style="padding-top:60px"><p>Select an item</p><small>Navigate to a question or fragment to manage tests</small></div>`;
+    return;
+  }
+
+  let tests, runUrl, parentLabel;
+  if (state.view === "question") {
+    tests = state.data.tests || [];
+    runUrl = `questions/${state.data.id}/run`;
+    parentLabel = "Question";
+  } else {
+    tests = state.data.tests || [];
+    runUrl = `fragments/${state.data.id}/run`;
+    parentLabel = "Fragment";
+  }
+
+  const passing = tests.filter(t => t.lastResult === "pass").length;
+  const failing = tests.filter(t => t.lastResult === "fail").length;
+  let summary = `${tests.length} tests`;
+  const untested = tests.length - passing - failing;
+  if (passing || failing || untested) {
+    summary += ` &mdash; <span class="pass">${passing} passing</span>, <span class="fail">${failing} failing</span>`;
+    if (untested > 0) summary += `, ${untested} untested`;
+  }
+
+  let testHtml = "";
+  for (const t of tests) {
+    const dot = t.lastResult || "pending";
+    const snip = t.snippet.replace(/\n/g, " ").slice(0, 60);
+    const expanded = state.expandedTestId === t.id;
+
+    testHtml += `<div class="test-row" onclick="toggleTest('${t.id}')">
+      <span class="test-dot ${dot}"></span>
+      <span class="test-name">${esc(snip)}</span>
+      <span class="test-expect">expects ${t.expected}</span>
+      ${t.lastResult ? `<span class="test-expect" style="color:var(--${t.lastResult === 'pass' ? 'green' : 'red'})">${t.lastResult}</span>` : ''}
+    </div>`;
+    if (expanded) {
+      testHtml += `<div class="test-detail slide-in">
+        <textarea id="editSnip_${t.id}">${esc(t.snippet)}</textarea>
+        <div class="test-detail-row">
+          <span style="font-size:9px;color:var(--text-muted);font-weight:600">Expected:</span>
+          <div class="toggle-group">
+            <button class="${t.expected === 'yes' ? 'active-yes' : ''}" onclick="setExp('${t.id}','yes')">Yes</button>
+            <button class="${t.expected === 'no' ? 'active-no' : ''}" onclick="setExp('${t.id}','no')">No</button>
+          </div>
+          <button class="btn-sm btn-accent" onclick="saveTest('${t.id}')" style="margin-left:auto">Save</button>
+          <button class="btn-sm btn-muted" onclick="delTest('${t.id}')">Del</button>
+        </div>
+        ${t.lastAnswer ? `<div style="margin-top:4px;font-size:9px;color:var(--text-muted)">Answer: <strong>${esc(t.lastAnswer)}</strong></div>` : ''}
+      </div>`;
+    }
+  }
+
+  let addHtml = "";
+  if (state.showAddTest) {
+    addHtml = `<div class="add-test-form slide-in">
+      <textarea id="newSnip" rows="3" placeholder="Paste transcript snippet..."></textarea>
+      <div class="test-detail-row">
+        <span style="font-size:9px;color:var(--text-muted);font-weight:600">Expected:</span>
+        <div class="toggle-group">
+          <button class="active-yes" id="nExpY" onclick="this.className='active-yes';document.getElementById('nExpN').className=''">Yes</button>
+          <button id="nExpN" onclick="this.className='active-no';document.getElementById('nExpY').className=''">No</button>
+        </div>
+        <button class="btn-sm btn-accent" onclick="addTest()" style="margin-left:auto">Add</button>
+        <button class="btn-sm btn-muted" onclick="state.showAddTest=false;renderRight()">Cancel</button>
+      </div>
+    </div>`;
+  }
+
+  el.innerHTML = `
+    <div class="panel-section">
+      <div class="panel-section-head">${parentLabel} Tests <span class="badge">${tests.length}</span></div>
+      <div class="panel-section-body">
+        <div class="test-header">
+          <div class="test-summary">${summary}</div>
+          <button class="run-btn" onclick="runTests()">Run All</button>
+        </div>
+        <div class="test-list">${testHtml}</div>
+        ${addHtml}
+        ${!state.showAddTest ? `<div style="margin-top:6px"><button class="btn-sm btn-muted" onclick="state.showAddTest=true;renderRight()">+ Add Test</button></div>` : ''}
+      </div>
+    </div>`;
+}
+
+// ── Actions ──
+
+let parseDebounce = null;
+function onComposer(val) {
+  state.composerText = val;
+  clearTimeout(parseDebounce);
+  const previewEl = document.getElementById("composerPreview");
+  if (val.trim().length < 3) { state.parseResult = null; if (previewEl) previewEl.innerHTML = ""; return; }
+  parseDebounce = setTimeout(async () => {
+    state.parseResult = await api.post("parse", { text: val });
+    const el = document.getElementById("composerPreview");
+    if (el && state.parseResult) {
+      const pr = state.parseResult;
+      const icon = pr.type === "scope" ? "&#8627;" : pr.strategy === "ai" ? "&#10024;" : "&#9889;";
+      const label = pr.type === "scope" ? "Scope filter"
+        : pr.type === "open-ended" ? "AI open-ended"
+        : pr.type === "number" ? "AI number check"
+        : pr.strategy === "ai" ? "AI boolean check"
+        : "Instant check";
+      el.innerHTML = `<div class="cond-card slide-in" style="border-left-color:var(--orange)">
+        <div class="cond-icon ai">${icon}</div>
+        <div class="cond-body">
+          <div style="font-size:10px;font-weight:600;color:var(--text-secondary)">${label}${pr.negated ? ' <span style="color:var(--red)">&#183; negated</span>' : ''} &#183; ${esc(pr.category)}</div>
+          <div style="font-size:10px;color:var(--text-muted);font-family:var(--mono);margin-top:1px">${esc(state.composerText)}</div>
+        </div>
+        <button class="btn-sm btn-accent" onclick="addFragment()" style="flex-shrink:0">+</button>
+      </div>`;
+    }
+  }, 200);
+}
+
+async function addConfig() { const ta = document.getElementById("composerInput"); const v = (ta ? ta.value : "").trim(); if (!v) return; await api.post("configs", { name: v }); goto("/question-lab", true); }
+async function delConfig(id) { if (!confirm("Delete config?")) return; await api.del(`configs/${id}`); goto("/question-lab", true); }
+
+async function addQuestion() {
+  const ta = document.getElementById("composerInput"); const v = (ta ? ta.value : "").trim(); if (!v) return;
+  // Use existing config or create one
+  let cfgId = state.configId;
+  if (!cfgId) {
+    const configs = await api.get("configs");
+    if (configs.length > 0) { cfgId = configs[0].id; }
+    else { const c = await api.post("configs", { name: "Default" }); cfgId = c.id; }
+  }
+  await api.post(`configs/${cfgId}/questions`, { name: v });
+  goto("/question-lab", true);
+}
+async function delQuestion(id) { if (!confirm("Delete question?")) return; await api.del(`questions/${id}`); goto("/question-lab", true); }
+
+async function addFragment() {
+  const ta = document.getElementById("composerInput");
+  const v = (ta ? ta.value : state.composerText || "").trim();
+  if (v.length < 3) return;
+  await api.post(`questions/${state.questionId}/fragments`, { text: v });
+  reload();
+}
+async function delFragment(id) { if (!confirm("Delete this fragment and its tests?")) return; await api.del(`fragments/${id}`); reload(); }
+
+async function setFragOp(fragId, op) { await api.put(`fragments/${fragId}`, { operator: op }); reload(); }
+
+async function saveFragment() { const text = document.getElementById("fragText").value.trim(); if (!text) return; await api.put(`fragments/${state.fragmentId}`, { text }); reload(); }
+async function restoreVersion(i) { if (!confirm("Restore?")) return; const v = state.data.versions[i]; await api.put(`fragments/${state.fragmentId}`, { text: v.text }); reload(); }
+
+function toggleTest(id) { state.expandedTestId = state.expandedTestId === id ? null : id; renderRight(); }
+function setExp(id, val) { const t = (state.data.tests || []).find(t => t.id === id); if (t) t.expected = val; renderRight(); }
+
+async function addTest() {
+  const snip = document.getElementById("newSnip").value.trim(); if (!snip) return;
+  const yes = document.getElementById("nExpY").className.includes("active");
+  const parentUrl = state.view === "question" ? `questions/${state.questionId}` : `fragments/${state.fragmentId}`;
+  await api.post(`${parentUrl}/tests`, { snippet: snip, expected: yes ? "yes" : "no" });
+  state.showAddTest = false;
+  reload();
+}
+
+async function saveTest(id) {
+  const snip = document.getElementById(`editSnip_${id}`).value.trim();
+  const t = (state.data.tests || []).find(t => t.id === id); if (!t) return;
+  await api.put(`tests/${id}`, { snippet: snip, expected: t.expected });
+  reload();
+}
+
+async function delTest(id) {
+  if (!confirm("Delete this test?")) return;
+  await api.del(`tests/${id}`);
+  reload();
+}
+
+async function runTests() {
+  const url = state.view === "question" ? `questions/${state.questionId}/run` : `fragments/${state.fragmentId}/run`;
+  await api.post(url, {});
+  reload();
+}
+
+route();
+</script>
+</body>
+</html>

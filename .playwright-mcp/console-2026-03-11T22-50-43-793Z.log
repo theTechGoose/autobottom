@@ -1,0 +1,7 @@
+[   30374ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:8000/audit/recording?id=alaEAQcvxvXFG7PA18Oco:0
+[   30376ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:8000/audit/recording?id=alaEAQcvxvXFG7PA18Oco:0
+[   30376ms] [ERROR] [WAVEFORM] decode error EncodingError: Unable to decode audio data @ http://localhost:8000/review:2062
+[  110368ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/messages/unread:0
+[  123160ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:8000/audit/recording?id=alaEAQcvxvXFG7PA18Oco:0
+[  123164ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:8000/audit/recording?id=alaEAQcvxvXFG7PA18Oco:0
+[  123164ms] [ERROR] [WAVEFORM] decode error EncodingError: Unable to decode audio data @ http://localhost:8000/review:2062

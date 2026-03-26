@@ -1,0 +1,30 @@
+[  410340ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/fragments/f7b5a5306:0
+[  410342ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/questions/q26a132bd:0
+[  410344ms] TypeError: Cannot read properties of undefined (reading 'slice')
+    at renderHeader (http://localhost:9090/:176:63)
+    at render (http://localhost:9090/:163:21)
+    at nav (http://localhost:9090/:160:3)
+[  410925ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/fragments/f7b5a5306:0
+[  410926ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/questions/q26a132bd:0
+[  410928ms] TypeError: Cannot read properties of undefined (reading 'slice')
+    at renderHeader (http://localhost:9090/:176:63)
+    at render (http://localhost:9090/:163:21)
+    at nav (http://localhost:9090/:160:3)
+[  411120ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/fragments/f7b5a5306:0
+[  411122ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/questions/q26a132bd:0
+[  411123ms] TypeError: Cannot read properties of undefined (reading 'slice')
+    at renderHeader (http://localhost:9090/:176:63)
+    at render (http://localhost:9090/:163:21)
+    at nav (http://localhost:9090/:160:3)
+[  411817ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/fragments/f7b5a5306:0
+[  411819ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/questions/q26a132bd:0
+[  411821ms] TypeError: Cannot read properties of undefined (reading 'slice')
+    at renderHeader (http://localhost:9090/:176:63)
+    at render (http://localhost:9090/:163:21)
+    at nav (http://localhost:9090/:160:3)
+[  412314ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/fragments/f7b5a5306:0
+[  412315ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:9090/api/questions/q26a132bd:0
+[  412317ms] TypeError: Cannot read properties of undefined (reading 'slice')
+    at renderHeader (http://localhost:9090/:176:63)
+    at render (http://localhost:9090/:163:21)
+    at nav (http://localhost:9090/:160:3)

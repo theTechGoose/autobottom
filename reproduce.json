@@ -1,0 +1,77 @@
+{
+  "capturedAt": "2026-03-12T12:33:51Z",
+  "reviewer1": {
+    "email": "aknight@monsterrg.com",
+    "current": {
+      "findingId": "0DbQ4gC0RQtmCA9E9WSoS",
+      "questionIndex": 2,
+      "reviewIndex": 3,
+      "totalForFinding": 9,
+      "header": "Marital Status",
+      "populated": "+:\r\n```\r\nPlease answer only with \"Yes\" or \"No\" for all questions.\r\n```\r\n\r\nDoes the guest say they are single? If the guest says they're a widow, this is considered single.\r\n\r\n|\r\n\r\nDoes the guest say they are separated?\r\n\r\n|\r\n\r\nDoes the team member state the question \"Are you married, cohabitating, single or separated?\" Minor differences in wording and punctuation are acceptable.\r\n\r\n&\r\n\r\nDid the team member tell the guest that both they and their spouse must have matching addresses on some form of paperwork? This can be IDs, utility bills, bank statements, or a marriage certificate.\r\n",
+      "thinking": "**Summary**\n\nThe examined transcription fragment contains only the guest\u2019s verification of their name, phone number, billing address, and email. It does **not** include any question about or statement of marital status\u2014whether the guest is single, married, cohabitating, divorced, or separated\u2014nor does it contain any reference to a spouse or a requirement that the guest\u2019s and spouse\u2019s addresses match on documentation. Consequently, there is no evidence in this excerpt that the guest indicated any marital condition.",
+      "defense": "**Summary**\n\nThe transcript captures an interaction where the agent verifies the guest\u2019s personal information:\n\n- Confirms the spelling of the first name.  \n- Confirms the last name is **Lee**.  \n- Verifies the phone number **559\u2011906\u20118588**.  \n- Confirms the billing address **2416 East Normal Avenue** (including city, state, ZIP).  \n- Confirms the email address (starting with \u201cV\u2026invictor\u201d).\n\nNo part of the conversation mentions marital status, spouse information, or any related details.",
+      "answer": "No",
+      "recordingIdField": "GenieNumber",
+      "recordId": "1754539"
+    },
+    "peek": {
+      "findingId": "0DbQ4gC0RQtmCA9E9WSoS",
+      "questionIndex": 3,
+      "reviewIndex": 4,
+      "totalForFinding": 9,
+      "header": "Major CC",
+      "populated": "+:\r\n```\r\nPlease answer only with \"Yes\" or \"No\" for all questions.\r\n```\r\nDid the team member ask the guest about having a major credit card?\r\n\r\n|\r\n\r\nDid the team member ask the guest to bring a major credit card?",
+      "thinking": "**Summary:**  \nThe transcript only includes the agent verifying the guest\u2019s name, phone number, billing address, and email. There is no instance where the agent asks about, requests, or mentions a major credit card. Therefore, the answer to whether the agent asked the guest about a major credit card is **No**.",
+      "defense": "**Summary**\n\nThe agent\u2019s script focuses solely on verifying the guest\u2019s personal details\u2014spelling of the name as it appears on the card, phone number, billing address, and email. There is no request or question about whether the guest possesses a major credit card, indicating that the guest was not asked about having a major credit card in this interaction.",
+      "answer": "No",
+      "recordingIdField": "GenieNumber",
+      "recordId": "1754539"
+    },
+    "remaining": 0,
+    "auditRemaining": 7,
+    "transcriptKeys": [
+      "raw",
+      "diarized",
+      "utteranceTimes"
+    ]
+  },
+  "reviewer2": {
+    "email": "alexatmonster@monsterrg.com",
+    "current": {
+      "findingId": "0DbQ4gC0RQtmCA9E9WSoS",
+      "questionIndex": 3,
+      "reviewIndex": 4,
+      "totalForFinding": 9,
+      "header": "Major CC",
+      "populated": "+:\r\n```\r\nPlease answer only with \"Yes\" or \"No\" for all questions.\r\n```\r\nDid the team member ask the guest about having a major credit card?\r\n\r\n|\r\n\r\nDid the team member ask the guest to bring a major credit card?",
+      "thinking": "**Summary:**  \nThe transcript only includes the agent verifying the guest\u2019s name, phone number, billing address, and email. There is no instance where the agent asks about, requests, or mentions a major credit card. Therefore, the answer to whether the agent asked the guest about a major credit card is **No**.",
+      "defense": "**Summary**\n\nThe agent\u2019s script focuses solely on verifying the guest\u2019s personal details\u2014spelling of the name as it appears on the card, phone number, billing address, and email. There is no request or question about whether the guest possesses a major credit card, indicating that the guest was not asked about having a major credit card in this interaction.",
+      "answer": "No",
+      "recordingIdField": "GenieNumber",
+      "recordId": "1754539"
+    },
+    "peek": {
+      "findingId": "0DbQ4gC0RQtmCA9E9WSoS",
+      "questionIndex": 4,
+      "reviewIndex": 5,
+      "totalForFinding": 9,
+      "header": "Presentation Disclosure",
+      "populated": "Please answer only with \"Yes\" or \"No\". Did the team member make a statement about the guest attending a presentation?",
+      "thinking": "I read the transcription to find any statement where the team member says the guest will attend a presentation. The agent only confirms personal details (name spelling, phone number, billing address, email) and mentions a text message with package info. There is no reference to a presentation attendance.",
+      "defense": "The transcription contains: \"Okay, so I have the spelling of the name...\"; \"...the phone number...\"; \"...the billing address...\"; \"...your email is...\"; and mentions a text message from Monster with package information. No sentence mentions the guest attending a presentation.",
+      "answer": "No",
+      "recordingIdField": "GenieNumber",
+      "recordId": "1754539"
+    },
+    "remaining": 0,
+    "auditRemaining": 7,
+    "transcriptKeys": [
+      "raw",
+      "diarized",
+      "utteranceTimes"
+    ]
+  },
+  "sameQuestion": false,
+  "sameFinding": true
+}

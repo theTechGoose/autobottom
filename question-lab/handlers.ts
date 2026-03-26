@@ -3,7 +3,7 @@ import {
   listConfigs, getConfig, createConfig, updateConfig, deleteConfig,
   getQuestion, getQuestionsForConfig, createQuestion, updateQuestion, deleteQuestion, restoreVersion,
   getTest, getTestsForQuestion, createTest, updateTest, deleteTest, updateTestResult,
-  serveConfig, addTestRun, updateTestEmailRecipients,
+  serveConfig, addTestRun, updateTestEmailRecipients, bulkImportConfig,
 } from "./kv.ts";
 import { configListPage, configDetailPage, questionEditorPage } from "./page.ts";
 import { askQuestion, type LlmAnswer } from "../providers/groq.ts";
@@ -341,35 +341,44 @@ export async function handleImport(req: Request): Promise<Response> {
     name: string;
     type: "internal" | "partner";
     questions: Array<{ name: string; text: string; autoYesExp: string }>;
-    skipDuplicates?: boolean;
+    dupeMode?: "skip" | "overwrite" | "duplicate";
   };
-  const { name, type, questions, skipDuplicates } = body;
+  const { name, type, questions, dupeMode = "skip" } = body;
   if (!name || !Array.isArray(questions)) return json({ error: "name and questions required" }, 400);
 
-  // Check for duplicate config name
-  if (skipDuplicates) {
-    const existing = await listConfigs(auth.orgId);
-    if (existing.some((c) => c.name === name)) {
-      console.log(`[QLAB] 📦 Import skipped duplicate config: "${name}"`);
+  const configType: "internal" | "partner" = type === "partner" ? "partner" : "internal";
+  const existing = await listConfigs(auth.orgId);
+  const match = existing.find((c) => c.name === name);
+
+  if (match) {
+    if (dupeMode === "skip") {
+      console.log(`[QLAB] 📦 Import skipped duplicate: "${name}"`);
       return json({ ok: true, skipped: true, configName: name });
     }
-  }
 
-  const configType: "internal" | "partner" = type === "partner" ? "partner" : "internal";
-  const config = await createConfig(auth.orgId, name, configType);
-  let questionCount = 0;
-
-  for (const q of questions) {
-    if (!q.name || !q.text) continue;
-    const question = await createQuestion(auth.orgId, config.id, q.name, q.text);
-    if (question && q.autoYesExp) {
-      await updateQuestion(auth.orgId, question.id, { autoYesExp: q.autoYesExp });
+    if (dupeMode === "overwrite") {
+      // Delete existing config + its questions, then create fresh
+      await deleteConfig(auth.orgId, match.id);
+      const result = await bulkImportConfig(auth.orgId, name, configType, questions);
+      console.log(`[QLAB] 📦 Overwritten config "${name}" with ${result.questionCount} questions by ${auth.orgId}`);
+      return json({ ok: true, skipped: false, overwritten: true, configName: name, questions: result.questionCount });
     }
-    if (question) questionCount++;
+
+    if (dupeMode === "duplicate") {
+      // Find next available number: "Config", "Config (2)", "Config (3)", ...
+      let num = 2;
+      const names = new Set(existing.map((c) => c.name));
+      while (names.has(`${name} (${num})`)) num++;
+      const newName = `${name} (${num})`;
+      const result = await bulkImportConfig(auth.orgId, newName, configType, questions);
+      console.log(`[QLAB] 📦 Imported duplicate config "${newName}" with ${result.questionCount} questions by ${auth.orgId}`);
+      return json({ ok: true, skipped: false, overwritten: false, configName: newName, questions: result.questionCount });
+    }
   }
 
-  console.log(`[QLAB] 📦 Imported config "${name}" with ${questionCount} questions by ${auth.orgId}`);
-  return json({ ok: true, skipped: false, configName: name, questions: questionCount });
+  const result = await bulkImportConfig(auth.orgId, name, configType, questions);
+  console.log(`[QLAB] 📦 Imported config "${name}" with ${result.questionCount} questions by ${auth.orgId}`);
+  return json({ ok: true, skipped: false, overwritten: false, configName: name, questions: result.questionCount });
 }
 
 // ── Serve Config ─────────────────────────────────────────────────────

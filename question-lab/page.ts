@@ -246,10 +246,18 @@ export function configListPage(configs: QLConfig[]): string {
         <div id="preview-summary" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
         <div id="preview-table" style="max-height:300px;overflow:auto;"></div>
         <div style="margin-top:12px;">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;font-weight:400;letter-spacing:0;">
-            <input type="checkbox" id="skip-dupes" checked style="width:14px;height:14px;accent-color:var(--green);" />
-            Skip configs that already exist (match by name)
-          </label>
+          <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;">When a config with the same name exists</label>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;font-weight:400;letter-spacing:0;">
+              <input type="radio" name="dupe-mode" value="skip" checked style="accent-color:var(--green);" /> Skip — don't import, keep existing
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;font-weight:400;letter-spacing:0;">
+              <input type="radio" name="dupe-mode" value="overwrite" style="accent-color:var(--orange);" /> Overwrite — delete existing, import new
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;font-weight:400;letter-spacing:0;">
+              <input type="radio" name="dupe-mode" value="duplicate" style="accent-color:var(--blue);" /> Duplicate — create with numbered suffix (e.g. "Config (2)")
+            </label>
+          </div>
         </div>
         <div id="import-progress" style="display:none;margin-top:12px;">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
@@ -425,19 +433,20 @@ export function configListPage(configs: QLConfig[]): string {
         progressEl.style.display = '';
         document.getElementById('import-log').textContent = '';
 
-        var skipDupes = document.getElementById('skip-dupes').checked;
+        var dupeMode = document.querySelector('input[name="dupe-mode"]:checked').value;
         var total = importPayload.length;
         var created = 0;
         var skipped = 0;
+        var overwritten = 0;
         var totalQ = 0;
         var errors = 0;
 
-        importLog('Starting import of ' + total + ' configs (skip duplicates: ' + skipDupes + ')');
+        importLog('Starting import of ' + total + ' configs (duplicate mode: ' + dupeMode + ')');
 
         for (var i = 0; i < total; i++) {
           var cfg = importPayload[i];
           var pct = Math.round(((i + 1) / total) * 100);
-          document.getElementById('import-progress-text').textContent = (i + 1) + ' / ' + total + ' — ' + cfg.name;
+          document.getElementById('import-progress-text').textContent = (i + 1) + ' / ' + total + ' \\u2014 ' + cfg.name;
           document.getElementById('import-progress-pct').textContent = pct + '%';
           document.getElementById('import-progress-bar').style.width = pct + '%';
 
@@ -449,35 +458,45 @@ export function configListPage(configs: QLConfig[]): string {
                 name: cfg.name,
                 type: cfg.type,
                 questions: cfg.questions,
-                skipDuplicates: skipDupes
+                dupeMode: dupeMode
               })
             });
             var d = await res.json();
             if (d.ok) {
               if (d.skipped) {
                 skipped++;
-                importLog('Skipped (duplicate): ' + cfg.name);
+                importLog('Skipped: ' + cfg.name);
+              } else if (d.overwritten) {
+                overwritten++;
+                totalQ += d.questions || 0;
+                importLog('Overwritten: ' + cfg.name + ' (' + (d.questions || 0) + ' questions)');
               } else {
                 created++;
                 totalQ += d.questions || 0;
-                importLog('Created: ' + cfg.name + ' (' + (d.questions || 0) + ' questions)');
+                importLog('Created: ' + (d.configName || cfg.name) + ' (' + (d.questions || 0) + ' questions)');
               }
             } else {
               errors++;
-              importLog('ERROR: ' + cfg.name + ' — ' + (d.error || 'unknown'));
+              importLog('ERROR: ' + cfg.name + ' \\u2014 ' + (d.error || 'unknown'));
             }
           } catch (e) {
             errors++;
-            importLog('ERROR: ' + cfg.name + ' — ' + e.message);
+            importLog('ERROR: ' + cfg.name + ' \\u2014 ' + e.message);
           }
         }
 
+        var parts = [];
+        if (created) parts.push(created + ' created');
+        if (overwritten) parts.push(overwritten + ' overwritten');
+        if (skipped) parts.push(skipped + ' skipped');
+        if (errors) parts.push(errors + ' errors');
         importLog('');
-        importLog('Done! Created: ' + created + ', Skipped: ' + skipped + ', Errors: ' + errors + ', Questions: ' + totalQ);
+        importLog('Done! ' + parts.join(', ') + ' \\u2014 ' + totalQ + ' total questions');
 
         document.getElementById('import-result').textContent =
-          'Created ' + created + ' configs with ' + totalQ + ' questions' +
-          (skipped > 0 ? ' (' + skipped + ' skipped as duplicates)' : '') +
+          totalQ + ' questions across ' + (created + overwritten) + ' configs' +
+          (skipped > 0 ? ' (' + skipped + ' skipped)' : '') +
+          (overwritten > 0 ? ' (' + overwritten + ' overwritten)' : '') +
           (errors > 0 ? ' (' + errors + ' errors)' : '');
         showStep('done');
       }

@@ -125,6 +125,54 @@ export async function deleteConfig(orgId: OrgId, id: string): Promise<void> {
   await setConfigIndex(orgId, index.filter((i) => i !== id));
 }
 
+// -- Bulk Import ----------------------------------------------------------
+
+/** Create a config with all its questions in minimal KV operations. */
+export async function bulkImportConfig(
+  orgId: OrgId,
+  name: string,
+  type: "internal" | "partner",
+  questions: Array<{ name: string; text: string; autoYesExp: string }>,
+): Promise<{ configId: string; questionCount: number }> {
+  const db = await kv();
+  const configId = nanoid();
+  const questionIds: string[] = [];
+  const questionObjects: Array<{ key: Deno.KvKey; value: QLQuestion }> = [];
+
+  for (const q of questions) {
+    if (!q.name || !q.text) continue;
+    const qId = nanoid();
+    questionIds.push(qId);
+    questionObjects.push({
+      key: orgKey(orgId, "qlab", "question", qId),
+      value: { id: qId, name: q.name, text: q.text, configId, autoYesExp: q.autoYesExp || "", versions: [], testIds: [] },
+    });
+  }
+
+  const config: QLConfig = { id: configId, name, createdAt: new Date().toISOString(), questionIds, type, active: false };
+
+  // Write config
+  await db.set(orgKey(orgId, "qlab", "config", configId), config);
+
+  // Write questions in batches of 8 (Deno KV atomic limit is ~10 mutations)
+  for (let i = 0; i < questionObjects.length; i += 8) {
+    const batch = questionObjects.slice(i, i + 8);
+    let atomic = db.atomic();
+    for (const q of batch) {
+      atomic = atomic.set(q.key, q.value);
+    }
+    await atomic.commit();
+  }
+
+  // Update config index
+  const indexEntry = await db.get<string[]>(orgKey(orgId, "qlab", "config-index"));
+  const index = indexEntry.value ?? [];
+  index.push(configId);
+  await db.set(orgKey(orgId, "qlab", "config-index"), index);
+
+  return { configId, questionCount: questionIds.length };
+}
+
 // -- Question CRUD --------------------------------------------------------
 
 export async function getQuestion(orgId: OrgId, id: string): Promise<QLQuestion | null> {

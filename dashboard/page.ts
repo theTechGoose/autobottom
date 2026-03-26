@@ -3574,11 +3574,12 @@ table { width: 100%; border-collapse: collapse; }
     acts.appendChild(pvBtn); hdr.appendChild(left); hdr.appendChild(acts); erContent.appendChild(hdr);
 
     // Step 1: Type
-    var step1 = document.createElement('div'); step1.style.marginBottom = '20px';
-    var s1Lbl = document.createElement('div'); s1Lbl.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin-bottom:10px;'; s1Lbl.textContent = 'What type of audit?';
-    var typeBtnRow = document.createElement('div'); typeBtnRow.style.cssText = 'display:flex;gap:8px;';
+    var step1 = document.createElement('div'); step1.style.cssText = 'margin-bottom:20px;display:flex;flex-direction:column;align-items:center;padding-top:24px;';
+    var s1Lbl = document.createElement('div'); s1Lbl.style.cssText = 'font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;color:var(--text);margin-bottom:16px;'; s1Lbl.textContent = 'What type of audit?';
+    var typeBtnRow = document.createElement('div'); typeBtnRow.style.cssText = 'display:flex;gap:10px;';
     ['internal','partner','both'].forEach(function(t) {
       var btn = document.createElement('button'); btn.className = 'wh-tab'; btn.type = 'button';
+      btn.style.cssText = 'padding:10px 28px;font-size:13px;';
       btn.textContent = t.charAt(0).toUpperCase()+t.slice(1); btn.dataset.type = t;
       btn.addEventListener('click', function() {
         typeBtnRow.querySelectorAll('.wh-tab').forEach(function(b){b.classList.remove('active');}); btn.classList.add('active');

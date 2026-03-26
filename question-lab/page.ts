@@ -149,7 +149,7 @@ function shell(title: string, body: string, crumbs: CrumbItem[] = []): string {
   <nav class="topnav">
     <div class="topnav-logo"><span class="flask">🧪</span> Question Lab</div>
     ${crumbHtml ? `<div class="topnav-crumb">${crumbHtml}</div>` : `<div style="flex:1"></div>`}
-    <a class="topnav-back" href="/dashboard">← Dashboard</a>
+    <a class="topnav-back" href="/admin/dashboard">← Dashboard</a>
   </nav>
   <div class="container">${body}</div>
 </body>

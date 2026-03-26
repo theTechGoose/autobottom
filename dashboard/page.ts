@@ -1539,7 +1539,12 @@ table { width: 100%; border-collapse: collapse; }
     <!-- Partner panel -->
     <div id="qlab-panel-partner" style="display:none;">
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:14px;">Assign a Question Lab config to a partner office. Package audits from that office will use the assigned config.</div>
-      <div id="qlab-partner-list"></div>
+      <div id="qlab-partner-list" style="margin-bottom:16px;"></div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input id="qlab-office-input" class="sf-input" type="text" placeholder="Office name..." style="flex:1;font-size:12px;">
+        <select id="qlab-partner-config-sel" class="sf-input" style="width:180px;font-size:12px;padding:6px 8px;"></select>
+        <button class="sf-btn primary" id="qlab-add-partner-btn" style="font-size:11px;padding:6px 14px;white-space:nowrap;">Assign</button>
+      </div>
     </div>
 
     <div class="modal-actions" style="margin-top:20px;">
@@ -2628,7 +2633,7 @@ table { width: 100%; border-collapse: collapse; }
 
     function configOpts(selected) {
       var o = '<option value="">\\u2014 Production (QB) \\u2014</option>';
-      qlabData.configs.forEach(function(c) {
+      (qlabData.configs || []).forEach(function(c) {
         o += '<option value="' + xesc(c.name) + '"' + (selected === c.name ? ' selected' : '') + '>' + xesc(c.name) + '</option>';
       });
       return o;
@@ -2662,19 +2667,21 @@ table { width: 100%; border-collapse: collapse; }
 
     function renderPartnerList() {
       var el = document.getElementById('qlab-partner-list');
-      if (!qlabData.offices.length) { el.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:6px 0;">No partner offices found. Run Backfill in Partner Dimensions first.</div>'; return; }
-      var html = '<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr>'
+      var entries = Object.entries(qlabData.partner || {});
+      if (!entries.length) { el.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:6px 0;">No office assignments yet.</div>'; return; }
+      var html = '<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:4px;"><thead><tr>'
         + '<th style="text-align:left;padding:4px 8px 4px 0;color:var(--text-dim);font-weight:700;text-transform:uppercase;font-size:9px;letter-spacing:.8px;">Office</th>'
         + '<th style="text-align:left;padding:4px 8px;color:var(--text-dim);font-weight:700;text-transform:uppercase;font-size:9px;letter-spacing:.8px;">Config</th>'
         + '<th></th></tr></thead><tbody>';
-      qlabData.offices.forEach(function(office) {
-        html += '<tr><td style="padding:5px 8px 5px 0;font-weight:600;color:var(--text);">' + xesc(office) + '</td>'
-          + '<td style="padding:5px 8px;" colspan="2"><select class="sf-input" style="font-size:11px;padding:4px 6px;width:100%;" data-office="' + xesc(office) + '">' + configOpts(qlabData.partner[office] || '') + '</select></td></tr>';
+      entries.forEach(function(kv) {
+        html += '<tr><td style="padding:5px 8px 5px 0;font-weight:600;color:var(--text);">' + xesc(kv[0]) + '</td>'
+          + '<td style="padding:5px 8px;"><span style="background:rgba(63,185,80,0.12);color:#3fb950;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;">' + xesc(kv[1]) + '</span></td>'
+          + '<td style="padding:5px 0;text-align:right;"><button class="sf-btn danger" style="font-size:9px;padding:2px 8px;" data-type="partner" data-key="' + xesc(kv[0]) + '">Remove</button></td></tr>';
       });
       html += '</tbody></table>';
       el.innerHTML = html;
-      el.querySelectorAll('select[data-office]').forEach(function(sel) {
-        sel.addEventListener('change', function() { qlabSave('partner', sel.dataset.office, sel.value || null); });
+      el.querySelectorAll('button[data-type]').forEach(function(btn) {
+        btn.addEventListener('click', function() { qlabSave('partner', btn.dataset.key, null); });
       });
     }
 
@@ -2708,11 +2715,13 @@ table { width: 100%; border-collapse: collapse; }
       fetch('/api/qlab-assignments')
         .then(function(r) { return r.json(); })
         .then(function(d) {
+          if (!d || d.error) { console.warn('[qlab] assignments fetch error:', d && d.error); return; }
           qlabData = d;
           document.getElementById('qlab-internal-config-sel').innerHTML = configOpts('');
+          document.getElementById('qlab-partner-config-sel').innerHTML = configOpts('');
           renderInternalList(); renderPartnerList(); updateSbBadge();
         })
-        .catch(function() {});
+        .catch(function(e) { console.warn('[qlab] assignments fetch failed:', e); });
     }
 
     document.getElementById('qlab-open').addEventListener('click', function() { loadQlabAssignments(); openModal('qlab-modal'); });
@@ -2726,6 +2735,15 @@ table { width: 100%; border-collapse: collapse; }
       if (!configName) { toast('Select a config', 'error'); return; }
       qlabSave('internal', destId, configName);
       document.getElementById('qlab-dest-input').value = '';
+    });
+
+    document.getElementById('qlab-add-partner-btn').addEventListener('click', function() {
+      var officeName = document.getElementById('qlab-office-input').value.trim();
+      var configName = document.getElementById('qlab-partner-config-sel').value;
+      if (!officeName) { toast('Enter an office name', 'error'); return; }
+      if (!configName) { toast('Select a config', 'error'); return; }
+      qlabSave('partner', officeName, configName);
+      document.getElementById('qlab-office-input').value = '';
     });
 
     // Sidebar badge on load

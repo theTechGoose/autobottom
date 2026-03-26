@@ -1,0 +1,37 @@
+/* Auto-Bot Dark Theme */
+:root {
+  --bg: #0b0f15;
+  --bg-raised: #111620;
+  --bg-surface: #161c28;
+  --border: #1c2333;
+  --border-hover: #2a3346;
+  --text: #c9d1d9;
+  --text-muted: #6e7681;
+  --text-dim: #484f58;
+  --text-bright: #e6edf3;
+  --blue: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --purple: #bc8cff;
+  --cyan: #39d0d8;
+  --blue-bg: rgba(31,111,235,0.10);
+  --green-bg: rgba(63,185,80,0.10);
+  --red-bg: rgba(248,81,73,0.10);
+  --yellow-bg: rgba(210,153,34,0.10);
+  --purple-bg: rgba(139,92,246,0.10);
+  --cyan-bg: rgba(57,208,216,0.10);
+  --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --sidebar-w: 280px;
+  --card: var(--bg-raised);
+  --hover: var(--bg-surface);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  min-height: 100vh;
+}

@@ -1,0 +1,53 @@
+/* Shared Layout: Sidebar + Main */
+.layout { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 10;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.sidebar::-webkit-scrollbar { width: 3px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.sb-brand { padding: 20px 18px 16px; border-bottom: 1px solid var(--border); }
+.sb-brand h1 { font-size: 14px; font-weight: 700; color: var(--text-bright); letter-spacing: -0.3px; }
+.sb-brand .sb-status { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 10px; color: var(--text-dim); }
+.sb-brand .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+
+.sb-section { padding: 14px 14px 6px; }
+.sb-label {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 8px; padding: 0 4px;
+}
+.sb-link {
+  display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border-radius: 8px; text-decoration: none; color: var(--text);
+  font-size: 12px; font-weight: 500; cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sb-link:hover { background: var(--hover); color: var(--text-bright); }
+.sb-link.active { background: var(--blue-bg); color: var(--blue); }
+.sb-link .icon {
+  width: 28px; height: 28px; border-radius: 7px; display: flex;
+  align-items: center; justify-content: center; flex-shrink: 0;
+}
+.sb-link .icon svg { width: 14px; height: 14px; }
+
+.main { flex: 1; margin-left: var(--sidebar-w); padding: 24px 32px; }
+
+/* Centered card layout (auth pages) */
+.center-card {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card { width: 100%; max-width: 400px; padding: 0 24px; }

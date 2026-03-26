@@ -100,14 +100,20 @@ export async function queryReportData(
     rows: [],
   }));
 
-  // Hydrate all candidates in parallel — finding + appeal fetched simultaneously
-  const hydrated = await Promise.all(candidates.map(async (entry) => {
-    const [finding, appealRecord] = await Promise.all([
-      getFinding(orgId, entry.findingId),
-      getAppeal(orgId, entry.findingId),
-    ]);
-    return { entry, finding, appealRecord };
-  }));
+  // Hydrate candidates in batches to avoid hammering KV concurrency limits
+  const HYDRATE_BATCH = 20;
+  const hydrated: { entry: AuditDoneIndexEntry; finding: Awaited<ReturnType<typeof getFinding>>; appealRecord: Awaited<ReturnType<typeof getAppeal>> }[] = [];
+  for (let i = 0; i < candidates.length; i += HYDRATE_BATCH) {
+    const batch = candidates.slice(i, i + HYDRATE_BATCH);
+    const results = await Promise.all(batch.map(async (entry) => {
+      const [finding, appealRecord] = await Promise.all([
+        getFinding(orgId, entry.findingId),
+        getAppeal(orgId, entry.findingId),
+      ]);
+      return { entry, finding, appealRecord };
+    }));
+    hydrated.push(...results);
+  }
 
   const topFilters = config.topLevelFilters ?? [];
 

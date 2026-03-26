@@ -395,6 +395,14 @@ table { width: 100%; border-collapse: collapse; }
     <div class="sb-section">
       <div class="sb-label">Configuration</div>
 
+      <!-- Question Lab (opens modal) -->
+      <div class="sb-link" id="qlab-open">
+        <div class="icon" style="background:rgba(63,185,80,0.12);color:#3fb950;">${icons.flask}</div>
+        <span class="title">Question Lab</span>
+        <span id="qlab-sb-badge" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(63,185,80,0.12);color:#3fb950;display:none;"></span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
       <!-- Webhook (opens modal) -->
       <div class="sb-link" id="webhook-open">
         <div class="icon">${icons.webhook}</div>
@@ -472,13 +480,6 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </a>
 
-      <!-- Question Lab (opens modal) -->
-      <div class="sb-link" id="qlab-open">
-        <div class="icon" style="background:rgba(63,185,80,0.12);color:#3fb950;">${icons.flask}</div>
-        <span class="title">Question Lab</span>
-        <span id="qlab-sb-badge" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(63,185,80,0.12);color:#3fb950;display:none;"></span>
-        <span class="arrow">${icons.chevronRight}</span>
-      </div>
     </div>
 
     <div class="sb-section">
@@ -1530,7 +1531,8 @@ table { width: 100%; border-collapse: collapse; }
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:14px;">Assign a Question Lab config to a specific destination ID. Internal audits for that destination will use the assigned config.</div>
       <div id="qlab-internal-list" style="margin-bottom:16px;"></div>
       <div style="display:flex;gap:8px;align-items:center;">
-        <input id="qlab-dest-input" class="sf-input" type="text" placeholder="Destination ID..." style="flex:1;font-family:var(--mono);font-size:12px;">
+        <input id="qlab-dest-input" class="sf-input" type="text" placeholder="Destination ID..." style="width:110px;font-family:var(--mono);font-size:12px;">
+        <input id="qlab-dest-name-input" class="sf-input" type="text" placeholder="Destination name..." style="flex:1;font-size:12px;">
         <select id="qlab-internal-config-sel" class="sf-input" style="width:180px;font-size:12px;padding:6px 8px;"></select>
         <button class="sf-btn primary" id="qlab-add-internal-btn" style="font-size:11px;padding:6px 14px;white-space:nowrap;">Assign</button>
       </div>
@@ -2651,10 +2653,13 @@ table { width: 100%; border-collapse: collapse; }
       if (!entries.length) { el.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:6px 0;">No destination assignments yet.</div>'; return; }
       var html = '<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:4px;"><thead><tr>'
         + '<th style="text-align:left;padding:4px 8px 4px 0;color:var(--text-dim);font-weight:700;text-transform:uppercase;font-size:9px;letter-spacing:.8px;">Destination ID</th>'
+        + '<th style="text-align:left;padding:4px 8px;color:var(--text-dim);font-weight:700;text-transform:uppercase;font-size:9px;letter-spacing:.8px;">Name</th>'
         + '<th style="text-align:left;padding:4px 8px;color:var(--text-dim);font-weight:700;text-transform:uppercase;font-size:9px;letter-spacing:.8px;">Config</th>'
         + '<th></th></tr></thead><tbody>';
       entries.forEach(function(kv) {
+        var destName = (qlabData.internalNames || {})[kv[0]] || '';
         html += '<tr><td style="padding:5px 8px 5px 0;font-family:var(--mono);color:var(--text);">' + xesc(kv[0]) + '</td>'
+          + '<td style="padding:5px 8px;color:var(--text-dim);font-size:11px;">' + (destName ? xesc(destName) : '<span style="opacity:.4;">—</span>') + '</td>'
           + '<td style="padding:5px 8px;"><span style="background:rgba(63,185,80,0.12);color:#3fb950;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;">' + xesc(kv[1]) + '</span></td>'
           + '<td style="padding:5px 0;text-align:right;"><button class="sf-btn danger" style="font-size:9px;padding:2px 8px;" data-type="internal" data-key="' + xesc(kv[0]) + '">Remove</button></td></tr>';
       });
@@ -2694,16 +2699,20 @@ table { width: 100%; border-collapse: collapse; }
       });
     };
 
-    function qlabSave(type, key, configName) {
+    function qlabSave(type, key, configName, destName) {
       fetch('/api/qlab-assignments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: type, key: key, configName: configName })
+        body: JSON.stringify({ type: type, key: key, configName: configName, destName: destName || undefined })
       })
         .then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.ok) {
             if (configName) { qlabData[type][key] = configName; } else { delete qlabData[type][key]; }
+            if (type === 'internal') {
+              if (!qlabData.internalNames) qlabData.internalNames = {};
+              if (configName && destName) { qlabData.internalNames[key] = destName; } else if (!configName) { delete qlabData.internalNames[key]; }
+            }
             renderInternalList(); renderPartnerList(); updateSbBadge();
             toast(configName ? ('Assigned "' + configName + '" to ' + key) : ('Removed assignment for ' + key), 'success');
           } else { toast(d.error || 'Failed to save', 'error'); }
@@ -2730,10 +2739,12 @@ table { width: 100%; border-collapse: collapse; }
 
     document.getElementById('qlab-add-internal-btn').addEventListener('click', function() {
       var destId = document.getElementById('qlab-dest-input').value.trim();
+      var destName = document.getElementById('qlab-dest-name-input').value.trim();
       var configName = document.getElementById('qlab-internal-config-sel').value;
       if (!destId) { toast('Enter a destination ID', 'error'); return; }
-      qlabSave('internal', destId, configName || null);
+      qlabSave('internal', destId, configName || null, destName || null);
       document.getElementById('qlab-dest-input').value = '';
+      document.getElementById('qlab-dest-name-input').value = '';
     });
 
     document.getElementById('qlab-add-partner-btn').addEventListener('click', function() {

@@ -107,7 +107,7 @@ import { getChatPage } from "./chat/page.ts";
 // Dashboard + Question Lab
 import { getDashboardPage } from "./dashboard/page.ts";
 import { routeQuestionLab } from "./question-lab/handlers.ts";
-import { listConfigs, getInternalAssignments, setInternalAssignment, getPartnerAssignments, setPartnerAssignment } from "./question-lab/kv.ts";
+import { listConfigs, getInternalAssignments, setInternalAssignment, getInternalNames, setInternalName, getPartnerAssignments, setPartnerAssignment } from "./question-lab/kv.ts";
 
 // Sound
 import { getSoundEngineJs } from "./shared/sound-engine.ts";
@@ -3953,21 +3953,23 @@ async function handleQlabAssignments(orgId: OrgId, req: Request): Promise<Respon
   if (auth instanceof Response) return auth;
 
   if (req.method === "GET") {
-    const [internal, partner, configs, dims] = await Promise.all([
+    const [internal, partner, internalNames, configs, dims] = await Promise.all([
       getInternalAssignments(orgId),
       getPartnerAssignments(orgId),
+      getInternalNames(orgId),
       listConfigs(orgId),
       getPartnerDimensions(orgId),
     ]);
-    return json({ internal, partner, configs, offices: Object.keys(dims.offices) });
+    return json({ internal, partner, internalNames, configs, offices: Object.keys(dims.offices) });
   }
 
   if (req.method === "POST") {
-    const body = await req.json() as { type: "internal" | "partner"; key: string; configName: string | null };
-    const { type, key, configName } = body;
+    const body = await req.json() as { type: "internal" | "partner"; key: string; configName: string | null; destName?: string };
+    const { type, key, configName, destName } = body;
     if (!key) return json({ error: "key required" }, 400);
     if (type === "internal") {
       await setInternalAssignment(orgId, key, configName ?? null);
+      await setInternalName(orgId, key, configName === null ? null : (destName ?? null));
     } else if (type === "partner") {
       await setPartnerAssignment(orgId, key, configName ?? null);
     } else {

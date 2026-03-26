@@ -307,6 +307,25 @@ export async function setInternalAssignment(orgId: OrgId, destinationId: string,
   await db.set(orgKey(orgId, "qlab", "internal-assignments"), assignments);
 }
 
+/** Get human-readable names for destination IDs: destinationId → name */
+export async function getInternalNames(orgId: OrgId): Promise<Record<string, string>> {
+  const db = await kv();
+  const entry = await db.get<Record<string, string>>(orgKey(orgId, "qlab", "internal-names"));
+  return entry.value ?? {};
+}
+
+/** Set or clear a destination's human-readable name. */
+export async function setInternalName(orgId: OrgId, destinationId: string, name: string | null): Promise<void> {
+  const db = await kv();
+  const names = await getInternalNames(orgId);
+  if (name === null) {
+    delete names[destinationId];
+  } else {
+    names[destinationId] = name;
+  }
+  await db.set(orgKey(orgId, "qlab", "internal-names"), names);
+}
+
 /** Get all partner (package) assignments: officeName → configName */
 export async function getPartnerAssignments(orgId: OrgId): Promise<Record<string, string>> {
   const db = await kv();

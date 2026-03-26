@@ -1,7 +1,0 @@
-[     787ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:3400/favicon.ico:0
-[  441677ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed:  @ http://localhost:3400/__demoer__/overlay.js:521
-[  441778ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521
-[  441979ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521
-[  442381ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521
-[  443185ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521
-[  444790ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521

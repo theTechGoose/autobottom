@@ -1,7 +1,0 @@
-[      30ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:3400/__demoer__/beacon:0
-[  130601ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed:  @ http://localhost:3400/__demoer__/overlay.js:521
-[  130702ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521
-[  130904ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521
-[  131309ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521
-[  132116ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521
-[  133720ms] [ERROR] WebSocket connection to 'ws://localhost:3400/__demoer__/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3400/__demoer__/overlay.js:521

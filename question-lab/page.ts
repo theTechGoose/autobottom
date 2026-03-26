@@ -278,14 +278,16 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
         </div>
         <div class="form-row" style="margin:0;">
           <label>Active</label>
-          <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;font-size:14px;font-weight:400;color:var(--text);">
-              <input type="checkbox" id="cfg-active" ${config.active ? "checked" : ""} onchange="saveActive()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green);" />
-              ${config.active ? '<span style="color:var(--green);font-weight:600;">Active</span>' : '<span style="color:var(--muted);">Inactive</span>'}
-            </label>
-          </div>
+          <button id="cfg-active-btn"
+            class="${config.active ? "btn-green" : "btn-ghost"} btn-sm"
+            title="${config.active ? "config is available for assignment" : ""}"
+            onclick="toggleActive()"
+            style="margin-top:5px;">
+            ${config.active ? "● Active" : "○ Inactive"}
+          </button>
         </div>
       </div>
+      <span id="cfg-save-status" style="font-size:12px;color:var(--green);margin-top:8px;display:block;min-height:16px;"></span>
     </div>
 
     <div class="card card-test">
@@ -347,20 +349,31 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
       let auditType = '${config.type ?? "internal"}';
       let cfgType = '${config.type ?? "internal"}';
 
+      function showSaveStatus(msg) {
+        const el = document.getElementById('cfg-save-status');
+        el.textContent = '\\u2713 ' + msg;
+        setTimeout(function() { el.textContent = ''; }, 2000);
+      }
+
       function setConfigType(t) {
         cfgType = t;
         document.getElementById('cfg-type-internal').classList.toggle('active', t === 'internal');
         document.getElementById('cfg-type-partner').classList.toggle('active', t === 'partner');
         fetch('/question-lab/api/configs/' + configId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: t }) })
           .then(function(r) { return r.json(); })
-          .then(function(d) { if (d.id) console.log('[qlab] type saved:', t); });
+          .then(function(d) { if (d.id) { console.log('[qlab] type saved:', t); showSaveStatus('Type saved'); } });
       }
 
-      function saveActive() {
-        const active = document.getElementById('cfg-active').checked;
-        fetch('/question-lab/api/configs/' + configId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) })
+      let cfgActive = ${config.active ? "true" : "false"};
+      function toggleActive() {
+        cfgActive = !cfgActive;
+        const btn = document.getElementById('cfg-active-btn');
+        btn.className = (cfgActive ? 'btn-green' : 'btn-ghost') + ' btn-sm';
+        btn.title = cfgActive ? 'config is available for assignment' : '';
+        btn.textContent = cfgActive ? '\\u25cf Active' : '\\u25cb Inactive';
+        fetch('/question-lab/api/configs/' + configId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: cfgActive }) })
           .then(function(r) { return r.json(); })
-          .then(function(d) { if (d.id) console.log('[qlab] active saved:', active); });
+          .then(function(d) { if (d.id) { console.log('[qlab] active saved:', cfgActive); showSaveStatus('Active status saved'); } });
       }
 
       function setAuditType(t) {

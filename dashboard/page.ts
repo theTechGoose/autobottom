@@ -2632,7 +2632,7 @@ table { width: 100%; border-collapse: collapse; }
     function xesc(s) { var d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 
     function configOpts(type, selected) {
-      var o = '<option value="">\\u2014 Production (QB) \\u2014</option>';
+      var o = '<option value="">\\u2014 Remove / Use Production QB \\u2014</option>';
       (qlabData.configs || []).filter(function(c) { return c.active && (c.type || 'internal') === type; }).forEach(function(c) {
         o += '<option value="' + xesc(c.name) + '"' + (selected === c.name ? ' selected' : '') + '>' + xesc(c.name) + '</option>';
       });
@@ -2732,8 +2732,7 @@ table { width: 100%; border-collapse: collapse; }
       var destId = document.getElementById('qlab-dest-input').value.trim();
       var configName = document.getElementById('qlab-internal-config-sel').value;
       if (!destId) { toast('Enter a destination ID', 'error'); return; }
-      if (!configName) { toast('Select a config', 'error'); return; }
-      qlabSave('internal', destId, configName);
+      qlabSave('internal', destId, configName || null);
       document.getElementById('qlab-dest-input').value = '';
     });
 
@@ -2741,8 +2740,7 @@ table { width: 100%; border-collapse: collapse; }
       var officeName = document.getElementById('qlab-office-input').value.trim();
       var configName = document.getElementById('qlab-partner-config-sel').value;
       if (!officeName) { toast('Enter an office name', 'error'); return; }
-      if (!configName) { toast('Select a config', 'error'); return; }
-      qlabSave('partner', officeName, configName);
+      qlabSave('partner', officeName, configName || null);
       document.getElementById('qlab-office-input').value = '';
     });
 

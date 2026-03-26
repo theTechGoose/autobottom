@@ -563,6 +563,22 @@ table { width: 100%; border-collapse: collapse; }
   <style>@keyframes bot-pulse { 0%,100%{opacity:0.5;transform:scale(0.95)} 50%{opacity:1;transform:scale(1.05)} }</style>
 
   <main class="main">
+    <!-- Question Lab Mode -->
+    <div class="tbl" style="margin-bottom:16px;" id="qlab-mode-panel">
+      <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>Audit Question Mode</span>
+        <span id="qlab-mode-badge" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:12px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);">Loading...</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;padding:0 0 2px;">
+        <select id="qlab-config-select" class="sf-input" style="flex:1;font-size:12px;padding:6px 8px;">
+          <option value="">-- select a Question Lab config --</option>
+        </select>
+        <button class="sf-btn primary" id="qlab-enable-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Use Question Lab</button>
+        <button class="sf-btn secondary" id="qlab-disable-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Use Production</button>
+      </div>
+      <div id="qlab-mode-msg" style="font-size:10px;margin-top:6px;min-height:14px;color:var(--text-dim);"></div>
+    </div>
+
     <div class="stat-row">
       <div class="stat-card yellow">
         <div class="stat-label">In Pipeline</div>
@@ -654,22 +670,6 @@ table { width: 100%; border-collapse: collapse; }
         <button class="sf-btn primary" id="record-search-btn" style="padding:6px 16px;font-size:11px;">Search</button>
       </div>
       <div id="record-search-results" style="margin-top:8px;display:none;"></div>
-    </div>
-
-    <!-- Question Lab Mode -->
-    <div class="tbl" style="margin-bottom:16px;" id="qlab-mode-panel">
-      <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
-        <span>Audit Question Mode</span>
-        <span id="qlab-mode-badge" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:12px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);">Loading...</span>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;padding:0 0 2px;">
-        <select id="qlab-config-select" class="sf-input" style="flex:1;font-size:12px;padding:6px 8px;">
-          <option value="">-- select a Question Lab config --</option>
-        </select>
-        <button class="sf-btn primary" id="qlab-enable-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Use Question Lab</button>
-        <button class="sf-btn secondary" id="qlab-disable-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Use Production</button>
-      </div>
-      <div id="qlab-mode-msg" style="font-size:10px;margin-top:6px;min-height:14px;color:var(--text-dim);"></div>
     </div>
 
     <!-- Test by RID -->

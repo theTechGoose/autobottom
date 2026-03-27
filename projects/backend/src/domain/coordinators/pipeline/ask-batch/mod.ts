@@ -4,8 +4,8 @@ import { enqueueStep } from "../../../data/queue/mod.ts";
 import { askQuestion } from "../../../data/groq/mod.ts";
 import { query as vectorQuery } from "../../../data/pinecone/mod.ts";
 import { parseAst } from "../../../business/question-expr/mod.ts";
-import { answerQuestion } from "../../../../../types/mod.ts";
-import type { IQuestion, IAnsweredQuestion, ILlmQuestionAnswer } from "../../../../../types/mod.ts";
+import { answerQuestion } from "../../../business/question/mod.ts";
+import type { IQuestion, IAnsweredQuestion, ILlmQuestionAnswer } from "../../../../../dto/question.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

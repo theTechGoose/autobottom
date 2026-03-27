@@ -1,6 +1,6 @@
 /** Question expression service — populates templates and parses compound question AST. */
-import type { IQuestion, IQuestionAstNode, IQuestionSeed } from "../../../../types/mod.ts";
-import { createQuestion } from "../../../../types/mod.ts";
+import type { IQuestion, IQuestionAstNode, IQuestionSeed } from "../../../../dto/question.ts";
+import { createQuestion } from "../question/mod.ts";
 
 const PLACEHOLDER_RE = /\{\{\s*(\d+)\s*(?:!\s*([^}]*)\s*)?\}\}/g;
 

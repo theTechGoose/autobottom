@@ -5,7 +5,7 @@ import { getQuestionsForDestination } from "../../../data/quickbase/mod.ts";
 import { upload } from "../../../data/pinecone/mod.ts";
 import { populateQuestions } from "../../../business/question-expr/mod.ts";
 import { serveConfig } from "../../question-lab/mod.ts";
-import type { IQuestionSeed } from "../../../../../types/mod.ts";
+import type { IQuestionSeed } from "../../../../../dto/question.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

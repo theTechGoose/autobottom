@@ -3,8 +3,8 @@ import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackComp
 import { enqueueCleanup } from "../../../data/queue/mod.ts";
 
 import { generateFeedback } from "../../../data/groq/mod.ts";
-import { answerQuestion } from "../../../../../types/mod.ts";
-import type { IAnsweredQuestion } from "../../../../../types/mod.ts";
+import { answerQuestion } from "../../../business/question/mod.ts";
+import type { IAnsweredQuestion } from "../../../../../dto/question.ts";
 import { populateReviewQueue } from "../../review/mod.ts";
 import { populateJudgeQueue, saveAppeal } from "../../judge/mod.ts";
 import { checkBadges } from "../../../business/gamification/badges/mod.ts";

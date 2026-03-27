@@ -1,0 +1,8 @@
+<div *if="visible" class="toast" (click)="dismiss()">
+  <span class="toast-dot"
+    [class.dot-success]="type === 'success'"
+    [class.dot-error]="type === 'error'"
+    [class.dot-info]="type === 'info'"
+  ></span>
+  <span class="toast-msg">{{ msg }}</span>
+</div>

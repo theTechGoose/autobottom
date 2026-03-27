@@ -1,0 +1,8 @@
+<div class="combo-meter">
+  <span class="combo-counter" [class]="comboClass">
+    <span *if="combo > 0">{{ combo }}x</span>
+  </span>
+  <div *if="showTimeBank" class="time-bank-track">
+    <div class="time-bank-fill"></div>
+  </div>
+</div>

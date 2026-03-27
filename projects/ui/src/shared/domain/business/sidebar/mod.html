@@ -1,0 +1,22 @@
+<nav class="sidebar">
+  <div class="sb-brand">
+    <h1>Auto-Bot</h1>
+    <div class="sb-status">
+      <span class="dot"></span>
+      <span>Online</span>
+    </div>
+  </div>
+  <div class="sb-section">
+    <div class="sb-label">Navigation</div>
+    <a *for="let link of links"
+      [attr.href]="link.href"
+      class="sb-link"
+      [class.active]="active === link.href">
+      <span class="icon" [style.background]="link.iconColor"></span>
+      {{ link.label }}
+    </a>
+  </div>
+  <div class="sb-section sb-footer">
+    <a href="/logout" class="sb-link sb-signout">Sign Out</a>
+  </div>
+</nav>

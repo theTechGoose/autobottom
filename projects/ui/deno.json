@@ -21,6 +21,7 @@
   ],
   "imports": {
     "@/": "./",
+    "@sprig/kit": "/Users/raphaelcastro/Documents/programming/sprig/items/kit/mod.ts",
     "fresh": "jsr:@fresh/core@^2.2.0",
     "preact": "npm:preact@^10.27.2",
     "@preact/signals": "npm:@preact/signals@^2.5.0",
@@ -54,6 +55,7 @@
       "noscript",
       "template"
     ],
+    "experimentalDecorators": true,
     "types": [
       "vite/client"
     ]

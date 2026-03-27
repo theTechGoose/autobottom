@@ -1,0 +1,10 @@
+<div class="badge-grid">
+  <div *for="let badge of badges" class="badge-card"
+    [class.badge-earned]="isEarned(badge.id)"
+    [class.badge-locked]="!isEarned(badge.id)"
+    [style.border-color]="getTierColor(badge.tier)">
+    <span *if="badge.icon" class="badge-icon">{{ badge.icon }}</span>
+    <span class="badge-name">{{ badge.name }}</span>
+    <span *if="badge.description" class="badge-desc">{{ badge.description }}</span>
+  </div>
+</div>

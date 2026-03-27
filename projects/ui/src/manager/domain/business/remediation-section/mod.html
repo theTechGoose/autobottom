@@ -1,0 +1,20 @@
+<div *if="canRemediate" class="remediation-panel">
+  <h3>Remediation Notes</h3>
+  <textarea
+    [(value)]="notes"
+    placeholder="Describe the action taken to address these audit failures (min 20 characters)..."
+  ></textarea>
+  <div class="rem-footer">
+    <span class="rem-counter">
+      {{notes.trim().length}} / 20 min
+    </span>
+    <button
+      class="rem-submit"
+      [disabled]="notes.trim().length < 20 || submitting"
+      (click)="submit()"
+    >
+      <span *if="submitting">Submitting...</span>
+      <span *if="!submitting">Submit Remediation</span>
+    </button>
+  </div>
+</div>

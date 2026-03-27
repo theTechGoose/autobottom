@@ -1,0 +1,43 @@
+<div *if="detail">
+  <div class="detail-header">
+    <span class="detail-title">Audit: {{detail.finding.owner}}</span>
+    <div class="detail-meta">
+      <div class="meta-chip">Finding <strong>{{detail.finding.id}}</strong></div>
+      <div class="meta-chip">Recording <strong>{{detail.finding.recordingId}}</strong></div>
+    </div>
+  </div>
+
+  <div class="section-title">Questions</div>
+  <div class="q-cards">
+    <div *for="let q of detail.questions" class="q-card">
+      <div class="q-card-head">
+        <span class="q-card-title">Q{{q.index}}: {{q.header}}</span>
+        <span class="q-card-badge"
+          [class.confirmed]="q.reviewDecision === 'confirm'"
+          [class.flipped]="q.reviewDecision === 'flip'"
+        >
+          {{q.reviewDecision}}
+        </span>
+      </div>
+      <div *if="q.defense" class="q-card-section">
+        <div class="q-card-label">Defense</div>
+        <div class="q-card-text">{{q.defense}}</div>
+      </div>
+      <div *if="q.reviewer" class="q-card-reviewer">
+        Reviewed by <strong>{{q.reviewer}}</strong>
+      </div>
+    </div>
+  </div>
+
+  <div class="transcript-section">
+    <div class="section-title">
+      Transcript
+      <span class="toggle-icon" [class.open]="transcriptOpen">&#8250;</span>
+    </div>
+    <div *if="transcriptOpen" class="transcript-body">
+      <div *if="detail.transcript">
+        {{detail.transcript.diarized}}
+      </div>
+    </div>
+  </div>
+</div>

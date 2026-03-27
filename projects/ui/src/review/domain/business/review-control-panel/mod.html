@@ -1,0 +1,28 @@
+<div class="review-controls">
+  <button
+    class="btn btn-confirm"
+    [disabled]="busy || !hasItem"
+    (click)="onConfirm()"
+  >
+    Confirm (Y)
+  </button>
+  <button
+    class="btn btn-flip"
+    [disabled]="busy || !hasItem"
+    (click)="onFlip()"
+  >
+    Flip (N)
+  </button>
+  <button
+    class="btn btn-undo"
+    [disabled]="busy"
+    (click)="onUndo()"
+  >
+    Undo (B)
+  </button>
+  <div class="hotkey-hints">
+    <span><kbd>Y</kbd> Confirm</span>
+    <span><kbd>N</kbd> Flip</span>
+    <span><kbd>B</kbd> Undo</span>
+  </div>
+</div>

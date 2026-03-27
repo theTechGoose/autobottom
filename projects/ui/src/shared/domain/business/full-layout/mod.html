@@ -1,0 +1,37 @@
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sb-brand">
+      <h1>Auto-Bot</h1>
+      <div class="sb-sub">{{ title }}</div>
+    </div>
+    <div class="sb-section">
+      <div class="sb-label">Navigation</div>
+      <a *for="let link of links"
+         [href]="link.href"
+         class="sb-link"
+         [class.active]="link.active">
+        <div class="icon" *if="link.icon">{{ link.icon }}</div>
+        <span class="title">{{ link.label }}</span>
+        <span class="arrow">&#8250;</span>
+      </a>
+    </div>
+    <div class="sb-footer">
+      <div class="sb-user">
+        <div class="sb-avatar" [id]="avatarId">U</div>
+        <div>
+          <div class="sb-email" [id]="usernameId">--</div>
+          <div class="sb-role" [id]="roleId">--</div>
+        </div>
+      </div>
+      <div class="sb-settings">
+        <button id="logout-btn" class="sb-link sb-logout">
+          <div class="icon icon-danger">&#10006;</div>
+          <span class="title">Logout</span>
+        </button>
+      </div>
+    </div>
+  </aside>
+  <main class="main">
+    <slot />
+  </main>
+</div>

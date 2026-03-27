@@ -1,0 +1,43 @@
+<AdminStatsBar
+  [inPipeline]="data?.pipeline?.inPipe || 0"
+  [completed24h]="data?.pipeline?.completed24h || 0"
+  [errors24h]="data?.pipeline?.errors24h || 0"
+  [retries24h]="data?.pipeline?.retries24h || 0"
+  [statusDot]="statusDot"
+  [countdown]="countdown"
+/>
+
+<AdminChartPanel
+  [completedTs]="data?.pipeline?.completedTs || []"
+  [errorsTs]="data?.pipeline?.errorsTs || []"
+  [retriesTs]="data?.pipeline?.retriesTs || []"
+  [reviewPending]="data?.review?.pending || 0"
+  [reviewDecided]="data?.review?.decided || 0"
+/>
+
+<AdminTablesPanel
+  [activeAudits]="data?.pipeline?.active || []"
+  [recentErrors]="data?.pipeline?.errors || []"
+  [tokensByFunction]="data?.tokens?.by_function || null"
+/>
+
+<div class="toolbar">
+  <button class="btn ghost" (click)="openModal('webhook')">Webhook</button>
+  <button class="btn ghost" (click)="openModal('email-reports')">Email Reports</button>
+  <button class="btn ghost" (click)="openModal('users')">Users</button>
+  <button class="btn ghost" (click)="openModal('pipeline')">Pipeline</button>
+  <button class="btn ghost" (click)="openModal('devtools')">Dev Tools</button>
+</div>
+
+<WebhookModal [open]="modal === 'webhook'" />
+<PipelineModal [open]="modal === 'pipeline'" />
+<UsersModal [open]="modal === 'users'" />
+<DevtoolsModal [open]="modal === 'devtools'" />
+<EmailReportsModal [open]="modal === 'email-reports'" />
+
+<div class="t-wrap">
+  <div *for="let t of toasts" class="t-toast" [class]="t.type">
+    <span class="t-dot"></span>
+    {{t.text}}
+  </div>
+</div>

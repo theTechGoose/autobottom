@@ -1,0 +1,28 @@
+<div class="modal-overlay" [class.open]="open">
+  <div class="modal">
+    <div class="modal-title">Webhook Configuration</div>
+    <div class="wh-tabs">
+      <button
+        *for="let k of ['terminate','appeal','manager','judge-finish']"
+        [class.active]="kind === k"
+        (click)="loadTab(k)"
+      >
+        {{k}}
+      </button>
+    </div>
+    <div class="sf">
+      <label class="sf-label">POST URL</label>
+      <input type="text" class="sf-input" [(value)]="postUrl" placeholder="https://example.com/webhook" />
+    </div>
+    <div class="sf">
+      <label class="sf-label">Headers (JSON)</label>
+      <textarea class="sf-input" [(value)]="headers" placeholder='{"Authorization": "Bearer ..."}'></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="sf-btn secondary">Cancel</button>
+      <button class="sf-btn primary" (click)="save()" [disabled]="saving">
+        Save
+      </button>
+    </div>
+  </div>
+</div>

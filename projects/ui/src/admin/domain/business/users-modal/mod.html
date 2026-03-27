@@ -1,0 +1,54 @@
+<div class="modal-overlay" [class.open]="open">
+  <div class="modal">
+    <div class="modal-title">Team</div>
+    <div class="modal-sub">Manage your organization's users and roles</div>
+
+    <div *if="tab === 'list'">
+      <div>
+        <button [class.active]="tab === 'list'" (click)="tab = 'list'">Members</button>
+        <button [class.active]="tab === 'add'" (click)="tab = 'add'">+ Add</button>
+      </div>
+      <div *for="let user of allUsers">
+        <div class="um-user-row">
+          <div class="um-user-email">{{user.username}}</div>
+          <span class="um-badge">{{user.role}}</span>
+        </div>
+      </div>
+    </div>
+
+    <div *if="tab === 'add'">
+      <div>
+        <label class="sf-label">Role</label>
+        <select [(value)]="selectedRole">
+          <option value="admin">Admin</option>
+          <option value="judge">Judge</option>
+          <option value="manager">Manager</option>
+          <option value="reviewer">Reviewer</option>
+          <option value="user">Agent</option>
+        </select>
+      </div>
+      <div>
+        <label class="sf-label">Email</label>
+        <input type="email" class="sf-input" [(value)]="newEmail" />
+      </div>
+      <div>
+        <label class="sf-label">Password</label>
+        <input type="password" class="sf-input" [(value)]="newPassword" />
+      </div>
+      <div *if="selectedRole !== 'admin'">
+        <label class="sf-label">Supervisor</label>
+        <select [(value)]="newSupervisor">
+          <option value="">-- Select --</option>
+          <option *for="let sup of supervisorOptions" [value]="sup.username">{{sup.username}}</option>
+        </select>
+      </div>
+      <button class="sf-btn primary" (click)="createUser()" [disabled]="saving">
+        Create
+      </button>
+    </div>
+
+    <div class="modal-actions">
+      <button class="sf-btn secondary">Close</button>
+    </div>
+  </div>
+</div>

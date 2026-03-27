@@ -1,0 +1,46 @@
+<div class="modal-overlay" [class.open]="open">
+  <div class="modal pipeline-modal">
+    <div class="pm-header">
+      <div class="modal-title">Pipeline Settings</div>
+      <div class="modal-sub">Control concurrency and failure recovery</div>
+    </div>
+
+    <div class="pm-section">
+      <div class="pm-section-label">Concurrency</div>
+      <div class="pm-field">
+        <div class="pm-field-info">
+          <div class="pm-field-name">Parallelism</div>
+          <div class="pm-field-desc">Max concurrent audit operations</div>
+        </div>
+        <input type="number" class="pm-step-value" [(value)]="parallelism" />
+      </div>
+    </div>
+
+    <div class="pm-divider"></div>
+
+    <div class="pm-section">
+      <div class="pm-section-label">Retry Policy</div>
+      <div class="pm-field">
+        <div class="pm-field-info">
+          <div class="pm-field-name">Max Retries</div>
+          <div class="pm-field-desc">Attempts before marking failed</div>
+        </div>
+        <input type="number" class="pm-step-value" [(value)]="retries" />
+      </div>
+      <div class="pm-field">
+        <div class="pm-field-info">
+          <div class="pm-field-name">Delay</div>
+          <div class="pm-field-desc">Milliseconds between retry attempts</div>
+        </div>
+        <input type="number" class="pm-step-value" [(value)]="retryDelay" />
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="sf-btn secondary">Cancel</button>
+      <button class="sf-btn primary" (click)="save()" [disabled]="saving">
+        Save
+      </button>
+    </div>
+  </div>
+</div>

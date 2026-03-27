@@ -5,7 +5,6 @@ import type { AuthContext } from "../auth/mod.ts";
 import { getAgentDashboardData } from "./mod.ts";
 import { getGameState, getEarnedBadges, purchaseStoreItem, listCustomStoreItems } from "../../data/kv/mod.ts";
 import { STORE_CATALOG } from "../../business/gamification/badges/mod.ts";
-import { getAgentPage } from "../../../../pages/agent.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -14,22 +13,10 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function html(body: string): Response {
-  return new Response(body, {
-    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-  });
-}
-
 async function requireAuth(req: Request): Promise<AuthContext | Response> {
   const auth = await resolveEffectiveAuth(req);
   if (!auth) return json({ error: "unauthorized" }, 401);
   return auth;
-}
-
-// -- Page --
-
-export async function handleAgentPage(_req: Request): Promise<Response> {
-  return html(getAgentPage());
 }
 
 // -- Dashboard Data --

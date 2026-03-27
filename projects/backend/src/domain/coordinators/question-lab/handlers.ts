@@ -5,7 +5,6 @@ import {
   getTest, getTestsForQuestion, createTest, updateTest, deleteTest, updateTestResult,
   serveConfig,
 } from "./mod.ts";
-import { configListPage, configDetailPage, questionEditorPage } from "../../../../pages/question-lab.ts";
 import { askQuestion, type LlmAnswer } from "../../data/groq/mod.ts";
 import { query as vectorQuery } from "../../data/pinecone/mod.ts";
 import { resolveEffectiveAuth } from "../auth/mod.ts";
@@ -15,43 +14,10 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function html(body: string): Response {
-  return new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-}
-
 async function requireAuth(req: Request): Promise<AuthContext | Response> {
   const auth = await resolveEffectiveAuth(req);
   if (!auth) return json({ error: "unauthorized" }, 401);
   return auth;
-}
-
-// ── HTML Pages ───────────────────────────────────────────────────────
-
-export async function handleConfigListPage(req: Request): Promise<Response> {
-  const auth = await requireAuth(req);
-  if (auth instanceof Response) return auth;
-  const configs = await listConfigs(auth.orgId);
-  return html(configListPage(configs));
-}
-
-export async function handleConfigDetailPage(req: Request): Promise<Response> {
-  const auth = await requireAuth(req);
-  if (auth instanceof Response) return auth;
-  const id = new URL(req.url).pathname.split("/").pop()!;
-  const config = await getConfig(auth.orgId, id);
-  if (!config) return json({ error: "config not found" }, 404);
-  const questions = await getQuestionsForConfig(auth.orgId, id);
-  return html(configDetailPage(config, questions));
-}
-
-export async function handleQuestionEditorPage(req: Request): Promise<Response> {
-  const auth = await requireAuth(req);
-  if (auth instanceof Response) return auth;
-  const id = new URL(req.url).pathname.split("/").pop()!;
-  const question = await getQuestion(auth.orgId, id);
-  if (!question) return json({ error: "question not found" }, 404);
-  const tests = await getTestsForQuestion(auth.orgId, id);
-  return html(questionEditorPage(question, tests));
 }
 
 // ── Config API ───────────────────────────────────────────────────────
@@ -258,11 +224,6 @@ function route(method: string, path: string, handler: (req: Request) => Promise<
 }
 
 const routes = [
-  // HTML pages
-  route("GET", "/question-lab", handleConfigListPage),
-  route("GET", "/question-lab/config/:id", handleConfigDetailPage),
-  route("GET", "/question-lab/question/:id", handleQuestionEditorPage),
-
   // Config API
   route("GET", "/question-lab/api/configs", handleListConfigs),
   route("POST", "/question-lab/api/configs", handleCreateConfig),

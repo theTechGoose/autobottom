@@ -10,7 +10,6 @@ import {
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/mod.ts";
 import type { AuthContext, Role } from "../auth/mod.ts";
 import { getGameState, getEarnedBadges, emitEvent } from "../../data/kv/mod.ts";
-import { getManagerPage } from "../../../../pages/manager.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {
@@ -19,22 +18,10 @@ function json(data: unknown, status = 200, headers?: Record<string, string>): Re
   });
 }
 
-function html(body: string): Response {
-  return new Response(body, {
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
 async function requireAuth(req: Request): Promise<AuthContext | Response> {
   const auth = await resolveEffectiveAuth(req);
   if (!auth) return json({ error: "unauthorized" }, 401);
   return auth;
-}
-
-// -- Page --
-
-export async function handleManagerPage(_req: Request): Promise<Response> {
-  return html(getManagerPage());
 }
 
 // -- Me --

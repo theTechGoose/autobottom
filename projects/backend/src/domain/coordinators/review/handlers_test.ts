@@ -4,7 +4,7 @@ import { assertEquals } from "@std/assert";
 import { setKvInstance, resetKvInstance } from "../../../../kv-factory.ts";
 import { mockFetchJson, restoreFetch } from "../../../../test-utils/mod.ts";
 import { createOrg, createUser, createSession } from "../auth/mod.ts";
-import { handleReviewPage, handleNext, handleStats } from "./handlers.ts";
+import { handleNext, handleStats } from "./handlers.ts";
 import { populateReviewQueue } from "./mod.ts";
 
 // -- env --
@@ -46,43 +46,7 @@ function makeQuestion(answer: string, header = "Q") {
   return { answer, header, populated: "pop", thinking: "think", defense: "def" };
 }
 
-// -- Test 1: handleReviewPage returns 200 with HTML --
-
-Deno.test(
-  "handleReviewPage: returns 200 with HTML content type",
-  { sanitizeOps: false, sanitizeResources: false },
-  async () => {
-    await withKv(async () => {
-      mockFetchJson(/.*/, {});
-      const req = unauthRequest();
-      const res = await handleReviewPage(req);
-      assertEquals(res.status, 200);
-      assertEquals(res.headers.get("content-type"), "text/html; charset=utf-8");
-    });
-  },
-);
-
-// -- Test 2: handleReviewPage with authenticated user also returns HTML --
-
-Deno.test(
-  "handleReviewPage: authenticated user gets HTML with org config embedded",
-  { sanitizeOps: false, sanitizeResources: false },
-  async () => {
-    await withKv(async () => {
-      mockFetchJson(/.*/, {});
-      const orgId = await createOrg("Test Org", "admin@test.com");
-      await createUser(orgId, "reviewer@test.com", "pass123", "reviewer");
-      const token = await createSession({ email: "reviewer@test.com", orgId, role: "reviewer" });
-
-      const req = authedRequest(token);
-      const res = await handleReviewPage(req);
-      assertEquals(res.status, 200);
-      assertEquals(res.headers.get("content-type"), "text/html; charset=utf-8");
-    });
-  },
-);
-
-// -- Test 3: handleNext returns 401 when unauthenticated --
+// -- Test 1: handleNext returns 401 when unauthenticated --
 
 Deno.test(
   "handleNext: unauthenticated request returns 401",

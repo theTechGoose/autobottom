@@ -9,10 +9,7 @@ import {
 } from "./mod.ts";
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/mod.ts";
 import type { AuthContext } from "../auth/mod.ts";
-import { resolveGamificationSettings, listSoundPacks, emitEvent } from "../../data/kv/mod.ts";
-import type { SoundSlot } from "../../data/kv/mod.ts";
-import { getJudgePage } from "../../../../pages/judge.ts";
-import { getJudgeDashboardPage } from "../../../../pages/judge-dashboard.ts";
+import { emitEvent } from "../../data/kv/mod.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {
@@ -21,38 +18,10 @@ function json(data: unknown, status = 200, headers?: Record<string, string>): Re
   });
 }
 
-function html(body: string): Response {
-  return new Response(body, {
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
 async function requireAuth(req: Request): Promise<AuthContext | Response> {
   const auth = await resolveEffectiveAuth(req);
   if (!auth) return json({ error: "unauthorized" }, 401);
   return auth;
-}
-
-// -- Page --
-
-export async function handleJudgePage(req: Request): Promise<Response> {
-  const auth = await resolveEffectiveAuth(req);
-  if (auth) {
-    const gamification = await resolveGamificationSettings(auth.orgId, auth.email, auth.role);
-    const packs = await listSoundPacks(auth.orgId);
-    const SLOTS: SoundSlot[] = ["ping", "double", "triple", "mega", "ultra", "rampage", "godlike", "levelup"];
-    const packRegistry: Record<string, Record<string, string>> = {};
-    for (const p of packs) {
-      const slots: Record<string, string> = {};
-      for (const s of SLOTS) {
-        if (p.slots[s]) slots[s] = `/sounds/${auth.orgId}/${p.id}/${s}.mp3`;
-      }
-      packRegistry[p.id] = slots;
-    }
-    const config = { ...gamification, orgId: auth.orgId, packRegistry };
-    return html(getJudgePage(JSON.stringify(config)));
-  }
-  return html(getJudgePage());
 }
 
 // -- Judge Actions --
@@ -135,10 +104,6 @@ export async function handleStats(req: Request): Promise<Response> {
 }
 
 // -- Dashboard --
-
-export async function handleDashboardPage(_req: Request): Promise<Response> {
-  return html(getJudgeDashboardPage());
-}
 
 export async function handleDashboardData(req: Request): Promise<Response> {
   const auth = await requireAuth(req);

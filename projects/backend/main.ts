@@ -1,4 +1,3 @@
-import * as icons from "./pages/icons.ts";
 import { stepInit } from "./src/domain/coordinators/pipeline/init/mod.ts";
 import { stepTranscribe } from "./src/domain/coordinators/pipeline/transcribe/mod.ts";
 import { stepTranscribeCb } from "./src/domain/coordinators/pipeline/diarize/mod.ts";
@@ -7,7 +6,7 @@ import { stepAskBatch } from "./src/domain/coordinators/pipeline/ask-batch/mod.t
 import { stepFinalize } from "./src/domain/coordinators/pipeline/finalize/mod.ts";
 import { stepCleanup } from "./src/domain/coordinators/pipeline/cleanup/mod.ts";
 import {
-  handleAuditByRid, handlePackageByRid, handleGetFinding, handleGetReport,
+  handleAuditByRid, handlePackageByRid, handleGetFinding,
   handleGetStats, handleGetRecording, handleFileAppeal, handleAppealStatus,
   handleAppealDifferentRecording, handleAppealUploadRecording,
 } from "./src/entrypoints/api.ts";
@@ -45,27 +44,21 @@ import {
   parseCookie, sessionCookie, clearSessionCookie,
 } from "./src/domain/coordinators/auth/mod.ts";
 import type { AuthContext } from "./src/domain/coordinators/auth/mod.ts";
-import { getRegisterPage, getLoginPage } from "./pages/auth.ts";
-
-// Super Admin
-import { getSuperAdminPage } from "./pages/super-admin.ts";
 
 // Review (unified auth)
 import {
-  handleReviewPage, handleNext, handleDecide, handleBack,
+  handleNext, handleDecide, handleBack,
   handleGetSettings, handleSaveSettings, handleStats, handleBackfill,
-  handleReviewDashboardPage, handleReviewDashboardData, handleReviewMe,
+  handleReviewDashboardData, handleReviewMe,
 } from "./src/domain/coordinators/review/handlers.ts";
 import { getReviewStats, populateReviewQueue } from "./src/domain/coordinators/review/mod.ts";
 
 // Judge (unified auth)
 import {
-  handleJudgePage,
   handleNext as handleJudgeNext,
   handleDecide as handleJudgeDecide,
   handleBack as handleJudgeBack,
   handleStats as handleJudgeStats,
-  handleDashboardPage as handleJudgeDashboardPage,
   handleDashboardData as handleJudgeDashboardData,
   handleJudgeMe,
   handleJudgeListReviewers, handleJudgeCreateReviewer, handleJudgeDeleteReviewer,
@@ -74,32 +67,21 @@ import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recor
 
 // Manager (unified auth)
 import {
-  handleManagerPage, handleManagerMe, handleManagerQueueList, handleManagerFinding,
+  handleManagerMe, handleManagerQueueList, handleManagerFinding,
   handleManagerRemediate, handleManagerStatsFetch, handleManagerBackfill,
   handleManagerListAgents, handleManagerCreateAgent, handleManagerDeleteAgent,
   handleManagerGameState,
 } from "./src/domain/coordinators/manager/handlers.ts";
 
 // Agent (unified auth)
-import { handleAgentPage, handleAgentDashboardData, handleAgentMe, handleAgentGameState, handleAgentStore, handleAgentStoreBuy } from "./src/domain/coordinators/agent/handlers.ts";
-
-// Chat
-import { getChatPage } from "./pages/chat.ts";
+import { handleAgentDashboardData, handleAgentMe, handleAgentGameState, handleAgentStore, handleAgentStoreBuy } from "./src/domain/coordinators/agent/handlers.ts";
 
 // Dashboard + Question Lab
-import { getDashboardPage } from "./pages/dashboard.ts";
 import { routeQuestionLab } from "./src/domain/coordinators/question-lab/handlers.ts";
 
-// Sound
-import { getSoundEngineJs } from "./pages/sound-engine.ts";
-import { getGamificationPage } from "./pages/gamification.ts";
-import { getStorePage } from "./pages/store.ts";
-import { getBadgeEditorPage } from "./pages/badge-editor.ts";
+// Gamification + Store + Badges
 import { STORE_CATALOG, PREFAB_EVENTS, rarityFromPrice } from "./src/domain/business/gamification/badges/mod.ts";
 import type { StoreItem } from "./src/domain/business/gamification/badges/mod.ts";
-
-// Impersonation
-import { getImpersonateSnippet } from "./pages/impersonate-bar.ts";
 
 // KV factory
 import { kvFactory } from "./kv-factory.ts";
@@ -125,15 +107,6 @@ async function requireAuth(req: Request): Promise<AuthContext | Response> {
   const auth = await resolveEffectiveAuth(req);
   if (!auth) return json({ error: "unauthorized" }, 401);
   return auth;
-}
-
-function requirePageAuth(handler: (req: Request) => Promise<Response>, role?: string): (req: Request) => Promise<Response> {
-  return async (req) => {
-    const auth = await authenticate(req);
-    if (!auth) return Response.redirect(new URL("/login", req.url).href, 302);
-    if (role && auth.role !== role) return Response.redirect(new URL("/login", req.url).href, 302);
-    return handler(req);
-  };
 }
 
 const ROLE_HOME: Record<string, string> = {
@@ -293,21 +266,11 @@ const getRoutes: Record<string, Handler> = {
   "/api/messages/unread": handleGetUnread,
   "/api/messages/conversations": handleGetConversations,
   "/api/users": handleGetOrgUsers,
-  "/gamification": requireRolePageAuth(["judge"], handleGamificationPageGet),
-  "/store": handleStorePage,
-  "/chat": handleChatPage,
   "/chat/api/me": handleChatMe,
   "/chat/api/cosmetics": handleChatCosmetics,
-  "/js/sound-engine.js": async () => new Response(getSoundEngineJs(), { headers: { "Content-Type": "application/javascript", "Cache-Control": "public, max-age=3600" } }),
-  "/": handleDemoPage,
-
-  // Auth
-  "/register": async () => html(getRegisterPage()),
-  "/login": async () => html(getLoginPage()),
 
   // Public-ish (orgId from auth/query/default)
   "/audit/finding": withOrgId(handleGetFinding),
-  "/audit/report": withOrgId(handleGetReport),
   "/audit/stats": withOrgId(handleGetStats),
   "/audit/recording": withOrgId(handleGetRecording),
   "/audit/appeal/status": withOrgId(handleAppealStatus),
@@ -330,9 +293,7 @@ const getRoutes: Record<string, Handler> = {
   "/docs/datamodule": () => Promise.resolve(html(getSwaggerHtml())),
   "/api/openapi.json": () => Promise.resolve(json(getOpenApiSpec())),
 
-  // Review (role-guarded)
-  "/review": requireRolePageAuth(["reviewer"], handleReviewPage),
-  "/review/dashboard": requireRolePageAuth(["reviewer"], handleReviewDashboardPage),
+  // Review API
   "/review/api/next": handleNext,
   "/review/api/settings": handleGetSettings,
   "/review/api/stats": handleStats,
@@ -340,13 +301,11 @@ const getRoutes: Record<string, Handler> = {
   "/review/api/dashboard": handleReviewDashboardData,
   "/review/api/gamification": handleReviewerGetGamification,
 
-  // Judge (role-guarded)
-  "/judge": requireRolePageAuth(["judge"], handleJudgePage),
+  // Judge API
   "/judge/api/next": handleJudgeNext,
   "/judge/api/stats": handleJudgeStats,
   "/judge/api/me": handleJudgeMe,
   "/judge/api/reviewers": handleJudgeListReviewers,
-  "/judge/dashboard": requireRolePageAuth(["judge"], handleJudgeDashboardPage),
   "/judge/api/dashboard": handleJudgeDashboardData,
   "/judge/api/gamification": handleJudgeGetGamification,
 
@@ -357,24 +316,20 @@ const getRoutes: Record<string, Handler> = {
   "/gamification/api/packs": handleListPacks,
   "/gamification/api/settings": handleGamificationPageGetSettings,
 
-  // Badge editor (admin only)
-  "/admin/badge-editor": requireRolePageAuth(["admin"], handleBadgeEditorPage),
+  // Badge editor API (admin only)
   "/admin/badge-editor/items": handleBadgeEditorItems,
 
   // Dashboard (admin only)
-  "/admin/dashboard": requireRolePageAuth(["admin"], handleDashboardPage),
   "/admin/dashboard/data": handleDashboardData,
   "/admin/api/me": handleAdminMe,
 
-  // Agent (role-guarded)
-  "/agent": requireRolePageAuth(["user"], handleAgentPage),
+  // Agent API
   "/agent/api/dashboard": handleAgentDashboardData,
   "/agent/api/me": handleAgentMe,
   "/agent/api/game-state": handleAgentGameState,
   "/agent/api/store": handleAgentStore,
 
-  // Manager (role-guarded)
-  "/manager": requireRolePageAuth(["manager"], handleManagerPage),
+  // Manager API
   "/manager/api/queue": handleManagerQueueList,
   "/manager/api/finding": handleManagerFinding,
   "/manager/api/stats": handleManagerStatsFetch,
@@ -444,123 +399,7 @@ async function handleLogoutPost(req: Request): Promise<Response> {
   });
 }
 
-// -- Demo Page --
-
-async function handleDemoPage(_req: Request): Promise<Response> {
-  const db = await kvFactory();
-  const defaultOrg = await db.get<string>(["default-org"]);
-  const orgId = defaultOrg.value;
-
-  let reportId = "";
-  if (orgId) {
-    const iter = db.list({ prefix: orgKey(orgId, "audit-finding") });
-    for await (const entry of iter) {
-      if (entry.key.length >= 3 && typeof entry.key[2] === "string") {
-        reportId = entry.key[2] as string;
-        break;
-      }
-    }
-  }
-  const reportHref = reportId
-    ? `/audit/report?id=${reportId}${orgId ? `&org=${orgId}` : ""}`
-    : `/audit/report?id=demo`;
-
-  return html(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Auto-Bot</title>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{background:#0a0e14;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
-  .wrap{width:100%;max-width:520px;padding:0 24px}
-  h1{font-size:28px;font-weight:700;color:#e6edf3;margin-bottom:6px;letter-spacing:-0.5px}
-  .sub{font-size:14px;color:#484f58;margin-bottom:36px}
-  .grid{display:flex;flex-direction:column;gap:8px}
-  a{text-decoration:none;display:flex;align-items:center;gap:14px;padding:16px 20px;background:#12161e;border:1px solid #1e2736;border-radius:12px;transition:border-color .15s,transform .1s}
-  a:hover{border-color:#2d333b;transform:translateX(4px)}
-  .icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
-  .i-auth{background:rgba(63,185,80,0.12);color:#3fb950}
-  .i-admin{background:rgba(31,111,235,0.12);color:#58a6ff}
-  .i-review{background:rgba(139,92,246,0.12);color:#bc8cff}
-  .i-judge{background:rgba(210,153,34,0.12);color:#d29922}
-  .i-manager{background:rgba(121,192,255,0.12);color:#79c0ff}
-  .i-agent{background:rgba(249,115,22,0.12);color:#f97316}
-  .i-qlab{background:rgba(63,185,80,0.12);color:#3fb950}
-  .i-report{background:rgba(139,148,158,0.12);color:#8b949e}
-  .label{font-size:15px;font-weight:600;color:#e6edf3}
-  .desc{font-size:12px;color:#484f58;margin-top:2px}
-  .arrow{margin-left:auto;color:#2d333b;font-size:18px;transition:color .15s}
-  a:hover .arrow{color:#484f58}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <h1>Auto-Bot</h1>
-  <p class="sub">AI-powered call recording audit pipeline</p>
-  <div class="grid">
-    <a href="/login">
-      <div class="icon i-auth">${icons.logIn}</div>
-      <div><div class="label">Login</div><div class="desc">Sign in to your account</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-    <a href="/register">
-      <div class="icon i-auth">${icons.userPlus}</div>
-      <div><div class="label">Register</div><div class="desc">Create a new organization</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-    <a href="/admin/dashboard">
-      <div class="icon i-admin">${icons.layoutDashboard}</div>
-      <div><div class="label">Admin Dashboard</div><div class="desc">Pipeline stats, config, user management</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-    <a href="/review">
-      <div class="icon i-review">${icons.playCircle}</div>
-      <div><div class="label">Review Queue</div><div class="desc">Human-in-the-loop audit verification</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-    <a href="/judge">
-      <div class="icon i-judge">${icons.scale}</div>
-      <div><div class="label">Judge Panel</div><div class="desc">Appeal decisions and dispute resolution</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-    <a href="/manager">
-      <div class="icon i-manager">${icons.clipboardList}</div>
-      <div><div class="label">Manager Portal</div><div class="desc">Failure remediation and tracking</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-    <a href="/agent">
-      <div class="icon i-agent">${icons.barChart}</div>
-      <div><div class="label">Agent Dashboard</div><div class="desc">Your audit results and performance trends</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-    <a href="/question-lab">
-      <div class="icon i-qlab">${icons.flask}</div>
-      <div><div class="label">Question Lab</div><div class="desc">Build and test audit question configs</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-    <a href="${reportHref}">
-      <div class="icon i-report">${icons.fileText}</div>
-      <div><div class="label">Audit Report</div><div class="desc">View a finding report by ID</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-    <a href="/gamification">
-      <div class="icon" style="background:rgba(236,72,153,0.12);color:#ec4899">${icons.music}</div>
-      <div><div class="label">Gamification</div><div class="desc">Sound packs, streaks, and combo settings</div></div>
-      <span class="arrow">&rsaquo;</span>
-    </a>
-  </div>
-</div>
-</body>
-</html>`);
-}
-
 // -- Admin: Dashboard --
-
-async function handleDashboardPage(_req: Request): Promise<Response> {
-  return html(getDashboardPage());
-}
 
 async function handleDashboardData(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
@@ -598,10 +437,6 @@ async function handleAdminMe(req: Request): Promise<Response> {
 }
 
 // -- Badge Editor --
-
-async function handleBadgeEditorPage(_req: Request): Promise<Response> {
-  return html(getBadgeEditorPage());
-}
 
 async function handleBadgeEditorItems(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
@@ -808,21 +643,7 @@ async function handleReviewerSaveGamification(req: Request): Promise<Response> {
   return json({ ok: true });
 }
 
-// -- Store Page --
-
-async function handleStorePage(req: Request): Promise<Response> {
-  const auth = await authenticate(req);
-  if (!auth) return Response.redirect(new URL("/login", req.url).href, 302);
-  return html(getStorePage());
-}
-
-// -- Chat Page --
-
-async function handleChatPage(req: Request): Promise<Response> {
-  const auth = await authenticate(req);
-  if (!auth) return Response.redirect(new URL("/login", req.url).href, 302);
-  return html(getChatPage());
-}
+// -- Chat API --
 
 async function handleChatMe(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
@@ -1049,14 +870,6 @@ async function handleBadgesApi(req: Request): Promise<Response> {
 }
 
 // -- Gamification Page Handlers --
-
-async function handleGamificationPageGet(req: Request): Promise<Response> {
-  const auth = await authenticate(req);
-  if (!auth || (auth.role !== "admin" && auth.role !== "judge")) {
-    return Response.redirect(new URL("/login", req.url).href, 302);
-  }
-  return html(getGamificationPage());
-}
 
 async function handleListPacks(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
@@ -1767,9 +1580,6 @@ async function routeSuperAdmin(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
 
-  if (req.method === "GET" && path === "/super-admin") {
-    return html(getSuperAdminPage());
-  }
   if (req.method === "GET" && path === "/super-admin/api/orgs") {
     return handleSuperAdminListOrgs();
   }
@@ -2222,27 +2032,7 @@ Deno.serve(async (req) => {
     const handler = getRoutes[url.pathname];
     if (handler) {
       try {
-        const res = await handler(req);
-
-        // Inject impersonation bar for admin viewing role-specific pages
-        const rolePageMap: Record<string, string> = {
-          "/judge": "judge", "/judge/dashboard": "judge",
-          "/review": "reviewer", "/review/dashboard": "reviewer",
-          "/manager": "manager", "/agent": "user",
-        };
-        const targetRole = rolePageMap[url.pathname];
-        if (targetRole && res.headers.get("content-type")?.includes("text/html")) {
-          const auth = await authenticate(req);
-          if (auth?.role === "admin") {
-            const body = await res.text();
-            const asEmail = url.searchParams.get("as") ?? "";
-            const snippet = getImpersonateSnippet(targetRole, asEmail);
-            const injected = body.replace("</body>", snippet + "</body>");
-            return new Response(injected, { status: res.status, headers: res.headers });
-          }
-        }
-
-        return res;
+        return await handler(req);
       } catch (e) {
         console.error(`[${url.pathname}] error:`, e);
         return json({ error: e instanceof Error ? e.message : String(e) }, 500);
@@ -2314,13 +2104,11 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Super Admin (session-gated: must be logged in as ai@monsterrg.com)
-  if (url.pathname.startsWith("/super-admin")) {
+  // Super Admin API (session-gated: must be logged in as ai@monsterrg.com)
+  if (url.pathname.startsWith("/super-admin/api")) {
     const sa = await authenticate(req);
     if (!sa || sa.email !== "ai@monsterrg.com") {
-      return req.method === "GET" && url.pathname === "/super-admin"
-        ? Response.redirect(new URL("/login", req.url).href, 302)
-        : json({ error: "unauthorized" }, 401);
+      return json({ error: "unauthorized" }, 401);
     }
     try {
       return await routeSuperAdmin(req);

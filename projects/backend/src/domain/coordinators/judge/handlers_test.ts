@@ -4,7 +4,7 @@ import { assertEquals } from "@std/assert";
 import { setKvInstance, resetKvInstance } from "../../../../kv-factory.ts";
 import { mockFetchJson, restoreFetch } from "../../../../test-utils/mod.ts";
 import { createOrg, createUser, createSession } from "../auth/mod.ts";
-import { handleJudgePage, handleNext, handleStats } from "./handlers.ts";
+import { handleNext, handleStats } from "./handlers.ts";
 import { populateJudgeQueue } from "./mod.ts";
 
 // -- env --
@@ -45,43 +45,7 @@ function makeQuestion(answer: string, header = "Q") {
   return { answer, header, populated: "pop", thinking: "think", defense: "def" };
 }
 
-// -- Test 1: handleJudgePage returns 200 with HTML (unauthenticated) --
-
-Deno.test(
-  "handleJudgePage: returns 200 with HTML content type",
-  { sanitizeOps: false, sanitizeResources: false },
-  async () => {
-    await withKv(async () => {
-      mockFetchJson(/.*/, {});
-      const req = unauthRequest();
-      const res = await handleJudgePage(req);
-      assertEquals(res.status, 200);
-      assertEquals(res.headers.get("content-type"), "text/html; charset=utf-8");
-    });
-  },
-);
-
-// -- Test 2: handleJudgePage with authenticated judge returns HTML --
-
-Deno.test(
-  "handleJudgePage: authenticated judge gets HTML with config embedded",
-  { sanitizeOps: false, sanitizeResources: false },
-  async () => {
-    await withKv(async () => {
-      mockFetchJson(/.*/, {});
-      const orgId = await createOrg("Judge Org", "judgeadmin@test.com");
-      await createUser(orgId, "judge@test.com", "pass123", "judge");
-      const token = await createSession({ email: "judge@test.com", orgId, role: "judge" });
-
-      const req = authedRequest(token);
-      const res = await handleJudgePage(req);
-      assertEquals(res.status, 200);
-      assertEquals(res.headers.get("content-type"), "text/html; charset=utf-8");
-    });
-  },
-);
-
-// -- Test 3: handleNext returns 401 when unauthenticated --
+// -- Test 1: handleNext returns 401 when unauthenticated --
 
 Deno.test(
   "handleNext: unauthenticated request returns 401",

@@ -4,7 +4,7 @@ import { assertEquals } from "@std/assert";
 import { setKvInstance, resetKvInstance } from "../../../../kv-factory.ts";
 import { mockFetchJson, restoreFetch } from "../../../../test-utils/mod.ts";
 import { createOrg, createUser, createSession } from "../auth/mod.ts";
-import { handleManagerPage, handleManagerQueueList } from "./handlers.ts";
+import { handleManagerQueueList } from "./handlers.ts";
 import { orgKey } from "../../../../lib/org.ts";
 import type { ManagerQueueItem } from "./mod.ts";
 
@@ -61,23 +61,7 @@ function makeQueueItem(findingId: string): ManagerQueueItem {
   };
 }
 
-// -- Test 1: handleManagerPage returns 200 with HTML --
-
-Deno.test(
-  "handleManagerPage: returns 200 with HTML content type",
-  { sanitizeOps: false, sanitizeResources: false },
-  async () => {
-    await withKv(async () => {
-      mockFetchJson(/.*/, {});
-      const req = unauthRequest();
-      const res = await handleManagerPage(req);
-      assertEquals(res.status, 200);
-      assertEquals(res.headers.get("content-type"), "text/html; charset=utf-8");
-    });
-  },
-);
-
-// -- Test 2: handleManagerQueueList returns 401 when unauthenticated --
+// -- Test 1: handleManagerQueueList returns 401 when unauthenticated --
 
 Deno.test(
   "handleManagerQueueList: unauthenticated request returns 401",

@@ -1,0 +1,28 @@
+<div class="section-block">
+  <div class="section-header">
+    <span class="section-title">Judge Performance</span>
+    <span class="section-badge">{{ judges.length }} judges</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Judge</th>
+          <th style="text-align:right">Decisions</th>
+          <th style="text-align:right">Upheld</th>
+          <th style="text-align:right">Overturned</th>
+          <th style="text-align:right">Overturn %</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *for="let j of judges">
+          <td><strong>{{ j.judge }}</strong></td>
+          <td style="text-align:right">{{ j.decisions }}</td>
+          <td style="text-align:right"><span class="badge green">{{ j.upholds }}</span></td>
+          <td style="text-align:right"><span class="badge red">{{ j.overturns }}</span></td>
+          <td style="text-align:right">{{ overturnPct(j.overturns, j.decisions) }}%</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>

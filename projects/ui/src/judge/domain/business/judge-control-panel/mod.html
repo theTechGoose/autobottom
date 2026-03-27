@@ -1,0 +1,27 @@
+<div class="judge-control-panel">
+  <button class="judge-btn uphold" [disabled]="busy || !hasItem">
+    <kbd>Y</kbd> Uphold
+  </button>
+  <div class="overturn-grid">
+    <button class="judge-btn overturn" [disabled]="busy || !hasItem">
+      <kbd>A</kbd> Error
+    </button>
+    <button class="judge-btn overturn" [disabled]="busy || !hasItem">
+      <kbd>S</kbd> Logic
+    </button>
+    <button class="judge-btn overturn" [disabled]="busy || !hasItem">
+      <kbd>D</kbd> Fragment
+    </button>
+    <button class="judge-btn overturn" [disabled]="busy || !hasItem">
+      <kbd>F</kbd> Transcript
+    </button>
+  </div>
+  <button class="judge-btn undo" [disabled]="busy">
+    <kbd>B</kbd> Undo
+  </button>
+  <div class="hotkey-hints">
+    <span>Y=uphold</span>
+    <span>A/S/D/F=overturn</span>
+    <span>B=undo</span>
+  </div>
+</div>

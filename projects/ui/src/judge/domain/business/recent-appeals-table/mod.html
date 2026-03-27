@@ -1,0 +1,37 @@
+<div class="section-block">
+  <div class="section-header">
+    <span class="section-title">Recent Appeals</span>
+    <span class="section-badge">{{ appeals.length }} completed</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Finding</th>
+          <th>Auditor</th>
+          <th>Judge</th>
+          <th style="text-align:right">Original</th>
+          <th style="text-align:right">Final</th>
+          <th style="text-align:right">Overturns</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *for="let h of appeals">
+          <td class="mono-cell">{{ h.findingId }}</td>
+          <td>{{ h.auditor }}</td>
+          <td>{{ h.judgedBy }}</td>
+          <td style="text-align:right">{{ h.originalScore }}%</td>
+          <td style="text-align:right">
+            {{ h.finalScore }}%
+            <span [class]="'badge ' + deltaClass(h.originalScore, h.finalScore)">
+              {{ scoreDelta(h.originalScore, h.finalScore) }}
+            </span>
+          </td>
+          <td style="text-align:right">{{ h.overturns }}</td>
+          <td>{{ h.timestamp }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>

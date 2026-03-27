@@ -1,0 +1,41 @@
+<div class="judge-dashboard">
+  <!-- Loading -->
+  <div *if="loading" class="center-message">Loading dashboard data...</div>
+
+  <!-- Error -->
+  <div *if="error" class="error-banner">{{ error }}</div>
+
+  <!-- Dashboard content -->
+  <div *if="!loading && !error && data">
+    <JudgeStatCards
+      [totalJudged]="data.appeals.total"
+      [upheld]="data.appeals.upheld"
+      [overturned]="data.appeals.overturns"
+      [accuracy]="data.appeals.overturnRate"
+      [avgTime]="'--'"
+      [streak]="data.queue.decided"
+    />
+
+    <JudgePerformanceTable [judges]="data.byJudge" />
+
+    <AuditorStatsTable [auditors]="data.byAuditor" />
+
+    <RecentAppealsTable [appeals]="data.recentAppeals" />
+
+    <ReviewersTable [reviewers]="reviewers" />
+
+    <BadgeShowcase
+      [badges]="JDG_BADGES"
+      [earnedIds]="earnedBadges"
+      [tierColors]="TIER_COLORS"
+    />
+
+    <!-- Gamification link -->
+    <div class="gamification-link">
+      <a href="/gamification">
+        <span>Sound packs, streaks, and combo settings</span>
+        <span class="arrow">&rsaquo;</span>
+      </a>
+    </div>
+  </div>
+</div>

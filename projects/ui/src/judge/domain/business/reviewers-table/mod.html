@@ -1,0 +1,48 @@
+<div class="section-block">
+  <div class="section-header">
+    <span class="section-title">My Reviewers</span>
+    <span class="section-badge">{{ reviewers.length }}</span>
+    <button class="btn btn-add" (click)="openAddModal()">+ Add</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *for="let r of reviewers">
+          <td><strong>{{ r.username }}</strong></td>
+          <td>{{ r.createdAt }}</td>
+          <td>
+            <button class="btn danger" (click)="removeReviewer(r.username)">Remove</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div *if="addModalOpen" class="modal-backdrop" (click)="closeAddModal()">
+    <div class="modal-card">
+      <div class="modal-title">Add Reviewer</div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" placeholder="reviewer@example.com" [(value)]="revEmail" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" placeholder="Password" [(value)]="revPassword" />
+      </div>
+      <div *if="addError" class="error-msg">{{ addError }}</div>
+      <div class="modal-actions">
+        <button class="btn ghost" (click)="closeAddModal()">Cancel</button>
+        <button class="btn primary" [disabled]="addLoading" (click)="addReviewer()">
+          {{ addLoading ? 'Adding...' : 'Add Reviewer' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

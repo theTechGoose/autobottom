@@ -1,0 +1,159 @@
+<div class="judge-queue-root">
+  <!-- Streak banner -->
+  <div *if="streakBannerVisible" [class]="'streak-banner ' + streakBannerCls">
+    {{ streakBannerText }}
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-bar-track">
+    <div class="progress-bar-fill" [style.width.%]="progressPct"></div>
+  </div>
+
+  <!-- Loading state -->
+  <div *if="view === 'loading'" class="center-message">Loading...</div>
+
+  <!-- Empty state -->
+  <div *if="view === 'empty'" class="center-message">
+    <h2>All caught up</h2>
+    <p *if="summaryHtml">{{ summaryHtml }}</p>
+    <p *if="!summaryHtml">No items pending judge review. Check back later.</p>
+  </div>
+
+  <!-- Review state -->
+  <div *if="view === 'review' && currentItem" class="review-layout">
+    <!-- Left panel: question + controls -->
+    <div class="left-panel">
+      <div class="question-section">
+        <div class="question-label">Question</div>
+        <div class="question-header">{{ currentItem.header }}</div>
+
+        <!-- Verdict badge -->
+        <div [class]="isYesAnswer(currentItem.answer) ? 'verdict-badge yes' : 'verdict-badge no'">
+          Current Answer: {{ isYesAnswer(currentItem.answer) ? 'YES' : 'NO' }}
+        </div>
+
+        <!-- Appeal info -->
+        <div *if="currentItem.appealType" class="appeal-info">
+          <div class="appeal-type-badge">
+            Appeal: {{ getAppealLabel(currentItem.appealType) }}
+          </div>
+          <div *if="currentItem.appealComment" class="appeal-comment">
+            <div class="appeal-comment-label">Agent Comment</div>
+            {{ currentItem.appealComment }}
+          </div>
+        </div>
+
+        <div class="question-populated">{{ currentItem.populated }}</div>
+
+        <div class="defense-section">
+          <div class="defense-label">Defense</div>
+          <div class="defense-content">
+            {{ currentItem.defense || 'No defense provided' }}
+          </div>
+        </div>
+
+        <button class="toggle-thinking" (click)="toggleThinking()">
+          <span [class]="thinkingOpen ? 'arrow open' : 'arrow'">&#9654;</span>
+          <span>Bot reasoning</span>
+          <kbd class="hint-key">G</kbd>
+        </button>
+        <div *if="thinkingOpen" class="thinking-content">
+          {{ currentItem.thinking || 'No reasoning provided' }}
+        </div>
+
+        <div class="meta-chips">
+          <div class="meta-chip">Appeal <strong>{{ currentItem.findingId }}</strong></div>
+          <div class="meta-chip">Q<strong>{{ currentItem.questionIndex }}</strong></div>
+          <div *if="auditRemaining === 1" class="meta-chip last-item">
+            <strong>Final for appeal</strong>
+          </div>
+        </div>
+
+        <!-- Judge control panel (inline) -->
+        <JudgeControlPanel [busy]="busy" [hasItem]="!!currentItem" />
+      </div>
+    </div>
+
+    <!-- Right panel: transcript -->
+    <div class="right-panel">
+      <!-- Search bar -->
+      <div *if="searchOpen" class="search-bar">
+        <input type="text" placeholder="Search transcript..." [(value)]="searchQuery" />
+        <span class="search-info">
+          {{ searchMatchCount > 0 ? searchMatchCount + ' found' : (searchQuery ? 'no match' : '') }}
+        </span>
+        <button class="search-close" (click)="searchOpen = false">&times;</button>
+      </div>
+
+      <div class="transcript-body">
+        <div *for="let line of transcriptLines" [class]="line.cls">
+          <span *if="line.speaker" class="t-speaker">{{ line.speaker }}</span>
+          {{ line.content }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Cheat sheet -->
+    <div *if="cheatOpen" class="cheat-sheet">
+      <div class="cheat-col">
+        <div class="cheat-header">Decide</div>
+        <div class="cheat-row"><kbd class="key-uphold">Y</kbd> Uphold</div>
+        <div class="cheat-row"><kbd class="key-overturn">A</kbd> Error</div>
+        <div class="cheat-row"><kbd class="key-overturn">S</kbd> Logic</div>
+        <div class="cheat-row"><kbd class="key-overturn">D</kbd> Fragment</div>
+        <div class="cheat-row"><kbd class="key-overturn">F</kbd> Transcript</div>
+      </div>
+      <div class="cheat-col">
+        <div class="cheat-header">Navigate</div>
+        <div class="cheat-row"><kbd>B</kbd> Undo</div>
+        <div class="cheat-row"><kbd>G</kbd> Toggle reasoning</div>
+        <div class="cheat-row"><kbd>H L</kbd> Scroll cols</div>
+      </div>
+    </div>
+
+    <!-- Bottom bar -->
+    <div class="bottom-bar">
+      <button class="keys-btn" (click)="toggleCheatSheet()">
+        <kbd>?</kbd> Keys
+      </button>
+
+      <div class="center-stats">
+        <span [class]="'combo-counter ' + getComboClass(combo)">
+          {{ combo > 0 ? combo + 'x' : '' }}
+        </span>
+        <span class="speed-stat">avg <strong>{{ speedAvg }}</strong>s</span>
+        <span class="session-stat">{{ sessionReviews }} today</span>
+      </div>
+
+      <div class="right-stats">
+        <span class="level-display">
+          Lv.{{ levelNum }}
+          <span class="xp-bar">
+            <span class="xp-fill" [style.width.%]="xpBarPct"></span>
+          </span>
+          <span class="xp-text">{{ xpDisplay }}</span>
+        </span>
+        <span *if="streakDays > 0" class="streak-days">{{ streakDays }}d</span>
+        <a href="/judge/dashboard" class="nav-link">Dashboard</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation modal -->
+  <div *if="confirmOpen" class="confirm-overlay">
+    <div class="confirm-card">
+      <h3>Final Question for This Appeal</h3>
+      <p>This is the last item for this appeal. Submitting will finalize the judgment.</p>
+      <div class="confirm-decision">
+        {{ pendingDecision === 'uphold' ? 'Uphold' : 'Overturn: ' + getReasonLabel(pendingReason || '') }}
+      </div>
+      <div class="confirm-label">Type YES to proceed</div>
+      <input type="text" [(value)]="confirmInput" class="confirm-input" />
+      <div class="confirm-actions">
+        <button class="btn ghost" (click)="confirmOpen = false">Cancel</button>
+        <button class="btn primary" [disabled]="confirmInput.trim().toUpperCase() !== 'YES'"
+          (click)="executeDecision(pendingDecision, pendingReason)">Submit</button>
+      </div>
+    </div>
+  </div>
+</div>

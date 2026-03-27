@@ -1,12 +1,12 @@
-/** Integration tests for manager/handlers.ts */
+/** Integration tests for manager handlers (moved from coordinators/manager/handlers_test.ts) */
 
 import { assertEquals } from "@std/assert";
-import { setKvInstance, resetKvInstance } from "../../data/kv/factory.ts";
-import { mockFetchJson, restoreFetch } from "../../../../test-utils/mod.ts";
-import { createOrg, createUser, createSession } from "../auth/mod.ts";
-import { handleManagerQueueList } from "./handlers.ts";
-import { orgKey } from "../../data/kv/org.ts";
-import type { ManagerQueueItem } from "./mod.ts";
+import { setKvInstance, resetKvInstance } from "../domain/data/kv/factory.ts";
+import { mockFetchJson, restoreFetch } from "../../test-utils/mod.ts";
+import { createOrg, createUser, createSession } from "../domain/coordinators/auth/mod.ts";
+import { handleManagerQueueList } from "./manager.ts";
+import { orgKey } from "../domain/data/kv/org.ts";
+import type { ManagerQueueItem } from "../domain/coordinators/manager/mod.ts";
 
 // -- env --
 

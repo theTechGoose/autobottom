@@ -1,11 +1,11 @@
-/** Integration tests for judge/handlers.ts */
+/** Integration tests for judge handlers (moved from coordinators/judge/handlers_test.ts) */
 
 import { assertEquals } from "@std/assert";
-import { setKvInstance, resetKvInstance } from "../../data/kv/factory.ts";
-import { mockFetchJson, restoreFetch } from "../../../../test-utils/mod.ts";
-import { createOrg, createUser, createSession } from "../auth/mod.ts";
-import { handleNext, handleStats } from "./handlers.ts";
-import { populateJudgeQueue } from "./mod.ts";
+import { setKvInstance, resetKvInstance } from "../domain/data/kv/factory.ts";
+import { mockFetchJson, restoreFetch } from "../../test-utils/mod.ts";
+import { createOrg, createUser, createSession } from "../domain/coordinators/auth/mod.ts";
+import { handleNext, handleStats } from "./judge.ts";
+import { populateJudgeQueue } from "../domain/coordinators/judge/mod.ts";
 
 // -- env --
 

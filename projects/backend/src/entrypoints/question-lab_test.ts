@@ -1,10 +1,10 @@
-/** Integration tests for question-lab/handlers.ts */
+/** Integration tests for question-lab handlers (moved from coordinators/question-lab/handlers_test.ts) */
 
 import { assertEquals } from "@std/assert";
-import { setKvInstance, resetKvInstance } from "../../data/kv/factory.ts";
-import { mockFetchJson, restoreFetch } from "../../../../test-utils/mod.ts";
-import { createOrg, createUser, createSession } from "../auth/mod.ts";
-import { routeQuestionLab } from "./handlers.ts";
+import { setKvInstance, resetKvInstance } from "../domain/data/kv/factory.ts";
+import { mockFetchJson, restoreFetch } from "../../test-utils/mod.ts";
+import { createOrg, createUser, createSession } from "../domain/coordinators/auth/mod.ts";
+import { routeQuestionLab } from "./question-lab.ts";
 
 // -- env --
 

@@ -1,0 +1,28 @@
+<div class="section-block">
+  <div class="section-header">
+    <span class="section-title">Auditor Appeal Stats</span>
+    <span class="section-badge">{{ auditors.length }} auditors</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Auditor</th>
+          <th style="text-align:right">Appeals</th>
+          <th style="text-align:right">Upheld</th>
+          <th style="text-align:right">Overturned</th>
+          <th style="text-align:right">Overturn Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *for="let a of auditors">
+          <td><strong>{{ a.auditor }}</strong></td>
+          <td style="text-align:right">{{ a.totalAppeals }}</td>
+          <td style="text-align:right"><span class="badge green">{{ a.upheld }}</span></td>
+          <td style="text-align:right"><span class="badge red">{{ a.overturned }}</span></td>
+          <td style="text-align:right">{{ a.overturnRate }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>

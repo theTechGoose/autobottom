@@ -576,6 +576,10 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
       <td>${esc(r.rid)}</td>
       <td><span class="tag">${r.type}</span></td>
       <td style="color:var(--muted);font-size:12px;">${new Date(r.startedAt).toLocaleString("en-US", { timeZone: "America/New_York" })}</td>
+      <td style="text-align:right;">
+        <a href="/audit/report?id=${r.findingId}" class="btn-ghost btn-sm" style="text-decoration:none;font-size:10px;">Report</a>
+        <a href="https://dash.deno.com/projects/autobottom/logs?q=${r.findingId}" target="_blank" class="btn-ghost btn-sm" style="text-decoration:none;font-size:10px;margin-left:4px;">Logs</a>
+      </td>
     </tr>`).join("");
 
   const defaultEmails = JSON.stringify(config.testEmailRecipients ?? ["ai@monsterrg.com"]);
@@ -651,7 +655,7 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
       ${testRuns.length > 0 ? `
       <div style="margin-top:20px;">
         <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;font-weight:600;">Recent Test Runs</div>
-        <table><thead><tr><th>Finding ID</th><th>RID</th><th>Type</th><th>Started</th></tr></thead><tbody>${runRows}</tbody></table>
+        <table><thead><tr><th>Finding ID</th><th>RID</th><th>Type</th><th>Started</th><th></th></tr></thead><tbody>${runRows}</tbody></table>
       </div>` : ""}
     </div>
 

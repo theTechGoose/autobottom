@@ -135,7 +135,7 @@ async function handleSuperAdminSeedSounds(req: Request): Promise<Response> {
 
     for (const [slot, filename] of Object.entries(slots)) {
       try {
-        const filePath = new URL("../../sounds/" + filename, import.meta.url);
+        const filePath = new URL("../../assets/sounds/" + filename, import.meta.url);
         const bytes = await Deno.readFile(filePath);
         const s3Key = `sounds/${orgId}/${packId}/${slot}.mp3`;
         const ref = new S3Ref(env.s3Bucket, s3Key);

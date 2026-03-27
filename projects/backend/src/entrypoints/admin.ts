@@ -378,7 +378,7 @@ export async function handleForceNos(req: Request): Promise<Response> {
 // -- Seed --
 
 async function loadSeedData(): Promise<any[]> {
-  const seedPath = new URL("../../seed-data.json", import.meta.url);
+  const seedPath = new URL("../../assets/seed-data.json", import.meta.url);
   const raw = await Deno.readTextFile(seedPath);
   return JSON.parse(raw);
 }

@@ -46,7 +46,7 @@ export async function handleSoundFile(req: Request): Promise<Response | null> {
   if (/^[\w\-.]+\.mp3$/.test(name)) {
     try {
       const bytes = await Deno.readFile(
-        new URL("../../sounds/" + name, import.meta.url),
+        new URL("../../assets/sounds/" + name, import.meta.url),
       );
       return new Response(bytes, {
         headers: {

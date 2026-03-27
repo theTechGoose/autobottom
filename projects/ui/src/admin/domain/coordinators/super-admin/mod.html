@@ -1,0 +1,15 @@
+<div class="layout">
+  <OrgSidebar [orgs]="orgs" [selectedOrg]="selectedOrg" />
+
+  <div class="panel">
+    <OrgActionCards [selectedOrg]="selectedOrg" />
+    <SoundPackSelector *if="selectedOrg" />
+  </div>
+
+  <div class="t-wrap">
+    <div *for="let t of toasts" class="t-toast" [class]="t.type">
+      <span class="t-dot"></span>
+      {{t.msg}}
+    </div>
+  </div>
+</div>

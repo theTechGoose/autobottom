@@ -1,0 +1,26 @@
+<div class="sidebar">
+  <div class="create-row">
+    <input
+      type="text"
+      [(value)]="newOrgName"
+      placeholder="New org name..."
+    />
+    <button class="btn btn-primary" (click)="createOrg()">
+      Create
+    </button>
+  </div>
+  <div>
+    <div
+      *for="let org of orgs; trackBy: org.id"
+      class="org-card"
+      [class.active]="selectedOrg?.id === org.id"
+    >
+      <div class="org-name">{{org.name}}</div>
+      <div class="org-slug">{{org.slug}}</div>
+      <div class="org-badges">
+        <span class="badge users">{{org.userCount}} users</span>
+        <span class="badge findings">{{org.findingCount}} findings</span>
+      </div>
+    </div>
+  </div>
+</div>

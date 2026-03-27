@@ -1,0 +1,62 @@
+<div class="modal-overlay" [class.open]="open">
+  <div class="modal er-modal">
+    <div *if="view === 'list'">
+      <div class="er-header">
+        <div class="modal-title">Email Report Configs</div>
+        <button class="sf-btn primary" (click)="openEdit()">+ New</button>
+      </div>
+      <table class="er-table" *if="configs.length > 0">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Cadence</th>
+            <th>Recipients</th>
+            <th>Sections</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *for="let c of configs" (click)="openEdit(c)">
+            <td>{{c.name}}</td>
+            <td>{{c.cadence}}</td>
+            <td>{{c.recipients.length}}</td>
+            <td></td>
+            <td>
+              <button class="er-trash" (click)="deleteConfig(c.id)">x</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div *if="view === 'edit'">
+      <div class="er-header">
+        <button class="er-back" (click)="view = 'list'">&larr;</button>
+        <div class="modal-title">Edit Report Config</div>
+      </div>
+      <div class="sf">
+        <label class="sf-label">Name</label>
+        <input type="text" class="sf-input" [(value)]="name" />
+      </div>
+      <div class="sf">
+        <label class="sf-label">Recipients (one per line)</label>
+        <textarea class="sf-input" [(value)]="recipients"></textarea>
+      </div>
+      <div class="sf">
+        <label class="sf-label">Cadence</label>
+        <select [(value)]="cadence">
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="biweekly">Biweekly</option>
+          <option value="monthly">Monthly</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="sf-btn secondary">Cancel</button>
+        <button class="sf-btn primary" (click)="saveConfig()" [disabled]="saving">
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

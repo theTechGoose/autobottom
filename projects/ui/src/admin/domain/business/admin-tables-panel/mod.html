@@ -1,0 +1,48 @@
+<div class="tbl">
+  <div class="tbl-title">Active Audits</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Finding ID</th>
+        <th>Step</th>
+        <th>Duration</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *for="let audit of activeAudits">
+        <td class="mono">{{audit.findingId}}</td>
+        <td><span class="step-badge">{{audit.step}}</span></td>
+        <td class="duration">{{audit.ts}}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tbl">
+  <div class="tbl-title">Recent Errors (24h)</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Finding ID</th>
+        <th>Step</th>
+        <th>Error</th>
+        <th>When</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *for="let err of recentErrors">
+        <td class="mono">{{err.findingId}}</td>
+        <td><span class="step-badge">{{err.step}}</span></td>
+        <td class="error-msg">{{err.error}}</td>
+        <td class="time-ago">{{err.ts}}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="panel" *if="tokensByFunction">
+  <div class="panel-title">Token Usage (1h)</div>
+  <div class="fn-list">
+    <!-- Token usage rendered by coordinator -->
+  </div>
+</div>

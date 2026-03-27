@@ -1,0 +1,27 @@
+<div class="modal-overlay" [class.open]="open">
+  <div class="modal">
+    <div class="modal-title">Dev Tools</div>
+    <div class="modal-sub">Local development utilities</div>
+    <div class="dt-action seed">
+      <div class="dt-info">
+        <div class="dt-name">Seed Test Data</div>
+        <div class="dt-desc">Populate KV with sample findings for testing</div>
+      </div>
+      <button class="sf-btn primary" (click)="seedData()" [disabled]="seedBusy">
+        Seed
+      </button>
+    </div>
+    <div class="dt-action wipe">
+      <div class="dt-info">
+        <div class="dt-name">Wipe All KV Data</div>
+        <div class="dt-desc">Permanently delete every entry -- cannot be undone</div>
+      </div>
+      <button class="sf-btn danger" (click)="wipeData()" [disabled]="wipeBusy">
+        Wipe
+      </button>
+    </div>
+    <div class="modal-actions">
+      <button class="sf-btn secondary">Close</button>
+    </div>
+  </div>
+</div>

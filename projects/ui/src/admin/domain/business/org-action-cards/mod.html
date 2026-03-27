@@ -1,0 +1,42 @@
+<div class="panel" *if="selectedOrg">
+  <div class="panel-title">{{selectedOrg.name}}</div>
+  <div class="panel-sub">{{selectedOrg.id}}</div>
+
+  <div class="action-grid">
+    <div class="action-card">
+      <h3>Seed Test Data</h3>
+      <p>Populate users, findings, reviews, judge appeals, manager queue, and question lab.</p>
+      <button class="btn btn-primary" (click)="seed()" [disabled]="loading.seed">
+        Seed Test Data
+      </button>
+    </div>
+
+    <div class="action-card">
+      <h3>Wipe Org Data</h3>
+      <p>Delete all KV entries scoped to this org. Org record stays.</p>
+      <button class="btn btn-danger" (click)="wipe()" [disabled]="loading.wipe">
+        Wipe Data
+      </button>
+    </div>
+
+    <div class="action-card">
+      <h3>Delete Org</h3>
+      <p>Wipe all data AND remove the org record. Cannot be undone.</p>
+      <button class="btn btn-danger" (click)="deleteOrg()" [disabled]="loading.delete">
+        Delete Org
+      </button>
+    </div>
+
+    <div class="action-card">
+      <h3>Impersonate</h3>
+      <p>Create an admin session for this org and jump to the dashboard.</p>
+      <button class="btn btn-primary" (click)="impersonate()" [disabled]="loading.impersonate">
+        Impersonate as Admin
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="panel-empty" *if="!selectedOrg">
+  Select an org to manage
+</div>

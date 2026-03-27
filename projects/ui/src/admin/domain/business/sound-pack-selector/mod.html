@@ -1,0 +1,10 @@
+<div class="pack-checks">
+  <label *for="let pack of packs" class="pack-check">
+    <input
+      type="checkbox"
+      [checked]="isSelected(pack)"
+      (change)="togglePack(pack)"
+    />
+    {{pack}}
+  </label>
+</div>

@@ -1,0 +1,28 @@
+<div>
+  <div *if="loading" class="loading-wrap">Loading store...</div>
+
+  <div *if="!loading && error" class="error-msg">{{error}}</div>
+
+  <div *if="!loading && !error && storeData" class="store-section">
+    <div class="section-head">
+      <span class="section-title">AutoBot Store</span>
+      <span class="section-badge">{{storeData.balance}} tokens</span>
+    </div>
+    <div class="store-grid">
+      <div *for="let item of storeData.items" class="store-item">
+        <div *if="item.icon" class="si-icon">{{item.icon}}</div>
+        <div class="si-name">{{item.name}}</div>
+        <div class="si-price">{{item.price}} tokens</div>
+        <button *if="isOwned(item.id)" class="si-btn owned">Owned</button>
+        <button *if="!isOwned(item.id)" class="si-btn buy" [disabled]="!canBuy(item.id, item.price)" (click)="buyItem(item.id)">Buy</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container">
+    <div *for="let t of toasts" [class]="'toast ' + t.type">
+      <span class="toast-dot"></span>
+      {{t.msg}}
+    </div>
+  </div>
+</div>

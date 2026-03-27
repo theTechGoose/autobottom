@@ -1,0 +1,16 @@
+<div class="section">
+  <div class="section-head">
+    <span class="section-title">Weekly Trend</span>
+    <span class="section-badge">Last 8 Weeks</span>
+  </div>
+  <div class="trend-chart">
+    <div *if="weeklyData.length === 0" class="trend-empty">No trend data available</div>
+    <div *for="let item of weeklyData" class="trend-bar-group">
+      <div class="trend-bar-value">{{item.value}}%</div>
+      <div class="trend-bar-wrap">
+        <div class="trend-bar" [style.height.%]="maxValue > 0 ? (item.value / maxValue) * 100 : 0"></div>
+      </div>
+      <div class="trend-bar-label">{{item.label}}</div>
+    </div>
+  </div>
+</div>

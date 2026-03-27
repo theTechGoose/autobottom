@@ -18,7 +18,7 @@ Deno.env.set("AWS_ACCESS_KEY_ID", "test-key");
 Deno.env.set("AWS_SECRET_ACCESS_KEY", "test-secret");
 
 // KV setup
-import { freshKv } from "../../test-utils/mod.ts";
+import { freshKv } from "../domain/data/kv/test-helpers.ts";
 import { setKvInstance, resetKvInstance } from "../domain/data/kv/factory.ts";
 
 async function withKv<T>(fn: (kv: Deno.Kv) => Promise<T>): Promise<T> {

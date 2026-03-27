@@ -5,7 +5,7 @@
 
 import { assertEquals } from "@std/assert";
 import { handleSoundFile } from "./sounds.ts";
-import { mockFetch, mockFetchJson, restoreFetch } from "../../test-utils/mod.ts";
+import { mockFetch, mockFetchJson, restoreFetch } from "../domain/data/mock-fetch.ts";
 
 // ---- env setup -------------------------------------------------------
 Deno.env.set("S3_BUCKET", "test-bucket");

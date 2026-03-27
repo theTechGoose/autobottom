@@ -755,6 +755,12 @@ table { width: 100%; border-collapse: collapse; }
         <option value="">— No template (email disabled) —</option>
       </select>
     </div>
+    <div class="sf" id="wh-dismissal-template-row" style="display:none;">
+      <label class="sf-label">Dismissal Email Template <span style="color:var(--text-dim);font-weight:400;">(used when a judge dismisses an appeal — falls back to above if not set)</span></label>
+      <select class="sf-input" id="a-dismissal-template-id">
+        <option value="">— Use verdict template above —</option>
+      </select>
+    </div>
     <div id="wh-default-url-row" style="display:none;margin-top:10px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:6px;">Default Email Endpoint (auto-configured)</div>
       <div style="display:flex;align-items:center;gap:8px;">
@@ -2909,16 +2915,22 @@ table { width: 100%; border-collapse: collapse; }
   var whCache = {};
   var etTemplateList = [];
 
-  // Load template list for the dropdown
+  // Load template list for the dropdowns
   fetch('/admin/email-templates').then(function(r){return r.json()}).then(function(list){
     etTemplateList = Array.isArray(list) ? list : [];
     var sel = document.getElementById('a-template-id');
     sel.innerHTML = '<option value="">— No template (email disabled) —</option>';
+    var sel2 = document.getElementById('a-dismissal-template-id');
+    sel2.innerHTML = '<option value="">— Use verdict template above —</option>';
     etTemplateList.forEach(function(t) {
       var opt = document.createElement('option');
       opt.value = t.id;
       opt.textContent = t.name;
       sel.appendChild(opt);
+      var opt2 = document.createElement('option');
+      opt2.value = t.id;
+      opt2.textContent = t.name;
+      sel2.appendChild(opt2);
     });
   }).catch(function(){});
 
@@ -2934,6 +2946,11 @@ table { width: 100%; border-collapse: collapse; }
     templateRow.style.display = EMAIL_KINDS.includes(kind) ? '' : 'none';
     if (EMAIL_KINDS.includes(kind)) {
       document.getElementById('a-template-id').value = d.emailTemplateId || '';
+    }
+    var dismissalRow = document.getElementById('wh-dismissal-template-row');
+    dismissalRow.style.display = kind === 'judge-finish' ? '' : 'none';
+    if (kind === 'judge-finish') {
+      document.getElementById('a-dismissal-template-id').value = d.dismissalTemplateId || '';
     }
     var defaultUrlRow = document.getElementById('wh-default-url-row');
     var selfEndpoints = { terminate: '/webhooks/audit-complete', appeal: '/webhooks/appeal-filed', manager: '/webhooks/manager-review', 'judge-finish': '/webhooks/appeal-decided' };
@@ -2952,6 +2969,7 @@ table { width: 100%; border-collapse: collapse; }
     document.querySelectorAll('.wh-tab').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-kind')===kind)});
     document.getElementById('wh-sub').textContent = whSubs[kind];
     document.getElementById('wh-template-row').style.display = EMAIL_KINDS.includes(kind) ? '' : 'none';
+    document.getElementById('wh-dismissal-template-row').style.display = kind === 'judge-finish' ? '' : 'none';
     if (whCache[kind]) {
       applyWebhookData(kind, whCache[kind]);
     } else {
@@ -3007,11 +3025,13 @@ table { width: 100%; border-collapse: collapse; }
     var testEmail = document.getElementById('a-test-email').value.trim();
     var bcc = document.getElementById('a-bcc').value.trim();
     var emailTemplateId = EMAIL_KINDS.includes(whKind) ? (document.getElementById('a-template-id').value || '') : '';
+    var dismissalTemplateId = whKind === 'judge-finish' ? (document.getElementById('a-dismissal-template-id').value || '') : '';
     btnLoad(btn);
     var saved = { postUrl: url, postHeaders: headers };
     if (testEmail) saved.testEmail = testEmail;
     if (bcc) saved.bcc = bcc;
     if (emailTemplateId) saved.emailTemplateId = emailTemplateId;
+    if (dismissalTemplateId) saved.dismissalTemplateId = dismissalTemplateId;
     fetch('/admin/settings/' + whKind, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(saved) })
     .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
     .then(function(){whCache[whKind]=saved;toast(whKind+' webhook saved','success');btnDone(btn,'Save');closeModal('webhook-modal');})

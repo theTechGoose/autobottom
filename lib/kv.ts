@@ -690,6 +690,7 @@ export interface WebhookConfig {
   postHeaders: Record<string, string>;
   testEmail?: string;
   emailTemplateId?: string;
+  dismissalTemplateId?: string;
   bcc?: string;
 }
 

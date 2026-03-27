@@ -1234,6 +1234,7 @@ async function handleAdminSaveSettings(req: Request): Promise<Response> {
     postHeaders: body.postHeaders ?? {},
     ...(body.testEmail ? { testEmail: String(body.testEmail) } : {}),
     ...(body.emailTemplateId ? { emailTemplateId: String(body.emailTemplateId) } : {}),
+    ...(body.dismissalTemplateId ? { dismissalTemplateId: String(body.dismissalTemplateId) } : {}),
     ...(body.bcc ? { bcc: String(body.bcc) } : {}),
   };
   await saveWebhookConfig(auth.orgId, kind, config);
@@ -2452,7 +2453,11 @@ async function handleAppealDecidedWebhook(req: Request): Promise<Response> {
   const findingId = fid ?? finding?.id ?? "";
   if (!findingId) return json({ error: "findingId required" }, 400);
 
-  const template = await resolveWebhookTemplate(orgId, webhookCfg);
+  const isDismissal = !!body.dismissalReason;
+  const templateId = isDismissal
+    ? (webhookCfg?.dismissalTemplateId || webhookCfg?.emailTemplateId)
+    : webhookCfg?.emailTemplateId;
+  const template = templateId ? await getEmailTemplate(orgId, templateId) : null;
   if (!template) return json({ ok: true, skipped: "no template configured" });
 
   const agentEmail = String(finding?.owner ?? "");

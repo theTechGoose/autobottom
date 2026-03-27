@@ -1,0 +1,41 @@
+<div class="section">
+  <div class="section-head">
+    <span class="section-title">Audit Reports</span>
+    <span class="section-badge">{{audits.length}}</span>
+  </div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Record ID</th>
+          <th>Recording ID</th>
+          <th class="num">Questions</th>
+          <th class="num">Passed</th>
+          <th class="num">Failed</th>
+          <th class="num">Score</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *if="audits.length === 0" class="empty-row">
+          <td colSpan="8">No audit reports yet</td>
+        </tr>
+        <tr *for="let audit of audits">
+          <td>{{formatDate(audit.completedAt || audit.jobTimestamp)}}</td>
+          <td class="mono">{{audit.recordId || '--'}}</td>
+          <td class="mono">{{audit.recordingId || '--'}}</td>
+          <td class="num">{{audit.totalQuestions || 0}}</td>
+          <td class="num"><span class="pill pill-green">{{audit.passedCount || 0}}</span></td>
+          <td class="num"><span class="pill pill-red">{{audit.failedCount || 0}}</span></td>
+          <td class="num">
+            <span [class]="'score-pill pill-' + scoreColor(getScore(audit))">{{getScore(audit)}}%</span>
+          </td>
+          <td>
+            <a class="action-link" [attr.href]="getReportUrl(audit)">View Report</a>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>

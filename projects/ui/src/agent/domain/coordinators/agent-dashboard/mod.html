@@ -1,0 +1,63 @@
+<div>
+  <div *if="loading" class="loading-wrap">Loading dashboard data...</div>
+
+  <div *if="!loading">
+    <div *if="error" class="error-msg">{{error}}</div>
+
+    <AgentGameBar
+      *if="gameState"
+      [level]="gameState.level"
+      [totalXp]="gameState.totalXp"
+      [tokenBalance]="gameState.tokenBalance"
+    />
+
+    <div class="main-tabs">
+      <button
+        [class.active]="activeTab === 'dashboard'"
+        class="main-tab"
+        (click)="activeTab = 'dashboard'"
+      >
+        Dashboard
+      </button>
+      <button
+        [class.active]="activeTab === 'badges'"
+        class="main-tab"
+        (click)="activeTab = 'badges'"
+      >
+        Badges
+      </button>
+    </div>
+
+    <div *if="activeTab === 'dashboard' && data">
+      <AgentStatsGrid
+        [totalAudits]="data.totalAudits || 0"
+        [averageScore]="data.avgScore || 0"
+        [thisWeek]="getThisWeekCount()"
+        completionRate="--"
+      />
+
+      <WeeklyTrendChart [weeklyData]="getWeeklyChartData()" />
+
+      <AuditReportsTable [audits]="data.recentAudits || []" />
+    </div>
+
+    <div *if="activeTab === 'badges'" class="section">
+      <div class="section-head">
+        <span class="section-title">Your Badges</span>
+        <span class="section-badge">{{earnedBadgeCount()}} / {{badges.length}}</span>
+      </div>
+      <div class="badge-showcase">
+        <div
+          *for="let badge of badges"
+          [class.locked]="!isBadgeEarned(badge.id)"
+          class="badge-item"
+          [attr.title]="badge.description"
+          [style.border-color]="isBadgeEarned(badge.id) ? getBadgeTierColor(badge.tier) : ''"
+        >
+          <span class="bi-name">{{badge.name}}</span>
+          <span class="bi-tier" [style.color]="getBadgeTierColor(badge.tier)">{{badge.tier}}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

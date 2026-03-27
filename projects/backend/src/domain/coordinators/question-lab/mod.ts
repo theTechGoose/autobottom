@@ -39,7 +39,7 @@ export interface QLTest {
   lastRunAt: null | string;
 }
 
-import { kvFactory } from "../../../../kv-factory.ts";
+import { kvFactory } from "../../data/kv/factory.ts";
 
 // -- KV Helpers -----------------------------------------------------------
 

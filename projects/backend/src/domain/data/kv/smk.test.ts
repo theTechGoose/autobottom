@@ -5,7 +5,7 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { setKvInstance, resetKvInstance } from "../../../../kv-factory.ts";
+import { setKvInstance, resetKvInstance } from "./factory.ts";
 import {
   saveFinding,
   getFinding,

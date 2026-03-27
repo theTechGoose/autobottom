@@ -4,7 +4,7 @@ import { orgKey } from "../../../../lib/org.ts";
 import type { OrgId } from "../../../../lib/org.ts";
 import { getFinding } from "../../data/kv/mod.ts";
 
-import { kvFactory } from "../../../../kv-factory.ts";
+import { kvFactory } from "../../data/kv/factory.ts";
 
 async function kv(): Promise<Deno.Kv> {
   return await kvFactory();

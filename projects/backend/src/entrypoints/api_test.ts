@@ -6,7 +6,7 @@
 import { assertEquals } from "@std/assert";
 import { mockFetch, mockFetchJson, restoreFetch } from "../../test-utils/mod.ts";
 import { freshKv } from "../../test-utils/mod.ts";
-import { setKvInstance, resetKvInstance } from "../../kv-factory.ts";
+import { setKvInstance, resetKvInstance } from "../domain/data/kv/factory.ts";
 import { handleAuditByRid, handlePackageByRid } from "./api.ts";
 
 // ---- env setup -------------------------------------------------------

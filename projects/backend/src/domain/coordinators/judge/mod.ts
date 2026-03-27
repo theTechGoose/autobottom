@@ -6,7 +6,7 @@ import type { OrgId } from "../../../../lib/org.ts";
 import { checkBadges } from "../../business/gamification/badges/mod.ts";
 import type { BadgeDef } from "../../business/gamification/badges/mod.ts";
 
-import { kvFactory } from "../../../../kv-factory.ts";
+import { kvFactory } from "../../data/kv/factory.ts";
 
 async function kv(): Promise<Deno.Kv> {
   return await kvFactory();

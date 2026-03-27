@@ -7,11 +7,11 @@
     "noFallthroughCasesInSwitch": true
   },
   "tasks": {
-    "dev": "deno run --allow-all --watch main.ts",
+    "dev": "deno run --allow-all --watch src/bootstrap.ts",
     "test": "deno test --allow-all --no-check --unstable-kv",
     "lint": "deno lint",
     "fmt": "deno fmt",
-    "check": "deno check main.ts"
+    "check": "deno check src/bootstrap.ts"
   },
   "imports": {
     "nanoid": "npm:nanoid@^5.0.0",

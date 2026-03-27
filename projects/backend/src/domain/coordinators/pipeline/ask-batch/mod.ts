@@ -117,7 +117,7 @@ export async function stepAskBatch(req: Request): Promise<Response> {
     } catch (err: any) {
       const msg = err.message || String(err);
       if (msg.includes("503") || msg.includes("over capacity") || msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
-        // Throw so the wrapper in main.ts catches it and re-enqueues with delay
+        // Throw so the withPipelineRetry wrapper in bootstrap catches it and re-enqueues with delay
         throw new Error(`GROQ_TRANSIENT: ${msg}`);
       }
       console.error(`[STEP-ASK] ${findingId}: Question "${q.header}" failed:`, err);

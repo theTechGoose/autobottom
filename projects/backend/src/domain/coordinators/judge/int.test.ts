@@ -5,7 +5,7 @@
 
 import { assertEquals, assertExists } from "@std/assert";
 import { setKvInstance, resetKvInstance } from "../../../../kv-factory.ts";
-import { orgKey } from "../../../../lib/org.ts";
+import { orgKey } from "../../data/kv/org.ts";
 import {
   populateJudgeQueue,
   claimNextItem,

@@ -34,8 +34,8 @@ import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, S
 import { S3Ref } from "./src/domain/data/s3/mod.ts";
 import { sendEmail } from "./src/domain/data/postmark/mod.ts";
 import { env } from "./env.ts";
-import { orgKey } from "./lib/org.ts";
-import type { OrgId } from "./lib/org.ts";
+import { orgKey } from "./src/domain/data/kv/org.ts";
+import type { OrgId } from "./src/domain/data/kv/org.ts";
 
 // Unified auth
 import {

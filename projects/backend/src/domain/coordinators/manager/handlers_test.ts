@@ -5,7 +5,7 @@ import { setKvInstance, resetKvInstance } from "../../../../kv-factory.ts";
 import { mockFetchJson, restoreFetch } from "../../../../test-utils/mod.ts";
 import { createOrg, createUser, createSession } from "../auth/mod.ts";
 import { handleManagerQueueList } from "./handlers.ts";
-import { orgKey } from "../../../../lib/org.ts";
+import { orgKey } from "../../data/kv/org.ts";
 import type { ManagerQueueItem } from "./mod.ts";
 
 // -- env --

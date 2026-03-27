@@ -8,7 +8,7 @@ import { env } from "../../env.ts";
 import { populateJudgeQueue, saveAppeal, getAppeal } from "../domain/coordinators/judge/mod.ts";
 import type { AuditFinding, AuditJob } from "../../types/mod.ts";
 import { createJob } from "../../types/mod.ts";
-import type { OrgId } from "../../lib/org.ts";
+import type { OrgId } from "../domain/data/kv/org.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

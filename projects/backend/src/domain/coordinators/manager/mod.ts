@@ -1,8 +1,8 @@
 /** Manager-specific KV operations: queue, remediation, stats, backfill. Org-scoped. */
 
 import { getFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, checkAndEmitPrefab } from "../../data/kv/mod.ts";
-import { orgKey } from "../../../../lib/org.ts";
-import type { OrgId } from "../../../../lib/org.ts";
+import { orgKey } from "../../data/kv/org.ts";
+import type { OrgId } from "../../data/kv/org.ts";
 import { checkBadges } from "../../business/gamification/badges/mod.ts";
 import type { BadgeDef } from "../../business/gamification/badges/mod.ts";
 

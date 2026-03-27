@@ -316,9 +316,10 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
     return;
   }
 
+  console.log(`${label} — [1/4] querying data...`);
   const sections = await queryReportData(orgId, config);
   const totalRows = sections.reduce((sum, s) => sum + s.rows.length, 0);
-  console.log(`${label} — queried: ${sections.length} section(s), ${totalRows} total row(s)`);
+  console.log(`${label} — [2/4] ${sections.length} section(s), ${totalRows} row(s)`);
 
   const template = config.templateId
     ? await getEmailTemplate(orgId, config.templateId)
@@ -341,9 +342,11 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
     ? [...new Set([...config.recipients, ...(config.weeklyAutoRecipients ?? [])])]
     : config.recipients;
 
+  console.log(`${label} — [3/4] rendering HTML...`);
   const sectionsHtml = renderSections(sections);
   const htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml, config.name, summaryHtml);
 
+  console.log(`${label} — [4/4] sending to ${allRecipients.length} recipient(s)...`);
   await sendEmail({
     to: allRecipients,
     ...(config.cc?.length ? { cc: config.cc } : {}),
@@ -352,5 +355,5 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
     htmlBody,
   });
 
-  console.log(`${label} — sent to ${config.recipients.length} recipient(s)`);
+  console.log(`${label} — ✅ sent successfully`);
 }

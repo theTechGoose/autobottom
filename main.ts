@@ -26,6 +26,7 @@ import {
   getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,
   getChargebackEntries, getWireDeductionEntries, purgeOldEntries, purgeBypassedWireDeductions, purgeBypassedAuditHistory, backfillReviewScores,
+  getReportLastFired, setReportLastFired,
   getBadWordConfig, saveBadWordConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
@@ -4169,11 +4170,10 @@ async function runWeeklySheets(since: number, until: number, tabs: ("chargebacks
   const sheetId = env.chargebacksSheetId;
   const orgId = env.chargebacksOrgId as OrgId;
   if (!saS3Key || !sheetId || !orgId) {
-    console.log("[SHEETS] ⚠️ Missing SHEETS_SA_S3_KEY, sheet ID, or org ID — skipping");
-    return;
+    throw new Error("[SHEETS] Missing SHEETS_SA_S3_KEY, sheet ID, or org ID");
   }
   const saBytes = await new S3Ref(env.s3Bucket, saS3Key).get();
-  if (!saBytes) { console.error(`[SHEETS] ❌ SA JSON not found in S3: ${saS3Key}`); return; }
+  if (!saBytes) { throw new Error(`[SHEETS] SA JSON not found in S3: ${saS3Key}`); }
   const saJson = JSON.parse(new TextDecoder().decode(saBytes));
   const saEmail = saJson.client_email as string;
   const saKey = saJson.private_key as string;
@@ -4203,6 +4203,8 @@ async function runWeeklySheets(since: number, until: number, tabs: ("chargebacks
     await appendSheetRows(sheetId, "Wire Deductions", toWireRows(wireEntries), saEmail, saKey);
     console.log(`[SHEETS] ✅ Appended ${wireEntries.length} wire deductions`);
   }
+
+  console.log(`[SHEETS] ✅ Weekly sheets complete — posted: ${tabs.join(", ")}`);
 }
 
 function prevWeekWindow(now: Date): { since: number; until: number } {
@@ -4338,14 +4340,36 @@ Deno.cron("email-reports", "* * * * *", async () => {
 
         if (!shouldFire) continue;
 
-        console.log(`[EMAIL-REPORT-CRON] Firing report "${config.name}" for org=${org.id}`);
-        runReport(org.id, config).catch((err) =>
-          console.error(`[EMAIL-REPORT-CRON] ❌ Failed "${config.name}" org=${org.id}:`, err)
-        );
+        // Dedup: skip if already fired within the last 59s
+        const lastFired = await getReportLastFired(org.id as OrgId, config.id);
+        if (Date.now() - lastFired < 59_000) continue;
+        await setReportLastFired(org.id as OrgId, config.id, Date.now());
+
+        // Retry loop with timeout
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            if (attempt > 0) {
+              console.log(`[EMAIL-REPORT-CRON] 🔄 Retry ${attempt}/2 for "${config.name}" org=${org.id}`);
+              await new Promise(r => setTimeout(r, 3000 * attempt));
+            }
+            console.log(`[EMAIL-REPORT-CRON] 🚀 Firing "${config.name}" org=${org.id}`);
+            const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout after 55s")), 55_000));
+            await Promise.race([runReport(org.id, config), timeout]);
+            console.log(`[EMAIL-REPORT-CRON] ✅ Sent "${config.name}" org=${org.id}`);
+            break;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (attempt === 2) {
+              console.error(`[EMAIL-REPORT-CRON] ❌ FINAL FAIL "${config.name}" org=${org.id}: ${msg}`);
+            } else {
+              console.warn(`[EMAIL-REPORT-CRON] ⚠️ Attempt ${attempt + 1} failed "${config.name}": ${msg}`);
+            }
+          }
+        }
       }
     }
   } catch (err) {
-    console.error("[EMAIL-REPORT-CRON] ❌ Error:", err);
+    console.error("[EMAIL-REPORT-CRON] ❌ Cron error:", err);
   }
 });
 

@@ -1720,3 +1720,16 @@ export async function getConversationList(
     .map(([email, data]) => ({ email, ...data }))
     .sort((a, b) => b.lastMessage.ts - a.lastMessage.ts);
 }
+
+// -- Report Deduplication -------------------------------------------------
+
+export async function getReportLastFired(orgId: OrgId, reportId: string): Promise<number> {
+  const kvDb = await db();
+  const entry = await kvDb.get<number>(orgKey(orgId, "report-last-fired", reportId));
+  return entry.value ?? 0;
+}
+
+export async function setReportLastFired(orgId: OrgId, reportId: string, ts: number): Promise<void> {
+  const kvDb = await db();
+  await kvDb.set(orgKey(orgId, "report-last-fired", reportId), ts);
+}

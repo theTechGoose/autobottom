@@ -223,7 +223,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
       appealTypeBadge.textContent = 'Appeal: ' + (APPEAL_LABELS[currentItem.appealType] || currentItem.appealType);
       if (currentItem.appealComment) {
         appealCallout.style.display = '';
-        appealCallout.innerHTML = '<div class="appeal-callout-label">Agent Comment</div>' + currentItem.appealComment.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\n/g, '<br>');
+        appealCallout.innerHTML = '<div class="appeal-callout-label">Team Member Comment</div>' + currentItem.appealComment.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\n/g, '<br>');
       } else {
         appealCallout.style.display = 'none';
       }
@@ -244,7 +244,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   body { background: #0a0e14; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; height: 100vh; overflow: hidden; }
 
   /* ===== Layout: verdict panel (left) + transcript (right) + bottom bar ===== */
-  #review-screen { display: none; height: 100vh; grid-template-columns: 380px 1fr; grid-template-rows: auto 1fr auto; overflow: hidden; }
+  #review-screen { display: none; height: 100vh; grid-template-columns: ${R ? '170px 380px 1fr' : '380px 1fr'}; grid-template-rows: auto 1fr auto; overflow: hidden; }
 
   /* Progress bar */
   #progress-bar-container { grid-column: 1 / -1; grid-row: 1; height: 3px; background: #1a1f2b; }
@@ -252,7 +252,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   /* Left verdict panel */
   #verdict-panel {
-    grid-column: 1; grid-row: 2;
+    grid-column: ${R ? '2' : '1'}; grid-row: 2;
     display: flex; flex-direction: column; gap: 0;
     background: #0f1219; border-right: 1px solid #1a1f2b;
     overflow: hidden;
@@ -264,6 +264,37 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   }
   #verdict-scroll::-webkit-scrollbar { width: 4px; }
   #verdict-scroll::-webkit-scrollbar-thumb { background: #1e2736; border-radius: 2px; }
+  ${R ? `
+  /* Audit progress sidebar (review only) */
+  #audit-progress { grid-column: 1; grid-row: 2; background: #0c1018; border-right: 1px solid #1a1f2b; overflow-y: auto; padding: 10px 8px; scrollbar-width: thin; scrollbar-color: #1e2736 transparent; }
+  #audit-progress::-webkit-scrollbar { width: 3px; }
+  #audit-progress::-webkit-scrollbar-thumb { background: #1e2736; border-radius: 2px; }
+  .ap-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #484f58; padding: 4px 6px 8px; }
+  .ap-pill { display: flex; align-items: center; gap: 7px; padding: 7px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 3px; transition: background 0.15s; font-size: 11px; color: #6e7681; }
+  .ap-pill:hover { background: rgba(139,92,246,0.08); }
+  .ap-pill.current { background: rgba(139,92,246,0.12); color: #c9d1d9; }
+  .ap-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #2d333b; }
+  .ap-dot.current { background: #8b5cf6; box-shadow: 0 0 6px rgba(139,92,246,0.5); }
+  .ap-dot.confirmed { background: #f85149; }
+  .ap-dot.flipped { background: #3fb950; }
+  .ap-hdr { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ap-num { font-size: 9px; font-weight: 700; color: #484f58; flex-shrink: 0; width: 16px; text-align: center; }
+  /* Audit header (review only) */
+  #audit-header { padding: 10px 16px; border-bottom: 1px solid #1a1f2b; background: #0c1018; }
+  .ah-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+  .ah-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; width: 70px; flex-shrink: 0; }
+  .ah-val { font-size: 12px; color: #c9d1d9; font-weight: 500; }
+  .ah-meta { display: flex; gap: 8px; margin-top: 6px; }
+  .ah-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 6px; border-radius: 3px; }
+  /* Completion overlay */
+  #audit-complete-overlay { display: none; position: fixed; inset: 0; z-index: 1500; background: rgba(0,0,0,0.75); align-items: center; justify-content: center; }
+  #aco-box { background: #161b22; border: 1px solid #2d333b; border-radius: 14px; padding: 32px 40px; text-align: center; min-width: 300px; }
+  #aco-box h2 { font-size: 18px; color: #c9d1d9; margin: 12px 0 16px; }
+  .aco-stats { display: flex; gap: 20px; justify-content: center; margin-bottom: 12px; }
+  .aco-stat { font-size: 13px; color: #8b949e; }
+  .aco-stat strong { color: #e6edf3; }
+  #aco-next { margin-top: 16px; padding: 10px 28px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #8b5cf6; border: none; color: #fff; }
+  ` : ''}
   #decision-btns {
     flex-shrink: 0; display: flex; gap: 10px;
     padding: 12px 16px; border-top: 1px solid #1a1f2b;
@@ -391,7 +422,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   /* ===== Transcript (right side) ===== */
   #transcript-panel {
-    grid-column: 2; grid-row: 2;
+    grid-column: ${R ? '3' : '2'}; grid-row: 2;
     padding: 20px 24px; padding-right: 24px; overflow: hidden; min-height: 0;
   }
   #transcript-body {
@@ -409,15 +440,15 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
     border-left: 3px solid transparent; color: #6e7681; break-inside: avoid;
     border-radius: 0 6px 6px 0; transition: background 0.2s;
   }
-  .t-agent { border-left-color: ${agentBorder}; color: ${agentColor}; }
-  .t-customer { border-left-color: ${custBorder}; color: ${custColor}; }
+  .t-team-member { border-left-color: ${agentBorder}; color: ${agentColor}; }
+  .t-guest { border-left-color: ${custBorder}; color: ${custColor}; }
   .t-system { border-left-color: #2d333b; color: #484f58; }
   .t-line.t-highlight { background: ${highlightBg}; }
   .t-line.t-evidence { background: rgba(250,176,5,0.1); border-left-color: #fab005 !important; }
   .t-line.t-evidence .t-speaker { color: #fab005 !important; }
   .t-speaker { font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; margin-right: 8px; }
-  .t-agent .t-speaker { color: ${agentSpeaker}; }
-  .t-customer .t-speaker { color: ${custSpeaker}; }
+  .t-team-member .t-speaker { color: ${agentSpeaker}; }
+  .t-guest .t-speaker { color: ${custSpeaker}; }
   .t-system .t-speaker { color: #484f58; }
 
   /* ===== Bottom bar ===== */
@@ -839,8 +870,28 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 <div id="review-screen">
   <div id="progress-bar-container"><div id="progress-bar"></div></div>
 
+  ${R ? `
+  <!-- Audit progress sidebar (review only) -->
+  <div id="audit-progress">
+    <div class="ap-title">Failed Questions</div>
+    <div id="ap-list"></div>
+  </div>
+  ` : ''}
+
   <!-- Left: Verdict panel -->
   <div id="verdict-panel">
+    ${R ? `
+    <!-- Audit header (review only) -->
+    <div id="audit-header">
+      <div class="ah-row"><span class="ah-label">Guest</span><span class="ah-val" id="ah-guest">--</span></div>
+      <div class="ah-row"><span class="ah-label">TM</span><span class="ah-val" id="ah-vo">--</span></div>
+      <div class="ah-row"><span class="ah-label">Record</span><span class="ah-val" id="ah-rid">--</span></div>
+      <div class="ah-meta">
+        <span class="ah-badge" id="ah-type-badge" style="background:rgba(139,92,246,0.15);color:#8b5cf6;">--</span>
+        <span class="ah-badge" id="ah-failed-badge" style="background:rgba(248,81,73,0.15);color:#f85149;">--</span>
+      </div>
+    </div>
+    ` : ''}
     <div id="verdict-scroll">
       <div id="verdict-content">
         <div id="q-label">Question</div>
@@ -1106,6 +1157,22 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   <span style="font-size:12px;color:#6e7681;letter-spacing:0.3px;">Going back…</span>
 </div>
 
+${R ? `
+<!-- Audit completion overlay (review only) -->
+<div id="audit-complete-overlay">
+  <div id="aco-box">
+    <div style="font-size:32px;">&#9989;</div>
+    <h2>Audit Reviewed</h2>
+    <div class="aco-stats">
+      <span class="aco-stat"><strong id="aco-confirms">0</strong> confirmed</span>
+      <span class="aco-stat"><strong id="aco-flips">0</strong> flipped</span>
+    </div>
+    <div style="font-size:14px;color:#8b949e;margin-bottom:4px;">Score: <strong id="aco-score" style="color:#e6edf3;">--%</strong></div>
+    <button id="aco-next" onclick="window._acoNext()">Next Audit</button>
+  </div>
+</div>
+` : ''}
+
 <!-- Game settings modal -->
 <div id="game-settings-overlay">
   <div class="gs-modal">
@@ -1163,6 +1230,12 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   var judgeAllowedTypes = ['date-leg', 'package']; // updated from /next response
   var selfTypeFilter = ''; // '' = no self-filter (show all judge-allowed)
   var transcriptCache = {};
+
+  // Audit ownership state (review mode only)
+  var auditItems = [];       // all items for current audit
+  var auditDecisions = {};   // { questionIndex: 'confirm'|'flip' }
+  var currentAuditIdx = 0;   // index into auditItems
+  var auditFindingId = null; // findingId for current audit
 
   // QuickBase record URL bases
   var QB_REALM = '${env.qbRealm}';
@@ -1667,6 +1740,21 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     for (var i = 0; i < buffer.length; i++) {
       if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
     }
+    // Review mode: populate audit state from buffer
+    if (MODE === 'review' && buffer.length > 0) {
+      var newFid = buffer[0].findingId;
+      if (newFid !== auditFindingId) {
+        auditFindingId = newFid;
+        auditItems = buffer.slice();
+        auditDecisions = {};
+        currentAuditIdx = 0;
+        updateAuditHeader();
+      } else {
+        // Same audit — refresh items but keep decisions
+        auditItems = buffer.slice();
+      }
+      renderAuditProgress();
+    }
   }
 
   // -- Queue --
@@ -1713,7 +1801,7 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   }
 
   function renderCurrent() {
-    var currentItem = buffer[0];
+    var currentItem = MODE === 'review' && auditItems.length > 0 ? auditItems[currentAuditIdx] : buffer[0];
     if (!currentItem) return;
     if (searchOpen) closeSearch();
     document.getElementById('q-header').textContent = currentItem.header;
@@ -1963,7 +2051,7 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
       if (match) {
         var speaker = match[1].toUpperCase();
         var content = match[2] || '';
-        div.classList.add(speaker === 'AGENT' ? 't-agent' : speaker === 'CUSTOMER' ? 't-customer' : 't-system');
+        div.classList.add(speaker === 'AGENT' ? 't-team-member' : speaker === 'CUSTOMER' ? 't-guest' : 't-system');
 
         // Timestamp chip (shown only when we have real times)
         if (times && div.getAttribute('data-time') !== null) {
@@ -1979,7 +2067,7 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
 
         var label = document.createElement('span');
         label.className = 't-speaker';
-        label.textContent = speaker;
+        label.textContent = speaker === 'AGENT' ? 'TEAM MEMBER' : speaker === 'CUSTOMER' ? 'GUEST' : speaker;
         div.appendChild(label);
         div.appendChild(document.createTextNode(content));
 
@@ -2066,44 +2154,71 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   }
 
   function executeDecision(decision, reason) {
-    if (buffer.length === 0) return;
-    if (busy && buffer.length === 0) return;
+    if (MODE === 'review' && auditItems.length > 0) {
+      // Review mode: audit ownership model
+      var item = auditItems[currentAuditIdx];
+      if (!item) return;
+
+      auditDecisions[item.questionIndex] = decision === POSITIVE_DECISION ? 'confirm' : 'flip';
+      renderAuditProgress();
+
+      trackDecision();
+      tickCombo();
+      sessionReviews++;
+      updateSessionCount();
+      awardXp(decision === POSITIVE_DECISION ? 10 : 15);
+      updateStreak();
+
+      // Auto-advance to next undecided question
+      var advanced = false;
+      for (var ai = 1; ai <= auditItems.length; ai++) {
+        var nextIdx = (currentAuditIdx + ai) % auditItems.length;
+        if (!auditDecisions[auditItems[nextIdx].questionIndex]) {
+          currentAuditIdx = nextIdx;
+          advanced = true;
+          animateTransition(function() { renderCurrent(); renderAuditProgress(); });
+          break;
+        }
+      }
+      if (!advanced) {
+        // All decided — block and wait for server
+        busy = true;
+        disableButtons();
+      }
+    } else {
+      // Judge mode: original buffer-shift model
+      if (buffer.length === 0) return;
+      if (busy && buffer.length === 0) return;
+
+      var item = buffer.shift();
+
+      inflightFids[item.findingId] = (inflightFids[item.findingId] || 0) + 1;
+
+      trackDecision();
+      tickCombo();
+      sessionReviews++;
+      updateSessionCount();
+      awardXp(decision === POSITIVE_DECISION ? 10 : 15);
+      updateStreak();
+
+      if (buffer.length > 0) {
+        var nextFid = buffer[0].findingId;
+        if (inflightFids[nextFid] && inflightFids[nextFid] > 0) {
+          busy = true;
+          disableButtons();
+          renderCurrent();
+        } else {
+          animateTransition(function() { renderCurrent(); });
+        }
+      } else {
+        busy = true;
+        disableButtons();
+      }
+    }
 
     // Optimistically hide "Final for Audit" badge
     var mLastOpt = document.getElementById('m-last');
     if (mLastOpt) mLastOpt.style.display = 'none';
-    var item = buffer.shift(); // consume from front
-
-    // Track inflight per finding — prevents racing past the last question before auditRemaining updates
-    inflightFids[item.findingId] = (inflightFids[item.findingId] || 0) + 1;
-
-    trackDecision();
-    tickCombo();
-    sessionReviews++;
-    updateSessionCount();
-    awardXp(decision === POSITIVE_DECISION ? 10 : 15);
-    updateStreak();
-
-    // Swap to next buffer item instantly, but block if next item is same finding (wait for server count)
-    if (buffer.length > 0) {
-      var nextFid = buffer[0].findingId;
-      if (inflightFids[nextFid] && inflightFids[nextFid] > 0) {
-        // Same finding still has inflight — show next question but block buttons until
-        // server responds with updated auditRemaining (prevents wrong "Final for Audit" badge)
-        console.log('[QUEUE] executeDecision — same-finding inflight, rendering next but blocking buttons (inflightFids[' + nextFid + ']=' + inflightFids[nextFid] + ')');
-        busy = true;
-        disableButtons();
-        renderCurrent(); // advance display so user sees what's coming
-      } else {
-        console.log('[QUEUE] executeDecision — advancing to next item fid=' + buffer[0].findingId + ' qi=' + buffer[0].questionIndex);
-        animateTransition(function() { renderCurrent(); });
-      }
-    } else {
-      // Buffer empty — block until /decide comes back
-      console.log('[QUEUE] executeDecision — buffer now empty, waiting for server response (inflight=' + inflight + ')');
-      busy = true;
-      disableButtons();
-    }
 
     ${toastDecisionJs}
 
@@ -2117,6 +2232,12 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     };
     if (reason) bodyObj.reason = reason;
     if (selfTypeFilter) bodyObj.types = selfTypeFilter;
+    if (MODE === 'review' && auditItems.length > 0) {
+      var confirms = 0, flips = 0;
+      for (var dk in auditDecisions) { if (auditDecisions[dk] === 'confirm') confirms++; else flips++; }
+      bodyObj.auditDecisionCounts = { confirms: confirms, flips: flips };
+      bodyObj.totalForFinding = auditItems[0].totalForFinding || auditItems.length;
+    }
 
     inflight++;
     console.log('[QUEUE] /decide POST fid=' + item.findingId + ' qi=' + item.questionIndex + ' decision=' + decision + ' inflight=' + inflight + ' inflightFids=' + JSON.stringify(inflightFids));
@@ -2154,12 +2275,22 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
         if (!res.ok) throw new Error(data.error || 'Request failed');
 
         if (data.auditComplete) {
-          toast('${completeMsg}', 'complete');
-          // Purge any remaining buffered items from this now-completed finding
-          var completedFid = item.findingId;
-          var purgeBefore = buffer.length;
-          buffer = buffer.filter(function(x) { return x.findingId !== completedFid; });
-          console.log('[QUEUE] auditComplete fid=' + completedFid + ' — purged ' + (purgeBefore - buffer.length) + ' buffered items, buffer now=' + buffer.length);
+          if (MODE === 'review') {
+            // Show completion overlay with summary
+            var confirms = 0, flips = 0;
+            for (var dk in auditDecisions) { if (auditDecisions[dk] === 'confirm') confirms++; else flips++; }
+            var totalQ = auditItems.length > 0 ? (auditItems[0].totalForFinding || auditItems.length) : 0;
+            var newScore = totalQ > 0 ? Math.round(((totalQ - confirms) / totalQ) * 100) : 0;
+            showAuditComplete(confirms, flips, newScore);
+            // Apply new buffer from server (next audit)
+            applyNextData(data);
+          } else {
+            toast('${completeMsg}', 'complete');
+            var completedFid = item.findingId;
+            var purgeBefore = buffer.length;
+            buffer = buffer.filter(function(x) { return x.findingId !== completedFid; });
+            console.log('[QUEUE] auditComplete fid=' + completedFid + ' — purged ' + (purgeBefore - buffer.length) + ' buffered items, buffer now=' + buffer.length);
+          }
         }
 
         // Badge toasts
@@ -2194,21 +2325,23 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
           }
         }
 
-        // If we were blocked, render next item — but only if no same-finding inflight remaining
-        var nextFidStillWaiting = buffer.length > 0 && inflightFids[buffer[0].findingId] > 0;
-        console.log('[QUEUE] post-response state: busy=' + busy + ' inflight=' + inflight + ' buffer=' + buffer.length + ' nextFidStillWaiting=' + nextFidStillWaiting);
-        if (busy && buffer.length > 0 && !nextFidStillWaiting) {
-          console.log('[QUEUE] unblocking — showReview fid=' + (buffer[0] && buffer[0].findingId));
-          showReview();
-        } else if (busy && buffer.length === 0) {
-          console.log('[QUEUE] unblocking — showEmpty');
-          showEmpty();
-        }
-
-        // Only unblock if all in-flight requests are done and next item's finding is clear
-        if (inflight === 0 && !nextFidStillWaiting) {
+        // Review mode: unblock after server response (audit still in progress)
+        if (MODE === 'review' && !data.auditComplete && inflight === 0) {
           busy = false;
           enableButtons();
+          renderAuditProgress();
+        } else {
+          // Judge mode: original unblocking logic
+          var nextFidStillWaiting = buffer.length > 0 && inflightFids[buffer[0].findingId] > 0;
+          if (busy && buffer.length > 0 && !nextFidStillWaiting) {
+            showReview();
+          } else if (busy && buffer.length === 0) {
+            showEmpty();
+          }
+          if (inflight === 0 && !nextFidStillWaiting) {
+            busy = false;
+            enableButtons();
+          }
         }
       });
     }).catch(function(err) {
@@ -2221,6 +2354,79 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
         enableButtons();
       }
     });
+  }
+
+  // -- Audit ownership helpers (review mode) --
+  function updateAuditHeader() {
+    if (MODE !== 'review' || auditItems.length === 0) return;
+    var meta = auditItems[0].recordMeta || {};
+    var el;
+    el = document.getElementById('ah-guest'); if (el) el.textContent = meta.guestName || '--';
+    el = document.getElementById('ah-vo'); if (el) el.textContent = meta.voName || '--';
+    el = document.getElementById('ah-rid'); if (el) el.textContent = auditItems[0].recordId || '--';
+    var typeBadge = document.getElementById('ah-type-badge');
+    if (typeBadge) {
+      var isPkg = auditItems[0].recordingIdField === 'GenieNumber';
+      typeBadge.textContent = isPkg ? 'Partner' : 'Internal';
+      typeBadge.style.background = isPkg ? 'rgba(251,191,36,0.15)' : 'rgba(139,92,246,0.15)';
+      typeBadge.style.color = isPkg ? '#fbbf24' : '#8b5cf6';
+    }
+    var failedBadge = document.getElementById('ah-failed-badge');
+    if (failedBadge) failedBadge.textContent = auditItems.length + ' failed';
+  }
+
+  function renderAuditProgress() {
+    if (MODE !== 'review') return;
+    var list = document.getElementById('ap-list');
+    if (!list) return;
+    list.innerHTML = '';
+    for (var pi = 0; pi < auditItems.length; pi++) {
+      var pill = document.createElement('div');
+      pill.className = 'ap-pill' + (pi === currentAuditIdx ? ' current' : '');
+      var dec = auditDecisions[auditItems[pi].questionIndex];
+      var dotClass = 'ap-dot';
+      if (pi === currentAuditIdx) dotClass += ' current';
+      else if (dec === 'confirm') dotClass += ' confirmed';
+      else if (dec === 'flip') dotClass += ' flipped';
+      pill.innerHTML = '<span class="ap-num">' + (pi + 1) + '</span>'
+        + '<span class="' + dotClass + '"></span>'
+        + '<span class="ap-hdr">' + (auditItems[pi].header || '').substring(0, 40) + '</span>';
+      (function(idx) {
+        pill.addEventListener('click', function() {
+          currentAuditIdx = idx;
+          renderCurrent();
+          renderAuditProgress();
+        });
+      })(pi);
+      list.appendChild(pill);
+    }
+  }
+
+  function showAuditComplete(confirms, flips, newScore) {
+    var overlay = document.getElementById('audit-complete-overlay');
+    if (!overlay) { toast('Audit reviewed — ' + confirms + ' confirmed, ' + flips + ' flipped', 'complete'); return; }
+    var el;
+    el = document.getElementById('aco-confirms'); if (el) el.textContent = confirms;
+    el = document.getElementById('aco-flips'); if (el) el.textContent = flips;
+    el = document.getElementById('aco-score'); if (el) el.textContent = newScore + '%';
+    overlay.style.display = 'flex';
+    window._acoNext = function() {
+      overlay.style.display = 'none';
+      auditFindingId = null;
+      auditDecisions = {};
+      currentAuditIdx = 0;
+      if (buffer.length > 0) {
+        applyNextData({ buffer: buffer });
+        showReview();
+        renderCurrent();
+      } else {
+        showEmpty();
+      }
+      busy = false;
+      enableButtons();
+    };
+    // Auto-dismiss after 5s
+    setTimeout(function() { if (overlay.style.display === 'flex') window._acoNext(); }, 5000);
   }
 
   // -- Confirmation modal --

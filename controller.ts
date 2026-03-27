@@ -541,8 +541,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
   const rawFallback = storedTranscript?.raw || f.diarizedTranscript || f.rawTranscript || "";
   const transcriptText = hasSpeakerLabels ? diarizedText! : rawFallback;
   const transcriptHtml = transcriptText
-    ? esc(transcriptText).replace(/\.\.\.\[KV_TRIM\]/g, "...").replace(/\[AGENT\]/g, '<span class="speaker agent">[AGENT]</span>')
-                         .replace(/\[CUSTOMER\]/g, '<span class="speaker customer">[CUSTOMER]</span>')
+    ? esc(transcriptText).replace(/\.\.\.\[KV_TRIM\]/g, "...").replace(/\[AGENT\]/g, '<span class="speaker team-member">[TEAM MEMBER]</span>')
+                         .replace(/\[CUSTOMER\]/g, '<span class="speaker guest">[GUEST]</span>')
                          .replace(/\n/g, "<br>")
     : "<em style='color:#484f58;'>No transcript available</em>";
 
@@ -589,8 +589,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
       .trim();
 
     const snippetFormatted = esc(snippet)
-      .replace(/\[AGENT\]/g, '<span class="speaker agent">[AGENT]</span>')
-      .replace(/\[CUSTOMER\]/g, '<span class="speaker customer">[CUSTOMER]</span>')
+      .replace(/\[AGENT\]/g, '<span class="speaker team-member">[TEAM MEMBER]</span>')
+      .replace(/\[CUSTOMER\]/g, '<span class="speaker guest">[GUEST]</span>')
       .replace(/\n/g, "<br>");
 
     const verdictClass = isYes ? "verdict-yes" : "verdict-no";
@@ -777,8 +777,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
     .transcript-box::-webkit-scrollbar-track { background: transparent; }
     .transcript-box::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 2px; }
     .speaker { font-weight: 700; }
-    .speaker.agent { color: var(--blue); }
-    .speaker.customer { color: var(--purple); }
+    .speaker.team-member { color: var(--blue); }
+    .speaker.guest { color: var(--purple); }
 
     /* Questions */
     .expand-bar { display: flex; gap: 6px; }

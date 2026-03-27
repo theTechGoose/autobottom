@@ -645,7 +645,7 @@ async function handleDemoPage(_req: Request): Promise<Response> {
     </a>
     <a href="/agent">
       <div class="icon i-agent">${icons.barChart}</div>
-      <div><div class="label">Agent Dashboard</div><div class="desc">Your audit results and performance trends</div></div>
+      <div><div class="label">Team Member Dashboard</div><div class="desc">Your audit results and performance trends</div></div>
       <span class="arrow">&rsaquo;</span>
     </a>
     <a href="/question-lab">
@@ -1477,7 +1477,7 @@ async function handleChatCosmetics(req: Request): Promise<Response> {
   };
   const TITLE_RANK: Record<string, { rank: number; label: string }> = {
     title_rookie: { rank: 1, label: "Rookie" },
-    title_ace: { rank: 2, label: "Ace Agent" },
+    title_ace: { rank: 2, label: "Ace Team Member" },
     title_shadow: { rank: 3, label: "Shadow Ops" },
     title_warden: { rank: 4, label: "Warden" },
     title_elite: { rank: 5, label: "Elite Performer" },
@@ -2417,6 +2417,8 @@ async function handleAppealFiledWebhook(req: Request): Promise<Response> {
     findingId,
     agentName,
     agentEmail: recipientEmail,
+    teamMemberName: agentName,
+    teamMemberEmail: recipientEmail,
     gmEmail,
     recordId: String(finding?.record?.RecordId ?? ""),
     guestName: String(finding?.record?.GuestName ?? ""),
@@ -2472,6 +2474,8 @@ async function handleAppealDecidedWebhook(req: Request): Promise<Response> {
     findingId,
     agentName,
     agentEmail: recipientEmail,
+    teamMemberName: agentName,
+    teamMemberEmail: recipientEmail,
     gmEmail,
     teamMemberFirst,
     recordId: String(finding?.record?.RecordId ?? ""),
@@ -2527,6 +2531,8 @@ async function handleManagerReviewWebhook(req: Request): Promise<Response> {
     findingId,
     agentName,
     agentEmail: recipientEmail,
+    teamMemberName: agentName,
+    teamMemberEmail: recipientEmail,
     gmEmail,
     teamMemberFirst,
     recordId: String(finding?.record?.RecordId ?? ""),
@@ -3314,7 +3320,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
   }> = [
     {
       name: "Guest Name",
-      text: "Did the agent verify the guest's full name during the call?",
+      text: "Did the team member verify the guest's full name during the call?",
       autoYesExp: "",
       tests: [
         {
@@ -3329,7 +3335,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
     },
     {
       name: "Age Verification",
-      text: "Did the agent confirm the guest meets the minimum age requirement (28 years old)?",
+      text: "Did the team member confirm the guest meets the minimum age requirement (28 years old)?",
       autoYesExp: "",
       tests: [
         {
@@ -3344,7 +3350,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
     },
     {
       name: "Confirmation Expectations",
-      text: "Did the agent explain when and how the guest will receive their confirmation (email within 48 hours or 30 days before trip)?",
+      text: "Did the team member explain when and how the guest will receive their confirmation (email within 48 hours or 30 days before trip)?",
       autoYesExp: "",
       tests: [
         {
@@ -3363,7 +3369,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
     },
     {
       name: "MCC Recurring Charges",
-      text: "Did the agent disclose that the Cruise Club membership will begin recurring charges after 6 months?",
+      text: "Did the team member disclose that the Cruise Club membership will begin recurring charges after 6 months?",
       autoYesExp: "",
       tests: [
         {
@@ -3378,7 +3384,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
     },
     {
       name: "Married/Cohabiting Qualifier",
-      text: "Did the agent confirm whether the guest is married or cohabiting with their significant other (not separated)?",
+      text: "Did the team member confirm whether the guest is married or cohabiting with their significant other (not separated)?",
       autoYesExp: "",
       tests: [
         {
@@ -3397,7 +3403,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
     },
     {
       name: "Correct Location",
-      text: "Did the agent state the correct destination/location for the booking?",
+      text: "Did the team member state the correct destination/location for the booking?",
       autoYesExp: "",
       tests: [
         {
@@ -3412,7 +3418,7 @@ async function seedOrgData(orgId: OrgId): Promise<{ seeded: number; managerSeede
     },
     {
       name: "Reschedule Process",
-      text: "Did the agent explain the reschedule process and any associated fees or deposit forfeiture?",
+      text: "Did the team member explain the reschedule process and any associated fees or deposit forfeiture?",
       autoYesExp: "",
       tests: [
         {

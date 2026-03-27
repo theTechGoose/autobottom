@@ -118,18 +118,37 @@ export async function handleDecide(req: Request): Promise<Response> {
     }).catch(() => {});
   }
 
-  // Claim next buffer for the reviewer, respecting judge config + self-filter
   const config = await getReviewerConfig(auth.orgId, auth.email);
   const judgeAllowedTypes: string[] = config?.allowedTypes ?? ["date-leg", "package"];
   const selfTypes = decidedTypes
     ? [decidedTypes].flat().filter((t: string) => judgeAllowedTypes.includes(t))
     : null;
   const effectiveTypes = selfTypes && selfTypes.length > 0 ? selfTypes : judgeAllowedTypes;
-  const next = await claimNextItem(auth.orgId, auth.email, effectiveTypes);
 
-  console.log(`[DECIDE] buffer replenished: ${next.buffer.length} items for ${auth.email}`);
+  // If audit complete, build summary and claim next audit; otherwise return same-audit buffer
+  const next = await claimNextItem(auth.orgId, auth.email, effectiveTypes);
   const newBadges = result.newBadges.map(({ check: _, ...rest }) => rest);
-  return json({ decided: { findingId, questionIndex, decision }, auditComplete: result.auditComplete, buffer: next.buffer, newBadges });
+
+  const responseData: Record<string, unknown> = {
+    decided: { findingId, questionIndex, decision },
+    auditComplete: result.auditComplete,
+    buffer: next.buffer,
+    newBadges,
+  };
+
+  if (result.auditComplete) {
+    // Count decisions for this audit from the decided items (they're still in KV)
+    const totalForFinding = body.totalForFinding ?? 0;
+    const confirms = body.auditDecisionCounts?.confirms ?? 0;
+    const flips = body.auditDecisionCounts?.flips ?? 0;
+    const newScore = totalForFinding > 0 ? Math.round(((totalForFinding - (confirms - flips > 0 ? confirms - flips : confirms)) / totalForFinding) * 100) : 0;
+    // Let the client compute score from its own state — just pass the counts through
+    responseData.completionSummary = { confirms, flips, totalForFinding };
+    console.log(`[DECIDE] 🏁 audit complete: ${confirms} confirms, ${flips} flips (fid=${findingId})`);
+  }
+
+  console.log(`[DECIDE] buffer: ${next.buffer.length} items for ${auth.email}`);
+  return json(responseData);
 }
 
 export async function handleBack(req: Request): Promise<Response> {

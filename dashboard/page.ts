@@ -512,7 +512,7 @@ table { width: 100%; border-collapse: collapse; }
             </a>
             <a href="/agent">
               <div class="rm-icon" style="background:rgba(249,115,22,0.10);color:#f97316;">${icons.barChart}</div>
-              Agent Dashboard
+              Team Member Dashboard
             </a>
           </div>
         </div>
@@ -1221,8 +1221,8 @@ table { width: 100%; border-collapse: collapse; }
           <button class="um-role" data-role="user">
             <span class="um-role-icon" style="background:var(--cyan-bg);color:var(--cyan);">${icons.headset}</span>
             <span class="um-role-info">
-              <span class="um-role-name">Agent</span>
-              <span class="um-role-desc">Call center agent.</span>
+              <span class="um-role-name">Team Member</span>
+              <span class="um-role-desc">Call center team member.</span>
             </span>
           </button>
         </div>
@@ -2183,7 +2183,7 @@ table { width: 100%; border-collapse: collapse; }
         + '<div class="um-user-avatar" style="background:var(--' + c + '-bg);color:var(--' + c + ');">' + (roleInitials[u.role] || '?') + '</div>'
         + '<div class="um-user-info"><div class="um-user-email">' + esc(u.email) + '</div>'
         + '<div class="um-user-meta">' + (u.supervisor ? 'reports to ' + esc(u.supervisor) : 'no supervisor') + '</div></div>'
-        + '<span class="um-badge ' + u.role + '">' + (u.role === 'user' ? 'agent' : u.role) + '</span>'
+        + '<span class="um-badge ' + u.role + '">' + (u.role === 'user' ? 'team member' : u.role) + '</span>'
         + '<button class="sf-btn ghost um-delete-btn" data-email="' + esc(u.email) + '" style="margin-left:6px;font-size:10px;padding:3px 8px;color:var(--red);" title="Delete user">✕</button>'
         + '</div>';
     }
@@ -2211,7 +2211,7 @@ table { width: 100%; border-collapse: collapse; }
     var credStep = document.getElementById('um-cred-step');
     var btnRole = document.getElementById('um-btn-role');
     if (!btnRole || !group || !sel || !credStep) return;
-    btnRole.textContent = selectedRole === 'user' ? 'Agent' : selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1);
+    btnRole.textContent = selectedRole === 'user' ? 'Team Member' : selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1);
 
     if (selectedRole === 'admin') {
       group.style.display = 'none';
@@ -2414,7 +2414,7 @@ table { width: 100%; border-collapse: collapse; }
       sorted.forEach(function(u) {
         var opt = document.createElement('option');
         opt.value = u.email;
-        opt.textContent = u.email + ' (' + (u.role === 'user' ? 'agent' : u.role) + ')';
+        opt.textContent = u.email + ' (' + (u.role === 'user' ? 'team member' : u.role) + ')';
         sel.appendChild(opt);
       });
       document.getElementById('imp-user-info').style.display = 'none';
@@ -2442,7 +2442,7 @@ table { width: 100%; border-collapse: collapse; }
       var c = roleColors[u.role] || 'blue';
       info.style.display = '';
       badge.style.color = 'var(--' + c + ')';
-      badge.textContent = u.role === 'user' ? 'Agent' : u.role.charAt(0).toUpperCase() + u.role.slice(1);
+      badge.textContent = u.role === 'user' ? 'Team Member' : u.role.charAt(0).toUpperCase() + u.role.slice(1);
       dest.textContent = 'Will open: ' + (roleHome[u.role] || '/') + '?as=' + email;
       goBtn.disabled = false;
     });
@@ -2911,7 +2911,7 @@ table { width: 100%; border-collapse: collapse; }
   // ===== Webhook Modal =====
   var modal = document.getElementById('webhook-modal');
   var whKind = 'terminate';
-  var whSubs = { terminate: 'Called when an audit is complete (100% first pass or review completed)', appeal: 'Called when an agent files an appeal', manager: 'Called when a manager submits a remediation note on a failed audit', 'judge-finish': 'Called when a judge finishes all appeal decisions for an audit', 're-audit-receipt': 'Sent to the agent when they request a receipt email after submitting a re-audit' };
+  var whSubs = { terminate: 'Called when an audit is complete (100% first pass or review completed)', appeal: 'Called when a team member files an appeal', manager: 'Called when a manager submits a remediation note on a failed audit', 'judge-finish': 'Called when a judge finishes all appeal decisions for an audit', 're-audit-receipt': 'Sent to the team member when they request a receipt email after submitting a re-audit' };
   var whCache = {};
   var etTemplateList = [];
 

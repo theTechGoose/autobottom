@@ -400,7 +400,7 @@ export const STORE_CATALOG: StoreItem[] = [
   // ── Titles ──────────────────────────────────────────
   { id: "title_rookie", name: "Rookie", price: 75, type: "title", icon: "\u{1F530}", rarity: "common",
     description: "Everyone starts somewhere. Wear it with pride -- this is day one of your story." },
-  { id: "title_ace", name: "Ace Agent", price: 200, type: "title", icon: "\u{1F0CF}", rarity: "uncommon",
+  { id: "title_ace", name: "Ace Team Member", price: 200, type: "title", icon: "\u{1F0CF}", rarity: "uncommon",
     description: "Marks you as a sharp operator. Displayed beside your name on leaderboards and dashboards." },
   { id: "title_shadow", name: "Shadow Ops", price: 350, type: "title", icon: "\u{1F575}", rarity: "uncommon",
     description: "Work in the shadows. A title for the quiet professionals who let results speak." },

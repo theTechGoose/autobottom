@@ -29,6 +29,8 @@ export interface ReviewItem {
   recordingIdField?: string; // "GenieNumber" = package, absent/other = date leg
   recordId?: string;         // QB record ID for direct link
   recordMeta?: {
+    // Shared
+    voName?: string;
     // Date leg (internal)
     guestName?: string;
     spouseName?: string;
@@ -182,37 +184,13 @@ export async function claimNextItem(orgId: OrgId, reviewer: string, allowedTypes
   const db = await kv();
   const now = Date.now();
 
-  // Helper: atomically claim up to `count` items from pending, optionally filtering by type
-  async function claimFromPending(count: number): Promise<ReviewItem[]> {
-    const claimed: ReviewItem[] = [];
-    const iter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
-    for await (const entry of iter) {
-      // Type filter: "GenieNumber" = package, anything else = date-leg
-      if (allowedTypes) {
-        const isPackage = entry.value.recordingIdField === "GenieNumber";
-        const itemType = isPackage ? "package" : "date-leg";
-        if (!allowedTypes.includes(itemType)) continue;
-      }
-      const activeKey = orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex);
-      const res = await db.atomic()
-        .check(entry)
-        .delete(entry.key)
-        .set(activeKey, { ...entry.value, claimedAt: now })
-        .commit();
-      if (res.ok) {
-        claimed.push(entry.value);
-        if (claimed.length >= count) break;
-      }
-    }
-    return claimed;
-  }
-
   // Helper: enrich a ReviewItem into a BufferItem (add transcript + auditRemaining)
-  async function enrich(item: ReviewItem): Promise<BufferItem> {
-    let transcript = await getTranscript(orgId, item.findingId);
-    if (transcript && !transcript.utteranceTimes?.length) {
-      transcript = await backfillUtteranceTimes(orgId, item.findingId, transcript);
-    }
+  async function enrich(item: ReviewItem, sharedTranscript?: { raw: string; diarized: string; utteranceTimes?: number[] } | null): Promise<BufferItem> {
+    const transcript = sharedTranscript !== undefined ? sharedTranscript : await (async () => {
+      let t = await getTranscript(orgId, item.findingId);
+      if (t && !t.utteranceTimes?.length) t = await backfillUtteranceTimes(orgId, item.findingId, t);
+      return t;
+    })();
     const counterEntry = await db.get<number>(orgKey(orgId, "review-audit-pending", item.findingId));
     return { ...item, auditRemaining: counterEntry.value ?? 0, transcript };
   }
@@ -223,7 +201,6 @@ export async function claimNextItem(orgId: OrgId, reviewer: string, allowedTypes
   });
   for await (const entry of allActiveIter) {
     const val = entry.value;
-    // Skip this reviewer's own items
     const keyParts = entry.key as Deno.KvKeyPart[];
     if (keyParts[2] === reviewer) continue;
     if (val.claimedAt && (now - val.claimedAt) > ACTIVE_TTL) {
@@ -249,18 +226,84 @@ export async function claimNextItem(orgId: OrgId, reviewer: string, allowedTypes
     activeItems.push(entry.value);
   }
 
-  // 3. Top up from pending if needed
-  if (activeItems.length < BUFFER_SIZE) {
-    const more = await claimFromPending(BUFFER_SIZE - activeItems.length);
-    activeItems.push(...more);
+  // 3. Legacy migration: if active items span multiple findings, keep the one with most items, release rest
+  if (activeItems.length > 0) {
+    const findingCounts = new Map<string, number>();
+    for (const item of activeItems) findingCounts.set(item.findingId, (findingCounts.get(item.findingId) ?? 0) + 1);
+    if (findingCounts.size > 1) {
+      let bestFid = ""; let bestCount = 0;
+      for (const [fid, count] of findingCounts) { if (count > bestCount) { bestFid = fid; bestCount = count; } }
+      for (const item of activeItems) {
+        if (item.findingId !== bestFid) {
+          const activeKey = orgKey(orgId, "review-active", reviewer, item.findingId, item.questionIndex);
+          const pendingKey = orgKey(orgId, "review-pending", item.findingId, item.questionIndex);
+          const entry = await db.get<ReviewItem & { claimedAt: number }>(activeKey);
+          if (entry.value) {
+            const { claimedAt: _, ...baseItem } = entry.value;
+            await db.atomic().check(entry).delete(activeKey).set(pendingKey, baseItem as ReviewItem).commit();
+          }
+        }
+      }
+      const kept = activeItems.filter(i => i.findingId === bestFid);
+      activeItems.length = 0;
+      activeItems.push(...kept);
+      console.log(`[REVIEW] Legacy migration: kept ${kept.length} items for ${bestFid}, released rest`);
+    }
   }
 
-  // 4. Enrich all items with transcript + auditRemaining
+  // 4. If reviewer has active items, return them (locked into this audit)
+  if (activeItems.length > 0) {
+    activeItems.sort((a, b) => a.reviewIndex - b.reviewIndex);
+    let transcript = await getTranscript(orgId, activeItems[0].findingId);
+    if (transcript && !transcript.utteranceTimes?.length) transcript = await backfillUtteranceTimes(orgId, activeItems[0].findingId, transcript);
+    const buffer: BufferItem[] = [];
+    for (const item of activeItems) buffer.push(await enrich(item, transcript));
+    return { buffer, remaining: 0 };
+  }
+
+  // 5. No active items — claim ALL pending items for one audit
+  // Find first matching findingId, then collect all pending items for it
+  let targetFindingId: string | null = null;
+  const pendingEntries: Deno.KvEntry<ReviewItem>[] = [];
+  const pendingIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
+  for await (const entry of pendingIter) {
+    if (allowedTypes) {
+      const isPackage = entry.value.recordingIdField === "GenieNumber";
+      const itemType = isPackage ? "package" : "date-leg";
+      if (!allowedTypes.includes(itemType)) continue;
+    }
+    if (!targetFindingId) targetFindingId = entry.value.findingId;
+    if (entry.value.findingId === targetFindingId) pendingEntries.push(entry);
+  }
+
+  if (pendingEntries.length === 0) return { buffer: [], remaining: 0 };
+
+  // Claim in batches of 3 (each claim = check + delete + set = 3 mutations, max 10 per atomic)
+  const claimed: ReviewItem[] = [];
+  for (let i = 0; i < pendingEntries.length; i += 3) {
+    const batch = pendingEntries.slice(i, i + 3);
+    let atomic = db.atomic();
+    for (const entry of batch) {
+      atomic = atomic
+        .check(entry)
+        .delete(entry.key)
+        .set(orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex), { ...entry.value, claimedAt: now });
+    }
+    const res = await atomic.commit();
+    if (res.ok) {
+      for (const entry of batch) claimed.push(entry.value);
+    }
+  }
+
+  if (claimed.length === 0) return { buffer: [], remaining: 0 };
+
+  claimed.sort((a, b) => a.reviewIndex - b.reviewIndex);
+  let transcript = await getTranscript(orgId, claimed[0].findingId);
+  if (transcript && !transcript.utteranceTimes?.length) transcript = await backfillUtteranceTimes(orgId, claimed[0].findingId, transcript);
   const buffer: BufferItem[] = [];
-  for (const item of activeItems) {
-    buffer.push(await enrich(item));
-  }
+  for (const item of claimed) buffer.push(await enrich(item, transcript));
 
+  console.log(`[REVIEW] ${reviewer}: Claimed ${claimed.length} items for audit ${targetFindingId}`);
   return { buffer, remaining: 0 };
 }
 
@@ -389,20 +432,17 @@ export async function undoDecision(
 }> {
   const db = await kv();
 
-  // Release all current active items held by this reviewer (put them back in pending)
+  // Determine current audit findingId from active items
+  let currentFindingId: string | null = null;
   const activeIter = db.list<ReviewItem & { claimedAt: number }>({
     prefix: orgKey(orgId, "review-active", reviewer),
   });
   for await (const entry of activeIter) {
-    const { claimedAt: _, ...baseItem } = entry.value;
-    await db.atomic()
-      .check(entry)
-      .delete(entry.key)
-      .set(orgKey(orgId, "review-pending", entry.value.findingId, entry.value.questionIndex), baseItem as ReviewItem)
-      .commit();
+    currentFindingId = entry.value.findingId;
+    break;
   }
 
-  // Fast path: use per-reviewer secondary index (negated-ts keys = newest first lexicographically)
+  // Find most recent decided item for the current audit (scoped to this reviewer + finding)
   let decidedEntry: Deno.KvEntry<ReviewDecision> | null = null;
   let undoIdxEntryKey: Deno.KvKey | null = null;
 
@@ -412,6 +452,8 @@ export async function undoDecision(
   );
   for await (const idxEntry of idxIter) {
     const { findingId: fid, questionIndex: qIdx } = idxEntry.value;
+    // Scope to current audit if we have one
+    if (currentFindingId && fid !== currentFindingId) continue;
     const counterCheck = await db.get<number>(orgKey(orgId, "review-audit-pending", fid));
     if (counterCheck.value === null) continue;
     const candidate = await db.get<ReviewDecision>(orgKey(orgId, "review-decided", fid, qIdx));
@@ -421,12 +463,14 @@ export async function undoDecision(
     break;
   }
 
-  // Fallback: full scan for decisions made before the index was introduced
+  // Fallback: full scan scoped to current finding
   if (!decidedEntry) {
     const myDecisions: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number }[] = [];
     const decidedIter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") });
     for await (const entry of decidedIter) {
-      if (entry.value.reviewer === reviewer) myDecisions.push({ entry, decidedAt: entry.value.decidedAt });
+      if (entry.value.reviewer !== reviewer) continue;
+      if (currentFindingId && entry.value.findingId !== currentFindingId) continue;
+      myDecisions.push({ entry, decidedAt: entry.value.decidedAt });
     }
     myDecisions.sort((a, b) => b.decidedAt - a.decidedAt);
     for (const candidate of myDecisions) {
@@ -453,6 +497,7 @@ export async function undoDecision(
     answer: decided.answer,
     ...(decided.recordingIdField ? { recordingIdField: decided.recordingIdField } : {}),
     ...(decided.recordId ? { recordId: decided.recordId } : {}),
+    ...(decided.recordMeta ? { recordMeta: decided.recordMeta } : {}),
   };
 
   // Move back: delete decided → active (assigned to this reviewer), increment counter
@@ -474,7 +519,7 @@ export async function undoDecision(
     return { buffer: [], remaining: 0 };
   }
 
-  // Now use claimNextItem to get the full buffer (restored item is first active)
+  // Return the full audit buffer (restored item + other active items)
   return claimNextItem(orgId, reviewer, allowedTypes);
 }
 

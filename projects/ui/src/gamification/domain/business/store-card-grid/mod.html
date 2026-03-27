@@ -1,0 +1,23 @@
+<div class="s-grid">
+  <div *for="let item of items; trackBy: item.id"
+       class="s-card"
+       [attr.data-r]="item.rarity">
+    <div class="s-card-top">
+      <span class="s-rarity" [attr.data-r]="item.rarity">{{item.rarity}}</span>
+      <span class="s-icon">{{item.icon}}</span>
+    </div>
+    <div class="s-card-bot">
+      <div class="s-name">{{item.name}}</div>
+      <div class="s-desc">{{item.description}}</div>
+      <div class="s-buy-row">
+        <div class="s-price">
+          <span class="s-price-coin">T</span>
+          {{item.price}}
+        </div>
+        <button class="s-buy buyable" (click)="buy(item.id)">
+          {{buying === item.id ? '...' : 'Buy'}}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

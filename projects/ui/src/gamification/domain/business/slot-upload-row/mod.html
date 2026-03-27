@@ -1,0 +1,11 @@
+<div class="slot-row">
+  <div class="slot-label">{{slot}}</div>
+  <div class="slot-file" [class.filled]="url">
+    {{url ? url : 'No file'}}
+  </div>
+  <button *if="url" class="play-btn" title="Preview {{slot}}">&#9654;</button>
+  <label class="btn btn-secondary btn-sm">
+    {{uploading ? '...' : 'Upload'}}
+    <input type="file" accept=".mp3,audio/mpeg" style="display:none" />
+  </label>
+</div>

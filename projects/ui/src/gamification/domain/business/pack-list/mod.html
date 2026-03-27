@@ -1,0 +1,12 @@
+<div class="pack-list">
+  <div class="pack-list-header"><span>Packs</span></div>
+  <div>
+    <div *for="let pack of packs; trackBy: pack.id"
+         class="pack-item"
+         [class.active]="selectedId === pack.id">
+      <div>
+        <div class="name">{{pack.name}}</div>
+      </div>
+    </div>
+  </div>
+</div>

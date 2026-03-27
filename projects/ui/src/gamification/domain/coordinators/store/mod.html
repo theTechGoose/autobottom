@@ -1,0 +1,11 @@
+<div *if="loading" class="loading">Loading store...</div>
+
+<div *if="!loading" class="store-layout">
+  <StoreSidebar [categories]="categoryList" [activeCategory]="activeCategory" />
+
+  <div class="store-main">
+    <StoreWalletBar [balance]="balance" [level]="level" [totalXp]="totalXp" />
+
+    <StoreCardGrid [items]="activeItems" [purchased]="purchased" />
+  </div>
+</div>

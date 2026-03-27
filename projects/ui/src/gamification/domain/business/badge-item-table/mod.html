@@ -1,0 +1,35 @@
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Icon</th>
+        <th>Name</th>
+        <th>Type</th>
+        <th>Rarity</th>
+        <th>Price</th>
+        <th>Source</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *for="let item of items; trackBy: item.id">
+        <td class="item-icon">{{item.icon}}</td>
+        <td>{{item.name}}</td>
+        <td><span class="pill pill-type">{{item.type}}</span></td>
+        <td><span class="pill pill-rarity">{{item.rarity}}</span></td>
+        <td>
+          <span class="token-price">
+            <span class="token-symbol">T</span>{{item.price}}
+          </span>
+        </td>
+        <td>{{item._source === 'builtin' ? 'Built-in' : 'Custom'}}</td>
+        <td>
+          <div *if="item._source !== 'builtin'" class="actions-cell">
+            <button class="btn-action edit">Edit</button>
+            <button class="btn-action delete">Delete</button>
+          </div>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>

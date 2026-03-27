@@ -10,32 +10,17 @@ import {
   handleGetStats, handleGetRecording, handleFileAppeal, handleAppealStatus,
   handleAppealDifferentRecording, handleAppealUploadRecording,
 } from "./src/entrypoints/api.ts";
-import { getTokenUsage } from "./src/domain/data/groq/mod.ts";
 import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./src/entrypoints/swagger.ts";
 import { enqueueStep } from "./src/domain/data/queue/mod.ts";
-import {
-  trackError, trackRetry, trackCompleted, getStats, getPipelineConfig, setPipelineConfig,
-  saveFinding, saveTranscript, saveBatchAnswers,
-  getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, saveEmailReportConfig, deleteEmailReportConfig,
-  getAllAnswersForFinding,
-  getGamificationSettings, saveGamificationSettings,
-  getJudgeGamificationOverride, saveJudgeGamificationOverride,
-  getReviewerGamificationOverride, saveReviewerGamificationOverride,
-  resolveGamificationSettings,
-  listSoundPacks, getSoundPack, saveSoundPack, deleteSoundPack,
-  getEarnedBadges,
-  getEvents, deleteEvents,
-  sendMessage, getConversation, getUnreadCount, markConversationRead, getConversationList,
-  getGameState, saveGameState,
-  getPrefabSubscriptions, savePrefabSubscriptions, getBroadcastEvents,
-  listCustomStoreItems, saveCustomStoreItem, deleteCustomStoreItem,
-} from "./src/domain/data/kv/mod.ts";
-import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot } from "./src/domain/data/kv/mod.ts";
+import { trackError, trackRetry, trackCompleted, getPipelineConfig } from "./src/domain/data/kv/mod.ts";
 import { S3Ref } from "./src/domain/data/s3/mod.ts";
 import { sendEmail } from "./src/domain/data/postmark/mod.ts";
 import { env } from "./src/env.ts";
-import { orgKey } from "./src/domain/data/kv/org.ts";
-import type { OrgId } from "./src/domain/data/kv/org.ts";
+import { authenticate } from "./src/domain/coordinators/auth/mod.ts";
+
+// Routing helpers
+import { json, html, withOrgId, withBodyOrg } from "./src/entrypoints/helpers.ts";
+import type { Handler } from "./src/entrypoints/helpers.ts";
 
 // Auth handlers
 import { handleRegisterPost, handleLoginPost, handleLogoutPost } from "./src/entrypoints/auth.ts";
@@ -51,7 +36,6 @@ import {
   handleListPacks, handleSavePack, handleDeletePack,
   handleUploadSound, handleSeedSoundPacks,
   handleGamificationPageGetSettings, handleGamificationPageSaveSettings,
-  BUILTIN_PACKS, BUILTIN_PACK_NAMES,
 } from "./src/entrypoints/gamification.ts";
 // Messaging handlers
 import {
@@ -74,24 +58,13 @@ import {
 } from "./src/entrypoints/admin.ts";
 // Super-admin handlers
 import { routeSuperAdmin } from "./src/entrypoints/super-admin.ts";
-
-// Unified auth
-import {
-  authenticate, resolveEffectiveAuth, createOrg, createUser, deleteUser, getUser, verifyUser,
-  createSession, deleteSession, listUsers, listOrgs, getOrg, deleteOrg,
-  parseCookie, sessionCookie, clearSessionCookie,
-} from "./src/domain/coordinators/auth/mod.ts";
-import type { AuthContext } from "./src/domain/coordinators/auth/mod.ts";
-
-// Review (unified auth)
+// Review handlers
 import {
   handleNext, handleDecide, handleBack,
   handleGetSettings, handleSaveSettings, handleStats, handleBackfill,
   handleReviewDashboardData, handleReviewMe,
 } from "./src/entrypoints/review.ts";
-import { getReviewStats, populateReviewQueue } from "./src/domain/coordinators/review/mod.ts";
-
-// Judge (unified auth)
+// Judge handlers
 import {
   handleNext as handleJudgeNext,
   handleDecide as handleJudgeDecide,
@@ -101,111 +74,17 @@ import {
   handleJudgeMe,
   handleJudgeListReviewers, handleJudgeCreateReviewer, handleJudgeDeleteReviewer,
 } from "./src/entrypoints/judge.ts";
-import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision } from "./src/domain/coordinators/judge/mod.ts";
-
-// Manager (unified auth)
+// Manager handlers
 import {
   handleManagerMe, handleManagerQueueList, handleManagerFinding,
   handleManagerRemediate, handleManagerStatsFetch, handleManagerBackfill,
   handleManagerListAgents, handleManagerCreateAgent, handleManagerDeleteAgent,
   handleManagerGameState,
 } from "./src/entrypoints/manager.ts";
-
-// Agent (unified auth)
+// Agent handlers
 import { handleAgentDashboardData, handleAgentMe, handleAgentGameState, handleAgentStore, handleAgentStoreBuy } from "./src/entrypoints/agent.ts";
-
-// Dashboard + Question Lab
+// Question Lab handlers
 import { routeQuestionLab } from "./src/entrypoints/question-lab.ts";
-
-// Gamification + Store + Badges
-import { STORE_CATALOG, PREFAB_EVENTS, rarityFromPrice } from "./src/domain/business/gamification/badges/mod.ts";
-import type { StoreItem } from "./src/domain/business/gamification/badges/mod.ts";
-
-// KV factory
-import { kvFactory } from "./src/domain/data/kv/factory.ts";
-
-// -- Helpers --
-
-type Handler = (req: Request) => Promise<Response>;
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function html(body: string): Response {
-  return new Response(body, {
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
-async function requireAuth(req: Request): Promise<AuthContext | Response> {
-  const auth = await resolveEffectiveAuth(req);
-  if (!auth) return json({ error: "unauthorized" }, 401);
-  return auth;
-}
-
-const ROLE_HOME: Record<string, string> = {
-  admin: "/admin/dashboard",
-  judge: "/judge/dashboard",
-  manager: "/manager",
-  reviewer: "/review/dashboard",
-  user: "/agent",
-};
-
-function requireRolePageAuth(allowedRoles: string[], handler: Handler): Handler {
-  return async (req) => {
-    const auth = await authenticate(req);
-    if (!auth) return Response.redirect(new URL("/login", req.url).href, 302);
-    if (auth.role !== "admin" && !allowedRoles.includes(auth.role))
-      return Response.redirect(new URL(ROLE_HOME[auth.role] ?? "/", req.url).href, 302);
-    return handler(req);
-  };
-}
-
-async function requireAdminAuth(req: Request): Promise<AuthContext | Response> {
-  const auth = await authenticate(req);
-  if (!auth) return json({ error: "unauthorized" }, 401);
-  if (auth.role !== "admin") return json({ error: "forbidden" }, 403);
-  return auth;
-}
-
-/** Resolve orgId: try auth, then ?org query param, then default org. */
-async function resolveOrgId(req: Request): Promise<OrgId | null> {
-  const auth = await authenticate(req);
-  if (auth) return auth.orgId;
-  const url = new URL(req.url);
-  const org = url.searchParams.get("org");
-  if (org) return org;
-  const db = await kvFactory();
-  const def = await db.get<string>(["default-org"]);
-  return def.value ?? null;
-}
-
-/** Wrap a controller function that needs orgId (resolved from auth/query/default). */
-function withOrgId(fn: (orgId: OrgId, req: Request) => Promise<Response>): Handler {
-  return async (req) => {
-    const orgId = await resolveOrgId(req);
-    if (!orgId) return json({ error: "org required (authenticate or provide ?org=)" }, 400);
-    return fn(orgId, req);
-  };
-}
-
-/** Wrap a POST controller function that reads orgId from the request body. */
-function withBodyOrg(fn: (orgId: OrgId, req: Request) => Promise<Response>): Handler {
-  return async (req) => {
-    const cloned = req.clone();
-    try {
-      const body = await cloned.json();
-      if (!body.orgId) return json({ error: "orgId required in body" }, 400);
-      return fn(body.orgId, req);
-    } catch {
-      return json({ error: "invalid JSON body" }, 400);
-    }
-  };
-}
 
 // -- Route Tables --
 
@@ -376,13 +255,6 @@ const getRoutes: Record<string, Handler> = {
   "/manager/api/agents": handleManagerListAgents,
   "/manager/api/prefab-subscriptions": handleGetPrefabSubscriptions,
 };
-
-// Auth handlers extracted to ./src/entrypoints/auth.ts
-// Admin handlers extracted to ./src/entrypoints/admin.ts
-// Super-admin handlers extracted to ./src/entrypoints/super-admin.ts
-// Gamification handlers extracted to ./src/entrypoints/gamification.ts
-
-// Messaging handlers extracted to ./src/entrypoints/messaging.ts
 
 // -- Server --
 

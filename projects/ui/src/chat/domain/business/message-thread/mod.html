@@ -1,0 +1,17 @@
+<div class="thread-messages">
+  <div *if="messages.length === 0" class="thread-empty">
+    <span>No messages yet. Say hello!</span>
+  </div>
+  <div *for="let group of groupedMessages">
+    <div class="msg-date-sep">{{group.label}}</div>
+    <div *for="let msg of group.messages"
+      class="msg-row"
+      [class.sent]="msg.from === myEmail"
+      [class.received]="msg.from !== myEmail">
+      <div class="msg-wrap">
+        <div class="msg-bubble">{{msg.body}}</div>
+        <div class="msg-time">{{msg.time}}</div>
+      </div>
+    </div>
+  </div>
+</div>

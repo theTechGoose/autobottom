@@ -1,0 +1,25 @@
+<div class="modal-overlay" [class.show]="open">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>New Message</h3>
+    </div>
+    <div class="modal-search">
+      <input
+        type="text"
+        placeholder="Search users..."
+        [(value)]="searchQuery" />
+    </div>
+    <div class="modal-list">
+      <div *if="filteredUsers.length === 0" class="modal-empty">
+        No users found
+      </div>
+      <div *for="let user of filteredUsers" class="modal-user">
+        <div class="modal-avatar">{{user.email[0].toUpperCase()}}</div>
+        <div class="mu-info">
+          <div class="mu-email">{{user.email}}</div>
+        </div>
+        <div class="mu-role">{{user.role}}</div>
+      </div>
+    </div>
+  </div>
+</div>

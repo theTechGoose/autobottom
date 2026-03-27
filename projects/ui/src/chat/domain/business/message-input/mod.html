@@ -1,0 +1,13 @@
+<div class="thread-input">
+  <textarea
+    rows="1"
+    placeholder="Type a message..."
+    [(value)]="text">
+  </textarea>
+  <button
+    class="btn-send"
+    [disabled]="!text.trim() || sending"
+    (click)="send()">
+    Send
+  </button>
+</div>

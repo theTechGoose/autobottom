@@ -1,0 +1,22 @@
+<div style="display:contents">
+  <ConversationList
+    [conversations]="conversations"
+    [activeEmail]="activeEmail"
+    [searchQuery]="convSearch" />
+
+  <div class="thread-panel">
+    <div *if="activeEmail">
+      <MessageThread
+        [messages]="messages"
+        [myEmail]="me?.email || ''" />
+      <MessageInput />
+    </div>
+    <div *if="!activeEmail" class="thread-empty" style="flex:1;">
+      <span>Select a conversation to start messaging</span>
+    </div>
+  </div>
+
+  <NewMessageModal
+    [open]="modalOpen"
+    [users]="allUsers" />
+</div>

@@ -9,7 +9,7 @@ import { populateJudgeQueue, saveAppeal, getAppeal } from "../domain/coordinator
 import type { AuditFinding } from "../../dto/audit-finding.ts";
 import type { AuditJob } from "../../dto/audit-job.ts";
 import { createJob } from "../domain/business/audit-job/mod.ts";
-import type { OrgId } from "../../lib/org.ts";
+import type { OrgId } from "../domain/data/kv/org.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

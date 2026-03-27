@@ -1,7 +1,7 @@
 /** Deno KV store for Question Lab configs, questions, tests, and versions. Org-scoped. */
 import { nanoid } from "npm:nanoid";
-import { orgKey } from "../../../../lib/org.ts";
-import type { OrgId } from "../../../../lib/org.ts";
+import { orgKey } from "../../data/kv/org.ts";
+import type { OrgId } from "../../data/kv/org.ts";
 
 // -- Types ----------------------------------------------------------------
 

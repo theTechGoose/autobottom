@@ -1,0 +1,53 @@
+<div>
+  <Toast
+    *if="toastMsg"
+    [msg]="toastMsg"
+    [type]="toastType"
+  />
+
+  <div *if="screen === 'queue'">
+    <ManagerStatsBar
+      *if="stats"
+      [outstanding]="stats.outstanding"
+      [addressedThisWeek]="stats.addressedThisWeek"
+      [totalAudits]="stats.totalAudits"
+      [avgResolution]="stats.avgResolution"
+    />
+
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <ManagerQueueTable
+          [items]="queueData"
+          [filter]="filterVal"
+        />
+      </div>
+      <button
+        class="backfill-btn"
+        [disabled]="backfilling"
+        (click)="backfill()"
+      >
+        <span *if="backfilling">Backfilling...</span>
+        <span *if="!backfilling">Backfill Queue</span>
+      </button>
+    </div>
+  </div>
+
+  <div *if="screen === 'detail' && detail">
+    <ManagerDetailPanel
+      [detail]="detail"
+      [transcriptOpen]="transcriptOpen"
+    />
+
+    <RemediationSection
+      [canRemediate]="detail.queueItem && detail.queueItem.status === 'pending' && !detail.remediation"
+    />
+  </div>
+
+  <ManagerGameBadge
+    *if="gameState"
+    [level]="gameState.level"
+    [totalXp]="gameState.totalXp"
+    [tokenBalance]="gameState.tokenBalance"
+    [badges]="gameState.badges"
+  />
+</div>

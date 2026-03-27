@@ -1,0 +1,59 @@
+<div>
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <button
+        [class.active]="localFilter === 'all'"
+        class="filter-btn"
+        (click)="setFilter('all')"
+      >All</button>
+      <button
+        [class.active]="localFilter === 'pending'"
+        class="filter-btn"
+        (click)="setFilter('pending')"
+      >Pending</button>
+      <button
+        [class.active]="localFilter === 'addressed'"
+        class="filter-btn"
+        (click)="setFilter('addressed')"
+      >Addressed</button>
+    </div>
+  </div>
+
+  <div class="table-panel" style="max-height:600px;overflow-y:auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Agent</th>
+          <th>Record</th>
+          <th>Failed / Total</th>
+          <th>Date</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *if="filteredItems.length === 0">
+          <td class="empty-cell" colspan="6">
+            No items
+          </td>
+        </tr>
+        <tr *for="let item of filteredItems; trackBy: item.findingId">
+          <td>{{item.agentEmail}}</td>
+          <td class="mono">{{item.recordId}}</td>
+          <td>
+            <span class="fail-ratio">{{item.failedCount}}/{{item.totalCount}}</span>
+          </td>
+          <td style="color:var(--text-muted);font-size:12px">{{item.completedAt}}</td>
+          <td>
+            <span class="status-badge" [class.pending]="item.status === 'pending'" [class.addressed]="item.status === 'addressed'">
+              {{item.status}}
+            </span>
+          </td>
+          <td>
+            <button class="view-btn">View</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>

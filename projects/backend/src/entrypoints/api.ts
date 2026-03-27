@@ -4,7 +4,7 @@ import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getStats, fi
 import { enqueueStep } from "../domain/data/queue/mod.ts";
 import { getDateLegByRid } from "../domain/data/quickbase/mod.ts";
 import { S3Ref } from "../domain/data/s3/mod.ts";
-import { env } from "../../env.ts";
+import { env } from "../env.ts";
 import { populateJudgeQueue, saveAppeal, getAppeal } from "../domain/coordinators/judge/mod.ts";
 import type { AuditFinding, AuditJob } from "../../types/mod.ts";
 import { createJob } from "../../types/mod.ts";

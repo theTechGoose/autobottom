@@ -8,7 +8,7 @@ import type { IAnsweredQuestion } from "../../../../../types/mod.ts";
 import { populateReviewQueue } from "../../review/mod.ts";
 import { populateJudgeQueue, saveAppeal } from "../../judge/mod.ts";
 import { checkBadges } from "../../../business/gamification/badges/mod.ts";
-import { env } from "../../../../../env.ts";
+import { env } from "../../../../env.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

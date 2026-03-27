@@ -1802,7 +1802,14 @@ ${R ? `
   function renderCurrent() {
     var currentItem = MODE === 'review' && auditItems.length > 0 ? auditItems[currentAuditIdx] : buffer[0];
     if (!currentItem) return;
-    if (searchOpen) closeSearch();
+    // In review mode, only close search when audit changes (not on intra-audit navigation)
+    if (searchOpen) {
+      if (MODE === 'review') {
+        if (currentItem.findingId !== auditFindingId) closeSearch();
+      } else {
+        closeSearch();
+      }
+    }
     document.getElementById('q-header').textContent = currentItem.header;
     document.getElementById('q-populated').textContent = currentItem.populated;
     document.getElementById('q-defense').textContent = currentItem.defense || 'No defense provided';
@@ -2125,24 +2132,40 @@ ${R ? `
 
   window.decide = function(decision, reason) { decide(decision, reason); };
   function decide(decision, reason) {
-    if (buffer.length === 0) {
+    if (MODE === 'review' && auditItems.length === 0) return;
+    if (MODE !== 'review' && buffer.length === 0) {
       console.log('[QUEUE] decide(' + decision + ') — buffer empty, ignoring');
       return;
     }
     if (busy) {
-      console.log('[QUEUE] decide(' + decision + ') — busy=true, ignoring (inflight=' + inflight + ' inflightFids=' + JSON.stringify(inflightFids) + ' buffer=' + buffer.length + ')');
+      console.log('[QUEUE] decide(' + decision + ') — busy=true, ignoring');
       return;
     }
 
     // Show confirm dialog when deciding on the last question for an audit
-    var currentItem = buffer[0];
-    console.log('[QUEUE] decide(' + decision + ') — fid=' + currentItem.findingId + ' qi=' + currentItem.questionIndex + ' auditRemaining=' + currentItem.auditRemaining + ' inflight=' + inflight);
-    if (currentItem && currentItem.auditRemaining === 1) {
-      pendingDecision = decision;
-      pendingReason = reason || null;
-      console.log('[QUEUE] decide — auditRemaining=1, showing confirm modal');
-      showConfirmModal();
-      return;
+    if (MODE === 'review') {
+      var currentItem = auditItems[currentAuditIdx];
+      if (!currentItem) return;
+      var undecided = 0;
+      for (var ui = 0; ui < auditItems.length; ui++) {
+        if (!auditDecisions[auditItems[ui].questionIndex]) undecided++;
+      }
+      console.log('[QUEUE] decide(' + decision + ') — review mode, undecided=' + undecided);
+      if (undecided === 1) {
+        pendingDecision = decision;
+        pendingReason = reason || null;
+        showConfirmModal();
+        return;
+      }
+    } else {
+      var currentItem = buffer[0];
+      console.log('[QUEUE] decide(' + decision + ') — fid=' + currentItem.findingId + ' qi=' + currentItem.questionIndex + ' auditRemaining=' + currentItem.auditRemaining);
+      if (currentItem && currentItem.auditRemaining === 1) {
+        pendingDecision = decision;
+        pendingReason = reason || null;
+        showConfirmModal();
+        return;
+      }
     }
 
     executeDecision(decision, reason);
@@ -2263,23 +2286,55 @@ ${R ? `
         console.log('[QUEUE] /decide response fid=' + item.findingId + ' qi=' + item.questionIndex + ' status=' + res.status + ' auditComplete=' + !!data.auditComplete + ' newBuffer=' + (data.buffer||[]).length + ' inflight=' + inflight + ' inflightFids=' + JSON.stringify(inflightFids));
 
         if (res.status === 409) {
-          // Silently absorb — item was already handled (stale). Refresh if buffer empty.
           console.warn('[QUEUE] 409 stale decision fid=' + item.findingId + ' qi=' + item.questionIndex + ' inflight=' + inflight + ' buffer=' + buffer.length);
-          if (inflight === 0 && buffer.length === 0) {
+          if (MODE === 'review') {
+            // 409 in review mode = item was already decided server-side.
+            // Mark it as decided locally and refresh audit state.
+            auditDecisions[item.questionIndex] = decision === POSITIVE_DECISION ? 'confirm' : 'flip';
+            renderAuditProgress();
+            // Refresh from server to get accurate state
             fetch(API + nextUrl()).then(function(r) { return r.json(); }).then(function(d) {
               applyNextData(d);
-              if (buffer.length > 0) {
-                showReview();
+              if (buffer.length > 0 || auditItems.length > 0) {
+                // Check if all questions are now decided
+                var stillUndecided = 0;
+                for (var si = 0; si < auditItems.length; si++) {
+                  if (!auditDecisions[auditItems[si].questionIndex]) stillUndecided++;
+                }
+                if (stillUndecided === 0 && auditItems.length > 0) {
+                  // All decided — show completion
+                  var cConfirms = 0, cFlips = 0;
+                  for (var cdk in auditDecisions) { if (auditDecisions[cdk] === 'confirm') cConfirms++; else cFlips++; }
+                  var cTotal = auditItems[0].totalForFinding || auditItems.length;
+                  var cScore = cTotal > 0 ? Math.round(((cTotal - cConfirms) / cTotal) * 100) : 0;
+                  showAuditComplete(cConfirms, cFlips, cScore);
+                } else {
+                  showReview();
+                  renderCurrent();
+                }
               } else {
                 showEmpty();
               }
               busy = false;
               enableButtons();
-            });
-          } else if (inflight === 0) {
-            // Still have buffer items but all requests done — unblock
-            var nextFidCheck = buffer.length > 0 && inflightFids[buffer[0].findingId] > 0;
-            if (!nextFidCheck) { busy = false; enableButtons(); }
+            }).catch(function() { busy = false; enableButtons(); });
+          } else {
+            // Judge mode: original 409 handling
+            if (inflight === 0 && buffer.length === 0) {
+              fetch(API + nextUrl()).then(function(r) { return r.json(); }).then(function(d) {
+                applyNextData(d);
+                if (buffer.length > 0) {
+                  showReview();
+                } else {
+                  showEmpty();
+                }
+                busy = false;
+                enableButtons();
+              });
+            } else if (inflight === 0) {
+              var nextFidCheck = buffer.length > 0 && inflightFids[buffer[0].findingId] > 0;
+              if (!nextFidCheck) { busy = false; enableButtons(); }
+            }
           }
           return;
         }
@@ -2415,6 +2470,7 @@ ${R ? `
         + '<span class="ap-hdr">' + (auditItems[pi].header || '').substring(0, 40) + '</span>';
       (function(idx) {
         pill.addEventListener('click', function() {
+          if (busy) return;
           currentAuditIdx = idx;
           renderCurrent();
           renderAuditProgress();
@@ -2509,9 +2565,32 @@ ${R ? `
     document.getElementById('back-spinner').classList.add('active');
     var backUrl = '/back' + (selfTypeFilter ? '?types=' + encodeURIComponent(selfTypeFilter) : '');
     api(backUrl, { method: 'POST', body: '{}' }).then(function(data) {
-      buffer = data.buffer || [];
-      for (var i = 0; i < buffer.length; i++) {
-        if (buffer[i].transcript) transcriptCache[buffer[i].findingId] = buffer[i].transcript;
+      // Update buffer and audit state
+      applyNextData(data);
+      // In review mode, remove the undone decision and navigate to the restored question
+      if (MODE === 'review' && auditItems.length > 0) {
+        // Find the first undecided question (the restored one) and navigate to it
+        var foundUndecided = false;
+        for (var ui = 0; ui < auditItems.length; ui++) {
+          if (!auditDecisions[auditItems[ui].questionIndex]) {
+            // Check if this was a previously decided question that's now back
+            // Clear any stale decision for items that are back in the active buffer
+            delete auditDecisions[auditItems[ui].questionIndex];
+            if (!foundUndecided) {
+              currentAuditIdx = ui;
+              foundUndecided = true;
+            }
+          }
+        }
+        // Sync auditDecisions: only keep decisions for items NOT in the active buffer
+        var activeQis = {};
+        for (var ai = 0; ai < auditItems.length; ai++) activeQis[auditItems[ai].questionIndex] = true;
+        var newDecisions = {};
+        for (var dk in auditDecisions) {
+          if (!activeQis[dk]) newDecisions[dk] = auditDecisions[dk];
+        }
+        auditDecisions = newDecisions;
+        renderAuditProgress();
       }
       toast('Undid last decision', 'undo');
       resetCombo();
@@ -2519,7 +2598,7 @@ ${R ? `
       updateProgress(data.remaining);
       document.getElementById('back-spinner').classList.remove('active');
       animateTransition(function() {
-        if (buffer.length > 0) {
+        if (buffer.length > 0 || (MODE === 'review' && auditItems.length > 0)) {
           showReview();
           renderCurrent();
         } else {

@@ -404,6 +404,16 @@ export async function recordDecision(
   const auditComplete = newCount <= 0;
 
   if (auditComplete) {
+    // Clean up any remaining active items for this finding (audit ownership leftovers)
+    const cleanupIter = db.list<ReviewItem & { claimedAt: number }>({
+      prefix: orgKey(orgId, "review-active", reviewer),
+    });
+    for await (const entry of cleanupIter) {
+      if ((entry.value as ReviewItem).findingId === findingId) {
+        await db.delete(entry.key);
+      }
+    }
+
     postCorrectedAudit(orgId, findingId).catch((err) =>
       console.error(`[REVIEW] ${findingId}: Completion POST failed:`, err)
     );

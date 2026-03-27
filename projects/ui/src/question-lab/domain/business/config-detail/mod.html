@@ -1,0 +1,60 @@
+<div *if="config">
+  <div class="card">
+    <div class="form-row">
+      <label>Config Name</label>
+      <div class="input-group">
+        <input type="text" [(value)]="configName" />
+        <button (click)="renameConfig()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>Questions ({{questions.length}})</h2>
+      <button (click)="toggleNewQuestion()">Add Question</button>
+    </div>
+
+    <div *if="showNewQuestion" class="inline-form active">
+      <div class="form-row">
+        <label>Question Name (short label)</label>
+        <input type="text" [(value)]="newQName" placeholder="e.g. Disclosure Check" />
+      </div>
+      <div class="form-row">
+        <label>Question Text</label>
+        <textarea [(value)]="newQText" placeholder="e.g. Did the agent disclose that the offer is promotional?"></textarea>
+      </div>
+      <div class="actions">
+        <button (click)="createQuestion()">Add</button>
+        <button class="btn-secondary" (click)="resetQuestionForm()">Cancel</button>
+      </div>
+    </div>
+
+    <div *if="questions.length === 0" class="empty">
+      No questions yet. Add one to get started.
+    </div>
+
+    <table *if="questions.length > 0">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Text</th>
+          <th>Tests</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *for="let q of questions; trackBy: q.id">
+          <td>
+            <a href="#" (click)="openQuestion(q)">{{q.name}}</a>
+          </td>
+          <td>{{q.text}}</td>
+          <td>{{q.testCount}}</td>
+          <td>
+            <button class="btn-sm btn-danger" (click)="deleteQuestion(q)">Delete</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>

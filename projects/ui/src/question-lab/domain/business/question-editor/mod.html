@@ -1,0 +1,41 @@
+<div class="card">
+  <div class="breadcrumb">
+    <a href="#" (click)="goToList()">Question Lab</a>
+    <span> / </span>
+    <a href="#" (click)="goToConfig()">Config</a>
+    <span> / Question</span>
+  </div>
+
+  <h2>Question Editor</h2>
+  <div class="form-row">
+    <label>Name</label>
+    <input type="text" [(value)]="qName" />
+  </div>
+  <div class="form-row">
+    <label>Question Text</label>
+    <textarea [(value)]="qText"></textarea>
+  </div>
+  <div class="form-row">
+    <label>Auto-Yes Expression (optional)</label>
+    <input type="text" [(value)]="qAutoYes" placeholder="e.g. HAS_FLAG" />
+  </div>
+  <div class="actions">
+    <button (click)="saveQuestion()">Save Changes</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Version History</h2>
+  <div *if="versions.length === 0" class="empty">
+    No previous versions yet.
+  </div>
+  <div *if="versions.length > 0">
+    <div *for="let version of versions; index as i" class="version-item">
+      <div class="version-header">
+        <span class="timestamp">{{version.timestamp}}</span>
+        <button class="btn-sm btn-secondary" (click)="restoreVersion(i)">Restore</button>
+      </div>
+      <div class="text">{{version.text}}</div>
+    </div>
+  </div>
+</div>

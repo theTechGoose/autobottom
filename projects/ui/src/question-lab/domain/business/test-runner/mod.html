@@ -1,0 +1,58 @@
+<div class="card">
+  <div class="card-header">
+    <h2>Tests ({{tests.length}})</h2>
+    <div class="actions">
+      <button class="btn-secondary" (click)="toggleNew()">Add Test</button>
+      <button *if="tests.length > 0" (click)="simulateAll()">Simulate All</button>
+    </div>
+  </div>
+
+  <div *if="showNew" class="inline-form active">
+    <div class="form-row">
+      <label>Transcript Snippet</label>
+      <textarea [(value)]="testSnippet" placeholder="Paste transcript fragment here..."></textarea>
+    </div>
+    <div class="form-row">
+      <label>Expected Answer</label>
+      <div class="toggle-group">
+        <button [class.active]="testExpected === 'yes'" (click)="testExpected = 'yes'">Yes</button>
+        <button [class.active]="testExpected === 'no'" (click)="testExpected = 'no'">No</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button (click)="createTest()">Add Test</button>
+      <button class="btn-secondary" (click)="toggleNew()">Cancel</button>
+    </div>
+  </div>
+
+  <div *if="tests.length === 0" class="empty">
+    No tests yet. Add a snippet to start testing.
+  </div>
+
+  <table *if="tests.length > 0">
+    <thead>
+      <tr>
+        <th>Snippet</th>
+        <th>Expected</th>
+        <th>Result</th>
+        <th>Last Run</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *for="let t of tests; trackBy: t.id" (click)="toggleExpanded(t.id)">
+        <td>{{t.snippet}}</td>
+        <td>
+          <span class="badge" [class.badge-pass]="t.expected === 'yes'" [class.badge-fail]="t.expected === 'no'">
+            {{t.expected}}
+          </span>
+        </td>
+        <td>{{getStatus(t.id)}}</td>
+        <td>{{t.lastRun}}</td>
+        <td>
+          <button class="btn-sm btn-danger" (click)="deleteTest(t.id)">Delete</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>

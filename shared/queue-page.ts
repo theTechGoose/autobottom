@@ -942,6 +942,10 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         style="display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 0;border-radius:8px;border:1px solid rgba(251,191,36,0.3);background:rgba(251,191,36,0.06);color:#fbbf24;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.15s;width:100%;">
         + Add 2nd Genie / Different Recording
       </button>
+      <button id="btn-dismiss-appeal" onclick="openDismissModal()" title="Dismiss this appeal entirely"
+        style="display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 0;border-radius:8px;border:1px solid rgba(139,148,158,0.3);background:rgba(139,148,158,0.06);color:#8b949e;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.15s;width:100%;">
+        Dismiss Appeal
+      </button>
     </div>`}
   </div>
 
@@ -1074,6 +1078,24 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
     <div style="display:flex;gap:8px;justify-content:flex-end;">
       <button onclick="closeAddGenieModal()" style="padding:8px 20px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:transparent;border:1px solid #1e2736;color:#6e7681;">Cancel</button>
       <button id="add-genie-submit" onclick="submitAddGenie()" style="padding:8px 20px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:#14b8a6;border:none;color:#fff;">Submit</button>
+    </div>
+  </div>
+</div>
+
+<!-- Dismiss Appeal modal (judge only) -->
+<div id="dismiss-appeal-overlay" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.75);align-items:center;justify-content:center;">
+  <div style="background:#161b22;border:1px solid #2d333b;border-radius:12px;padding:24px;width:420px;max-width:90vw;">
+    <h3 style="font-size:15px;font-weight:700;margin-bottom:8px;color:#c9d1d9;">Dismiss Appeal</h3>
+    <p style="font-size:12px;color:#8b949e;line-height:1.5;margin-bottom:16px;">
+      This will remove all pending judge items for this finding, delete the appeal record (making it re-appealable), and send a dismissal notification email.
+    </p>
+    <div style="font-size:11px;color:#6e7681;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Reason for dismissal</div>
+    <textarea id="dismiss-reason" rows="3" placeholder="Enter reason for dismissal..."
+      style="width:100%;padding:10px 12px;background:#0a0e14;border:1px solid #1e2736;border-radius:8px;color:#c9d1d9;font-size:13px;box-sizing:border-box;outline:none;resize:vertical;font-family:inherit;"></textarea>
+    <div id="dismiss-error" style="display:none;color:#f85149;font-size:12px;margin-top:8px;"></div>
+    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
+      <button onclick="closeDismissModal()" style="padding:8px 20px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:transparent;border:1px solid #1e2736;color:#6e7681;">Cancel</button>
+      <button id="dismiss-submit" onclick="submitDismissAppeal()" style="padding:8px 20px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:rgba(139,148,158,0.15);border:1px solid rgba(139,148,158,0.3);color:#c9d1d9;">Confirm Dismiss</button>
     </div>
   </div>
 </div>` : ''}
@@ -2703,6 +2725,9 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
   window.submitAddGenie = function() { submitAddGenie(); };
   window.addGenieRow = function() { addGenieRow(); };
   window.setAddGenieMode = function(m) { setAddGenieMode(m); };
+  window.openDismissModal = function() { openDismissModal(); };
+  window.closeDismissModal = function() { closeDismissModal(); };
+  window.submitDismissAppeal = function() { submitDismissAppeal(); };
 
   var addGenieMode = 'genie';
   function setAddGenieMode(mode) {
@@ -2935,6 +2960,63 @@ ${!R ? `<!-- Add Genie modal (judge only) -->
       setDropFile(file);
     });
   })();
+
+  // -- Dismiss Appeal (judge only) --
+  function openDismissModal() {
+    if (!buffer[0]) return;
+    document.getElementById('dismiss-reason').value = '';
+    document.getElementById('dismiss-error').style.display = 'none';
+    var btn = document.getElementById('dismiss-submit');
+    btn.disabled = false;
+    btn.textContent = 'Confirm Dismiss';
+    document.getElementById('dismiss-appeal-overlay').style.display = 'flex';
+    setTimeout(function() { document.getElementById('dismiss-reason').focus(); }, 50);
+  }
+  function closeDismissModal() {
+    document.getElementById('dismiss-appeal-overlay').style.display = 'none';
+  }
+  function submitDismissAppeal() {
+    var currentItem = buffer[0];
+    if (!currentItem) return;
+    var reason = document.getElementById('dismiss-reason').value.trim();
+    var errEl = document.getElementById('dismiss-error');
+    if (!reason) {
+      errEl.textContent = 'Please enter a reason for dismissal.';
+      errEl.style.display = '';
+      return;
+    }
+    var btn = document.getElementById('dismiss-submit');
+    btn.disabled = true;
+    btn.textContent = 'Dismissing...';
+    errEl.style.display = 'none';
+    fetch('/judge/api/dismiss-appeal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ findingId: currentItem.findingId, reason: reason }),
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (d.error) {
+        errEl.textContent = d.error;
+        errEl.style.display = '';
+        btn.disabled = false;
+        btn.textContent = 'Confirm Dismiss';
+      } else {
+        closeDismissModal();
+        toast('Appeal dismissed — removed from queue', 'pos');
+        loadNext();
+      }
+    }).catch(function(err) {
+      errEl.textContent = err.message || 'Dismiss failed';
+      errEl.style.display = '';
+      btn.disabled = false;
+      btn.textContent = 'Confirm Dismiss';
+    });
+  }
+  document.getElementById('dismiss-appeal-overlay').addEventListener('click', function(e) {
+    if (e.target === this) closeDismissModal();
+  });
+  document.getElementById('dismiss-reason').addEventListener('keydown', function(e) {
+    e.stopPropagation();
+  });
   ` : ''}
 
   // -- Init: try resuming session (or preview mode if ?id=X in URL) --

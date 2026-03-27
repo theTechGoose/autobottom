@@ -7,10 +7,12 @@ import {
   getJudgeStats,
   getJudgeDashboardData,
   dismissFindingFromJudgeQueue,
+  deleteAppeal,
+  getAppeal,
 } from "./kv.ts";
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/kv.ts";
 import type { AuthContext } from "../auth/kv.ts";
-import { resolveGamificationSettings, listSoundPacks, emitEvent, getReviewerConfig, saveReviewerConfig } from "../lib/kv.ts";
+import { resolveGamificationSettings, listSoundPacks, emitEvent, getReviewerConfig, saveReviewerConfig, getFinding, fireWebhook } from "../lib/kv.ts";
 import type { SoundSlot } from "../lib/kv.ts";
 import { getJudgePage } from "./page.ts";
 import { getJudgeDashboardPage } from "./dashboard.ts";
@@ -231,4 +233,46 @@ export async function handleJudgeDismissFinding(req: Request): Promise<Response>
 
   const result = await dismissFindingFromJudgeQueue(auth.orgId, findingId);
   return json({ ok: true, ...result });
+}
+
+export async function handleDismissAppeal(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  if (auth.role !== "judge" && auth.role !== "admin") return json({ error: "forbidden" }, 403);
+
+  const body = await req.json();
+  const { findingId, reason } = body;
+  if (!findingId) return json({ error: "findingId required" }, 400);
+  if (!reason || typeof reason !== "string" || !reason.trim()) {
+    return json({ error: "reason required" }, 400);
+  }
+
+  const appeal = await getAppeal(auth.orgId, findingId);
+  if (!appeal) return json({ error: "no appeal found for this finding" }, 404);
+
+  const dismissed = await dismissFindingFromJudgeQueue(auth.orgId, findingId);
+  await deleteAppeal(auth.orgId, findingId);
+
+  try {
+    const finding = await getFinding(auth.orgId, findingId);
+    if (finding) {
+      fireWebhook(auth.orgId, "judge", {
+        findingId,
+        finding,
+        judgedBy: auth.email,
+        dismissalReason: reason.trim(),
+      }).catch((err) => console.error(`[JUDGE] ❌ dismissal webhook failed:`, err));
+    }
+  } catch (err) {
+    console.error(`[JUDGE] ❌ Failed to send dismissal email:`, err);
+  }
+
+  emitEvent(auth.orgId, auth.email, "appeal-decided", {
+    findingId,
+    judge: auth.email,
+    decision: "dismissed",
+  }).catch(() => {});
+
+  console.log(`[JUDGE] ✅ Appeal dismissed: findingId=${findingId} by=${auth.email} reason="${reason.trim()}"`);
+  return json({ ok: true, ...dismissed });
 }

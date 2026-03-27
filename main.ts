@@ -88,6 +88,7 @@ import {
   handleJudgeListReviewers, handleJudgeCreateReviewer, handleJudgeDeleteReviewer,
   handleJudgeGetReviewerConfig, handleJudgeSaveReviewerConfig,
   handleJudgeDismissFinding,
+  handleDismissAppeal,
 } from "./judge/handlers.ts";
 import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision, clearJudgeQueue, backfillChargebackEntries, pruneBypassedFromQueues, findDuplicates, deleteDuplicates, adminDeleteFinding } from "./judge/kv.ts";
 
@@ -330,6 +331,7 @@ const postRoutes: Record<string, Handler> = {
   "/judge/api/reviewers/delete": handleJudgeDeleteReviewer,
   "/judge/api/reviewer-config": handleJudgeSaveReviewerConfig,
   "/judge/api/dismiss-finding": handleJudgeDismissFinding,
+  "/judge/api/dismiss-appeal": handleDismissAppeal,
   "/judge/api/gamification": handleJudgeSaveGamification,
 
   // Admin gamification
@@ -2475,6 +2477,7 @@ async function handleAppealDecidedWebhook(req: Request): Promise<Response> {
     overturns: String(overturns ?? 0),
     totalQuestions: String(totalQuestions ?? 0),
     judgedBy: judgedBy ?? "",
+    dismissalReason: body.dismissalReason || "",
     reportUrl: `${env.selfUrl}/audit/report?id=${findingId}`,
     logoUrl: `${env.selfUrl}/logo.png`,
     selfUrl: env.selfUrl,

@@ -766,6 +766,10 @@ export async function dismissFindingFromJudgeQueue(orgId: OrgId, findingId: stri
     const val = entry.value as JudgeItem & { claimedAt: number };
     if (val?.findingId === findingId) keys.push(entry.key);
   }
+  // All decided items for this finding (prevents stale data on re-appeal)
+  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-decided", findingId) })) {
+    keys.push(entry.key);
+  }
 
   for (let i = 0; i < keys.length; i += 10) {
     const batch = keys.slice(i, i + 10);
@@ -821,6 +825,11 @@ export async function getAppeal(orgId: OrgId, findingId: string): Promise<Appeal
 export async function saveAppeal(orgId: OrgId, record: AppealRecord) {
   const db = await kv();
   await db.set(orgKey(orgId, "appeal", record.findingId), record);
+}
+
+export async function deleteAppeal(orgId: OrgId, findingId: string): Promise<void> {
+  const db = await kv();
+  await db.delete(orgKey(orgId, "appeal", findingId));
 }
 
 // -- Backfill Chargeback / Wire Deduction Entries --

@@ -1,0 +1,19 @@
+<div class="review-dashboard-coordinator">
+  <!-- Loading state -->
+  <div *if="loading" class="loading-state">
+    Loading dashboard data...
+  </div>
+
+  <!-- Error state -->
+  <div *if="error" class="error-state">
+    {{ error }}
+  </div>
+
+  <!-- Dashboard content -->
+  <div *if="!loading && !error && data">
+    <ReviewStatCards />
+    <ReviewerPerformanceTable />
+    <RecentDecisionsTable />
+    <BadgeShowcase />
+  </div>
+</div>

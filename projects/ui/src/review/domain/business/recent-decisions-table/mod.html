@@ -1,0 +1,22 @@
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Finding</th>
+        <th>Question</th>
+        <th>Decision</th>
+        <th>Reviewer</th>
+        <th>Time</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *for="let row of decisions">
+        <td>{{ row.finding }}</td>
+        <td>{{ row.question }}</td>
+        <td>{{ row.decision }}</td>
+        <td>{{ row.reviewer }}</td>
+        <td>{{ row.time }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>

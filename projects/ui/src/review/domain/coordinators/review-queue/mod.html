@@ -1,0 +1,50 @@
+<div class="review-queue-coordinator">
+  <!-- Loading state -->
+  <div *if="view === 'loading'" class="loading-state">
+    Loading...
+  </div>
+
+  <!-- Review state -->
+  <div *if="view === 'review' && currentItem">
+    <QuestionCard />
+    <TranscriptPanel />
+    <AudioPlayer />
+    <GameUi />
+    <ReviewControlPanel
+      [busy]="busy"
+      [hasItem]="!!currentItem"
+    />
+    <Toast />
+  </div>
+
+  <!-- Empty state -->
+  <div *if="view === 'empty'" class="empty-state">
+    <h2>All caught up</h2>
+    <p *if="summaryHtml">{{ summaryHtml }}</p>
+    <p *if="!summaryHtml">No items pending review. Check back later.</p>
+  </div>
+
+  <!-- Streak banner -->
+  <div *if="streakBannerVisible" class="streak-banner" [class]="streakBannerCls">
+    {{ streakBannerText }}
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-bar-container">
+    <div class="progress-bar" [style.width.%]="progressPct"></div>
+  </div>
+
+  <!-- Confirmation modal -->
+  <div *if="confirmOpen" class="confirm-modal">
+    <div class="confirm-dialog">
+      <h3>Final Question for This Audit</h3>
+      <p>This is the last item for this audit. Submitting will finalize the review.</p>
+      <input [(value)]="confirmInput" placeholder="Type YES to proceed" />
+    </div>
+  </div>
+
+  <!-- Toasts -->
+  <div class="toast-container">
+    <div *for="let t of toasts" class="toast">{{ t.msg }}</div>
+  </div>
+</div>

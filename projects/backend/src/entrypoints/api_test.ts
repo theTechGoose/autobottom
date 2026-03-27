@@ -4,8 +4,8 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { mockFetch, mockFetchJson, restoreFetch } from "../../test-utils/mod.ts";
-import { freshKv } from "../../test-utils/mod.ts";
+import { mockFetch, mockFetchJson, restoreFetch } from "../domain/data/mock-fetch.ts";
+import { freshKv } from "../domain/data/kv/test-helpers.ts";
 import { setKvInstance, resetKvInstance } from "../domain/data/kv/factory.ts";
 import { handleAuditByRid, handlePackageByRid } from "./api.ts";
 

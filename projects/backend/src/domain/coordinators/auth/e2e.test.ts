@@ -2,6 +2,7 @@
 
 import { assertEquals, assertNotEquals } from "@std/assert";
 import { setKvInstance, resetKvInstance } from "../../data/kv/factory.ts";
+import { freshKv } from "../../data/kv/test-helpers.ts";
 import {
   createOrg,
   getOrg,
@@ -19,8 +20,8 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function freshKv(): Promise<Deno.Kv> {
-  const kv = await Deno.openKv(":memory:");
+async function setupKv(): Promise<Deno.Kv> {
+  const kv = await freshKv();
   setKvInstance(kv);
   return kv;
 }
@@ -39,7 +40,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const orgId = await createOrg("Test Org", "admin@example.com");
       assertNotEquals(orgId, "");
@@ -59,7 +60,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const result = await getOrg("nonexistent-id");
       assertEquals(result, null);
@@ -78,7 +79,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const orgId = await createOrg("User Org", "admin@example.com");
       await createUser(orgId, "alice@example.com", "secret123", "judge");
@@ -97,7 +98,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const orgId = await createOrg("Verify Org", "admin@example.com");
       await createUser(orgId, "bob@example.com", "pass1234", "reviewer");
@@ -117,7 +118,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const orgId = await createOrg("WrongPass Org", "admin@example.com");
       await createUser(orgId, "carol@example.com", "correct", "user");
@@ -139,7 +140,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const orgId = await createOrg("Delete Org", "admin@example.com");
       await createUser(orgId, "dave@example.com", "pw", "user");
@@ -165,7 +166,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const orgId = await createOrg("List Org", "admin@example.com");
       await createUser(orgId, "u1@example.com", "pw", "judge");
@@ -192,7 +193,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const orgId = await createOrg("Session Org", "admin@example.com");
       const ctx = { email: "eve@example.com", orgId, role: "admin" as const };
@@ -217,7 +218,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const req = new Request("http://localhost/");
       const auth = await authenticate(req);
@@ -233,7 +234,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const req = new Request("http://localhost/", {
         headers: { cookie: "session=totally-fake-token-that-does-not-exist" },
@@ -255,7 +256,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const kv = await freshKv();
+    const kv = await setupKv();
     try {
       const id1 = await createOrg("Alpha Corp", "a@example.com");
       const id2 = await createOrg("Beta Inc", "b@example.com");

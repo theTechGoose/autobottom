@@ -2,7 +2,7 @@
 
 import { assertEquals } from "@std/assert";
 import { setKvInstance, resetKvInstance } from "../domain/data/kv/factory.ts";
-import { mockFetchJson, restoreFetch } from "../../test-utils/mod.ts";
+import { mockFetchJson, restoreFetch } from "../domain/data/mock-fetch.ts";
 import { createOrg, createUser, createSession } from "../domain/coordinators/auth/mod.ts";
 import { handleManagerQueueList } from "./manager.ts";
 import { orgKey } from "../domain/data/kv/org.ts";

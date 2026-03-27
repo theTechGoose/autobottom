@@ -11,7 +11,7 @@ import {
   handleAppealDifferentRecording, handleAppealUploadRecording,
 } from "./src/entrypoints/api.ts";
 import { getTokenUsage } from "./src/domain/data/groq/mod.ts";
-import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
+import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./src/entrypoints/swagger.ts";
 import { enqueueStep } from "./src/domain/data/queue/mod.ts";
 import {
   trackError, trackRetry, trackCompleted, getStats, getPipelineConfig, setPipelineConfig,

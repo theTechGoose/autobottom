@@ -1,10 +1,10 @@
 /** HTTP handlers for agent dashboard API routes. Uses unified auth. */
 
-import { resolveEffectiveAuth } from "../auth/mod.ts";
-import type { AuthContext } from "../auth/mod.ts";
-import { getAgentDashboardData } from "./mod.ts";
-import { getGameState, getEarnedBadges, purchaseStoreItem, listCustomStoreItems } from "../../data/kv/mod.ts";
-import { STORE_CATALOG } from "../../business/gamification/badges/mod.ts";
+import { resolveEffectiveAuth } from "../domain/coordinators/auth/mod.ts";
+import type { AuthContext } from "../domain/coordinators/auth/mod.ts";
+import { getAgentDashboardData } from "../domain/coordinators/agent/mod.ts";
+import { getGameState, getEarnedBadges, purchaseStoreItem, listCustomStoreItems } from "../domain/data/kv/mod.ts";
+import { STORE_CATALOG } from "../domain/business/gamification/badges/mod.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

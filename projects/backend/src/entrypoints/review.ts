@@ -7,11 +7,11 @@ import {
   getReviewStats,
   backfillFromFinished,
   getReviewerDashboardData,
-} from "./mod.ts";
-import { getWebhookConfig, saveWebhookConfig, emitEvent } from "../../data/kv/mod.ts";
-import type { WebhookConfig } from "../../data/kv/mod.ts";
-import { resolveEffectiveAuth } from "../auth/mod.ts";
-import type { AuthContext } from "../auth/mod.ts";
+} from "../domain/coordinators/review/mod.ts";
+import { getWebhookConfig, saveWebhookConfig, emitEvent } from "../domain/data/kv/mod.ts";
+import type { WebhookConfig } from "../domain/data/kv/mod.ts";
+import { resolveEffectiveAuth } from "../domain/coordinators/auth/mod.ts";
+import type { AuthContext } from "../domain/coordinators/auth/mod.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {

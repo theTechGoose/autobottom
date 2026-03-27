@@ -6,10 +6,10 @@ import {
   undoDecision,
   getJudgeStats,
   getJudgeDashboardData,
-} from "./mod.ts";
-import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/mod.ts";
-import type { AuthContext } from "../auth/mod.ts";
-import { emitEvent } from "../../data/kv/mod.ts";
+} from "../domain/coordinators/judge/mod.ts";
+import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../domain/coordinators/auth/mod.ts";
+import type { AuthContext } from "../domain/coordinators/auth/mod.ts";
+import { emitEvent } from "../domain/data/kv/mod.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {

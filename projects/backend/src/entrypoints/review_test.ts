@@ -1,11 +1,11 @@
-/** Integration tests for review/handlers.ts */
+/** Integration tests for review handlers (moved from coordinators/review/handlers_test.ts) */
 
 import { assertEquals } from "@std/assert";
-import { setKvInstance, resetKvInstance } from "../../data/kv/factory.ts";
-import { mockFetchJson, restoreFetch } from "../../../../test-utils/mod.ts";
-import { createOrg, createUser, createSession } from "../auth/mod.ts";
-import { handleNext, handleStats } from "./handlers.ts";
-import { populateReviewQueue } from "./mod.ts";
+import { setKvInstance, resetKvInstance } from "../domain/data/kv/factory.ts";
+import { mockFetchJson, restoreFetch } from "../../test-utils/mod.ts";
+import { createOrg, createUser, createSession } from "../domain/coordinators/auth/mod.ts";
+import { handleNext, handleStats } from "./review.ts";
+import { populateReviewQueue } from "../domain/coordinators/review/mod.ts";
 
 // -- env --
 

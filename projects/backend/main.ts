@@ -88,7 +88,7 @@ import {
   handleNext, handleDecide, handleBack,
   handleGetSettings, handleSaveSettings, handleStats, handleBackfill,
   handleReviewDashboardData, handleReviewMe,
-} from "./src/domain/coordinators/review/handlers.ts";
+} from "./src/entrypoints/review.ts";
 import { getReviewStats, populateReviewQueue } from "./src/domain/coordinators/review/mod.ts";
 
 // Judge (unified auth)
@@ -100,7 +100,7 @@ import {
   handleDashboardData as handleJudgeDashboardData,
   handleJudgeMe,
   handleJudgeListReviewers, handleJudgeCreateReviewer, handleJudgeDeleteReviewer,
-} from "./src/domain/coordinators/judge/handlers.ts";
+} from "./src/entrypoints/judge.ts";
 import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision } from "./src/domain/coordinators/judge/mod.ts";
 
 // Manager (unified auth)
@@ -109,13 +109,13 @@ import {
   handleManagerRemediate, handleManagerStatsFetch, handleManagerBackfill,
   handleManagerListAgents, handleManagerCreateAgent, handleManagerDeleteAgent,
   handleManagerGameState,
-} from "./src/domain/coordinators/manager/handlers.ts";
+} from "./src/entrypoints/manager.ts";
 
 // Agent (unified auth)
-import { handleAgentDashboardData, handleAgentMe, handleAgentGameState, handleAgentStore, handleAgentStoreBuy } from "./src/domain/coordinators/agent/handlers.ts";
+import { handleAgentDashboardData, handleAgentMe, handleAgentGameState, handleAgentStore, handleAgentStoreBuy } from "./src/entrypoints/agent.ts";
 
 // Dashboard + Question Lab
-import { routeQuestionLab } from "./src/domain/coordinators/question-lab/handlers.ts";
+import { routeQuestionLab } from "./src/entrypoints/question-lab.ts";
 
 // Gamification + Store + Badges
 import { STORE_CATALOG, PREFAB_EVENTS, rarityFromPrice } from "./src/domain/business/gamification/badges/mod.ts";

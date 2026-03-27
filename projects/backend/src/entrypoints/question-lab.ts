@@ -4,11 +4,11 @@ import {
   getQuestion, getQuestionsForConfig, createQuestion, updateQuestion, deleteQuestion, restoreVersion,
   getTest, getTestsForQuestion, createTest, updateTest, deleteTest, updateTestResult,
   serveConfig,
-} from "./mod.ts";
-import { askQuestion, type LlmAnswer } from "../../data/groq/mod.ts";
-import { query as vectorQuery } from "../../data/pinecone/mod.ts";
-import { resolveEffectiveAuth } from "../auth/mod.ts";
-import type { AuthContext } from "../auth/mod.ts";
+} from "../domain/coordinators/question-lab/mod.ts";
+import { askQuestion, type LlmAnswer } from "../domain/data/groq/mod.ts";
+import { query as vectorQuery } from "../domain/data/pinecone/mod.ts";
+import { resolveEffectiveAuth } from "../domain/coordinators/auth/mod.ts";
+import type { AuthContext } from "../domain/coordinators/auth/mod.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -20,7 +20,7 @@ async function requireAuth(req: Request): Promise<AuthContext | Response> {
   return auth;
 }
 
-// ── Config API ───────────────────────────────────────────────────────
+// -- Config API --
 
 export async function handleListConfigs(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
@@ -54,7 +54,7 @@ export async function handleDeleteConfig(req: Request): Promise<Response> {
   return json({ ok: true });
 }
 
-// ── Question API ─────────────────────────────────────────────────────
+// -- Question API --
 
 export async function handleGetQuestion(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
@@ -105,7 +105,7 @@ export async function handleRestoreVersion(req: Request): Promise<Response> {
   return result ? json(result) : json({ error: "not found or invalid index" }, 404);
 }
 
-// ── Test API ─────────────────────────────────────────────────────────
+// -- Test API --
 
 export async function handleCreateTest(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
@@ -136,7 +136,7 @@ export async function handleDeleteTest(req: Request): Promise<Response> {
   return json({ ok: true });
 }
 
-// ── Simulate (SSE) ──────────────────────────────────────────────────
+// -- Simulate (SSE) --
 
 export async function handleSimulate(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
@@ -188,7 +188,7 @@ export async function handleSimulate(req: Request): Promise<Response> {
   });
 }
 
-// ── Snippet Retrieval ────────────────────────────────────────────────
+// -- Snippet Retrieval --
 
 export async function handleGetSnippet(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
@@ -206,7 +206,7 @@ export async function handleGetSnippet(req: Request): Promise<Response> {
   }
 }
 
-// ── Serve Config ─────────────────────────────────────────────────────
+// -- Serve Config --
 
 export async function handleServeConfig(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
@@ -215,7 +215,7 @@ export async function handleServeConfig(req: Request): Promise<Response> {
   return json(await serveConfig(auth.orgId, configNameOrId));
 }
 
-// ── Router ───────────────────────────────────────────────────────────
+// -- Router --
 
 type Route = { pattern: URLPattern; handler: (req: Request) => Promise<Response> };
 

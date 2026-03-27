@@ -6,10 +6,10 @@ import {
   submitRemediation,
   getManagerStats,
   backfillManagerQueue,
-} from "./mod.ts";
-import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/mod.ts";
-import type { AuthContext, Role } from "../auth/mod.ts";
-import { getGameState, getEarnedBadges, emitEvent } from "../../data/kv/mod.ts";
+} from "../domain/coordinators/manager/mod.ts";
+import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../domain/coordinators/auth/mod.ts";
+import type { AuthContext, Role } from "../domain/coordinators/auth/mod.ts";
+import { getGameState, getEarnedBadges, emitEvent } from "../domain/data/kv/mod.ts";
 
 function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {

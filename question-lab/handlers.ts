@@ -3,13 +3,18 @@ import {
   listConfigs, getConfig, createConfig, updateConfig, deleteConfig,
   getQuestion, getQuestionsForConfig, createQuestion, updateQuestion, deleteQuestion, restoreVersion,
   getTest, getTestsForQuestion, createTest, updateTest, deleteTest, updateTestResult,
-  serveConfig,
+  serveConfig, addTestRun, updateTestEmailRecipients, bulkImportConfig, bulkDeleteConfig, listConfigNames,
 } from "./kv.ts";
 import { configListPage, configDetailPage, questionEditorPage } from "./page.ts";
 import { askQuestion, type LlmAnswer } from "../providers/groq.ts";
 import { query as vectorQuery } from "../providers/pinecone.ts";
 import { resolveEffectiveAuth } from "../auth/kv.ts";
 import type { AuthContext } from "../auth/kv.ts";
+import { nanoid } from "npm:nanoid";
+import { getDateLegByRid, getPackageByRid } from "../providers/quickbase.ts";
+import { saveFinding, saveJob } from "../lib/kv.ts";
+import { enqueueStep } from "../lib/queue.ts";
+import type { AuditFinding, AuditJob } from "../types/mod.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -65,18 +70,23 @@ export async function handleListConfigs(req: Request): Promise<Response> {
 export async function handleCreateConfig(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
   if (auth instanceof Response) return auth;
-  const { name } = await req.json();
+  const body = await req.json();
+  const { name, type } = body;
   if (!name) return json({ error: "name required" }, 400);
-  return json(await createConfig(auth.orgId, name));
+  const configType: "internal" | "partner" = type === "partner" ? "partner" : "internal";
+  return json(await createConfig(auth.orgId, name, configType));
 }
 
 export async function handleUpdateConfig(req: Request): Promise<Response> {
   const auth = await requireAuth(req);
   if (auth instanceof Response) return auth;
   const id = new URL(req.url).pathname.split("/").pop()!;
-  const { name } = await req.json();
-  if (!name) return json({ error: "name required" }, 400);
-  const result = await updateConfig(auth.orgId, id, name);
+  const body = await req.json();
+  const updates: { name?: string; type?: "internal" | "partner"; active?: boolean } = {};
+  if (body.name !== undefined) updates.name = body.name;
+  if (body.type === "internal" || body.type === "partner") updates.type = body.type;
+  if (body.active !== undefined) updates.active = Boolean(body.active);
+  const result = await updateConfig(auth.orgId, id, updates);
   return result ? json(result) : json({ error: "not found" }, 404);
 }
 
@@ -240,6 +250,134 @@ export async function handleGetSnippet(req: Request): Promise<Response> {
   }
 }
 
+// ── Test Audit ───────────────────────────────────────────────────────
+
+export async function handleRunTestAudit(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const { configId, rid, type } = await req.json() as { configId: string; rid: string; type: "internal" | "partner" };
+  if (!configId || !rid || !type) return json({ error: "configId, rid, type required" }, 400);
+
+  const config = await getConfig(auth.orgId, configId);
+  if (!config) return json({ error: "config not found" }, 404);
+
+  const recipients = config.testEmailRecipients ?? ["ai@monsterrg.com"];
+  const record = type === "partner"
+    ? (await getPackageByRid(rid) ?? { RecordId: rid })
+    : (await getDateLegByRid(rid) ?? { RecordId: rid });
+  const recordingIdField = type === "partner" ? "GenieNumber" : "VoGenie";
+
+  const jobId = nanoid();
+  const job: AuditJob = {
+    id: jobId,
+    doneAuditIds: [],
+    status: "running",
+    timestamp: new Date().toISOString(),
+    owner: "question-lab-test",
+    updateEndpoint: "none",
+    recordsToAudit: [rid],
+  };
+  await saveJob(auth.orgId, job);
+
+  const findingId = nanoid();
+  const rawRecordingId = record[recordingIdField] ? String(record[recordingIdField]) : undefined;
+  const finding: AuditFinding = {
+    id: findingId,
+    auditJobId: jobId,
+    findingStatus: "pending",
+    feedback: { heading: "", text: "", viewUrl: "" },
+    job,
+    record,
+    recordingIdField,
+    recordingId: rawRecordingId,
+    owner: "question-lab-test",
+    updateEndpoint: "none",
+    qlabConfig: config.name,
+    isTest: true,
+    testEmailRecipients: recipients,
+  };
+  await saveFinding(auth.orgId, finding);
+  await enqueueStep("init", { findingId, orgId: auth.orgId });
+
+  await addTestRun(auth.orgId, configId, {
+    findingId,
+    rid,
+    type,
+    startedAt: new Date().toISOString(),
+  });
+
+  console.log(`[QLAB] Test audit started: config=${config.name} rid=${rid} type=${type} finding=${findingId}`);
+  return json({ findingId });
+}
+
+export async function handleGetTestRuns(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const parts = new URL(req.url).pathname.split("/");
+  const configId = parts[parts.length - 1];
+  const config = await getConfig(auth.orgId, configId);
+  if (!config) return json({ error: "not found" }, 404);
+  return json(config.testRuns ?? []);
+}
+
+export async function handleUpdateTestEmails(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const parts = new URL(req.url).pathname.split("/");
+  // /question-lab/api/configs/:id/test-emails → id is parts[-2]
+  const configId = parts[parts.length - 2];
+  const { emails } = await req.json() as { emails: string[] };
+  if (!Array.isArray(emails)) return json({ error: "emails array required" }, 400);
+  const result = await updateTestEmailRecipients(auth.orgId, configId, emails);
+  return result ? json(result) : json({ error: "not found" }, 404);
+}
+
+// ── CSV Import (one config per request to avoid Deploy timeouts) ────
+
+export async function handleImport(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json() as {
+    name: string;
+    type: "internal" | "partner";
+    questions: Array<{ name: string; text: string; autoYesExp: string }>;
+    dupeMode?: "skip" | "overwrite" | "duplicate";
+  };
+  const { name, type, questions, dupeMode = "skip" } = body;
+  if (!name || !Array.isArray(questions)) return json({ error: "name and questions required" }, 400);
+
+  const configType: "internal" | "partner" = type === "partner" ? "partner" : "internal";
+  const existing = await listConfigNames(auth.orgId);
+  const match = existing.find((c) => c.name === name);
+
+  if (match) {
+    if (dupeMode === "skip") {
+      return json({ ok: true, skipped: true, configName: name });
+    }
+
+    if (dupeMode === "overwrite") {
+      await bulkDeleteConfig(auth.orgId, match.id);
+      const result = await bulkImportConfig(auth.orgId, name, configType, questions);
+      console.log(`[QLAB] 📦 Overwritten "${name}" (${result.questionCount}q)`);
+      return json({ ok: true, skipped: false, overwritten: true, configName: name, questions: result.questionCount });
+    }
+
+    if (dupeMode === "duplicate") {
+      let num = 2;
+      const names = new Set(existing.map((c) => c.name));
+      while (names.has(`${name} (${num})`)) num++;
+      const newName = `${name} (${num})`;
+      const result = await bulkImportConfig(auth.orgId, newName, configType, questions);
+      console.log(`[QLAB] 📦 Duplicate "${newName}" (${result.questionCount}q)`);
+      return json({ ok: true, skipped: false, overwritten: false, configName: newName, questions: result.questionCount });
+    }
+  }
+
+  const result = await bulkImportConfig(auth.orgId, name, configType, questions);
+  console.log(`[QLAB] 📦 Imported config "${name}" with ${result.questionCount} questions by ${auth.orgId}`);
+  return json({ ok: true, skipped: false, overwritten: false, configName: name, questions: result.questionCount });
+}
+
 // ── Serve Config ─────────────────────────────────────────────────────
 
 export async function handleServeConfig(req: Request): Promise<Response> {
@@ -287,6 +425,14 @@ const routes = [
   // Snippet + Serve
   route("GET", "/question-lab/api/snippet", handleGetSnippet),
   route("GET", "/question-lab/api/serve/:configNameOrId", handleServeConfig),
+
+  // Import
+  route("POST", "/question-lab/api/import", handleImport),
+
+  // Test Audit
+  route("POST", "/question-lab/api/run-test-audit", handleRunTestAudit),
+  route("GET", "/question-lab/api/test-runs/:configId", handleGetTestRuns),
+  route("PUT", "/question-lab/api/configs/:id/test-emails", handleUpdateTestEmails),
 ];
 
 export async function routeQuestionLab(req: Request): Promise<Response> {

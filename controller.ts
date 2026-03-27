@@ -75,7 +75,9 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
     genieIds: genieIdList.length > 1 ? genieIdList : undefined,
     owner: job.owner,
     updateEndpoint: callbackUrl,
-    qlabConfig: qlabConfig ?? body.qlabConfig,
+    qlabConfig: qlabConfig ?? body.qlabConfig ?? undefined,
+    isTest: body.isTest ?? undefined,
+    testEmailRecipients: body.testEmailRecipients ?? undefined,
   };
 
   if (override) {
@@ -88,7 +90,7 @@ export async function handleAuditByRid(orgId: OrgId, req: Request): Promise<Resp
   // Kick off pipeline
   await enqueueStep("init", { findingId, orgId });
 
-  console.log(`[CONTROLLER] Audit started: job=${jobId} finding=${findingId} rid=${rid}`);
+  console.log(`[CONTROLLER] Audit started: job=${jobId} finding=${findingId} rid=${rid} qlab=${finding.qlabConfig ?? "off"}`);
   return json({ jobId, findingId, status: "queued" });
 }
 
@@ -144,13 +146,15 @@ export async function handlePackageByRid(orgId: OrgId, req: Request): Promise<Re
     genieIds: genieIdListPkg.length > 1 ? genieIdListPkg : undefined,
     owner: job.owner,
     updateEndpoint: callbackUrl,
-    qlabConfig: qlabConfig ?? body.qlabConfig,
+    qlabConfig: qlabConfig ?? body.qlabConfig ?? undefined,
+    isTest: body.isTest ?? undefined,
+    testEmailRecipients: body.testEmailRecipients ?? undefined,
   };
 
   await saveFinding(orgId, finding);
   await enqueueStep("init", { findingId, orgId });
 
-  console.log(`[CONTROLLER] Package audit started: job=${jobId} finding=${findingId} rid=${rid}`);
+  console.log(`[CONTROLLER] Package audit started: job=${jobId} finding=${findingId} rid=${rid} qlab=${finding.qlabConfig ?? "off"}`);
   return json({ jobId, findingId, status: "queued" });
 }
 

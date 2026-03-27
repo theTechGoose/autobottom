@@ -10,11 +10,22 @@ export interface QLVersion {
   timestamp: string;
 }
 
+export interface QLTestRun {
+  findingId: string;
+  rid: string;
+  type: "internal" | "partner";
+  startedAt: string;
+}
+
 export interface QLConfig {
   id: string;
   name: string;
   createdAt: string;
   questionIds: string[];
+  type: "internal" | "partner";
+  active: boolean;
+  testEmailRecipients?: string[];
+  testRuns?: QLTestRun[];
 }
 
 export interface QLQuestion {
@@ -76,9 +87,9 @@ export async function getConfig(orgId: OrgId, id: string): Promise<QLConfig | nu
   return entry.value ?? null;
 }
 
-export async function createConfig(orgId: OrgId, name: string): Promise<QLConfig> {
+export async function createConfig(orgId: OrgId, name: string, type: "internal" | "partner" = "internal"): Promise<QLConfig> {
   const id = nanoid();
-  const config: QLConfig = { id, name, createdAt: new Date().toISOString(), questionIds: [] };
+  const config: QLConfig = { id, name, createdAt: new Date().toISOString(), questionIds: [], type, active: false };
   const db = await kv();
   await db.set(orgKey(orgId, "qlab", "config", id), config);
   const index = await getConfigIndex(orgId);
@@ -87,10 +98,16 @@ export async function createConfig(orgId: OrgId, name: string): Promise<QLConfig
   return config;
 }
 
-export async function updateConfig(orgId: OrgId, id: string, name: string): Promise<QLConfig | null> {
+export async function updateConfig(
+  orgId: OrgId,
+  id: string,
+  updates: { name?: string; type?: "internal" | "partner"; active?: boolean },
+): Promise<QLConfig | null> {
   const config = await getConfig(orgId, id);
   if (!config) return null;
-  config.name = name;
+  if (updates.name !== undefined) config.name = updates.name;
+  if (updates.type !== undefined) config.type = updates.type;
+  if (updates.active !== undefined) config.active = updates.active;
   const db = await kv();
   await db.set(orgKey(orgId, "qlab", "config", id), config);
   return config;
@@ -106,6 +123,84 @@ export async function deleteConfig(orgId: OrgId, id: string): Promise<void> {
   await db.delete(orgKey(orgId, "qlab", "config", id));
   const index = await getConfigIndex(orgId);
   await setConfigIndex(orgId, index.filter((i) => i !== id));
+}
+
+// -- Bulk Import ----------------------------------------------------------
+
+/** Fast delete: wipe a config + all its questions in batched atomics. No per-question read. */
+export async function bulkDeleteConfig(orgId: OrgId, id: string): Promise<void> {
+  const db = await kv();
+  const config = await getConfig(orgId, id);
+  if (!config) return;
+
+  // Batch-delete all questions (no need to read each one, just delete keys)
+  const keys = config.questionIds.map((qId) => orgKey(orgId, "qlab", "question", qId));
+  for (let i = 0; i < keys.length; i += 8) {
+    const batch = keys.slice(i, i + 8);
+    let atomic = db.atomic();
+    for (const k of batch) atomic = atomic.delete(k);
+    await atomic.commit();
+  }
+
+  // Delete config + update index
+  await db.delete(orgKey(orgId, "qlab", "config", id));
+  const index = await getConfigIndex(orgId);
+  await setConfigIndex(orgId, index.filter((i) => i !== id));
+}
+
+/** Get just config names quickly — reads index + configs but returns only id+name. */
+export async function listConfigNames(orgId: OrgId): Promise<Array<{ id: string; name: string }>> {
+  const db = await kv();
+  const ids = await getConfigIndex(orgId);
+  // Parallel reads
+  const entries = await Promise.all(ids.map((id) => db.get<QLConfig>(orgKey(orgId, "qlab", "config", id))));
+  return entries.filter((e) => e.value).map((e) => ({ id: e.value!.id, name: e.value!.name }));
+}
+
+/** Create a config with all its questions in minimal KV operations. */
+export async function bulkImportConfig(
+  orgId: OrgId,
+  name: string,
+  type: "internal" | "partner",
+  questions: Array<{ name: string; text: string; autoYesExp: string }>,
+): Promise<{ configId: string; questionCount: number }> {
+  const db = await kv();
+  const configId = nanoid();
+  const questionIds: string[] = [];
+  const questionObjects: Array<{ key: Deno.KvKey; value: QLQuestion }> = [];
+
+  for (const q of questions) {
+    if (!q.name || !q.text) continue;
+    const qId = nanoid();
+    questionIds.push(qId);
+    questionObjects.push({
+      key: orgKey(orgId, "qlab", "question", qId),
+      value: { id: qId, name: q.name, text: q.text, configId, autoYesExp: q.autoYesExp || "", versions: [], testIds: [] },
+    });
+  }
+
+  const config: QLConfig = { id: configId, name, createdAt: new Date().toISOString(), questionIds, type, active: false };
+
+  // Write config + questions in one pass of batched atomics
+  // First batch: config + first few questions
+  const allSets: Array<{ key: Deno.KvKey; value: unknown }> = [
+    { key: orgKey(orgId, "qlab", "config", configId), value: config },
+    ...questionObjects,
+  ];
+  for (let i = 0; i < allSets.length; i += 8) {
+    const batch = allSets.slice(i, i + 8);
+    let atomic = db.atomic();
+    for (const item of batch) atomic = atomic.set(item.key, item.value);
+    await atomic.commit();
+  }
+
+  // Update config index
+  const indexEntry = await db.get<string[]>(orgKey(orgId, "qlab", "config-index"));
+  const index = indexEntry.value ?? [];
+  index.push(configId);
+  await db.set(orgKey(orgId, "qlab", "config-index"), index);
+
+  return { configId, questionCount: questionIds.length };
 }
 
 // -- Question CRUD --------------------------------------------------------
@@ -267,6 +362,86 @@ export async function deleteTest(orgId: OrgId, id: string): Promise<void> {
     question.testIds = question.testIds.filter((tId) => tId !== id);
     await db.set(orgKey(orgId, "qlab", "question", test.questionId), question);
   }
+}
+
+// -- Destination / Office Assignments ------------------------------------
+
+/** Get all internal (date-leg) assignments: destinationId → configName */
+export async function getInternalAssignments(orgId: OrgId): Promise<Record<string, string>> {
+  const db = await kv();
+  const entry = await db.get<Record<string, string>>(orgKey(orgId, "qlab", "internal-assignments"));
+  return entry.value ?? {};
+}
+
+/** Set or clear a destination's Question Lab config assignment. */
+export async function setInternalAssignment(orgId: OrgId, destinationId: string, configName: string | null): Promise<void> {
+  const db = await kv();
+  const assignments = await getInternalAssignments(orgId);
+  if (configName === null) {
+    delete assignments[destinationId];
+  } else {
+    assignments[destinationId] = configName;
+  }
+  await db.set(orgKey(orgId, "qlab", "internal-assignments"), assignments);
+}
+
+/** Get human-readable names for destination IDs: destinationId → name */
+export async function getInternalNames(orgId: OrgId): Promise<Record<string, string>> {
+  const db = await kv();
+  const entry = await db.get<Record<string, string>>(orgKey(orgId, "qlab", "internal-names"));
+  return entry.value ?? {};
+}
+
+/** Set or clear a destination's human-readable name. */
+export async function setInternalName(orgId: OrgId, destinationId: string, name: string | null): Promise<void> {
+  const db = await kv();
+  const names = await getInternalNames(orgId);
+  if (name === null) {
+    delete names[destinationId];
+  } else {
+    names[destinationId] = name;
+  }
+  await db.set(orgKey(orgId, "qlab", "internal-names"), names);
+}
+
+/** Get all partner (package) assignments: officeName → configName */
+export async function getPartnerAssignments(orgId: OrgId): Promise<Record<string, string>> {
+  const db = await kv();
+  const entry = await db.get<Record<string, string>>(orgKey(orgId, "qlab", "partner-assignments"));
+  return entry.value ?? {};
+}
+
+/** Set or clear an office's Question Lab config assignment. */
+export async function setPartnerAssignment(orgId: OrgId, officeName: string, configName: string | null): Promise<void> {
+  const db = await kv();
+  const assignments = await getPartnerAssignments(orgId);
+  if (configName === null) {
+    delete assignments[officeName];
+  } else {
+    assignments[officeName] = configName;
+  }
+  await db.set(orgKey(orgId, "qlab", "partner-assignments"), assignments);
+}
+
+// -- Test Audit Helpers --------------------------------------------------
+
+export async function addTestRun(orgId: OrgId, configId: string, run: QLTestRun): Promise<void> {
+  const config = await getConfig(orgId, configId);
+  if (!config) return;
+  if (!config.testRuns) config.testRuns = [];
+  config.testRuns.unshift(run);
+  if (config.testRuns.length > 10) config.testRuns = config.testRuns.slice(0, 10);
+  const db = await kv();
+  await db.set(orgKey(orgId, "qlab", "config", configId), config);
+}
+
+export async function updateTestEmailRecipients(orgId: OrgId, configId: string, emails: string[]): Promise<QLConfig | null> {
+  const config = await getConfig(orgId, configId);
+  if (!config) return null;
+  config.testEmailRecipients = emails;
+  const db = await kv();
+  await db.set(orgKey(orgId, "qlab", "config", configId), config);
+  return config;
 }
 
 // -- Serve ----------------------------------------------------------------

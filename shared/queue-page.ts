@@ -244,7 +244,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   body { background: #0a0e14; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; height: 100vh; overflow: hidden; }
 
   /* ===== Layout: verdict panel (left) + transcript (right) + bottom bar ===== */
-  #review-screen { display: none; height: 100vh; grid-template-columns: ${R ? '170px 380px 1fr' : '380px 1fr'}; grid-template-rows: auto 1fr auto; overflow: hidden; }
+  #review-screen { display: none; height: 100vh; grid-template-columns: 380px 1fr; grid-template-rows: auto 1fr auto; overflow: hidden; }
 
   /* Progress bar */
   #progress-bar-container { grid-column: 1 / -1; grid-row: 1; height: 3px; background: #1a1f2b; }
@@ -252,7 +252,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   /* Left verdict panel */
   #verdict-panel {
-    grid-column: ${R ? '2' : '1'}; grid-row: 2;
+    grid-column: 1; grid-row: 2;
     display: flex; flex-direction: column; gap: 0;
     background: #0f1219; border-right: 1px solid #1a1f2b;
     overflow: hidden;
@@ -265,15 +265,11 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
   #verdict-scroll::-webkit-scrollbar { width: 4px; }
   #verdict-scroll::-webkit-scrollbar-thumb { background: #1e2736; border-radius: 2px; }
   ${R ? `
-  /* Audit progress sidebar (review only) */
-  #audit-progress { grid-column: 1; grid-row: 2; background: #0c1018; border-right: 1px solid #1a1f2b; overflow-y: auto; padding: 10px 8px; scrollbar-width: thin; scrollbar-color: #1e2736 transparent; }
-  #audit-progress::-webkit-scrollbar { width: 3px; }
-  #audit-progress::-webkit-scrollbar-thumb { background: #1e2736; border-radius: 2px; }
-  .ap-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #484f58; padding: 4px 6px 8px; }
-  .ap-pill { display: flex; align-items: center; gap: 7px; padding: 7px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 3px; transition: background 0.15s; font-size: 11px; color: #6e7681; }
+  /* Failed questions drawer (review only, inside verdict panel) */
+  .ap-pill { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; transition: background 0.15s; font-size: 11px; color: #6e7681; }
   .ap-pill:hover { background: rgba(139,92,246,0.08); }
   .ap-pill.current { background: rgba(139,92,246,0.12); color: #c9d1d9; }
-  .ap-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #2d333b; }
+  .ap-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: #2d333b; }
   .ap-dot.current { background: #8b5cf6; box-shadow: 0 0 6px rgba(139,92,246,0.5); }
   .ap-dot.confirmed { background: #f85149; }
   .ap-dot.flipped { background: #3fb950; }
@@ -422,7 +418,7 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 
   /* ===== Transcript (right side) ===== */
   #transcript-panel {
-    grid-column: ${R ? '3' : '2'}; grid-row: 2;
+    grid-column: 2; grid-row: 2;
     padding: 20px 24px; padding-right: 24px; overflow: hidden; min-height: 0;
   }
   #transcript-body {
@@ -870,14 +866,6 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
 <div id="review-screen">
   <div id="progress-bar-container"><div id="progress-bar"></div></div>
 
-  ${R ? `
-  <!-- Audit progress sidebar (review only) -->
-  <div id="audit-progress">
-    <div class="ap-title">Failed Questions</div>
-    <div id="ap-list"></div>
-  </div>
-  ` : ''}
-
   <!-- Left: Verdict panel -->
   <div id="verdict-panel">
     ${R ? `
@@ -929,6 +917,17 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
         <div id="record-details-content">
           <div id="record-details-body"></div>
         </div>
+
+        ${R ? `
+        <button id="failed-q-toggle" style="display:none;width:100%;padding:8px 12px;background:none;border:none;border-top:1px solid #1a1f2b;color:#6e7681;font-size:11px;font-weight:600;cursor:pointer;text-align:left;display:flex;align-items:center;gap:6px;">
+          <span class="rd-arrow" id="fq-arrow">${icons.chevronRight}</span>
+          <span>Failed Questions</span>
+          <span id="fq-count" style="margin-left:auto;font-size:10px;color:#484f58;">0</span>
+        </button>
+        <div id="failed-q-content" style="max-height:0;overflow:hidden;transition:max-height 0.25s ease;">
+          <div id="ap-list" style="padding:4px 8px 8px;"></div>
+        </div>
+        ` : ''}
 
         <div id="meta-row">
           <a class="meta-chip" id="m-report-link" href="#" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;" title="Open audit report">Audit <strong id="m-finding" style="color:#a371f7;"></strong></a>
@@ -1952,6 +1951,18 @@ ${R ? `
     arrow.classList.toggle('open');
   });
 
+  ${R ? `
+  // -- Failed Questions drawer toggle (review only) --
+  var fqOpen = false;
+  document.getElementById('failed-q-toggle').addEventListener('click', function() {
+    fqOpen = !fqOpen;
+    var content = document.getElementById('failed-q-content');
+    var arrow = document.getElementById('fq-arrow');
+    content.style.maxHeight = fqOpen ? '300px' : '0';
+    arrow.classList.toggle('open', fqOpen);
+  });
+  ` : ''}
+
   // -- Transcript --
   var colOffset = 0;
   var colStep = 0;
@@ -2380,6 +2391,17 @@ ${R ? `
     var list = document.getElementById('ap-list');
     if (!list) return;
     list.innerHTML = '';
+
+    // Show/hide the toggle button
+    var toggle = document.getElementById('failed-q-toggle');
+    if (toggle) toggle.style.display = auditItems.length > 0 ? 'flex' : 'none';
+    var countEl = document.getElementById('fq-count');
+    if (countEl) {
+      var decided = 0;
+      for (var dk in auditDecisions) decided++;
+      countEl.textContent = decided + '/' + auditItems.length;
+    }
+
     for (var pi = 0; pi < auditItems.length; pi++) {
       var pill = document.createElement('div');
       pill.className = 'ap-pill' + (pi === currentAuditIdx ? ' current' : '');

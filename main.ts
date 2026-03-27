@@ -21,7 +21,7 @@ import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
 import { enqueueStep, publishStep, ALL_QUEUES, pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts } from "./lib/queue.ts";
 import {
   trackActive, trackError, trackRetry, trackCompleted, terminateAllActive, terminateFinding, getStats, getRecentCompleted, getAllCompleted, getPipelineConfig, setPipelineConfig, getStuckFindings, clearErrors,
-  getFinding, saveFinding, saveTranscript, saveBatchAnswers,
+  getFinding, saveFinding, saveJob, saveTranscript, saveBatchAnswers,
   getWebhookConfig, saveWebhookConfig, listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig,
   getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,

@@ -676,6 +676,14 @@ table { width: 100%; border-collapse: collapse; }
         </select>
         <button class="sf-btn secondary" id="bulk-open-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Bulk</button>
         <button class="sf-btn primary" id="rid-btn" style="padding:6px 16px;font-size:11px;white-space:nowrap;">Start Audit</button>
+        <button class="sf-btn" id="sandbox-btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid rgba(63,185,80,0.3);">Test</button>
+      </div>
+      <div id="sandbox-row" style="display:none;margin-top:6px;display:none;">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input id="sandbox-emails" class="sf-input" type="text" value="ai@monsterrg.com" placeholder="Email recipients (comma-separated)" style="flex:1;font-size:11px;">
+          <button class="sf-btn" id="sandbox-go-btn" style="padding:5px 14px;font-size:10px;background:#3fb950;color:#0d1117;font-weight:600;white-space:nowrap;">Run Sandbox</button>
+        </div>
+        <div style="font-size:9px;color:var(--text-muted);margin-top:3px;">Sandbox: runs full audit, emails results, no live data affected</div>
       </div>
       <div id="rid-result" style="font-size:10px;margin-top:6px;min-height:14px;"></div>
     </div>
@@ -2790,6 +2798,42 @@ table { width: 100%; border-collapse: collapse; }
   }
   document.getElementById('rid-btn').addEventListener('click', doRidAudit);
   document.getElementById('rid-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doRidAudit(); });
+
+  // Test (sandbox) toggle
+  document.getElementById('sandbox-btn').addEventListener('click', function() {
+    var row = document.getElementById('sandbox-row');
+    row.style.display = row.style.display === 'none' ? '' : 'none';
+  });
+  document.getElementById('sandbox-go-btn').addEventListener('click', function() {
+    var rid = document.getElementById('rid-input').value.trim();
+    var type = document.getElementById('rid-type').value;
+    var emails = document.getElementById('sandbox-emails').value.trim();
+    var resultEl = document.getElementById('rid-result');
+    if (!rid) { resultEl.style.color = 'var(--red)'; resultEl.textContent = 'Enter a Record ID.'; return; }
+    if (!emails) { resultEl.style.color = 'var(--red)'; resultEl.textContent = 'Enter email recipients.'; return; }
+    var btn = document.getElementById('sandbox-go-btn');
+    btn.disabled = true; btn.textContent = 'Starting...';
+    resultEl.style.color = 'var(--text-muted)'; resultEl.textContent = 'Starting test audit...';
+    var endpoint = type === 'package' ? '/audit/package-by-rid' : '/audit/test-by-rid';
+    fetch(endpoint + '?rid=' + encodeURIComponent(rid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isTest: true, testEmailRecipients: emails.split(',').map(function(e) { return e.trim(); }).filter(Boolean) })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok || d.findingId) {
+          resultEl.style.color = 'var(--green)';
+          resultEl.innerHTML = 'Test started: <a href="/audit/report?id=' + d.findingId + '" style="color:var(--green);">' + d.findingId + '</a>';
+          toast('Test audit started \\u2014 results will be emailed', 'success');
+        } else {
+          resultEl.style.color = 'var(--red)';
+          resultEl.textContent = d.error || 'Failed to start';
+        }
+      })
+      .catch(function() { resultEl.style.color = 'var(--red)'; resultEl.textContent = 'Request failed'; })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Run Test'; });
+  });
 
   // ===== Bulk Audit Modal =====
   document.getElementById('bulk-open-btn').addEventListener('click', function() {

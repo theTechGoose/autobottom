@@ -203,7 +203,9 @@ export async function handleGetRecording(orgId: OrgId, req: Request): Promise<Re
   const finding = await getFinding(orgId, id);
   if (!finding) return json({ error: "finding not found" }, 404);
 
-  const recordingPath = (finding as Record<string, any>).recordingPath;
+  const idx = parseInt(url.searchParams.get("idx") ?? "0");
+  const keys = (finding as Record<string, any>).s3RecordingKeys as string[] | undefined;
+  const recordingPath = keys?.length ? keys[Math.min(idx, keys.length - 1)] : (finding as Record<string, any>).recordingPath;
   if (!recordingPath) return json({ error: "no recording path" }, 404);
 
   const s3 = new S3Ref(env.s3Bucket, recordingPath);
@@ -1063,7 +1065,8 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         <span style="font-size:11px;color:#6e7681;font-weight:500;">${esc(f.findingStatus ?? "")}</span>
       </div>
       <div class="ap" id="audio-player">
-        <audio id="recording-audio" class="audio-native" preload="metadata" src="/audit/recording?id=${esc(id)}"></audio>
+        ${((f as any).s3RecordingKeys?.length ?? 0) > 1 ? `<div id="rec-tabs" style="display:flex;gap:2px;margin-right:8px;">${((f as any).s3RecordingKeys as string[]).map((_: string, i: number) => `<button class="ap-rec-tab${i === 0 ? " active" : ""}" data-idx="${i}" onclick="switchRecording(${i})" style="padding:2px 7px;font-size:9px;font-weight:700;border-radius:4px;border:1px solid ${i === 0 ? "var(--blue,#388bfd)" : "rgba(255,255,255,0.15)"};background:${i === 0 ? "var(--blue,#388bfd)" : "transparent"};color:${i === 0 ? "#fff" : "rgba(255,255,255,0.5)"};cursor:pointer;">REC ${i + 1}</button>`).join("")}</div>` : ""}
+        <audio id="recording-audio" class="audio-native" preload="metadata" src="/audit/recording?id=${esc(id)}&idx=0"></audio>
         <button class="ap-play" id="ap-play" title="Play recording">
           <span id="ap-icon-play">${icons.play16}</span>
           <span id="ap-icon-pause" style="display:none">${icons.pause16}</span>
@@ -1756,6 +1759,25 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           setTimeout(function() { btn.textContent = 'Submit Re-Audit'; btn.disabled = false; }, 2000);
         });
     }
+    // Switch recording tab (multi-genie)
+    window.switchRecording = function(idx) {
+      var audio = document.getElementById('recording-audio');
+      if (!audio) return;
+      var wasPlaying = !audio.paused;
+      audio.pause();
+      audio.src = '/audit/recording?id=${esc(id)}&idx=' + idx;
+      audio.load();
+      if (wasPlaying) audio.play();
+      var tabs = document.querySelectorAll('.ap-rec-tab');
+      tabs.forEach(function(t) {
+        var isActive = parseInt(t.dataset.idx) === idx;
+        t.style.borderColor = isActive ? 'var(--blue,#388bfd)' : 'rgba(255,255,255,0.15)';
+        t.style.background = isActive ? 'var(--blue,#388bfd)' : 'transparent';
+        t.style.color = isActive ? '#fff' : 'rgba(255,255,255,0.5)';
+        t.className = isActive ? 'ap-rec-tab active' : 'ap-rec-tab';
+      });
+    };
+
     // Custom audio player with waveform
     (function() {
       var audio = document.getElementById('recording-audio');

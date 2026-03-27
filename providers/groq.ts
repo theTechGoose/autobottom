@@ -64,6 +64,7 @@ export async function getTokenUsage(hours = 1): Promise<{
 }> {
   const db = await tokenKv();
   const now = Date.now();
+
   const cutoff = now - hours * 60 * 60 * 1000;
   let total_tokens = 0, prompt_tokens = 0, completion_tokens = 0, calls = 0;
   const by_function: Record<

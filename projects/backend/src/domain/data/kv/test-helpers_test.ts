@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { freshKv, clearKv } from "./kv.ts";
+import { freshKv, clearKv } from "./test-helpers.ts";
 
 Deno.test("freshKv creates an in-memory KV instance", async () => {
   const kv = await freshKv();

@@ -1,0 +1,69 @@
+<div class="container">
+
+  <!-- Config list view -->
+  <div *if="view === 'list'">
+    <div class="header">
+      <h1>Question Lab</h1>
+    </div>
+    <ConfigList
+      [configs]="configs"
+      (createConfig)="createConfig($event)"
+      (openConfig)="openConfig($event)"
+      (deleteConfig)="deleteConfig($event)"
+    />
+  </div>
+
+  <!-- Config detail view -->
+  <div *if="view === 'config'">
+    <div class="header">
+      <div class="breadcrumb">
+        <a href="#" (click)="loadConfigs(); view = 'list'">Question Lab</a>
+        <span> / Config</span>
+      </div>
+      <h1 *if="activeConfig">{{activeConfig.name}}</h1>
+    </div>
+    <ConfigDetail
+      [config]="activeConfig"
+      [questions]="questions"
+      (renameConfig)="renameConfig($event.id, $event.name)"
+      (createQuestion)="createQuestion($event.configId, $event.name, $event.text)"
+      (openQuestion)="openQuestion($event)"
+      (deleteQuestion)="deleteQuestion($event)"
+    />
+  </div>
+
+  <!-- Question editor view -->
+  <div *if="view === 'question'">
+    <div class="header">
+      <div class="breadcrumb">
+        <a href="#" (click)="loadConfigs(); view = 'list'">Question Lab</a>
+        <span> / </span>
+        <a href="#" *if="activeConfig" (click)="openConfig(activeConfig.id)">Config</a>
+        <span> / Question</span>
+      </div>
+      <h1 *if="activeQuestion">{{activeQuestion.name}}</h1>
+    </div>
+    <QuestionEditor
+      [question]="activeQuestion"
+      [versions]="activeQuestion ? activeQuestion.versions : []"
+      (saveQuestion)="saveQuestion($event.id, $event.data)"
+      (restoreVersion)="restoreVersion($event.questionId, $event.index)"
+    />
+    <TestRunner
+      *if="activeQuestion"
+      [questionId]="activeQuestion.id"
+      [tests]="tests"
+      (createTest)="createTest($event.questionId, $event.snippet, $event.expected)"
+      (deleteTest)="deleteTest($event)"
+      (simulateAll)="simulateAll($event.questionText, $event.testIds)"
+    />
+  </div>
+
+  <!-- Toast -->
+  <div *if="toastMsg" class="toast-overlay"
+    [class.badge-pass]="toastType === 'success'"
+    [class.badge-fail]="toastType === 'error'"
+  >
+    {{toastMsg}}
+  </div>
+</div>

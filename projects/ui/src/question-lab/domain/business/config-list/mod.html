@@ -1,0 +1,44 @@
+<div class="card">
+  <div class="card-header">
+    <h2>Configurations</h2>
+    <button (click)="toggleNew()">New Config</button>
+  </div>
+
+  <div *if="showNew" class="inline-form active">
+    <div class="form-row">
+      <label>Config Name</label>
+      <input type="text" [(value)]="newName" placeholder="e.g. VO Audit Questions v2" />
+    </div>
+    <div class="actions">
+      <button (click)="createConfig()">Create</button>
+      <button class="btn-secondary" (click)="resetForm()">Cancel</button>
+    </div>
+  </div>
+
+  <div *if="configs.length === 0" class="empty">
+    No configurations yet. Create one to get started.
+  </div>
+
+  <table *if="configs.length > 0">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Questions</th>
+        <th>Created</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *for="let config of configs; trackBy: config.id">
+        <td>
+          <a href="#" (click)="openConfig(config)">{{config.name}}</a>
+        </td>
+        <td>{{config.questionCount}}</td>
+        <td>{{config.createdAt}}</td>
+        <td>
+          <button class="btn-sm btn-danger" (click)="deleteConfig(config)">Delete</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>

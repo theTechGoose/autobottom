@@ -1,0 +1,23 @@
+<div class="conv-panel">
+  <div class="conv-header">
+    <h2>Messages</h2>
+  </div>
+  <div class="conv-list">
+    <div *if="filteredConversations.length === 0" class="conv-empty">
+      <span>No conversations</span>
+    </div>
+    <div *for="let conv of filteredConversations"
+      class="conv-item"
+      [class.active]="activeEmail === conv.email">
+      <div class="conv-avatar">{{conv.email[0].toUpperCase()}}</div>
+      <div class="conv-info">
+        <div class="conv-email">{{conv.email}}</div>
+        <div *if="conv.lastMessage" class="conv-preview">{{conv.lastMessage}}</div>
+      </div>
+      <div class="conv-meta">
+        <div *if="conv.lastTime" class="conv-time">{{conv.lastTime}}</div>
+        <div *if="conv.unread > 0" class="conv-unread"></div>
+      </div>
+    </div>
+  </div>
+</div>

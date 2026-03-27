@@ -1,0 +1,28 @@
+<div class="question-card">
+  <div class="question-label">Question</div>
+  <div class="question-header">{{header}}</div>
+
+  <div *if="populated" class="question-populated">{{populated}}</div>
+
+  <div *if="appealType" class="appeal-section">
+    <div class="appeal-badge">Appeal: {{appealType}}</div>
+    <div *if="appealComment" class="appeal-comment">
+      <div class="appeal-comment-label">Agent Comment</div>
+      {{appealComment}}
+    </div>
+  </div>
+
+  <div class="defense-section">
+    <div class="defense-label">Defense</div>
+    <div class="defense-text">{{defense}}</div>
+  </div>
+
+  <button class="thinking-toggle" (click)="toggleThinking()">
+    <span class="thinking-arrow" [class.thinking-arrow-open]="thinkingOpen">&#9654;</span>
+    <span>Bot reasoning</span>
+  </button>
+
+  <div *if="thinkingOpen" class="thinking-content">
+    {{thinking}}
+  </div>
+</div>

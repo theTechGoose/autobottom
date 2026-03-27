@@ -1,0 +1,24 @@
+<div class="transcript-panel">
+  <div *if="searchOpen" class="search-overlay">
+    <input
+      type="text"
+      placeholder="Search transcript..."
+      [(value)]="searchQuery"
+      class="search-input"
+    />
+    <span class="search-count">
+      {{searchMatchCount}} found
+    </span>
+    <button class="search-close" (click)="closeSearch()">&times;</button>
+  </div>
+
+  <div class="transcript-body">
+    <div *for="let line of lines" class="t-line"
+         [class.t-agent]="line.speaker === 'AGENT'"
+         [class.t-customer]="line.speaker === 'CUSTOMER'"
+         [class.t-system]="line.speaker === 'SYSTEM'">
+      <span *if="line.speaker" class="t-speaker">{{line.speaker}}</span>
+      {{line.text}}
+    </div>
+  </div>
+</div>

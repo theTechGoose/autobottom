@@ -1,0 +1,28 @@
+<div class="game-ui">
+  <div *if="streakBannerVisible" class="streak-banner" [class]="streakBannerCls">
+    {{streakBannerText}}
+  </div>
+
+  <div class="game-bar">
+    <div class="level-badge">
+      <span class="level-label">Lv.{{level}}</span>
+      <div class="xp-bar-track">
+        <div class="xp-bar-fill" [style.width.%]="xpBarPct"></div>
+      </div>
+      <span class="xp-display">{{xpDisplay}}</span>
+    </div>
+
+    <ComboMeter [combo]="combo" [timeBank]="timeBankVal" />
+
+    <div class="progress-section">
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" [style.width.%]="progressPct"></div>
+      </div>
+      <span class="progress-label">{{progressLabel}}</span>
+    </div>
+
+    <div *if="streakDays > 0" class="streak-days">
+      {{streakDays}}d streak
+    </div>
+  </div>
+</div>

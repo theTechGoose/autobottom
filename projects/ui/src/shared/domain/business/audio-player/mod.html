@@ -1,0 +1,19 @@
+<div class="audio-player">
+  <audio #audioRef [src]="src" preload="none"
+    (play)="playing = true"
+    (pause)="playing = false"
+    (ended)="playing = false"
+    (timeupdate)="onTimeUpdate(audioRef.currentTime, audioRef.duration || 0)">
+  </audio>
+
+  <button class="play-btn" (click)="toggle()">
+    <span *if="playing" class="pause-icon">&#9646;&#9646;</span>
+    <span *if="!playing" class="play-icon">&#9654;</span>
+  </button>
+
+  <div class="progress-track">
+    <div class="progress-fill" [style.width.%]="fillPct"></div>
+  </div>
+
+  <span class="time-display">{{currentTime}}</span>
+</div>

@@ -1,0 +1,20 @@
+<div class="card">
+  <div class="logo">Auto-Bot</div>
+  <p class="sub">Sign in to your account</p>
+  <form (submit)="handleSubmit($event)">
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" name="email" placeholder="you@example.com" required />
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" name="password" required />
+    </div>
+    <button class="btn full" type="submit" [disabled]="loading">
+      <span *if="loading">Signing in...</span>
+      <span *if="!loading">Sign In</span>
+    </button>
+    <p *if="error" class="error-msg">{{error}}</p>
+  </form>
+  <p class="link">Need an account? <a href="/register">Create organization</a></p>
+</div>

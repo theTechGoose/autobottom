@@ -192,7 +192,7 @@ export function configListPage(configs: QLConfig[]): string {
     <tr>
       <td><a href="/question-lab/config/${c.id}">${esc(c.name)}</a></td>
       <td><span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${typeBg};color:${typeColor};border:1px solid ${typeBorder};">${c.type ?? "internal"}</span></td>
-      <td><span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${activeBg};color:${activeColor};border:1px solid ${activeBorder};">${c.active ? "active" : "inactive"}</span></td>
+      <td><button onclick="toggleActive('${c.id}',${!c.active},this)" style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${activeBg};color:${activeColor};border:1px solid ${activeBorder};cursor:pointer;transition:all 0.15s;" title="Click to toggle">${c.active ? "active" : "inactive"}</button></td>
       <td style="color:var(--muted);">${c.questionIds.length} question${c.questionIds.length === 1 ? "" : "s"}</td>
       <td style="color:var(--muted);font-size:13px;">${new Date(c.createdAt).toLocaleDateString("en-US", { timeZone: "America/New_York" })}</td>
       <td style="text-align:right;"><button class="btn-sm btn-danger" onclick="deleteConfig('${c.id}')">Delete</button></td>
@@ -315,6 +315,16 @@ export function configListPage(configs: QLConfig[]): string {
         if (!name) return;
         await fetch('/question-lab/api/configs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, type: newConfigType }) });
         location.reload();
+      }
+      async function toggleActive(id, newState, btn) {
+        btn.disabled = true;
+        await fetch('/question-lab/api/configs/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: newState }) });
+        btn.textContent = newState ? 'active' : 'inactive';
+        btn.style.background = newState ? 'var(--green-dim)' : 'rgba(139,148,158,0.1)';
+        btn.style.color = newState ? 'var(--green)' : 'var(--muted)';
+        btn.style.borderColor = newState ? 'rgba(63,185,80,0.3)' : 'rgba(139,148,158,0.2)';
+        btn.setAttribute('onclick', "toggleActive('" + id + "'," + !newState + ",this)");
+        btn.disabled = false;
       }
       async function deleteConfig(id) {
         if (!confirm('Delete this config and all its questions?')) return;

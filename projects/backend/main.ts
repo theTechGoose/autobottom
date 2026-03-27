@@ -84,7 +84,7 @@ import { STORE_CATALOG, PREFAB_EVENTS, rarityFromPrice } from "./src/domain/busi
 import type { StoreItem } from "./src/domain/business/gamification/badges/mod.ts";
 
 // KV factory
-import { kvFactory } from "./kv-factory.ts";
+import { kvFactory } from "./src/domain/data/kv/factory.ts";
 
 // -- Helpers --
 

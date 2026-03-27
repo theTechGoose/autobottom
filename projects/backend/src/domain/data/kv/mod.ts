@@ -2,7 +2,7 @@
 
 import { orgKey } from "./org.ts";
 import type { OrgId } from "./org.ts";
-import { kvFactory } from "../../../../kv-factory.ts";
+import { kvFactory } from "./factory.ts";
 
 async function kv(): Promise<Deno.Kv> {
   return await kvFactory();

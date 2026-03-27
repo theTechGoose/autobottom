@@ -9,7 +9,7 @@ const MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct";
 
 // -- Token tracking --
 
-import { kvFactory } from "../../../../kv-factory.ts";
+import { kvFactory } from "../kv/factory.ts";
 
 async function tokenKv(): Promise<Deno.Kv> {
   return await kvFactory();

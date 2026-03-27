@@ -4,7 +4,7 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { setKvInstance, resetKvInstance } from "../../../../kv-factory.ts";
+import { setKvInstance, resetKvInstance } from "../../data/kv/factory.ts";
 import { orgKey } from "../../data/kv/org.ts";
 import { saveFinding } from "../../data/kv/mod.ts";
 import { mockFetch, restoreFetch } from "../../../../test-utils/mod.ts";

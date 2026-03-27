@@ -12,7 +12,7 @@
 import { assertEquals } from "@std/assert";
 import { mockFetch, mockFetchJson, restoreFetch } from "../../../../../test-utils/mod.ts";
 import { freshKv } from "../../../../../test-utils/mod.ts";
-import { setKvInstance, resetKvInstance } from "../../../../../kv-factory.ts";
+import { setKvInstance, resetKvInstance } from "../../../data/kv/factory.ts";
 import { saveFinding } from "../../../data/kv/mod.ts";
 import { stepFinalize } from "./mod.ts";
 

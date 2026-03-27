@@ -1,7 +1,7 @@
 /** Integration tests for auth/kv.ts using an in-memory KV instance. */
 
 import { assertEquals, assertNotEquals } from "@std/assert";
-import { setKvInstance, resetKvInstance } from "../../../../kv-factory.ts";
+import { setKvInstance, resetKvInstance } from "../../data/kv/factory.ts";
 import {
   createOrg,
   getOrg,

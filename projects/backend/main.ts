@@ -11,7 +11,7 @@ import {
   handleAppealDifferentRecording, handleAppealUploadRecording,
 } from "./src/entrypoints/api.ts";
 import { getTokenUsage } from "./src/domain/data/groq/mod.ts";
-import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./swagger.ts";
+import { getOpenApiSpec, getSwaggerHtml, getDocsIndexHtml } from "./src/entrypoints/swagger.ts";
 import { enqueueStep } from "./src/domain/data/queue/mod.ts";
 import {
   trackError, trackRetry, trackCompleted, getStats, getPipelineConfig, setPipelineConfig,
@@ -33,9 +33,9 @@ import {
 import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot } from "./src/domain/data/kv/mod.ts";
 import { S3Ref } from "./src/domain/data/s3/mod.ts";
 import { sendEmail } from "./src/domain/data/postmark/mod.ts";
-import { env } from "./env.ts";
-import { orgKey } from "./lib/org.ts";
-import type { OrgId } from "./lib/org.ts";
+import { env } from "./src/env.ts";
+import { orgKey } from "./src/domain/data/kv/org.ts";
+import type { OrgId } from "./src/domain/data/kv/org.ts";
 
 // Unified auth
 import {
@@ -84,7 +84,7 @@ import { STORE_CATALOG, PREFAB_EVENTS, rarityFromPrice } from "./src/domain/busi
 import type { StoreItem } from "./src/domain/business/gamification/badges/mod.ts";
 
 // KV factory
-import { kvFactory } from "./kv-factory.ts";
+import { kvFactory } from "./src/domain/data/kv/factory.ts";
 
 // -- Helpers --
 

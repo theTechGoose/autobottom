@@ -1,13 +1,13 @@
 /** Review-specific KV operations: queue, locks, settings, completion. All keys are org-scoped. */
 
-import { orgKey } from "../../../../lib/org.ts";
-import type { OrgId } from "../../../../lib/org.ts";
+import { orgKey } from "../../data/kv/org.ts";
+import type { OrgId } from "../../data/kv/org.ts";
 import { getFinding, getAllAnswersForFinding, getTranscript, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../../data/kv/mod.ts";
 import { populateManagerQueue } from "../manager/mod.ts";
 import { checkBadges, BADGE_CATALOG } from "../../business/gamification/badges/mod.ts";
 import type { BadgeDef } from "../../business/gamification/badges/mod.ts";
 
-import { kvFactory } from "../../../../kv-factory.ts";
+import { kvFactory } from "../../data/kv/factory.ts";
 
 async function kv(): Promise<Deno.Kv> {
   return await kvFactory();

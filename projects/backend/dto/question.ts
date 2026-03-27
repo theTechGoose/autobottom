@@ -42,5 +42,6 @@ export const AnsweredQuestionSchema = QuestionSchema.extend({
 
 export type IQuestionSeed = z.infer<typeof QuestionSeedSchema>;
 export type ILlmQuestionAnswer = z.infer<typeof LlmQuestionAnswerSchema>;
+export type IQuestionAstNode = z.infer<typeof QuestionAstNodeSchema>;
 export type IQuestion = z.infer<typeof QuestionSchema>;
 export type IAnsweredQuestion = z.infer<typeof AnsweredQuestionSchema>;

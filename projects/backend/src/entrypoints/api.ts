@@ -4,11 +4,12 @@ import { saveFinding, saveJob, getFinding, getAllAnswersForFinding, getStats, fi
 import { enqueueStep } from "../domain/data/queue/mod.ts";
 import { getDateLegByRid } from "../domain/data/quickbase/mod.ts";
 import { S3Ref } from "../domain/data/s3/mod.ts";
-import { env } from "../../env.ts";
+import { env } from "../env.ts";
 import { populateJudgeQueue, saveAppeal, getAppeal } from "../domain/coordinators/judge/mod.ts";
-import type { AuditFinding, AuditJob } from "../../types/mod.ts";
-import { createJob } from "../../types/mod.ts";
-import type { OrgId } from "../../lib/org.ts";
+import type { AuditFinding } from "../../dto/audit-finding.ts";
+import type { AuditJob } from "../../dto/audit-job.ts";
+import { createJob } from "../domain/business/audit-job/mod.ts";
+import type { OrgId } from "../domain/data/kv/org.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

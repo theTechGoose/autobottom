@@ -1,0 +1,31 @@
+<div>
+  <div class="tabs">
+    <button class="tab" [class.active]="tab === 'settings'" (click)="tab = 'settings'">
+      Streak &amp; Combo
+    </button>
+    <button class="tab" [class.active]="tab === 'packs'" (click)="tab = 'packs'">
+      Sound Packs
+    </button>
+  </div>
+
+  <div class="content">
+    <div *if="tab === 'settings'">
+      <GamificationSettingsTab
+        [threshold]="threshold"
+        [comboTimeoutMs]="comboTimeoutMs"
+        [gsEnabled]="gsEnabled"
+        [activePack]="activePack"
+        [role]="role"
+        [packOptions]="packOptions" />
+    </div>
+
+    <div *if="tab === 'packs'">
+      <div class="packs-layout">
+        <PackList [packs]="packs" [selectedId]="selectedPackId" />
+        <PackEditor [packId]="selectedPackId" [packName]="selectedPackName">
+          <SlotUploadRow *for="let slot of slots" [slot]="slot" [url]="slotUrl(slot)" />
+        </PackEditor>
+      </div>
+    </div>
+  </div>
+</div>

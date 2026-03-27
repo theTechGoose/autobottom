@@ -1,0 +1,14 @@
+<div class="pack-editor">
+  <input class="pack-name-input"
+         [(value)]="packName"
+         placeholder="Pack name..." />
+
+  <slot></slot>
+
+  <div class="editor-actions">
+    <button class="btn btn-primary btn-sm" (click)="saveName()">
+      {{saving ? 'Saving...' : 'Save'}}
+    </button>
+    <button class="btn btn-danger btn-sm">Delete Pack</button>
+  </div>
+</div>

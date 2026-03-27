@@ -1,0 +1,60 @@
+<div *if="open" class="modal-overlay open">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>{{mode === 'create' ? 'New Item' : 'Edit Item'}}</h3>
+      <button class="modal-close" (click)="close()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-field">
+          <label>ID</label>
+          <input type="text" [value]="id" readonly placeholder="Auto-generated from name" />
+        </div>
+        <div class="form-field">
+          <label>Name</label>
+          <input type="text" [(value)]="name" placeholder="Item name" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Type</label>
+          <select [(value)]="type">
+            <option value="title">Title</option>
+            <option value="avatar_frame">Frame</option>
+            <option value="name_color">Color</option>
+            <option value="animation">Animation</option>
+            <option value="theme">Theme</option>
+            <option value="flair">Flair</option>
+            <option value="font">Font</option>
+            <option value="bubble_font">Bubble Font</option>
+            <option value="bubble_color">Bubble Color</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Price</label>
+          <input type="number" [(value)]="price" min="0" placeholder="0" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Icon</label>
+          <input type="text" [(value)]="icon" placeholder="Emoji or text icon" />
+        </div>
+        <div class="form-field">
+          <label>Preview (CSS value)</label>
+          <input type="text" [(value)]="preview" placeholder="e.g. #ff0 or linear-gradient(...)" />
+        </div>
+      </div>
+      <div class="form-field">
+        <label>Description</label>
+        <textarea [(value)]="description" placeholder="Brief description of this item"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal btn-cancel" (click)="close()">Cancel</button>
+      <button class="btn-modal btn-save" (click)="save()" [disabled]="saving">
+        {{saving ? 'Saving...' : 'Save'}}
+      </button>
+    </div>
+  </div>
+</div>

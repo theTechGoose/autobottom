@@ -1,0 +1,10 @@
+<div class="store-sidebar">
+  <div class="ss-heading">Categories</div>
+  <button *for="let cat of categories; trackBy: cat.key"
+          class="ss-item"
+          [class.active]="activeCategory === cat.key">
+    <span class="ss-icon"></span>
+    {{cat.label}}
+    <span class="ss-count">{{cat.count}}</span>
+  </button>
+</div>

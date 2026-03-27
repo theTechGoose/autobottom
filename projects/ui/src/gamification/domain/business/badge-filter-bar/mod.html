@@ -1,0 +1,7 @@
+<div class="filter-bar">
+  <div *for="let f of filters"
+       class="filter-tab"
+       [class.active]="activeFilter === f">
+    {{f}}
+  </div>
+</div>

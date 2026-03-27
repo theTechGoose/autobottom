@@ -1,0 +1,12 @@
+<div class="main">
+  <div class="header">
+    <h2>Store Catalog</h2>
+    <button class="btn-new-item" (click)="openModal()">+ New Item</button>
+  </div>
+
+  <BadgeFilterBar [activeFilter]="activeFilter" [filters]="filterList" />
+
+  <BadgeItemTable [items]="filteredItems" />
+
+  <BadgeItemModal [open]="modalOpen" [mode]="modalMode" />
+</div>

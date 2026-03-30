@@ -2188,8 +2188,10 @@ async function handleBackfillPartnerDimensions(req: Request): Promise<Response> 
 async function handleBackfillAuditIndex(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
-  const result = await backfillAuditDoneIndex(auth.orgId);
-  console.log(`[ADMIN] Backfill audit index by ${auth.email}: scanned=${result.scanned} updated=${result.updated}`);
+  const body = await req.json().catch(() => ({}));
+  const cursor = typeof body.cursor === "string" ? body.cursor : undefined;
+  const result = await backfillAuditDoneIndex(auth.orgId, cursor);
+  console.log(`[ADMIN] Backfill audit index by ${auth.email}: scanned=${result.scanned} updated=${result.updated} done=${result.done}`);
   return json({ ok: true, ...result });
 }
 

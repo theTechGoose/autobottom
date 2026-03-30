@@ -12,7 +12,7 @@ import {
 } from "../domain/data/kv/mod.ts";
 import type { GamificationSettings, SoundPackMeta, SoundSlot } from "../domain/data/kv/mod.ts";
 import { S3Ref } from "../domain/data/s3/mod.ts";
-import { env } from "../env.ts";
+import { env } from "../domain/data/env/mod.ts";
 
 // -- Judge Gamification --
 

@@ -3,7 +3,7 @@
 import { enqueueStep } from "../domain/data/queue/mod.ts";
 import { trackError, trackRetry, trackCompleted, getPipelineConfig } from "../domain/data/kv/mod.ts";
 import { sendEmail } from "../domain/data/postmark/mod.ts";
-import { env } from "../env.ts";
+import { env } from "../domain/data/env/mod.ts";
 import { json } from "./helpers.ts";
 import type { Handler } from "./helpers.ts";
 

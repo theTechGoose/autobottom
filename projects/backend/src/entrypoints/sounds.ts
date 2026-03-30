@@ -1,7 +1,7 @@
 /** Sound file serving handler — serves from S3 or local fallback. */
 
 import { S3Ref } from "../domain/data/s3/mod.ts";
-import { env } from "../env.ts";
+import { env } from "../domain/data/env/mod.ts";
 import { json } from "./helpers.ts";
 
 /**

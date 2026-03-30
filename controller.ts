@@ -1112,13 +1112,13 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
           <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:6px;">What would you like to do?</div>
           <div style="font-size:12px;color:#6e7681;margin-bottom:20px;">Choose how you'd like to address this audit result.</div>
           <div style="display:flex;gap:12px;margin-bottom:20px;">
-            <button id="choice-appeal-btn" onclick="chooseAppeal()" style="flex:1;text-align:left;padding:18px;border-radius:10px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;cursor:pointer;transition:border-color 0.15s;" onmouseover="this.style.borderColor='#58a6ff'" onmouseout="this.style.borderColor='#30363d'">
-              <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:#58a6ff;">Appeal Decision</div>
-              <div style="font-size:11px;color:#6e7681;line-height:1.5;">Submit for a human to review the flagged questions</div>
-            </button>
             <button id="choice-reaudit-btn" onclick="chooseReAudit()" style="flex:1;text-align:left;padding:18px;border-radius:10px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;cursor:pointer;transition:border-color 0.15s;" onmouseover="this.style.borderColor='var(--teal)'" onmouseout="this.style.borderColor='#30363d'">
               <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:var(--teal);">Add 2nd Genie / Different Recording</div>
               <div style="font-size:11px;color:#6e7681;line-height:1.5;">Run the audit again using a different or additional recording</div>
+            </button>
+            <button id="choice-appeal-btn" onclick="chooseAppeal()" style="flex:1;text-align:left;padding:18px;border-radius:10px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;cursor:pointer;transition:border-color 0.15s;" onmouseover="this.style.borderColor='#58a6ff'" onmouseout="this.style.borderColor='#30363d'">
+              <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:#58a6ff;">Appeal Decision</div>
+              <div style="font-size:11px;color:#6e7681;line-height:1.5;">Submit for a human to review the flagged questions</div>
             </button>
           </div>
           <div style="text-align:center;">

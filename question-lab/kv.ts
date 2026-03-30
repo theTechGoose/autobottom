@@ -88,12 +88,8 @@ async function setConfigIndex(orgId: OrgId, ids: string[]) {
 
 export async function listConfigs(orgId: OrgId): Promise<QLConfig[]> {
   const ids = await getConfigIndex(orgId);
-  const results: QLConfig[] = [];
-  for (const id of ids) {
-    const cfg = await getConfig(orgId, id);
-    if (cfg) results.push(cfg);
-  }
-  return results;
+  const results = await Promise.all(ids.map((id) => getConfig(orgId, id)));
+  return results.filter((cfg): cfg is QLConfig => cfg !== null);
 }
 
 export async function getConfig(orgId: OrgId, id: string): Promise<QLConfig | null> {
@@ -229,20 +225,17 @@ export async function getQuestion(orgId: OrgId, id: string): Promise<QLQuestion 
 export async function getQuestionsForConfig(orgId: OrgId, configId: string): Promise<QLQuestion[]> {
   const config = await getConfig(orgId, configId);
   if (!config) return [];
-  const results: QLQuestion[] = [];
-  for (const id of config.questionIds) {
-    const q = await getQuestion(orgId, id);
-    if (q) results.push(q);
-  }
-  return results;
+  const results = await Promise.all(config.questionIds.map((id) => getQuestion(orgId, id)));
+  return results.filter((q): q is QLQuestion => q !== null);
 }
 
 /** Get all unique question names across all configs (for bulk egregious UI). */
 export async function getAllQuestionNames(orgId: OrgId): Promise<Array<{ name: string; count: number; egregious: boolean }>> {
   const configs = await listConfigs(orgId);
+  // Parallel fetch all configs' questions at once
+  const allQuestions = await Promise.all(configs.map((cfg) => getQuestionsForConfig(orgId, cfg.id)));
   const nameMap = new Map<string, { count: number; egregious: boolean }>();
-  for (const cfg of configs) {
-    const questions = await getQuestionsForConfig(orgId, cfg.id);
+  for (const questions of allQuestions) {
     for (const q of questions) {
       const existing = nameMap.get(q.name);
       if (existing) {
@@ -262,18 +255,19 @@ export async function getAllQuestionNames(orgId: OrgId): Promise<Array<{ name: s
 export async function bulkSetEgregious(orgId: OrgId, questionName: string, egregious: boolean): Promise<number> {
   const db = await kv();
   const configs = await listConfigs(orgId);
-  let updated = 0;
-  for (const cfg of configs) {
-    const questions = await getQuestionsForConfig(orgId, cfg.id);
+  const allQuestions = await Promise.all(configs.map((cfg) => getQuestionsForConfig(orgId, cfg.id)));
+  const toUpdate: QLQuestion[] = [];
+  for (const questions of allQuestions) {
     for (const q of questions) {
       if (q.name === questionName && q.egregious !== egregious) {
         q.egregious = egregious;
-        await db.set(orgKey(orgId, "qlab", "question", q.id), q);
-        updated++;
+        toUpdate.push(q);
       }
     }
   }
-  return updated;
+  // Batch write in parallel
+  await Promise.all(toUpdate.map((q) => db.set(orgKey(orgId, "qlab", "question", q.id), q)));
+  return toUpdate.length;
 }
 
 export async function createQuestion(orgId: OrgId, configId: string, name: string, text: string): Promise<QLQuestion | null> {

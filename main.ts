@@ -31,7 +31,7 @@ import {
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
   getAuditDimensions, saveAuditDimensions,
-  getPartnerDimensions, backfillPartnerDimensions,
+  getPartnerDimensions, backfillPartnerDimensions, backfillAuditDoneIndex,
   getAllAnswersForFinding,
   findAuditsByRecordId, queryAuditDoneIndex,
   getGamificationSettings, saveGamificationSettings,
@@ -303,6 +303,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/backfill-review-scores": handleBackfillReviewScores,
   "/admin/backfill-chargeback-entries": handleBackfillChargebackEntries,
   "/admin/backfill-partner-dimensions": handleBackfillPartnerDimensions,
+  "/admin/backfill-audit-index": handleBackfillAuditIndex,
   "/admin/deduplicate-findings": handleDeduplicateFindings,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
@@ -2182,6 +2183,14 @@ async function handleBackfillPartnerDimensions(req: Request): Promise<Response> 
   const result = await backfillPartnerDimensions(auth.orgId, cursor);
   console.log(`[ADMIN] 🔧 Backfill partner dimensions by ${auth.email}: scanned=${result.scanned} saved=${result.saved} done=${result.done}`);
   return json(result);
+}
+
+async function handleBackfillAuditIndex(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const result = await backfillAuditDoneIndex(auth.orgId);
+  console.log(`[ADMIN] Backfill audit index by ${auth.email}: scanned=${result.scanned} updated=${result.updated}`);
+  return json({ ok: true, ...result });
 }
 
 // -- Admin: Chargebacks & Omissions Report --

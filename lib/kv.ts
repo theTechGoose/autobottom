@@ -981,6 +981,50 @@ export async function queryAuditDoneIndex(
   return entries;
 }
 
+const AUDIT_INDEX_BACKFILL_BATCH = 20;
+
+export async function backfillAuditDoneIndex(
+  orgId: OrgId,
+): Promise<{ scanned: number; updated: number }> {
+  const kvDb = await db();
+  const prefix = orgKey(orgId, "audit-done-idx");
+  const toUpdate: AuditDoneIndexEntry[] = [];
+
+  for await (const entry of kvDb.list<AuditDoneIndexEntry>({ prefix })) {
+    if (!entry.value) continue;
+    const e = entry.value;
+    if (e.voName !== undefined || e.owner !== undefined) continue;
+    toUpdate.push(e);
+  }
+
+  let updated = 0;
+  for (let i = 0; i < toUpdate.length; i += AUDIT_INDEX_BACKFILL_BATCH) {
+    const batch = toUpdate.slice(i, i + AUDIT_INDEX_BACKFILL_BATCH);
+    await Promise.all(batch.map(async (entry) => {
+      const finding = await getFinding(orgId, entry.findingId);
+      if (!finding) return;
+      const rec = finding.record as Record<string, unknown> | undefined;
+      const isPackage = finding.recordingIdField === "GenieNumber";
+      const rawVo = String(rec?.VoName ?? "");
+      const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim() || undefined;
+      const department = String(isPackage ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined;
+      const shift = isPackage ? undefined : String(rec?.Shift ?? "") || undefined;
+      await writeAuditDoneIndex(orgId, {
+        ...entry,
+        isPackage,
+        voName: voName || undefined,
+        owner: finding.owner as string | undefined,
+        department,
+        shift,
+        startedAt: entry.startedAt ?? (finding.startedAt as number | undefined),
+      });
+      updated++;
+    }));
+  }
+
+  return { scanned: toUpdate.length, updated };
+}
+
 // ── Email Report Preview Cache ───────────────────────────────────────────────
 
 export interface EmailReportPreview {

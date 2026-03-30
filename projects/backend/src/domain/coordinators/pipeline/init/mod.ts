@@ -3,7 +3,7 @@ import { saveFinding, getFinding, trackActive } from "../../../data/kv/mod.ts";
 import { enqueueStep } from "../../../data/queue/mod.ts";
 import { downloadRecording } from "../../../data/genie/mod.ts";
 import { S3Ref } from "../../../data/s3/mod.ts";
-import { env } from "../../../../env.ts";
+import { env } from "../../../data/env/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

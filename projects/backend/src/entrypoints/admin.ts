@@ -16,7 +16,7 @@ import type { WebhookConfig, WebhookKind, GamificationSettings } from "../domain
 import { orgKey } from "../domain/data/kv/org.ts";
 import type { OrgId } from "../domain/data/kv/org.ts";
 import { kvFactory } from "../domain/data/kv/factory.ts";
-import { env } from "../env.ts";
+import { env } from "../domain/data/env/mod.ts";
 import { getReviewStats, populateReviewQueue } from "../domain/coordinators/review/mod.ts";
 import { getAppealStats, populateJudgeQueue, saveAppeal, recordDecision as recordJudgeDecision } from "../domain/coordinators/judge/mod.ts";
 import {

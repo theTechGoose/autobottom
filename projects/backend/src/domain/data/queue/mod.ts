@@ -1,5 +1,5 @@
 /** QStash queue helper for enqueuing pipeline steps. */
-import { env } from "../../../env.ts";
+import { env } from "../env/mod.ts";
 
 const QUEUE_NAME = "audit-pipeline";
 const CLEANUP_QUEUE = "audit-cleanup";

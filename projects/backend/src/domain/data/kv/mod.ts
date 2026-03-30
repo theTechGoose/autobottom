@@ -547,7 +547,7 @@ export async function resolveGamificationSettings(
 
 // -- Custom Store Items --
 
-import type { StoreItem } from "../../business/gamification/badges/mod.ts";
+import type { StoreItem } from "../../business/gamification/store/mod.ts";
 
 export async function listCustomStoreItems(orgId: OrgId): Promise<StoreItem[]> {
   const db = await kv();
@@ -570,8 +570,10 @@ export async function deleteCustomStoreItem(orgId: OrgId, itemId: string): Promi
 
 // -- Badge + Game State --
 
-import type { EarnedBadge, BadgeCheckState, GameState, BadgeDef } from "../../business/gamification/badges/mod.ts";
-import { DEFAULT_BADGE_STATS, DEFAULT_GAME_STATE, getLevel, LEVEL_THRESHOLDS, AGENT_LEVEL_THRESHOLDS } from "../../business/gamification/badges/mod.ts";
+import type { EarnedBadge, BadgeCheckState, BadgeDef } from "../../business/gamification/badges/mod.ts";
+import { DEFAULT_BADGE_STATS } from "../../business/gamification/badges/mod.ts";
+import type { GameState } from "../../business/gamification/levels/mod.ts";
+import { DEFAULT_GAME_STATE, getLevel, LEVEL_THRESHOLDS, AGENT_LEVEL_THRESHOLDS } from "../../business/gamification/levels/mod.ts";
 
 /** Get all earned badges for a user. */
 export async function getEarnedBadges(orgId: OrgId, email: string): Promise<EarnedBadge[]> {

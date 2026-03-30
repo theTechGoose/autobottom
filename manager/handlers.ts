@@ -9,7 +9,7 @@ import {
 } from "./kv.ts";
 import { resolveEffectiveAuth, listUsers, createUser, deleteUser } from "../auth/kv.ts";
 import type { AuthContext, Role } from "../auth/kv.ts";
-import { getGameState, getEarnedBadges, emitEvent, getAllCompleted, getManagerScope } from "../lib/kv.ts";
+import { getGameState, getEarnedBadges, emitEvent, queryAuditDoneIndex, getFinding, getManagerScope } from "../lib/kv.ts";
 import { getReviewedFindingIds } from "../review/kv.ts";
 import { getManagerPage } from "./page.ts";
 import { getManagerAuditsPage } from "./audits-page.ts";
@@ -202,9 +202,58 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
   const sinceParam = url.searchParams.get("since");
   const untilParam = url.searchParams.get("until");
   const since = sinceParam ? parseInt(sinceParam, 10) : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
-  const until = untilParam ? parseInt(untilParam, 10) : undefined;
+  const until = untilParam ? parseInt(untilParam, 10) : Date.now();
 
-  const windowEntries = await getAllCompleted(auth.orgId, since);
+  const orgId = auth.orgId;
+  type AuditRow = {
+    findingId: string; ts: number; score: number; recordId?: string;
+    isPackage?: boolean; voName?: string; owner?: string; department?: string;
+    shift?: string; startedAt?: number; durationMs?: number; reason?: string;
+    reviewed?: boolean;
+  };
+  const indexEntries = await queryAuditDoneIndex(orgId, since, until);
+  const windowEntries: AuditRow[] = indexEntries
+    .map((e) => ({
+      findingId: e.findingId,
+      ts: e.completedAt,
+      score: e.score,
+      recordId: e.recordId,
+      isPackage: e.isPackage,
+      voName: e.voName,
+      owner: e.owner,
+      department: e.department,
+      shift: e.shift,
+      startedAt: e.startedAt,
+      durationMs: e.durationMs,
+      reason: e.reason,
+    }))
+    .sort((a, b) => b.ts - a.ts);
+
+  async function hydrateMissing(rows: AuditRow[]): Promise<AuditRow[]> {
+    const needsHydration = rows.filter((r) => r.voName === undefined && r.owner === undefined);
+    if (needsHydration.length === 0) return rows;
+    const findings = await Promise.all(needsHydration.map((r) => getFinding(orgId, r.findingId)));
+    const findingMap = new Map<string, Record<string, unknown>>();
+    findings.forEach((f, i) => { if (f) findingMap.set(needsHydration[i].findingId, f as Record<string, unknown>); });
+    return rows.map((r) => {
+      if (r.voName !== undefined || r.owner !== undefined) return r;
+      const f = findingMap.get(r.findingId);
+      if (!f) return r;
+      const rec = f.record as Record<string, unknown> | undefined;
+      const isPkg = f.recordingIdField === "GenieNumber";
+      const rawVo = String(rec?.VoName ?? "");
+      const vo = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+      return {
+        ...r,
+        isPackage: isPkg,
+        voName: vo || undefined,
+        owner: f.owner as string | undefined,
+        department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined,
+        shift: isPkg ? undefined : String(rec?.Shift ?? "") || undefined,
+        startedAt: f.startedAt as number | undefined,
+      };
+    });
+  }
 
   // Scope by manager's department+shift configuration; admin sees everything
   let scopedEntries = windowEntries;
@@ -242,8 +291,10 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
   const departments = [...new Set(inWindow.map((c) => c.department).filter(Boolean))].sort() as string[];
   const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / limit));
-  const pageItems = filtered.slice((page - 1) * limit, page * limit).map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
+  const pageSlice = filtered.slice((page - 1) * limit, page * limit);
+  const hydratedPage = await hydrateMissing(pageSlice);
+  const items = hydratedPage.map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
 
   console.log(`[MANAGER-AUDITS] 🔍 ${auth.email}: ${total}/${inWindow.length} scoped audits in window, page=${page}/${pages}`);
-  return json({ items: pageItems, total, pages, page, owners, shifts, departments });
+  return json({ items, total, pages, page, owners, shifts, departments });
 }

@@ -400,7 +400,7 @@ export async function trackCompleted(orgId: OrgId, findingId: string, meta?: { r
   const w = await store(WatchdogActive);
   await w.delete([findingId]);
   const c = await store(CompletedAuditStatDto);
-  await c.set([orgId, `${Date.now()}-${findingId}`], { findingId, ts: Date.now(), ...(meta ?? {}) } as any, { expireIn: DAY_MS });
+  await c.set([orgId, `${Date.now()}-${findingId}`], { findingId, ts: Date.now(), ...(meta ?? {}) } as any);
   console.log(`[TRACK-COMPLETED] ✅ ${findingId}: score=${meta?.score ?? "?"}% owner=${meta?.owner ?? "unknown"} dept=${meta?.department ?? "unknown"} type=${meta?.isPackage ? "package" : "date-leg"}`);
   // Update persistent dimensions index (fire-and-forget)
   if (meta?.department || meta?.shift) {
@@ -813,6 +813,14 @@ export interface AuditDoneIndexEntry {
   reason?: "perfect_score" | "invalid_genie" | "reviewed";
   score: number;
   recordId?: string; // QB RecordId (date-leg or package) — for dedup grouping
+  // Extended fields for audit history (populated from finalize step)
+  isPackage?: boolean;
+  voName?: string;
+  owner?: string;
+  department?: string;
+  shift?: string;
+  startedAt?: number;
+  durationMs?: number;
 }
 
 export type CriteriaField =

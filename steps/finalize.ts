@@ -165,6 +165,13 @@ export async function stepFinalize(req: Request): Promise<Response> {
       completed: isAutoComplete,
       ...(isAutoComplete ? { doneAt: completedAt, reason: reason! } : {}),
       recordId: String((finding.record as any)?.RecordId ?? "") || undefined,
+      isPackage,
+      voName,
+      owner: finding.owner,
+      department,
+      shift: isPackage ? undefined : String((finding.record as any)?.Shift ?? "") || undefined,
+      startedAt,
+      durationMs,
     });
     console.log(`[STEP-FINALIZE] ${findingId}: 📇 audit-done-idx written — completed=${isAutoComplete} reason=${reason ?? "pending-review"}`);
   } catch (err) {

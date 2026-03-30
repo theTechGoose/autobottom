@@ -33,7 +33,7 @@ import {
   getAuditDimensions, saveAuditDimensions,
   getPartnerDimensions, backfillPartnerDimensions,
   getAllAnswersForFinding,
-  findAuditsByRecordId,
+  findAuditsByRecordId, queryAuditDoneIndex,
   getGamificationSettings, saveGamificationSettings,
   getJudgeGamificationOverride, saveJudgeGamificationOverride,
   getReviewerGamificationOverride, saveReviewerGamificationOverride,
@@ -723,25 +723,70 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const owner = url.searchParams.get("owner") || "";
   const department = url.searchParams.get("department") || "";
   const shift = url.searchParams.get("shift") || "";
-  const reviewed = url.searchParams.get("reviewed") || ""; // "yes" | "no" | "auto" | ""
+  const reviewed = url.searchParams.get("reviewed") || "";
   const scoreMin = parseInt(url.searchParams.get("scoreMin") || "0", 10);
   const scoreMax = parseInt(url.searchParams.get("scoreMax") || "100", 10);
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
   const limit = Math.min(100, Math.max(10, parseInt(url.searchParams.get("limit") || "50", 10)));
-  // since/until: unix ms timestamps. Default: today at midnight.
   const sinceParam = url.searchParams.get("since");
   const untilParam = url.searchParams.get("until");
   const since = sinceParam ? parseInt(sinceParam, 10) : (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
-  const until = untilParam ? parseInt(untilParam, 10) : undefined;
+  const until = untilParam ? parseInt(untilParam, 10) : Date.now();
 
-  // getAllCompleted does an efficient reverse KV scan with early-break at `since`
-  const [windowEntries, reviewedIds] = await Promise.all([
-    getAllCompleted(auth.orgId, since),
+  // Use audit-done-idx as primary source — no TTL, has all historical data
+  const [indexEntries, reviewedIds] = await Promise.all([
+    queryAuditDoneIndex(auth.orgId, since, until),
     getReviewedFindingIds(auth.orgId),
   ]);
 
+  // Normalize index entries into the shape the frontend expects
+  type AuditRow = { findingId: string; ts: number; score: number; recordId?: string; isPackage?: boolean; voName?: string; owner?: string; department?: string; shift?: string; startedAt?: number; durationMs?: number; reason?: string; reviewed?: boolean };
+  const orgId = auth.orgId;
+  const windowEntries: AuditRow[] = indexEntries
+    .map((e: { findingId: string; completedAt: number; score: number; recordId?: string; isPackage?: boolean; voName?: string; owner?: string; department?: string; shift?: string; startedAt?: number; durationMs?: number; reason?: string }) => ({
+      findingId: e.findingId,
+      ts: e.completedAt,
+      score: e.score,
+      recordId: e.recordId,
+      isPackage: e.isPackage,
+      voName: e.voName,
+      owner: e.owner,
+      department: e.department,
+      shift: e.shift,
+      startedAt: e.startedAt,
+      durationMs: e.durationMs,
+      reason: e.reason,
+    }))
+    .sort((a: AuditRow, b: AuditRow) => b.ts - a.ts);
+
+  // Hydrate old entries missing extended fields from findings (page items only, after filtering)
+  async function hydrateMissing(rows: AuditRow[]): Promise<AuditRow[]> {
+    const needsHydration = rows.filter((r) => r.voName === undefined && r.owner === undefined);
+    if (needsHydration.length === 0) return rows;
+    const findings = await Promise.all(needsHydration.map((r) => getFinding(orgId, r.findingId)));
+    const findingMap = new Map<string, Record<string, unknown>>();
+    findings.forEach((f, i) => { if (f) findingMap.set(needsHydration[i].findingId, f as Record<string, unknown>); });
+    return rows.map((r) => {
+      if (r.voName !== undefined || r.owner !== undefined) return r;
+      const f = findingMap.get(r.findingId);
+      if (!f) return r;
+      const rec = f.record as Record<string, unknown> | undefined;
+      const isPkg = f.recordingIdField === "GenieNumber";
+      const rawVo = String(rec?.VoName ?? "");
+      const vo = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+      return {
+        ...r,
+        isPackage: isPkg,
+        voName: vo || undefined,
+        owner: f.owner as string | undefined,
+        department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined,
+        shift: isPkg ? undefined : String(rec?.Shift ?? "") || undefined,
+        startedAt: f.startedAt as number | undefined,
+      };
+    });
+  }
+
   const filtered = windowEntries.filter((c) => {
-    if (until && c.ts > until) return false;
     if (type === "date-leg" && c.isPackage) return false;
     if (type === "package" && !c.isPackage) return false;
     if (owner && (c.voName || c.owner) !== owner) return false;
@@ -755,9 +800,7 @@ async function handleAuditsData(req: Request): Promise<Response> {
     return true;
   });
 
-  // Cross-filtered dropdown options: each list filtered by the other active filters (not its own)
-  const matchesBase = (c: typeof windowEntries[0]) => {
-    if (until && c.ts > until) return false;
+  const matchesBase = (c: AuditRow) => {
     if (type === "date-leg" && c.isPackage) return false;
     if (type === "package" && !c.isPackage) return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
@@ -779,7 +822,9 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageItems = filtered.slice((page - 1) * limit, page * limit);
 
-  const items = pageItems.map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
+  // Hydrate only the current page's items (max 50) to avoid loading thousands of findings
+  const hydratedPage = await hydrateMissing(pageItems);
+  const items = hydratedPage.map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
 
   console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}, shift=${shift || "all"}`);
   return json({ items, total, pages, page, owners, departments, shifts });

@@ -22,6 +22,7 @@ const STYLES = `
     --orange: #d29922;
     --orange-dim: rgba(210,153,34,0.12);
     --radius: 10px;
+    --dim: #8b949e;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; min-height: 100vh; }
@@ -80,6 +81,12 @@ const STYLES = `
   textarea { resize: vertical; min-height: 120px; }
   .form-row { margin-bottom: 14px; }
   .form-row label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+
+  /* Question editor fields */
+  .qe-field { margin-top: 14px; }
+  .qe-label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+  .qe-input { background: var(--bg-raised); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 14px; font-family: inherit; transition: border-color 0.15s, box-shadow 0.15s; }
+  .qe-input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(56,139,253,0.1); }
 
   /* Inline expand forms */
   .inline-form { display: none; margin-top: 16px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
@@ -195,7 +202,7 @@ export function configListPage(configs: QLConfig[]): string {
       <td><button onclick="toggleActive('${c.id}',${!c.active},this)" style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${activeBg};color:${activeColor};border:1px solid ${activeBorder};cursor:pointer;transition:all 0.15s;" title="Click to toggle">${c.active ? "active" : "inactive"}</button></td>
       <td style="color:var(--muted);">${c.questionIds.length} question${c.questionIds.length === 1 ? "" : "s"}</td>
       <td style="color:var(--muted);font-size:13px;">${new Date(c.createdAt).toLocaleDateString("en-US", { timeZone: "America/New_York" })}</td>
-      <td style="text-align:right;"><button class="btn-sm btn-danger" onclick="deleteConfig('${c.id}')">Delete</button></td>
+      <td style="text-align:right;display:flex;gap:4px;justify-content:flex-end;"><button class="btn-sm btn-ghost" onclick="cloneConfig('${c.id}')" title="Clone">Clone</button><button class="btn-sm btn-danger" onclick="deleteConfig('${c.id}')">Delete</button></td>
     </tr>`;
   }).join("");
 
@@ -330,6 +337,12 @@ export function configListPage(configs: QLConfig[]): string {
         if (!confirm('Delete this config and all its questions?')) return;
         await fetch('/question-lab/api/configs/' + id, { method: 'DELETE' });
         location.reload();
+      }
+      async function cloneConfig(id) {
+        var res = await fetch('/question-lab/api/configs/' + id + '/clone', { method: 'POST' });
+        var data = await res.json();
+        if (data.id) { location.href = '/question-lab/config/' + data.id; }
+        else { alert('Clone failed: ' + (data.error || 'unknown')); }
       }
 
       // ── CSV Import ──
@@ -561,13 +574,20 @@ export function configListPage(configs: QLConfig[]): string {
 // ── Config Detail Page ───────────────────────────────────────────────
 
 export function configDetailPage(config: QLConfig, questions: QLQuestion[]): string {
-  const rows = questions.map((q) => `
+  const rows = questions.map((q) => {
+    const egColor = q.egregious ? "var(--red)" : "var(--muted)";
+    const egBg = q.egregious ? "var(--red-dim)" : "rgba(139,148,158,0.1)";
+    const egBorder = q.egregious ? "rgba(248,81,73,0.3)" : "rgba(139,148,158,0.2)";
+    const egText = q.egregious ? "egregious" : "normal";
+    return `
     <tr>
       <td><a href="/question-lab/question/${q.id}">${esc(q.name)}</a></td>
       <td style="color:var(--muted);font-size:13px;">${esc(q.text.length > 90 ? q.text.slice(0, 90) + "…" : q.text)}</td>
+      <td><button onclick="event.stopPropagation();toggleEgregious('${q.id}',${!q.egregious},this)" style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${egBg};color:${egColor};border:1px solid ${egBorder};cursor:pointer;transition:all 0.15s;" title="Click to toggle">${egText}</button></td>
       <td style="color:var(--muted);">${q.testIds.length}</td>
       <td style="text-align:right;"><button class="btn-sm btn-danger" onclick="deleteQuestion('${q.id}')">Delete</button></td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   const testRuns = config.testRuns ?? [];
   const runRows = testRuns.map((r) => `
@@ -589,6 +609,7 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
       <div style="display:flex;align-items:center;gap:10px;">
         <h1>${esc(config.name)}</h1>
         <span class="tag">Config</span>
+        <button class="btn-ghost btn-sm" onclick="cloneConfig()" title="Clone this config">Clone</button>
       </div>
     </div>
 
@@ -674,7 +695,7 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
       </div>
       ${questions.length === 0
         ? '<div class="empty">No questions yet. Add one to get started.</div>'
-        : `<table><thead><tr><th>Name</th><th>Text</th><th>Tests</th><th></th></tr></thead><tbody>${rows}</tbody></table>`}
+        : `<table><thead><tr><th>Name</th><th>Text</th><th>Egregious</th><th>Tests</th><th></th></tr></thead><tbody>${rows}</tbody></table>`}
     </div>
 
     <script>
@@ -773,6 +794,24 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
         await fetch('/question-lab/api/questions/' + id, { method: 'DELETE' });
         location.reload();
       }
+
+      async function toggleEgregious(qId, newVal, btn) {
+        btn.disabled = true;
+        await fetch('/question-lab/api/questions/' + qId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ egregious: newVal }) });
+        btn.textContent = newVal ? 'egregious' : 'normal';
+        btn.style.background = newVal ? 'var(--red-dim)' : 'rgba(139,148,158,0.1)';
+        btn.style.color = newVal ? 'var(--red)' : 'var(--muted)';
+        btn.style.borderColor = newVal ? 'rgba(248,81,73,0.3)' : 'rgba(139,148,158,0.2)';
+        btn.setAttribute('onclick', "event.stopPropagation();toggleEgregious('" + qId + "'," + !newVal + ",this)");
+        btn.disabled = false;
+      }
+
+      async function cloneConfig() {
+        var res = await fetch('/question-lab/api/configs/' + configId + '/clone', { method: 'POST' });
+        var data = await res.json();
+        if (data.id) { location.href = '/question-lab/config/' + data.id; }
+        else { alert('Clone failed: ' + (data.error || 'unknown')); }
+      }
     </script>`,
     [{ label: "Question Lab", href: "/question-lab" }, { label: config.name }]);
 }
@@ -853,6 +892,23 @@ export function questionEditorPage(question: QLQuestion, tests: QLTest[]): strin
           </div>
         </details>
       </div>
+      <div class="qe-field">
+        <label class="qe-label">Temperature <span style="color:var(--dim);font-weight:400;">(0 = deterministic, 1 = creative)</span></label>
+        <input type="number" id="q-temperature" min="0" max="1" step="0.1" class="qe-input" style="width:80px;">
+      </div>
+      <div class="qe-field">
+        <label class="qe-label">Vector Docs <span style="color:var(--dim);font-weight:400;">(RAG chunks retrieved, 1–10)</span></label>
+        <input type="number" id="q-numDocs" min="1" max="10" step="1" class="qe-input" style="width:80px;">
+      </div>
+      <div class="qe-field">
+        <label class="qe-label">Weight <span style="color:var(--dim);font-weight:400;">(bonus point cost, 1–100)</span></label>
+        <input type="number" id="q-weight" min="1" max="100" step="1" class="qe-input" style="width:80px;">
+      </div>
+      <div class="qe-field" style="display:flex;align-items:center;gap:10px;">
+        <input type="checkbox" id="q-egregious" style="width:16px;height:16px;accent-color:#f85149;">
+        <label for="q-egregious" class="qe-label" style="margin:0;">Egregious Question</label>
+        <span style="color:var(--dim);font-size:11px;">(impacts chargebacks, immune to bonus flips)</span>
+      </div>
       <div class="actions"><button onclick="saveQuestion()">Save Changes</button></div>
     </div>
 
@@ -892,6 +948,10 @@ export function questionEditorPage(question: QLQuestion, tests: QLTest[]): strin
 
     <script>
       const questionId = '${question.id}';
+      document.getElementById('q-temperature').value = ${question.temperature ?? 0.8};
+      document.getElementById('q-numDocs').value = ${question.numDocs ?? 4};
+      document.getElementById('q-weight').value = ${question.weight ?? 5};
+      document.getElementById('q-egregious').checked = ${question.egregious ?? false};
       let expectedValue = 'yes';
       function setExpected(val) {
         expectedValue = val;
@@ -904,7 +964,7 @@ export function questionEditorPage(question: QLQuestion, tests: QLTest[]): strin
         const text = document.getElementById('q-text').value.trim();
         const autoYesExp = document.getElementById('q-autoyes').value.trim();
         if (!name || !text) return;
-        await fetch('/question-lab/api/questions/' + questionId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, text, autoYesExp }) });
+        await fetch('/question-lab/api/questions/' + questionId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, text, autoYesExp, temperature: parseFloat(document.getElementById('q-temperature').value) || 0.8, numDocs: parseInt(document.getElementById('q-numDocs').value) || 4, weight: parseInt(document.getElementById('q-weight').value) || 5, egregious: document.getElementById('q-egregious').checked }) });
         location.reload();
       }
       async function restoreVersion(index) {

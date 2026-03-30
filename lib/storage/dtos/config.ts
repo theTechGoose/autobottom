@@ -47,3 +47,10 @@ export class PartnerDimensionsConfig {
   // Persistent index of partner offices and their GM emails.
   offices: Record<string, string[]> = {};
 }
+
+export class BonusPointsConfig {
+  /** Bonus points for internal (date-leg) audits. 0 = disabled. */
+  internalBonusPoints = 0;
+  /** Bonus points for partner (package) audits. 0 = disabled. */
+  partnerBonusPoints = 0;
+}

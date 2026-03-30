@@ -59,11 +59,11 @@ async function askLlmOne(
   const useFullTranscript = rawTranscript.length <= SHORT_TRANSCRIPT_THRESHOLD;
 
   /** Query vector store using a clean query (no instruction notes), falling back to raw transcript. */
-  async function getContext(q: string): Promise<string> {
+  async function getContext(q: string, numDocs?: number): Promise<string> {
     if (useFullTranscript) return rawTranscript;
     const query = toQueryText(q) || q;
     try {
-      const vectorContext = await vectorQuery(findingId, query);
+      const vectorContext = await vectorQuery(findingId, query, numDocs ?? 4);
       if (vectorContext.trim()) return vectorContext;
     } catch (err) {
       console.warn(`[STEP-ASK-ALL] ${findingId}: ⚠️ Pinecone failed for "${query.slice(0, 40)}..." — raw transcript fallback:`, err);
@@ -75,8 +75,8 @@ async function askLlmOne(
 
   // If no AST (simple question), use vector search + LLM
   if (ast.length === 0 || (ast.length === 1 && ast[0].length === 1 && !ast[0][0].flip)) {
-    const context = await getContext(question.populated);
-    const answer = await askQuestion(question.populated, context);
+    const context = await getContext(question.populated, question.numDocs);
+    const answer = await askQuestion(question.populated, context, 0, question.temperature ?? 0.8);
     await cacheAnswer(orgId, findingId, question.populated, answer);
     const answered = answerQuestion(question, answer);
     answered.snippet = context;
@@ -99,10 +99,10 @@ async function askLlmOne(
     );
     const queryNodes = transcriptNodes.length > 0 ? transcriptNodes : andNodes;
     const combinedQuery = queryNodes.map((n) => toQueryText(n.question)).filter(Boolean).join(" ");
-    const sharedContext = await getContext(combinedQuery || andNodes[0].question);
+    const sharedContext = await getContext(combinedQuery || andNodes[0].question, question.numDocs);
 
     for (const node of andNodes) {
-      const llmAnswer = await askQuestion(node.question, sharedContext);
+      const llmAnswer = await askQuestion(node.question, sharedContext, 0, question.temperature ?? 0.8);
       const boolAnswer = strToBool(llmAnswer.answer);
 
       if (boolAnswer === null) {

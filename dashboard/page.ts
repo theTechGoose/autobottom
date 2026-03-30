@@ -466,6 +466,13 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
+      <!-- Bonus Points (opens modal) -->
+      <div class="sb-link" id="bonus-points-open">
+        <div class="icon" style="background:var(--purple-bg);color:var(--purple);">${icons.trophy}</div>
+        <span class="title">Bonus Points</span>
+        <span class="arrow">${icons.chevronRight}</span>
+      </div>
+
       <!-- Gamification (standalone page) -->
       <a class="sb-link" href="/gamification" style="text-decoration:none;color:inherit;">
         <div class="icon" style="background:var(--green-bg);color:var(--green);">${icons.trophy}</div>
@@ -1160,6 +1167,27 @@ table { width: 100%; border-collapse: collapse; }
 
     <div class="modal-actions" style="margin-top:12px;" id="ob-offices-actions">
       <button class="sf-btn secondary" id="office-bypass-cancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bonus Points Modal -->
+<div class="modal-overlay" id="bonus-points-modal">
+  <div class="modal" style="width:440px;">
+    <div class="modal-title">Bonus Points</div>
+    <div class="modal-sub">Configure bonus points that automatically flip the first eligible failed question(s) to pass. Egregious questions are immune.</div>
+    <div class="sf" style="margin-bottom:14px;">
+      <label class="sf-label">Internal (Date-Leg)</label>
+      <input type="number" class="sf-input num" id="bp-internal" min="0" value="0">
+    </div>
+    <div class="sf" style="margin-bottom:14px;">
+      <label class="sf-label">Partner (Package)</label>
+      <input type="number" class="sf-input num" id="bp-partner" min="0" value="0">
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);line-height:1.5;margin-bottom:4px;">Set to 0 to disable. Points are consumed by question weight (default 5 per question).</div>
+    <div class="modal-actions">
+      <button class="sf-btn secondary" id="bonus-points-cancel">Cancel</button>
+      <button class="sf-btn primary" id="bonus-points-save">Save</button>
     </div>
   </div>
 </div>
@@ -5184,6 +5212,34 @@ table { width: 100%; border-collapse: collapse; }
         .finally(function() { btn.disabled = false; btn.textContent = 'Save Bypass'; });
     });
   })();
+
+  // --- Bonus Points ---
+  document.getElementById('bonus-points-open').addEventListener('click', function() {
+    openModal('bonus-points-modal');
+    fetch('/admin/bonus-points-config').then(function(r) { return r.json(); }).then(function(d) {
+      document.getElementById('bp-internal').value = d.internalBonusPoints || 0;
+      document.getElementById('bp-partner').value = d.partnerBonusPoints || 0;
+    });
+  });
+  document.getElementById('bonus-points-cancel').addEventListener('click', function() { closeModal('bonus-points-modal'); });
+  backdropClose('bonus-points-modal');
+  document.getElementById('bonus-points-save').addEventListener('click', function() {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Saving...';
+    fetch('/admin/bonus-points-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        internalBonusPoints: parseInt(document.getElementById('bp-internal').value) || 0,
+        partnerBonusPoints: parseInt(document.getElementById('bp-partner').value) || 0,
+      }),
+    }).then(function(r) { return r.json(); }).then(function() {
+      toast('Bonus points saved', 'success');
+      closeModal('bonus-points-modal');
+    }).catch(function() { toast('Save failed', 'error'); }).finally(function() {
+      btn.disabled = false; btn.textContent = 'Save';
+    });
+  });
 
 })();
 </script>

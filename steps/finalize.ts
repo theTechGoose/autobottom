@@ -1,5 +1,5 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, getOfficeBypassConfig, saveWireDeductionEntry, updatePartnerDimensions } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, getOfficeBypassConfig, saveWireDeductionEntry, updatePartnerDimensions, getBonusPointsConfig } from "../lib/kv.ts";
 import { enqueueCleanup } from "../lib/queue.ts";
 
 import { generateFeedback } from "../providers/groq.ts";
@@ -103,6 +103,36 @@ export async function stepFinalize(req: Request): Promise<Response> {
   const startedAt = (finding as Record<string, any>).startedAt as number | undefined;
   const durationMs = startedAt ? completedAt - startedAt : undefined;
   const qs = finding.answeredQuestions as any[] | undefined;
+
+  // Bonus points: auto-flip eligible "No" answers before scoring (Question Lab audits only)
+  if (!isInvalid && qs?.length) {
+    try {
+      const bonusCfg = await getBonusPointsConfig(orgId);
+      const isPackageBp = finding.recordingIdField === "GenieNumber";
+      const bonusBudget = isPackageBp ? bonusCfg.partnerBonusPoints : bonusCfg.internalBonusPoints;
+      if (bonusBudget > 0) {
+        let remaining = bonusBudget;
+        let flipped = 0;
+        for (const q of qs) {
+          if (q.answer !== "No") continue;
+          if (q.egregious) continue;
+          const weight = q.weight ?? 5;
+          if (remaining >= weight) {
+            q.answer = "Yes";
+            q.bonusFlipped = true;
+            remaining -= weight;
+            flipped++;
+          }
+        }
+        if (flipped > 0) {
+          console.log(`[STEP-FINALIZE] ${findingId}: 🎁 Bonus flipped ${flipped} question(s) (budget=${bonusBudget}, remaining=${remaining})`);
+        }
+      }
+    } catch (err) {
+      console.error(`[STEP-FINALIZE] ${findingId}: ⚠️ Bonus points check failed:`, err);
+    }
+  }
+
   const score = isInvalid ? 0 : (qs?.length ? Math.round((qs.filter((q: any) => q.answer === "Yes").length / qs.length) * 100) : undefined);
   finding.findingStatus = "finished";
   (finding as Record<string, any>).completedAt = completedAt;
@@ -188,12 +218,15 @@ export async function stepFinalize(req: Request): Promise<Response> {
         await deleteChargebackEntry(orgId, findingId);
         console.log(`[STEP-FINALIZE] ${findingId}: 🗑️ chargebackEntry deleted — re-audit passed`);
       } else {
-        const failedQHeaders = isInvalid && !(qs?.length)
-          ? ["Invalid Genie / No Recording"]
-          : (qs as IAnsweredQuestion[] ?? [])
+        const failedQs = isInvalid && !(qs?.length)
+          ? [{ header: "Invalid Genie / No Recording", egregious: false }]
+          : (qs as (IAnsweredQuestion & { egregious?: boolean })[] ?? [])
               .filter((q) => q.answer === "No")
-              .map((q) => q.header)
-              .filter(Boolean);
+              .map((q) => ({ header: q.header, egregious: !!q.egregious }))
+              .filter((q) => q.header);
+        const failedQHeaders = failedQs.map((q) => q.header);
+        const egregiousHeaders = failedQs.filter((q) => q.egregious).map((q) => q.header);
+        const omissionHeaders = failedQs.filter((q) => !q.egregious).map((q) => q.header);
         if (failedQHeaders.length) {
           await saveChargebackEntry(orgId, {
             findingId,
@@ -204,8 +237,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
             recordId: String(rec.RecordId ?? ""),
             score: score ?? 0,
             failedQHeaders,
+            egregiousHeaders,
+            omissionHeaders,
           });
-          console.log(`[STEP-FINALIZE] ${findingId}: 💰 chargebackEntry saved — ${failedQHeaders.length} failed Q(s)${isInvalid ? " (invalid genie)" : ""}`);
+          console.log(`[STEP-FINALIZE] ${findingId}: 💰 chargebackEntry saved — ${egregiousHeaders.length} egregious, ${omissionHeaders.length} omissions${isInvalid ? " (invalid genie)" : ""}`);
         }
       }
     } catch (err) {

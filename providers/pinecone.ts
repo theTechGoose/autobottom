@@ -141,6 +141,7 @@ export async function upload(findingId: string, text: string) {
 export async function query(
   findingId: string,
   question: string,
+  numDocs = 4,
 ): Promise<string> {
   const host = await getPineconeHost();
   const { key } = PINECONE_HOST();
@@ -155,7 +156,7 @@ export async function query(
     },
     body: JSON.stringify({
       vector: queryVector,
-      topK: 4,
+      topK: numDocs,
       namespace: findingId,
       includeMetadata: true,
     }),

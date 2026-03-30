@@ -98,6 +98,31 @@ export async function handleDeleteConfig(req: Request): Promise<Response> {
   return json({ ok: true });
 }
 
+export async function handleCloneConfig(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const parts = new URL(req.url).pathname.split("/");
+  const id = parts[parts.length - 2]; // .../configs/:id/clone
+  const config = await getConfig(auth.orgId, id);
+  if (!config) return json({ error: "not found" }, 404);
+  const questions = await getQuestionsForConfig(auth.orgId, id);
+  const result = await bulkImportConfig(
+    auth.orgId,
+    `Copy of ${config.name}`,
+    config.type,
+    questions.map((q) => ({
+      name: q.name,
+      text: q.text,
+      autoYesExp: q.autoYesExp,
+      temperature: q.temperature,
+      numDocs: q.numDocs,
+      egregious: q.egregious,
+      weight: q.weight,
+    })),
+  );
+  return json({ ok: true, configId: result.configId, name: `Copy of ${config.name}` });
+}
+
 // ── Question API ─────────────────────────────────────────────────────
 
 export async function handleGetQuestion(req: Request): Promise<Response> {
@@ -406,6 +431,7 @@ const routes = [
   route("POST", "/question-lab/api/configs", handleCreateConfig),
   route("PUT", "/question-lab/api/configs/:id", handleUpdateConfig),
   route("DELETE", "/question-lab/api/configs/:id", handleDeleteConfig),
+  route("POST", "/question-lab/api/configs/:id/clone", handleCloneConfig),
 
   // Question API
   route("GET", "/question-lab/api/questions/:id", handleGetQuestion),

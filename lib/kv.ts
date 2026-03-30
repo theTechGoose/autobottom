@@ -18,6 +18,7 @@ import {
   ManagerScopeConfig as ManagerScopeConfigDto,
   AuditDimensionsConfig as AuditDimensionsConfigDto,
   PartnerDimensionsConfig as PartnerDimensionsConfigDto,
+  BonusPointsConfig as BonusPointsConfigDto,
 } from "./storage/dtos/config.ts";
 import {
   EmailReportConfig as EmailReportConfigDto, EmailTemplate as EmailTemplateDto,
@@ -246,6 +247,8 @@ export interface ChargebackEntry {
   recordId: string;
   score: number;
   failedQHeaders: string[];
+  egregiousHeaders?: string[];
+  omissionHeaders?: string[];
 }
 
 export async function saveChargebackEntry(orgId: OrgId, entry: ChargebackEntry): Promise<void> {
@@ -1226,6 +1229,26 @@ export async function getPartnerDimensions(orgId: OrgId): Promise<PartnerDimensi
 export async function savePartnerDimensions(orgId: OrgId, dims: PartnerDimensions): Promise<void> {
   const s = await store(PartnerDimensionsConfigDto);
   await s.set([orgId], dims as any);
+}
+
+// ── Bonus Points Config ──────────────────────────────────────────────────────
+
+export interface BonusPointsConfig {
+  internalBonusPoints: number;
+  partnerBonusPoints: number;
+}
+
+const DEFAULT_BONUS_POINTS: BonusPointsConfig = { internalBonusPoints: 0, partnerBonusPoints: 0 };
+
+export async function getBonusPointsConfig(orgId: OrgId): Promise<BonusPointsConfig> {
+  const s = await store(BonusPointsConfigDto);
+  const v = await s.get([orgId]);
+  return (v as unknown as BonusPointsConfig) ?? { ...DEFAULT_BONUS_POINTS };
+}
+
+export async function saveBonusPointsConfig(orgId: OrgId, config: BonusPointsConfig): Promise<void> {
+  const s = await store(BonusPointsConfigDto);
+  await s.set([orgId], config as any);
 }
 
 export async function updatePartnerDimensions(orgId: OrgId, officeName: string, gmEmail: string): Promise<void> {

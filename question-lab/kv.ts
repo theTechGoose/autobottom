@@ -34,9 +34,24 @@ export interface QLQuestion {
   text: string;
   configId: string;
   autoYesExp: string;
+  /** LLM sampling temperature (0–1.0). Lower = more deterministic. */
+  temperature: number;
+  /** Number of vector DB chunks to retrieve for RAG context (1–10). */
+  numDocs: number;
+  /** Egregious failures impact chargebacks and cannot be bonus-flipped. */
+  egregious: boolean;
+  /** Point value for bonus point calculation (1–100). */
+  weight: number;
   versions: QLVersion[];
   testIds: string[];
 }
+
+export const QLQUESTION_DEFAULTS = {
+  temperature: 0.8,
+  numDocs: 4,
+  egregious: false,
+  weight: 5,
+} as const;
 
 export interface QLTest {
   id: string;
@@ -162,7 +177,7 @@ export async function bulkImportConfig(
   orgId: OrgId,
   name: string,
   type: "internal" | "partner",
-  questions: Array<{ name: string; text: string; autoYesExp: string }>,
+  questions: Array<{ name: string; text: string; autoYesExp: string; temperature?: number; numDocs?: number; egregious?: boolean; weight?: number }>,
 ): Promise<{ configId: string; questionCount: number }> {
   const db = await kv();
   const configId = nanoid();
@@ -175,7 +190,7 @@ export async function bulkImportConfig(
     questionIds.push(qId);
     questionObjects.push({
       key: orgKey(orgId, "qlab", "question", qId),
-      value: { id: qId, name: q.name, text: q.text, configId, autoYesExp: q.autoYesExp || "", versions: [], testIds: [] },
+      value: { id: qId, name: q.name, text: q.text, configId, autoYesExp: q.autoYesExp || "", temperature: q.temperature ?? QLQUESTION_DEFAULTS.temperature, numDocs: q.numDocs ?? QLQUESTION_DEFAULTS.numDocs, egregious: q.egregious ?? QLQUESTION_DEFAULTS.egregious, weight: q.weight ?? QLQUESTION_DEFAULTS.weight, versions: [], testIds: [] },
     });
   }
 
@@ -226,7 +241,7 @@ export async function createQuestion(orgId: OrgId, configId: string, name: strin
   const config = await getConfig(orgId, configId);
   if (!config) return null;
   const id = nanoid();
-  const question: QLQuestion = { id, name, text, configId, autoYesExp: "", versions: [], testIds: [] };
+  const question: QLQuestion = { id, name, text, configId, autoYesExp: "", temperature: QLQUESTION_DEFAULTS.temperature, numDocs: QLQUESTION_DEFAULTS.numDocs, egregious: QLQUESTION_DEFAULTS.egregious, weight: QLQUESTION_DEFAULTS.weight, versions: [], testIds: [] };
   const db = await kv();
   await db.set(orgKey(orgId, "qlab", "question", id), question);
   config.questionIds.push(id);
@@ -237,7 +252,7 @@ export async function createQuestion(orgId: OrgId, configId: string, name: strin
 export async function updateQuestion(
   orgId: OrgId,
   id: string,
-  updates: { name?: string; text?: string; autoYesExp?: string },
+  updates: { name?: string; text?: string; autoYesExp?: string; temperature?: number; numDocs?: number; egregious?: boolean; weight?: number },
 ): Promise<QLQuestion | null> {
   const question = await getQuestion(orgId, id);
   if (!question) return null;
@@ -247,6 +262,15 @@ export async function updateQuestion(
   }
   if (updates.name !== undefined) question.name = updates.name;
   if (updates.autoYesExp !== undefined) question.autoYesExp = updates.autoYesExp;
+  if (updates.temperature !== undefined) question.temperature = Math.max(0, Math.min(1, updates.temperature));
+  if (updates.numDocs !== undefined) question.numDocs = Math.max(1, Math.min(10, Math.round(updates.numDocs)));
+  if (updates.egregious !== undefined) question.egregious = updates.egregious;
+  if (updates.weight !== undefined) question.weight = Math.max(1, Math.min(100, Math.round(updates.weight)));
+  // Backfill defaults for questions created before these fields existed
+  if (question.temperature === undefined) question.temperature = QLQUESTION_DEFAULTS.temperature;
+  if (question.numDocs === undefined) question.numDocs = QLQUESTION_DEFAULTS.numDocs;
+  if (question.egregious === undefined) question.egregious = QLQUESTION_DEFAULTS.egregious;
+  if (question.weight === undefined) question.weight = QLQUESTION_DEFAULTS.weight;
   const db = await kv();
   await db.set(orgKey(orgId, "qlab", "question", id), question);
   return question;
@@ -459,5 +483,9 @@ export async function serveConfig(orgId: OrgId, configNameOrId: string) {
     unpopulated: q.text,
     populated: q.text,
     autoYesExp: q.autoYesExp,
+    temperature: q.temperature ?? QLQUESTION_DEFAULTS.temperature,
+    numDocs: q.numDocs ?? QLQUESTION_DEFAULTS.numDocs,
+    egregious: q.egregious ?? QLQUESTION_DEFAULTS.egregious,
+    weight: q.weight ?? QLQUESTION_DEFAULTS.weight,
   }));
 }

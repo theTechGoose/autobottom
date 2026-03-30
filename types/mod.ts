@@ -8,6 +8,14 @@ export interface IQuestionSeed {
   unpopulated: string;
   populated: string;
   autoYesExp: string;
+  /** LLM sampling temperature (0–1.0). */
+  temperature?: number;
+  /** Number of vector DB chunks to retrieve. */
+  numDocs?: number;
+  /** Egregious failures impact chargebacks and cannot be bonus-flipped. */
+  egregious?: boolean;
+  /** Point value for bonus point calculation. */
+  weight?: number;
 }
 
 export interface ILlmQuestionAnswer {
@@ -41,6 +49,8 @@ export interface IAnsweredQuestion extends IQuestion {
   thinking: string;
   defense: string;
   snippet?: string;
+  /** Set to true when this question was auto-flipped by bonus points. */
+  bonusFlipped?: boolean;
 }
 
 // -- Feedback --

@@ -148,6 +148,7 @@ export async function askQuestion(
   question: string,
   transcript: string,
   modelIndex = 0,
+  temperature = 0.8,
 ): Promise<LlmAnswer> {
   const model: GroqModel = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
@@ -176,6 +177,7 @@ export async function askQuestion(
         ],
         response_format: { type: "json_object" },
         max_tokens: 8000,
+        temperature,
       }),
       timeoutP,
     ]);
@@ -215,7 +217,7 @@ export async function askQuestion(
         `[LLM-FALLBACK] ${model} → trying ${FALLBACK_MODELS[nextIndex]}`,
       );
       await new Promise((r) => setTimeout(r, 1000));
-      return askQuestion(question, transcript, nextIndex);
+      return askQuestion(question, transcript, nextIndex, temperature);
     }
     throw e;
   }

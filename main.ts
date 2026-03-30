@@ -28,6 +28,7 @@ import {
   getChargebackEntries, getWireDeductionEntries, purgeOldEntries, purgeBypassedWireDeductions, purgeBypassedAuditHistory, backfillReviewScores,
   getReportLastFired, setReportLastFired,
   getBadWordConfig, saveBadWordConfig,
+  getBonusPointsConfig, saveBonusPointsConfig,
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
   getAuditDimensions, saveAuditDimensions,
@@ -294,6 +295,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/email-templates": handleSaveEmailTemplate,
   "/admin/email-templates/delete": handleDeleteEmailTemplate,
   "/admin/bad-word-config": handleSaveBadWordConfig,
+  "/admin/bonus-points-config": handleSaveBonusPointsConfig,
   "/admin/office-bypass": handleSaveOfficeBypass,
   "/admin/manager-scopes": handleSaveManagerScope,
   "/admin/audit-dimensions": handleSaveAuditDimensions,
@@ -419,6 +421,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/email-templates": handleListEmailTemplates,
   "/admin/email-templates/get": handleGetEmailTemplate,
   "/admin/bad-word-config": handleGetBadWordConfig,
+  "/admin/bonus-points-config": handleGetBonusPointsConfig,
   "/admin/office-bypass": handleGetOfficeBypass,
   "/admin/manager-scopes": handleGetManagerScopes,
   "/admin/audit-dimensions": handleGetAuditDimensions,
@@ -2091,6 +2094,25 @@ async function handleSaveBadWordConfig(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
   const body = await req.json();
   await saveBadWordConfig(auth.orgId, body);
+  return json({ ok: true });
+}
+
+// -- Admin: Bonus Points Config --
+
+async function handleGetBonusPointsConfig(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  return json(await getBonusPointsConfig(auth.orgId));
+}
+
+async function handleSaveBonusPointsConfig(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  await saveBonusPointsConfig(auth.orgId, {
+    internalBonusPoints: Math.max(0, Math.round(body.internalBonusPoints ?? 0)),
+    partnerBonusPoints: Math.max(0, Math.round(body.partnerBonusPoints ?? 0)),
+  });
   return json({ ok: true });
 }
 

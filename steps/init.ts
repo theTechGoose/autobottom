@@ -75,11 +75,12 @@ export async function stepInit(req: Request): Promise<Response> {
         const ref = new S3Ref(env.s3Bucket, key);
         await ref.save(bytes);
         console.log(`[STEP-INIT] ${findingId}: Genie ${trimmed} saved (${bytes.byteLength} bytes)`);
-        return key;
+        return { key, bytes };
       })
     );
 
-    const keys = results.filter((k): k is string => k !== null);
+    const successful = results.filter((r): r is { key: string; bytes: Uint8Array } => r !== null);
+    const keys = successful.map((r) => r.key);
 
     if (keys.length === 0) {
       const retryableIds = validIds.filter(isRetryableGenie);
@@ -111,7 +112,25 @@ export async function stepInit(req: Request): Promise<Response> {
 
     finding.s3RecordingKeys = keys;
     finding.s3RecordingKey = keys[0];
-    finding.recordingPath = keys[0];
+
+    // Stitch multi-genie audio into one continuous MP3 for the review/judge queue
+    if (successful.length > 1) {
+      const totalBytes = successful.reduce((sum, r) => sum + r.bytes.byteLength, 0);
+      const stitched = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const r of successful) {
+        stitched.set(r.bytes, offset);
+        offset += r.bytes.byteLength;
+      }
+      const stitchedKey = `recordings/${finding.auditJobId}/stitched.mp3`;
+      const stitchedRef = new S3Ref(env.s3Bucket, stitchedKey);
+      await stitchedRef.save(stitched);
+      finding.recordingPath = stitchedKey;
+      console.log(`[STEP-INIT] ${findingId}: 🎵 Stitched ${successful.length} recordings → ${stitchedKey} (${totalBytes} bytes)`);
+    } else {
+      finding.recordingPath = keys[0];
+    }
+
     await saveFinding(orgId, finding);
 
     console.log(`[STEP-INIT] ${findingId}: Multi-genie: ${keys.length} recordings saved`);

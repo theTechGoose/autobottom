@@ -4,6 +4,7 @@
     "start": "deno run --allow-net --allow-env --allow-read main.ts",
     "dev": "deno run --allow-net --allow-env --allow-read --allow-write --env --unstable-cron --unstable-kv --watch main.ts",
     "check": "deno check main.ts controller.ts question-lab/kv.ts question-lab/handlers.ts question-lab/page.ts",
+    "test": "deno test test/ --allow-all",
     "test:email": "deno run --allow-net --allow-env --allow-read --env test/email-pipeline.ts",
     "test:qlab-mode": "deno run --allow-all --unstable-kv --env test-qlab-mode.ts"
   }

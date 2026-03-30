@@ -4,6 +4,7 @@ import {
   getQuestion, getQuestionsForConfig, createQuestion, updateQuestion, deleteQuestion, restoreVersion,
   getTest, getTestsForQuestion, createTest, updateTest, deleteTest, updateTestResult,
   serveConfig, addTestRun, updateTestEmailRecipients, bulkImportConfig, bulkDeleteConfig, listConfigNames,
+  getAllQuestionNames, bulkSetEgregious,
 } from "./kv.ts";
 import { configListPage, configDetailPage, questionEditorPage } from "./page.ts";
 import { askQuestion, type LlmAnswer } from "../providers/groq.ts";
@@ -121,6 +122,24 @@ export async function handleCloneConfig(req: Request): Promise<Response> {
     })),
   );
   return json({ ok: true, configId: result.configId, name: `Copy of ${config.name}` });
+}
+
+// ── Bulk Egregious ───────────────────────────────────────────────────
+
+export async function handleGetQuestionNames(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  return json(await getAllQuestionNames(auth.orgId));
+}
+
+export async function handleBulkSetEgregious(req: Request): Promise<Response> {
+  const auth = await requireAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  const { name, egregious } = body;
+  if (!name || typeof name !== "string") return json({ error: "name required" }, 400);
+  const updated = await bulkSetEgregious(auth.orgId, name, egregious !== false);
+  return json({ ok: true, updated });
 }
 
 // ── Question API ─────────────────────────────────────────────────────
@@ -432,6 +451,10 @@ const routes = [
   route("PUT", "/question-lab/api/configs/:id", handleUpdateConfig),
   route("DELETE", "/question-lab/api/configs/:id", handleDeleteConfig),
   route("POST", "/question-lab/api/configs/:id/clone", handleCloneConfig),
+
+  // Bulk Egregious
+  route("GET", "/question-lab/api/question-names", handleGetQuestionNames),
+  route("POST", "/question-lab/api/bulk-egregious", handleBulkSetEgregious),
 
   // Question API
   route("GET", "/question-lab/api/questions/:id", handleGetQuestion),

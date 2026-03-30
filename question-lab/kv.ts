@@ -237,6 +237,45 @@ export async function getQuestionsForConfig(orgId: OrgId, configId: string): Pro
   return results;
 }
 
+/** Get all unique question names across all configs (for bulk egregious UI). */
+export async function getAllQuestionNames(orgId: OrgId): Promise<Array<{ name: string; count: number; egregious: boolean }>> {
+  const configs = await listConfigs(orgId);
+  const nameMap = new Map<string, { count: number; egregious: boolean }>();
+  for (const cfg of configs) {
+    const questions = await getQuestionsForConfig(orgId, cfg.id);
+    for (const q of questions) {
+      const existing = nameMap.get(q.name);
+      if (existing) {
+        existing.count++;
+        if (q.egregious) existing.egregious = true;
+      } else {
+        nameMap.set(q.name, { count: 1, egregious: q.egregious ?? false });
+      }
+    }
+  }
+  return [...nameMap.entries()]
+    .map(([name, { count, egregious }]) => ({ name, count, egregious }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Set egregious flag on ALL questions matching a given name across all configs. */
+export async function bulkSetEgregious(orgId: OrgId, questionName: string, egregious: boolean): Promise<number> {
+  const db = await kv();
+  const configs = await listConfigs(orgId);
+  let updated = 0;
+  for (const cfg of configs) {
+    const questions = await getQuestionsForConfig(orgId, cfg.id);
+    for (const q of questions) {
+      if (q.name === questionName && q.egregious !== egregious) {
+        q.egregious = egregious;
+        await db.set(orgKey(orgId, "qlab", "question", q.id), q);
+        updated++;
+      }
+    }
+  }
+  return updated;
+}
+
 export async function createQuestion(orgId: OrgId, configId: string, name: string, text: string): Promise<QLQuestion | null> {
   const config = await getConfig(orgId, configId);
   if (!config) return null;

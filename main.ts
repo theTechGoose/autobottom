@@ -4306,7 +4306,8 @@ function prevWeekWindow(now: Date): { since: number; until: number } {
 }
 
 // Wire Deductions — Monday 7am
-Deno.cron("wire-deductions-weekly", "0 7 * * 1", async () => {
+// Wire Deductions — Monday 7am EST (11:00 UTC)
+Deno.cron("wire-deductions-weekly", "0 11 * * 1", async () => {
   try {
     const { since, until } = prevWeekWindow(new Date());
     console.log(`[SHEETS-CRON] 🚀 Wire deductions for ${new Date(since).toDateString()} – ${new Date(until).toDateString()}`);
@@ -4316,8 +4317,8 @@ Deno.cron("wire-deductions-weekly", "0 7 * * 1", async () => {
   }
 });
 
-// Chargebacks + Omissions — Tuesday 7am
-Deno.cron("chargebacks-weekly", "0 7 * * 2", async () => {
+// Chargebacks + Omissions — Tuesday 7am EST (11:00 UTC)
+Deno.cron("chargebacks-weekly", "0 11 * * 2", async () => {
   try {
     const { since, until } = prevWeekWindow(new Date());
     console.log(`[SHEETS-CRON] 🚀 Chargebacks/omissions for ${new Date(since).toDateString()} – ${new Date(until).toDateString()}`);

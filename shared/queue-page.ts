@@ -988,13 +988,13 @@ export function generateQueuePage(mode: "review" | "judge", gamificationJson?: s
           Transcript
         </button>
       </div>
-      <button id="btn-add-genie" onclick="openAddGenieModal()" title="Submit additional or different Genie recording"
-        style="display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 0;border-radius:8px;border:1px solid rgba(251,191,36,0.3);background:rgba(251,191,36,0.06);color:#fbbf24;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.15s;width:100%;">
-        + Add 2nd Genie / Different Recording
-      </button>
       <button id="btn-dismiss-appeal" onclick="openDismissModal()" title="Dismiss this appeal entirely"
         style="display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 0;border-radius:8px;border:1px solid rgba(139,148,158,0.3);background:rgba(139,148,158,0.06);color:#8b949e;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.15s;width:100%;">
         Dismiss Appeal
+      </button>
+      <button id="btn-add-genie" onclick="openAddGenieModal()" title="Submit additional or different Genie recording"
+        style="display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 0;border-radius:8px;border:1px solid rgba(251,191,36,0.3);background:rgba(251,191,36,0.06);color:#fbbf24;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.15s;width:100%;">
+        + Add 2nd Genie / Different Recording
       </button>
     </div>`}
   </div>

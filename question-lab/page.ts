@@ -215,6 +215,7 @@ export function configListPage(configs: QLConfig[]): string {
       <div class="card-hd">
         <h2>Configurations</h2>
         <div style="display:flex;gap:8px;">
+          <button class="btn-ghost btn-sm" onclick="openBulkEgregiousModal()" style="color:#f85149;border-color:rgba(248,81,73,0.3);">Mark Bulk Egregious</button>
           <button class="btn-ghost btn-sm" onclick="openImportModal()">Import CSV</button>
           <button onclick="document.getElementById('new-config-form').classList.toggle('active')">+ New Config</button>
         </div>
@@ -240,6 +241,19 @@ export function configListPage(configs: QLConfig[]): string {
         ? '<div class="empty">No configurations yet. Create one to get started.</div>'
         : `<table><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Questions</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`}
     </div>
+    <!-- Bulk Egregious Modal -->
+    <div class="modal-overlay" id="bulk-egregious-modal" onclick="if(event.target===this)closeBulkEgregiousModal();">
+      <div class="modal-box" style="max-width:500px;">
+        <div class="modal-hd"><h2>Mark Bulk Egregious</h2><button class="btn-ghost btn-sm" onclick="closeBulkEgregiousModal()">Close</button></div>
+        <div class="modal-body">
+          <p style="color:#8b949e;font-size:12px;margin-bottom:12px;">Toggle a question name to mark/unmark it as egregious across <strong>all</strong> configurations.</p>
+          <div id="be-list" style="max-height:400px;overflow-y:auto;">
+            <div style="color:#6e7681;font-size:12px;padding:12px;">Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="import-modal" onclick="if(event.target===this)closeImportModal();">
       <div class="modal-box">
         <!-- Step: Upload -->
@@ -344,6 +358,49 @@ export function configListPage(configs: QLConfig[]): string {
         if (data.id) { location.href = '/question-lab/config/' + data.id; }
         else { alert('Clone failed: ' + (data.error || 'unknown')); }
       }
+
+      // ── Bulk Egregious ──
+      function openBulkEgregiousModal() {
+        document.getElementById('bulk-egregious-modal').classList.add('open');
+        var list = document.getElementById('be-list');
+        list.innerHTML = '<div style="color:#6e7681;font-size:12px;padding:12px;">Loading...</div>';
+        fetch('/question-lab/api/question-names').then(function(r){return r.json()}).then(function(names){
+          if(!names.length){list.innerHTML='<div style="color:#6e7681;font-size:12px;padding:12px;">No questions found.</div>';return;}
+          list.innerHTML='';
+          names.forEach(function(n){
+            var row=document.createElement('div');
+            row.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #1e2736;';
+            var badge=document.createElement('button');
+            badge.style.cssText='padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;border:1px solid;cursor:pointer;min-width:80px;';
+            function setStyle(eg){
+              badge.textContent=eg?'egregious':'normal';
+              badge.style.background=eg?'rgba(248,81,73,0.15)':'rgba(139,148,158,0.1)';
+              badge.style.color=eg?'#f85149':'#8b949e';
+              badge.style.borderColor=eg?'rgba(248,81,73,0.3)':'rgba(139,148,158,0.2)';
+            }
+            setStyle(n.egregious);
+            badge.addEventListener('click',function(){
+              var newVal=!n.egregious;
+              badge.textContent='...';
+              badge.disabled=true;
+              fetch('/question-lab/api/bulk-egregious',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n.name,egregious:newVal})})
+                .then(function(r){return r.json()})
+                .then(function(d){n.egregious=newVal;setStyle(newVal);count.textContent=d.updated+' updated';setTimeout(function(){count.textContent=n.count+' questions';},2000);})
+                .catch(function(){setStyle(n.egregious);})
+                .finally(function(){badge.disabled=false;});
+            });
+            var label=document.createElement('span');
+            label.style.cssText='flex:1;font-size:13px;color:#c9d1d9;font-weight:500;';
+            label.textContent=n.name;
+            var count=document.createElement('span');
+            count.style.cssText='font-size:11px;color:#6e7681;';
+            count.textContent=n.count+' questions';
+            row.appendChild(badge);row.appendChild(label);row.appendChild(count);
+            list.appendChild(row);
+          });
+        }).catch(function(){list.innerHTML='<div style="color:#f85149;font-size:12px;padding:12px;">Failed to load.</div>';});
+      }
+      function closeBulkEgregiousModal(){document.getElementById('bulk-egregious-modal').classList.remove('open');}
 
       // ── CSV Import ──
       var csvRows = [];

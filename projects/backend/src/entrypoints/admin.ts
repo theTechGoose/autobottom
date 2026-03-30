@@ -23,8 +23,8 @@ import {
   createOrg, createUser, deleteUser, getUser, listUsers,
   createSession, sessionCookie,
 } from "../domain/coordinators/auth/mod.ts";
-import { STORE_CATALOG, rarityFromPrice } from "../domain/business/gamification/badges/mod.ts";
-import type { StoreItem } from "../domain/business/gamification/badges/mod.ts";
+import { STORE_CATALOG, rarityFromPrice } from "../domain/business/gamification/store/mod.ts";
+import type { StoreItem } from "../domain/business/gamification/store/mod.ts";
 import { trackCompleted } from "../domain/data/kv/mod.ts";
 
 // -- Dashboard --

@@ -1,48 +1,12 @@
 import { assertEquals, assert } from "@std/assert";
 import {
   checkBadges,
-  rarityFromPrice,
-  STORE_CATALOG,
+  getBadgeCatalogJson,
+  BadgeService,
   DEFAULT_BADGE_STATS,
   BADGE_CATALOG,
-  type BadgeDef,
-  type StoreItem,
   type BadgeCheckState,
 } from "./mod.ts";
-
-// ---------------------------------------------------------------------------
-// rarityFromPrice
-// ---------------------------------------------------------------------------
-
-Deno.test("rarityFromPrice: >= 1000 returns legendary", () => {
-  assertEquals(rarityFromPrice(1000), "legendary");
-  assertEquals(rarityFromPrice(2000), "legendary");
-  assertEquals(rarityFromPrice(1500), "legendary");
-});
-
-Deno.test("rarityFromPrice: >= 700 and < 1000 returns epic", () => {
-  assertEquals(rarityFromPrice(700), "epic");
-  assertEquals(rarityFromPrice(800), "epic");
-  assertEquals(rarityFromPrice(999), "epic");
-});
-
-Deno.test("rarityFromPrice: >= 400 and < 700 returns rare", () => {
-  assertEquals(rarityFromPrice(400), "rare");
-  assertEquals(rarityFromPrice(500), "rare");
-  assertEquals(rarityFromPrice(699), "rare");
-});
-
-Deno.test("rarityFromPrice: >= 200 and < 400 returns uncommon", () => {
-  assertEquals(rarityFromPrice(200), "uncommon");
-  assertEquals(rarityFromPrice(300), "uncommon");
-  assertEquals(rarityFromPrice(399), "uncommon");
-});
-
-Deno.test("rarityFromPrice: < 200 returns common", () => {
-  assertEquals(rarityFromPrice(0), "common");
-  assertEquals(rarityFromPrice(100), "common");
-  assertEquals(rarityFromPrice(199), "common");
-});
 
 // ---------------------------------------------------------------------------
 // DEFAULT_BADGE_STATS
@@ -107,34 +71,49 @@ Deno.test("BADGE_CATALOG: all badge IDs are unique", () => {
 });
 
 // ---------------------------------------------------------------------------
-// STORE_CATALOG
+// BadgeService class
 // ---------------------------------------------------------------------------
 
-Deno.test("STORE_CATALOG: is a non-empty array", () => {
-  assert(Array.isArray(STORE_CATALOG));
-  assert(STORE_CATALOG.length > 0);
+Deno.test("BadgeService: can be instantiated", () => {
+  const svc = new BadgeService();
+  assert(svc instanceof BadgeService);
 });
 
-Deno.test("STORE_CATALOG: every entry has required StoreItem shape", () => {
-  const validTypes = new Set([
-    "title", "avatar_frame", "name_color", "animation",
-    "theme", "flair", "font", "bubble_font", "bubble_color",
-  ]);
-  const validRarities = new Set(["common", "uncommon", "rare", "epic", "legendary"]);
+Deno.test("BadgeService.checkBadges: returns newly earned badges", () => {
+  const svc = new BadgeService();
+  const stats: BadgeCheckState = { ...DEFAULT_BADGE_STATS, totalDecisions: 1 };
+  const result = svc.checkBadges("reviewer", stats, new Set());
+  const ids = result.map((b) => b.id);
+  assert(ids.includes("rev_first_blood"), "Expected rev_first_blood to be earned");
+});
 
-  for (const item of STORE_CATALOG) {
-    assert(typeof item.id === "string" && item.id.length > 0, `item.id invalid: ${item.id}`);
-    assert(typeof item.name === "string", `item.name invalid for ${item.id}`);
-    assert(typeof item.description === "string", `item.description invalid for ${item.id}`);
-    assert(typeof item.price === "number" && item.price >= 0, `item.price invalid for ${item.id}`);
-    assert(validTypes.has(item.type), `item.type invalid for ${item.id}: ${item.type}`);
-    assert(typeof item.icon === "string", `item.icon invalid for ${item.id}`);
-    assert(validRarities.has(item.rarity), `item.rarity invalid for ${item.id}: ${item.rarity}`);
+Deno.test("BadgeService.getBadgeCatalogJson: returns valid JSON string", () => {
+  const svc = new BadgeService();
+  const jsonStr = svc.getBadgeCatalogJson();
+  const parsed = JSON.parse(jsonStr);
+  assert(Array.isArray(parsed));
+  assert(parsed.length > 0);
+});
+
+Deno.test("BadgeService.getBadgeCatalogJson: excludes check function", () => {
+  const svc = new BadgeService();
+  const parsed = JSON.parse(svc.getBadgeCatalogJson());
+  for (const entry of parsed) {
+    assertEquals(entry.check, undefined, `check function should be excluded for ${entry.id}`);
   }
 });
 
 // ---------------------------------------------------------------------------
-// checkBadges
+// Wrapper: getBadgeCatalogJson matches class method
+// ---------------------------------------------------------------------------
+
+Deno.test("getBadgeCatalogJson wrapper matches BadgeService method", () => {
+  const svc = new BadgeService();
+  assertEquals(getBadgeCatalogJson(), svc.getBadgeCatalogJson());
+});
+
+// ---------------------------------------------------------------------------
+// checkBadges (wrapper function)
 // ---------------------------------------------------------------------------
 
 Deno.test("checkBadges: returns newly earned badges for reviewer role", () => {

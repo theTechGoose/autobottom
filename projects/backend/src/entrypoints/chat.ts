@@ -3,7 +3,7 @@
 import { requireAuth, json } from "./helpers.ts";
 import { listUsers } from "../domain/coordinators/auth/mod.ts";
 import { getGameState, saveGameState, listCustomStoreItems } from "../domain/data/kv/mod.ts";
-import { PREFAB_EVENTS } from "../domain/business/gamification/badges/mod.ts";
+import { PREFAB_EVENTS } from "../domain/business/gamification/prefab-events/mod.ts";
 
 export async function handleChatMe(req: Request): Promise<Response> {
   const auth = await requireAuth(req);

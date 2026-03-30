@@ -4,7 +4,7 @@ import { resolveEffectiveAuth } from "../domain/coordinators/auth/mod.ts";
 import type { AuthContext } from "../domain/coordinators/auth/mod.ts";
 import { getAgentDashboardData } from "../domain/coordinators/agent/mod.ts";
 import { getGameState, getEarnedBadges, purchaseStoreItem, listCustomStoreItems } from "../domain/data/kv/mod.ts";
-import { STORE_CATALOG } from "../domain/business/gamification/badges/mod.ts";
+import { STORE_CATALOG } from "../domain/business/gamification/store/mod.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

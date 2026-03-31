@@ -2278,17 +2278,23 @@ async function handleBulkFlip(req: Request): Promise<Response> {
 
   (async () => {
     let flipped = 0;
-    for (let i = 0; i < findingIds.length; i++) {
-      const result = await adminFlipFinding(auth.orgId, findingIds[i]);
-      if (result.success) flipped++;
-      // Send progress every 5 items or on last item
-      if ((i + 1) % 5 === 0 || i === findingIds.length - 1) {
-        await writer.write(encoder.encode(`data: ${JSON.stringify({ flipped, done: i + 1, total: findingIds.length })}\n\n`));
+    try {
+      for (let i = 0; i < findingIds.length; i++) {
+        const result = await adminFlipFinding(auth.orgId, findingIds[i]);
+        if (result.success) flipped++;
+        // Send progress every 5 items or on last item
+        if ((i + 1) % 5 === 0 || i === findingIds.length - 1) {
+          await writer.write(encoder.encode(`data: ${JSON.stringify({ flipped, done: i + 1, total: findingIds.length })}\n\n`));
+        }
       }
+      console.log(`[ADMIN-BULK-FLIP] ${auth.email}: flipped ${flipped}/${findingIds.length} findings to 100%`);
+      await writer.write(encoder.encode(`data: ${JSON.stringify({ ok: true, flipped, total: findingIds.length, complete: true })}\n\n`));
+    } catch (err) {
+      console.error(`[ADMIN-BULK-FLIP] ❌ ${auth.email}: error after ${flipped} flips:`, err);
+      try { await writer.write(encoder.encode(`data: ${JSON.stringify({ error: String(err), flipped, total: findingIds.length, complete: true })}\n\n`)); } catch {}
+    } finally {
+      try { await writer.close(); } catch {}
     }
-    console.log(`[ADMIN-BULK-FLIP] ${auth.email}: flipped ${flipped}/${findingIds.length} findings to 100%`);
-    await writer.write(encoder.encode(`data: ${JSON.stringify({ ok: true, flipped, total: findingIds.length, complete: true })}\n\n`));
-    await writer.close();
   })();
 
   return new Response(readable, {

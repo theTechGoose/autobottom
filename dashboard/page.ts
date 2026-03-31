@@ -4963,12 +4963,16 @@ table { width: 100%; border-collapse: collapse; }
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ findingIds: fids }),
       }).then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error('Server error ' + r.status + ': ' + t); });
         var reader = r.body.getReader();
         var decoder = new TextDecoder();
         var buf = '';
         function read() {
           return reader.read().then(function(result) {
-            if (result.done) return;
+            if (result.done) {
+              btn.disabled = false; btn.textContent = 'Flip Selected to 100%';
+              return;
+            }
             buf += decoder.decode(result.value, { stream: true });
             var lines = buf.split('\\n\\n');
             buf = lines.pop() || '';
@@ -4976,7 +4980,11 @@ table { width: 100%; border-collapse: collapse; }
               if (!line.startsWith('data: ')) return;
               try {
                 var d = JSON.parse(line.slice(6));
-                if (d.complete) {
+                if (d.error) {
+                  toast('Flip error: ' + d.error, 'error');
+                  msgEl.textContent = 'Error after ' + d.flipped + '/' + d.total;
+                  btn.disabled = false; btn.textContent = 'Flip Selected to 100%';
+                } else if (d.complete) {
                   toast('Flipped ' + d.flipped + ' audit(s) to 100%', 'success');
                   msgEl.textContent = 'Done — flipped ' + d.flipped + '/' + d.total;
                   btn.disabled = false; btn.textContent = 'Flip Selected to 100%';

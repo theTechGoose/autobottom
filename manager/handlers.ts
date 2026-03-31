@@ -255,6 +255,18 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
     });
   }
 
+  // Hydrate entries with missing department/shift BEFORE scope filtering
+  // (old index entries don't have these fields, causing them to be excluded from scoped views)
+  const needsHydrationForScope = windowEntries.filter((r) => r.department === undefined);
+  if (needsHydrationForScope.length > 0) {
+    const hydrated = await hydrateMissing(needsHydrationForScope);
+    const hydratedMap = new Map(hydrated.map((r) => [r.findingId, r]));
+    for (let i = 0; i < windowEntries.length; i++) {
+      const h = hydratedMap.get(windowEntries[i].findingId);
+      if (h) windowEntries[i] = h;
+    }
+  }
+
   // Scope by manager's department+shift configuration; admin sees everything
   let scopedEntries = windowEntries;
   if (auth.role === "manager") {

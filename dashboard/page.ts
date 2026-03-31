@@ -4618,6 +4618,15 @@ table { width: 100%; border-collapse: collapse; }
     var msgEl = document.getElementById('bfrs-msg');
     if (bfrsModeVal !== 'wire') {
       // Scores backfill: fix CompletedAuditStat + audit-done-idx stale scores
+      var bfStartTime = Date.now();
+      var bfTimer = setInterval(function() {
+        var elapsed = Math.round((Date.now() - bfStartTime) / 1000);
+        var mins = Math.floor(elapsed / 60);
+        var secs = elapsed % 60;
+        var timeStr = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
+        var base = msgEl.textContent.split(' (')[0];
+        msgEl.textContent = base + ' (' + timeStr + ')';
+      }, 1000);
       msgEl.textContent = 'Running — fixing stale scores...';
       // Phase 1: fix audit-done-idx (paginated)
       var totalScanned = 0, totalUpdated = 0;
@@ -4645,7 +4654,7 @@ table { width: 100%; border-collapse: collapse; }
           toast('Score backfill complete', 'success');
         })
         .catch(function() { toast('Backfill failed', 'error'); })
-        .finally(function() { btn.disabled = false; btn.textContent = 'Run Backfill'; });
+        .finally(function() { clearInterval(bfTimer); btn.disabled = false; btn.textContent = 'Run Backfill'; });
       return;
     }
     // Wire/chargeback backfill: SSE stream (can take a while)
@@ -4946,20 +4955,45 @@ table { width: 100%; border-collapse: collapse; }
       if (fids.length === 0) return;
       if (!confirm('Flip ' + fids.length + ' audit(s) to 100%? This cannot be undone.')) return;
       var btn = document.getElementById('flip-exec-btn');
+      var msgEl = document.getElementById('flip-msg');
       btn.disabled = true; btn.textContent = 'Flipping...';
+      msgEl.textContent = 'Flipping 0/' + fids.length + '...';
       fetch('/admin/bulk-flip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ findingIds: fids }),
-      })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          if (d.error) { toast(d.error, 'error'); return; }
-          toast('Flipped ' + d.flipped + ' audit(s) to 100%', 'success');
-          document.getElementById('flip-pull-btn').click();
-        })
-        .catch(function(e) { toast('Flip failed: ' + e.message, 'error'); })
-        .finally(function() { btn.disabled = false; btn.textContent = 'Flip Selected to 100%'; });
+      }).then(function(r) {
+        var reader = r.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+        function read() {
+          return reader.read().then(function(result) {
+            if (result.done) return;
+            buf += decoder.decode(result.value, { stream: true });
+            var lines = buf.split('\\n\\n');
+            buf = lines.pop() || '';
+            lines.forEach(function(line) {
+              if (!line.startsWith('data: ')) return;
+              try {
+                var d = JSON.parse(line.slice(6));
+                if (d.complete) {
+                  toast('Flipped ' + d.flipped + ' audit(s) to 100%', 'success');
+                  msgEl.textContent = 'Done — flipped ' + d.flipped + '/' + d.total;
+                  btn.disabled = false; btn.textContent = 'Flip Selected to 100%';
+                  document.getElementById('flip-pull-btn').click();
+                } else {
+                  msgEl.textContent = 'Flipping ' + d.done + '/' + d.total + ' (' + d.flipped + ' flipped)...';
+                }
+              } catch(e) {}
+            });
+            return read();
+          });
+        }
+        return read();
+      }).catch(function(e) {
+        toast('Flip failed: ' + e.message, 'error');
+        btn.disabled = false; btn.textContent = 'Flip Selected to 100%';
+      });
     });
   })();
 

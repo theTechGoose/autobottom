@@ -305,7 +305,14 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageSlice = filtered.slice((page - 1) * limit, page * limit);
   const hydratedPage = await hydrateMissing(pageSlice);
-  const items = hydratedPage.map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
+  // Load appeal status for page items
+  const { getAppeal } = await import("../judge/kv.ts");
+  const appeals = await Promise.all(hydratedPage.map((c) => getAppeal(auth.orgId, c.findingId)));
+  const items = hydratedPage.map((c, i) => ({
+    ...c,
+    reviewed: reviewedIds.has(c.findingId),
+    appealStatus: appeals[i] ? appeals[i]!.status : null,
+  }));
 
   console.log(`[MANAGER-AUDITS] 🔍 ${auth.email}: ${total}/${inWindow.length} scoped audits in window, page=${page}/${pages}`);
   return json({ items, total, pages, page, owners, shifts, departments });

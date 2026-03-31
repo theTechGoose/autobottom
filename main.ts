@@ -832,6 +832,38 @@ async function handleAuditsData(req: Request): Promise<Response> {
     windowEntries.map((c) => c.reviewedBy).filter(Boolean)
   )].sort() as string[];
   const total = filtered.length;
+
+  // CSV export — return ALL filtered items as a downloadable CSV (no pagination)
+  const format = url.searchParams.get("format");
+  if (format === "csv") {
+    const hydratedAll = await hydrateMissing(filtered);
+    const { getAppeal } = await import("./judge/kv.ts");
+    const appeals = await Promise.all(hydratedAll.map((c) => getAppeal(auth.orgId, c.findingId)));
+    const csvHeaders = ["Finding ID","Record ID","Type","Team Member","Auditor","Score","Started","Finished","Duration","Reviewed","Appeal Status"];
+    const csvRows = [csvHeaders.join(",")];
+    hydratedAll.forEach((c, i) => {
+      const isReviewed = reviewedIds.has(c.findingId);
+      const appealStatus = appeals[i] ? appeals[i]!.status : null;
+      csvRows.push([
+        c.findingId || "",
+        c.recordId || "",
+        c.isPackage ? "Partner" : "Internal",
+        '"' + (c.voName || "").replace(/"/g, '""') + '"',
+        '"' + (c.reviewedBy || c.owner || "api").replace(/"/g, '""') + '"',
+        c.score != null ? c.score + "%" : "",
+        c.startedAt ? new Date(c.startedAt).toISOString() : "",
+        c.ts ? new Date(c.ts).toISOString() : "",
+        c.durationMs ? Math.round(c.durationMs / 1000) + "s" : "",
+        isReviewed ? "Reviewed" : (c.reason === "perfect_score" || c.reason === "invalid_genie" ? "Auto" : ""),
+        appealStatus === "pending" ? "Pending" : (appealStatus === "complete" ? "Complete" : ""),
+      ].join(","));
+    });
+    console.log(`[AUDITS] 📥 ${auth.email}: CSV export ${hydratedAll.length} rows`);
+    return new Response(csvRows.join("\n"), {
+      headers: { "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=audit-history.csv" },
+    });
+  }
+
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageItems = filtered.slice((page - 1) * limit, page * limit);
 
@@ -1140,23 +1172,18 @@ document.getElementById('reset-btn').onclick=function(){
 var lastLoadedItems=[];
 document.getElementById('csv-btn').onclick=function(){
   if(!lastLoadedItems.length){alert('No data to export');return;}
-  var headers=['Finding ID','Record ID','Type','Team Member','Auditor','Score','Started','Finished','Duration','Reviewed','Appeal Status'];
-  var csvRows=[headers.join(',')];
-  lastLoadedItems.forEach(function(c){
-    csvRows.push([
-      c.findingId||'',c.recordId||'',c.isPackage?'Partner':'Internal',
-      '"'+(c.voName||'').replace(/"/g,'""')+'"',
-      '"'+(c.reviewedBy||c.owner||'api').replace(/"/g,'""')+'"',
-      (c.score!=null?c.score+'%':''),
-      c.startedAt?new Date(c.startedAt).toLocaleString():'',
-      c.ts?new Date(c.ts).toLocaleString():'',
-      c.durationMs?Math.round(c.durationMs/1000)+'s':'',
-      c.reviewed?'Reviewed':(c.reason==='perfect_score'||c.reason==='invalid_genie'?'Auto':''),
-      c.appealStatus==='pending'?'Pending':(c.appealStatus==='complete'?'Complete':'')
-    ].join(','));
-  });
-  var blob=new Blob([csvRows.join('\\n')],{type:'text/csv'});
-  var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='audit-history.csv';a.click();
+  var since=state.customStart!==null?state.customStart:Date.now()-WINDOW_HOURS*3600000;
+  var p={type:state.type,owner:state.owner,department:state.department,shift:state.shift,reviewed:state.reviewed,auditor:state.auditor,scoreMin:state.scoreMin,scoreMax:state.scoreMax,since:since,format:'csv'};
+  if(state.customEnd!==null)p.until=state.customEnd;
+  var params=new URLSearchParams(p);
+  var btn=this;btn.disabled=true;btn.textContent='Exporting...';
+  fetch('/admin/audits/data?'+params)
+    .then(function(r){if(!r.ok)throw new Error('Export failed');return r.blob()})
+    .then(function(blob){
+      var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='audit-history.csv';a.click();
+    })
+    .catch(function(e){alert('CSV export failed: '+e.message)})
+    .finally(function(){btn.disabled=false;btn.textContent='⬇ CSV'});
 };
 document.getElementById('f-type').onchange=function(){state.type=this.value;state.page=1;load()};
 document.getElementById('f-owner').onchange=function(){state.owner=this.value;state.page=1;load()};
@@ -2187,15 +2214,19 @@ async function handleGetUnreviewedAudits(req: Request): Promise<Response> {
   const since = sinceParam ? parseInt(sinceParam, 10) : Date.now() - 7 * 86_400_000;
   const until = untilParam ? parseInt(untilParam, 10) : Date.now();
 
-  const [indexEntries, reviewedIds] = await Promise.all([
+  const [indexEntries, reviewedIds, bypassCfg] = await Promise.all([
     queryAuditDoneIndex(auth.orgId, since, until),
     getReviewedFindingIds(auth.orgId),
+    getOfficeBypassConfig(auth.orgId),
   ]);
+  const bypassPatterns = bypassCfg.patterns.map((p: string) => p.toLowerCase());
+  const isBypassed = (dept: string) => bypassPatterns.length > 0 && bypassPatterns.some((p: string) => dept.toLowerCase().includes(p));
 
-  // Unreviewed = not in review-done AND not auto-complete (perfect_score/invalid_genie)
+  // Unreviewed = not in review-done AND not auto-complete AND not bypassed office
   const unreviewed = indexEntries.filter((e) => {
     if (reviewedIds.has(e.findingId)) return false;
     if (e.reason === "perfect_score" || e.reason === "invalid_genie") return false;
+    if (isBypassed(e.department ?? "")) return false;
     if (type === "date-leg" && e.isPackage) return false;
     if (type === "package" && !e.isPackage) return false;
     if (owner && (e.voName || e.owner) !== owner) return false;
@@ -2239,13 +2270,30 @@ async function handleBulkFlip(req: Request): Promise<Response> {
   const body = await req.json();
   const { findingIds } = body as { findingIds: string[] };
   if (!findingIds?.length) return json({ error: "findingIds required" }, 400);
-  let flipped = 0;
-  for (const fid of findingIds) {
-    const result = await adminFlipFinding(auth.orgId, fid);
-    if (result.success) flipped++;
-  }
-  console.log(`[ADMIN-BULK-FLIP] ${auth.email}: flipped ${flipped}/${findingIds.length} findings to 100%`);
-  return json({ ok: true, flipped, total: findingIds.length });
+
+  // Stream progress to keep connection alive (Deno Deploy timeout is ~50s)
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+
+  (async () => {
+    let flipped = 0;
+    for (let i = 0; i < findingIds.length; i++) {
+      const result = await adminFlipFinding(auth.orgId, findingIds[i]);
+      if (result.success) flipped++;
+      // Send progress every 5 items or on last item
+      if ((i + 1) % 5 === 0 || i === findingIds.length - 1) {
+        await writer.write(encoder.encode(`data: ${JSON.stringify({ flipped, done: i + 1, total: findingIds.length })}\n\n`));
+      }
+    }
+    console.log(`[ADMIN-BULK-FLIP] ${auth.email}: flipped ${flipped}/${findingIds.length} findings to 100%`);
+    await writer.write(encoder.encode(`data: ${JSON.stringify({ ok: true, flipped, total: findingIds.length, complete: true })}\n\n`));
+    await writer.close();
+  })();
+
+  return new Response(readable, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
 }
 
 // -- Admin: Office Bypass Config --

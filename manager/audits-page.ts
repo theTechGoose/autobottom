@@ -196,9 +196,12 @@ function renderTable(d){
     if(c.reason==='perfect_score'){reviewedBadge='<span class="badge" style="background:rgba(63,185,80,0.10);color:#3fb950;border:1px solid rgba(63,185,80,0.25);" title="100% — no review needed">✓ Auto</span>';}
     else if(c.reason==='invalid_genie'){reviewedBadge='<span class="badge" style="background:rgba(110,118,129,0.12);color:#8b949e;border:1px solid rgba(110,118,129,0.3);" title="No recording — no review needed">✓ Auto</span>';}
     else if(c.reviewed){reviewedBadge='<span class="badge" style="background:rgba(63,185,80,0.12);color:#3fb950;border:1px solid rgba(63,185,80,0.3);">✓ Reviewed</span>';}
-    return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+dept+'</td><td>'+owner+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td><td>'+reviewedBadge+'</td></tr>';
+    var appealBadge='';
+    if(c.appealStatus==='pending'){appealBadge='<span class="badge" style="background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.3);">Appeal Pending</span>';}
+    else if(c.appealStatus==='complete'){appealBadge='<span class="badge" style="background:rgba(88,166,255,0.12);color:#58a6ff;border:1px solid rgba(88,166,255,0.25);">Appeal Complete</span>';}
+    return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+dept+'</td><td>'+owner+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td><td>'+reviewedBadge+'</td><td>'+appealBadge+'</td></tr>';
   }).join('');
-  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Department</th><th>Team Member</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Reviewed</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Department</th><th>Team Member</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Reviewed</th><th>Appeal</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function renderPagination(d){

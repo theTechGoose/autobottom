@@ -2233,12 +2233,15 @@ async function handleGetChargebacks(req: Request): Promise<Response> {
   const since = parseInt(url.searchParams.get("since") ?? "0", 10);
   const until = parseInt(url.searchParams.get("until") ?? String(Date.now()), 10);
   if (!since) return json({ error: "since required" }, 400);
-  const [entries, reviewedIds] = await Promise.all([
+  const [entries, reviewedIds, bypassCfg] = await Promise.all([
     getChargebackEntries(auth.orgId, since, until),
     getReviewedFindingIds(auth.orgId),
+    getOfficeBypassConfig(auth.orgId),
   ]);
-  // Only include audits that have been reviewed (exclude pending review)
-  const reviewed = entries.filter((e) => reviewedIds.has(e.findingId));
+  const bypassPatterns = bypassCfg.patterns.map((p: string) => p.toLowerCase());
+  const isBypassed = (dept: string) => bypassPatterns.length > 0 && bypassPatterns.some((p: string) => dept.toLowerCase().includes(p));
+  // Exclude unreviewed audits and bypassed offices
+  const reviewed = entries.filter((e) => reviewedIds.has(e.findingId) && !isBypassed(e.destination ?? ""));
   const chargebacks = reviewed.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
   const omissions = reviewed.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
   return json({ chargebacks, omissions });
@@ -2251,9 +2254,15 @@ async function handleGetWireDeductions(req: Request): Promise<Response> {
   const since = parseInt(url.searchParams.get("since") ?? "0", 10);
   const until = parseInt(url.searchParams.get("until") ?? String(Date.now()), 10);
   if (!since) return json({ error: "since required" }, 400);
-  const result = await getWireDeductionEntries(auth.orgId, since, until);
-  // Exclude perfect scores — no deduction for 100%
-  result.items = result.items.filter((e) => e.score < 100);
+  const [result, reviewedIds, bypassCfg] = await Promise.all([
+    getWireDeductionEntries(auth.orgId, since, until),
+    getReviewedFindingIds(auth.orgId),
+    getOfficeBypassConfig(auth.orgId),
+  ]);
+  const bypassPatterns = bypassCfg.patterns.map((p: string) => p.toLowerCase());
+  const isBypassed = (office: string) => bypassPatterns.length > 0 && bypassPatterns.some((p: string) => office.toLowerCase().includes(p));
+  // Exclude perfect scores, unreviewed audits, and bypassed offices
+  result.items = result.items.filter((e) => e.score < 100 && reviewedIds.has(e.findingId) && !isBypassed(e.office ?? ""));
   console.log(`[WIRE-DEDUCTIONS] orgId=${auth.orgId} since=${since} until=${until} found=${result.items.length} total=${result.totalCount} newestTs=${result.newestTs}`);
   return json({ items: result.items, _debug: { totalCount: result.totalCount, newestTs: result.newestTs, orgId: auth.orgId } });
 }
@@ -2282,13 +2291,17 @@ async function handlePostToSheet(req: Request): Promise<Response> {
   const pkgCrmUrl = (e: { recordId: string }) => `https://${realm}.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=${e.recordId}`;
   const auditUrl = (e: { findingId: string }) => `${env.selfUrl}/audit/report?id=${e.findingId}`;
   const posted: string[] = [];
+  const bypassCfg = await getOfficeBypassConfig(orgId);
+  const bypassPatterns = bypassCfg.patterns.map((p: string) => p.toLowerCase());
+  const isBypassed = (dept: string) => bypassPatterns.length > 0 && bypassPatterns.some((p: string) => dept.toLowerCase().includes(p));
+
   if (tabList.includes("chargebacks") || tabList.includes("omissions")) {
     const [allEntries, reviewedIds] = await Promise.all([
       getChargebackEntries(orgId, since, until),
       getReviewedFindingIds(orgId),
     ]);
-    // Only include audits that have been reviewed
-    const entries = allEntries.filter((e) => reviewedIds.has(e.findingId));
+    // Only include reviewed audits, exclude bypassed offices
+    const entries = allEntries.filter((e) => reviewedIds.has(e.findingId) && !isBypassed(e.destination ?? ""));
     console.log(`[POST-TO-SHEET] Chargeback entries: ${entries.length} reviewed (${allEntries.length} total) in range ${new Date(since).toISOString()} – ${new Date(until).toISOString()}`);
     const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
     const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
@@ -2298,10 +2311,13 @@ async function handlePostToSheet(req: Request): Promise<Response> {
     if (tabList.includes("omissions")) { const omRows = toRows(omissions); console.log(`[POST-TO-SHEET] Omission rows: ${omRows.length}`); await appendSheetRows(sheetId, "Omissions", omRows, saEmail, saKey); posted.push(`Omissions (${omRows.length} rows)`); }
   }
   if (tabList.includes("wire")) {
-    const wireResult = await getWireDeductionEntries(orgId, since, until);
-    // Exclude perfect scores — no deduction for 100%
-    wireResult.items = wireResult.items.filter((e) => e.score < 100);
-    console.log(`[POST-TO-SHEET] Wire deductions: ${wireResult.items.length} items (excl 100%) in range ${new Date(since).toISOString()} – ${new Date(until).toISOString()} (total in KV: ${wireResult.totalCount})`);
+    const [wireResult, wireReviewedIds] = await Promise.all([
+      getWireDeductionEntries(orgId, since, until),
+      getReviewedFindingIds(orgId),
+    ]);
+    // Exclude perfect scores, unreviewed audits, and bypassed offices
+    wireResult.items = wireResult.items.filter((e) => e.score < 100 && wireReviewedIds.has(e.findingId) && !isBypassed(e.office ?? ""));
+    console.log(`[POST-TO-SHEET] Wire deductions: ${wireResult.items.length} items (excl 100% + unreviewed) in range ${new Date(since).toISOString()} – ${new Date(until).toISOString()} (total in KV: ${wireResult.totalCount})`);
     const toWireRows = (list: WireDeductionEntry[]): string[][] =>
       list.map((e) => [fmtDate(e.ts), `${e.score}%`, String(e.questionsAudited), String(e.totalSuccess), pkgCrmUrl(e), auditUrl(e), e.office, e.excellenceAuditor, "", e.guestName]);
     const wireRows = toWireRows(wireResult.items);
@@ -4297,13 +4313,17 @@ async function runWeeklySheets(since: number, until: number, tabs: ("chargebacks
   const pkgCrmUrl = (e: { recordId: string }) => `https://${realm}.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=${e.recordId}`;
   const auditUrl = (e: { findingId: string }) => `${env.selfUrl}/audit/report?id=${e.findingId}`;
 
+  const bypassCfg = await getOfficeBypassConfig(orgId);
+  const bypassPatterns = bypassCfg.patterns.map((p: string) => p.toLowerCase());
+  const isBypassed = (dept: string) => bypassPatterns.length > 0 && bypassPatterns.some((p: string) => dept.toLowerCase().includes(p));
+
   if (tabs.includes("chargebacks") || tabs.includes("omissions")) {
     const [allEntries, reviewedIds] = await Promise.all([
       getChargebackEntries(orgId, since, until),
       getReviewedFindingIds(orgId),
     ]);
-    const entries = allEntries.filter((e) => reviewedIds.has(e.findingId));
-    console.log(`[SHEETS] Chargeback entries: ${entries.length} reviewed of ${allEntries.length} total`);
+    const entries = allEntries.filter((e) => reviewedIds.has(e.findingId) && !isBypassed(e.destination ?? ""));
+    console.log(`[SHEETS] Chargeback entries: ${entries.length} reviewed+non-bypassed of ${allEntries.length} total`);
     const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
     const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
     const toRows = (list: typeof entries): string[][] =>
@@ -4313,8 +4333,11 @@ async function runWeeklySheets(since: number, until: number, tabs: ("chargebacks
   }
 
   if (tabs.includes("wire")) {
-    const wireResult = await getWireDeductionEntries(orgId, since, until);
-    const wireEntries = wireResult.items.filter((e) => e.score < 100);
+    const [wireResult, wireReviewedIds] = await Promise.all([
+      getWireDeductionEntries(orgId, since, until),
+      getReviewedFindingIds(orgId),
+    ]);
+    const wireEntries = wireResult.items.filter((e) => e.score < 100 && wireReviewedIds.has(e.findingId) && !isBypassed(e.office ?? ""));
     const toWireRows = (list: WireDeductionEntry[]): string[][] =>
       list.map((e) => [fmtDate(e.ts), `${e.score}%`, String(e.questionsAudited), String(e.totalSuccess), pkgCrmUrl(e), auditUrl(e), e.office, e.excellenceAuditor, "", e.guestName]);
     await appendSheetRows(sheetId, "Wire Deductions", toWireRows(wireEntries), saEmail, saKey);

@@ -588,22 +588,31 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
   // Mark this finding as reviewed so admin views can show a badge
   await db.set(orgKey(orgId, "review-done", findingId), { reviewedAt });
 
-  // Update secondary index — audit is now fully done
-  const completedAt = (finding as Record<string, unknown>).completedAt as number | undefined;
-  if (completedAt) {
-    try {
-      await writeAuditDoneIndex(orgId, {
-        findingId,
-        completedAt,
-        score,
-        completed: true,
-        doneAt: Date.now(),
-        reason: "reviewed",
-        recordId: String((finding as any)?.record?.RecordId ?? "") || undefined,
-      });
-    } catch (err) {
-      console.error(`[REVIEW] ${findingId}: ❌ audit-done-idx update failed:`, err);
-    }
+  // Update secondary index — audit is now fully done (always write, never skip)
+  const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
+  try {
+    const rec = (finding as any).record as Record<string, any> ?? {};
+    const isPackage = finding.recordingIdField === "GenieNumber";
+    const rawVoName = String(rec.VoName ?? "");
+    const voName = rawVoName.includes(" - ") ? rawVoName.split(" - ").slice(1).join(" - ").trim() : rawVoName.trim();
+    await writeAuditDoneIndex(orgId, {
+      findingId,
+      completedAt,
+      score,
+      completed: true,
+      doneAt: Date.now(),
+      reason: "reviewed",
+      recordId: String(rec.RecordId ?? "") || undefined,
+      isPackage,
+      voName: voName || undefined,
+      owner: finding.owner as string | undefined,
+      department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
+      shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+      startedAt: (finding as any).startedAt as number | undefined,
+      durationMs: (finding as any).durationMs as number | undefined,
+    });
+  } catch (err) {
+    console.error(`[REVIEW] ${findingId}: ❌ audit-done-idx update failed:`, err);
   }
 
   // Update the audit history stat so the score reflects the reviewed result
@@ -704,6 +713,67 @@ export async function listReviewQueueFindings(
 
   const items = Array.from(seen.values());
   return { items: items.slice(0, limit), total: items.length };
+}
+
+/** Admin bulk flip: set all answers to Yes, score to 100%, remove from review queue. */
+export async function adminFlipFinding(orgId: OrgId, findingId: string): Promise<{ success: boolean; score: number }> {
+  const db = await kv();
+  const finding = await getFinding(orgId, findingId);
+  if (!finding) return { success: false, score: 0 };
+
+  const allAnswers = await getAllAnswersForFinding(orgId, findingId);
+  const answers = allAnswers.length > 0 ? allAnswers : (finding.answeredQuestions ?? []);
+  const corrected = answers.map((a: any) => a.answer === "No" ? { ...a, answer: "Yes", reviewAction: "admin-flip" } : a);
+  const score = 100;
+
+  finding.answeredQuestions = corrected;
+  (finding as Record<string, unknown>).reviewedAt = new Date().toISOString();
+  (finding as Record<string, unknown>).reviewScore = score;
+  await saveFinding(orgId, finding);
+  await saveBatchAnswers(orgId, findingId, 0, corrected);
+
+  // Clean up review queue entries
+  const keys: Deno.KvKey[] = [];
+  for await (const entry of db.list({ prefix: orgKey(orgId, "review-pending", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list({ prefix: orgKey(orgId, "review-decided", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "review-active") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+  keys.push(orgKey(orgId, "review-audit-pending", findingId));
+  for (let i = 0; i < keys.length; i += 10) {
+    const batch = keys.slice(i, i + 10);
+    const atomic = db.atomic();
+    for (const key of batch) atomic.delete(key);
+    await atomic.commit();
+  }
+
+  // Mark as reviewed
+  await db.set(orgKey(orgId, "review-done", findingId), { reviewedAt: new Date().toISOString() });
+
+  // Update indices
+  const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
+  const rec = (finding as any).record as Record<string, any> ?? {};
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const rawVo = String(rec.VoName ?? "");
+  const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+  try {
+    await writeAuditDoneIndex(orgId, {
+      findingId, completedAt, score, completed: true, doneAt: Date.now(), reason: "reviewed",
+      recordId: String(rec.RecordId ?? "") || undefined, isPackage,
+      voName: voName || undefined, owner: finding.owner as string | undefined,
+      department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
+      shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+    });
+  } catch {}
+  await updateCompletedStatScore(orgId, findingId, score);
+
+  // Delete chargeback/wire entries (100% = no failures)
+  const { deleteChargebackEntry, deleteWireDeductionEntry } = await import("../lib/kv.ts");
+  await deleteChargebackEntry(orgId, findingId).catch(() => {});
+  await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
+
+  console.log(`[ADMIN-FLIP] ✅ ${findingId} → 100% (${keys.length} queue entries removed)`);
+  return { success: true, score };
 }
 
 // -- Reviewer Dashboard --

@@ -32,7 +32,7 @@ import {
   getOfficeBypassConfig, saveOfficeBypassConfig,
   getManagerScope, saveManagerScope, listManagerScopes,
   getAuditDimensions, saveAuditDimensions,
-  getPartnerDimensions, backfillPartnerDimensions, backfillAuditDoneIndex,
+  getPartnerDimensions, backfillPartnerDimensions, backfillAuditDoneIndex, backfillStaleScores,
   getAllAnswersForFinding,
   findAuditsByRecordId, queryAuditDoneIndex,
   getGamificationSettings, saveGamificationSettings,
@@ -74,7 +74,7 @@ import {
   handleGetSettings, handleSaveSettings, handleStats, handleBackfill,
   handleReviewDashboardPage, handleReviewDashboardData, handleReviewMe, handlePreviewFinding,
 } from "./review/handlers.ts";
-import { getReviewStats, populateReviewQueue, clearReviewQueue, getReviewedFindingIds, listReviewQueueFindings } from "./review/kv.ts";
+import { getReviewStats, populateReviewQueue, clearReviewQueue, getReviewedFindingIds, listReviewQueueFindings, adminFlipFinding } from "./review/kv.ts";
 
 // Judge (unified auth)
 import {
@@ -296,6 +296,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/email-templates/delete": handleDeleteEmailTemplate,
   "/admin/bad-word-config": handleSaveBadWordConfig,
   "/admin/bonus-points-config": handleSaveBonusPointsConfig,
+  "/admin/bulk-flip": handleBulkFlip,
   "/admin/office-bypass": handleSaveOfficeBypass,
   "/admin/manager-scopes": handleSaveManagerScope,
   "/admin/audit-dimensions": handleSaveAuditDimensions,
@@ -306,6 +307,7 @@ const postRoutes: Record<string, Handler> = {
   "/admin/backfill-chargeback-entries": handleBackfillChargebackEntries,
   "/admin/backfill-partner-dimensions": handleBackfillPartnerDimensions,
   "/admin/backfill-audit-index": handleBackfillAuditIndex,
+  "/admin/backfill-stale-scores": handleBackfillStaleScores,
   "/admin/deduplicate-findings": handleDeduplicateFindings,
   "/webhooks/audit-complete": handleAuditCompleteWebhook,
   "/webhooks/appeal-filed": handleAppealFiledWebhook,
@@ -422,6 +424,7 @@ const getRoutes: Record<string, Handler> = {
   "/admin/email-templates/get": handleGetEmailTemplate,
   "/admin/bad-word-config": handleGetBadWordConfig,
   "/admin/bonus-points-config": handleGetBonusPointsConfig,
+  "/admin/unreviewed-audits": handleGetUnreviewedAudits,
   "/admin/office-bypass": handleGetOfficeBypass,
   "/admin/manager-scopes": handleGetManagerScopes,
   "/admin/audit-dimensions": handleGetAuditDimensions,
@@ -2116,6 +2119,32 @@ async function handleSaveBonusPointsConfig(req: Request): Promise<Response> {
   return json({ ok: true });
 }
 
+// -- Admin: Unreviewed Audits + Bulk Flip --
+
+async function handleGetUnreviewedAudits(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const url = new URL(req.url);
+  const type = url.searchParams.get("type") as "date-leg" | "package" | undefined;
+  const result = await listReviewQueueFindings(auth.orgId, type || undefined, 500);
+  return json(result);
+}
+
+async function handleBulkFlip(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json();
+  const { findingIds } = body as { findingIds: string[] };
+  if (!findingIds?.length) return json({ error: "findingIds required" }, 400);
+  let flipped = 0;
+  for (const fid of findingIds) {
+    const result = await adminFlipFinding(auth.orgId, fid);
+    if (result.success) flipped++;
+  }
+  console.log(`[ADMIN-BULK-FLIP] ${auth.email}: flipped ${flipped}/${findingIds.length} findings to 100%`);
+  return json({ ok: true, flipped, total: findingIds.length });
+}
+
 // -- Admin: Office Bypass Config --
 
 async function handleGetOfficeBypass(req: Request): Promise<Response> {
@@ -2214,6 +2243,16 @@ async function handleBackfillAuditIndex(req: Request): Promise<Response> {
   const cursor = typeof body.cursor === "string" ? body.cursor : undefined;
   const result = await backfillAuditDoneIndex(auth.orgId, cursor);
   console.log(`[ADMIN] Backfill audit index by ${auth.email}: scanned=${result.scanned} updated=${result.updated} done=${result.done}`);
+  return json({ ok: true, ...result });
+}
+
+async function handleBackfillStaleScores(req: Request): Promise<Response> {
+  const auth = await requireAdminAuth(req);
+  if (auth instanceof Response) return auth;
+  const body = await req.json().catch(() => ({}));
+  const cursor = typeof body.cursor === "string" ? body.cursor : undefined;
+  const result = await backfillStaleScores(auth.orgId, cursor);
+  console.log(`[ADMIN] Backfill stale scores by ${auth.email}: scanned=${result.scanned} updated=${result.updated} done=${result.done}`);
   return json({ ok: true, ...result });
 }
 

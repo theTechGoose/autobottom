@@ -1030,6 +1030,62 @@ export async function backfillAuditDoneIndex(
   return { scanned: page.length, updated, cursor: nextCursor, done };
 }
 
+/** Backfill stale scores in audit-done-idx by comparing to finding.reviewScore.
+ *  Fixes entries where the index score doesn't match the actual reviewed score. */
+export async function backfillStaleScores(
+  orgId: OrgId,
+  cursor?: string,
+): Promise<{ scanned: number; updated: number; cursor: string | null; done: boolean }> {
+  const kvDb = await db();
+  const prefix = orgKey(orgId, "audit-done-idx");
+  const iter = kvDb.list<AuditDoneIndexEntry>({ prefix }, cursor ? { cursor } : {});
+
+  const page: Array<{ entry: AuditDoneIndexEntry; key: Deno.KvKey }> = [];
+  for await (const entry of iter) {
+    if (entry.value) page.push({ entry: entry.value, key: entry.key });
+    if (page.length >= 50) break;
+  }
+
+  const done = page.length < 50;
+  const nextCursor = done ? null : iter.cursor;
+
+  let scanned = 0, updated = 0;
+  // Process in parallel batches of 10
+  for (let i = 0; i < page.length; i += 10) {
+    const batch = page.slice(i, i + 10);
+    await Promise.all(batch.map(async ({ entry }) => {
+      scanned++;
+      const finding = await getFinding(orgId, entry.findingId);
+      if (!finding) return;
+      const reviewScore = (finding as Record<string, unknown>).reviewScore as number | undefined;
+      const actualScore = reviewScore ?? (finding.answeredQuestions?.length
+        ? Math.round((finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length) * 100)
+        : undefined);
+      if (actualScore === undefined || actualScore === entry.score) return;
+      // Score mismatch — update index
+      const rec = (finding as any).record as Record<string, any> ?? {};
+      const isPackage = finding.recordingIdField === "GenieNumber";
+      const rawVo = String(rec.VoName ?? "");
+      const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+      await writeAuditDoneIndex(orgId, {
+        ...entry,
+        score: actualScore,
+        isPackage,
+        voName: voName || undefined,
+        owner: finding.owner as string | undefined,
+        department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
+        shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+        startedAt: entry.startedAt ?? (finding as any).startedAt,
+        durationMs: entry.durationMs ?? (finding as any).durationMs,
+      });
+      updated++;
+      console.log(`[BACKFILL-SCORES] ${entry.findingId}: ${entry.score}% → ${actualScore}%`);
+    }));
+  }
+
+  return { scanned, updated, cursor: nextCursor, done };
+}
+
 // ── Email Report Preview Cache ───────────────────────────────────────────────
 
 export interface EmailReportPreview {

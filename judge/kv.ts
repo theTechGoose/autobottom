@@ -1,6 +1,6 @@
 /** Judge-specific KV operations: queue, locks, decisions, appeal stats. */
 
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getChargebackEntries, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry, getWireDeductionEntries, queryAuditDoneIndex, deleteCompletedStat, deleteAuditDoneIndexEntry } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, getChargebackEntry, saveChargebackEntry, deleteChargebackEntry, getChargebackEntries, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry, getWireDeductionEntries, queryAuditDoneIndex, deleteCompletedStat, deleteAuditDoneIndexEntry, writeAuditDoneIndex, updateCompletedStatScore } from "../lib/kv.ts";
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
 import { checkBadges } from "../shared/badges.ts";
@@ -598,6 +598,35 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judgedBy: string
       header: d.header,
     })),
   });
+
+  // Update audit-done-idx + CompletedAuditStat with corrected score
+  try {
+    const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
+    const rec = (finding as any).record as Record<string, any> ?? {};
+    const isPackage = finding.recordingIdField === "GenieNumber";
+    const rawVoName = String(rec.VoName ?? "");
+    const voName = rawVoName.includes(" - ") ? rawVoName.split(" - ").slice(1).join(" - ").trim() : rawVoName.trim();
+    await writeAuditDoneIndex(orgId, {
+      findingId,
+      completedAt,
+      score: finalScore,
+      completed: true,
+      doneAt: Date.now(),
+      reason: "reviewed",
+      recordId: String(rec.RecordId ?? "") || undefined,
+      isPackage,
+      voName: voName || undefined,
+      owner: finding.owner as string | undefined,
+      department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
+      shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+      startedAt: (finding as any).startedAt as number | undefined,
+      durationMs: (finding as any).durationMs as number | undefined,
+    });
+    await updateCompletedStatScore(orgId, findingId, finalScore);
+    console.log(`[JUDGE] ${findingId}: Updated audit-done-idx + CompletedAuditStat → ${finalScore}%`);
+  } catch (err) {
+    console.error(`[JUDGE] ${findingId}: ❌ audit-done-idx update failed:`, err);
+  }
 }
 
 
@@ -1111,6 +1140,25 @@ async function _deleteFindingAndRelated(orgId: OrgId, findingId: string, complet
   }
   keys.push(orgKey(orgId, "judge-audit-pending", findingId));
 
+  // Manager queue
+  keys.push(orgKey(orgId, "manager-queue", findingId));
+
+  // Appeal record + history
+  keys.push(orgKey(orgId, "appeal", findingId));
+  keys.push(orgKey(orgId, "appeal-history", findingId));
+
+  // Batch answers
+  for (let batch = 0; batch < 50; batch++) {
+    const sentinel = await db.get([...orgKey(orgId, "audit-answers", findingId, batch), "_n"]);
+    if (sentinel.value == null) break;
+    keys.push([...orgKey(orgId, "audit-answers", findingId, batch), "_n"]);
+  }
+
+  // Review undo-idx entries pointing to this finding
+  for await (const entry of db.list<{ findingId: string }>({ prefix: orgKey(orgId, "review-undo-idx") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+
   // Delete in batches of 10
   const BATCH = 10;
   for (let i = 0; i < keys.length; i += BATCH) {
@@ -1128,6 +1176,49 @@ async function _deleteFindingAndRelated(orgId: OrgId, findingId: string, complet
   await deleteAuditDoneIndexEntry(orgId, findingId, completedAt);
 
   console.log(`[DEDUP] 🗑️ deleted ${findingId}: ${keys.length} KV entries + cb/wire/history`);
+}
+
+/** Clean up all secondary indices for a finding WITHOUT deleting the finding itself.
+ *  Used when a re-audit replaces the old finding — keeps the old report accessible but
+ *  removes it from all list views, queues, chargebacks, and wire deductions. */
+export async function cleanupFindingFromIndices(orgId: OrgId, findingId: string): Promise<void> {
+  const db = await kv();
+  let completedAt = Date.now();
+  for await (const entry of db.list<{ findingId: string; completedAt: number }>({ prefix: orgKey(orgId, "audit-done-idx") })) {
+    if (entry.value?.findingId === findingId) { completedAt = entry.value.completedAt; break; }
+  }
+  // Collect all secondary index keys (same as _deleteFindingAndRelated but skip finding chunks)
+  const keys: Deno.KvKey[] = [];
+  for await (const entry of db.list({ prefix: orgKey(orgId, "review-pending", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list({ prefix: orgKey(orgId, "review-decided", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "review-active") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+  keys.push(orgKey(orgId, "review-audit-pending", findingId));
+  keys.push(orgKey(orgId, "review-done", findingId));
+  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-pending", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-decided", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "judge-active") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+  keys.push(orgKey(orgId, "judge-audit-pending", findingId));
+  keys.push(orgKey(orgId, "manager-queue", findingId));
+  keys.push(orgKey(orgId, "appeal", findingId));
+  keys.push(orgKey(orgId, "appeal-history", findingId));
+  for await (const entry of db.list<{ findingId: string }>({ prefix: orgKey(orgId, "review-undo-idx") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+  const BATCH = 10;
+  for (let i = 0; i < keys.length; i += BATCH) {
+    const atomic = db.atomic();
+    for (const key of keys.slice(i, i + BATCH)) atomic.delete(key);
+    await atomic.commit();
+  }
+  await deleteChargebackEntry(orgId, findingId);
+  await deleteWireDeductionEntry(orgId, findingId);
+  await deleteCompletedStat(orgId, findingId);
+  await deleteAuditDoneIndexEntry(orgId, findingId, completedAt);
+  console.log(`[CLEANUP] 🗑️ cleaned indices for ${findingId}: ${keys.length} KV entries + cb/wire/history`);
 }
 
 /** Admin: delete a single finding and all related data by finding ID. */

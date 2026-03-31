@@ -6,7 +6,7 @@ import { enqueueStep } from "./lib/queue.ts";
 import { getDateLegByRid, getPackageByRid } from "./providers/quickbase.ts";
 import { S3Ref } from "./lib/s3.ts";
 import { env } from "./env.ts";
-import { populateJudgeQueue, saveAppeal, getAppeal } from "./judge/kv.ts";
+import { populateJudgeQueue, saveAppeal, getAppeal, cleanupFindingFromIndices } from "./judge/kv.ts";
 import type { AuditFinding, AuditJob } from "./types/mod.ts";
 import { createJob } from "./types/mod.ts";
 import type { OrgId } from "./lib/org.ts";
@@ -349,6 +349,9 @@ export async function handleAppealDifferentRecording(orgId: OrgId, req: Request)
   // Mark old finding as re-audited
   (oldFinding as Record<string, any>).reAuditedAt = Date.now();
   await saveFinding(orgId, oldFinding as Record<string, any>);
+  // Clean up old finding from all list views, queues, chargebacks, wire deductions
+  cleanupFindingFromIndices(orgId, findingId).catch((err) =>
+    console.error(`[APPEAL] ❌ cleanup old finding ${findingId} failed:`, err));
 
   // Create new job + finding with same record data
   const newJobId = nanoid();
@@ -423,6 +426,9 @@ export async function handleAppealUploadRecording(orgId: OrgId, req: Request): P
   // Mark old finding as re-audited
   (oldFinding as Record<string, any>).reAuditedAt = Date.now();
   await saveFinding(orgId, oldFinding as Record<string, any>);
+  // Clean up old finding from all list views, queues, chargebacks, wire deductions
+  cleanupFindingFromIndices(orgId, findingId).catch((err) =>
+    console.error(`[APPEAL] ❌ cleanup old finding ${findingId} failed:`, err));
 
   // Upload file to S3
   const fileBytes = new Uint8Array(await file.arrayBuffer());

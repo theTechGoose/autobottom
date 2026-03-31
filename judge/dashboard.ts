@@ -219,6 +219,9 @@ export function getJudgeDashboardPage(): string {
   <div id="loading" class="loading-wrap">Loading dashboard data...</div>
 
   <div id="dashboard" style="display:none">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+      <button onclick="load();loadReviewers();loadBadges();" style="padding:6px 16px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-size:11px;font-weight:600;cursor:pointer;">Refresh</button>
+    </div>
 
     <!-- Top stat cards -->
     <div class="stat-row">
@@ -638,7 +641,6 @@ export function getJudgeDashboardPage(): string {
   load();
   loadReviewers();
   loadBadges();
-  setInterval(load, 15000);
 })();
 </script>
 </body>

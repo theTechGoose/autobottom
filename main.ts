@@ -2259,8 +2259,10 @@ async function handlePostToSheet(req: Request): Promise<Response> {
   if (!since || !until || !tabs) return json({ error: "since, until, tabs required" }, 400);
   const saS3Key = env.sheetsSaS3Key;
   const sheetId = env.chargebacksSheetId;
-  const orgId = env.chargebacksOrgId as OrgId;
+  // Use the logged-in user's orgId (dashboard context), fall back to env var for cron
+  const orgId = (auth.orgId || env.chargebacksOrgId) as OrgId;
   if (!saS3Key || !sheetId || !orgId) return json({ error: "sheets not configured" }, 500);
+  console.log(`[POST-TO-SHEET] orgId=${orgId} since=${new Date(since).toISOString()} until=${new Date(until).toISOString()} tabs=${tabs}`);
   const saBytes = await new S3Ref(env.s3Bucket, saS3Key).get();
   if (!saBytes) return json({ error: "SA credentials not found" }, 500);
   const saJson = JSON.parse(new TextDecoder().decode(saBytes));
@@ -2275,19 +2277,23 @@ async function handlePostToSheet(req: Request): Promise<Response> {
   const posted: string[] = [];
   if (tabList.includes("chargebacks") || tabList.includes("omissions")) {
     const entries = await getChargebackEntries(orgId, since, until);
+    console.log(`[POST-TO-SHEET] Chargeback entries: ${entries.length} in range ${new Date(since).toISOString()} – ${new Date(until).toISOString()}`);
     const chargebacks = entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h)));
     const omissions = entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h)));
     const toRows = (list: typeof entries): string[][] =>
       list.map((e) => [fmtDate(e.ts), e.voName, e.revenue, crmUrl(e), e.destination, e.failedQHeaders.join(", "), `${e.score}%`]);
-    if (tabList.includes("chargebacks")) { await appendSheetRows(sheetId, "Chargebacks", toRows(chargebacks), saEmail, saKey); posted.push("Chargebacks"); }
-    if (tabList.includes("omissions")) { await appendSheetRows(sheetId, "Omissions", toRows(omissions), saEmail, saKey); posted.push("Omissions"); }
+    if (tabList.includes("chargebacks")) { const cbRows = toRows(chargebacks); console.log(`[POST-TO-SHEET] Chargeback rows: ${cbRows.length}`); await appendSheetRows(sheetId, "Chargebacks", cbRows, saEmail, saKey); posted.push(`Chargebacks (${cbRows.length} rows)`); }
+    if (tabList.includes("omissions")) { const omRows = toRows(omissions); console.log(`[POST-TO-SHEET] Omission rows: ${omRows.length}`); await appendSheetRows(sheetId, "Omissions", omRows, saEmail, saKey); posted.push(`Omissions (${omRows.length} rows)`); }
   }
   if (tabList.includes("wire")) {
     const wireResult = await getWireDeductionEntries(orgId, since, until);
+    console.log(`[POST-TO-SHEET] Wire deductions: ${wireResult.items.length} items in range ${new Date(since).toISOString()} – ${new Date(until).toISOString()} (total in KV: ${wireResult.totalCount})`);
     const toWireRows = (list: WireDeductionEntry[]): string[][] =>
       list.map((e) => [fmtDate(e.ts), `${e.score}%`, String(e.questionsAudited), String(e.totalSuccess), pkgCrmUrl(e), auditUrl(e), e.office, e.excellenceAuditor, "", e.guestName]);
-    await appendSheetRows(sheetId, "Wire Deductions", toWireRows(wireResult.items), saEmail, saKey);
-    posted.push("Wire Deductions");
+    const wireRows = toWireRows(wireResult.items);
+    console.log(`[POST-TO-SHEET] Wire rows to append: ${wireRows.length}`);
+    await appendSheetRows(sheetId, "Wire Deductions", wireRows, saEmail, saKey);
+    posted.push(`Wire Deductions (${wireRows.length} rows)`);
   }
   console.log(`[POST-TO-SHEET] ✅ Posted by ${auth.email}: ${posted.join(", ")}`);
   return json({ ok: true, posted });

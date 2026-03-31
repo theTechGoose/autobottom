@@ -229,21 +229,21 @@ export async function getQuestionsForConfig(orgId: OrgId, configId: string): Pro
   return results.filter((q): q is QLQuestion => q !== null);
 }
 
-/** Get all unique question names across all configs (for bulk egregious UI). */
+/** Get all unique question names across all configs (for bulk egregious UI).
+ *  Uses a single KV prefix scan instead of loading each question individually. */
 export async function getAllQuestionNames(orgId: OrgId): Promise<Array<{ name: string; count: number; egregious: boolean }>> {
-  const configs = await listConfigs(orgId);
-  // Parallel fetch all configs' questions at once
-  const allQuestions = await Promise.all(configs.map((cfg) => getQuestionsForConfig(orgId, cfg.id)));
+  const db = await kv();
   const nameMap = new Map<string, { count: number; egregious: boolean }>();
-  for (const questions of allQuestions) {
-    for (const q of questions) {
-      const existing = nameMap.get(q.name);
-      if (existing) {
-        existing.count++;
-        if (q.egregious) existing.egregious = true;
-      } else {
-        nameMap.set(q.name, { count: 1, egregious: q.egregious ?? false });
-      }
+  // Single prefix scan of all questions for this org — no per-question round trips
+  for await (const entry of db.list<QLQuestion>({ prefix: orgKey(orgId, "qlab", "question") })) {
+    const q = entry.value;
+    if (!q?.name) continue;
+    const existing = nameMap.get(q.name);
+    if (existing) {
+      existing.count++;
+      if (q.egregious) existing.egregious = true;
+    } else {
+      nameMap.set(q.name, { count: 1, egregious: q.egregious ?? false });
     }
   }
   return [...nameMap.entries()]
@@ -254,19 +254,17 @@ export async function getAllQuestionNames(orgId: OrgId): Promise<Array<{ name: s
 /** Set egregious flag on ALL questions matching a given name across all configs. */
 export async function bulkSetEgregious(orgId: OrgId, questionName: string, egregious: boolean): Promise<number> {
   const db = await kv();
-  const configs = await listConfigs(orgId);
-  const allQuestions = await Promise.all(configs.map((cfg) => getQuestionsForConfig(orgId, cfg.id)));
-  const toUpdate: QLQuestion[] = [];
-  for (const questions of allQuestions) {
-    for (const q of questions) {
-      if (q.name === questionName && q.egregious !== egregious) {
-        q.egregious = egregious;
-        toUpdate.push(q);
-      }
+  const toUpdate: Array<{ key: Deno.KvKey; value: QLQuestion }> = [];
+  // Single prefix scan — no per-config round trips
+  for await (const entry of db.list<QLQuestion>({ prefix: orgKey(orgId, "qlab", "question") })) {
+    const q = entry.value;
+    if (q?.name === questionName && q.egregious !== egregious) {
+      q.egregious = egregious;
+      toUpdate.push({ key: entry.key, value: q });
     }
   }
   // Batch write in parallel
-  await Promise.all(toUpdate.map((q) => db.set(orgKey(orgId, "qlab", "question", q.id), q)));
+  await Promise.all(toUpdate.map(({ key, value }) => db.set(key, value)));
   return toUpdate.length;
 }
 

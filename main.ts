@@ -731,6 +731,7 @@ async function handleAuditsData(req: Request): Promise<Response> {
   const department = url.searchParams.get("department") || "";
   const shift = url.searchParams.get("shift") || "";
   const reviewed = url.searchParams.get("reviewed") || "";
+  const auditor = url.searchParams.get("auditor") || "";
   const scoreMin = parseInt(url.searchParams.get("scoreMin") || "0", 10);
   const scoreMax = parseInt(url.searchParams.get("scoreMax") || "100", 10);
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
@@ -747,10 +748,10 @@ async function handleAuditsData(req: Request): Promise<Response> {
   ]);
 
   // Normalize index entries into the shape the frontend expects
-  type AuditRow = { findingId: string; ts: number; score: number; recordId?: string; isPackage?: boolean; voName?: string; owner?: string; department?: string; shift?: string; startedAt?: number; durationMs?: number; reason?: string; reviewed?: boolean };
+  type AuditRow = { findingId: string; ts: number; score: number; recordId?: string; isPackage?: boolean; voName?: string; owner?: string; department?: string; shift?: string; startedAt?: number; durationMs?: number; reason?: string; reviewed?: boolean; reviewedBy?: string };
   const orgId = auth.orgId;
   const windowEntries: AuditRow[] = indexEntries
-    .map((e: { findingId: string; completedAt: number; score: number; recordId?: string; isPackage?: boolean; voName?: string; owner?: string; department?: string; shift?: string; startedAt?: number; durationMs?: number; reason?: string }) => ({
+    .map((e: { findingId: string; completedAt: number; score: number; recordId?: string; isPackage?: boolean; voName?: string; owner?: string; department?: string; shift?: string; startedAt?: number; durationMs?: number; reason?: string; reviewedBy?: string }) => ({
       findingId: e.findingId,
       ts: e.completedAt,
       score: e.score,
@@ -763,6 +764,7 @@ async function handleAuditsData(req: Request): Promise<Response> {
       startedAt: e.startedAt,
       durationMs: e.durationMs,
       reason: e.reason,
+      reviewedBy: e.reviewedBy,
     }))
     .sort((a: AuditRow, b: AuditRow) => b.ts - a.ts);
 
@@ -799,6 +801,7 @@ async function handleAuditsData(req: Request): Promise<Response> {
     if (owner && (c.voName || c.owner) !== owner) return false;
     if (department && c.department !== department) return false;
     if (shift && c.shift !== shift) return false;
+    if (auditor && c.reviewedBy !== auditor) return false;
     if (reviewed === "yes" && !reviewedIds.has(c.findingId)) return false;
     if (reviewed === "no" && (reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
     if (reviewed === "auto" && c.reason !== "perfect_score" && c.reason !== "invalid_genie") return false;
@@ -825,16 +828,26 @@ async function handleAuditsData(req: Request): Promise<Response> {
     windowEntries.filter((c) => matchesBase(c) && (!owner || (c.voName || c.owner) === owner) && (!department || c.department === department))
       .map((c) => c.shift).filter(Boolean)
   )].sort() as string[];
+  const reviewers = [...new Set(
+    windowEntries.map((c) => c.reviewedBy).filter(Boolean)
+  )].sort() as string[];
   const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageItems = filtered.slice((page - 1) * limit, page * limit);
 
   // Hydrate only the current page's items (max 50) to avoid loading thousands of findings
   const hydratedPage = await hydrateMissing(pageItems);
-  const items = hydratedPage.map((c) => ({ ...c, reviewed: reviewedIds.has(c.findingId) }));
+  // Load appeal status for page items
+  const { getAppeal } = await import("./judge/kv.ts");
+  const appeals = await Promise.all(hydratedPage.map((c) => getAppeal(auth.orgId, c.findingId)));
+  const items = hydratedPage.map((c, i) => ({
+    ...c,
+    reviewed: reviewedIds.has(c.findingId),
+    appealStatus: appeals[i] ? appeals[i]!.status : null, // "pending" | "complete" | null
+  }));
 
   console.log(`[AUDITS] 🔍 ${auth.email}: ${total}/${windowEntries.length} in window, page=${page}/${pages}, type=${type}, owner=${owner || "all"}, dept=${department || "all"}, shift=${shift || "all"}`);
-  return json({ items, total, pages, page, owners, departments, shifts });
+  return json({ items, total, pages, page, owners, departments, shifts, reviewers });
 }
 
 async function handleAuditsByRecord(req: Request): Promise<Response> {
@@ -955,6 +968,9 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
   <label>Reviewed
     <select id="f-reviewed"><option value="">All</option><option value="yes">Reviewed</option><option value="no">Not Reviewed</option><option value="auto">Auto</option><option value="invalid_genie">Invalid Genie</option></select>
   </label>
+  <label>Auditor
+    <select id="f-auditor"><option value="">All Auditors</option></select>
+  </label>
   <label>Min Score %
     <input type="number" id="f-score-min" value="0" min="0" max="100" style="width:70px">
   </label>
@@ -980,7 +996,7 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
 </div>
 <script>
 var WINDOW_HOURS = 24;
-var state = { page: 1, type: 'all', owner: '', department: '', shift: '', reviewed: '', scoreMin: 0, scoreMax: 100, limit: 50, customStart: null, customEnd: null };
+var state = { page: 1, type: 'all', owner: '', department: '', shift: '', reviewed: '', auditor: '', scoreMin: 0, scoreMax: 100, limit: 50, customStart: null, customEnd: null };
 var logsBase = null;
 var hm = window.location.hostname.match(/^([^.]+)\\.([^.]+)\\.deno\\.net$/);
 if (hm) logsBase = 'https://console.deno.com/' + hm[2] + '/' + hm[1] + '/observability/logs?query=';
@@ -1018,7 +1034,7 @@ function setWindow(h){
 
 function load(){
   var since=state.customStart!==null?state.customStart:Date.now()-WINDOW_HOURS*3600000;
-  var p={type:state.type,owner:state.owner,department:state.department,shift:state.shift,reviewed:state.reviewed,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit,since:since};
+  var p={type:state.type,owner:state.owner,department:state.department,shift:state.shift,reviewed:state.reviewed,auditor:state.auditor,scoreMin:state.scoreMin,scoreMax:state.scoreMax,page:state.page,limit:state.limit,since:since};
   if(state.customEnd!==null)p.until=state.customEnd;
   var params=new URLSearchParams(p);
   document.getElementById('tbl-body').innerHTML='<div class="loading">Loading...</div>';
@@ -1038,6 +1054,10 @@ function load(){
       while(sw.options.length>1)sw.remove(1);
       (d.shifts||[]).forEach(function(s){var opt=document.createElement('option');opt.value=s;opt.textContent=s;sw.appendChild(opt)});
       if(state.shift&&(d.shifts||[]).indexOf(state.shift)===-1){state.shift='';}sw.value=state.shift;
+      var rw=document.getElementById('f-auditor');
+      while(rw.options.length>1)rw.remove(1);
+      (d.reviewers||[]).forEach(function(r){var opt=document.createElement('option');opt.value=r;opt.textContent=r.split('@')[0];rw.appendChild(opt)});
+      if(state.auditor&&(d.reviewers||[]).indexOf(state.auditor)===-1){state.auditor='';}rw.value=state.auditor||'';
       lastLoadedItems=d.items||[];
       renderStats(d);
       renderTable(d);
@@ -1070,8 +1090,8 @@ function renderTable(d){
     var typeBadge=c.isPackage?'<span class="badge badge-pkg">Partner</span>':'<span class="badge badge-dl">Internal</span>';
     var tmLabel=c.voName||'';
     var tm=tmLabel?'<span class="mono" style="font-size:10px">'+esc(tmLabel)+'</span>':'<span style="color:var(--text-dim);font-size:10px">--</span>';
-    var auditorLabel=c.owner&&c.owner!=='api'?c.owner.split('@')[0]:'api';
-    var auditor='<span class="mono" style="font-size:10px;color:var(--text-dim)">'+esc(auditorLabel)+'</span>';
+    var auditorLabel=c.reviewedBy?c.reviewedBy.split('@')[0]:(c.owner&&c.owner!=='api'?c.owner.split('@')[0]:'api');
+    var auditor='<span class="mono" style="font-size:10px;color:'+(c.reviewedBy?'var(--text)':'var(--text-dim)')+'">'+esc(auditorLabel)+'</span>';
     var started=c.startedAt?'<span title="'+fmtTime(c.startedAt)+'">'+timeAgo(c.startedAt)+'</span>':'--';
     var finished='<span title="'+fmtTime(c.ts)+'">'+timeAgo(c.ts)+'</span>';
     var dur=c.durationMs?'<span style="font-variant-numeric:tabular-nums">'+fmtDur(c.durationMs)+'</span>':'--';
@@ -1079,9 +1099,12 @@ function renderTable(d){
     if(c.reason==='perfect_score'){reviewedBadge='<span class="badge" style="background:rgba(63,185,80,0.10);color:#3fb950;border:1px solid rgba(63,185,80,0.25);" title="100% — no review needed">✓ Auto</span>';}
     else if(c.reason==='invalid_genie'){reviewedBadge='<span class="badge" style="background:rgba(110,118,129,0.12);color:#8b949e;border:1px solid rgba(110,118,129,0.3);" title="No recording — no review needed">✓ Auto</span>';}
     else if(c.reviewed){reviewedBadge='<span class="badge" style="background:rgba(63,185,80,0.12);color:#3fb950;border:1px solid rgba(63,185,80,0.3);">✓ Reviewed</span>';}
-    return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+typeBadge+'</td><td>'+tm+'</td><td>'+auditor+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td><td>'+reviewedBadge+'</td></tr>';
+    var appealBadge='';
+    if(c.appealStatus==='pending'){appealBadge='<span class="badge" style="background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.3);">Appeal Pending</span>';}
+    else if(c.appealStatus==='complete'){appealBadge='<span class="badge" style="background:rgba(88,166,255,0.12);color:#58a6ff;border:1px solid rgba(88,166,255,0.25);">Appeal Complete</span>';}
+    return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+typeBadge+'</td><td>'+tm+'</td><td>'+auditor+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td><td>'+reviewedBadge+'</td><td>'+appealBadge+'</td></tr>';
   }).join('');
-  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Team Member</th><th>Auditor</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Reviewed</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Team Member</th><th>Auditor</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Reviewed</th><th>Appeal</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function renderPagination(d){
@@ -1117,18 +1140,19 @@ document.getElementById('reset-btn').onclick=function(){
 var lastLoadedItems=[];
 document.getElementById('csv-btn').onclick=function(){
   if(!lastLoadedItems.length){alert('No data to export');return;}
-  var headers=['Finding ID','Record ID','Type','Team Member','Auditor','Score','Started','Finished','Duration','Reviewed'];
+  var headers=['Finding ID','Record ID','Type','Team Member','Auditor','Score','Started','Finished','Duration','Reviewed','Appeal Status'];
   var csvRows=[headers.join(',')];
   lastLoadedItems.forEach(function(c){
     csvRows.push([
       c.findingId||'',c.recordId||'',c.isPackage?'Partner':'Internal',
       '"'+(c.voName||'').replace(/"/g,'""')+'"',
-      '"'+(c.owner||'api').replace(/"/g,'""')+'"',
+      '"'+(c.reviewedBy||c.owner||'api').replace(/"/g,'""')+'"',
       (c.score!=null?c.score+'%':''),
       c.startedAt?new Date(c.startedAt).toLocaleString():'',
       c.ts?new Date(c.ts).toLocaleString():'',
       c.durationMs?Math.round(c.durationMs/1000)+'s':'',
-      c.reviewed?'Reviewed':(c.reason==='perfect_score'||c.reason==='invalid_genie'?'Auto':'')
+      c.reviewed?'Reviewed':(c.reason==='perfect_score'||c.reason==='invalid_genie'?'Auto':''),
+      c.appealStatus==='pending'?'Pending':(c.appealStatus==='complete'?'Complete':'')
     ].join(','));
   });
   var blob=new Blob([csvRows.join('\\n')],{type:'text/csv'});
@@ -1139,6 +1163,7 @@ document.getElementById('f-owner').onchange=function(){state.owner=this.value;st
 document.getElementById('f-dept').onchange=function(){state.department=this.value;state.page=1;load()};
 document.getElementById('f-shift').onchange=function(){state.shift=this.value;state.page=1;load()};
 document.getElementById('f-reviewed').onchange=function(){state.reviewed=this.value;state.page=1;load()};
+document.getElementById('f-auditor').onchange=function(){state.auditor=this.value;state.page=1;load()};
 document.querySelectorAll('.window-btn').forEach(function(btn){
   btn.addEventListener('click',function(){setWindow(+this.getAttribute('data-hours'));load();});
 });

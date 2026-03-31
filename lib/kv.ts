@@ -824,6 +824,8 @@ export interface AuditDoneIndexEntry {
   shift?: string;
   startedAt?: number;
   durationMs?: number;
+  /** Email of the reviewer/judge who processed this audit (set on review/judge completion). */
+  reviewedBy?: string;
 }
 
 export type CriteriaField =
@@ -1067,15 +1069,21 @@ export async function backfillStaleScores(
       const actualScore = reviewScore ?? (finding.answeredQuestions?.length
         ? Math.round((finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length) * 100)
         : undefined);
-      if (actualScore === undefined || actualScore === entry.score) return;
-      // Score mismatch — update index
+      // Extract reviewer from answered questions
+      const answers = finding.answeredQuestions as any[] ?? [];
+      const reviewerEmail = answers.find((a: any) => a.reviewedBy)?.reviewedBy as string | undefined;
+
+      const scoreMismatch = actualScore !== undefined && actualScore !== entry.score;
+      const missingReviewer = !entry.reviewedBy && reviewerEmail;
+      if (!scoreMismatch && !missingReviewer) return;
+
       const rec = (finding as any).record as Record<string, any> ?? {};
       const isPackage = finding.recordingIdField === "GenieNumber";
       const rawVo = String(rec.VoName ?? "");
       const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
       await writeAuditDoneIndex(orgId, {
         ...entry,
-        score: actualScore,
+        score: actualScore ?? entry.score,
         isPackage,
         voName: voName || undefined,
         owner: finding.owner as string | undefined,
@@ -1083,9 +1091,10 @@ export async function backfillStaleScores(
         shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
         startedAt: entry.startedAt ?? (finding as any).startedAt,
         durationMs: entry.durationMs ?? (finding as any).durationMs,
+        reviewedBy: reviewerEmail ?? entry.reviewedBy,
       });
       updated++;
-      console.log(`[BACKFILL-SCORES] ${entry.findingId}: ${entry.score}% → ${actualScore}%`);
+      console.log(`[BACKFILL-SCORES] ${entry.findingId}: score=${entry.score}→${actualScore ?? entry.score}% reviewer=${reviewerEmail ?? "unchanged"}`);
     }));
   }
 

@@ -595,6 +595,7 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
     const isPackage = finding.recordingIdField === "GenieNumber";
     const rawVoName = String(rec.VoName ?? "");
     const voName = rawVoName.includes(" - ") ? rawVoName.split(" - ").slice(1).join(" - ").trim() : rawVoName.trim();
+    const reviewerEmail = decisions.find((d) => d.reviewer)?.reviewer;
     await writeAuditDoneIndex(orgId, {
       findingId,
       completedAt,
@@ -610,6 +611,7 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
       shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
       startedAt: (finding as any).startedAt as number | undefined,
       durationMs: (finding as any).durationMs as number | undefined,
+      reviewedBy: reviewerEmail,
     });
   } catch (err) {
     console.error(`[REVIEW] ${findingId}: ❌ audit-done-idx update failed:`, err);

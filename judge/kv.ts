@@ -621,6 +621,7 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judgedBy: string
       shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
       startedAt: (finding as any).startedAt as number | undefined,
       durationMs: (finding as any).durationMs as number | undefined,
+      reviewedBy: judgedBy,
     });
     await updateCompletedStatScore(orgId, findingId, finalScore);
     console.log(`[JUDGE] ${findingId}: Updated audit-done-idx + CompletedAuditStat → ${finalScore}%`);

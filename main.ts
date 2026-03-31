@@ -967,6 +967,9 @@ tbody td{padding:8px 12px;color:var(--text);vertical-align:middle}
   <label style="align-self:flex-end">
     <button class="btn btn-ghost" id="reset-btn">Reset</button>
   </label>
+  <label style="align-self:flex-end">
+    <button class="btn btn-ghost" id="csv-btn" style="font-size:10px;">⬇ CSV</button>
+  </label>
 </div>
 <div class="content">
   <div class="stats-row" id="stats-row"></div>
@@ -1035,6 +1038,7 @@ function load(){
       while(sw.options.length>1)sw.remove(1);
       (d.shifts||[]).forEach(function(s){var opt=document.createElement('option');opt.value=s;opt.textContent=s;sw.appendChild(opt)});
       if(state.shift&&(d.shifts||[]).indexOf(state.shift)===-1){state.shift='';}sw.value=state.shift;
+      lastLoadedItems=d.items||[];
       renderStats(d);
       renderTable(d);
       renderPagination(d);
@@ -1064,8 +1068,10 @@ function renderTable(d){
     var ridHtml='--';
     if(c.recordId){var u=(c.isPackage?qbPkgUrl:qbDateUrl)+encodeURIComponent(c.recordId);ridHtml='<a href="'+u+'" target="_blank" class="tbl-link">'+esc(c.recordId)+'</a>';}
     var typeBadge=c.isPackage?'<span class="badge badge-pkg">Partner</span>':'<span class="badge badge-dl">Internal</span>';
-    var ownerLabel=c.voName||(c.owner&&c.owner!=='api'?c.owner.split('@')[0]:'');
-    var owner=ownerLabel?'<span class="mono" style="font-size:10px">'+esc(ownerLabel)+'</span>':'<span style="color:var(--text-dim);font-size:10px">api</span>';
+    var tmLabel=c.voName||'';
+    var tm=tmLabel?'<span class="mono" style="font-size:10px">'+esc(tmLabel)+'</span>':'<span style="color:var(--text-dim);font-size:10px">--</span>';
+    var auditorLabel=c.owner&&c.owner!=='api'?c.owner.split('@')[0]:'api';
+    var auditor='<span class="mono" style="font-size:10px;color:var(--text-dim)">'+esc(auditorLabel)+'</span>';
     var started=c.startedAt?'<span title="'+fmtTime(c.startedAt)+'">'+timeAgo(c.startedAt)+'</span>':'--';
     var finished='<span title="'+fmtTime(c.ts)+'">'+timeAgo(c.ts)+'</span>';
     var dur=c.durationMs?'<span style="font-variant-numeric:tabular-nums">'+fmtDur(c.durationMs)+'</span>':'--';
@@ -1073,9 +1079,9 @@ function renderTable(d){
     if(c.reason==='perfect_score'){reviewedBadge='<span class="badge" style="background:rgba(63,185,80,0.10);color:#3fb950;border:1px solid rgba(63,185,80,0.25);" title="100% — no review needed">✓ Auto</span>';}
     else if(c.reason==='invalid_genie'){reviewedBadge='<span class="badge" style="background:rgba(110,118,129,0.12);color:#8b949e;border:1px solid rgba(110,118,129,0.3);" title="No recording — no review needed">✓ Auto</span>';}
     else if(c.reviewed){reviewedBadge='<span class="badge" style="background:rgba(63,185,80,0.12);color:#3fb950;border:1px solid rgba(63,185,80,0.3);">✓ Reviewed</span>';}
-    return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+typeBadge+'</td><td>'+owner+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td><td>'+reviewedBadge+'</td></tr>';
+    return '<tr><td><a href="/audit/report?id='+encodeURIComponent(fid)+'" target="_blank" class="tbl-link">'+esc(fid)+'</a></td><td>'+logsHtml+'</td><td>'+ridHtml+'</td><td>'+typeBadge+'</td><td>'+tm+'</td><td>'+auditor+'</td><td>'+scoreHtml(c.score)+'</td><td>'+started+'</td><td>'+finished+'</td><td>'+dur+'</td><td>'+reviewedBadge+'</td></tr>';
   }).join('');
-  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Team Member</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Reviewed</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  document.getElementById('tbl-body').innerHTML='<table><thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Type</th><th>Team Member</th><th>Auditor</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Reviewed</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function renderPagination(d){
@@ -1107,6 +1113,26 @@ document.getElementById('reset-btn').onclick=function(){
   document.getElementById('f-score-max').value=100;
   setWindow(24);
   load();
+};
+var lastLoadedItems=[];
+document.getElementById('csv-btn').onclick=function(){
+  if(!lastLoadedItems.length){alert('No data to export');return;}
+  var headers=['Finding ID','Record ID','Type','Team Member','Auditor','Score','Started','Finished','Duration','Reviewed'];
+  var csvRows=[headers.join(',')];
+  lastLoadedItems.forEach(function(c){
+    csvRows.push([
+      c.findingId||'',c.recordId||'',c.isPackage?'Partner':'Internal',
+      '"'+(c.voName||'').replace(/"/g,'""')+'"',
+      '"'+(c.owner||'api').replace(/"/g,'""')+'"',
+      (c.score!=null?c.score+'%':''),
+      c.startedAt?new Date(c.startedAt).toLocaleString():'',
+      c.ts?new Date(c.ts).toLocaleString():'',
+      c.durationMs?Math.round(c.durationMs/1000)+'s':'',
+      c.reviewed?'Reviewed':(c.reason==='perfect_score'||c.reason==='invalid_genie'?'Auto':'')
+    ].join(','));
+  });
+  var blob=new Blob([csvRows.join('\\n')],{type:'text/csv'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='audit-history.csv';a.click();
 };
 document.getElementById('f-type').onchange=function(){state.type=this.value;state.page=1;load()};
 document.getElementById('f-owner').onchange=function(){state.owner=this.value;state.page=1;load()};

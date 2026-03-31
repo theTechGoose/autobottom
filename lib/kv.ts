@@ -1056,7 +1056,13 @@ export async function backfillStaleScores(
     await Promise.all(batch.map(async ({ entry }) => {
       scanned++;
       const finding = await getFinding(orgId, entry.findingId);
-      if (!finding) return;
+      if (!finding || (finding as Record<string, unknown>).reAuditedAt) {
+        // Orphaned/re-audited index entry — clean it up.
+        await kvDb.delete(orgKey(orgId, "audit-done-idx", padTs(entry.completedAt), entry.findingId));
+        updated++;
+        console.log(`[BACKFILL-SCORES] ${entry.findingId}: deleted index entry (${!finding ? "finding not found" : "re-audited"})`);
+        return;
+      }
       const reviewScore = (finding as Record<string, unknown>).reviewScore as number | undefined;
       const actualScore = reviewScore ?? (finding.answeredQuestions?.length
         ? Math.round((finding.answeredQuestions.filter((q: any) => q.answer === "Yes").length / finding.answeredQuestions.length) * 100)

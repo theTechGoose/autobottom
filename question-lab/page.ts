@@ -641,6 +641,9 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
       <td><a href="/question-lab/question/${q.id}">${esc(q.name)}</a></td>
       <td style="color:var(--muted);font-size:13px;">${esc(q.text.length > 90 ? q.text.slice(0, 90) + "…" : q.text)}</td>
       <td><button onclick="event.stopPropagation();toggleEgregious('${q.id}',${!q.egregious},this)" style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${egBg};color:${egColor};border:1px solid ${egBorder};cursor:pointer;transition:all 0.15s;" title="Click to toggle">${egText}</button></td>
+      <td><input type="number" value="${q.weight ?? 5}" min="1" max="100" style="width:45px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;padding:2px 4px;text-align:center;" onchange="updateQField('${q.id}','weight',+this.value,this)"></td>
+      <td><input type="number" value="${q.numDocs ?? 4}" min="1" max="10" style="width:45px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;padding:2px 4px;text-align:center;" onchange="updateQField('${q.id}','numDocs',+this.value,this)"></td>
+      <td><input type="number" value="${q.temperature ?? 0.8}" min="0" max="1" step="0.1" style="width:50px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;padding:2px 4px;text-align:center;" onchange="updateQField('${q.id}','temperature',+this.value,this)"></td>
       <td style="color:var(--muted);">${q.testIds.length}</td>
       <td style="text-align:right;"><button class="btn-sm btn-danger" onclick="deleteQuestion('${q.id}')">Delete</button></td>
     </tr>`;
@@ -752,7 +755,7 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
       </div>
       ${questions.length === 0
         ? '<div class="empty">No questions yet. Add one to get started.</div>'
-        : `<table><thead><tr><th>Name</th><th>Text</th><th>Egregious</th><th>Tests</th><th></th></tr></thead><tbody>${rows}</tbody></table>`}
+        : `<table><thead><tr><th>Name</th><th>Text</th><th>Egregious</th><th>Weight</th><th>Docs</th><th>Temp</th><th>Tests</th><th></th></tr></thead><tbody>${rows}</tbody></table>`}
     </div>
 
     <script>
@@ -861,6 +864,14 @@ export function configDetailPage(config: QLConfig, questions: QLQuestion[]): str
         btn.style.borderColor = newVal ? 'rgba(248,81,73,0.3)' : 'rgba(139,148,158,0.2)';
         btn.setAttribute('onclick', "event.stopPropagation();toggleEgregious('" + qId + "'," + !newVal + ",this)");
         btn.disabled = false;
+      }
+
+      async function updateQField(qId, field, value, input) {
+        var body = {};
+        body[field] = value;
+        input.style.borderColor = 'var(--blue)';
+        await fetch('/question-lab/api/questions/' + qId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        input.style.borderColor = 'var(--border)';
       }
 
       async function cloneConfig() {

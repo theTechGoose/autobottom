@@ -1068,7 +1068,13 @@ export async function handleGetReport(orgId: OrgId, req: Request): Promise<Respo
         <span class="hero-label">Audit Report</span>
         <span class="hero-id">${esc(id)}</span>
         ${statusBadge}
-        <span style="font-size:11px;color:#6e7681;font-weight:500;">${esc(f.findingStatus ?? "")}</span>
+        <span style="font-size:11px;color:#6e7681;font-weight:500;">${esc(f.findingStatus ?? "")}</span>${
+          (f as any).reviewedAt
+            ? `<span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:2px 8px;border-radius:4px;background:rgba(139,92,246,0.15);color:#8b5cf6;margin-left:8px;">Reviewed</span>`
+            : questions.some((q: any) => q.judgeAction)
+              ? `<span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:2px 8px;border-radius:4px;background:rgba(20,184,166,0.15);color:#14b8a6;margin-left:8px;">Appeal Complete</span>`
+              : ""
+        }
       </div>
       <div class="ap" id="audio-player">
         ${((f as any).s3RecordingKeys?.length ?? 0) > 1 ? `<div id="rec-tabs" style="display:flex;gap:2px;margin-right:8px;">${((f as any).s3RecordingKeys as string[]).map((_: string, i: number) => `<button class="ap-rec-tab${i === 0 ? " active" : ""}" data-idx="${i}" onclick="switchRecording(${i})" style="padding:2px 7px;font-size:9px;font-weight:700;border-radius:4px;border:1px solid ${i === 0 ? "var(--blue,#388bfd)" : "rgba(255,255,255,0.15)"};background:${i === 0 ? "var(--blue,#388bfd)" : "transparent"};color:${i === 0 ? "#fff" : "rgba(255,255,255,0.5)"};cursor:pointer;">REC ${i + 1}</button>`).join("")}</div>` : ""}

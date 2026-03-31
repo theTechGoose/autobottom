@@ -473,13 +473,6 @@ table { width: 100%; border-collapse: collapse; }
         <span class="arrow">${icons.chevronRight}</span>
       </div>
 
-      <!-- Bulk Flip (opens modal) -->
-      <div class="sb-link" id="bulk-flip-open">
-        <div class="icon" style="background:rgba(249,115,22,0.10);color:#f97316;">${icons.webhook}</div>
-        <span class="title">Bulk Flip</span>
-        <span class="arrow">${icons.chevronRight}</span>
-      </div>
-
       <!-- Gamification (standalone page) -->
       <a class="sb-link" href="/gamification" style="text-decoration:none;color:inherit;">
         <div class="icon" style="background:var(--green-bg);color:var(--green);">${icons.trophy}</div>
@@ -888,6 +881,7 @@ table { width: 100%; border-collapse: collapse; }
       <button id="maint-tab-backfill" onclick="maintTab('backfill')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);font-size:11px;font-weight:700;padding:6px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;">Backfill Scores</button>
       <button id="maint-tab-dedup" onclick="maintTab('dedup')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);font-size:11px;font-weight:700;padding:6px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;">Deduplicate</button>
       <button id="maint-tab-wire" onclick="maintTab('wire')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);font-size:11px;font-weight:700;padding:6px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;">Wire Cleanup</button>
+      <button id="maint-tab-flip" onclick="maintTab('flip')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);font-size:11px;font-weight:700;padding:6px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;">Bulk Flip</button>
     </div>
 
     <!-- Purge panel -->
@@ -953,6 +947,50 @@ table { width: 100%; border-collapse: collapse; }
       <div class="modal-actions">
         <button class="sf-btn secondary" id="maintenance-close-4">Close</button>
         <button class="sf-btn danger" id="wire-cleanup-btn">Remove Bypassed Entries</button>
+      </div>
+    </div>
+
+    <!-- Bulk Flip panel -->
+    <div id="maint-panel-flip" style="display:none;">
+      <div class="modal-sub" style="margin-bottom:12px;">Pull unreviewed audits matching your filters and flip all answers to Yes (100% score). This removes them from the review queue.</div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px;">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;">From</label>
+        <input type="date" id="flip-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;" onclick="this.showPicker()">
+        <label style="font-size:11px;color:var(--text-dim);font-weight:600;">To</label>
+        <input type="date" id="flip-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;" onclick="this.showPicker()">
+        <select id="flip-type" class="sf-input" style="font-size:11px;padding:5px 8px;">
+          <option value="all">All Types</option>
+          <option value="date-leg">Internal</option>
+          <option value="package">Partner</option>
+        </select>
+        <select id="flip-dept" class="sf-input" style="font-size:11px;padding:5px 8px;">
+          <option value="">All Departments</option>
+        </select>
+        <select id="flip-shift" class="sf-input" style="font-size:11px;padding:5px 8px;">
+          <option value="">All Shifts</option>
+        </select>
+        <input type="number" id="flip-score-min" class="sf-input" style="font-size:11px;padding:5px 8px;width:60px;" placeholder="Min %" value="0">
+        <input type="number" id="flip-score-max" class="sf-input" style="font-size:11px;padding:5px 8px;width:60px;" placeholder="Max %" value="99">
+        <button class="sf-btn primary" id="flip-pull-btn" style="font-size:11px;">Pull Unreviewed</button>
+      </div>
+      <div id="flip-msg" style="font-size:12px;color:var(--text-dim);margin-bottom:8px;min-height:18px;"></div>
+      <div id="flip-table-wrap" style="max-height:350px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;display:none;">
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead><tr style="border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);">
+            <th style="padding:6px 8px;text-align:left;"><input type="checkbox" id="flip-select-all"></th>
+            <th style="padding:6px 8px;text-align:left;color:var(--text-dim);">Finding ID</th>
+            <th style="padding:6px 8px;text-align:left;color:var(--text-dim);">Record</th>
+            <th style="padding:6px 8px;text-align:left;color:var(--text-dim);">Department</th>
+            <th style="padding:6px 8px;text-align:left;color:var(--text-dim);">Team Member</th>
+            <th style="padding:6px 8px;text-align:left;color:var(--text-dim);">Score</th>
+            <th style="padding:6px 8px;text-align:left;color:var(--text-dim);">Date</th>
+          </tr></thead>
+          <tbody id="flip-tbody"></tbody>
+        </table>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:12px;">
+        <span id="flip-count" style="font-size:11px;color:var(--text-dim);">0 selected</span>
+        <button class="sf-btn danger" id="flip-exec-btn" style="font-size:11px;margin-left:auto;" disabled>Flip Selected to 100%</button>
       </div>
     </div>
   </div>
@@ -1195,39 +1233,6 @@ table { width: 100%; border-collapse: collapse; }
     <div class="modal-actions">
       <button class="sf-btn secondary" id="bonus-points-cancel">Cancel</button>
       <button class="sf-btn primary" id="bonus-points-save">Save</button>
-    </div>
-  </div>
-</div>
-
-<!-- Bulk Flip Modal -->
-<div class="modal-overlay" id="bulk-flip-modal">
-  <div class="modal" style="width:620px;max-height:85vh;display:flex;flex-direction:column;">
-    <div class="modal-title">Bulk Flip Audits to 100%</div>
-    <div class="modal-sub">Pull unreviewed audits and flip all answers to Yes. This removes them from the review queue and sets score to 100%.</div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
-      <div class="wh-tabs" id="bf-type-tabs" style="margin-bottom:0;">
-        <button class="wh-tab active" data-bftype="internal">Internal</button>
-        <button class="wh-tab" data-bftype="partner">Partner</button>
-      </div>
-      <button class="sf-btn primary" id="bf-pull" style="margin-left:auto;">Pull Unreviewed</button>
-    </div>
-    <div id="bf-results" style="display:none;overflow-y:auto;flex:1;min-height:0;">
-      <table style="width:100%;border-collapse:collapse;font-size:11px;">
-        <thead><tr style="border-bottom:1px solid var(--border);">
-          <th style="padding:6px 8px;text-align:left;font-weight:600;width:28px;"><input type="checkbox" id="bf-select-all"></th>
-          <th style="padding:6px 8px;text-align:left;font-weight:600;">Finding ID</th>
-          <th style="padding:6px 8px;text-align:left;font-weight:600;">Record ID</th>
-          <th style="padding:6px 8px;text-align:left;font-weight:600;">Team Member</th>
-          <th style="padding:6px 8px;text-align:right;font-weight:600;">Score</th>
-        </tr></thead>
-        <tbody id="bf-body"></tbody>
-      </table>
-    </div>
-    <div id="bf-empty" style="display:none;text-align:center;padding:24px;color:var(--text-dim);font-size:11px;">No unreviewed audits found.</div>
-    <div class="modal-actions" style="margin-top:12px;">
-      <span id="bf-count" style="font-size:11px;color:var(--text-dim);margin-right:auto;"></span>
-      <button class="sf-btn ghost" id="bf-cancel">Cancel</button>
-      <button class="sf-btn primary" id="bf-flip" disabled style="background:#f97316;border-color:#f97316;">Flip Selected</button>
     </div>
   </div>
 </div>
@@ -4529,8 +4534,8 @@ table { width: 100%; border-collapse: collapse; }
 
   // ===== Data Maintenance Modal =====
   function maintTab(tab) {
-    var tabs = ['purge','backfill','dedup','wire'];
-    var colors = { purge: 'var(--red)', backfill: 'var(--blue)', dedup: 'var(--yellow)', wire: 'var(--cyan)' };
+    var tabs = ['purge','backfill','dedup','wire','flip'];
+    var colors = { purge: 'var(--red)', backfill: 'var(--blue)', dedup: 'var(--yellow)', wire: 'var(--cyan)', flip: 'var(--orange, #f97316)' };
     tabs.forEach(function(t) {
       var btn = document.getElementById('maint-tab-' + t);
       var panel = document.getElementById('maint-panel-' + t);
@@ -4845,6 +4850,118 @@ table { width: 100%; border-collapse: collapse; }
         btn.disabled = false; btn.textContent = 'Remove Bypassed Entries';
       });
   });
+
+  // ===== Bulk Flip (maintenance tab) =====
+  (function() {
+    var today = new Date().toISOString().slice(0, 10);
+    var weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    document.getElementById('flip-date-from').value = weekAgo;
+    document.getElementById('flip-date-to').value = today;
+
+    function updateFlipCount() {
+      var cbs = document.querySelectorAll('#flip-tbody input[type=checkbox]');
+      var checked = 0;
+      cbs.forEach(function(cb) { if (cb.checked) checked++; });
+      document.getElementById('flip-count').textContent = checked + ' selected';
+      document.getElementById('flip-exec-btn').disabled = checked === 0;
+    }
+
+    document.getElementById('flip-select-all').addEventListener('change', function() {
+      var val = this.checked;
+      document.querySelectorAll('#flip-tbody input[type=checkbox]').forEach(function(cb) { cb.checked = val; });
+      updateFlipCount();
+    });
+
+    document.getElementById('flip-tbody').addEventListener('change', function(e) {
+      if (e.target && e.target.type === 'checkbox') {
+        document.getElementById('flip-select-all').checked = false;
+        updateFlipCount();
+      }
+    });
+
+    document.getElementById('flip-pull-btn').addEventListener('click', function() {
+      var btn = this;
+      var fromVal = document.getElementById('flip-date-from').value;
+      var toVal = document.getElementById('flip-date-to').value;
+      if (!fromVal || !toVal) { toast('Select both dates', 'error'); return; }
+      var since = new Date(fromVal + 'T00:00:00').getTime();
+      var until = new Date(toVal + 'T23:59:59').getTime();
+      var type = document.getElementById('flip-type').value;
+      var dept = document.getElementById('flip-dept').value;
+      var shift = document.getElementById('flip-shift').value;
+      var scoreMin = document.getElementById('flip-score-min').value || '0';
+      var scoreMax = document.getElementById('flip-score-max').value || '99';
+      var params = new URLSearchParams({ since: since, until: until, type: type, scoreMin: scoreMin, scoreMax: scoreMax });
+      if (dept) params.set('department', dept);
+      if (shift) params.set('shift', shift);
+      btn.disabled = true; btn.textContent = 'Loading...';
+      document.getElementById('flip-msg').textContent = '';
+      fetch('/admin/unreviewed-audits?' + params)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.error) { toast(d.error, 'error'); return; }
+          var deptSel = document.getElementById('flip-dept');
+          var curDept = deptSel.value;
+          deptSel.innerHTML = '<option value="">All Departments</option>';
+          (d.departments || []).forEach(function(dep) { var o = document.createElement('option'); o.value = dep; o.textContent = dep; deptSel.appendChild(o); });
+          deptSel.value = curDept;
+          var shiftSel = document.getElementById('flip-shift');
+          var curShift = shiftSel.value;
+          shiftSel.innerHTML = '<option value="">All Shifts</option>';
+          (d.shifts || []).forEach(function(s) { var o = document.createElement('option'); o.value = s; o.textContent = s; shiftSel.appendChild(o); });
+          shiftSel.value = curShift;
+          var tbody = document.getElementById('flip-tbody');
+          tbody.innerHTML = '';
+          if (!d.items || d.items.length === 0) {
+            document.getElementById('flip-table-wrap').style.display = 'none';
+            document.getElementById('flip-msg').textContent = 'No unreviewed audits match the filters.';
+            return;
+          }
+          document.getElementById('flip-table-wrap').style.display = '';
+          document.getElementById('flip-msg').textContent = d.total + ' unreviewed audit(s) found.';
+          d.items.forEach(function(item) {
+            var tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid var(--border)';
+            var shortId = (item.findingId || '').substring(0, 16);
+            tr.innerHTML = '<td style="padding:5px 8px;"><input type="checkbox" data-fid="' + item.findingId + '"></td>'
+              + '<td style="padding:5px 8px;"><a href="/audit/report?id=' + item.findingId + '" target="_blank" style="color:var(--blue);text-decoration:none;font-size:10px;">' + shortId + '</a></td>'
+              + '<td style="padding:5px 8px;">' + (item.recordId || '--') + '</td>'
+              + '<td style="padding:5px 8px;">' + (item.department || '--') + '</td>'
+              + '<td style="padding:5px 8px;">' + (item.voName || item.owner || '--') + '</td>'
+              + '<td style="padding:5px 8px;font-weight:600;color:' + ((item.score || 0) >= 80 ? 'var(--green)' : 'var(--red)') + ';">' + (item.score != null ? item.score + '%' : '--') + '</td>'
+              + '<td style="padding:5px 8px;font-size:10px;color:var(--text-dim);">' + (item.ts ? new Date(item.ts).toLocaleDateString() : '--') + '</td>';
+            tbody.appendChild(tr);
+          });
+          document.getElementById('flip-select-all').checked = false;
+          updateFlipCount();
+        })
+        .catch(function(e) { toast('Pull failed: ' + e.message, 'error'); })
+        .finally(function() { btn.disabled = false; btn.textContent = 'Pull Unreviewed'; });
+    });
+
+    document.getElementById('flip-exec-btn').addEventListener('click', function() {
+      var cbs = document.querySelectorAll('#flip-tbody input[type=checkbox]:checked');
+      var fids = [];
+      cbs.forEach(function(cb) { fids.push(cb.dataset.fid); });
+      if (fids.length === 0) return;
+      if (!confirm('Flip ' + fids.length + ' audit(s) to 100%? This cannot be undone.')) return;
+      var btn = document.getElementById('flip-exec-btn');
+      btn.disabled = true; btn.textContent = 'Flipping...';
+      fetch('/admin/bulk-flip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ findingIds: fids }),
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.error) { toast(d.error, 'error'); return; }
+          toast('Flipped ' + d.flipped + ' audit(s) to 100%', 'success');
+          document.getElementById('flip-pull-btn').click();
+        })
+        .catch(function(e) { toast('Flip failed: ' + e.message, 'error'); })
+        .finally(function() { btn.disabled = false; btn.textContent = 'Flip Selected to 100%'; });
+    });
+  })();
 
   // ===== Review Queue Drill-down =====
   var rqDrillType = 'date-leg';
@@ -5268,84 +5385,6 @@ table { width: 100%; border-collapse: collapse; }
         .then(function() { toast('Bypass patterns saved', 'success'); })
         .catch(function() { toast('Save failed', 'error'); })
         .finally(function() { btn.disabled = false; btn.textContent = 'Save Bypass'; });
-    });
-  })();
-
-  // --- Bulk Flip ---
-  (function() {
-    var selectedType = 'internal';
-    document.getElementById('bulk-flip-open').addEventListener('click', function() { openModal('bulk-flip-modal'); });
-    document.getElementById('bf-cancel').addEventListener('click', function() { closeModal('bulk-flip-modal'); });
-    backdropClose('bulk-flip-modal');
-    document.querySelectorAll('#bf-type-tabs .wh-tab').forEach(function(t) {
-      t.addEventListener('click', function() {
-        document.querySelectorAll('#bf-type-tabs .wh-tab').forEach(function(b) { b.classList.remove('active'); });
-        t.classList.add('active');
-        selectedType = t.getAttribute('data-bftype');
-      });
-    });
-    function updateCount() {
-      var boxes = document.querySelectorAll('.bf-check');
-      var ct = [].slice.call(boxes).filter(function(c) { return c.checked; }).length;
-      document.getElementById('bf-count').textContent = ct ? ct + ' selected' : '';
-      document.getElementById('bf-flip').disabled = ct === 0;
-    }
-    document.getElementById('bf-select-all').addEventListener('change', function() {
-      var v = this.checked;
-      document.querySelectorAll('.bf-check').forEach(function(c) { c.checked = v; });
-      updateCount();
-    });
-    document.getElementById('bf-pull').addEventListener('click', function() {
-      var btn = this;
-      btn.disabled = true; btn.textContent = 'Pulling...';
-      document.getElementById('bf-results').style.display = 'none';
-      document.getElementById('bf-empty').style.display = 'none';
-      document.getElementById('bf-select-all').checked = false;
-      fetch('/admin/unreviewed-audits?type=' + selectedType)
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          var body = document.getElementById('bf-body');
-          body.innerHTML = '';
-          if (!d.items || d.items.length === 0) {
-            document.getElementById('bf-empty').style.display = 'block';
-            updateCount();
-            return;
-          }
-          d.items.forEach(function(it) {
-            var tr = document.createElement('tr');
-            tr.style.borderBottom = '1px solid var(--border)';
-            tr.innerHTML = '<td style="padding:6px 8px;"><input type="checkbox" class="bf-check" data-fid="' + it.findingId + '"></td>'
-              + '<td style="padding:6px 8px;font-family:var(--mono);font-size:10px;">' + it.findingId + '</td>'
-              + '<td style="padding:6px 8px;font-family:var(--mono);font-size:10px;">' + (it.recordId || '') + '</td>'
-              + '<td style="padding:6px 8px;">' + (it.voName || '') + '</td>'
-              + '<td style="padding:6px 8px;text-align:right;">' + (it.score != null ? it.score + '%' : '') + '</td>';
-            body.appendChild(tr);
-          });
-          document.querySelectorAll('.bf-check').forEach(function(c) {
-            c.addEventListener('change', updateCount);
-          });
-          document.getElementById('bf-results').style.display = 'block';
-          updateCount();
-        })
-        .catch(function() { toast('Failed to pull audits', 'error'); })
-        .finally(function() { btn.disabled = false; btn.textContent = 'Pull Unreviewed'; });
-    });
-    document.getElementById('bf-flip').addEventListener('click', function() {
-      var selected = [].slice.call(document.querySelectorAll('.bf-check')).filter(function(c) { return c.checked; }).map(function(c) { return c.dataset.fid; });
-      if (!selected.length) return;
-      if (!confirm('Flip ' + selected.length + ' audits to 100%? This cannot be undone.')) return;
-      var btn = this;
-      btn.disabled = true; btn.textContent = 'Flipping...';
-      fetch('/admin/bulk-flip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ findingIds: selected })
-      }).then(function(r) { return r.json(); }).then(function(d) {
-        toast('Flipped ' + d.flipped + ' audits to 100%', 'success');
-        document.getElementById('bf-pull').click();
-      }).catch(function() { toast('Bulk flip failed', 'error'); }).finally(function() {
-        btn.disabled = false; btn.textContent = 'Flip Selected';
-      });
     });
   })();
 

@@ -2125,9 +2125,61 @@ async function handleGetUnreviewedAudits(req: Request): Promise<Response> {
   const auth = await requireAdminAuth(req);
   if (auth instanceof Response) return auth;
   const url = new URL(req.url);
-  const type = url.searchParams.get("type") as "date-leg" | "package" | undefined;
-  const result = await listReviewQueueFindings(auth.orgId, type || undefined, 500);
-  return json(result);
+  const type = url.searchParams.get("type") || "all";
+  const owner = url.searchParams.get("owner") || "";
+  const department = url.searchParams.get("department") || "";
+  const shift = url.searchParams.get("shift") || "";
+  const scoreMin = parseInt(url.searchParams.get("scoreMin") || "0", 10);
+  const scoreMax = parseInt(url.searchParams.get("scoreMax") || "100", 10);
+  const sinceParam = url.searchParams.get("since");
+  const untilParam = url.searchParams.get("until");
+  const since = sinceParam ? parseInt(sinceParam, 10) : Date.now() - 7 * 86_400_000;
+  const until = untilParam ? parseInt(untilParam, 10) : Date.now();
+
+  const [indexEntries, reviewedIds] = await Promise.all([
+    queryAuditDoneIndex(auth.orgId, since, until),
+    getReviewedFindingIds(auth.orgId),
+  ]);
+
+  // Unreviewed = not in review-done AND not auto-complete (perfect_score/invalid_genie)
+  const unreviewed = indexEntries.filter((e) => {
+    if (reviewedIds.has(e.findingId)) return false;
+    if (e.reason === "perfect_score" || e.reason === "invalid_genie") return false;
+    if (type === "date-leg" && e.isPackage) return false;
+    if (type === "package" && !e.isPackage) return false;
+    if (owner && (e.voName || e.owner) !== owner) return false;
+    if (department && e.department !== department) return false;
+    if (shift && e.shift !== shift) return false;
+    if (e.score != null && (e.score < scoreMin || e.score > scoreMax)) return false;
+    return true;
+  });
+
+  // Hydrate missing fields for old entries
+  const items = await Promise.all(unreviewed.slice(0, 500).map(async (e) => {
+    if (e.voName !== undefined || e.owner !== undefined) {
+      return { findingId: e.findingId, recordId: e.recordId, voName: e.voName, owner: e.owner, department: e.department, shift: e.shift, score: e.score, isPackage: e.isPackage, ts: e.completedAt };
+    }
+    const finding = await getFinding(auth.orgId, e.findingId);
+    if (!finding) return { findingId: e.findingId, recordId: e.recordId, score: e.score, ts: e.completedAt };
+    const rec = (finding as Record<string, unknown>).record as Record<string, unknown> | undefined;
+    const isPkg = finding.recordingIdField === "GenieNumber";
+    const rawVo = String(rec?.VoName ?? "");
+    const vo = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+    return {
+      findingId: e.findingId, recordId: e.recordId ?? String(rec?.RecordId ?? ""),
+      voName: vo || undefined, owner: finding.owner as string | undefined,
+      department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined,
+      shift: isPkg ? undefined : String(rec?.Shift ?? "") || undefined,
+      score: e.score, isPackage: isPkg, ts: e.completedAt,
+    };
+  }));
+
+  // Build dropdown options from unreviewed entries
+  const owners = [...new Set(items.map((i) => i.voName || i.owner).filter(Boolean))].sort();
+  const departments = [...new Set(items.map((i) => i.department).filter(Boolean))].sort();
+  const shifts = [...new Set(items.map((i) => i.shift).filter(Boolean))].sort();
+
+  return json({ items, total: unreviewed.length, owners, departments, shifts });
 }
 
 async function handleBulkFlip(req: Request): Promise<Response> {

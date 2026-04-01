@@ -113,15 +113,26 @@ export function getWeeklyBuilderPage(): string {
   .wb-staged-empty { font-size: 12px; color: var(--text-dim); padding: 20px 0; text-align: center; }
 
   .wb-staged-item {
-    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
     border: 1px solid var(--border); border-radius: 6px; margin-bottom: 5px;
-    font-size: 12px;
+    font-size: 12px; overflow: hidden;
   }
+  .wb-staged-main {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+    cursor: pointer; user-select: none; transition: background 0.1s;
+  }
+  .wb-staged-main:hover { background: var(--bg-surface); }
   .wb-staged-name { flex: 1; font-weight: 600; }
   .wb-staged-type { font-size: 10px; color: var(--text-muted); padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; }
   .wb-staged-dup { font-size: 10px; color: var(--yellow); }
   .wb-staged-del { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
   .wb-staged-del:hover { color: var(--red); }
+  .wb-staged-emails {
+    display: none; padding: 8px 12px 10px; border-top: 1px solid var(--border);
+    background: var(--bg-surface);
+  }
+  .wb-staged-emails.open { display: block; }
+  .wb-staged-email-item { font-size: 11px; color: var(--text-muted); padding: 2px 0; }
+  .wb-staged-no-emails { font-size: 11px; color: var(--text-dim); font-style: italic; }
 
   .wb-publish-bar { border-top: 1px solid var(--border); padding-top: 16px; display: flex; flex-direction: column; gap: 8px; }
   .wb-publish-warn { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
@@ -233,6 +244,19 @@ export function getWeeklyBuilderPage(): string {
     renderStaged();
   }
 
+  function getConfigEmails(cfg) {
+    if (cfg.type === 'partner') {
+      return ((partnerDims && partnerDims.offices) || {})[cfg.office] || [];
+    }
+    // internal — invert scopes for this dept
+    var emails = [];
+    Object.entries(managerScopes || {}).forEach(function(e) {
+      var email = e[0]; var scope = e[1];
+      if ((scope.departments || []).includes(cfg.department)) emails.push(email);
+    });
+    return emails;
+  }
+
   function renderStaged() {
     var list = document.getElementById('wb-staged-list');
     var count = document.getElementById('wb-count');
@@ -249,19 +273,33 @@ export function getWeeklyBuilderPage(): string {
     staged.forEach(function(cfg) {
       var dup = isDuplicate(cfg);
       var key = stagedKey(cfg);
+      var emails = getConfigEmails(cfg);
+      var emailsHtml = emails.length
+        ? emails.map(function(e) { return '<div class="wb-staged-email-item">' + esc(e) + '</div>'; }).join('')
+        : '<div class="wb-staged-no-emails">No recipients — will be empty on publish</div>';
       html += '<div class="wb-staged-item" data-key="' + escAttr(key) + '">' +
-        '<span class="wb-staged-name">' + esc(cfg.name) + '</span>' +
-        '<span class="wb-staged-type">' + (cfg.type === 'internal' ? 'Internal' : 'Partner') + '</span>' +
-        (dup ? '<span class="wb-staged-dup">already exists</span>' : '') +
-        '<button class="wb-staged-del" data-key="' + escAttr(key) + '" title="Remove">&times;</button>' +
-        '</div>';
+        '<div class="wb-staged-main">' +
+          '<span class="wb-staged-name">' + esc(cfg.name) + '</span>' +
+          '<span class="wb-staged-type">' + (cfg.type === 'internal' ? 'Internal' : 'Partner') + '</span>' +
+          (dup ? '<span class="wb-staged-dup">already exists</span>' : '') +
+          '<button class="wb-staged-del" data-key="' + escAttr(key) + '" title="Remove">&times;</button>' +
+        '</div>' +
+        '<div class="wb-staged-emails">' + emailsHtml + '</div>' +
+      '</div>';
     });
     list.innerHTML = html;
+    list.querySelectorAll('.wb-staged-main').forEach(function(row) {
+      row.addEventListener('click', function(e) {
+        if (e.target.classList.contains('wb-staged-del')) return;
+        var emailsPanel = row.nextElementSibling;
+        if (emailsPanel) emailsPanel.classList.toggle('open');
+      });
+    });
     list.querySelectorAll('.wb-staged-del').forEach(function(btn) {
-      btn.addEventListener('click', function() {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
         var key = btn.dataset.key;
         unstageConfig(key);
-        // uncheck the corresponding checkbox if it exists
         var cb = document.querySelector('[data-staged-key="' + CSS.escape(key) + '"]');
         if (cb) cb.checked = false;
       });

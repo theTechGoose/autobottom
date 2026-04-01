@@ -786,6 +786,9 @@ table { width: 100%; border-collapse: collapse; }
 <div class="modal-overlay" id="email-reports-modal">
   <div class="modal er-modal">
     <div id="er-content"></div>
+    <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:12px;text-align:center;">
+      <a href="/admin/weekly-builder" style="font-size:11px;color:var(--text-muted);text-decoration:none;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-muted)'">Build Weekly Reports &rarr;</a>
+    </div>
   </div>
 </div>
 

@@ -4082,10 +4082,10 @@ table { width: 100%; border-collapse: collapse; }
     }
     function autoName() {
       if (!wState.type) return '';
-      if (wState.type==='both') return 'All Audits \u2014 Weekly';
-      if (wState.type==='partner') return (wState.office||'Partner')+' \u2014 Weekly';
+      if (wState.type==='both') return 'All Audits';
+      if (wState.type==='partner') return wState.office||'Partner';
       var parts=[]; if(wState.department)parts.push(wState.department); if(wState.shift)parts.push(wState.shift);
-      return (parts.length?parts.join(' \u2014 '):'Internal')+' \u2014 Weekly';
+      return parts.length ? parts.join(' \u2014 ') : 'Internal';
     }
     function deriveAutoRecipients() {
       if (wState.type==='partner' && wPartnerDims && wState.office) return (wPartnerDims.offices||{})[wState.office]||[];

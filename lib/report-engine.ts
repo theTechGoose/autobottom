@@ -347,11 +347,20 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
   const htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml, config.name, summaryHtml);
 
   console.log(`${label} — [4/4] sending to ${allRecipients.length} recipient(s)...`);
+  let subject = config.name;
+  if (config.weeklyType) {
+    const { from, to } = resolveDateRange(config.dateRange);
+    const fmt = (ts: number) => {
+      const d = new Date(ts);
+      return (d.getUTCMonth() + 1) + "/" + d.getUTCDate();
+    };
+    subject = config.name + " \u2014 Week of " + fmt(from) + "\u2013" + fmt(to);
+  }
   await sendEmail({
     to: allRecipients,
     ...(config.cc?.length ? { cc: config.cc } : {}),
     ...(config.bcc?.length ? { bcc: config.bcc } : {}),
-    subject: config.name,
+    subject,
     htmlBody,
   });
 

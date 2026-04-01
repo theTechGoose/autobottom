@@ -126,6 +126,8 @@ export function getWeeklyBuilderPage(): string {
   .wb-staged-dup { font-size: 10px; color: var(--yellow); }
   .wb-staged-del { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
   .wb-staged-del:hover { color: var(--red); }
+  .wb-staged-pv { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
+  .wb-staged-pv:hover { color: var(--blue); }
   .wb-staged-emails {
     display: none; padding: 8px 12px 10px; border-top: 1px solid var(--border);
     background: var(--bg-surface);
@@ -244,6 +246,31 @@ export function getWeeklyBuilderPage(): string {
     renderStaged();
   }
 
+  function buildEphemeralPayload(cfg) {
+    var filters = [];
+    if (cfg.type === 'internal') {
+      filters.push({ field: 'auditType', operator: 'equals', value: 'internal' });
+      if (cfg.department) filters.push({ field: 'department', operator: 'equals', value: cfg.department });
+      if (cfg.shift) filters.push({ field: 'shift', operator: 'equals', value: cfg.shift });
+    } else {
+      filters.push({ field: 'auditType', operator: 'equals', value: 'partner' });
+      if (cfg.office) filters.push({ field: 'department', operator: 'equals', value: cfg.office });
+    }
+    filters.push({ field: 'appealStatus', operator: 'not_equals', value: 'pending' });
+    return {
+      name: cfg.name,
+      weeklyType: cfg.type,
+      weeklyDepartment: cfg.department,
+      weeklyOffice: cfg.office,
+      weeklyShift: cfg.shift || undefined,
+      dateRange: { mode: 'weekly', startDay: 1 },
+      onlyCompleted: true,
+      topLevelFilters: filters,
+      reportSections: [{ header: cfg.name, columns: ['finalizedAt', 'voName', 'department', 'score', 'recordId', 'findingId'], criteria: [] }],
+      recipients: [],
+    };
+  }
+
   function getConfigEmails(cfg) {
     if (cfg.type === 'partner') {
       return ((partnerDims && partnerDims.offices) || {})[cfg.office] || [];
@@ -282,6 +309,7 @@ export function getWeeklyBuilderPage(): string {
           '<span class="wb-staged-name">' + esc(cfg.name) + '</span>' +
           '<span class="wb-staged-type">' + (cfg.type === 'internal' ? 'Internal' : 'Partner') + '</span>' +
           (dup ? '<span class="wb-staged-dup">already exists</span>' : '') +
+          '<button class="wb-staged-pv" data-key="' + escAttr(key) + '" title="Preview">\uD83D\uDC41</button>' +
           '<button class="wb-staged-del" data-key="' + escAttr(key) + '" title="Remove">&times;</button>' +
         '</div>' +
         '<div class="wb-staged-emails">' + emailsHtml + '</div>' +
@@ -293,6 +321,34 @@ export function getWeeklyBuilderPage(): string {
         if (e.target.classList.contains('wb-staged-del')) return;
         var emailsPanel = row.nextElementSibling;
         if (emailsPanel) emailsPanel.classList.toggle('open');
+      });
+    });
+    list.querySelectorAll('.wb-staged-pv').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var key = btn.dataset.key;
+        var cfg = staged.get(key);
+        if (!cfg) return;
+        var payload = buildEphemeralPayload(cfg);
+        btn.textContent = '...';
+        fetch('/admin/email-reports/preview-inline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+          .then(function(r) {
+            btn.textContent = '\uD83D\uDC41';
+            if (!r.ok) { r.json().then(function(e) { toast(e.error || 'Preview failed', 'error'); }); return; }
+            return r.text();
+          })
+          .then(function(html) {
+            if (!html) return;
+            var w = window.open('', '_blank');
+            if (!w) { toast('Allow popups to preview', 'error'); return; }
+            w.document.write(html);
+            w.document.close();
+          })
+          .catch(function(e) { btn.textContent = '\uD83D\uDC41'; toast(e.message, 'error'); });
       });
     });
     list.querySelectorAll('.wb-staged-del').forEach(function(btn) {

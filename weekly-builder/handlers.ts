@@ -81,22 +81,20 @@ export async function handleWeeklyBuilderTestSend(req: Request): Promise<Respons
   if (!testEmail) return json({ error: "testEmail required" }, 400);
   if (!configs?.length) return json({ error: "no configs" }, 400);
 
-  let sent = 0;
-  const errors: string[] = [];
-
-  for (const staged of configs) {
-    try {
+  const results = await Promise.allSettled(
+    configs.map((staged) => {
       const ephemeral = buildEphemeralConfig(staged, [testEmail]);
       const timeout = new Promise<never>((_, rej) =>
         setTimeout(() => rej(new Error("timeout after 55s")), 55_000)
       );
-      await Promise.race([runReport(auth.orgId, ephemeral), timeout]);
-      sent++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${staged.name}: ${msg}`);
-    }
-  }
+      return Promise.race([runReport(auth.orgId, ephemeral), timeout]);
+    })
+  );
+
+  const sent = results.filter((r) => r.status === "fulfilled").length;
+  const errors = results
+    .map((r, i) => r.status === "rejected" ? `${configs[i].name}: ${(r as PromiseRejectedResult).reason?.message ?? r.reason}` : null)
+    .filter(Boolean) as string[];
 
   return json({ sent, errors });
 }

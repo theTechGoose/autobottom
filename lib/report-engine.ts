@@ -337,10 +337,7 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
     summaryHtml = renderWeeklySummary(summaryData);
   }
 
-  // Merge weeklyAutoRecipients with regular recipients
-  const allRecipients = config.weeklyType
-    ? [...new Set([...config.recipients, ...(config.weeklyAutoRecipients ?? [])])]
-    : config.recipients;
+  const allRecipients = config.recipients;
 
   console.log(`${label} — [3/4] rendering HTML...`);
   const sectionsHtml = renderSections(sections);

@@ -273,7 +273,7 @@ export async function handleManagerAuditsData(req: Request): Promise<Response> {
     const scope = await getManagerScope(auth.orgId, auth.email);
     scopedEntries = windowEntries.filter((c) => {
       if (scope.departments.length > 0 && !scope.departments.includes(c.department ?? "")) return false;
-      if (scope.shifts.length > 0 && !scope.shifts.includes(c.shift ?? "")) return false;
+      if (scope.shifts.length > 0 && !c.isPackage && !scope.shifts.includes(c.shift ?? "")) return false;
       return true;
     });
   }

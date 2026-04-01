@@ -3270,6 +3270,17 @@ table { width: 100%; border-collapse: collapse; }
     var d = s.days === 'weekdays' ? 'Mon–Fri' : s.days === 'weekends' ? 'Sat–Sun' : 'Daily';
     return d + ' @ ' + erFmtTime(s.timeOfDayEst) + ' EST';
   }
+  function weeklySchedDesc(c) {
+    if (!c.schedule || c.schedule.mode !== 'cron') return 'Daily @ 8:00 PM EST';
+    var parts = c.schedule.expression.trim().split(/\s+/);
+    var hUtc = parseInt(parts[1]); var mUtc = parseInt(parts[0]);
+    if (isNaN(hUtc) || isNaN(mUtc)) return 'Daily @ 8:00 PM EST';
+    var hEst = ((hUtc - 5) % 24 + 24) % 24;
+    var period = hEst >= 12 ? 'PM' : 'AM';
+    var h12 = hEst % 12 || 12;
+    var mm = mUtc < 10 ? '0' + mUtc : String(mUtc);
+    return 'Daily @ ' + h12 + (mm !== '00' ? ':' + mm : '') + ' ' + period + ' EST';
+  }
 
   // ── Tag chip input ───────────────────────────────────────────────────
   function erChipInput(container, initialValues) {
@@ -3522,15 +3533,15 @@ table { width: 100%; border-collapse: collapse; }
   // ── List view ─────────────────────────────────────────────────────────
   function renderERList() {
     var html = '<div class="er-list-hdr"><div class="modal-title">Email Reports</div><div style="display:flex;gap:8px;"><button class="sf-btn" id="er-new-weekly" style="font-size:11px;background:#238636;border-color:#238636;color:#fff;">+ Weekly Report</button><button class="sf-btn primary" id="er-new" style="font-size:11px;">+ New Report</button></div></div>';
-    if (!emailConfigs.length) {
-      html += '<div class="er-empty">No reports yet. Click <strong>+ New Report</strong> to create one.</div>';
-    } else {
-      html += '<table class="er-table"><thead><tr><th style="width:50px;">Active</th><th>Name</th><th>Schedule</th><th>Recipients</th><th></th></tr></thead><tbody>';
-      emailConfigs.forEach(function(c, i) {
-        var dis = !!c.disabled;
-        var sched = c.schedule ? erScheduleDesc(c.schedule) : '<span style="color:var(--text-dim);font-style:italic;">No schedule</span>';
+    var regular = [], weekly = [];
+    emailConfigs.forEach(function(c, i) { if (c.weeklyType) weekly.push({c:c,i:i}); else regular.push({c:c,i:i}); });
+    function buildRows(items) {
+      var s = '';
+      items.forEach(function(item) {
+        var c = item.c; var i = item.i; var dis = !!c.disabled;
+        var sched = c.weeklyType ? weeklySchedDesc(c) : (c.schedule ? erScheduleDesc(c.schedule) : '<span style="color:var(--text-dim);font-style:italic;">No schedule</span>');
         var rc = (c.recipients||[]).length;
-        html += '<tr data-idx="'+i+'"'+(dis?' class="er-disabled"':'')+'>'+
+        s += '<tr data-idx="'+i+'"'+(dis?' class="er-disabled"':'')+'>'+
           '<td style="text-align:center;" class="er-cb-cell"><input type="checkbox" class="er-active-cb" data-id="'+c.id+'" data-idx="'+i+'"'+(dis?'':' checked')+'></td>'+
           '<td style="font-weight:600;">'+esc(c.name)+'</td>'+
           '<td>'+sched+'</td>'+
@@ -3540,14 +3551,27 @@ table { width: 100%; border-collapse: collapse; }
             '<button class="er-icon-btn er-pv-btn" data-id="'+c.id+'" style="font-size:13px;">&#128065;</button>'+
           '</div></td></tr>';
       });
-      html += '</tbody></table>';
+      return s;
+    }
+    var thead = '<thead><tr><th style="width:50px;">Active</th><th>Name</th><th>Schedule</th><th>Recipients</th><th></th></tr></thead>';
+    if (!emailConfigs.length) {
+      html += '<div class="er-empty">No reports yet. Click <strong>+ New Report</strong> to create one.</div>';
+    } else {
+      if (regular.length) html += '<table class="er-table">'+thead+'<tbody>'+buildRows(regular)+'</tbody></table>';
+      if (weekly.length) {
+        html += '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin:'+(regular.length?'20px':'0')+'px 0 8px;">Weekly Reports</div>';
+        html += '<table class="er-table">'+thead+'<tbody>'+buildRows(weekly)+'</tbody></table>';
+      }
     }
     erContent.innerHTML = html;
     document.getElementById('er-new').addEventListener('click', function() { renderEREdit(null); });
-    document.getElementById('er-new-weekly').addEventListener('click', function() { renderERWeekly(); });
+    document.getElementById('er-new-weekly').addEventListener('click', function() { renderERWeekly(null); });
     erContent.querySelectorAll('tr[data-idx]').forEach(function(row) {
       row.querySelectorAll('td:not(:last-child):not(.er-cb-cell)').forEach(function(td) {
-        td.addEventListener('click', function() { renderEREdit(emailConfigs[parseInt(row.dataset.idx)]); });
+        td.addEventListener('click', function() {
+          var cfg = emailConfigs[parseInt(row.dataset.idx)];
+          if (cfg && cfg.weeklyType) renderERWeekly(cfg); else renderEREdit(cfg);
+        });
       });
     });
     erContent.querySelectorAll('.er-active-cb').forEach(function(cb) {
@@ -3870,20 +3894,36 @@ table { width: 100%; border-collapse: collapse; }
   }
 
   // ── Weekly report creation view ──────────────────────────────────────────
-  function renderERWeekly() {
+  function renderERWeekly(existingConfig) {
+    var editing = !!existingConfig;
     erContent.innerHTML = '';
-    var wState = { type: null, department: null, shift: null, office: null };
+    var wState = {
+      type: editing ? existingConfig.weeklyType : null,
+      department: editing ? (existingConfig.weeklyDepartment || null) : null,
+      shift: editing ? (existingConfig.weeklyShift || null) : null,
+      office: editing ? (existingConfig.weeklyOffice || null) : null,
+    };
     var wDims = null, wPartnerDims = null, wScopes = null;
     var recipChipWrap, ccChipWrap, bccChipWrap;
     var weeklyChipCtrls = {};
     var secCont, nameInput, failedOnlyInput, tplSel, editForm;
+    var initializing = editing;
+
+    function cronToEstHhmm(expr) {
+      var p = (expr||'').trim().split(/\s+/);
+      if (p.length < 2) return '20:00';
+      var hU = parseInt(p[1]); var mU = parseInt(p[0]);
+      if (isNaN(hU)||isNaN(mU)) return '20:00';
+      var hE = ((hU - 5) % 24 + 24) % 24;
+      return (hE<10?'0':'')+hE+':'+(mU<10?'0':'')+mU;
+    }
 
     // Header
     var hdr = document.createElement('div'); hdr.className = 'er-edit-hdr';
     var left = document.createElement('div'); left.className = 'er-edit-hdr-left';
     var backBtn = document.createElement('button'); backBtn.className = 'er-back'; backBtn.innerHTML = '&#8592;';
     backBtn.addEventListener('click', function() { renderERList(); });
-    var titleEl = document.createElement('div'); titleEl.className = 'modal-title'; titleEl.style.marginBottom = '0'; titleEl.textContent = 'New Weekly Report';
+    var titleEl = document.createElement('div'); titleEl.className = 'modal-title'; titleEl.style.marginBottom = '0'; titleEl.textContent = editing ? 'Edit Weekly Report' : 'New Weekly Report';
     left.appendChild(backBtn); left.appendChild(titleEl);
     var acts = document.createElement('div'); acts.className = 'er-edit-actions';
     var pvBtn = document.createElement('button'); pvBtn.className = 'sf-btn secondary'; pvBtn.style.fontSize = '11px'; pvBtn.textContent = '\uD83D\uDC41 Preview';
@@ -3941,6 +3981,7 @@ table { width: 100%; border-collapse: collapse; }
     var foRow = document.createElement('div'); foRow.className = 'er-status-row';
     var foWrap = document.createElement('label'); foWrap.className = 'er-toggle';
     failedOnlyInput = document.createElement('input'); failedOnlyInput.type = 'checkbox'; failedOnlyInput.id = 'er-weekly-failed-only';
+    failedOnlyInput.checked = editing ? !!existingConfig.failedOnly : false;
     var foSlider = document.createElement('span'); foSlider.className = 'er-toggle-slider';
     foWrap.appendChild(failedOnlyInput); foWrap.appendChild(foSlider);
     var foLbl = document.createElement('span'); foLbl.className = 'er-toggle-label'; foLbl.textContent = 'Failed audits only (score < 100)';
@@ -3950,6 +3991,7 @@ table { width: 100%; border-collapse: collapse; }
     var nameWrap = document.createElement('div'); nameWrap.className = 'sf';
     var nameLblEl = document.createElement('label'); nameLblEl.className = 'sf-label'; nameLblEl.textContent = 'Report Name';
     nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.className = 'sf-input'; nameInput.placeholder = 'Auto-generated from selections';
+    if (editing) nameInput.value = existingConfig.name || '';
     nameWrap.appendChild(nameLblEl); nameWrap.appendChild(nameInput); editForm.appendChild(nameWrap);
 
     // Recipients / CC / BCC
@@ -3961,7 +4003,7 @@ table { width: 100%; border-collapse: collapse; }
       else if (item.field==='cc') ccChipWrap = chipWrap;
       else bccChipWrap = chipWrap;
       wrap.appendChild(lbl); wrap.appendChild(chipWrap); editForm.appendChild(wrap);
-      weeklyChipCtrls[item.field] = erChipInput(chipWrap, []);
+      weeklyChipCtrls[item.field] = erChipInput(chipWrap, editing ? (existingConfig[item.field] || []) : []);
     });
 
     // Template
@@ -3970,11 +4012,13 @@ table { width: 100%; border-collapse: collapse; }
     tplSel = document.createElement('select'); tplSel.className = 'sf-input';
     var tplNone = document.createElement('option'); tplNone.value = ''; tplNone.textContent = 'None (use default dark template)'; tplSel.appendChild(tplNone);
     erTemplates.forEach(function(t){var o=document.createElement('option');o.value=t.id;o.textContent=t.name;tplSel.appendChild(o);});
+    if (editing && existingConfig.templateId) tplSel.value = existingConfig.templateId;
     tplWrap.appendChild(tplLblEl); tplWrap.appendChild(tplSel); editForm.appendChild(tplWrap);
 
     // Send schedule description + time picker
     var schedWrap = document.createElement('div'); schedWrap.style.cssText = 'margin-top:16px;padding:12px 14px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.2);border-radius:8px;font-size:12px;color:#c9d1d9;line-height:1.6;';
-    var sendTimeInput = document.createElement('input'); sendTimeInput.type = 'time'; sendTimeInput.value = '20:00';
+    var sendTimeInput = document.createElement('input'); sendTimeInput.type = 'time';
+    sendTimeInput.value = editing && existingConfig.schedule && existingConfig.schedule.mode === 'cron' ? cronToEstHhmm(existingConfig.schedule.expression) : '20:00';
     sendTimeInput.style.cssText = 'background:#0a0e14;border:1px solid #1e2736;border-radius:5px;color:#c9d1d9;font-size:12px;padding:2px 6px;margin:0 4px;';
     var schedPre = document.createTextNode('This report covers all audits within the current pay period (Mon\u2013Sun) and sends nightly at');
     var schedPost = document.createTextNode('EST');
@@ -4000,6 +4044,7 @@ table { width: 100%; border-collapse: collapse; }
       var recips = weeklyChipCtrls.recipients.getValues();
       if (!recips.length) { toast('At least one recipient required','error'); return; }
       var payload = {
+        id: editing ? existingConfig.id : undefined,
         name: name, weeklyType: wState.type,
         weeklyDepartment: wState.type==='internal' ? (wState.department||undefined) : undefined,
         weeklyShift: wState.type==='internal' ? (wState.shift||undefined) : undefined,
@@ -4008,12 +4053,16 @@ table { width: 100%; border-collapse: collapse; }
         failedOnly: failedOnlyInput.checked,
         sendTimeEst: sendTimeInput.value || '20:00',
         recipients: recips, cc: weeklyChipCtrls.cc.getValues(), bcc: weeklyChipCtrls.bcc.getValues(),
-        templateId: tplSel.value||undefined, topLevelFilters: buildTopLevelFilters(), reportSections: collectSections(), disabled: false,
+        templateId: tplSel.value||undefined, topLevelFilters: buildTopLevelFilters(), reportSections: collectSections(), disabled: editing ? !!existingConfig.disabled : false,
       };
       btnLoad(saveBtn,'Saving\u2026');
       fetch('/admin/email-reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
         .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-        .then(function(saved){emailConfigs.push(saved);toast('Weekly report saved','success');btnDone(saveBtn,'Save Report');renderERList();})
+        .then(function(saved){
+          if (editing) { var idx=emailConfigs.findIndex(function(c){return c.id===existingConfig.id;}); if(idx!==-1)emailConfigs[idx]=saved; else emailConfigs.push(saved); }
+          else { emailConfigs.push(saved); }
+          toast(editing?'Weekly report updated':'Weekly report saved','success');btnDone(saveBtn,'Save Report');renderERList();
+        })
         .catch(function(e){toast(e.message,'error');btnDone(saveBtn,'Save Report');});
     });
     actBar.appendChild(cancelBtn); actBar.appendChild(saveBtn); editForm.appendChild(actBar);
@@ -4066,18 +4115,28 @@ table { width: 100%; border-collapse: collapse; }
       return sections;
     }
     function populateEditForm() {
-      if (!nameInput.value.trim()) nameInput.value = autoName();
-      resetRecipients();
-      if (secCont.children.length===0) {
-        erBuildSectionCard({header:autoName(),columns:['finalizedAt','voName','department','score','recordId','findingId'],criteria:[]}, secCont);
+      if (editing) {
+        if (secCont.children.length===0) {
+          (existingConfig.reportSections||[]).forEach(function(s){erBuildSectionCard(s,secCont);});
+          if (secCont.children.length===0) erBuildSectionCard({header:autoName(),columns:['finalizedAt','voName','department','score','recordId','findingId'],criteria:[]},secCont);
+        }
+      } else {
+        if (!nameInput.value.trim()) nameInput.value = autoName();
+        resetRecipients();
+        if (secCont.children.length===0) {
+          erBuildSectionCard({header:autoName(),columns:['finalizedAt','voName','department','score','recordId','findingId'],criteria:[]}, secCont);
+        }
       }
       editForm.style.display = '';
     }
     function updateStep2() {
       step2Int.style.display='none'; step2Part.style.display='none'; editForm.style.display='none';
       if (secCont) secCont.innerHTML='';
-      if (nameInput) nameInput.value='';
-      if (recipChipWrap) { recipChipWrap.innerHTML=''; weeklyChipCtrls.recipients=erChipInput(recipChipWrap,[]); }
+      if (!initializing) {
+        if (nameInput) nameInput.value='';
+        if (recipChipWrap) { recipChipWrap.innerHTML=''; weeklyChipCtrls.recipients=erChipInput(recipChipWrap,[]); }
+      }
+      initializing = false;
       if (wState.type==='internal') { step2Int.style.display=''; loadInternalDims(); }
       else if (wState.type==='partner') { step2Part.style.display=''; loadPartnerDims(); }
       else if (wState.type==='both') { populateEditForm(); }
@@ -4098,6 +4157,11 @@ table { width: 100%; border-collapse: collapse; }
       (dims.shifts||[]).forEach(function(s){var o=document.createElement('option');o.value=s;o.textContent=s;shiftSel.appendChild(o);});
       deptSel.onchange=function(){wState.department=deptSel.value||null;wState.shift=shiftSel.value||null;if(wState.department){nameInput.value=autoName();populateEditForm();}else{editForm.style.display='none';}};
       shiftSel.onchange=function(){wState.shift=shiftSel.value||null;if(wState.department){nameInput.value=autoName();resetRecipients();}};
+      if (wState.department) {
+        deptSel.value = wState.department;
+        if (wState.shift) shiftSel.value = wState.shift;
+        populateEditForm();
+      }
     }
     function loadPartnerDims() {
       if (wPartnerDims) { renderOfficeOpts(); return; }
@@ -4109,6 +4173,12 @@ table { width: 100%; border-collapse: collapse; }
       officeSel.innerHTML='<option value="">Select office...</option>';
       offices.forEach(function(o){var opt=document.createElement('option');opt.value=o;opt.textContent=o;officeSel.appendChild(opt);});
       officeSel.onchange=function(){wState.office=officeSel.value||null;if(wState.office){nameInput.value=autoName();populateEditForm();}else{editForm.style.display='none';}};
+      if (wState.office) { officeSel.value = wState.office; populateEditForm(); }
+    }
+
+    if (editing && wState.type) {
+      var activeBtn = typeBtnRow.querySelector('[data-type="'+wState.type+'"]');
+      if (activeBtn) { activeBtn.classList.add('active'); updateStep2(); }
     }
   }
 

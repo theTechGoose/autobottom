@@ -422,7 +422,9 @@ export function getJudgeDashboardPage(): string {
     document.getElementById('s-overturn-detail').textContent = d.appeals.overturns + ' overturned / ' + d.appeals.upheld + ' upheld';
     document.getElementById('s-q-pending').textContent = d.queue.pending;
     document.getElementById('s-q-decided').textContent = d.queue.decided;
-    document.getElementById('s-queue-info').textContent = d.queue.pending + ' questions in queue';
+    var qInfo = d.queue.pending + ' in queue';
+    if (d.queue.active > 0) qInfo += ', ' + d.queue.active + ' being judged';
+    document.getElementById('s-queue-info').textContent = qInfo;
 
     // Color the overturn rate
     var rateEl = document.getElementById('s-overturn-rate');

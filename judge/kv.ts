@@ -134,6 +134,35 @@ export interface JudgeBufferItem extends JudgeItem {
 // Recording re-audit types should never reach the judge queue.
 const SKIP_APPEAL_TYPES = new Set(["different-recording", "additional-recording", "upload-recording"]);
 
+/** Sweep expired active claims back to judge-pending. Called by claimNextItem and dashboard stats. */
+async function sweepExpiredActiveClaims(orgId: OrgId, excludeJudge?: string): Promise<number> {
+  const db = await kv();
+  const now = Date.now();
+  let reclaimed = 0;
+  const iter = db.list<JudgeItem & { claimedAt: number }>({ prefix: orgKey(orgId, "judge-active") });
+  for await (const entry of iter) {
+    const val = entry.value;
+    if (excludeJudge) {
+      const keyParts = entry.key as Deno.KvKeyPart[];
+      if (keyParts[2] === excludeJudge) continue;
+    }
+    if (val.claimedAt && (now - val.claimedAt) > ACTIVE_TTL) {
+      const pendingKey = orgKey(orgId, "judge-pending", val.findingId, val.questionIndex);
+      const { claimedAt: _, ...baseItem } = val;
+      const res = await db.atomic()
+        .check(entry)
+        .delete(entry.key)
+        .set(pendingKey, baseItem as JudgeItem)
+        .commit();
+      if (res.ok) {
+        reclaimed++;
+        console.log(`[JUDGE] Reclaimed expired active item ${val.findingId}/${val.questionIndex}`);
+      }
+    }
+  }
+  return reclaimed;
+}
+
 export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
   buffer: JudgeBufferItem[];
   remaining: number;
@@ -147,7 +176,17 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
     const iter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
     for await (const entry of iter) {
       if (entry.value.appealType && SKIP_APPEAL_TYPES.has(entry.value.appealType)) {
-        await db.delete(entry.key);
+        const skipFid = entry.value.findingId;
+        const counterKey = orgKey(orgId, "judge-audit-pending", skipFid);
+        const counterEntry = await db.get<number>(counterKey);
+        const newCount = (counterEntry.value ?? 1) - 1;
+        const skipAtomic = db.atomic().delete(entry.key);
+        if (newCount <= 0) skipAtomic.delete(counterKey); else skipAtomic.set(counterKey, newCount);
+        await skipAtomic.commit();
+        if (newCount <= 0) {
+          postJudgedAudit(orgId, skipFid, "system").catch((err) =>
+            console.error(`[JUDGE] ${skipFid}: ❌ SKIP completion failed:`, err));
+        }
         continue;
       }
       const activeKey = orgKey(orgId, "judge-active", judge, entry.value.findingId, entry.value.questionIndex);
@@ -218,27 +257,7 @@ export async function claimNextItem(orgId: OrgId, judge: string): Promise<{
   }
 
   // 1. Sweep expired active claims from OTHER judges back to pending
-  const allActiveIter = db.list<JudgeItem & { claimedAt: number }>({
-    prefix: orgKey(orgId, "judge-active"),
-  });
-  for await (const entry of allActiveIter) {
-    const val = entry.value;
-    // Skip this judge's own items
-    const keyParts = entry.key as Deno.KvKeyPart[];
-    if (keyParts[2] === judge) continue;
-    if (val.claimedAt && (now - val.claimedAt) > ACTIVE_TTL) {
-      const pendingKey = orgKey(orgId, "judge-pending", val.findingId, val.questionIndex);
-      const { claimedAt: _, ...baseItem } = val;
-      const res = await db.atomic()
-        .check(entry)
-        .delete(entry.key)
-        .set(pendingKey, baseItem as JudgeItem)
-        .commit();
-      if (res.ok) {
-        console.log(`[JUDGE] Reclaimed expired active item ${val.findingId}/${val.questionIndex}`);
-      }
-    }
-  }
+  await sweepExpiredActiveClaims(orgId, judge);
 
   // 2. Collect existing active items for this judge
   const activeItems: JudgeItem[] = [];
@@ -633,17 +652,20 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judgedBy: string
 
 // -- Stats --
 
-export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; decided: number }> {
+export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; active: number; decided: number }> {
   const db = await kv();
+  await sweepExpiredActiveClaims(orgId);
   let pending = 0;
+  let active = 0;
   let decided = 0;
 
   for await (const entry of db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") })) {
     if (!entry.value?.appealType || !SKIP_APPEAL_TYPES.has(entry.value.appealType)) pending++;
   }
+  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-active") })) active++;
   for await (const _ of db.list({ prefix: orgKey(orgId, "judge-decided") })) decided++;
 
-  return { pending, decided };
+  return { pending, active, decided };
 }
 
 // -- Appeal Stats --
@@ -694,7 +716,7 @@ export async function getAppealStats(orgId: OrgId): Promise<{
 // -- Judge Dashboard Data --
 
 export async function getJudgeDashboardData(orgId: OrgId): Promise<{
-  queue: { pending: number; decided: number };
+  queue: { pending: number; active: number; decided: number };
   appeals: {
     total: number; completed: number; pending: number;
     overturns: number; upheld: number;
@@ -706,23 +728,69 @@ export async function getJudgeDashboardData(orgId: OrgId): Promise<{
 }> {
   const db = await kv();
 
+  // Sweep expired active claims back to pending BEFORE counting stats
+  const reclaimed = await sweepExpiredActiveClaims(orgId);
+  if (reclaimed > 0) console.log(`[JUDGE-DASHBOARD] Swept ${reclaimed} expired active items back to pending`);
+
   // Queue stats
   let pending = 0;
+  let active = 0;
   let decided = 0;
   for await (const entry of db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") })) {
     if (!entry.value?.appealType || !SKIP_APPEAL_TYPES.has(entry.value.appealType)) pending++;
   }
+  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-active") })) active++;
   for await (const _ of db.list({ prefix: orgKey(orgId, "judge-decided") })) decided++;
 
-  // Appeal records
+  // Appeal records — collect pending ones for stuck-appeal repair
   let totalAppeals = 0;
   let completedAppeals = 0;
   let pendingAppeals = 0;
+  const pendingAppealFids: string[] = [];
   const appealIter = db.list<AppealRecord>({ prefix: orgKey(orgId, "appeal") });
   for await (const entry of appealIter) {
     totalAppeals++;
     if (entry.value.status === "complete") completedAppeals++;
-    else pendingAppeals++;
+    else {
+      pendingAppeals++;
+      pendingAppealFids.push(entry.value.findingId);
+    }
+  }
+
+  // Repair stuck appeals: pending appeal with no judge-pending or judge-active entries
+  for (const fid of pendingAppealFids) {
+    let hasPending = false;
+    for await (const _ of db.list({ prefix: orgKey(orgId, "judge-pending", fid) })) { hasPending = true; break; }
+    if (hasPending) continue;
+    let hasActive = false;
+    // judge-active is keyed by judge, so scan all active entries for this findingId
+    for await (const entry of db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-active") })) {
+      if (entry.value?.findingId === fid) { hasActive = true; break; }
+    }
+    if (hasActive) continue;
+    // No pending or active questions — check if decisions exist
+    let hasDecisions = false;
+    for await (const _ of db.list({ prefix: orgKey(orgId, "judge-decided", fid) })) { hasDecisions = true; break; }
+    if (hasDecisions) {
+      // Decisions exist but appeal never completed — run completion
+      console.log(`[JUDGE-REPAIR] ⚠️ ${fid}: stuck appeal with decisions — completing`);
+      try {
+        await postJudgedAudit(orgId, fid, "system-repair");
+        pendingAppeals--;
+        completedAppeals++;
+      } catch (err) {
+        console.error(`[JUDGE-REPAIR] ❌ ${fid}: completion failed:`, err);
+      }
+    } else {
+      // No questions anywhere — orphaned appeal, mark complete
+      console.log(`[JUDGE-REPAIR] ⚠️ ${fid}: orphaned appeal with no questions — marking complete`);
+      const appealEntry = await db.get<AppealRecord>(orgKey(orgId, "appeal", fid));
+      if (appealEntry.value) {
+        await db.set(orgKey(orgId, "appeal", fid), { ...appealEntry.value, status: "complete" as const });
+        pendingAppeals--;
+        completedAppeals++;
+      }
+    }
   }
 
   // Per-auditor stats
@@ -771,7 +839,7 @@ export async function getJudgeDashboardData(orgId: OrgId): Promise<{
   const byJudge = Array.from(judgeMap.entries()).map(([judge, stats]) => ({ judge, ...stats }));
 
   return {
-    queue: { pending, decided },
+    queue: { pending, active, decided },
     appeals: { total: totalAppeals, completed: completedAppeals, pending: pendingAppeals, overturns, upheld, overturnRate },
     byAuditor,
     recentAppeals: recentAppeals.slice(0, 50),

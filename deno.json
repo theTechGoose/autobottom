@@ -1,3 +1,7 @@
 {
-  "workspace": ["./projects/backend", "./projects/ui"]
+  "workspace": ["./projects/backend", "./projects/ui"],
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
 }

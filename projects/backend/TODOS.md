@@ -1,0 +1,63 @@
+<!-- pipeline-active -->
+## Implementation Plan
+
+- [x] Remove `.env` from version control and create `.env.example`
+  - [x] Add `.env` and `.env.local` to `.gitignore` (currently only `.worktrees/` is listed)
+  - [x] Create `.env.example` with every var from `src/core/data/env/impl.ts` — include `QSTASH_URL`, `QSTASH_TOKEN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET`, `ASSEMBLYAI_API_KEY`, `GROQ_API_KEY`, `OPEN_AI_KEY`, `PINECONE_DB_KEY`, `PINECONE_INDEX`, `QB_REALM`, `QB_USER_TOKEN`, `POSTMARK_SERVER`, `GENIE_AUTH`, `GENIE_AUTH_TWO`, `GENIE_BASE_URL`, `GENIE_PRIMARY_ACCOUNT`, `GENIE_SECONDARY_ACCOUNT`, `SELF_URL`, `KV_SERVICE_URL`, `DENO_KV_URL`, `ALERT_EMAIL`, `FROM_EMAIL`, `PORT`, `DENO_KV_PATH`, `LOCAL_QUEUE`, `QSTASH_CURRENT_SIGNING_KEY`
+  - [x] Run `git rm --cached .env` if `.env` is tracked (check with `git ls-files .env`)
+  - [x] Verify: `git status` shows `.env` is no longer tracked; `cat .gitignore` includes `.env`
+- [x] Secure session cookies — add `Secure` flag for production
+  - [x] In `src/auth/domain/coordinators/auth/impl.ts` line 226-228, update `sessionCookie()` to conditionally add `Secure` when `SELF_URL` starts with `https://` (or when an env var like `NODE_ENV=production` is set). Cookie string becomes: `session=${token}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=86400`
+  - [x] Apply the same change to `clearSessionCookie()` at line 230-232
+  - [x] Verify: `deno task test` passes; manually inspect cookie header in a test request includes `Secure` flag when SELF_URL is https
+- [x] Consolidate Danet controllers and legacy handlers
+  - [x] Legacy entrypoints in `src/core/entrypoints/` are already deleted on this branch (git status shows `D` for all files in `src/core/domain/coordinators/` and `src/core/entrypoints/`). Only `src/core/entrypoints/health/mod.ts` remains and is already a Danet controller
+  - [x] Remove the `dev:legacy` task from `deno.json` line 13 (`"dev:legacy": "deno run --allow-all --watch src/bootstrap.legacy.ts"`) since the legacy bootstrap is gone
+  - [x] Delete `src/bootstrap.legacy.ts` if it still exists on disk
+  - [x] Verify: `deno task dev` starts cleanly; no imports reference deleted `src/core/entrypoints/` or `src/core/domain/coordinators/` paths
+- [x] Add session expiration with sliding window refresh
+  - [x] Sessions already have 24h TTL via `{ expireIn: SESSION_TTL }` in `src/auth/domain/coordinators/auth/impl.ts` line 195 and cookie `Max-Age=86400` at line 227
+  - [x] Add a `refreshSession()` function in `impl.ts` that re-sets the KV entry with a fresh TTL when a session is accessed and more than 1 hour has elapsed since `createdAt`
+  - [x] Call `refreshSession()` from `SessionGuard.canActivate()` in `src/auth/domain/business/session-guard/mod.ts` after successful auth resolution (line 12), and update the `Set-Cookie` header on the response to extend `Max-Age`
+  - [x] Verify: create a session, wait > 1 hour (or lower TTL in test), confirm the KV entry TTL is reset and the cookie `Max-Age` is refreshed in the response
+- [x] Add password requirements
+  - [x] Replace `hashPassword()` in `src/auth/domain/coordinators/auth/impl.ts` lines 36-42 — switch from SHA-256 to PBKDF2 using Web Crypto (`crypto.subtle.importKey` + `crypto.subtle.deriveBits` with a random salt). Store the salt alongside the hash in the format `salt:hash`
+  - [x] Update `verifyUser()` at line 129-143 to extract the salt from the stored hash before comparing
+  - [x] Update `UserRecord.passwordHash` to store the `salt:hash` format. Existing SHA-256 hashes will need a one-time migration or a fallback check in `verifyUser()` that detects the old format (no `:` separator) and re-hashes on successful login
+  - [x] Add a `validatePassword()` function in `impl.ts` that enforces: minimum 8 characters, at least one uppercase, one lowercase, one digit
+  - [x] Call `validatePassword()` in the register endpoint at `src/auth/entrypoints/auth/mod.ts` line 13 (after the presence check), returning 400 with a descriptive error if it fails
+  - [x] Call `validatePassword()` in `createUser()` at line 93 of `impl.ts` so admin-created users also get validated
+  - [x] Verify: `deno task test` passes; register with `"abc"` returns 400; register with `"MyP4ssword"` succeeds; login with correct password works after the hash migration
+- [x] Implement account lockout
+  - [x] Add a KV key pattern `["login-attempts", email]` in `src/auth/domain/coordinators/auth/impl.ts` that stores `{ count: number; lockedUntil: number | null }`
+  - [x] In `verifyUser()` (line 129), before checking the password: read the attempts entry; if `lockedUntil > Date.now()`, return `null` immediately (account locked)
+  - [x] After a failed password check (line 141), increment the counter. If count >= 5, set `lockedUntil = Date.now() + 15 * 60 * 1000` (15-minute lockout). Use `{ expireIn: 15 * 60 * 1000 }` so the KV entry auto-cleans
+  - [x] On successful login, delete the `["login-attempts", email]` entry to reset the counter
+  - [x] Update the login endpoint in `src/auth/entrypoints/auth/mod.ts` line 47-51 to distinguish between "invalid credentials" (401) and "account locked" (429) — add a return type to `verifyUser` that communicates lockout vs bad password (e.g., return `{ locked: true }` instead of `null`)
+  - [x] Verify: attempt 5 bad logins for the same email, confirm the 6th attempt returns 429; wait 15 minutes (or lower in test), confirm login works again
+- [x] Add Zod validation to controllers
+  - [x] Create `src/core/business/validate/mod.ts` with a helper: `function validate<T>(schema: z.ZodSchema<T>, data: unknown): T` that calls `schema.parse(data)` and throws a 400-safe error with `.format()` on failure
+  - [x] In `src/auth/entrypoints/auth/mod.ts`, replace the manual presence checks (lines 13-19 and 38-43) with Zod schemas: `z.object({ orgName: z.string().min(1), email: z.string().email(), password: z.string() })` for register, `z.object({ email: z.string().email(), password: z.string() })` for login
+  - [x] In `src/judge/entrypoints/judge/mod.ts`, replace the manual validation (lines 42-54) with a Zod schema using `z.enum(["uphold", "overturn"])` for decision and `z.enum(["error", "logic", "fragment", "transcript"]).optional()` for reason
+  - [x] In `src/manager/entrypoints/manager/mod.ts`, replace manual validation (lines 66-71) with a Zod schema: `z.object({ findingId: z.string(), notes: z.string().min(20) })`
+  - [x] Repeat for remaining controllers — audit, review, agent, admin, gamification, messaging, question-lab — using the existing schemas in `src/core/dto/`
+  - [x] Verify: `deno task test` passes; POST to `/login` with `{ email: "notanemail" }` returns 400 with a Zod error message; POST with valid data succeeds
+- [x] Add end-to-end API tests
+  - [x] Create `src/auth/entrypoints/auth/e2e.test.ts` — start a `DanetApplication` with `AppModule`, call `app.listen(0)` on a random port, then test: `POST /register` returns 200 + Set-Cookie, `POST /login` returns 200 + correct role/redirect, `POST /logout` clears cookie, unauthenticated requests to guarded routes return 401
+  - [x] Create `src/core/entrypoints/health/e2e.test.ts` — test that `GET /health` returns `{ ok: true, ts: <number> }`
+  - [x] Create `src/admin/entrypoints/admin/e2e.test.ts` — register an admin user, then test key admin endpoints (list users, get settings) with the session cookie
+  - [x] Create `src/audit/entrypoints/api/e2e.test.ts` — test audit creation and listing with authenticated requests
+  - [x] Use `DENO_KV_PATH=:memory:` and `LOCAL_QUEUE=true` in test env so no external services are needed. Set `setKvInstance()` from `src/core/data/kv/factory.ts` to use a fresh in-memory KV per test suite
+  - [x] Verify: `deno task test` runs all e2e tests and they pass
+- [x] Add edge case tests
+  - [x] In `src/auth/entrypoints/auth/e2e.test.ts`, add tests for: empty body, missing fields, extra fields, SQL-injection-like strings in email, very long password (10k chars), duplicate registration
+  - [x] In `src/audit/entrypoints/api/e2e.test.ts`, add tests for: invalid findingId format, missing required fields, unauthorized access (wrong role)
+  - [x] In `src/judge/entrypoints/judge/e2e.test.ts`, add tests for: invalid decision value, questionIndex as string, negative questionIndex
+  - [x] Add timeout/error simulation tests: mock external service failures (Groq returns 500, AssemblyAI returns 429) and verify the app returns appropriate error responses instead of crashing
+  - [x] Verify: `deno task test` passes; edge case tests cover at least 15 distinct failure scenarios
+- [x] Enhance health check endpoint
+  - [x] Inject `KvService` (or use `kvFactory()`) into `HealthController` in `src/core/entrypoints/health/mod.ts` — test KV connectivity by writing and reading a sentinel key `["health-check"]`
+  - [x] Add a `dependencies` object to the response: `{ kv: "ok" | "error", s3: "ok" | "error" }`. For S3, call a lightweight operation like `HeadBucket` via the S3 service
+  - [x] If any dependency is `"error"`, return HTTP 503 instead of 200 so load balancers can detect unhealthy instances
+  - [x] Add a `GET /health/ready` endpoint (readiness probe) that checks all dependencies, vs `GET /health` (liveness probe) that just returns `{ ok: true }`
+  - [x] Verify: `deno task test` passes; `GET /health` returns 200; stop KV (or use a bad DENO_KV_PATH) and confirm `GET /health/ready` returns 503 with `{ kv: "error" }`

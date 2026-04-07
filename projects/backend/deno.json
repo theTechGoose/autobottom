@@ -4,7 +4,9 @@
     "strict": true,
     "noImplicitAny": true,
     "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
   },
   "tasks": {
     "dev": "deno run --allow-all --watch src/bootstrap.ts",
@@ -14,6 +16,10 @@
     "check": "deno check src/bootstrap.ts"
   },
   "imports": {
+    "@danet": "jsr:@mrg-keystone/danet@1.0.0",
+    "@danet/core": "jsr:@danet/core@2",
+    "@danet/swagger": "jsr:@danet/swagger@2",
+    "reflect-metadata": "npm:reflect-metadata@0.1.13",
     "nanoid": "npm:nanoid@^5.0.0",
     "groq-sdk": "npm:groq-sdk",
     "openai": "npm:openai",

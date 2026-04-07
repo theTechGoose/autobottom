@@ -1,5 +1,5 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, getOfficeBypassConfig, saveWireDeductionEntry, updatePartnerDimensions, getBonusPointsConfig } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, writeAuditDoneIndex, getOfficeBypassConfig, saveWireDeductionEntry, updatePartnerDimensions, getBonusPointsConfig } from "../lib/kv.ts";
 import { enqueueCleanup } from "../lib/queue.ts";
 
 import { generateFeedback } from "../providers/groq.ts";
@@ -208,71 +208,57 @@ export async function stepFinalize(req: Request): Promise<Response> {
     console.error(`[STEP-FINALIZE] ${findingId}: ❌ audit-done-idx write failed:`, err);
   }
 
-  // Write chargeback/omission report entry for internal (date leg) findings.
-  // Invalid genies are included. If a re-audit passes (score 100), the old entry is deleted.
-  if (!isPackage && score !== undefined) {
+  // Write chargeback entry for invalid genie (internal only) — finalize is the terminal state.
+  // All other internal audit entries are written in postCorrectedAudit after review.
+  if (!isPackage && isInvalid) {
     try {
       const rec = finding.record as any ?? {};
-      if (score === 100) {
-        // Passing re-audit — remove any existing chargeback entry for this finding
-        await deleteChargebackEntry(orgId, findingId);
-        console.log(`[STEP-FINALIZE] ${findingId}: 🗑️ chargebackEntry deleted — re-audit passed`);
-      } else {
-        const failedQs = isInvalid && !(qs?.length)
-          ? [{ header: "Invalid Genie / No Recording", egregious: false }]
-          : (qs as (IAnsweredQuestion & { egregious?: boolean })[] ?? [])
-              .filter((q) => q.answer === "No")
-              .map((q) => ({ header: q.header, egregious: !!q.egregious }))
-              .filter((q) => q.header);
-        const failedQHeaders = failedQs.map((q) => q.header);
-        const egregiousHeaders = failedQs.filter((q) => q.egregious).map((q) => q.header);
-        const omissionHeaders = failedQs.filter((q) => !q.egregious).map((q) => q.header);
-        if (failedQHeaders.length) {
-          await saveChargebackEntry(orgId, {
-            findingId,
-            ts: completedAt,
-            voName: voName ?? "",
-            destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
-            revenue: String(rec["706"] ?? ""),
-            recordId: String(rec.RecordId ?? ""),
-            score: score ?? 0,
-            failedQHeaders,
-            egregiousHeaders,
-            omissionHeaders,
-          });
-          console.log(`[STEP-FINALIZE] ${findingId}: 💰 chargebackEntry saved — ${egregiousHeaders.length} egregious, ${omissionHeaders.length} omissions${isInvalid ? " (invalid genie)" : ""}`);
-        }
-      }
+      await saveChargebackEntry(orgId, {
+        findingId,
+        ts: completedAt,
+        voName: voName ?? "",
+        destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
+        revenue: String(rec["706"] ?? ""),
+        recordId: String(rec.RecordId ?? ""),
+        score: 0,
+        failedQHeaders: ["Invalid Genie / No Recording"],
+        egregiousHeaders: [],
+        omissionHeaders: ["Invalid Genie / No Recording"],
+      });
+      console.log(`[STEP-FINALIZE] ${findingId}: 💰 chargebackEntry saved — invalid genie`);
     } catch (err) {
-      console.error(`[STEP-FINALIZE] ${findingId}: ❌ chargebackEntry update failed:`, err);
+      console.error(`[STEP-FINALIZE] ${findingId}: ❌ chargebackEntry save failed:`, err);
     }
   }
 
-  // Write wire deduction entry for partner (package) findings.
-  // Skip bypassed offices (e.g. JAY, GUN) — same logic as review queue bypass.
-  if (isPackage && score !== undefined && !isOfficeBypassed) {
+  // Write wire deduction entry for invalid genie (package only) — finalize is the terminal state.
+  // All other package audit entries are written in postCorrectedAudit after review.
+  // Skip bypassed offices (e.g. JAY, GUN).
+  if (isPackage && isInvalid && !isOfficeBypassed) {
     try {
       const rec = finding.record as any ?? {};
-      const questionsAudited = qs?.length ?? 0;
-      const totalSuccess = qs ? (qs as IAnsweredQuestion[]).filter((q) => q.answer === "Yes").length : 0;
       await saveWireDeductionEntry(orgId, {
         findingId,
         ts: completedAt,
-        score: score ?? 0,
-        questionsAudited,
-        totalSuccess,
+        score: 0,
+        questionsAudited: 0,
+        totalSuccess: 0,
         recordId: String(rec.RecordId ?? ""),
         office: department ?? "",
         excellenceAuditor: voName ?? "",
         guestName: String(rec.GuestName ?? ""),
       });
-      console.log(`[STEP-FINALIZE] ${findingId}: 📋 wireDeductionEntry saved — score=${score}% qs=${questionsAudited}`);
-      // Accumulate partner office/GM email dimensions (fire-and-forget)
-      if (rec.OfficeName && rec.GmEmail) {
-        updatePartnerDimensions(orgId, String(rec.OfficeName), String(rec.GmEmail)).catch(() => {});
-      }
+      console.log(`[STEP-FINALIZE] ${findingId}: 📋 wireDeductionEntry saved — invalid genie`);
     } catch (err) {
       console.error(`[STEP-FINALIZE] ${findingId}: ❌ wireDeductionEntry save failed:`, err);
+    }
+  }
+
+  // Accumulate partner office/GM email dimensions (fire-and-forget)
+  if (isPackage && !isOfficeBypassed) {
+    const rec = finding.record as any ?? {};
+    if (rec.OfficeName && rec.GmEmail) {
+      updatePartnerDimensions(orgId, String(rec.OfficeName), String(rec.GmEmail)).catch(() => {});
     }
   }
 

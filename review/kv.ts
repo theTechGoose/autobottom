@@ -2,7 +2,7 @@
 
 import { orgKey } from "../lib/org.ts";
 import type { OrgId } from "../lib/org.ts";
-import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, writeAuditDoneIndex, updateCompletedStatScore, getWireDeductionEntry, saveWireDeductionEntry } from "../lib/kv.ts";
+import { getFinding, saveFinding, getAllAnswersForFinding, saveBatchAnswers, getTranscript, backfillUtteranceTimes, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, writeAuditDoneIndex, updateCompletedStatScore, getWireDeductionEntry, saveWireDeductionEntry, deleteWireDeductionEntry, saveChargebackEntry, deleteChargebackEntry } from "../lib/kv.ts";
 import { populateManagerQueue } from "../manager/kv.ts";
 import { checkBadges, BADGE_CATALOG } from "../shared/badges.ts";
 import type { BadgeDef } from "../shared/badges.ts";
@@ -620,18 +620,68 @@ async function postCorrectedAudit(orgId: OrgId, findingId: string) {
   // Update the audit history stat so the score reflects the reviewed result
   await updateCompletedStatScore(orgId, findingId, score);
 
-  // Update wire deduction entry if this is a package (partner) audit
   const isPackage = (finding as any).recordingIdField === "GenieNumber";
+  const rec = (finding as any).record as Record<string, any> ?? {};
+  const rawVoNameCb = String(rec.VoName ?? "");
+  const voNameCb = rawVoNameCb.includes(" - ") ? rawVoNameCb.split(" - ").slice(1).join(" - ").trim() : rawVoNameCb.trim();
+  const completedAtCb = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
+  const department = String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined;
+
   if (isPackage) {
+    // Write or update wire deduction entry with corrected post-review data
     try {
-      const wireEntry = await getWireDeductionEntry(orgId, findingId);
-      if (wireEntry) {
-        const totalSuccess = correctedAnswers.filter((a: any) => a.answer === "Yes").length;
-        await saveWireDeductionEntry(orgId, { ...wireEntry, score, totalSuccess, questionsAudited: correctedAnswers.length });
-        console.log(`[REVIEW] ${findingId}: 📋 wireDeductionEntry updated — score=${score}% totalSuccess=${totalSuccess}`);
+      const totalSuccess = correctedAnswers.filter((a: any) => a.answer === "Yes").length;
+      const existingWire = await getWireDeductionEntry(orgId, findingId);
+      if (score === 100) {
+        await deleteWireDeductionEntry(orgId, findingId);
+        console.log(`[REVIEW] ${findingId}: 📋 wireDeductionEntry deleted — reviewer passed all`);
+      } else {
+        await saveWireDeductionEntry(orgId, {
+          findingId,
+          ts: existingWire?.ts ?? completedAtCb,
+          score,
+          questionsAudited: correctedAnswers.length,
+          totalSuccess,
+          recordId: String(rec.RecordId ?? ""),
+          office: department ?? "",
+          excellenceAuditor: voNameCb,
+          guestName: String(rec.GuestName ?? ""),
+        });
+        console.log(`[REVIEW] ${findingId}: 📋 wireDeductionEntry saved — score=${score}% totalSuccess=${totalSuccess}`);
       }
     } catch (err) {
       console.error(`[REVIEW] ${findingId}: ❌ wireDeductionEntry update failed:`, err);
+    }
+  } else {
+    // Write or update chargeback entry with corrected post-review data (internal audits only)
+    try {
+      if (score === 100) {
+        await deleteChargebackEntry(orgId, findingId);
+        console.log(`[REVIEW] ${findingId}: 💰 chargebackEntry deleted — reviewer passed all`);
+      } else {
+        const failedQs = correctedAnswers
+          .filter((a: any) => String(a.answer ?? "").toLowerCase() === "no")
+          .map((a: any) => ({ header: a.header, egregious: !!a.egregious }))
+          .filter((q: any) => q.header);
+        const failedQHeaders = failedQs.map((q: any) => q.header);
+        const egregiousHeaders = failedQs.filter((q: any) => q.egregious).map((q: any) => q.header);
+        const omissionHeaders = failedQs.filter((q: any) => !q.egregious).map((q: any) => q.header);
+        await saveChargebackEntry(orgId, {
+          findingId,
+          ts: completedAtCb,
+          voName: voNameCb,
+          destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
+          revenue: String(rec["706"] ?? ""),
+          recordId: String(rec.RecordId ?? ""),
+          score,
+          failedQHeaders,
+          egregiousHeaders,
+          omissionHeaders,
+        });
+        console.log(`[REVIEW] ${findingId}: 💰 chargebackEntry saved — score=${score}% fails=${failedQHeaders.length}`);
+      }
+    } catch (err) {
+      console.error(`[REVIEW] ${findingId}: ❌ chargebackEntry save failed:`, err);
     }
   }
 

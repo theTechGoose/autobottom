@@ -1,0 +1,15 @@
+- generic [ref=e2]:
+  - generic [ref=e3]: Auto-Bot
+  - paragraph [ref=e4]: Sign in to your account
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: Email
+      - textbox "you@example.com" [ref=e8]
+    - generic [ref=e9]:
+      - generic [ref=e10]: Password
+      - textbox [ref=e11]
+    - button "Sign In" [ref=e12] [cursor=pointer]
+  - paragraph [ref=e13]:
+    - text: Need an account?
+    - link "Create organization" [ref=e14] [cursor=pointer]:
+      - /url: /register

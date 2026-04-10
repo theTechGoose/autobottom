@@ -1,0 +1,266 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e3]:
+    - generic [ref=e8]:
+      - img "U.S. flag" [ref=e10]
+      - paragraph [ref=e12]: An official website of the United States government
+      - button "Here's how you know" [ref=e13] [cursor=pointer]
+    - banner [ref=e14]:
+      - region "Site alert,,,,,," [ref=e24]:
+        - generic [ref=e26]:
+          - paragraph
+          - 'link "Tax season is here: You can access your Benefit Statement tax form through your personal my Social Security account." [ref=e28] [cursor=pointer]':
+            - /url: https://www.ssa.gov/myaccount/
+          - paragraph
+      - generic [ref=e30]:
+        - link "Home" [ref=e32] [cursor=pointer]:
+          - /url: /
+          - img "Social Security Administration" [ref=e34]
+          - generic [ref=e35]: Social Security
+        - generic [ref=e36]:
+          - list [ref=e38]:
+            - listitem [ref=e39]:
+              - link "Español" [ref=e40] [cursor=pointer]:
+                - /url: /es/disability
+          - list [ref=e41]:
+            - listitem [ref=e42]:
+              - link "Account" [ref=e43] [cursor=pointer]:
+                - /url: https://secure.ssa.gov/myssa/myhub
+                - generic [ref=e44]: Account
+        - button "Menu" [ref=e45]
+    - main [ref=e46]:
+      - navigation "Breadcrumb" [ref=e51]:
+        - heading "Breadcrumb" [level=2] [ref=e52]
+        - list [ref=e53]:
+          - listitem [ref=e54]:
+            - link "Home" [ref=e55] [cursor=pointer]:
+              - /url: /
+          - listitem [ref=e56]: Disability
+      - generic [ref=e58]:
+        - complementary [ref=e59]:
+          - list [ref=e61]:
+            - listitem [ref=e62]:
+              - link "Retirement" [ref=e63] [cursor=pointer]:
+                - /url: /retirement
+            - listitem [ref=e64]:
+              - link "Disability" [ref=e65] [cursor=pointer]:
+                - /url: /disability
+            - list [ref=e66]:
+              - listitem [ref=e67]:
+                - link "Who can get Disability" [ref=e68] [cursor=pointer]:
+                  - /url: /disability/eligibility
+              - listitem [ref=e69]:
+                - link "What you could get from Disability" [ref=e70] [cursor=pointer]:
+                  - /url: /disability/amount
+              - listitem [ref=e71]:
+                - link "Try returning to work without losing Disability" [ref=e72] [cursor=pointer]:
+                  - /url: /disability/work
+              - listitem [ref=e73]:
+                - link "What you must report while on Disability" [ref=e74] [cursor=pointer]:
+                  - /url: /disability/reporting
+              - listitem [ref=e75]:
+                - link "What to do during a Disability review" [ref=e76] [cursor=pointer]:
+                  - /url: /disability/review
+              - listitem [ref=e77]:
+                - link "Get Disability back if your benefit ended" [ref=e78] [cursor=pointer]:
+                  - /url: /disability/restart
+            - listitem [ref=e79]:
+              - link "Survivor" [ref=e80] [cursor=pointer]:
+                - /url: /survivor
+            - listitem [ref=e81]:
+              - link "Family" [ref=e82] [cursor=pointer]:
+                - /url: /family
+            - listitem [ref=e83]:
+              - link "Supplemental Security Income (SSI)" [ref=e84] [cursor=pointer]:
+                - /url: /ssi
+        - article [ref=e87]:
+          - generic [ref=e89]:
+            - heading "Disability" [level=1] [ref=e90]
+            - paragraph [ref=e92]: Social Security Disability Insurance (SSDI) or “Disability” provides monthly payments to people who have a disability that stops or limits their ability to work.
+            - generic [ref=e95]:
+              - heading [level=2]
+              - link "Learn how to apply" [ref=e97] [cursor=pointer]:
+                - /url: /apply?benefits=disability&age=adult
+            - generic [ref=e99]:
+              - heading [level=2]
+              - generic [ref=e100]:
+                - generic [ref=e102]:
+                  - heading "Who can get Disability" [level=2] [ref=e103]
+                  - generic [ref=e104]:
+                    - paragraph [ref=e105]: "Individuals may be eligible for Disability if they have:"
+                    - list [ref=e106]:
+                      - listitem [ref=e107]:
+                        - text: A disability or blindness,
+                        - strong [ref=e108]: and
+                      - listitem [ref=e109]: Enough work history.
+                    - paragraph [ref=e110]:
+                      - link "See if you might be eligible for Disability" [ref=e111] [cursor=pointer]:
+                        - /url: /disability/eligibility
+                - generic [ref=e113]:
+                  - heading "What you could get" [level=2] [ref=e114]
+                  - generic [ref=e115]:
+                    - paragraph [ref=e116]: Your benefits may include a monthly payment and Medicare. Your payment amount is based on your work history before your disability began.
+                    - paragraph [ref=e117]:
+                      - link "See what you could get from Disability" [ref=e118] [cursor=pointer]:
+                        - /url: /disability/amount
+                - generic [ref=e120]:
+                  - heading "Try returning to work without losing Disability" [level=2] [ref=e121]
+                  - generic [ref=e122]:
+                    - paragraph [ref=e123]: You may be able to return to work or continue working without losing your Disability benefits.
+                    - paragraph [ref=e124]:
+                      - link "Learn about returning to work" [ref=e125] [cursor=pointer]:
+                        - /url: /disability/work
+                - generic [ref=e127]:
+                  - heading "What you need to report" [level=2] [ref=e128]
+                  - generic [ref=e129]:
+                    - paragraph [ref=e130]: Once you’re approved for Disability, you must report changes to your work, income, and personal information.
+                    - paragraph [ref=e131]:
+                      - link "See what you need to report" [ref=e132] [cursor=pointer]:
+                        - /url: /disability/reporting
+                - generic [ref=e134]:
+                  - heading "What to do during a Disability review" [level=2] [ref=e135]
+                  - generic [ref=e136]:
+                    - paragraph [ref=e137]: We sometimes check to see if you still have a disability. You must fill out a report to help us complete the review.
+                    - paragraph [ref=e138]:
+                      - link "Learn how to submit your report" [ref=e139] [cursor=pointer]:
+                        - /url: /disability/review
+                - generic [ref=e141]:
+                  - heading "Get Disability back if your benefit ended" [level=2] [ref=e142]
+                  - generic [ref=e143]:
+                    - paragraph [ref=e144]: If your Disability benefit ended, you might be able to restart it later.
+                    - paragraph [ref=e145]:
+                      - link "Learn how to restart your benefit" [ref=e146] [cursor=pointer]:
+                        - /url: /disability/restart
+    - contentinfo [ref=e147]:
+      - link "Return to top" [ref=e149] [cursor=pointer]:
+        - /url: "#"
+      - navigation [ref=e157]:
+        - generic [ref=e158]:
+          - generic [ref=e160]:
+            - heading "Support" [level=4] [ref=e161]
+            - list [ref=e162]:
+              - listitem [ref=e163]:
+                - link "Contact us" [ref=e164] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/agency/contact/
+              - listitem [ref=e165]:
+                - link "Find an office" [ref=e166] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/locator/
+              - listitem [ref=e167]:
+                - link "Forms" [ref=e168] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/forms/
+              - listitem [ref=e169]:
+                - link "Publications" [ref=e170] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/pubs/
+              - listitem [ref=e171]:
+                - link "Report fraud" [ref=e172] [cursor=pointer]:
+                  - /url: https://secure.ssa.gov/oig/fraud/
+          - generic [ref=e174]:
+            - heading "Languages" [level=4] [ref=e175]
+            - list [ref=e176]:
+              - listitem [ref=e177]:
+                - link "Español" [ref=e178] [cursor=pointer]:
+                  - /url: /es
+              - listitem [ref=e179]:
+                - link "Other languages" [ref=e180] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/site/languages/en/
+              - listitem [ref=e181]:
+                - link "Plain language" [ref=e182] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/agency/plain-language
+          - generic [ref=e184]:
+            - heading "Services for" [level=4] [ref=e185]
+            - list [ref=e186]:
+              - listitem [ref=e187]:
+                - link "Employers & businesses" [ref=e188] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/employer/
+              - listitem [ref=e189]:
+                - link "Government agencies" [ref=e190] [cursor=pointer]:
+                  - /url: /about-ssa/agency-resources#government-agencies
+              - listitem [ref=e191]:
+                - link "Other groups" [ref=e192] [cursor=pointer]:
+                  - /url: /about-ssa/agency-resources#other-groups
+              - listitem [ref=e193]:
+                - link "Representatives" [ref=e194] [cursor=pointer]:
+                  - /url: /about-ssa/agency-resources#representatives
+          - generic [ref=e196]:
+            - heading "Resources" [level=4] [ref=e197]
+            - list [ref=e198]:
+              - listitem [ref=e199]:
+                - link "Careers" [ref=e200] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/careers/
+              - listitem [ref=e201]:
+                - link "Chief actuary data" [ref=e202] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/OACT/
+              - listitem [ref=e203]:
+                - link "Communications" [ref=e204] [cursor=pointer]:
+                  - /url: /about-ssa/agency-resources#communications
+              - listitem [ref=e205]:
+                - link "Financial reports" [ref=e206] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/finance/
+              - listitem [ref=e207]:
+                - link "Initiatives" [ref=e208] [cursor=pointer]:
+                  - /url: /about-ssa/agency-resources#initiatives
+              - listitem [ref=e209]:
+                - link "Research & policy" [ref=e210] [cursor=pointer]:
+                  - /url: /about-ssa/agency-resources#research-policy
+      - region "Footer social links" [ref=e212]:
+        - generic [ref=e213]:
+          - paragraph [ref=e215]: Social Security Administration
+          - list [ref=e217]:
+            - listitem [ref=e218]:
+              - link "Social Security on Facebook" [ref=e219] [cursor=pointer]:
+                - /url: https://www.facebook.com/socialsecurity
+            - listitem [ref=e220]:
+              - link "Social Security on Twitter" [ref=e221] [cursor=pointer]:
+                - /url: https://x.com/socialsecurity
+            - listitem [ref=e222]:
+              - link "Social Security on Youtube" [ref=e223] [cursor=pointer]:
+                - /url: https://www.youtube.com/user/socialsecurityonline
+            - listitem [ref=e224]:
+              - link "Social Security on Instagram" [ref=e225] [cursor=pointer]:
+                - /url: https://www.instagram.com/socialsecurity
+            - listitem [ref=e226]:
+              - link "Social Security on LinkedIn" [ref=e227] [cursor=pointer]:
+                - /url: https://www.linkedin.com/company/ssa
+      - region "Agency identifier" [ref=e229]:
+        - generic [ref=e230]:
+          - link "Social Security Administration" [ref=e232] [cursor=pointer]:
+            - /url: https://ssa.gov
+            - img "Social Security Administration" [ref=e233]
+          - generic "Agency description" [ref=e234]:
+            - paragraph [ref=e235]: SSA.gov
+            - paragraph [ref=e237]:
+              - strong [ref=e238]:
+                - text: An official website of the
+                - link "Social Security Administration" [ref=e239] [cursor=pointer]:
+                  - /url: https://www.ssa.gov
+        - navigation "Secondary Footer" [ref=e242]:
+          - heading "Secondary Footer" [level=2] [ref=e243]
+          - navigation "Important links" [ref=e244]:
+            - list [ref=e246]:
+              - listitem [ref=e247]:
+                - link "About SSA" [ref=e248] [cursor=pointer]:
+                  - /url: /about-ssa
+              - listitem [ref=e249]:
+                - link "Civil rights and compliance" [ref=e250] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/eeo
+              - listitem [ref=e251]:
+                - link "Privacy policy" [ref=e252] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/agency/privacy.html
+              - listitem [ref=e253]:
+                - link "Office of the Inspector General" [ref=e254] [cursor=pointer]:
+                  - /url: https://oig.ssa.gov/
+              - listitem [ref=e255]:
+                - link "Accessibility statement" [ref=e256] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/accessibility/
+              - listitem [ref=e257]:
+                - link "FOIA requests" [ref=e258] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/foia/
+              - listitem [ref=e259]:
+                - link "Performance reports" [ref=e260] [cursor=pointer]:
+                  - /url: https://ssa.gov/agency/performance/
+        - paragraph [ref=e262]:
+          - text: Looking for U.S. government information and services?
+          - link "Visit USA.gov" [ref=e263] [cursor=pointer]:
+            - /url: https://usa.gov
+            - strong [ref=e264]: Visit USA.gov

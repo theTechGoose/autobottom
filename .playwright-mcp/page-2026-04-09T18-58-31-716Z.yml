@@ -1,0 +1,426 @@
+- generic [active] [ref=e1]:
+  - complementary:
+    - link "Skip to main content" [ref=e2] [cursor=pointer]:
+      - /url: "#content"
+  - generic "Site Alert" [ref=e3]:
+    - generic [ref=e4]:
+      - img [ref=e5]
+      - 'link "Tax season is here: You can access your Benefit Statement tax form through your personal my Social Security account." [ref=e10] [cursor=pointer]':
+        - /url: https://www.ssa.gov/myaccount/
+  - generic [ref=e12]:
+    - generic [ref=e15]:
+      - generic [ref=e17]:
+        - img "U.S. Flag" [ref=e19]
+        - generic [ref=e21]:
+          - paragraph [ref=e22]: An official website of the United States government
+          - button "Here's how you know Chevron Icon" [ref=e23] [cursor=pointer]:
+            - generic [ref=e24]:
+              - text: Here's how you know
+              - img "Chevron Icon" [ref=e25]
+      - generic [ref=e28]:
+        - generic [ref=e29]:
+          - img [ref=e31]
+          - generic [ref=e34]:
+            - generic [ref=e35]: Official websites use .gov
+            - generic [ref=e36]:
+              - text: A
+              - strong [ref=e37]: .gov
+              - text: website belongs to an official government organization in the United States.
+        - generic [ref=e38]:
+          - img [ref=e40]
+          - generic [ref=e43]:
+            - generic [ref=e44]: Secure .gov websites use HTTPS
+            - generic [ref=e45]:
+              - text: A
+              - strong [ref=e46]: lock (
+              - img "A locked padlock" [ref=e47]
+              - strong [ref=e49]: )
+              - text: or
+              - strong [ref=e50]: https://
+              - text: means you've safely connected to the .gov website. Share sensitive information only on official, secure websites.
+    - navigation [ref=e52]:
+      - generic [ref=e53]:
+        - link "Social Security Administration" [ref=e55] [cursor=pointer]:
+          - /url: /
+          - img "Social Security Administration Logo" [ref=e56]
+          - generic [ref=e57]: Social Security
+        - link "Spanish Language Español" [ref=e58] [cursor=pointer]:
+          - /url: /es
+          - img "Spanish Language" [ref=e59]
+          - generic [ref=e60]: Español
+        - link "User Account Account" [ref=e61] [cursor=pointer]:
+          - /url: https://secure.ssa.gov/RIL/SiView.action
+          - img "User Account" [ref=e62]
+          - generic [ref=e63]: Account
+        - button "Mobile Menu Menu" [ref=e64] [cursor=pointer]:
+          - img "Mobile Menu" [ref=e65]
+          - generic [ref=e67]: Menu
+        - generic:
+          - search [ref=e69]:
+            - search [ref=e70]:
+              - generic [ref=e71]:
+                - generic [ref=e72]: Search
+                - searchbox "Search" [ref=e73]
+              - button "Search Search" [ref=e75] [cursor=pointer]:
+                - generic [ref=e76]: Search
+                - img "Search" [ref=e77]
+          - list [ref=e81]:
+            - listitem [ref=e82]:
+              - button "Benefits Plus" [ref=e83] [cursor=pointer]:
+                - generic [ref=e84]: Benefits
+                - img "Plus" [ref=e85]
+              - list:
+                - listitem:
+                  - heading "BY PHASE" [level=5] [ref=e87]
+                  - list [ref=e88]:
+                    - listitem [ref=e89]:
+                      - link "Prepare" [ref=e90] [cursor=pointer]:
+                        - /url: /prepare
+                    - listitem [ref=e91]:
+                      - link "Apply" [ref=e92] [cursor=pointer]:
+                        - /url: /apply
+                    - listitem [ref=e93]:
+                      - link "Manage benefits" [ref=e94] [cursor=pointer]:
+                        - /url: /manage-benefits
+                - listitem:
+                  - heading "BY TYPE" [level=5] [ref=e95]
+                  - list [ref=e96]:
+                    - listitem [ref=e97]:
+                      - link "Retirement" [ref=e98] [cursor=pointer]:
+                        - /url: /retirement
+                    - listitem [ref=e99]:
+                      - link "Disability" [ref=e100] [cursor=pointer]:
+                        - /url: /disability
+                    - listitem [ref=e101]:
+                      - link "Survivor" [ref=e102] [cursor=pointer]:
+                        - /url: /survivor
+                    - listitem [ref=e103]:
+                      - link "Family" [ref=e104] [cursor=pointer]:
+                        - /url: /family
+                    - listitem [ref=e105]:
+                      - link "Supplemental Security Income (SSI)" [ref=e106] [cursor=pointer]:
+                        - /url: /ssi
+                - listitem [ref=e107]:
+                  - link "Benefits overview" [ref=e108] [cursor=pointer]:
+                    - /url: /benefits
+            - listitem [ref=e109]:
+              - button "Medicare Plus" [ref=e110] [cursor=pointer]:
+                - generic [ref=e111]: Medicare
+                - img "Plus" [ref=e112]
+              - list:
+                - listitem [ref=e114]:
+                  - link "Plan for Medicare" [ref=e115] [cursor=pointer]:
+                    - /url: /medicare
+                - listitem [ref=e116]:
+                  - link "Sign up for Medicare" [ref=e117] [cursor=pointer]:
+                    - /url: /medicare/sign-up
+                - listitem [ref=e118]:
+                  - link "Request to lower IRMAA" [ref=e119] [cursor=pointer]:
+                    - /url: /medicare/lower-irmaa
+                - listitem [ref=e120]:
+                  - link "Apply for Part D Extra Help" [ref=e121] [cursor=pointer]:
+                    - /url: /medicare/part-d-extra-help
+                - listitem [ref=e122]:
+                  - link "Manage Medicare benefits" [ref=e123] [cursor=pointer]:
+                    - /url: /medicare/manage
+            - listitem [ref=e124]:
+              - button "Card & record Plus" [ref=e125] [cursor=pointer]:
+                - generic [ref=e126]: Card & record
+                - img "Plus" [ref=e127]
+              - list:
+                - listitem [ref=e129]:
+                  - link "Number & card" [ref=e130] [cursor=pointer]:
+                    - /url: /number-card
+                - listitem [ref=e131]:
+                  - link "Personal record" [ref=e132] [cursor=pointer]:
+                    - /url: /personal-record
+  - main [ref=e133]:
+    - alert [ref=e134]:
+      - link "Learn about changes we’re making to your personal my Social Security account" [ref=e136] [cursor=pointer]:
+        - /url: https://www.ssa.gov/myaccount/account-transition-faqs.html
+        - text: Learn about changes we’re making to your personal
+        - strong [ref=e137]:
+          - emphasis [ref=e138]: my
+          - text: Social Security
+        - text: account
+    - generic [ref=e141]:
+      - heading "Go Digital! Create your personal my Social Security account today" [level=1] [ref=e143]
+      - generic [ref=e144]:
+        - paragraph [ref=e145]: An online my Social Security account provides you with personalized tools, whether you receive benefits or not. With this free and secure account, you can request a replacement Social Security card, check the status of an application, estimate future benefits, or manage the benefits you already receive.
+        - paragraph [ref=e146]: When you create your account, opt in to receive your notices online, faster and more securely than by mail. Choose the online notice option to get your annual Cost of Living Adjustment (COLA) benefit amount and tax forms up to three weeks earlier than by mail!
+        - paragraph [ref=e147]:
+          - link "Create an Account" [ref=e148] [cursor=pointer]:
+            - /url: https://secure.ssa.gov/RIL/
+          - link "Sign In" [ref=e149] [cursor=pointer]:
+            - /url: https://secure.ssa.gov/RIL/
+      - iframe [ref=e153]:
+        - generic [active] [ref=f2e1]:
+          - generic "YouTube Video Player" [ref=f2e3]
+          - generic [ref=f2e5]:
+            - generic:
+              - generic:
+                - button "Play video" [ref=f2e10] [cursor=pointer]:
+                  - generic [ref=f2e13]:
+                    - img
+                - button "Hide player controls" [ref=f2e14] [cursor=pointer]
+                - generic [ref=f2e16]:
+                  - generic [ref=f2e21]:
+                    - generic [ref=f2e22]:
+                      - link "How to Choose Your Sign-in Account for \"my Social Security\"" [ref=f2e23] [cursor=pointer]:
+                        - /url: https://www.youtube.com/watch?v=T1tTtn90iHQ
+                      - link "U.S. Social Security Administration" [ref=f2e24] [cursor=pointer]:
+                        - /url: /channel/UCNm7O9WmYwy_CuU7YEg8UOA
+                        - generic [ref=f2e25]: U.S. Social Security Administration
+                    - generic [ref=f2e26]:
+                      - button "thumbnail-image" [ref=f2e27] [cursor=pointer]:
+                        - img "thumbnail-image" [ref=f2e28]
+                      - generic [ref=f2e30]:
+                        - generic: U.S. Social Security Administration
+                        - generic: 93.1K subscribers
+                  - generic [ref=f2e31]:
+                    - button "Copy link" [ref=f2e34] [cursor=pointer]:
+                      - generic [ref=f2e38]:
+                        - img
+                    - link "Watch on YouTube" [ref=f2e45] [cursor=pointer]:
+                      - /url: https://www.youtube.com/watch?v=T1tTtn90iHQ
+                      - generic [ref=f2e48]:
+                        - text: Watch on
+                        - img [ref=f2e50]:
+                          - generic [ref=f2e52]:
+                            - img
+    - generic [ref=e154]:
+      - paragraph [ref=e155]:
+        - text: To create a personal my Social Security account, first you’ll need to decide whether to create a Login.gov or an ID.me account. There is no wrong choice, it’s just a matter of which account is the best fit for you. Watch the
+        - link "How to Choose Your Sign-in Account for my Social Security" [ref=e156] [cursor=pointer]:
+          - /url: https://youtu.be/T1tTtn90iHQ
+        - text: video for more information.
+      - paragraph [ref=e157]: "For step-by-step instructions for creating each account type, watch:"
+      - list [ref=e158]:
+        - listitem [ref=e159]:
+          - link "How to Create Your Login.gov Account with SSA" [ref=e160] [cursor=pointer]:
+            - /url: https://youtu.be/ploTPE5uqXE
+        - listitem [ref=e161]:
+          - link "How to Create Your ID.me Account with SSA" [ref=e162] [cursor=pointer]:
+            - /url: https://youtu.be/SESbUu2hY84
+      - paragraph [ref=e163]:
+        - text: If you need additional assistance in creating your account, call
+        - strong [ref=e164]: 1-800-772-1213
+        - text: and say “Help Desk” for priority service between 8:00 a.m. – 7:00 p.m. local time, Monday through Friday.
+      - generic [ref=e165]:
+        - generic [ref=e166]:
+          - heading "What can you do with a my Social Security account?" [level=2] [ref=e167]
+          - generic [ref=e168]:
+            - list [ref=e170]:
+              - listitem [ref=e171]:
+                - link "Request a replacement Social Security card" [ref=e172] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/number-card/replace-card
+            - list [ref=e174]:
+              - listitem [ref=e175]:
+                - link "Upload documents and submit online forms" [ref=e176] [cursor=pointer]:
+                  - /url: https://www.ssa.gov/updocs
+          - generic [ref=e177]:
+            - generic [ref=e178]:
+              - heading "If you are not receiving benefits:" [level=3] [ref=e179]
+              - list [ref=e180]:
+                - listitem [ref=e181]:
+                  - link "Get personalized retirement benefit estimates" [ref=e182] [cursor=pointer]:
+                    - /url: https://www.ssa.gov/prepare/plan-retirement
+                - listitem [ref=e183]:
+                  - link "Get estimates for spouse’s benefits" [ref=e184] [cursor=pointer]:
+                    - /url: spousal-benefits.html
+                - listitem [ref=e185]:
+                  - link "Get proof that you do not receive benefits" [ref=e186] [cursor=pointer]:
+                    - /url: https://www.ssa.gov/manage-benefits/get-benefit-letter
+                - listitem [ref=e187]:
+                  - link "Check your application status" [ref=e188] [cursor=pointer]:
+                    - /url: https://www.ssa.gov/apply/check-application-or-appeal-status
+                - listitem [ref=e189]:
+                  - link "Get your Social Security Statement" [ref=e190] [cursor=pointer]:
+                    - /url: /myaccount/statement.html
+                    - text: Get your
+                    - emphasis [ref=e191]: Social Security Statement
+            - generic [ref=e192]:
+              - heading "If you are receiving benefits:" [level=3] [ref=e193]
+              - list [ref=e194]:
+                - listitem [ref=e195]:
+                  - link "Set up or change direct deposit" [ref=e196] [cursor=pointer]:
+                    - /url: https://www.ssa.gov/manage-benefits/update-direct-deposit
+                - listitem [ref=e197]:
+                  - link "Access your current and historical 1099 tax forms" [ref=e198] [cursor=pointer]:
+                    - /url: https://www.ssa.gov/manage-benefits/get-tax-form-10991042s
+                - listitem [ref=e199]:
+                  - link "Access your annual cost of living adjustment benefit amount" [ref=e200] [cursor=pointer]:
+                    - /url: https://secure.ssa.gov/RIL/SiView.action
+                - listitem [ref=e201]:
+                  - link "Print a benefit verification letter" [ref=e202] [cursor=pointer]:
+                    - /url: https://www.ssa.gov/manage-benefits/get-benefit-letter
+                - listitem [ref=e203]:
+                  - link "Change your address" [ref=e204] [cursor=pointer]:
+                    - /url: https://www.ssa.gov/personal-record/update-contact-information
+        - paragraph [ref=e205]:
+          - link "Create an Account" [ref=e206] [cursor=pointer]:
+            - /url: https://secure.ssa.gov/RIL/
+          - link "Sign In" [ref=e207] [cursor=pointer]:
+            - /url: https://secure.ssa.gov/RIL/
+        - separator [ref=e208]
+      - generic [ref=e209]:
+        - heading "Why create an account?" [level=2] [ref=e210]
+        - generic [ref=e211]:
+          - generic [ref=e215]:
+            - heading "It’s quick" [level=3] [ref=e216]
+            - paragraph [ref=e217]: Your personal my Social Security account gives you immediate access to important information and tools, putting you in control of your time!
+            - paragraph [ref=e218]:
+              - link "Learn more" [ref=e219] [cursor=pointer]:
+                - /url: what.html
+                - text: Learn more
+                - img [ref=e220]
+          - generic [ref=e226]:
+            - heading "It’s secure" [level=3] [ref=e227]
+            - paragraph [ref=e228]: We’re committed to using the best technologies available to protect your personal information. Extra security measures keep you safe and secure.
+            - paragraph [ref=e229]:
+              - link "Learn more" [ref=e230] [cursor=pointer]:
+                - /url: security.html
+                - text: Learn more
+                - img [ref=e231]
+          - generic [ref=e237]:
+            - heading "It’s easy" [level=3] [ref=e238]
+            - paragraph [ref=e239]: We make signing up for your personal my Social Security account convenient.
+            - paragraph [ref=e240]:
+              - link "Learn more" [ref=e241] [cursor=pointer]:
+                - /url: create.html
+                - text: Learn more
+                - img [ref=e242]
+  - contentinfo [ref=e246]:
+    - generic [ref=e247]:
+      - list [ref=e250]:
+        - listitem [ref=e251]:
+          - heading "Support" [level=4] [ref=e252]
+          - list [ref=e253]:
+            - listitem [ref=e254]:
+              - link "Contact us" [ref=e255] [cursor=pointer]:
+                - /url: /agency/contact/
+            - listitem [ref=e256]:
+              - link "Find an office" [ref=e257] [cursor=pointer]:
+                - /url: /locator/
+            - listitem [ref=e258]:
+              - link "Forms" [ref=e259] [cursor=pointer]:
+                - /url: /forms/
+            - listitem [ref=e260]:
+              - link "Publications" [ref=e261] [cursor=pointer]:
+                - /url: /pubs/
+            - listitem [ref=e262]:
+              - link "Report Fraud" [ref=e263] [cursor=pointer]:
+                - /url: https://secure.ssa.gov/pfrf/home
+        - listitem [ref=e264]:
+          - heading "Languages" [level=4] [ref=e265]
+          - list [ref=e266]:
+            - listitem [ref=e267]:
+              - link "Español" [ref=e268] [cursor=pointer]:
+                - /url: /es
+            - listitem [ref=e269]:
+              - link "Other languages" [ref=e270] [cursor=pointer]:
+                - /url: /multilanguage
+            - listitem [ref=e271]:
+              - link "Plain language" [ref=e272] [cursor=pointer]:
+                - /url: /agency/plain-language
+        - listitem [ref=e273]:
+          - heading "Services for" [level=4] [ref=e274]
+          - list [ref=e275]:
+            - listitem [ref=e276]:
+              - link "Employers & businesses" [ref=e277] [cursor=pointer]:
+                - /url: /employer
+            - listitem [ref=e278]:
+              - link "Government agencies" [ref=e279] [cursor=pointer]:
+                - /url: /about-ssa/agency-resources#government-agencies
+            - listitem [ref=e280]:
+              - link "Other groups" [ref=e281] [cursor=pointer]:
+                - /url: /about-ssa/agency-resources#other-groups
+            - listitem [ref=e282]:
+              - link "Representatives" [ref=e283] [cursor=pointer]:
+                - /url: /about-ssa/agency-resources#representatives
+        - listitem [ref=e284]:
+          - heading "Resources" [level=4] [ref=e285]
+          - list [ref=e286]:
+            - listitem [ref=e287]:
+              - link "Careers" [ref=e288] [cursor=pointer]:
+                - /url: /careers/
+            - listitem [ref=e289]:
+              - link "Chief actuary data" [ref=e290] [cursor=pointer]:
+                - /url: /OACT/
+            - listitem [ref=e291]:
+              - link "Communications" [ref=e292] [cursor=pointer]:
+                - /url: /about-ssa/agency-resources#communications
+            - listitem [ref=e293]:
+              - link "Financial Reports" [ref=e294] [cursor=pointer]:
+                - /url: /finance
+            - listitem [ref=e295]:
+              - link "Initiatives" [ref=e296] [cursor=pointer]:
+                - /url: /about-ssa/agency-resources#initiatives
+            - listitem [ref=e297]:
+              - link "Research & policy" [ref=e298] [cursor=pointer]:
+                - /url: /about-ssa/agency-resources#research-policy
+      - generic [ref=e299]:
+        - generic [ref=e302]:
+          - paragraph [ref=e304]: Social Security Administration
+          - list [ref=e306]:
+            - listitem [ref=e307]:
+              - link "Social Security on Facebook" [ref=e308] [cursor=pointer]:
+                - /url: https://www.facebook.com/socialsecurity
+                - img "facebook" [ref=e309]
+            - listitem [ref=e310]:
+              - link "Social Security on X" [ref=e311] [cursor=pointer]:
+                - /url: https://www.x.com/socialsecurity
+                - img "twitter" [ref=e312]
+            - listitem [ref=e313]:
+              - link "Social Security on Youtube" [ref=e314] [cursor=pointer]:
+                - /url: https://www.youtube.com/user/socialsecurityonline
+                - img "youtube" [ref=e315]
+            - listitem [ref=e316]:
+              - link "Social Security on Instagram" [ref=e317] [cursor=pointer]:
+                - /url: https://www.instagram.com/socialsecurity
+                - img "instagram" [ref=e318]
+            - listitem [ref=e319]:
+              - link "Social Security on LinkedIn" [ref=e320] [cursor=pointer]:
+                - /url: https://www.linkedin.com/company/ssa
+                - img "linkedin" [ref=e321]
+        - generic [ref=e322]:
+          - region "Agency identifier" [ref=e323]:
+            - link "Social Security Administration Logo" [ref=e324] [cursor=pointer]:
+              - /url: https://ssa.gov
+              - img "Social Security Administration Logo" [ref=e325]
+            - generic "Agency description" [ref=e326]:
+              - paragraph [ref=e327]: SSA.gov
+              - paragraph [ref=e328]:
+                - strong [ref=e329]:
+                  - text: An official website of the
+                  - link "Social Security Administration." [ref=e330] [cursor=pointer]:
+                    - /url: https://www.ssa.gov
+          - separator [ref=e332]
+          - generic [ref=e333]:
+            - navigation [ref=e334]:
+              - list "Important links" [ref=e336]:
+                - listitem [ref=e337]:
+                  - link "About SSA" [ref=e338] [cursor=pointer]:
+                    - /url: /about-ssa
+                - listitem [ref=e339]:
+                  - link "Civil Rights and Compliance" [ref=e340] [cursor=pointer]:
+                    - /url: /eeo
+                - listitem [ref=e341]:
+                  - link "Privacy policy" [ref=e342] [cursor=pointer]:
+                    - /url: /agency/privacy.html
+                - listitem [ref=e343]:
+                  - link "Office of the Inspector General" [ref=e344] [cursor=pointer]:
+                    - /url: https://oig.ssa.gov/
+                - listitem [ref=e345]:
+                  - link "Accessibility Statement" [ref=e346] [cursor=pointer]:
+                    - /url: /accessibility/
+                - listitem [ref=e347]:
+                  - link "FOIA requests" [ref=e348] [cursor=pointer]:
+                    - /url: /foia/
+                - listitem [ref=e349]:
+                  - link "Performance reports" [ref=e350] [cursor=pointer]:
+                    - /url: /agency/performance/
+            - paragraph [ref=e352]:
+              - generic [ref=e353]: Looking for U.S. government information and services?
+              - link "Visit USA.gov" [ref=e354] [cursor=pointer]:
+                - /url: https://usa.gov

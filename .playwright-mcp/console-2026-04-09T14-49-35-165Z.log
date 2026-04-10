@@ -1,0 +1,36 @@
+[      35ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://localhost:9900/register:0
+[   11835ms] [LOG] [ET] init — openModal: function | backdropClose: function | closeModal: function @ http://localhost:9900/admin/dashboard:4200
+[   11836ms] [LOG] [ET] open button element: JSHandle@node @ http://localhost:9900/admin/dashboard:4295
+[   11850ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:9900/admin/dashboard:0
+[   11852ms] [LOG] [dashboard] review loaded in 16ms @ http://localhost:9900/admin/dashboard:2089
+[   11858ms] [LOG] [dashboard] recent loaded in 22ms @ http://localhost:9900/admin/dashboard:2089
+[   11858ms] [LOG] [dashboard] tokens loaded in 22ms @ http://localhost:9900/admin/dashboard:2089
+[   12449ms] [LOG] [dashboard] pipeline loaded in 617ms @ http://localhost:9900/admin/dashboard:2089
+[   41848ms] [LOG] [dashboard] tokens loaded in 11ms @ http://localhost:9900/admin/dashboard:2089
+[   41848ms] [LOG] [dashboard] recent loaded in 12ms @ http://localhost:9900/admin/dashboard:2089
+[   41848ms] [LOG] [dashboard] review loaded in 12ms @ http://localhost:9900/admin/dashboard:2089
+[   41959ms] [LOG] [dashboard] pipeline loaded in 123ms @ http://localhost:9900/admin/dashboard:2089
+[   71846ms] [LOG] [dashboard] tokens loaded in 10ms @ http://localhost:9900/admin/dashboard:2089
+[   71846ms] [LOG] [dashboard] recent loaded in 11ms @ http://localhost:9900/admin/dashboard:2089
+[   71846ms] [LOG] [dashboard] review loaded in 12ms @ http://localhost:9900/admin/dashboard:2089
+[   71948ms] [LOG] [dashboard] pipeline loaded in 114ms @ http://localhost:9900/admin/dashboard:2089
+[  101846ms] [LOG] [dashboard] tokens loaded in 12ms @ http://localhost:9900/admin/dashboard:2089
+[  101846ms] [LOG] [dashboard] recent loaded in 12ms @ http://localhost:9900/admin/dashboard:2089
+[  101846ms] [LOG] [dashboard] review loaded in 13ms @ http://localhost:9900/admin/dashboard:2089
+[  101879ms] [LOG] [dashboard] pipeline loaded in 45ms @ http://localhost:9900/admin/dashboard:2089
+[  131843ms] [LOG] [dashboard] tokens loaded in 11ms @ http://localhost:9900/admin/dashboard:2089
+[  131843ms] [LOG] [dashboard] recent loaded in 12ms @ http://localhost:9900/admin/dashboard:2089
+[  131843ms] [LOG] [dashboard] review loaded in 12ms @ http://localhost:9900/admin/dashboard:2089
+[  131947ms] [LOG] [dashboard] pipeline loaded in 115ms @ http://localhost:9900/admin/dashboard:2089
+[  161840ms] [LOG] [dashboard] tokens loaded in 10ms @ http://localhost:9900/admin/dashboard:2089
+[  161841ms] [LOG] [dashboard] recent loaded in 10ms @ http://localhost:9900/admin/dashboard:2089
+[  161842ms] [LOG] [dashboard] review loaded in 11ms @ http://localhost:9900/admin/dashboard:2089
+[  161945ms] [LOG] [dashboard] pipeline loaded in 116ms @ http://localhost:9900/admin/dashboard:2089
+[  191844ms] [LOG] [dashboard] tokens loaded in 13ms @ http://localhost:9900/admin/dashboard:2089
+[  191845ms] [LOG] [dashboard] recent loaded in 12ms @ http://localhost:9900/admin/dashboard:2089
+[  191845ms] [LOG] [dashboard] review loaded in 13ms @ http://localhost:9900/admin/dashboard:2089
+[  191948ms] [LOG] [dashboard] pipeline loaded in 116ms @ http://localhost:9900/admin/dashboard:2089
+[  221831ms] [LOG] [dashboard] tokens loaded in 4ms @ http://localhost:9900/admin/dashboard:2089
+[  221831ms] [LOG] [dashboard] recent loaded in 4ms @ http://localhost:9900/admin/dashboard:2089
+[  221831ms] [LOG] [dashboard] review loaded in 4ms @ http://localhost:9900/admin/dashboard:2089
+[  221932ms] [LOG] [dashboard] pipeline loaded in 105ms @ http://localhost:9900/admin/dashboard:2089

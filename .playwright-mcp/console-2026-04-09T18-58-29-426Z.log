@@ -1,0 +1,4 @@
+[   15344ms] TypeError: Cannot read properties of null (reading 'addEventListener')
+    at HTMLDocument.<anonymous> (https://secure.ssa.gov/RIL/appjavascript/sign-in.js:3:3)
+[   15674ms] [WARNING] <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes"> @ https://secure.ssa.gov/RIL/SiView.action:0
+[   18612ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "username"): (More info: https://goo.gl/9p2vKq) %o @ https://secure.login.gov/:0

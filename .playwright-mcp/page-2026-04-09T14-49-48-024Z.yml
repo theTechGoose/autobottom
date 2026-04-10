@@ -1,0 +1,245 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - heading "Auto-Bot" [level=1] [ref=e5]
+      - generic [ref=e8]:
+        - text: Refresh in
+        - strong [ref=e9]: "29"
+        - text: s
+    - generic [ref=e10]:
+      - generic [ref=e11]: Navigation
+      - link "Chat" [ref=e12] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e14]
+        - generic [ref=e16]: Chat
+        - img [ref=e18]
+    - generic [ref=e20]:
+      - generic [ref=e21]: Configuration
+      - generic [ref=e22] [cursor=pointer]:
+        - img [ref=e24]
+        - generic [ref=e26]: Question Lab
+        - img [ref=e28]
+      - generic [ref=e30] [cursor=pointer]:
+        - img [ref=e32]
+        - generic [ref=e34]: Webhook
+        - img [ref=e36]
+      - generic [ref=e38] [cursor=pointer]:
+        - img [ref=e40]
+        - generic [ref=e43]: Email Reports
+        - img [ref=e45]
+      - generic [ref=e47] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Email Templates
+        - img [ref=e54]
+      - generic [ref=e56] [cursor=pointer]:
+        - img [ref=e58]
+        - generic [ref=e61]: Chargebacks & Omissions
+        - img [ref=e63]
+      - generic [ref=e65] [cursor=pointer]:
+        - img [ref=e67]
+        - generic [ref=e70]: Data Maintenance
+        - img [ref=e72]
+      - generic [ref=e74] [cursor=pointer]:
+        - img [ref=e76]
+        - generic [ref=e78]: Bad Words
+        - img [ref=e80]
+      - generic [ref=e82] [cursor=pointer]:
+        - img [ref=e84]
+        - generic [ref=e87]: Offices
+        - img [ref=e89]
+      - generic [ref=e91] [cursor=pointer]:
+        - img [ref=e93]
+        - generic [ref=e98]: Users
+        - img [ref=e100]
+      - generic [ref=e102] [cursor=pointer]:
+        - img [ref=e104]
+        - generic [ref=e107]: Pipeline
+        - img [ref=e109]
+      - generic [ref=e111] [cursor=pointer]:
+        - img [ref=e113]
+        - generic [ref=e119]: Bonus Points
+        - img [ref=e121]
+      - link "Gamification" [ref=e123] [cursor=pointer]:
+        - /url: /gamification
+        - img [ref=e125]
+        - generic [ref=e131]: Gamification
+        - img [ref=e133]
+      - link "Badge Editor" [ref=e135] [cursor=pointer]:
+        - /url: /admin/badge-editor
+        - img [ref=e137]
+        - generic [ref=e140]: Badge Editor
+        - img [ref=e142]
+    - generic [ref=e144]:
+      - generic [ref=e145]: Impersonate
+      - generic [ref=e146] [cursor=pointer]:
+        - img [ref=e148]
+        - generic [ref=e160]: Specific User
+        - img [ref=e162]
+      - generic [ref=e164]:
+        - generic [ref=e165] [cursor=pointer]:
+          - img [ref=e167]
+          - generic [ref=e172]: Role Views
+          - img [ref=e174]
+        - generic:
+          - generic:
+            - generic: View as role
+            - link "Judge Dashboard":
+              - /url: /judge/dashboard
+              - generic:
+                - img
+              - text: Judge Dashboard
+            - link "Review Dashboard":
+              - /url: /review/dashboard
+              - generic:
+                - img
+              - text: Review Dashboard
+            - link "Manager Portal":
+              - /url: /manager
+              - generic:
+                - img
+              - text: Manager Portal
+            - link "Team Member Dashboard":
+              - /url: /agent
+              - generic:
+                - img
+              - text: Team Member Dashboard
+    - generic [ref=e177]:
+      - generic [ref=e178]:
+        - generic [ref=e179]: A
+        - generic [ref=e180]:
+          - generic [ref=e181]: admin@autobot.dev
+          - generic [ref=e182]: Admin
+      - generic [ref=e184] [cursor=pointer]:
+        - img [ref=e186]
+        - generic [ref=e189]: Logout
+  - main [ref=e190]:
+    - generic [ref=e191]:
+      - generic [ref=e192]:
+        - generic [ref=e193]: In Pipeline
+        - generic [ref=e194]: "0"
+      - generic [ref=e195]:
+        - generic [ref=e196]: Active
+        - generic [ref=e197]:
+          - generic [ref=e198]: "0"
+          - generic [ref=e199]:
+            - generic [ref=e200]: "ask-all: 0"
+            - generic [ref=e201]: "cleanup: 0"
+            - generic [ref=e202]: "transcribe: 0"
+      - generic [ref=e203]:
+        - generic [ref=e204]: Completed (24h)
+        - generic [ref=e205]: "0"
+      - generic [ref=e206]:
+        - generic [ref=e207]: Errors (24h)
+        - generic [ref=e208]: "0"
+      - generic [ref=e209]:
+        - generic [ref=e210]: Retries (24h)
+        - generic [ref=e211]: "0"
+    - generic [ref=e212]:
+      - generic [ref=e214]: Pipeline Activity (24h)
+      - generic [ref=e217]:
+        - generic [ref=e218]: Review Progress
+        - generic [ref=e221]:
+          - generic [ref=e222]:
+            - text: Pending
+            - generic [ref=e224]: "0"
+          - generic [ref=e225]:
+            - text: Decided
+            - generic [ref=e227]: "0"
+          - generic [ref=e228]:
+            - text: Total
+            - generic [ref=e229]: "0"
+    - generic [ref=e230]:
+      - generic [ref=e231]:
+        - generic [ref=e232]:
+          - generic [ref=e233]: Review Queue
+          - button "Clear Queue" [ref=e234] [cursor=pointer]
+        - generic [ref=e235]:
+          - generic [ref=e236]:
+            - generic [ref=e238]: Pending
+            - generic [ref=e239]: Decided
+          - generic "Click to inspect internal audits" [ref=e240] [cursor=pointer]:
+            - generic [ref=e241]: Internal
+            - generic [ref=e242]: "0"
+            - generic [ref=e243]: "0"
+          - generic "Click to inspect partner audits" [ref=e244] [cursor=pointer]:
+            - generic [ref=e245]: Partner
+            - generic [ref=e246]: "0"
+            - generic [ref=e247]: "0"
+      - generic [ref=e248]:
+        - generic [ref=e249]: Token Usage (1h)
+        - generic [ref=e250]: 0 tokens (0 calls)
+        - generic [ref=e252]: No usage this hour
+    - generic [ref=e253]:
+      - generic [ref=e254]: Find Audit
+      - generic [ref=e255]:
+        - textbox "Finding ID..." [ref=e256]
+        - button "View Report" [ref=e257] [cursor=pointer]
+        - button "Delete" [ref=e258] [cursor=pointer]
+    - generic [ref=e259]:
+      - generic [ref=e260]: Find by QB Record
+      - generic [ref=e261]:
+        - textbox "QB Record ID..." [ref=e262]
+        - button "Search" [ref=e263] [cursor=pointer]
+    - generic [ref=e264]:
+      - generic [ref=e265]: Test Audit by RID
+      - generic [ref=e266]:
+        - textbox "Record ID..." [ref=e267]
+        - combobox [ref=e268]:
+          - option "Internal" [selected]
+          - option "Partner"
+        - button "Bulk" [ref=e269] [cursor=pointer]
+        - button "Start Audit" [ref=e270] [cursor=pointer]
+        - button "Test" [ref=e271] [cursor=pointer]
+    - generic [ref=e273]:
+      - generic [ref=e274]:
+        - generic [ref=e275]: Active Audits
+        - generic [ref=e276]:
+          - button "Pause Queues" [ref=e277] [cursor=pointer]
+          - button "Terminate Running" [ref=e278] [cursor=pointer]
+          - button "Clear Queue" [ref=e279] [cursor=pointer]
+      - table [ref=e280]:
+        - rowgroup [ref=e281]:
+          - row "Finding ID QB Record Step Started Duration" [ref=e282]:
+            - columnheader "Finding ID" [ref=e283]
+            - columnheader "QB Record" [ref=e284]
+            - columnheader "Step" [ref=e285]
+            - columnheader "Started" [ref=e286]
+            - columnheader "Duration" [ref=e287]
+            - columnheader [ref=e288]
+        - rowgroup [ref=e289]:
+          - row "No active audits" [ref=e290]:
+            - cell "No active audits" [ref=e291]
+    - generic [ref=e292]:
+      - generic [ref=e293]:
+        - generic [ref=e294]: Recent Errors (24h)
+        - button "Clear Errors" [ref=e295] [cursor=pointer]
+      - table [ref=e296]:
+        - rowgroup [ref=e297]:
+          - row "Finding ID Logs Step Error When" [ref=e298]:
+            - columnheader "Finding ID" [ref=e299]
+            - columnheader "Logs" [ref=e300]
+            - columnheader "Step" [ref=e301]
+            - columnheader "Error" [ref=e302]
+            - columnheader "When" [ref=e303]
+        - rowgroup [ref=e304]:
+          - row "No errors" [ref=e305]:
+            - cell "No errors" [ref=e306]
+    - generic [ref=e307]:
+      - generic [ref=e308]:
+        - generic [ref=e309]: Recently Completed (24h)
+        - link "View All →" [ref=e310] [cursor=pointer]:
+          - /url: /admin/audits
+      - table [ref=e311]:
+        - rowgroup [ref=e312]:
+          - row "Finding ID Logs QB Record Score Started Finished Duration" [ref=e313]:
+            - columnheader "Finding ID" [ref=e314]
+            - columnheader "Logs" [ref=e315]
+            - columnheader "QB Record" [ref=e316]
+            - columnheader "Score" [ref=e317]
+            - columnheader "Started" [ref=e318]
+            - columnheader "Finished" [ref=e319]
+            - columnheader "Duration" [ref=e320]
+            - columnheader [ref=e321]
+        - rowgroup [ref=e322]:
+          - row "No completed audits" [ref=e323]:
+            - cell "No completed audits" [ref=e324]

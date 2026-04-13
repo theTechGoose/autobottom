@@ -1,0 +1,143 @@
+/** QStash queue adapter for audit pipeline step orchestration. Ported from lib/queue.ts. */
+
+const TRANSCRIBE_QUEUE = "audit-transcribe";
+const QUESTIONS_QUEUE = "audit-questions";
+const CLEANUP_QUEUE = "audit-cleanup";
+
+export const ALL_QUEUES = [TRANSCRIBE_QUEUE, QUESTIONS_QUEUE, CLEANUP_QUEUE] as const;
+
+const STEP_QUEUE: Record<string, string> = {
+  "init": TRANSCRIBE_QUEUE,
+  "transcribe": TRANSCRIBE_QUEUE,
+  "poll-transcript": TRANSCRIBE_QUEUE,
+  "transcribe-complete": TRANSCRIBE_QUEUE,
+  "prepare": TRANSCRIBE_QUEUE,
+  "ask-batch": QUESTIONS_QUEUE,
+  "ask-all": QUESTIONS_QUEUE,
+  "finalize": CLEANUP_QUEUE,
+  "diarize-async": CLEANUP_QUEUE,
+  "pinecone-async": CLEANUP_QUEUE,
+  "bad-word-check": CLEANUP_QUEUE,
+};
+
+function selfUrl(): string { return Deno.env.get("SELF_URL") ?? "http://localhost:3000"; }
+function qstashUrl(): string { return Deno.env.get("QSTASH_URL") ?? "https://qstash.upstash.io"; }
+function qstashToken(): string { return Deno.env.get("QSTASH_TOKEN") ?? ""; }
+function isLocalMode(): boolean { return Deno.env.get("LOCAL_QUEUE") === "true"; }
+function qstashAuth(): Record<string, string> { return { Authorization: `Bearer ${qstashToken()}` }; }
+
+async function localEnqueue(targetUrl: string, body: unknown, delaySeconds?: number): Promise<string> {
+  const delay = delaySeconds ? delaySeconds * 1000 : 0;
+  setTimeout(async () => {
+    try {
+      const res = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) console.error(`[LOCAL-QUEUE] ${targetUrl} failed: ${res.status} ${await res.text()}`);
+    } catch (err) {
+      console.error(`[LOCAL-QUEUE] ${targetUrl} error:`, err);
+    }
+  }, delay);
+  return `local-${Date.now()}`;
+}
+
+async function enqueue(queueName: string, targetUrl: string, body: unknown, delaySeconds?: number, extraHeaders?: Record<string, string>): Promise<string> {
+  if (isLocalMode()) return localEnqueue(targetUrl, body, delaySeconds);
+
+  const headers: Record<string, string> = {
+    ...qstashAuth(),
+    "Content-Type": "application/json",
+    "Upstash-Retries": "0",
+    ...extraHeaders,
+  };
+
+  let endpoint: string;
+  if (delaySeconds) {
+    headers["Upstash-Delay"] = `${delaySeconds}s`;
+    headers["Upstash-Retries"] = "3";
+    endpoint = `${qstashUrl()}/v2/publish/${targetUrl}`;
+  } else {
+    endpoint = `${qstashUrl()}/v2/enqueue/${queueName}/${targetUrl}`;
+  }
+
+  const res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`QStash enqueue failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return data.messageId;
+}
+
+export function enqueueStep(step: string, body: unknown, delaySeconds?: number): Promise<string> {
+  const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
+  const url = `${selfUrl()}/audit/step/${step}`;
+  const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "120s" } : undefined;
+  return enqueue(queueName, url, body, delaySeconds, extraHeaders);
+}
+
+export async function publishStep(step: string, body: unknown): Promise<string> {
+  const url = `${selfUrl()}/audit/step/${step}`;
+  if (isLocalMode()) return localEnqueue(url, body);
+  const timeout: Record<string, string> = step === "ask-all" ? { "Upstash-Timeout": "900s" } : {};
+  const res = await fetch(`${qstashUrl()}/v2/publish/${url}`, {
+    method: "POST",
+    headers: { ...qstashAuth(), "Content-Type": "application/json", "Upstash-Retries": "0", ...timeout },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`QStash publish failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return data.messageId;
+}
+
+export function enqueueCleanup(body: unknown, delaySeconds: number): Promise<string> {
+  const url = `${selfUrl()}/audit/step/cleanup`;
+  return enqueue(CLEANUP_QUEUE, url, body, delaySeconds);
+}
+
+export async function pauseAllQueues(): Promise<void> {
+  if (isLocalMode()) return;
+  await Promise.all(ALL_QUEUES.map(async (q) => {
+    const res = await fetch(`${qstashUrl()}/v2/queues/${q}/pause`, { method: "POST", headers: qstashAuth() });
+    if (!res.ok) console.error(`[QSTASH] pause ${q} failed: ${res.status} ${await res.text()}`);
+  }));
+}
+
+export async function resumeAllQueues(): Promise<void> {
+  if (isLocalMode()) return;
+  await Promise.all(ALL_QUEUES.map(async (q) => {
+    const res = await fetch(`${qstashUrl()}/v2/queues/${q}/resume`, { method: "POST", headers: qstashAuth() });
+    if (!res.ok) console.error(`[QSTASH] resume ${q} failed: ${res.status} ${await res.text()}`);
+  }));
+}
+
+export async function purgeAllQueues(): Promise<number> {
+  if (isLocalMode()) return 0;
+  let total = 0;
+  await Promise.all(ALL_QUEUES.map(async (q) => {
+    let cursor: string | undefined;
+    do {
+      const url = new URL(`${qstashUrl()}/v2/messages`);
+      url.searchParams.set("queueName", q);
+      if (cursor) url.searchParams.set("cursor", cursor);
+      const res = await fetch(url.toString(), { headers: qstashAuth() });
+      if (!res.ok) { console.error(`[QSTASH] list ${q} failed: ${res.status}`); return; }
+      const { messages = [], cursor: next } = await res.json();
+      cursor = next;
+      await Promise.all((messages as { messageId: string }[]).map(async (m) => {
+        const del = await fetch(`${qstashUrl()}/v2/messages/${m.messageId}`, { method: "DELETE", headers: qstashAuth() });
+        if (del.ok) total++;
+      }));
+    } while (cursor);
+  }));
+  return total;
+}
+
+export async function getQueueCounts(): Promise<Record<string, number>> {
+  if (isLocalMode()) return Object.fromEntries(ALL_QUEUES.map((q) => [q, 0]));
+  const pairs = await Promise.all(ALL_QUEUES.map(async (q) => {
+    const res = await fetch(`${qstashUrl()}/v2/queues/${q}`, { headers: qstashAuth() });
+    const data = res.ok ? await res.json() : {};
+    return [q, data.messageCount ?? 0] as [string, number];
+  }));
+  return Object.fromEntries(pairs);
+}

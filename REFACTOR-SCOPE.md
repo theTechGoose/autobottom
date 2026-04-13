@@ -21,10 +21,37 @@
 - **Phase 8b**: Stats repository — tracking, index, chargebacks, wire (7 tests) — `43e11bd`
 - **Phase 8c**: Config repository — pipeline, webhooks, bypass, bonus, dimensions (12 tests) — `d667eb4`
 
-## Current State: 116 tests passing, 15 commits, ~200 endpoints registered
+## Current State: 148 tests passing, 21 commits, ~200 endpoints registered, controllers wired to real repos
 
-## Remaining Work
-### Phase 8d: Email/Template Repository
+## Completed Since Last Update
+- **Phase 8d-8f**: Email, gamification, events, chat repos (20 tests) — `0385fcd`
+- **Phase 8g**: Judge, manager, question-lab repos (12 tests) — `ca24e87`
+- **Phase 9a**: Wire admin + reporting controllers — `bde03cb`
+- **Phase 9c**: Wire review/judge/manager controllers — `288d978`
+- **Phase 9d**: Wire remaining controllers (qlab, gamification, agent, chat, events, weekly) — `aa255cd`
+- **Phase 10**: Swagger limitation documented, generic DTOs added — `ea6b3b2`
+
+## Remaining Work (follow-up sessions)
+
+### Swagger Fix
+@danet/swagger crashes on async controller methods (Reflect.construct(Promise)).
+Options: fix upstream package, add @ReturnType decorators, or use sync wrappers.
+
+### Pipeline Step Implementations (Phase 9b)
+Port steps/*.ts logic into business features under src/audit/domain/business/pipeline-orchestrator/.
+Also port: genie.ts (downloadRecording), bad-word.ts, question-expr.ts.
+
+### Auth Context Injection
+Controllers use hardcoded ORG="default". Need proper auth middleware that extracts
+orgId from session cookie and injects into controller methods.
+
+### Shape-checker Violations
+301 violations total — mostly from legacy root-level files (old monolith code).
+When legacy files are deleted, only empty placeholder directories under src/ remain.
+Add mod.ts files to empty business feature dirs or remove them.
+
+### Previously listed remaining work (now completed):
+~~Phase 8d: Email/Template Repository~~ DONE
 Port from lib/kv.ts: listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig, listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate, getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview, getReportLastFired, setReportLastFired
 → src/reporting/domain/data/email-repository/
 

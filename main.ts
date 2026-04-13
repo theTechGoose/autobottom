@@ -55,7 +55,7 @@ import { appendSheetRows, parseSheetsServiceAccount } from "./providers/sheets.t
 import { env } from "./env.ts";
 import { orgKey } from "./lib/org.ts";
 import type { OrgId } from "./lib/org.ts";
-import { initOtel, withSpan, flushOtel, shutdownOtel } from "./lib/otel.ts";
+import { initOtel, withSpan, flushOtel, shutdownOtel, log as otelLog, metric as otelMetric } from "./lib/otel.ts";
 
 initOtel();
 
@@ -4797,19 +4797,22 @@ Deno.serve(async (req) => {
 
   // OTel smoke test — emits a trace span, a log record, and a metric to Datadog.
   // Hit this after deploying to verify the full pipeline before wiring broader instrumentation.
+  // Note: traces won't appear in DD APM until CSM enables the preview flag;
+  // logs and metrics should land immediately (both intakes are GA).
   if (url.pathname === "/health/otel") {
-    const result = await withSpan("health.otel.test", async (span) => {
+    const marker = crypto.randomUUID();
+    const result = await withSpan("health.otel.test", (span) => {
       span.setAttribute("test.source", "health-check");
-      await new Promise((r) => setTimeout(r, 5));
+      span.setAttribute("test.marker", marker);
+      otelLog("info", `otel smoke-test via withSpan marker=${marker}`, { "test.marker": marker }, span);
+      otelMetric("autobottom.health.otel.hits", 1, { "test.marker": marker });
       return {
         traceId: span.spanContext().traceId,
         spanId: span.spanContext().spanId,
       };
-    }, { "test.kind": "smoke" });
-    // Force-flush before responding so the span actually leaves the isolate
-    // before Deno Deploy freezes it.
+    }, { "test.kind": "smoke" }, "server");
     await flushOtel();
-    return json({ ok: true, ...result, ts: Date.now() });
+    return json({ ok: true, marker, ...result, ts: Date.now() });
   }
 
   // Raw OTLP/JSON trace test — bypasses the OTel SDK exporter entirely

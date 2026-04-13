@@ -55,6 +55,9 @@ import { appendSheetRows, parseSheetsServiceAccount } from "./providers/sheets.t
 import { env } from "./env.ts";
 import { orgKey } from "./lib/org.ts";
 import type { OrgId } from "./lib/org.ts";
+import { initOtel, withSpan, shutdownOtel } from "./lib/otel.ts";
+
+initOtel();
 
 // Unified auth
 import {
@@ -4790,6 +4793,21 @@ Deno.serve(async (req) => {
   // Health check
   if (url.pathname === "/health") {
     return json({ ok: true, ts: Date.now() });
+  }
+
+  // OTel smoke test — emits a trace span, a log record, and a metric to Datadog.
+  // Hit this after deploying to verify the full pipeline before wiring broader instrumentation.
+  if (url.pathname === "/health/otel") {
+    return await withSpan("health.otel.test", async (span) => {
+      span.setAttribute("test.source", "health-check");
+      await new Promise((r) => setTimeout(r, 5));
+      return json({
+        ok: true,
+        traceId: span.spanContext().traceId,
+        spanId: span.spanContext().spanId,
+        ts: Date.now(),
+      });
+    }, { "test.kind": "smoke" });
   }
 
   // Favicon

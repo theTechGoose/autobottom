@@ -59,4 +59,10 @@ export const env = {
   get sheetsSaS3Key() { return Deno.env.get("SHEETS_SA_S3_KEY") ?? ""; },
   get chargebacksSheetId() { return Deno.env.get("CHARGEBACKS_SHEET_ID") ?? ""; },
   get chargebacksOrgId() { return Deno.env.get("CHARGEBACKS_ORG_ID") ?? ""; },
+
+  // Datadog / OTel. Deno Deploy blocks every OTEL_-prefixed env var, so we
+  // configure the SDK programmatically and read from DD_* vars instead.
+  get ddApiKey() { return Deno.env.get("DD_API_KEY") ?? ""; },
+  get ddSite() { return Deno.env.get("DD_SITE") ?? "us5.datadoghq.com"; },
+  get appEnv() { return Deno.env.get("APP_ENV") ?? "prod"; },
 };

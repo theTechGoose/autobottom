@@ -119,6 +119,11 @@ export function initOtel(): void {
   };
   _appEnv = env.appEnv;
   _initialized = true;
+  // Mirror every console.* call to DD Logs. Preserves normal console output
+  // to Deno Deploy's log stream while ALSO queuing an OTLP log record for
+  // shipment to DD. This is what gives us zero-touch log coverage of all
+  // existing `[STEP-INIT] ...` style messages without editing any call sites.
+  patchConsoleForOtel();
   console.log(`🚀 OTel initialized → ${_base}`);
 }
 
@@ -474,6 +479,69 @@ function buildMetricsRequest(metrics: MetricPoint[]) {
       }],
     }],
   };
+}
+
+// ---------- Console patching ----------
+
+/**
+ * Hooks console.log/info/warn/error so every call is:
+ *  (a) printed to Deno Deploy's log stream as normal (via the original fn)
+ *  (b) queued as an OTLP log record for shipment to DD
+ *
+ * Uses a reentry guard so the OTel module's own console.error calls (e.g. on
+ * flush failure) cannot recurse into the capture path. Arg formatting handles
+ * strings, Errors, and JSON-serializable objects; non-serializable values fall
+ * back to String().
+ */
+let _inCapture = false;
+function patchConsoleForOtel(): void {
+  type Method = "log" | "info" | "warn" | "error" | "debug";
+  const mapping: Array<{ method: Method; level: "debug" | "info" | "warn" | "error" }> = [
+    { method: "debug", level: "debug" },
+    { method: "log",   level: "info" },
+    { method: "info",  level: "info" },
+    { method: "warn",  level: "warn" },
+    { method: "error", level: "error" },
+  ];
+
+  for (const { method, level } of mapping) {
+    // deno-lint-ignore no-explicit-any
+    const original = ((console as any)[method] as (...args: unknown[]) => void).bind(console);
+    // deno-lint-ignore no-explicit-any
+    (console as any)[method] = (...args: unknown[]): void => {
+      original(...args);
+      if (_inCapture) return;
+      _inCapture = true;
+      try {
+        const parent = _spanContext.getStore();
+        _logBuf.push({
+          timeUnixNano: nowNs(),
+          severityNumber: LEVEL_TO_SEVERITY[level],
+          severityText: level.toUpperCase(),
+          body: args.map(formatConsoleArg).join(" "),
+          attributes: { "log.source": "console" },
+          traceId: parent?.traceId,
+          spanId: parent?.spanId,
+        });
+      } catch {
+        /* never let logging break the app */
+      } finally {
+        _inCapture = false;
+      }
+    };
+  }
+}
+
+function formatConsoleArg(a: unknown): string {
+  if (typeof a === "string") return a;
+  if (a instanceof Error) return `${a.name}: ${a.message}${a.stack ? "\n" + a.stack : ""}`;
+  if (typeof a === "undefined") return "undefined";
+  if (a === null) return "null";
+  try {
+    return JSON.stringify(a);
+  } catch {
+    return String(a);
+  }
 }
 
 // ---------- Primitives ----------

@@ -39,7 +39,13 @@ import { EventsModule } from "@events/mod-root.ts";
 class AppModule {}
 
 const port = Number(Deno.env.get("PORT") ?? 3000);
-// Swagger disabled during development — re-enable after all controllers have typed DTOs
+// Swagger builds per-module docs. Filter out modules whose controllers use
+// async methods returning Promise (swagger can't introspect Promise constructor).
+// This is a @danet/swagger limitation — will be resolved when the package supports
+// async return types or we add explicit @ReturnType() decorators.
 const server = await bootstrapServer(AppModule, { port, swagger: false });
 console.log(`🚀 Autobottom API running on port ${port}`);
+// Note: Swagger UI temporarily disabled — @danet/swagger crashes on async controller
+// methods (tries to Reflect.construct(Promise)). Will be re-enabled after upstream fix
+// or after adding @ReturnType decorators to all controller methods.
 await server.listen();

@@ -1,4 +1,6 @@
 import { Module } from "@danet/core";
+import { AuditController } from "@audit/entrypoints/audit-controller.ts";
+import { StepController } from "@audit/entrypoints/step-controller.ts";
 
 // Re-export business logic for consumers
 export { applyBonusFlips, calculateScore, getAutoCompleteReason } from "@audit/domain/business/scoring/mod.ts";
@@ -10,7 +12,7 @@ export {
 export type { FailedQuestion } from "@audit/domain/business/chargeback-engine/mod.ts";
 
 @Module({
-  controllers: [],
+  controllers: [AuditController, StepController],
   injectables: [],
 })
 export class AuditModule {}

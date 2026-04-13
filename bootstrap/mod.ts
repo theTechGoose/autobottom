@@ -39,7 +39,7 @@ import { EventsModule } from "@events/mod-root.ts";
 class AppModule {}
 
 const port = Number(Deno.env.get("PORT") ?? 3000);
-const server = await bootstrapServer(AppModule, { port });
+// Swagger disabled during development — re-enable after all controllers have typed DTOs
+const server = await bootstrapServer(AppModule, { port, swagger: false });
 console.log(`🚀 Autobottom API running on port ${port}`);
-console.log(`📖 Swagger UI at http://localhost:${port}/docs`);
 await server.listen();

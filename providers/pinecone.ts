@@ -1,4 +1,5 @@
 /** Pinecone vector store for RAG retrieval (manual OpenAI embeddings). */
+import { withSpan, metric } from "../lib/otel.ts";
 import OpenAI from "npm:openai";
 
 function getOpenAI() {
@@ -98,43 +99,47 @@ function chunkText(text: string, maxChunkSize = 2000, overlap = 200): string[] {
 
 /** Upload transcript chunks to Pinecone with OpenAI embeddings. */
 export async function upload(findingId: string, text: string) {
-  const chunks = chunkText(text);
-  const host = await getPineconeHost();
-  const { key } = PINECONE_HOST();
+  return await withSpan("pinecone.upload", async (span) => {
+    span.setAttributes({ "finding.id": findingId, "pinecone.text_length": text.length });
+    const chunks = chunkText(text);
+    span.setAttribute("pinecone.chunks", chunks.length);
+    const host = await getPineconeHost();
+    const { key } = PINECONE_HOST();
 
-  // Embed all chunks
-  const vectors = await Promise.all(
-    chunks.map(async (chunk, i) => {
-      const values = await embed(chunk);
-      return {
-        id: `${findingId}-${i}`,
-        values,
-        metadata: { text: chunk },
-      };
-    }),
-  );
+    // Embed all chunks
+    const vectors = await Promise.all(
+      chunks.map(async (chunk, i) => {
+        const values = await embed(chunk);
+        return {
+          id: `${findingId}-${i}`,
+          values,
+          metadata: { text: chunk },
+        };
+      }),
+    );
 
-  // Upsert in batches of 100
-  for (let i = 0; i < vectors.length; i += 100) {
-    const batch = vectors.slice(i, i + 100);
-    const res = await timedFetch(`https://${host}/vectors/upsert`, {
-      method: "POST",
-      headers: {
-        "Api-Key": key,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ vectors: batch, namespace: findingId }),
-    });
-    if (!res.ok) {
-      throw new Error(
-        `Pinecone upsert failed: ${res.status} ${await res.text()}`,
-      );
+    // Upsert in batches of 100
+    for (let i = 0; i < vectors.length; i += 100) {
+      const batch = vectors.slice(i, i + 100);
+      const res = await timedFetch(`https://${host}/vectors/upsert`, {
+        method: "POST",
+        headers: {
+          "Api-Key": key,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ vectors: batch, namespace: findingId }),
+      });
+      if (!res.ok) {
+        throw new Error(
+          `Pinecone upsert failed: ${res.status} ${await res.text()}`,
+        );
+      }
+      await res.json(); // consume body
     }
-    await res.json(); // consume body
-  }
-
-  // No polling — vectors index async. ask-batch falls back to rawTranscript if Pinecone
-  // returns empty on the first query before indexing completes.
+    metric("autobottom.pinecone.upload", 1, { outcome: "ok" });
+    // No polling — vectors index async. ask-batch falls back to rawTranscript if Pinecone
+    // returns empty on the first query before indexing completes.
+  }, {}, "client");
 }
 
 /** Query Pinecone for relevant transcript chunks. */
@@ -143,40 +148,48 @@ export async function query(
   question: string,
   numDocs = 4,
 ): Promise<string> {
-  const host = await getPineconeHost();
-  const { key } = PINECONE_HOST();
+  return await withSpan("pinecone.query", async (span) => {
+    span.setAttributes({
+      "finding.id": findingId,
+      "pinecone.top_k": numDocs,
+      "pinecone.question_length": question.length,
+    });
+    const host = await getPineconeHost();
+    const { key } = PINECONE_HOST();
 
-  const queryVector = await embed(question);
+    const queryVector = await embed(question);
 
-  const res = await timedFetch(`https://${host}/query`, {
-    method: "POST",
-    headers: {
-      "Api-Key": key,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      vector: queryVector,
-      topK: numDocs,
-      namespace: findingId,
-      includeMetadata: true,
-    }),
-  });
+    const res = await timedFetch(`https://${host}/query`, {
+      method: "POST",
+      headers: {
+        "Api-Key": key,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        vector: queryVector,
+        topK: numDocs,
+        namespace: findingId,
+        includeMetadata: true,
+      }),
+    });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Pinecone query failed: ${res.status} ${errText}`);
-  }
-  const data = await res.json();
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Pinecone query failed: ${res.status} ${errText}`);
+    }
+    const data = await res.json();
 
-  const matches = (data.matches ?? []) as Array<
-    { score: number; metadata?: { text?: string } }
-  >;
-  const topScore = matches[0]?.score ?? 0;
-  const hits = matches
-    .filter((m) => topScore - m.score < 0.2)
-    .map((m) => m.metadata?.text ?? "")
-    .filter(Boolean);
-  return hits.join("\n\n --- \n\n");
+    const matches = (data.matches ?? []) as Array<
+      { score: number; metadata?: { text?: string } }
+    >;
+    span.setAttribute("pinecone.matches", matches.length);
+    const topScore = matches[0]?.score ?? 0;
+    const hits = matches
+      .filter((m) => topScore - m.score < 0.2)
+      .map((m) => m.metadata?.text ?? "")
+      .filter(Boolean);
+    return hits.join("\n\n --- \n\n");
+  }, {}, "client");
 }
 
 /** Delete an entire namespace (for cleanup). */

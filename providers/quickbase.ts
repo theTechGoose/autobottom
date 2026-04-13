@@ -1,4 +1,5 @@
 /** QuickBase API client. */
+import { withSpan, metric } from "../lib/otel.ts";
 
 /** Strip non-numeric suffixes from a Genie ID or comma-separated list of IDs.
  *  QB formula fields can return values like "27475188-error"; only the numeric part is valid.
@@ -38,6 +39,25 @@ const QB_TIMEOUT_MS = 30_000;
 const QB_RETRY_DELAYS = [2000, 5000, 10000]; // 3 retries: 2s, 5s, 10s
 
 export async function queryRecords(opts: QBQueryOptions, attempt = 0): Promise<any[]> {
+  return await withSpan("quickbase.queryRecords", async (span) => {
+    span.setAttributes({
+      "qb.table": opts.tableId,
+      "qb.attempt": attempt,
+      "qb.select_fields": opts.select.length,
+    });
+    try {
+      const result = await queryRecordsInner(opts, attempt);
+      metric("autobottom.quickbase.queryRecords", 1, { outcome: "ok", table: opts.tableId });
+      span.setAttribute("qb.result_count", result.length);
+      return result;
+    } catch (err) {
+      metric("autobottom.quickbase.queryRecords", 1, { outcome: "failed", table: opts.tableId });
+      throw err;
+    }
+  }, {}, "client");
+}
+
+async function queryRecordsInner(opts: QBQueryOptions, attempt = 0): Promise<any[]> {
   const body: any = {
     from: opts.tableId,
     where: opts.where,
@@ -65,7 +85,7 @@ export async function queryRecords(opts: QBQueryOptions, attempt = 0): Promise<a
       const delay = QB_RETRY_DELAYS[attempt];
       console.warn(`[QB] ⚠️ queryRecords attempt ${attempt + 1} ${label} — retrying in ${delay}ms (table=${opts.tableId})`);
       await new Promise((r) => setTimeout(r, delay));
-      return queryRecords(opts, attempt + 1);
+      return queryRecordsInner(opts, attempt + 1);
     }
     throw new Error(`QuickBase query failed after ${attempt + 1} attempts: ${label} (table=${opts.tableId})`);
   } finally {
@@ -79,7 +99,7 @@ export async function queryRecords(opts: QBQueryOptions, attempt = 0): Promise<a
       const delay = QB_RETRY_DELAYS[attempt];
       console.warn(`[QB] ⚠️ queryRecords attempt ${attempt + 1} got ${res.status} — retrying in ${delay}ms (table=${opts.tableId})`);
       await new Promise((r) => setTimeout(r, delay));
-      return queryRecords(opts, attempt + 1);
+      return queryRecordsInner(opts, attempt + 1);
     }
     throw new Error(`QuickBase query failed: ${res.status} ${text}`);
   }

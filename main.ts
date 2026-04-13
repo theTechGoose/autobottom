@@ -55,7 +55,7 @@ import { appendSheetRows, parseSheetsServiceAccount } from "./providers/sheets.t
 import { env } from "./env.ts";
 import { orgKey } from "./lib/org.ts";
 import type { OrgId } from "./lib/org.ts";
-import { initOtel, withSpan, flushOtel, shutdownOtel, log as otelLog, metric as otelMetric } from "./lib/otel.ts";
+import { initOtel, withSpan, withRequest, runStep, flushOtel, shutdownOtel, log as otelLog, metric as otelMetric } from "./lib/otel.ts";
 
 initOtel();
 
@@ -241,19 +241,20 @@ function withBodyOrg(fn: (orgId: OrgId, req: Request) => Promise<Response>): Han
 // -- Route Tables --
 
 const postRoutes: Record<string, Handler> = {
-  // Pipeline steps (called by QStash, orgId in body)
-  "/audit/step/init": stepInit,
-  "/audit/step/transcribe": stepTranscribe,
-  "/audit/step/poll-transcript": stepPollTranscript,
-  "/audit/step/transcribe-complete": stepTranscribeCb,
-  "/audit/step/diarize-async": stepDiarizeAsync,
-  "/audit/step/pinecone-async": stepPineconeAsync,
-  "/audit/step/prepare": stepPrepare,
-  "/audit/step/ask-batch": stepAskBatch,
-  "/audit/step/ask-all": stepAskAll,
-  "/audit/step/finalize": stepFinalize,
-  "/audit/step/cleanup": stepCleanup,
-  "/audit/step/bad-word-check": stepBadWordCheck,
+  // Pipeline steps (called by QStash, orgId in body) — each wrapped with
+  // runStep() to produce a step.<name> child span and step metrics in OTel.
+  "/audit/step/init": runStep("init", stepInit),
+  "/audit/step/transcribe": runStep("transcribe", stepTranscribe),
+  "/audit/step/poll-transcript": runStep("poll-transcript", stepPollTranscript),
+  "/audit/step/transcribe-complete": runStep("transcribe-complete", stepTranscribeCb),
+  "/audit/step/diarize-async": runStep("diarize-async", stepDiarizeAsync),
+  "/audit/step/pinecone-async": runStep("pinecone-async", stepPineconeAsync),
+  "/audit/step/prepare": runStep("prepare", stepPrepare),
+  "/audit/step/ask-batch": runStep("ask-batch", stepAskBatch),
+  "/audit/step/ask-all": runStep("ask-all", stepAskAll),
+  "/audit/step/finalize": runStep("finalize", stepFinalize),
+  "/audit/step/cleanup": runStep("cleanup", stepCleanup),
+  "/audit/step/bad-word-check": runStep("bad-word-check", stepBadWordCheck),
 
   // API endpoints (orgId from auth/query/default-org)
   "/audit/test-by-rid": withOrgId(handleAuditByRid),
@@ -4787,7 +4788,7 @@ Deno.cron("email-reports", "* * * * *", async () => {
 
 // -- Server --
 
-Deno.serve(async (req) => {
+Deno.serve(withRequest(async (req) => {
   const url = new URL(req.url);
 
   // Health check
@@ -5176,4 +5177,4 @@ Deno.serve(async (req) => {
   }
 
   return json({ error: "not found" }, 404);
-});
+}));

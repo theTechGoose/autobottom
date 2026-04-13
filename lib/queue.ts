@@ -1,5 +1,6 @@
 /** QStash queue helper for enqueuing pipeline steps. */
 import { env } from "../env.ts";
+import { withSpan, metric } from "./otel.ts";
 
 const TRANSCRIBE_QUEUE = "audit-transcribe";
 const QUESTIONS_QUEUE = "audit-questions";
@@ -47,41 +48,55 @@ async function localEnqueue(targetUrl: string, body: unknown, delaySeconds?: num
 }
 
 async function enqueue(queueName: string, targetUrl: string, body: unknown, delaySeconds?: number, extraHeaders?: Record<string, string>) {
-  if (LOCAL_MODE) {
-    return localEnqueue(targetUrl, body, delaySeconds);
-  }
+  return await withSpan("qstash.enqueue", async (span) => {
+    span.setAttributes({
+      "messaging.system": "qstash",
+      "messaging.destination": queueName,
+      "messaging.target": targetUrl,
+      "messaging.delay_seconds": delaySeconds ?? 0,
+    });
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${env.qstashToken}`,
-    "Content-Type": "application/json",
-    "Upstash-Retries": "0",
-    ...extraHeaders,
-  };
+    if (LOCAL_MODE) {
+      metric("autobottom.queue.enqueue", 1, { queue: queueName, mode: "local" });
+      return localEnqueue(targetUrl, body, delaySeconds);
+    }
 
-  // QStash enqueue (queue-based) does not support Upstash-Delay.
-  // Use publish (non-queued) for delayed messages instead.
-  // Delayed publishes get 3 retries so a cold-start 5xx doesn't silently drop the message.
-  let endpoint: string;
-  if (delaySeconds) {
-    headers["Upstash-Delay"] = `${delaySeconds}s`;
-    headers["Upstash-Retries"] = "3";
-    endpoint = `${env.qstashUrl}/v2/publish/${targetUrl}`;
-  } else {
-    endpoint = `${env.qstashUrl}/v2/enqueue/${queueName}/${targetUrl}`;
-  }
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${env.qstashToken}`,
+      "Content-Type": "application/json",
+      "Upstash-Retries": "0",
+      ...extraHeaders,
+    };
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+    // QStash enqueue (queue-based) does not support Upstash-Delay.
+    // Use publish (non-queued) for delayed messages instead.
+    // Delayed publishes get 3 retries so a cold-start 5xx doesn't silently drop the message.
+    let endpoint: string;
+    if (delaySeconds) {
+      headers["Upstash-Delay"] = `${delaySeconds}s`;
+      headers["Upstash-Retries"] = "3";
+      endpoint = `${env.qstashUrl}/v2/publish/${targetUrl}`;
+    } else {
+      endpoint = `${env.qstashUrl}/v2/enqueue/${queueName}/${targetUrl}`;
+    }
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`QStash enqueue failed: ${res.status} ${text}`);
-  }
-  const data = await res.json();
-  return data.messageId;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    span.setAttribute("http.status_code", res.status);
+
+    if (!res.ok) {
+      const text = await res.text();
+      metric("autobottom.queue.enqueue", 1, { queue: queueName, outcome: "failed" });
+      throw new Error(`QStash enqueue failed: ${res.status} ${text}`);
+    }
+    const data = await res.json();
+    metric("autobottom.queue.enqueue", 1, { queue: queueName, outcome: "ok" });
+    return data.messageId;
+  }, {}, "client");
 }
 
 export function enqueueStep(step: string, body: unknown, delaySeconds?: number) {

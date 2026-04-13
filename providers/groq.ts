@@ -1,4 +1,5 @@
 /** Groq LLM provider for question answering, diarization, and feedback. */
+import { withSpan, metric } from "../lib/otel.ts";
 import Groq from "npm:groq-sdk";
 import type { ChatCompletion } from "npm:groq-sdk/resources/chat/completions";
 
@@ -151,6 +152,32 @@ export async function askQuestion(
   temperature = 0.8,
 ): Promise<LlmAnswer> {
   const model: GroqModel = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
+  return await withSpan("groq.askQuestion", async (span) => {
+    span.setAttributes({
+      "llm.model": model,
+      "llm.model_index": modelIndex,
+      "llm.temperature": temperature,
+      "llm.transcript_length": transcript.length,
+      "llm.question_length": question.length,
+    });
+    try {
+      const result = await askQuestionInner(question, transcript, modelIndex, temperature);
+      metric("autobottom.groq.askQuestion", 1, { model, outcome: "ok" });
+      return result;
+    } catch (err) {
+      metric("autobottom.groq.askQuestion", 1, { model, outcome: "failed" });
+      throw err;
+    }
+  }, {}, "client");
+}
+
+async function askQuestionInner(
+  question: string,
+  transcript: string,
+  modelIndex = 0,
+  temperature = 0.8,
+): Promise<LlmAnswer> {
+  const model: GroqModel = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
   const userPrompt = makeUserPrompt(question, transcript);
 
@@ -217,7 +244,7 @@ export async function askQuestion(
         `[LLM-FALLBACK] ${model} → trying ${FALLBACK_MODELS[nextIndex]}`,
       );
       await new Promise((r) => setTimeout(r, 1000));
-      return askQuestion(question, transcript, nextIndex, temperature);
+      return askQuestionInner(question, transcript, nextIndex, temperature);
     }
     throw e;
   }

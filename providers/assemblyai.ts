@@ -1,4 +1,5 @@
 /** AssemblyAI transcription provider - uses raw fetch (no SDK). */
+import { withSpan, metric } from "../lib/otel.ts";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const BASE = "https://api.assemblyai.com/v2";
@@ -9,25 +10,41 @@ function authHeaders(): Record<string, string> {
 
 /** Upload raw audio bytes to AssemblyAI. Returns the upload URL. */
 export async function uploadAudio(bytes: Uint8Array, timeoutMs = 60_000): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${BASE}/upload`, {
-      method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/octet-stream" },
-      body: bytes as BodyInit,
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`AssemblyAI upload failed: ${res.status} ${await res.text()}`);
-    const data = await res.json();
-    return data.upload_url;
-  } finally {
-    clearTimeout(timer);
-  }
+  return await withSpan("assemblyai.uploadAudio", async (span) => {
+    span.setAttribute("audio.bytes", bytes.length);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${BASE}/upload`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/octet-stream" },
+        body: bytes as BodyInit,
+        signal: controller.signal,
+      });
+      span.setAttribute("http.status_code", res.status);
+      if (!res.ok) throw new Error(`AssemblyAI upload failed: ${res.status} ${await res.text()}`);
+      const data = await res.json();
+      metric("autobottom.assemblyai.uploads", 1, { outcome: "ok" });
+      return data.upload_url;
+    } finally {
+      clearTimeout(timer);
+    }
+  }, {}, "client");
 }
 
 /** Transcribe raw audio bytes. Returns speaker-labeled transcript text. */
 export async function transcribe(audioBytes: Uint8Array, maxAttempts = 3, delayMs = 1500, findingId?: string): Promise<string> {
+  return await withSpan("assemblyai.transcribe", async (span) => {
+    span.setAttributes({
+      "audio.bytes": audioBytes.length,
+      "finding.id": findingId ?? "",
+      "max_attempts": maxAttempts,
+    });
+    return await transcribeInner(audioBytes, maxAttempts, delayMs, findingId);
+  }, {}, "client");
+}
+
+async function transcribeInner(audioBytes: Uint8Array, maxAttempts: number, delayMs: number, findingId?: string): Promise<string> {
   let lastError: unknown;
   const tag = findingId ? `${findingId}: ` : "";
 

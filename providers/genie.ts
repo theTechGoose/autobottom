@@ -289,16 +289,30 @@ async function tryStrategy(role: AccountRole, contract: number, tag: string): Pr
  *  1. static-primary   — sync search, then async job fallback
  *  2. static-secondary — sync search, then async job fallback
  */
+import { withSpan, metric } from "../lib/otel.ts";
+
 export async function downloadRecording(genieId: number, findingId?: string): Promise<Uint8Array | null> {
-  const tag = findingId ?? String(genieId);
-  console.log(`[GENIE] 🚀 download begin: contract=${genieId} ${tag}`);
+  return await withSpan("genie.downloadRecording", async (span) => {
+    span.setAttributes({
+      "genie.contract": genieId,
+      "finding.id": findingId ?? "",
+    });
+    const tag = findingId ?? String(genieId);
+    console.log(`[GENIE] 🚀 download begin: contract=${genieId} ${tag}`);
 
-  for (const role of ["primary", "secondary"] as AccountRole[]) {
-    const bytes = await tryStrategy(role, genieId, tag);
-    if (bytes) return bytes;
-    console.log(`[GENIE] ⚠️ ${role} failed, trying next...`);
-  }
+    for (const role of ["primary", "secondary"] as AccountRole[]) {
+      const bytes = await tryStrategy(role, genieId, tag);
+      if (bytes) {
+        span.setAttributes({ "genie.role_used": role, "genie.bytes": bytes.length });
+        metric("autobottom.genie.downloads", 1, { outcome: "ok", role });
+        return bytes;
+      }
+      console.log(`[GENIE] ⚠️ ${role} failed, trying next...`);
+    }
 
-  console.error(`[GENIE] ❌ all strategies exhausted: contract=${genieId}`);
-  return null;
+    span.setAttribute("error", true);
+    metric("autobottom.genie.downloads", 1, { outcome: "failed" });
+    console.error(`[GENIE] ❌ all strategies exhausted: contract=${genieId}`);
+    return null;
+  }, {}, "client");
 }

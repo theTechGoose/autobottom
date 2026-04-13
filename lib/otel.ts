@@ -29,10 +29,14 @@
  *                                             // returning from request handlers
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { env } from "../env.ts";
 
 const SERVICE_NAME = "autobottom";
 const SCOPE_NAME = "autobottom";
+
+/** Per-request/per-async-context storage so child spans find their parent. */
+const _spanContext = new AsyncLocalStorage<Span>();
 
 // ---------- Types ----------
 
@@ -155,6 +159,10 @@ export function metric(name: string, value = 1, attrs: AttrMap = {}): void {
  * Run `fn` wrapped in a span. If OTel is disabled, runs `fn` with a no-op
  * span so call sites never need to branch on enabled state. On throw, records
  * the exception and sets status=ERROR before re-raising.
+ *
+ * Context propagation: if called inside another `withSpan`, the new span
+ * inherits the parent's traceId and sets parentSpanId so DD renders them as
+ * a single linked trace.
  */
 export async function withSpan<T>(
   name: string,
@@ -165,8 +173,10 @@ export async function withSpan<T>(
   if (!_initialized) {
     return await fn(NOOP_SPAN);
   }
-  const traceId = hex(16);
+  const parent = _spanContext.getStore();
+  const traceId = parent?.traceId ?? hex(16);
   const spanId = hex(8);
+  const parentSpanId = parent?.spanId;
   const startNs = nowNs();
   const spanAttrs: AttrMap = { ...attrs };
   const events: SpanRecord["events"] = [];
@@ -209,29 +219,119 @@ export async function withSpan<T>(
     },
   };
 
-  try {
-    const result = await fn(span);
-    return result;
-  } catch (err) {
-    span.recordException(err);
-    status = {
-      code: 2,
-      message: (err as Error)?.message ?? String(err),
-    };
-    throw err;
-  } finally {
-    _spanBuf.push({
-      traceId,
-      spanId,
-      name,
-      kind: KIND_TO_NUMBER[kind],
-      startTimeUnixNano: startNs,
-      endTimeUnixNano: nowNs(),
-      attributes: spanAttrs,
-      status,
-      events,
-    });
-  }
+  return await _spanContext.run(span, async () => {
+    try {
+      const result = await fn(span);
+      return result;
+    } catch (err) {
+      span.recordException(err);
+      status = {
+        code: 2,
+        message: (err as Error)?.message ?? String(err),
+      };
+      throw err;
+    } finally {
+      _spanBuf.push({
+        traceId,
+        spanId,
+        parentSpanId,
+        name,
+        kind: KIND_TO_NUMBER[kind],
+        startTimeUnixNano: startNs,
+        endTimeUnixNano: nowNs(),
+        attributes: spanAttrs,
+        status,
+        events,
+      });
+    }
+  });
+}
+
+/**
+ * Middleware that wraps a Deno.serve handler with a root server span and
+ * guarantees telemetry is flushed before the isolate can freeze. Usage:
+ *
+ *   Deno.serve(withRequest(async (req) => { ... }));
+ *
+ * Contributes http.method / http.route / http.status_code to the span and
+ * a `autobottom.http.requests` counter metric.
+ */
+export function withRequest(
+  handler: (req: Request) => Promise<Response> | Response,
+): (req: Request) => Promise<Response> {
+  return async (req: Request): Promise<Response> => {
+    const u = new URL(req.url);
+    const route = u.pathname;
+    const method = req.method;
+    try {
+      return await withSpan(
+        `${method} ${route}`,
+        async (span) => {
+          span.setAttributes({
+            "http.method": method,
+            "http.route": route,
+            "http.url": req.url,
+          });
+          const res = await handler(req);
+          span.setAttribute("http.status_code", res.status);
+          metric("autobottom.http.requests", 1, {
+            method,
+            route,
+            status: res.status,
+          });
+          return res;
+        },
+        {},
+        "server",
+      );
+    } finally {
+      // Always flush — even on thrown errors — before the isolate freezes.
+      await flushOtel();
+    }
+  };
+}
+
+/**
+ * Wrap a pipeline step handler with a child span + step metrics. Usage:
+ *
+ *   "/audit/step/init": runStep("init", stepInit),
+ *
+ * Keeps step instrumentation uniform and one-line at every dispatch site.
+ */
+export function runStep(
+  stepName: string,
+  handler: (req: Request) => Promise<Response> | Response,
+): (req: Request) => Promise<Response> {
+  return async (req: Request): Promise<Response> => {
+    return await withSpan(
+      `step.${stepName}`,
+      async (span) => {
+        span.setAttribute("step.name", stepName);
+        metric("autobottom.step.started", 1, { step: stepName });
+        try {
+          const res = await handler(req);
+          if (res.status >= 500) {
+            metric("autobottom.step.failed", 1, {
+              step: stepName,
+              reason: "5xx",
+            });
+            span.setAttribute("error", true);
+          } else {
+            metric("autobottom.step.completed", 1, { step: stepName });
+          }
+          return res;
+        } catch (err) {
+          metric("autobottom.step.failed", 1, {
+            step: stepName,
+            reason: "thrown",
+          });
+          throw err;
+        }
+      },
+      { "step.name": stepName },
+      "internal",
+    );
+  };
 }
 
 // ---------- Flush ----------

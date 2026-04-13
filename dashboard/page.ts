@@ -786,6 +786,9 @@ table { width: 100%; border-collapse: collapse; }
 <div class="modal-overlay" id="email-reports-modal">
   <div class="modal er-modal">
     <div id="er-content"></div>
+    <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:12px;text-align:center;">
+      <a href="/admin/weekly-builder" style="font-size:11px;color:var(--text-muted);text-decoration:none;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-muted)'">Build Weekly Reports &rarr;</a>
+    </div>
   </div>
 </div>
 
@@ -3553,15 +3556,16 @@ table { width: 100%; border-collapse: collapse; }
       });
       return s;
     }
-    var thead = '<thead><tr><th style="width:50px;">Active</th><th>Name</th><th>Schedule</th><th>Recipients</th><th></th></tr></thead>';
     if (!emailConfigs.length) {
       html += '<div class="er-empty">No reports yet. Click <strong>+ New Report</strong> to create one.</div>';
     } else {
-      if (regular.length) html += '<table class="er-table">'+thead+'<tbody>'+buildRows(regular)+'</tbody></table>';
+      html += '<table class="er-table"><thead><tr><th style="width:50px;">Active</th><th>Name</th><th>Schedule</th><th>Recipients</th><th></th></tr></thead><tbody>';
+      if (regular.length) html += buildRows(regular);
       if (weekly.length) {
-        html += '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin:'+(regular.length?'20px':'0')+'px 0 8px;">Weekly Reports</div>';
-        html += '<table class="er-table">'+thead+'<tbody>'+buildRows(weekly)+'</tbody></table>';
+        html += '<tr><td colspan="5" style="padding:12px 0 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);border:none;">'+(regular.length?'Weekly Reports':'Weekly Reports')+'</td></tr>';
+        html += buildRows(weekly);
       }
+      html += '</tbody></table>';
     }
     erContent.innerHTML = html;
     document.getElementById('er-new').addEventListener('click', function() { renderEREdit(null); });
@@ -4082,10 +4086,10 @@ table { width: 100%; border-collapse: collapse; }
     }
     function autoName() {
       if (!wState.type) return '';
-      if (wState.type==='both') return 'All Audits \u2014 Weekly';
-      if (wState.type==='partner') return (wState.office||'Partner')+' \u2014 Weekly';
+      if (wState.type==='both') return 'All Audits';
+      if (wState.type==='partner') return wState.office||'Partner';
       var parts=[]; if(wState.department)parts.push(wState.department); if(wState.shift)parts.push(wState.shift);
-      return (parts.length?parts.join(' \u2014 '):'Internal')+' \u2014 Weekly';
+      return parts.length ? parts.join(' \u2014 ') : 'Internal';
     }
     function deriveAutoRecipients() {
       if (wState.type==='partner' && wPartnerDims && wState.office) return (wPartnerDims.offices||{})[wState.office]||[];

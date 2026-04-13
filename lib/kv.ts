@@ -931,6 +931,11 @@ export async function saveEmailReportConfig(
     ...(config.topLevelFilters ? { topLevelFilters: config.topLevelFilters } : {}),
     ...(config.reportSections ? { reportSections: config.reportSections } : {}),
     ...(config.disabled ? { disabled: config.disabled } : {}),
+    ...(config.weeklyType ? { weeklyType: config.weeklyType } : {}),
+    ...(config.weeklyDepartment ? { weeklyDepartment: config.weeklyDepartment } : {}),
+    ...(config.weeklyShift ? { weeklyShift: config.weeklyShift } : {}),
+    ...(config.weeklyOffice ? { weeklyOffice: config.weeklyOffice } : {}),
+    ...(config.weeklyAutoRecipients?.length ? { weeklyAutoRecipients: config.weeklyAutoRecipients } : {}),
     createdAt: config.createdAt || now,
     updatedAt: now,
   };

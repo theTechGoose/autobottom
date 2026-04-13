@@ -109,6 +109,8 @@ import { getChatPage } from "./chat/page.ts";
 
 // Dashboard + Question Lab
 import { getDashboardPage } from "./dashboard/page.ts";
+import { getWeeklyBuilderPage } from "./weekly-builder/page.ts";
+import { handleWeeklyBuilderTestSend, handleWeeklyBuilderPublish, handleWeeklyBuilderGetData } from "./weekly-builder/handlers.ts";
 import { routeQuestionLab } from "./question-lab/handlers.ts";
 import { listConfigs, getInternalAssignments, setInternalAssignment, getInternalNames, setInternalName, getPartnerAssignments, setPartnerAssignment } from "./question-lab/kv.ts";
 
@@ -298,6 +300,8 @@ const postRoutes: Record<string, Handler> = {
   "/admin/bonus-points-config": handleSaveBonusPointsConfig,
   "/admin/bulk-flip": handleBulkFlip,
   "/admin/office-bypass": handleSaveOfficeBypass,
+  "/admin/weekly-builder/test-send": handleWeeklyBuilderTestSend,
+  "/admin/weekly-builder/publish": handleWeeklyBuilderPublish,
   "/admin/manager-scopes": handleSaveManagerScope,
   "/admin/audit-dimensions": handleSaveAuditDimensions,
   "/admin/post-to-sheet": handlePostToSheet,
@@ -426,6 +430,8 @@ const getRoutes: Record<string, Handler> = {
   "/admin/bonus-points-config": handleGetBonusPointsConfig,
   "/admin/unreviewed-audits": handleGetUnreviewedAudits,
   "/admin/office-bypass": handleGetOfficeBypass,
+  "/admin/weekly-builder": (_req: Request) => Promise.resolve(html(getWeeklyBuilderPage())),
+  "/admin/weekly-builder/data": handleWeeklyBuilderGetData,
   "/admin/manager-scopes": handleGetManagerScopes,
   "/admin/audit-dimensions": handleGetAuditDimensions,
   "/admin/partner-dimensions": handleGetPartnerDimensions,

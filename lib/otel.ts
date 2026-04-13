@@ -49,6 +49,7 @@ const SERVICE_NAME = "autobottom";
 
 let _tracer: Tracer | null = null;
 let _shutdown: (() => Promise<void>) | null = null;
+let _flush: (() => Promise<void>) | null = null;
 
 export function initOtel(): void {
   if (_tracer) return;
@@ -112,6 +113,13 @@ export function initOtel(): void {
   logs.setGlobalLoggerProvider(loggerProvider);
 
   _tracer = trace.getTracer(SERVICE_NAME);
+  _flush = async () => {
+    await Promise.allSettled([
+      tracerProvider.forceFlush(),
+      meterProvider.forceFlush(),
+      loggerProvider.forceFlush(),
+    ]);
+  };
   _shutdown = async () => {
     await Promise.allSettled([
       tracerProvider.shutdown(),
@@ -157,6 +165,16 @@ export async function withSpan<T>(
 
 export function getTracer(): Tracer | null {
   return _tracer;
+}
+
+/**
+ * Force all span/metric/log batch processors to flush now.
+ * Critical on Deno Deploy: call this before returning from handlers that emit
+ * spans, otherwise the isolate can freeze before the batch processor fires its
+ * 1s flush timer and the spans are lost.
+ */
+export async function flushOtel(): Promise<void> {
+  if (_flush) await _flush();
 }
 
 export async function shutdownOtel(): Promise<void> {

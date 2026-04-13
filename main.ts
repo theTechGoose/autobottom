@@ -55,7 +55,7 @@ import { appendSheetRows, parseSheetsServiceAccount } from "./providers/sheets.t
 import { env } from "./env.ts";
 import { orgKey } from "./lib/org.ts";
 import type { OrgId } from "./lib/org.ts";
-import { initOtel, withSpan, shutdownOtel } from "./lib/otel.ts";
+import { initOtel, withSpan, flushOtel, shutdownOtel } from "./lib/otel.ts";
 
 initOtel();
 
@@ -4798,16 +4798,18 @@ Deno.serve(async (req) => {
   // OTel smoke test — emits a trace span, a log record, and a metric to Datadog.
   // Hit this after deploying to verify the full pipeline before wiring broader instrumentation.
   if (url.pathname === "/health/otel") {
-    return await withSpan("health.otel.test", async (span) => {
+    const result = await withSpan("health.otel.test", async (span) => {
       span.setAttribute("test.source", "health-check");
       await new Promise((r) => setTimeout(r, 5));
-      return json({
-        ok: true,
+      return {
         traceId: span.spanContext().traceId,
         spanId: span.spanContext().spanId,
-        ts: Date.now(),
-      });
+      };
     }, { "test.kind": "smoke" });
+    // Force-flush before responding so the span actually leaves the isolate
+    // before Deno Deploy freezes it.
+    await flushOtel();
+    return json({ ok: true, ...result, ts: Date.now() });
   }
 
   // Direct OTLP probe — bypasses the SDK entirely to isolate whether DD is

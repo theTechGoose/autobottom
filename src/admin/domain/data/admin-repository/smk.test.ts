@@ -14,7 +14,7 @@ import {
 } from "./mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
-const ORG = "test-org-config";
+const ORG = "test-org-" + crypto.randomUUID().slice(0, 8) + Date.now();
 
 Deno.test({ name: "pipeline config — defaults then override", ...kvOpts, fn: async () => {
   const defaults = await getPipelineConfig(ORG);

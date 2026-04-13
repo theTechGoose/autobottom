@@ -11,7 +11,7 @@ import {
 } from "./mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
-const ORG = "test-org-audit";
+const ORG = "test-org-" + crypto.randomUUID().slice(0, 8);
 
 Deno.test({ name: "finding — save and retrieve (chunked)", ...kvOpts, fn: async () => {
   const finding = { id: "f-1", findingStatus: "pending", record: { RecordId: "123" } };

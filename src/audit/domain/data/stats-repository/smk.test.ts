@@ -11,7 +11,7 @@ import {
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
-const ORG = "test-org-stats";
+const ORG = "test-org-" + crypto.randomUUID().slice(0, 8);
 
 Deno.test({ name: "tracking — active → completed lifecycle", ...kvOpts, fn: async () => {
   await trackActive(ORG, "f-track-1", "transcribe");

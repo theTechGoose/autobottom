@@ -4810,6 +4810,47 @@ Deno.serve(async (req) => {
     }, { "test.kind": "smoke" });
   }
 
+  // Direct OTLP probe — bypasses the SDK entirely to isolate whether DD is
+  // accepting our requests at all. POSTs an empty-but-valid OTLP ExportTraceServiceRequest
+  // and returns the exact HTTP response from Datadog.
+  if (url.pathname === "/health/otel-probe") {
+    const site = Deno.env.get("DD_SITE") ?? "us5.datadoghq.com";
+    const key = Deno.env.get("DD_API_KEY") ?? "";
+    const targets = [
+      { name: "traces",  url: `https://otlp.${site}/v1/traces` },
+      { name: "metrics", url: `https://otlp.${site}/v1/metrics` },
+      { name: "logs",    url: `https://otlp.${site}/v1/logs` },
+    ];
+    const results = [];
+    for (const t of targets) {
+      try {
+        const res = await fetch(t.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-protobuf",
+            "dd-api-key": key,
+          },
+          body: new Uint8Array(0),
+        });
+        const body = await res.text();
+        results.push({
+          target: t.name,
+          url: t.url,
+          status: res.status,
+          statusText: res.statusText,
+          body: body.slice(0, 500),
+        });
+      } catch (err) {
+        results.push({
+          target: t.name,
+          url: t.url,
+          error: (err as Error)?.message ?? String(err),
+        });
+      }
+    }
+    return json({ site, keyPresent: key.length > 0, keyLength: key.length, results });
+  }
+
   // Favicon
   if (url.pathname === "/favicon.svg") {
     try {

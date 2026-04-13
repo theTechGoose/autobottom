@@ -18,6 +18,9 @@ import {
   trace,
   metrics,
   SpanStatusCode,
+  diag,
+  DiagConsoleLogger,
+  DiagLogLevel,
   type Span,
   type Tracer,
 } from "npm:@opentelemetry/api@^1.9.0";
@@ -53,6 +56,10 @@ export function initOtel(): void {
     console.warn("⚠️  OTel disabled: DD_API_KEY not set");
     return;
   }
+
+  // Diagnostic logger — surface exporter errors (HTTP status, protobuf errors,
+  // network failures) to Deno Deploy logs. Without this the SDK swallows them.
+  diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.DEBUG);
 
   const base = `https://otlp.${env.ddSite}`;
   const headers = { "dd-api-key": env.ddApiKey };

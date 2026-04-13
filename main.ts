@@ -4836,13 +4836,16 @@ Deno.serve(async (req) => {
           spans: [{
             traceId,
             spanId,
-            name: "health.otel.raw",
-            kind: 1, // SPAN_KIND_INTERNAL
+            name: "GET /health/otel-raw",
+            kind: 2, // SPAN_KIND_SERVER — required for DD APM Services to surface this
             startTimeUnixNano: startNs.toString(),
             endTimeUnixNano: nowNs.toString(),
             attributes: [
-              { key: "test.kind",   value: { stringValue: "raw-json" } },
-              { key: "test.source", value: { stringValue: "health-check" } },
+              { key: "test.kind",     value: { stringValue: "raw-json" } },
+              { key: "test.source",   value: { stringValue: "health-check" } },
+              { key: "http.method",   value: { stringValue: "GET" } },
+              { key: "http.route",    value: { stringValue: "/health/otel-raw" } },
+              { key: "http.status_code", value: { intValue: "200" } },
             ],
             status: { code: 1 }, // STATUS_CODE_OK
           }],
@@ -4874,6 +4877,65 @@ Deno.serve(async (req) => {
         error: (err as Error)?.message ?? String(err),
         traceId,
         spanId,
+      });
+    }
+  }
+
+  // Raw OTLP/JSON logs test — logs intake is GA (not preview-gated), so if this
+  // shows up in Datadog Logs Explorer we've proven the payload format is correct
+  // and confirmed that the traces endpoint is the preview-gated one.
+  if (url.pathname === "/health/otel-raw-logs") {
+    const site = Deno.env.get("DD_SITE") ?? "us5.datadoghq.com";
+    const key = Deno.env.get("DD_API_KEY") ?? "";
+    const nowNs = (BigInt(Date.now()) * 1_000_000n).toString();
+    const marker = crypto.randomUUID();
+    const payload = {
+      resourceLogs: [{
+        resource: {
+          attributes: [
+            { key: "service.name",           value: { stringValue: "autobottom" } },
+            { key: "deployment.environment", value: { stringValue: "prod" } },
+          ],
+        },
+        scopeLogs: [{
+          scope: { name: "autobottom.raw" },
+          logRecords: [{
+            timeUnixNano: nowNs,
+            observedTimeUnixNano: nowNs,
+            severityNumber: 9, // INFO
+            severityText: "INFO",
+            body: { stringValue: `otel raw log test marker=${marker}` },
+            attributes: [
+              { key: "test.kind",   value: { stringValue: "raw-json-log" } },
+              { key: "test.marker", value: { stringValue: marker } },
+            ],
+          }],
+        }],
+      }],
+    };
+    try {
+      const res = await fetch(`https://otlp.${site}/v1/logs`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "dd-api-key": key,
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.text();
+      return json({
+        ok: res.ok,
+        status: res.status,
+        statusText: res.statusText,
+        body: body.slice(0, 1000),
+        marker,
+        ts: Date.now(),
+      });
+    } catch (err) {
+      return json({
+        ok: false,
+        error: (err as Error)?.message ?? String(err),
+        marker,
       });
     }
   }

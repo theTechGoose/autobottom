@@ -7,8 +7,53 @@
 ## Branch: `refactor/danet-backend`
 
 ## Completed Phases
-- **Phase 0**: Scaffold (14 modules, bootstrap/mod.ts, Swagger UI) — commit `8c4dd7c`
-- **Phase 1**: Core infra (KvRepository, auth, S3, QStash, DTOs, 23 tests) — commit `cbc74a3`
+- **Phase 0**: Scaffold (14 modules, bootstrap/mod.ts, Swagger UI) — `8c4dd7c`
+- **Phase 1**: Core infra (KvRepository, auth, S3, QStash, DTOs, 23 tests) — `cbc74a3`
+- **Phase 2a**: Scoring engine + chargeback classification (32 tests) — `4693f3c`
+- **Phase 2b**: QuickBase, Postmark, Google Sheets adapters — `2c100a6`
+- **Phase 2c**: AssemblyAI, Groq, Pinecone adapters (8 tests) — `bf8b5d1`
+- **Phase 2d**: AuditController + StepController (16 endpoints) — `1bd704d`
+- **Phase 3**: Review + Judge + Manager controllers (39 endpoints, 6 tests) — `65e9c36`
+- **Phase 4**: Reporting + Admin controllers (80+ endpoints, 8 tests) — `73ef75c`
+- **Phase 5**: Question Lab, Gamification, Agent, Chat, Events, Weekly Builder, Auth (54 endpoints) — `1bce4e0`
+- **Phase 6**: Cron jobs — watchdog + weekly sheets (7 tests) — `866335c`
+- **Phase 8a**: Audit repository — findings, jobs, batches, transcripts, cache, dedup (13 tests) — `ceeb197`
+- **Phase 8b**: Stats repository — tracking, index, chargebacks, wire (7 tests) — `43e11bd`
+- **Phase 8c**: Config repository — pipeline, webhooks, bypass, bonus, dimensions (12 tests) — `d667eb4`
+
+## Current State: 116 tests passing, 15 commits, ~200 endpoints registered
+
+## Remaining Work
+### Phase 8d: Email/Template Repository
+Port from lib/kv.ts: listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig, listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate, getEmailReportPreview, saveEmailReportPreview, deleteEmailReportPreview, getReportLastFired, setReportLastFired
+→ src/reporting/domain/data/email-repository/
+
+### Phase 8e: Gamification Repository
+Port from lib/kv.ts: listSoundPacks, getSoundPack, saveSoundPack, deleteSoundPack, getGamificationSettings, saveGamificationSettings, resolveGamificationSettings, get/saveJudgeGamificationOverride, get/saveReviewerGamificationOverride, listCustomStoreItems, saveCustomStoreItem, deleteCustomStoreItem, getEarnedBadges, awardBadge, hasBadge, getBadgeStats, updateBadgeStats, getGameState, saveGameState, awardXp, purchaseStoreItem
+→ src/gamification/domain/data/gamification-repository/
+
+### Phase 8f: Events/Chat Repository
+Port from lib/kv.ts: emitEvent, getEvents, deleteEvents, emitBroadcastEvent, getBroadcastEvents, checkAndEmitPrefab, getPrefabSubscriptions, savePrefabSubscriptions, sendMessage, getConversation, getUnreadCount, markConversationRead, getConversationList
+→ src/events/domain/data/ + src/chat/domain/data/chat-repository/
+
+### Phase 8g: Review/Judge/Manager/Question Lab Repositories
+Port review/kv.ts remaining: claimNextItem (full FIFO with sweep), undoDecision, listReviewQueueFindings, adminFlipFinding, getReviewerDashboardData, backfillFromFinished, previewFinding
+Port judge/kv.ts: populateJudgeQueue, claimNextItem, recordDecision, undoDecision, getJudgeStats, getAppealStats, getJudgeDashboardData, dismissFindingFromJudgeQueue, clearJudgeQueue, getAppeal, saveAppeal, backfillChargebackEntries, pruneBypassedFromQueues, findDuplicates, deleteDuplicates, cleanupFindingFromIndices, adminDeleteFinding
+Port manager/kv.ts: populateManagerQueue, getManagerQueue, getManagerFindingDetail, submitRemediation, getManagerStats, backfillManagerQueue
+Port question-lab/kv.ts (24 functions): all config/question/test/assignment CRUD
+
+### Phase 9: Wire Controllers to Real Services
+Update all ~191 stub controller methods to call the real repository/service functions.
+9a: Admin controllers (51 methods)
+9b: Pipeline steps (12 methods — port steps/*.ts as business features)
+9c: Review/Judge/Manager controllers
+9d: All remaining controllers
+
+### Phase 10: Zod DTOs + Swagger Re-enablement
+Create typed Zod schemas in each module's dto/ folder, replace Record<string, any> in controllers, re-enable swagger: true in bootstrap/mod.ts.
+
+### Phase 11: Shape-checker + Final Verification
+Run shape-checker, fix violations. Full test suite. Cross-reference every route against this doc.
 
 ## Target Architecture
 - Framework: `@mrg-keystone/danet` (NestJS-like for Deno)
@@ -344,8 +389,77 @@ test/review-queue-fifo_test.ts — 10 tests: FIFO ordering
 
 ---
 
-## NEW TESTS (on refactor branch)
+## NEW TESTS (on refactor branch) — 116 total
 
 src/core/domain/business/auth/test.ts — 12 tests: hashing, roles, cookies
 src/core/domain/business/repository-base/test.ts — 8 tests: KV CRUD
 src/core/domain/data/deno-kv/smk.test.ts — 3 tests: orgKey
+src/audit/domain/business/scoring/test.ts — 18 tests: bonus flips, score calc, auto-complete
+src/audit/domain/business/chargeback-engine/test.ts — 14 tests: classification, bypass, headers
+src/audit/domain/data/assemblyai/smk.test.ts — 4 tests: role identification, snip filter
+src/audit/domain/data/pinecone/smk.test.ts — 4 tests: chunk logic
+src/audit/domain/data/audit-repository/smk.test.ts — 13 tests: finding/job/batch/cache/transcript CRUD
+src/audit/domain/data/stats-repository/smk.test.ts — 7 tests: tracking lifecycle, index, cb/wire
+src/admin/domain/data/admin-repository/smk.test.ts — 12 tests: config CRUD, dimensions, scopes
+src/reporting/domain/business/chargeback-report/test.ts — 8 tests: report filtering
+src/review/domain/business/review-queue/test.ts — 6 tests: FIFO ordering
+src/cron/domain/business/watchdog/test.ts — 4 tests: stuck detection
+src/cron/domain/business/weekly-sheets/test.ts — 3 tests: date window calc
+
+## IMPLEMENTED FILES ON REFACTOR BRANCH
+
+### Core module (src/core/)
+- domain/business/auth/mod.ts — full auth service (orgs, users, sessions, RBAC)
+- domain/business/repository-base/mod.ts — generic KvRepository<T> with chunked storage
+- domain/data/deno-kv/mod.ts — KV connection factory, orgKey helper
+- domain/data/s3/mod.ts — S3 adapter with AWS Sig V4
+- domain/data/qstash/mod.ts — QStash queue adapter (enqueue, publish, pause, resume, purge)
+- dto/types.ts — all shared TypeScript interfaces
+- entrypoints/auth-controller.ts — login, register, logout
+
+### Audit module (src/audit/)
+- domain/business/scoring/mod.ts — applyBonusFlips, calculateScore, getAutoCompleteReason
+- domain/business/chargeback-engine/mod.ts — computeFailedQuestions, splitHeaders, buildChargebackEntry, buildWireDeductionEntry, classifyChargebacks, isOfficeBypassed
+- domain/data/quickbase/mod.ts — queryRecords, getDateLegByRid, getPackageByRid, getQuestionsForDestination
+- domain/data/assemblyai/mod.ts — uploadAudio, transcribe, transcribeWithUtterances, submitTranscription, pollTranscriptOnce, processTranscriptResult, identifyRoles
+- domain/data/groq/mod.ts — askQuestion, generateFeedback, summarize, diarize, getTokenUsage
+- domain/data/pinecone/mod.ts — upload, query, deleteNamespace, chunkText
+- domain/data/audit-repository/mod.ts — getFinding, saveFinding, getJob, saveJob, claimAuditDedup, batch CRUD, cache, transcripts
+- domain/data/stats-repository/mod.ts — trackActive, trackCompleted, terminateFinding, trackError, getStats, audit-done-idx CRUD, chargeback/wire CRUD
+- entrypoints/audit-controller.ts — createDateLegAudit, createPackageAudit, getFinding, getStats
+- entrypoints/step-controller.ts — 12 pipeline step stubs
+
+### Review module (src/review/)
+- domain/business/review-queue/mod.ts — populateReviewQueue, selectOldestFinding, recordDecision, getReviewStats, getReviewedFindingIds, clearReviewQueue
+- entrypoints/review-controller.ts — 12 endpoints (2 wired, 10 stubs)
+
+### Judge module (src/judge/)
+- entrypoints/judge-controller.ts — 15 endpoint stubs
+
+### Manager module (src/manager/)
+- entrypoints/manager-controller.ts — 12 endpoint stubs
+
+### Reporting module (src/reporting/)
+- domain/business/chargeback-report/mod.ts — queryAuditDoneIndex, getChargebackEntries, getWireDeductionEntries, queryChargebackReport, queryWireReport
+- domain/data/postmark/mod.ts — sendEmail
+- domain/data/google-sheets/mod.ts — parseSheetsServiceAccount, appendSheetRows
+- entrypoints/chargeback-controller.ts — 4 endpoints
+- entrypoints/email-report-controller.ts — 7 endpoints
+
+### Admin module (src/admin/)
+- domain/data/admin-repository/mod.ts — all config CRUD (pipeline, webhooks, bad word, bypass, bonus, scopes, dimensions, reviewer config)
+- entrypoints/admin-controller.ts — 51 endpoint stubs
+- entrypoints/user-controller.ts — 4 endpoint stubs
+- entrypoints/webhook-controller.ts — 8 endpoint stubs
+- entrypoints/dashboard-controller.ts — 6 endpoint stubs
+
+### Other modules
+- src/question-lab/entrypoints/question-lab-controller.ts — 24 endpoint stubs
+- src/gamification/entrypoints/gamification-controller.ts — 7 endpoint stubs
+- src/gamification/entrypoints/badge-controller.ts — 7 endpoint stubs
+- src/agent/entrypoints/agent-controller.ts — 5 endpoint stubs
+- src/chat/entrypoints/chat-controller.ts — 4 endpoint stubs
+- src/events/entrypoints/events-controller.ts — 1 endpoint stub
+- src/weekly-builder/entrypoints/weekly-builder-controller.ts — 3 endpoint stubs
+- src/cron/domain/business/watchdog/mod.ts — getStuckFindings, runWatchdog
+- src/cron/domain/business/weekly-sheets/mod.ts — prevWeekWindow

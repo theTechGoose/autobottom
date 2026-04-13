@@ -3,8 +3,11 @@
   "specifiers": {
     "npm:@opentelemetry/api-logs@0.57": "0.57.2",
     "npm:@opentelemetry/api@^1.9.0": "1.9.0",
+    "npm:@opentelemetry/exporter-logs-otlp-http@0.57": "0.57.2_@opentelemetry+api@1.9.0",
     "npm:@opentelemetry/exporter-logs-otlp-proto@0.57": "0.57.2_@opentelemetry+api@1.9.0",
+    "npm:@opentelemetry/exporter-metrics-otlp-http@0.57": "0.57.2_@opentelemetry+api@1.9.0",
     "npm:@opentelemetry/exporter-metrics-otlp-proto@0.57": "0.57.2_@opentelemetry+api@1.9.0",
+    "npm:@opentelemetry/exporter-trace-otlp-http@0.57": "0.57.2_@opentelemetry+api@1.9.0",
     "npm:@opentelemetry/exporter-trace-otlp-proto@0.57": "0.57.2_@opentelemetry+api@1.9.0",
     "npm:@opentelemetry/resources@^1.30.0": "1.30.1_@opentelemetry+api@1.9.0",
     "npm:@opentelemetry/sdk-logs@0.57": "0.57.2_@opentelemetry+api@1.9.0",
@@ -30,6 +33,17 @@
       "dependencies": [
         "@opentelemetry/api",
         "@opentelemetry/semantic-conventions"
+      ]
+    },
+    "@opentelemetry/exporter-logs-otlp-http@0.57.2_@opentelemetry+api@1.9.0": {
+      "integrity": "sha512-0rygmvLcehBRp56NQVLSleJ5ITTduq/QfU7obOkyWgPpFHulwpw2LYTqNIz5TczKZuy5YY+5D3SDnXZL1tXImg==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@opentelemetry/api-logs",
+        "@opentelemetry/core",
+        "@opentelemetry/otlp-exporter-base",
+        "@opentelemetry/otlp-transformer",
+        "@opentelemetry/sdk-logs"
       ]
     },
     "@opentelemetry/exporter-logs-otlp-proto@0.57.2_@opentelemetry+api@1.9.0": {
@@ -66,6 +80,17 @@
         "@opentelemetry/otlp-transformer",
         "@opentelemetry/resources",
         "@opentelemetry/sdk-metrics"
+      ]
+    },
+    "@opentelemetry/exporter-trace-otlp-http@0.57.2_@opentelemetry+api@1.9.0": {
+      "integrity": "sha512-sB/gkSYFu+0w2dVQ0PWY9fAMl172PKMZ/JrHkkW8dmjCL0CYkmXeE+ssqIL/yBUTPOvpLIpenX5T9RwXRBW/3g==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@opentelemetry/core",
+        "@opentelemetry/otlp-exporter-base",
+        "@opentelemetry/otlp-transformer",
+        "@opentelemetry/resources",
+        "@opentelemetry/sdk-trace-base"
       ]
     },
     "@opentelemetry/exporter-trace-otlp-proto@0.57.2_@opentelemetry+api@1.9.0": {

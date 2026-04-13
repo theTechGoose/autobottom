@@ -30,18 +30,21 @@ import {
   BasicTracerProvider,
   BatchSpanProcessor,
 } from "npm:@opentelemetry/sdk-trace-base@^1.30.0";
-import { OTLPTraceExporter } from "npm:@opentelemetry/exporter-trace-otlp-proto@^0.57.0";
+// Using the HTTP/JSON exporters (not the -proto variants) so we don't pull in
+// protobufjs, whose postinstall script Deno Deploy refuses to run. OTLP over
+// HTTP/JSON is fully supported by Datadog's direct OTLP intake.
+import { OTLPTraceExporter } from "npm:@opentelemetry/exporter-trace-otlp-http@^0.57.0";
 import {
   MeterProvider,
   PeriodicExportingMetricReader,
   AggregationTemporality,
 } from "npm:@opentelemetry/sdk-metrics@^1.30.0";
-import { OTLPMetricExporter } from "npm:@opentelemetry/exporter-metrics-otlp-proto@^0.57.0";
+import { OTLPMetricExporter } from "npm:@opentelemetry/exporter-metrics-otlp-http@^0.57.0";
 import {
   LoggerProvider,
   BatchLogRecordProcessor,
 } from "npm:@opentelemetry/sdk-logs@^0.57.0";
-import { OTLPLogExporter } from "npm:@opentelemetry/exporter-logs-otlp-proto@^0.57.0";
+import { OTLPLogExporter } from "npm:@opentelemetry/exporter-logs-otlp-http@^0.57.0";
 
 import { env } from "../env.ts";
 
@@ -114,11 +117,21 @@ export function initOtel(): void {
 
   _tracer = trace.getTracer(SERVICE_NAME);
   _flush = async () => {
-    await Promise.allSettled([
-      tracerProvider.forceFlush(),
-      meterProvider.forceFlush(),
-      loggerProvider.forceFlush(),
+    console.log("🔄 flushOtel: starting forceFlush on all providers");
+    const label = async (name: string, p: Promise<unknown>) => {
+      try {
+        await p;
+        console.log(`✅ flushOtel: ${name} OK`);
+      } catch (err) {
+        console.error(`❌ flushOtel: ${name} FAILED:`, err);
+      }
+    };
+    await Promise.all([
+      label("traces", tracerProvider.forceFlush()),
+      label("metrics", meterProvider.forceFlush()),
+      label("logs", loggerProvider.forceFlush()),
     ]);
+    console.log("🔄 flushOtel: done");
   };
   _shutdown = async () => {
     await Promise.allSettled([

@@ -4812,6 +4812,72 @@ Deno.serve(async (req) => {
     return json({ ok: true, ...result, ts: Date.now() });
   }
 
+  // Raw OTLP/JSON trace test — bypasses the OTel SDK exporter entirely
+  // (which appears to use sendBeacon on Deno and silently drops data).
+  // Hand-builds a valid OTLP traces payload and POSTs it via Deno's native fetch.
+  // Returns Datadog's exact response. Use this to verify the path works end-to-end.
+  if (url.pathname === "/health/otel-raw") {
+    const site = Deno.env.get("DD_SITE") ?? "us5.datadoghq.com";
+    const key = Deno.env.get("DD_API_KEY") ?? "";
+    const nowNs = BigInt(Date.now()) * 1_000_000n;
+    const startNs = nowNs - 5_000_000n; // 5ms earlier
+    const traceId = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 0); // 32 hex chars
+    const spanId = crypto.randomUUID().replace(/-/g, "").slice(0, 16); // 16 hex chars
+    const payload = {
+      resourceSpans: [{
+        resource: {
+          attributes: [
+            { key: "service.name",           value: { stringValue: "autobottom" } },
+            { key: "deployment.environment", value: { stringValue: "prod" } },
+          ],
+        },
+        scopeSpans: [{
+          scope: { name: "autobottom.raw" },
+          spans: [{
+            traceId,
+            spanId,
+            name: "health.otel.raw",
+            kind: 1, // SPAN_KIND_INTERNAL
+            startTimeUnixNano: startNs.toString(),
+            endTimeUnixNano: nowNs.toString(),
+            attributes: [
+              { key: "test.kind",   value: { stringValue: "raw-json" } },
+              { key: "test.source", value: { stringValue: "health-check" } },
+            ],
+            status: { code: 1 }, // STATUS_CODE_OK
+          }],
+        }],
+      }],
+    };
+    try {
+      const res = await fetch(`https://otlp.${site}/v1/traces`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "dd-api-key": key,
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.text();
+      return json({
+        ok: res.ok,
+        status: res.status,
+        statusText: res.statusText,
+        body: body.slice(0, 1000),
+        traceId,
+        spanId,
+        ts: Date.now(),
+      });
+    } catch (err) {
+      return json({
+        ok: false,
+        error: (err as Error)?.message ?? String(err),
+        traceId,
+        spanId,
+      });
+    }
+  }
+
   // Direct OTLP probe — bypasses the SDK entirely to isolate whether DD is
   // accepting our requests at all. POSTs an empty-but-valid OTLP ExportTraceServiceRequest
   // and returns the exact HTTP response from Datadog.

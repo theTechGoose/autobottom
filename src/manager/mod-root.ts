@@ -1,7 +1,8 @@
 import { Module } from "@danet/core";
+import { ManagerController } from "@manager/entrypoints/manager-controller.ts";
 
 @Module({
-  controllers: [],
+  controllers: [ManagerController],
   injectables: [],
 })
 export class ManagerModule {}

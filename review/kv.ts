@@ -26,6 +26,7 @@ export interface ReviewItem {
   thinking: string;
   defense: string;
   answer: string;
+  completedAt?: number;      // audit completion timestamp — used for FIFO ordering (oldest first)
   recordingIdField?: string; // "GenieNumber" = package, absent/other = date leg
   recordId?: string;         // QB record ID for direct link
   recordMeta?: {
@@ -98,6 +99,7 @@ export async function populateReviewQueue(
   recordingIdField?: string,
   recordId?: string,
   recordMeta?: ReviewItem["recordMeta"],
+  completedAt?: number,
 ) {
   const db = await kv();
   const noAnswers = answeredQuestions
@@ -118,6 +120,7 @@ export async function populateReviewQueue(
       thinking: q.thinking,
       defense: q.defense,
       answer: q.answer,
+      ...(completedAt != null ? { completedAt } : {}),
       ...(recordingIdField ? { recordingIdField } : {}),
       ...(recordId ? { recordId } : {}),
       ...(recordMeta ? { recordMeta } : {}),
@@ -261,10 +264,10 @@ export async function claimNextItem(orgId: OrgId, reviewer: string, allowedTypes
     return { buffer, remaining: 0 };
   }
 
-  // 5. No active items — claim ALL pending items for one audit
-  // Find first matching findingId, then collect all pending items for it
-  let targetFindingId: string | null = null;
-  const pendingEntries: Deno.KvEntry<ReviewItem>[] = [];
+  // 5. No active items — claim ALL pending items for the OLDEST audit (FIFO by completedAt)
+  // Scan all pending items, group by findingId, track oldest completedAt per finding
+  const findingTimestamps = new Map<string, number>();
+  const pendingByFinding = new Map<string, Deno.KvEntry<ReviewItem>[]>();
   const pendingIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
   for await (const entry of pendingIter) {
     if (allowedTypes) {
@@ -272,9 +275,23 @@ export async function claimNextItem(orgId: OrgId, reviewer: string, allowedTypes
       const itemType = isPackage ? "package" : "date-leg";
       if (!allowedTypes.includes(itemType)) continue;
     }
-    if (!targetFindingId) targetFindingId = entry.value.findingId;
-    if (entry.value.findingId === targetFindingId) pendingEntries.push(entry);
+    const fid = entry.value.findingId;
+    if (!pendingByFinding.has(fid)) pendingByFinding.set(fid, []);
+    pendingByFinding.get(fid)!.push(entry);
+    // Items without completedAt (pre-deploy) get 0 = highest priority (drain first)
+    const ts = entry.value.completedAt ?? 0;
+    if (!findingTimestamps.has(fid) || ts < findingTimestamps.get(fid)!) {
+      findingTimestamps.set(fid, ts);
+    }
   }
+
+  // Pick the finding with the oldest completedAt
+  let targetFindingId: string | null = null;
+  let oldestTs = Infinity;
+  for (const [fid, ts] of findingTimestamps) {
+    if (ts < oldestTs) { oldestTs = ts; targetFindingId = fid; }
+  }
+  const pendingEntries = targetFindingId ? (pendingByFinding.get(targetFindingId) ?? []) : [];
 
   if (pendingEntries.length === 0) return { buffer: [], remaining: 0 };
 

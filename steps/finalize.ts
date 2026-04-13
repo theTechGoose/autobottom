@@ -303,7 +303,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
         totalWGS: rec["460"] ? String(rec["460"]) : undefined,
         totalMCC: rec["594"] ? String(rec["594"]) : undefined,
       };
-      await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[], finding.recordingIdField as string | undefined, recordId, recordMeta);
+      await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[], finding.recordingIdField as string | undefined, recordId, recordMeta, completedAt);
       console.log(`[STEP-FINALIZE] ${findingId}: → review queue${isRecordingReAudit ? ` (recording re-audit: ${appealType})` : ""}`);
     } catch (err) {
       console.error(`[STEP-FINALIZE] ${findingId}: Queue population failed:`, err);

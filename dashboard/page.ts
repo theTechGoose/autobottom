@@ -828,6 +828,7 @@ table { width: 100%; border-collapse: collapse; }
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Team Member</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Revenue</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">CRM Link</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Audit</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Type</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Failed Questions</th>
             </tr></thead>
@@ -842,6 +843,7 @@ table { width: 100%; border-collapse: collapse; }
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Team Member</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Revenue</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">CRM Link</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Audit</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Type</th>
               <th style="text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;">Failed Questions</th>
             </tr></thead>
@@ -4416,9 +4418,10 @@ table { width: 100%; border-collapse: collapse; }
 
   function cbRenderRows(tbodyId, rows, type) {
     var tbody = document.getElementById(tbodyId);
-    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" style="padding:12px 10px;color:var(--text-dim);">None</td></tr>'; return; }
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="7" style="padding:12px 10px;color:var(--text-dim);">None</td></tr>'; return; }
     tbody.innerHTML = rows.map(function(e) {
       var crmLink = e.recordId ? '<a href="' + qbDateUrl + encodeURIComponent(e.recordId) + '" target="_blank" style="color:var(--blue);text-decoration:none;">CRM</a>' : '';
+      var auditLink = e.findingId ? '<a href="/audit/report?id=' + encodeURIComponent(e.findingId) + '" target="_blank" style="color:var(--blue);text-decoration:none;">Audit</a>' : '';
       var tm = cbTeamMember(e).replace(/</g,'&lt;');
       var fq = (e.failedQHeaders || []).join(', ').replace(/</g,'&lt;');
       return '<tr style="border-bottom:1px solid var(--border);">' +
@@ -4426,6 +4429,7 @@ table { width: 100%; border-collapse: collapse; }
         '<td style="padding:6px 10px;color:var(--text-bright);font-weight:500;">' + tm + '</td>' +
         '<td style="padding:6px 10px;color:var(--green);">' + cbFmtRevenue(e.revenue) + '</td>' +
         '<td style="padding:6px 10px;">' + crmLink + '</td>' +
+        '<td style="padding:6px 10px;">' + auditLink + '</td>' +
         '<td style="padding:6px 10px;font-weight:600;color:' + (type === 'Chargeback' ? 'var(--red)' : 'var(--yellow)') + ';">' + type + '</td>' +
         '<td style="padding:6px 10px;color:var(--text-dim);">' + fq + '</td>' +
         '</tr>';

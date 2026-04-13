@@ -1,4 +1,5 @@
 import { Module } from "@danet/core";
+import { AuthController } from "@core/entrypoints/auth-controller.ts";
 
 // Re-export core components for consumers
 export { KvRepository } from "@core/domain/business/repository-base/mod.ts";
@@ -10,7 +11,7 @@ export * from "@core/domain/data/qstash/mod.ts";
 export * from "@core/dto/types.ts";
 
 @Module({
-  controllers: [],
+  controllers: [AuthController],
   injectables: [],
 })
 export class CoreModule {}

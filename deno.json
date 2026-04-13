@@ -1,12 +1,44 @@
 {
-  "unstable": ["cron", "kv"],
+  "unstable": ["cron", "kv", "raw-imports"],
   "tasks": {
-    "start": "deno run --allow-net --allow-env --allow-read main.ts",
-    "dev": "deno run --allow-net --allow-env --allow-read --allow-write --env --unstable-cron --unstable-kv --watch main.ts",
-    "check": "deno check main.ts controller.ts question-lab/kv.ts question-lab/handlers.ts question-lab/page.ts",
-    "test": "deno test test/ --allow-all",
+    "start": "deno run -A --unstable-raw-imports bootstrap/mod.ts",
+    "dev": "deno run -A --unstable-raw-imports --unstable-cron --unstable-kv --env --watch bootstrap/mod.ts",
+    "check": "deno check bootstrap/mod.ts",
+    "test": "deno test -A --unstable-raw-imports --unstable-kv",
     "test:email": "deno run --allow-net --allow-env --allow-read --env test/email-pipeline.ts",
     "test:sheets": "deno run --allow-net --allow-env --allow-read --env test/manual/fire-sheets-cron.ts",
     "test:qlab-mode": "deno run --allow-all --unstable-kv --env test-qlab-mode.ts"
+  },
+  "imports": {
+    "@mrg-keystone/danet": "/Users/adam/Programming/keystone/keystone-suite/external/projects/danet/src/bootstrap/mod.ts",
+    "@foundation/": "/Users/adam/Programming/keystone/keystone-suite/external/projects/danet/src/foundation/",
+    "@types": "/Users/adam/Programming/keystone/keystone-suite/external/projects/danet/src/foundation/dto/types.ts",
+    "@danet/core": "jsr:@danet/core@2",
+    "@danet/swagger": "jsr:@danet/swagger@2",
+    "#reflect-metadata": "npm:reflect-metadata@0.1.13",
+    "#handlebars": "npm:handlebars@^4.7.8",
+    "#openapi3-ts": "npm:openapi3-ts@4.5.0",
+    "#danet/core": "jsr:@danet/core@2",
+    "#danet/swagger": "jsr:@danet/swagger@2",
+    "#zod": "npm:zod@3",
+    "#assert": "jsr:@std/assert",
+    "@core/": "./src/core/",
+    "@audit/": "./src/audit/",
+    "@review/": "./src/review/",
+    "@judge/": "./src/judge/",
+    "@manager/": "./src/manager/",
+    "@reporting/": "./src/reporting/",
+    "@question-lab/": "./src/question-lab/",
+    "@gamification/": "./src/gamification/",
+    "@agent/": "./src/agent/",
+    "@chat/": "./src/chat/",
+    "@weekly-builder/": "./src/weekly-builder/",
+    "@admin/": "./src/admin/",
+    "@cron/": "./src/cron/",
+    "@events/": "./src/events/"
+  },
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
   }
 }

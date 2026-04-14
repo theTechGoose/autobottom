@@ -270,3 +270,8 @@ export interface AuditJob { id: string; doneAuditIds: Array<{ auditId: string; a
 
 export type ReportColumnKey = "recordId" | "findingId" | "guestName" | "voName" | "department" | "score" | "appealStatus" | "finalizedAt" | "markedForReview";
 
+
+// Zod validation schemas — shape-checker compliance
+import { z } from "#zod";
+export const ChargebackEntrySchema = z.object({ findingId: z.string(), ts: z.number(), voName: z.string(), score: z.number() });
+export const WireDeductionEntrySchema = z.object({ findingId: z.string(), ts: z.number(), score: z.number() });

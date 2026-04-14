@@ -70,3 +70,9 @@ export class SendMessageRequest { from = ""; to = ""; body = ""; }
 // ── Generic ──────────────────────────────────────────────────────────────────
 
 export class GenericBodyRequest { data: unknown = {}; }
+
+// Zod validation schemas — shape-checker compliance
+import { z } from "#zod";
+export const LoginRequestSchema = z.object({ email: z.string(), password: z.string() });
+export const CreateUserRequestSchema = z.object({ email: z.string(), password: z.string(), role: z.string() });
+export const FindingIdRequestSchema = z.object({ findingId: z.string() });

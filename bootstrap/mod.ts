@@ -3,7 +3,9 @@ import { bootstrapServer } from "@mrg-keystone/danet";
 import { Module } from "@danet/core";
 
 // Module imports
-import { CoreModule } from "@core/mod-root.ts";
+import { AuthController } from "@core/business/auth/mod.ts";
+@Module({ controllers: [AuthController], injectables: [] })
+class CoreModule {}
 import { AuditModule } from "@audit/mod-root.ts";
 import { ReviewModule } from "@review/mod-root.ts";
 import { JudgeModule } from "@judge/mod-root.ts";

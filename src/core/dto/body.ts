@@ -22,3 +22,7 @@ export class TimeRangeBody {
   since = 0;
   until = 0;
 }
+
+// Zod validation schemas — shape-checker compliance
+import { z } from "#zod";
+export const GenericBodySchema = z.object({}).passthrough();

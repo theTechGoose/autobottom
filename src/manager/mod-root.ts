@@ -1,5 +1,5 @@
 import { Module } from "@danet/core";
-import { ManagerController } from "@manager/entrypoints/manager-controller.ts";
+import { ManagerController } from "@manager/entrypoints/manager/mod.ts";
 
 @Module({
   controllers: [ManagerController],

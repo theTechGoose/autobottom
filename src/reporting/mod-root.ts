@@ -1,6 +1,6 @@
 import { Module } from "@danet/core";
-import { ChargebackController } from "@reporting/entrypoints/chargeback-controller.ts";
-import { EmailReportController } from "@reporting/entrypoints/email-report-controller.ts";
+import { ChargebackController } from "@reporting/entrypoints/chargeback/mod.ts";
+import { EmailReportController } from "@reporting/entrypoints/email-report/mod.ts";
 
 export { queryChargebackReport, queryWireReport, queryAuditDoneIndex, getChargebackEntries, getWireDeductionEntries } from "@reporting/domain/business/chargeback-report/mod.ts";
 

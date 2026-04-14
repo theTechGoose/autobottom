@@ -1,6 +1,6 @@
 import { Module } from "@danet/core";
-import { GamificationPageController } from "@gamification/entrypoints/gamification-controller.ts";
-import { BadgeStoreController } from "@gamification/entrypoints/badge-controller.ts";
+import { GamificationPageController } from "@gamification/entrypoints/gamification/mod.ts";
+import { BadgeStoreController } from "@gamification/entrypoints/badge/mod.ts";
 
 @Module({
   controllers: [GamificationPageController, BadgeStoreController],

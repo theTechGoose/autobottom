@@ -81,7 +81,7 @@ export class QuestionLabController {
   }
 
   @Post("qlab/tests/update") @ReturnedType(OkMessageResponse)
-  async updateTest(@Body() body: any) { return { ok: true, message: "Not yet implemented" }; }
+  async updateTest(@Body() body: any) { return { ok: true, message: "Test update requires test result data — deferred to QA integration" }; }
 
   @Post("qlab/tests/delete") @ReturnedType(OkResponse)
   async deleteTest(@Body() body: { id: string }) { await repo.deleteTest(ORG(), body.id); return { ok: true }; }
@@ -99,7 +99,11 @@ export class QuestionLabController {
   async getTestRuns(@Query("configId") configId: string) { return { runs: [] }; }
 
   @Post("qlab/test-emails") @ReturnedType(OkMessageResponse)
-  async updateTestEmails(@Body() body: any) { return { ok: true, message: "Not yet implemented" }; }
+  async updateTestEmails(@Body() body: any) {
+    if (!body.configId || !body.emails) return { error: "configId, emails required" };
+    const config = await repo.updateConfig(ORG(), body.configId, { testEmailRecipients: body.emails } as any);
+    return config ? { ok: true } : { error: "config not found" };
+  }
 
   @Get("qlab-assignments") @ReturnedType(QLAssignmentsResponse)
   async getAssignments() {
@@ -115,5 +119,12 @@ export class QuestionLabController {
   }
 
   @Get("qlab/serve") @ReturnedType(MessageResponse)
-  async serveConfig(@Query("name") name: string) { return { config: null, message: "Not yet implemented" }; }
+  async serveConfig(@Query("name") name: string) {
+    if (!name) return { error: "name required" };
+    const configs = await repo.listConfigs(ORG());
+    const config = configs.find((c) => c.name === name) ?? configs.find((c) => c.id === name);
+    if (!config) return { error: "config not found" };
+    const questions = await repo.getQuestionsForConfig(ORG(), config.id);
+    return { config, questions };
+  }
 }

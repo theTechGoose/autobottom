@@ -43,8 +43,10 @@ export class DashboardController {
 
   @Get("delete-finding") @ReturnedType(OkMessageResponse)
   async deleteFinding(@Query("findingId") findingId: string) {
-    // TODO: port adminDeleteFinding from judge/kv.ts
-    return { ok: true, findingId, message: "Not yet implemented" };
+    if (!findingId) return { error: "findingId required" };
+    const { adminDeleteFinding } = await import("../../../judge/kv.ts");
+    await adminDeleteFinding(ORG(), findingId);
+    return { ok: true, findingId };
   }
 
   @Get("audits-by-record") @ReturnedType(AuditsDataResponse)

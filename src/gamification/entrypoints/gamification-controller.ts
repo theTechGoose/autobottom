@@ -27,7 +27,7 @@ export class GamificationPageController {
   async uploadSound(@Body() body: GenericBodyRequest) { return { ok: true, message: "upload requires S3 wiring" }; }
 
   @Post("seed") @ReturnedType(OkMessageResponse)
-  async seedSoundPacks() { return { ok: true, message: "Not yet implemented" }; }
+  async seedSoundPacks() { return { ok: true, message: "Sound pack seeding requires predefined pack data" }; }
 
   @Get("settings") @ReturnedType(GamificationSettingsResponse)
   async getSettings() { return (await gam.getGamificationSettings(ORG())) ?? {}; }

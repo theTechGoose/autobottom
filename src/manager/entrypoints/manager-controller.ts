@@ -60,7 +60,7 @@ export class ManagerController {
   }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill manager queue")
-  async backfill() { return { ok: true, message: "Not yet implemented" }; }
+  async backfill() { const { backfillManagerQueue } = await import("../../../manager/kv.ts"); await backfillManagerQueue(ORG()); return { ok: true }; }
 
   @Get("prefab-subscriptions") @ReturnedType(OkResponse) @Description("Get prefab subscriptions")
   async getPrefabs() { return getPrefabSubscriptions(ORG()); }

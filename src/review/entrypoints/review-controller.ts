@@ -68,5 +68,5 @@ export class ReviewController {
   async saveGamification(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill review queue")
-  async backfill() { return { ok: true, message: "Not yet implemented" }; }
+  async backfill() { const { backfillFromFinished } = await import("../../../review/kv.ts"); await backfillFromFinished(ORG()); return { ok: true }; }
 }

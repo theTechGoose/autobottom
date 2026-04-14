@@ -33,7 +33,7 @@ export class BadgeStoreController {
   }
 
   @Post("api/equip") @ReturnedType(OkMessageResponse)
-  async equip(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async equip(@Body() body: GenericBodyRequest) { const b = body as any; if (!b.email) return { error: "email required" }; const { saveGameState, getGameState } = await import("../../gamification/domain/data/gamification-repository/mod.ts"); const state = await getGameState("default", b.email); if (b.binding) { state.cosmetics = { ...state.cosmetics, ...b.binding }; await saveGameState("default", b.email, state as any); } return { ok: true }; }
 
   @Get("api/badges") @ReturnedType(BadgeListResponse)
   async getBadges() { return { badges: [], message: "Requires auth context — not yet implemented" }; }

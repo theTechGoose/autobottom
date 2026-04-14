@@ -152,7 +152,12 @@ export class AdminConfigController {
 
   // -- Backfills --
   @Post("backfill-review-scores") @ReturnedType(OkMessageResponse)
-  async backfillReviewScores(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async backfillReviewScores(@Body() body: GenericBodyRequest) {
+    const { since, until } = body as any;
+    if (!since || !until) return { error: "since and until required" };
+    const { backfillReviewScores: backfill } = await import("../../../lib/kv.ts");
+    return backfill(ORG(), since, until);
+  }
   @Post("backfill-chargeback-entries") @ReturnedType(OkMessageResponse)
   async backfillChargebackEntries(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse)
@@ -166,9 +171,20 @@ export class AdminConfigController {
 
   // -- Purge --
   @Post("purge-old-audits") @ReturnedType(OkMessageResponse)
-  async purgeOldAudits(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async purgeOldAudits(@Body() body: GenericBodyRequest) {
+    const { since, before } = body as any;
+    if (!before) return { error: "before required" };
+    const { purgeOldEntries } = await import("../../../lib/kv.ts");
+    const result = await purgeOldEntries(ORG(), since ?? 0, before);
+    return { ok: true, ...result };
+  }
   @Post("purge-bypassed-wire-deductions") @ReturnedType(OkMessageResponse)
-  async purgeBypassedWireDeductions() { return { ok: true, message: "Not yet implemented" }; }
+  async purgeBypassedWireDeductions() {
+    const { purgeBypassedWireDeductions: purge } = await import("../../../lib/kv.ts");
+    const bypassCfg = await cfg.getOfficeBypassConfig(ORG());
+    const result = await purge(ORG(), bypassCfg.patterns);
+    return { ok: true, ...result };
+  }
 
   // -- State management --
   @Post("wipe-kv") @ReturnedType(OkMessageResponse)
@@ -194,5 +210,11 @@ export class AdminConfigController {
 
   // -- Unreviewed --
   @Get("unreviewed-audits") @ReturnedType(MessageResponse)
-  async getUnreviewedAudits() { return { audits: [], message: "Not yet implemented" }; }
+  async getUnreviewedAudits() {
+    const now = Date.now();
+    const since = now - 7 * 24 * 3600 * 1000; // last 7 days
+    const entries = await stats.queryAuditDoneIndex(ORG(), since, now);
+    const unreviewed = entries.filter((e: any) => !e.completed && e.score != null && e.score < 100);
+    return { audits: unreviewed };
+  }
 }

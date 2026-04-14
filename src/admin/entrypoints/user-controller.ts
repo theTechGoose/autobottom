@@ -2,8 +2,9 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, Description, BodyType } from "jsr:@danet/swagger@2/decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
+import { CreateUserRequest, DeleteEmailRequest } from "@core/dto/requests.ts";
 import { createUser, deleteUser, listUsers } from "@core/domain/business/auth/mod.ts";
 import type { Role } from "@core/domain/business/auth/mod.ts";
 
@@ -17,14 +18,14 @@ export class UserController {
   @Get("users") @ReturnedType(UserListResponse)
   async listUsers() { return { users: await listUsers(ORG()) }; }
 
-  @Post("users") @ReturnedType(OkResponse)
+  @Post("users") @ReturnedType(OkResponse) @BodyType(CreateUserRequest)
   async addUser(@Body() body: { email: string; password: string; role: string; supervisor?: string }) {
     if (!body.email || !body.password || !body.role) return { error: "email, password, role required" };
     await createUser(ORG(), body.email, body.password, body.role as Role, body.supervisor);
     return { ok: true };
   }
 
-  @Post("users/delete") @ReturnedType(OkResponse)
+  @Post("users/delete") @ReturnedType(OkResponse) @BodyType(DeleteEmailRequest)
   async doDeleteUser(@Body() body: { email: string }) {
     if (!body.email) return { error: "email required" };
     await deleteUser(ORG(), body.email);

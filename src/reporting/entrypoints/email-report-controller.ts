@@ -2,7 +2,7 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType, Description } from "jsr:@danet/swagger@2/decorators";
 import { ChargebackReportResponse, WireReportResponse, OkResponse, OkMessageResponse, EmailConfigListResponse, EmailPreviewResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import * as repo from "@reporting/domain/data/email-repository/mod.ts";

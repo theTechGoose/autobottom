@@ -2,8 +2,9 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType, Description } from "jsr:@danet/swagger@2/decorators";
 import { LoginResponse, RegisterResponse, LogoutResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { verifyUser, createSession, createUser, createOrg, sessionCookie, clearSessionCookie } from "@core/domain/business/auth/mod.ts";
 
 @SwaggerDescription("Auth — login, register, logout")

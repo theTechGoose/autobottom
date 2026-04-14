@@ -2,9 +2,9 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, Description, BodyType } from "jsr:@danet/swagger@2/decorators";
 import { ReviewBufferResponse, DecisionResponse, ReviewStatsResponse, OkResponse, OkMessageResponse, ReviewerConfigResponse, MessageResponse, GamificationSettingsResponse } from "@core/dto/responses.ts";
-import { GenericBodyRequest } from "@core/dto/requests.ts";
+import { GenericBodyRequest, ReviewDecideRequest, ReviewBackRequest } from "@core/dto/requests.ts";
 import { recordDecision, getReviewStats, getReviewedFindingIds, clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
@@ -23,7 +23,7 @@ export class ReviewController {
     return claimNextItem(ORG(), reviewer, allowedTypes);
   }
 
-  @Post("decide") @ReturnedType(DecisionResponse) @Description("Confirm or flip a reviewed question")
+  @Post("decide") @ReturnedType(DecisionResponse) @Description("Confirm or flip a reviewed question") @BodyType(ReviewDecideRequest)
   async decide(@Body() body: { findingId: string; questionIndex: number; decision: "confirm" | "flip"; reviewer: string }) {
     if (!body.findingId || body.questionIndex == null || !body.decision || !body.reviewer) {
       return { error: "findingId, questionIndex, decision, reviewer required" };
@@ -32,7 +32,7 @@ export class ReviewController {
     return { ok: true, ...result };
   }
 
-  @Post("back") @ReturnedType(ReviewBufferResponse) @Description("Undo last decision")
+  @Post("back") @ReturnedType(ReviewBufferResponse) @Description("Undo last decision") @BodyType(ReviewBackRequest)
   async back(@Body() body: { findingId: string; questionIndex: number; reviewer: string }) {
     if (!body.reviewer) return { error: "reviewer required" };
     const { undoDecision } = await import("../../../review/kv.ts");
@@ -48,7 +48,7 @@ export class ReviewController {
     return (await getReviewerConfig(ORG(), email)) ?? { allowedTypes: ["date-leg", "package"] };
   }
 
-  @Post("settings") @ReturnedType(OkResponse) @Description("Save reviewer settings")
+  @Post("settings") @ReturnedType(OkResponse) @Description("Save reviewer settings") @BodyType(GenericBodyRequest)
   async saveSettings(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.email || !b.config) return { error: "email and config required" };
@@ -74,7 +74,7 @@ export class ReviewController {
   @Get("gamification") @ReturnedType(GamificationSettingsResponse) @Description("Get gamification settings")
   async getGamification() { return {}; }
 
-  @Post("gamification") @ReturnedType(OkResponse) @Description("Save gamification settings")
+  @Post("gamification") @ReturnedType(OkResponse) @Description("Save gamification settings") @BodyType(GenericBodyRequest)
   async saveGamification(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill review queue")

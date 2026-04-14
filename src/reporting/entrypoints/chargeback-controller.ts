@@ -2,8 +2,9 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType, Description } from "jsr:@danet/swagger@2/decorators";
 import { ChargebackReportResponse, WireReportResponse, OkResponse, OkMessageResponse, EmailConfigListResponse, EmailPreviewResponse, MessageResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { queryChargebackReport, queryWireReport } from "@reporting/domain/business/chargeback-report/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";

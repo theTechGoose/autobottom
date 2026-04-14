@@ -22,76 +22,76 @@ export class AdminConfigController {
   @Get("pipeline-config") @ReturnedType(PipelineConfigResponse)
   async getPipelineConfig() { return cfg.getPipelineConfig(ORG()); }
 
-  @Post("pipeline-config") @ReturnedType(PipelineConfigResponse)
+  @Post("pipeline-config") @ReturnedType(PipelineConfigResponse) @BodyType(GenericBodyRequest)
   async setPipelineConfig(@Body() body: GenericBodyRequest) { return cfg.setPipelineConfig(ORG(), body as any); }
 
   @Get("parallelism") @ReturnedType(ParallelismResponse)
   async getParallelism() { const c = await cfg.getPipelineConfig(ORG()); return { parallelism: c.parallelism }; }
 
-  @Post("parallelism") @ReturnedType(PipelineConfigResponse)
+  @Post("parallelism") @ReturnedType(PipelineConfigResponse) @BodyType(GenericBodyRequest)
   async setParallelism(@Body() body: { parallelism: number }) { return cfg.setPipelineConfig(ORG(), { parallelism: body.parallelism }); }
 
   // -- Webhook settings --
   @Get("settings/terminate") @ReturnedType(WebhookConfigResponse)
   async getTerminateSettings() { return (await cfg.getWebhookConfig(ORG(), "terminate")) ?? {}; }
-  @Post("settings/terminate") @ReturnedType(OkResponse)
+  @Post("settings/terminate") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveTerminateSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "terminate", body as any); return { ok: true }; }
 
   @Get("settings/appeal") @ReturnedType(WebhookConfigResponse)
   async getAppealSettings() { return (await cfg.getWebhookConfig(ORG(), "appeal")) ?? {}; }
-  @Post("settings/appeal") @ReturnedType(OkResponse)
+  @Post("settings/appeal") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveAppealSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "appeal", body as any); return { ok: true }; }
 
   @Get("settings/manager") @ReturnedType(WebhookConfigResponse)
   async getManagerSettings() { return (await cfg.getWebhookConfig(ORG(), "manager")) ?? {}; }
-  @Post("settings/manager") @ReturnedType(OkResponse)
+  @Post("settings/manager") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveManagerSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "manager", body as any); return { ok: true }; }
 
   @Get("settings/review") @ReturnedType(WebhookConfigResponse)
   async getReviewSettings() { return (await cfg.getWebhookConfig(ORG(), "review")) ?? {}; }
-  @Post("settings/review") @ReturnedType(OkResponse)
+  @Post("settings/review") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveReviewSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "review", body as any); return { ok: true }; }
 
   @Get("settings/judge") @ReturnedType(WebhookConfigResponse)
   async getJudgeSettings() { return (await cfg.getWebhookConfig(ORG(), "judge")) ?? {}; }
-  @Post("settings/judge") @ReturnedType(OkResponse)
+  @Post("settings/judge") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveJudgeSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "judge", body as any); return { ok: true }; }
 
   @Get("settings/judge-finish") @ReturnedType(WebhookConfigResponse)
   async getJudgeFinishSettings() { return (await cfg.getWebhookConfig(ORG(), "judge-finish")) ?? {}; }
-  @Post("settings/judge-finish") @ReturnedType(OkResponse)
+  @Post("settings/judge-finish") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveJudgeFinishSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "judge-finish", body as any); return { ok: true }; }
 
   @Get("settings/re-audit-receipt") @ReturnedType(WebhookConfigResponse)
   async getReAuditReceiptSettings() { return (await cfg.getWebhookConfig(ORG(), "re-audit-receipt")) ?? {}; }
-  @Post("settings/re-audit-receipt") @ReturnedType(OkResponse)
+  @Post("settings/re-audit-receipt") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveReAuditReceiptSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "re-audit-receipt", body as any); return { ok: true }; }
 
   @Get("settings/gamification") @ReturnedType(OkResponse)
   async getGamificationSettings() { return {}; } // gamification settings in own module
-  @Post("settings/gamification") @ReturnedType(OkResponse)
+  @Post("settings/gamification") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveGamificationSettings(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   // -- Bad words / bonus / bypass --
   @Get("bad-word-config") @ReturnedType(BadWordConfigResponse)
   async getBadWordConfig() { return cfg.getBadWordConfig(ORG()); }
-  @Post("bad-word-config") @ReturnedType(OkResponse)
+  @Post("bad-word-config") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveBadWordConfig(@Body() body: GenericBodyRequest) { await cfg.saveBadWordConfig(ORG(), body as any); return { ok: true }; }
 
   @Get("bonus-points-config") @ReturnedType(BonusConfigResponse)
   async getBonusPointsConfig() { return cfg.getBonusPointsConfig(ORG()); }
-  @Post("bonus-points-config") @ReturnedType(OkResponse)
+  @Post("bonus-points-config") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveBonusPointsConfig(@Body() body: GenericBodyRequest) { await cfg.saveBonusPointsConfig(ORG(), body as any); return { ok: true }; }
 
   @Get("office-bypass") @ReturnedType(BypassConfigResponse)
   async getOfficeBypass() { return cfg.getOfficeBypassConfig(ORG()); }
-  @Post("office-bypass") @ReturnedType(OkResponse)
+  @Post("office-bypass") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveOfficeBypass(@Body() body: GenericBodyRequest) { await cfg.saveOfficeBypassConfig(ORG(), body as any); return { ok: true }; }
 
   // -- Dimensions --
   @Get("audit-dimensions") @ReturnedType(DimensionsResponse)
   async getAuditDimensions() { return cfg.getAuditDimensions(ORG()); }
-  @Post("audit-dimensions") @ReturnedType(OkResponse)
+  @Post("audit-dimensions") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveAuditDimensions(@Body() body: GenericBodyRequest) { await cfg.saveAuditDimensions(ORG(), body as any); return { ok: true }; }
 
   @Get("partner-dimensions") @ReturnedType(PartnerDimensionsResponse)
@@ -100,7 +100,7 @@ export class AdminConfigController {
   // -- Manager scopes --
   @Get("manager-scopes") @ReturnedType(OkResponse)
   async getManagerScopes() { return cfg.listManagerScopes(ORG()); }
-  @Post("manager-scopes") @ReturnedType(OkResponse)
+  @Post("manager-scopes") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveManagerScope(@Body() body: { email: string; scope: { departments: string[]; shifts: string[] } }) {
     await cfg.saveManagerScope(ORG(), body.email, body.scope);
     return { ok: true };
@@ -109,7 +109,7 @@ export class AdminConfigController {
   // -- Queue management --
   @Get("queues") @ReturnedType(QueueCountsResponse)
   async getQueues() { return getQueueCounts(); }
-  @Post("queues") @ReturnedType(OkResponse)
+  @Post("queues") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async setQueue(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   @Post("pause-queues") @ReturnedType(OkResponse)
@@ -123,7 +123,7 @@ export class AdminConfigController {
   async clearErrors() { const count = await stats.clearErrors(ORG()); return { ok: true, cleared: count }; }
 
   // -- Pipeline operations --
-  @Post("retry-finding") @ReturnedType(OkResponse)
+  @Post("retry-finding") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async retryFinding(@Body() body: { findingId: string; step?: string }) {
     const step = body.step ?? "init";
     await publishStep(step, { findingId: body.findingId, orgId: ORG() });
@@ -135,7 +135,7 @@ export class AdminConfigController {
     return { ok: true };
   }
 
-  @Post("terminate-finding") @ReturnedType(OkResponse)
+  @Post("terminate-finding") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async terminateFinding(@Body() body: { findingId: string }) {
     await stats.terminateFinding(ORG(), body.findingId);
     return { ok: true };
@@ -143,7 +143,7 @@ export class AdminConfigController {
   @Post("terminate-all") @ReturnedType(TerminatedResponse)
   async terminateAll() { const count = await stats.terminateAllActive(ORG()); return { ok: true, terminated: count }; }
 
-  @Post("reset-finding") @ReturnedType(OkMessageResponse)
+  @Post("reset-finding") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async resetFinding(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.findingId) return { error: "findingId required" };
@@ -151,7 +151,7 @@ export class AdminConfigController {
     await pub("init", { findingId: b.findingId, orgId: ORG() });
     return { ok: true, message: "Finding re-queued for re-audit" };
   }
-  @Post("flip-answer") @ReturnedType(OkResponse)
+  @Post("flip-answer") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async flipAnswer(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.findingId) return { error: "findingId required" };
@@ -159,7 +159,7 @@ export class AdminConfigController {
     const result = await adminFlipFinding(ORG(), b.findingId);
     return { ok: result.success, score: result.score };
   }
-  @Post("bulk-flip") @ReturnedType(OkResponse)
+  @Post("bulk-flip") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async bulkFlip(@Body() body: GenericBodyRequest) {
     const b = body as any;
     const findingIds: string[] = b.findingIds ?? [];
@@ -174,39 +174,39 @@ export class AdminConfigController {
   }
 
   // -- Backfills --
-  @Post("backfill-review-scores") @ReturnedType(OkMessageResponse)
+  @Post("backfill-review-scores") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillReviewScores(@Body() body: GenericBodyRequest) {
     const { since, until } = body as any;
     if (!since || !until) return { error: "since and until required" };
     const { backfillReviewScores: backfill } = await import("../../../lib/kv.ts");
     return backfill(ORG(), since, until);
   }
-  @Post("backfill-chargeback-entries") @ReturnedType(OkMessageResponse)
+  @Post("backfill-chargeback-entries") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillChargebackEntries(@Body() body: GenericBodyRequest) {
     const { since, until } = body as any;
     if (!since || !until) return { error: "since and until required" };
     const { backfillChargebackEntries: backfill } = await import("../../../judge/kv.ts");
     return backfill(ORG(), since, until);
   }
-  @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse)
+  @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillPartnerDimensions(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;
     const { backfillPartnerDimensions: backfill } = await import("../../../lib/kv.ts");
     return backfill(ORG(), cursor);
   }
-  @Post("backfill-audit-index") @ReturnedType(OkMessageResponse)
+  @Post("backfill-audit-index") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillAuditIndex(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;
     const { backfillAuditDoneIndex: backfill } = await import("../../../lib/kv.ts");
     return backfill(ORG(), cursor);
   }
-  @Post("backfill-stale-scores") @ReturnedType(OkMessageResponse)
+  @Post("backfill-stale-scores") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillStaleScores(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;
     const { backfillStaleScores: backfill } = await import("../../../lib/kv.ts");
     return backfill(ORG(), cursor);
   }
-  @Post("deduplicate-findings") @ReturnedType(OkMessageResponse)
+  @Post("deduplicate-findings") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async deduplicateFindings(@Body() body: GenericBodyRequest) {
     const { since, until } = body as any;
     if (!since || !until) return { error: "since and until required" };
@@ -220,7 +220,7 @@ export class AdminConfigController {
   }
 
   // -- Purge --
-  @Post("purge-old-audits") @ReturnedType(OkMessageResponse)
+  @Post("purge-old-audits") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async purgeOldAudits(@Body() body: GenericBodyRequest) {
     const { since, before } = body as any;
     if (!before) return { error: "before required" };
@@ -239,7 +239,7 @@ export class AdminConfigController {
   // -- State management --
   @Post("wipe-kv") @ReturnedType(OkMessageResponse)
   async wipeKv() { return { ok: true, message: "wipe-kv — destructive, pending safe implementation" }; }
-  @Post("seed") @ReturnedType(OkResponse)
+  @Post("seed") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async seed(@Body() body: GenericBodyRequest) {
     const { createOrg, createUser } = await import("../../core/domain/business/auth/mod.ts");
     const orgId = await createOrg("Auto-Bot Dev", "admin@autobot.dev");
@@ -248,7 +248,7 @@ export class AdminConfigController {
   }
   @Get("seed") @ReturnedType(MessageResponse)
   async seedDryRun() { return { message: "Seed would create default org + admin user" }; }
-  @Post("init-org") @ReturnedType(OkResponse)
+  @Post("init-org") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async initOrg(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.name) return { error: "name required" };
@@ -259,7 +259,7 @@ export class AdminConfigController {
     }
     return { ok: true, orgId };
   }
-  @Post("force-nos") @ReturnedType(OkResponse)
+  @Post("force-nos") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async forceNos(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.findingId) return { error: "findingId required" };
@@ -275,9 +275,9 @@ export class AdminConfigController {
   }
   @Post("dump-state") @ReturnedType(OkMessageResponse)
   async dumpState() { return { ok: true, message: "State dump — use KV export tools directly" }; }
-  @Post("import-state") @ReturnedType(OkMessageResponse)
+  @Post("import-state") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async importState(@Body() body: GenericBodyRequest) { return { ok: true, message: "State import — use KV import tools directly" }; }
-  @Post("pull-state") @ReturnedType(OkMessageResponse)
+  @Post("pull-state") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async pullState(@Body() body: GenericBodyRequest) { return { ok: true, message: "State pull — use KV sync tools directly" }; }
 
   // -- Token usage --

@@ -2,7 +2,7 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Req, Query, Body, HttpContext } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, Description, BodyType } from "jsr:@danet/swagger@2/decorators";
 import { AuditQueuedResponse, FindingResponse, MessageResponse, PipelineStatsResponse } from "@core/dto/responses.ts";
 import { getStats } from "@audit/domain/data/stats-repository/mod.ts";
 import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
@@ -22,7 +22,7 @@ const jobRepo = new KvRepository("audit-job");
 @Controller("audit")
 export class AuditController {
 
-  @Post("test-by-rid") @ReturnedType(AuditQueuedResponse) @Description("Create date-leg audit from QuickBase record ID")
+  @Post("test-by-rid") @ReturnedType(AuditQueuedResponse) @Description("Create date-leg audit from QuickBase record ID") @BodyType(GenericBodyRequest)
   async createDateLegAudit(@Body() body: any, @Query("rid") rid: string, @Query("callback_url") callbackUrl: string, @Query("qlab_config") qlabConfig: string, @Query("override") override: string, @Query("audit_id") auditId: string) {
     if (!rid) return { error: "rid parameter required" };
 
@@ -57,7 +57,7 @@ export class AuditController {
     return { jobId, findingId, status: "queued" };
   }
 
-  @Post("package-by-rid") @ReturnedType(AuditQueuedResponse) @Description("Create package audit from QuickBase record ID")
+  @Post("package-by-rid") @ReturnedType(AuditQueuedResponse) @Description("Create package audit from QuickBase record ID") @BodyType(GenericBodyRequest)
   async createPackageAudit(@Body() body: any, @Query("rid") rid: string, @Query("callback_url") callbackUrl: string, @Query("qlab_config") qlabConfig: string) {
     if (!rid) return { error: "rid parameter required" };
 

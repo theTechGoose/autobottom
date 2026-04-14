@@ -2,8 +2,9 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType, Description } from "jsr:@danet/swagger@2/decorators";
 import { ManagerQueueResponse, ManagerStatsResponse, OkResponse, OkMessageResponse, AgentListResponse, MessageResponse, FindingResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { getManagerQueue, submitRemediation, getManagerStats } from "@manager/domain/data/manager-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { createUser, deleteUser, listUsers } from "@core/domain/business/auth/mod.ts";

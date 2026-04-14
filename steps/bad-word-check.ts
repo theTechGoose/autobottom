@@ -1,7 +1,8 @@
 /** STEP: Bad word detection for package transcripts. Runs off critical path. */
-import { getFinding, getBadWordConfig } from "../lib/kv.ts";
-import { checkFindingForBadWords } from "../providers/bad-word.ts";
-import { env } from "../env.ts";
+import { getFinding } from "../src/audit/domain/data/audit-repository/mod.ts";
+import { getBadWordConfig } from "../src/admin/domain/data/admin-repository/mod.ts";
+import { checkFindingForBadWords } from "../src/audit/domain/data/bad-word/mod.ts";
+
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -32,11 +33,11 @@ export async function stepBadWordCheck(req: Request): Promise<Response> {
 
   const recordId = String(finding.record?.RecordId ?? "");
   const isPackage = !!finding.record?.GenieNumber;
-  const realm = env.qbRealm;
+  const realm = Deno.env.get("QB_REALM") ?? "";
   const recordUrl = recordId && realm
     ? `https://${realm}.quickbase.com/db/${PACKAGES_TABLE}?a=dr&rid=${recordId}`
     : undefined;
-  const findingUrl = `${env.selfUrl}/audit/report?id=${findingId}`;
+  const findingUrl = `${Deno.env.get("SELF_URL") ?? "http://localhost:3000"}/audit/report?id=${findingId}`;
 
   const ctx = {
     findingId,

@@ -154,3 +154,27 @@ export async function purchaseStoreItem(orgId: OrgId, email: string, itemId: str
   if (!res.ok) return { ok: false, error: "concurrent modification, try again" };
   return { ok: true, newBalance: state.tokenBalance };
 }
+
+// ── Award XP ─────────────────────────────────────────────────────────────────
+
+import { getLevel, LEVEL_THRESHOLDS, AGENT_LEVEL_THRESHOLDS } from "../../business/badge-system/mod.ts";
+
+export async function awardXp(
+  orgId: OrgId, email: string, xpAmount: number, role: "reviewer" | "judge" | "manager" | "agent",
+): Promise<{ state: any; xpGained: number; leveledUp: boolean }> {
+  const state = await getGameState(orgId, email);
+  const prevLevel = state.level;
+  state.totalXp = (state.totalXp ?? 0) + xpAmount;
+  state.tokenBalance = (state.tokenBalance ?? 0) + xpAmount;
+  const thresholds = role === "agent" ? AGENT_LEVEL_THRESHOLDS : LEVEL_THRESHOLDS;
+  state.level = getLevel(state.totalXp, thresholds);
+  const today = new Date().toISOString().slice(0, 10);
+  if (state.lastActiveDate !== today) {
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    state.dayStreak = state.lastActiveDate === yesterday ? state.dayStreak + 1 : 1;
+    state.lastActiveDate = today;
+  }
+  await saveGameState(orgId, email, state as any);
+  const leveledUp = state.level > prevLevel;
+  return { state, xpGained: xpAmount, leveledUp };
+}

@@ -1,15 +1,22 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
-import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob, trackCompleted, fireWebhook, getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp, emitEvent, checkAndEmitPrefab, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, getOfficeBypassConfig, saveWireDeductionEntry, updatePartnerDimensions, getBonusPointsConfig } from "../lib/kv.ts";
-import { enqueueCleanup } from "../lib/queue.ts";
+import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob } from "../src/audit/domain/data/audit-repository/mod.ts";
+import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, saveWireDeductionEntry } from "../src/audit/domain/data/stats-repository/mod.ts";
+import { getOfficeBypassConfig, getBonusPointsConfig } from "../src/admin/domain/data/admin-repository/mod.ts";
+import { updatePartnerDimensions } from "../src/admin/domain/data/admin-repository/mod.ts";
+import { getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "../src/gamification/domain/data/gamification-repository/mod.ts";
+import { getGameState, saveGameState } from "../src/gamification/domain/data/gamification-repository/mod.ts";
+import { emitEvent, checkAndEmitPrefab } from "../src/events/domain/data/events-repository/mod.ts";
+import { fireWebhook } from "../src/admin/domain/data/admin-repository/mod.ts";
+import { enqueueCleanup } from "../src/core/domain/data/qstash/mod.ts";
 
-import { generateFeedback } from "../providers/groq.ts";
-import { answerQuestion } from "../types/mod.ts";
-import type { IAnsweredQuestion } from "../types/mod.ts";
-import { populateReviewQueue } from "../review/kv.ts";
-import { populateJudgeQueue, saveAppeal, getAppeal } from "../judge/kv.ts";
-import { checkBadges } from "../shared/badges.ts";
-import { env } from "../env.ts";
-import { sendEmail } from "../providers/postmark.ts";
+import { generateFeedback } from "../src/audit/domain/data/groq/mod.ts";
+import { answerQuestion } from "../src/core/dto/types.ts";
+import type { IAnsweredQuestion } from "../src/core/dto/types.ts";
+import { populateReviewQueue } from "../src/review/domain/business/review-queue/mod.ts";
+import { populateJudgeQueue, getAppeal, saveAppeal } from "../src/judge/domain/data/judge-repository/mod.ts";
+import { checkBadges } from "../src/gamification/domain/business/badge-system/mod.ts";
+
+import { sendEmail } from "../src/reporting/domain/data/postmark/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -71,8 +78,8 @@ export async function stepFinalize(req: Request): Promise<Response> {
       heading: "Audit Failed",
       text: `Audit Failed: The recording file for ID ${badId} could not be located.`,
       viewUrl: "",
-      disputeUrl: `${env.selfUrl}/audit/appeal?findingId=${findingId}`,
-      recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
+      disputeUrl: `${Deno.env.get("SELF_URL") ?? "http://localhost:3000"}/audit/appeal?findingId=${findingId}`,
+      recordingUrl: `${Deno.env.get("SELF_URL") ?? "http://localhost:3000"}/audit/recording?id=${findingId}`,
     };
   }
 
@@ -89,9 +96,9 @@ export async function stepFinalize(req: Request): Promise<Response> {
         finding.feedback = {
           heading: "Audit Feedback",
           text: feedbackText,
-          viewUrl: `${env.denoKvUrl}/get?id=${findingId}`,
-          disputeUrl: `${env.selfUrl}/audit/appeal?findingId=${findingId}`,
-          recordingUrl: `${env.selfUrl}/audit/recording?id=${findingId}`,
+          viewUrl: `${Deno.env.get("KV_SERVICE_URL") ?? ""}/get?id=${findingId}`,
+          disputeUrl: `${Deno.env.get("SELF_URL") ?? "http://localhost:3000"}/audit/appeal?findingId=${findingId}`,
+          recordingUrl: `${Deno.env.get("SELF_URL") ?? "http://localhost:3000"}/audit/recording?id=${findingId}`,
         };
       }
     } catch (err) {
@@ -359,11 +366,11 @@ export async function stepFinalize(req: Request): Promise<Response> {
 
       const earned = await getEarnedBadges(orgId, finding.owner);
       const earnedSet = new Set(earned.map((b) => b.badgeId));
-      const newBadges = checkBadges("agent", stats, earnedSet);
+      const newBadges = checkBadges("agent", stats as any, earnedSet);
 
       let badgeXp = 0;
       for (const badge of newBadges) {
-        await awardBadge(orgId, finding.owner, badge);
+        await awardBadge(orgId, finding.owner, badge as any);
         badgeXp += badge.xpReward;
       }
 
@@ -479,7 +486,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
 }
 
 async function postToDeno(finding: Record<string, any>) {
-  const DENO_URL = env.denoKvUrl;
+  const DENO_URL = Deno.env.get("KV_SERVICE_URL") ?? "";
   const CHUNK_SIZE = 25_000; // Deno KV 64KB limit; UTF-16 strings cost 2 bytes/char
 
   const controller = new AbortController();
@@ -554,7 +561,7 @@ async function sendTestAuditEmail(finding: Record<string, any>, score: number | 
   const pct = total > 0 ? score ?? Math.round((passed / total) * 100) : 0;
   const rid = String(finding.record?.RecordId ?? finding.recordingId ?? "?");
   const configName = escHtml(finding.qlabConfig ?? "Unknown Config");
-  const reportUrl = `${env.selfUrl}/audit/report?id=${finding.id}`;
+  const reportUrl = `${Deno.env.get("SELF_URL") ?? "http://localhost:3000"}/audit/report?id=${finding.id}`;
   const scoreColor = pct === 100 ? "#3fb950" : pct >= 80 ? "#d29922" : "#f85149";
 
   const qRows = qs.map((q: any) => {

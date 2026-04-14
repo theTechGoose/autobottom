@@ -1,5 +1,6 @@
 /** STEP 2: Submit audio to AssemblyAI. Single-genie returns immediately; poll-transcript handles the wait. */
-import { getFinding, saveFinding, trackActive } from "../lib/kv.ts";
+import { getFinding, saveFinding } from "../src/audit/domain/data/audit-repository/mod.ts";
+import { trackActive } from "../src/audit/domain/data/stats-repository/mod.ts";
 import { enqueueStep } from "../src/core/domain/data/qstash/mod.ts";
 import { transcribe, uploadAudio, submitTranscription } from "../src/audit/domain/data/assemblyai/mod.ts";
 import { S3Ref } from "../src/core/domain/data/s3/mod.ts";

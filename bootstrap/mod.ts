@@ -2,6 +2,11 @@ import "npm:reflect-metadata@0.1.13";
 import { bootstrapServer } from "@mrg-keystone/danet";
 import { Module } from "@danet/core";
 
+// Initialize Datadog OTel before any module loads so every subsequent
+// console.* call gets auto-mirrored to DD Logs and every withSpan has a tracer.
+import { initOtel } from "@core/data/datadog-otel/mod.ts";
+initOtel();
+
 // Module imports
 import { AuthController } from "@core/business/auth/mod.ts";
 @Module({ controllers: [AuthController], injectables: [] })

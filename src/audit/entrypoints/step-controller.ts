@@ -1,83 +1,58 @@
-/** Pipeline step controller — receives QStash callbacks for each audit step.
- *  Each method is a thin entrypoint that delegates to the actual step logic.
- *  Step implementations will be ported as business features. Stubs for now. */
+/** Pipeline step controller — delegates to original step implementations.
+ *  Each step receives the raw request and returns the step's response body. */
 import "npm:reflect-metadata@0.1.13";
-import { Controller, Post, Body } from "@danet/core";
+import { Controller, Post, Req } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
+import {
+  stepInit, stepTranscribe, stepTranscribeCb, stepPollTranscript,
+  stepDiarizeAsync, stepPineconeAsync, stepPrepare,
+  stepAskBatch, stepAskAll, stepFinalize, stepCleanup, stepBadWordCheck,
+} from "@audit/domain/business/pipeline-orchestrator/mod.ts";
+
+/** Call an original step handler (which returns Response) and extract its JSON body. */
+async function callStep(stepFn: (req: Request) => Promise<Response>, req: Request) {
+  const response = await stepFn(req);
+  try { return await response.json(); }
+  catch { return { ok: true }; }
+}
 
 @SwaggerDescription("Pipeline steps — QStash callback endpoints for audit processing")
 @Controller("audit/step")
 export class StepController {
 
   @Post("init")
-  async init(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] init: findingId=${body.findingId}`);
-    return { ok: true, step: "init", findingId: body.findingId };
-  }
+  async init(@Req req: Request) { return callStep(stepInit, req); }
 
   @Post("transcribe")
-  async transcribe(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] transcribe: findingId=${body.findingId}`);
-    return { ok: true, step: "transcribe", findingId: body.findingId };
-  }
+  async transcribe(@Req req: Request) { return callStep(stepTranscribe, req); }
 
   @Post("poll-transcript")
-  async pollTranscript(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] poll-transcript: findingId=${body.findingId}`);
-    return { ok: true, step: "poll-transcript", findingId: body.findingId };
-  }
+  async pollTranscript(@Req req: Request) { return callStep(stepPollTranscript, req); }
 
   @Post("transcribe-complete")
-  async transcribeComplete(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] transcribe-complete: findingId=${body.findingId}`);
-    return { ok: true, step: "transcribe-complete", findingId: body.findingId };
-  }
+  async transcribeComplete(@Req req: Request) { return callStep(stepTranscribeCb, req); }
 
   @Post("diarize-async")
-  async diarizeAsync(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] diarize-async: findingId=${body.findingId}`);
-    return { ok: true, step: "diarize-async", findingId: body.findingId };
-  }
+  async diarizeAsync(@Req req: Request) { return callStep(stepDiarizeAsync, req); }
 
   @Post("pinecone-async")
-  async pineconeAsync(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] pinecone-async: findingId=${body.findingId}`);
-    return { ok: true, step: "pinecone-async", findingId: body.findingId };
-  }
+  async pineconeAsync(@Req req: Request) { return callStep(stepPineconeAsync, req); }
 
   @Post("prepare")
-  async prepare(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] prepare: findingId=${body.findingId}`);
-    return { ok: true, step: "prepare", findingId: body.findingId };
-  }
+  async prepare(@Req req: Request) { return callStep(stepPrepare, req); }
 
   @Post("ask-batch")
-  async askBatch(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] ask-batch: findingId=${body.findingId}`);
-    return { ok: true, step: "ask-batch", findingId: body.findingId };
-  }
+  async askBatch(@Req req: Request) { return callStep(stepAskBatch, req); }
 
   @Post("ask-all")
-  async askAll(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] ask-all: findingId=${body.findingId}`);
-    return { ok: true, step: "ask-all", findingId: body.findingId };
-  }
+  async askAll(@Req req: Request) { return callStep(stepAskAll, req); }
 
   @Post("finalize")
-  async finalize(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] finalize: findingId=${body.findingId}`);
-    return { ok: true, step: "finalize", findingId: body.findingId };
-  }
+  async finalize(@Req req: Request) { return callStep(stepFinalize, req); }
 
   @Post("cleanup")
-  async cleanup(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] cleanup: findingId=${body.findingId}`);
-    return { ok: true, step: "cleanup", findingId: body.findingId };
-  }
+  async cleanup(@Req req: Request) { return callStep(stepCleanup, req); }
 
   @Post("bad-word-check")
-  async badWordCheck(@Body() body: Record<string, any>) {
-    console.log(`📋 [STEP] bad-word-check: findingId=${body.findingId}`);
-    return { ok: true, step: "bad-word-check", findingId: body.findingId };
-  }
+  async badWordCheck(@Req req: Request) { return callStep(stepBadWordCheck, req); }
 }

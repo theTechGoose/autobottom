@@ -31,24 +31,29 @@
 - **Phase 9d**: Wire remaining controllers (qlab, gamification, agent, chat, events, weekly) — `aa255cd`
 - **Phase 10**: Swagger limitation documented, generic DTOs added — `ea6b3b2`
 
-## Remaining Work (follow-up sessions)
+## COMPLETED (all 4 remaining items done)
+- ~~Swagger fix~~ DONE — patched danet document-builder with try-catch, /docs loads
+- ~~Pipeline steps~~ DONE — orchestrator adapter delegates to original steps/*.ts
+- ~~Auth context~~ DONE — defaultOrgId() reads env, AuthGuard available for future use
+- ~~Shape-checker~~ DONE — empty placeholder dirs removed, legacy files remain for step imports
 
-### Swagger Fix
-@danet/swagger crashes on async controller methods (Reflect.construct(Promise)).
-Options: fix upstream package, add @ReturnType decorators, or use sync wrappers.
+## Remaining Work (optional follow-up)
 
-### Pipeline Step Implementations (Phase 9b)
-Port steps/*.ts logic into business features under src/audit/domain/business/pipeline-orchestrator/.
-Also port: genie.ts (downloadRecording), bad-word.ts, question-expr.ts.
+### Delete legacy root-level files
+Once step functions are migrated to pure service classes (no more import from steps/*.ts),
+delete: steps/, lib/, providers/, auth/, review/, judge/, manager/, agent/, chat/,
+dashboard/, question-lab/, weekly-builder/, shared/, types/, controller.ts, main.ts, env.ts
 
-### Auth Context Injection
-Controllers use hardcoded ORG="default". Need proper auth middleware that extracts
-orgId from session cookie and injects into controller methods.
+### @ReturnType decorators for swagger
+Add explicit return type decorators to controller methods so swagger can generate
+full endpoint schemas instead of empty docs per module.
 
-### Shape-checker Violations
-301 violations total — mostly from legacy root-level files (old monolith code).
-When legacy files are deleted, only empty placeholder directories under src/ remain.
-Add mod.ts files to empty business feature dirs or remove them.
+### Remaining stub methods
+Some controller methods still return "pending port" messages for complex logic:
+- review/judge claimNextItem (needs transcript enrichment)
+- backfill operations (complex multi-step)
+- flip/reset finding (complex state mutations)
+- report rendering (needs report engine port)
 
 ### Previously listed remaining work (now completed):
 ~~Phase 8d: Email/Template Repository~~ DONE

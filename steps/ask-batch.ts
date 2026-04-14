@@ -1,11 +1,14 @@
 /** STEP 4: Answer a batch of questions via RAG + Groq LLM. */
-import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, decrementBatchCounter, trackActive, getPopulatedQuestions, getPipelineConfig } from "../lib/kv.ts";
-import { enqueueStep, publishStep } from "../lib/queue.ts";
-import { askQuestion, summarize } from "../providers/groq.ts";
-import { query as vectorQuery } from "../providers/pinecone.ts";
-import { parseAst, evaluateAutoYes } from "../providers/question-expr.ts";
-import { answerQuestion } from "../types/mod.ts";
-import type { IQuestion, IAnsweredQuestion, ILlmQuestionAnswer } from "../types/mod.ts";
+import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, decrementBatchCounter, getPopulatedQuestions } from "../src/audit/domain/data/audit-repository/mod.ts";
+import { trackActive } from "../src/audit/domain/data/stats-repository/mod.ts";
+import { getPipelineConfig } from "../src/admin/domain/data/admin-repository/mod.ts";
+import { enqueueStep, publishStep } from "../src/core/domain/data/qstash/mod.ts";
+import { askQuestion, summarize } from "../src/audit/domain/data/groq/mod.ts";
+import { query as vectorQuery } from "../src/audit/domain/data/pinecone/mod.ts";
+import { parseAst, evaluateAutoYes } from "../src/audit/domain/business/question-expr/mod.ts";
+import { answerQuestion } from "../src/core/dto/types.ts";
+import type { IQuestion, IAnsweredQuestion } from "../src/core/dto/types.ts";
+type ILlmQuestionAnswer = { answer: string; thinking: string; defense: string };
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -42,7 +45,7 @@ async function askLlmOne(
 
   // Parse AST
   const questionWithAst = parseAst(question);
-  const ast = questionWithAst.astResults.ast ?? [];
+  const ast = questionWithAst.astResults?.ast ?? [];
 
   /** Query vector store, falling back to raw transcript if Pinecone returns empty. */
   async function getContext(q: string): Promise<string> {

@@ -15,7 +15,7 @@ export interface IQuestion {
   weight?: number;
   temperature?: number;
   numDocs?: number;
-  astResults?: Record<string, unknown>;
+  astResults?: IAstResults;
   autoYesVal?: boolean;
   autoYesMsg?: string;
   resolvedAst?: IQuestionAstNode[];
@@ -247,7 +247,7 @@ export interface IAstResults {
   orResult?: boolean;
 }
 
-export function createQuestion(seed: IQuestionSeed & Partial<Record<string, unknown>>): IQuestion {
+export function createQuestion(seed: any): IQuestion {
   return {
     header: seed.header,
     unpopulated: seed.unpopulated,
@@ -259,8 +259,8 @@ export function createQuestion(seed: IQuestionSeed & Partial<Record<string, unkn
   };
 }
 
-export function answerQuestion(q: Record<string, unknown>, answer: { answer: string; thinking: string; defense: string }): Record<string, unknown> {
-  return { ...q, ...answer };
+export function answerQuestion(q: any, answer: { answer: string; thinking: string; defense: string }): IAnsweredQuestion {
+  return { ...q, ...answer } as IAnsweredQuestion;
 }
 
 // ── Audit finding/job types (used by pipeline steps) ─────────────────────────

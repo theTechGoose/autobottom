@@ -1,10 +1,11 @@
 /** STEP 3: Fetch questions from QuickBase (or Question Lab), populate with record values, enqueue ask-all. */
-import { getFinding, saveFinding, getCachedQuestions, cacheQuestions, trackActive, savePopulatedQuestions } from "../lib/kv.ts";
-import { enqueueStep, publishStep } from "../lib/queue.ts";
-import { getQuestionsForDestination } from "../providers/quickbase.ts";
-import { populateQuestions } from "../providers/question-expr.ts";
-import { serveConfig, getInternalAssignments, getPartnerAssignments } from "../question-lab/kv.ts";
-import type { IQuestionSeed } from "../types/mod.ts";
+import { getFinding, saveFinding, getCachedQuestions, cacheQuestions, savePopulatedQuestions } from "../src/audit/domain/data/audit-repository/mod.ts";
+import { trackActive } from "../src/audit/domain/data/stats-repository/mod.ts";
+import { enqueueStep, publishStep } from "../src/core/domain/data/qstash/mod.ts";
+import { getQuestionsForDestination } from "../src/audit/domain/data/quickbase/mod.ts";
+import { populateQuestions } from "../src/audit/domain/business/question-expr/mod.ts";
+import { serveConfig, getInternalAssignments, getPartnerAssignments } from "../src/question-lab/domain/data/question-repository/mod.ts";
+import type { IQuestionSeed } from "../src/core/dto/types.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

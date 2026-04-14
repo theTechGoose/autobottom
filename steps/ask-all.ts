@@ -1,12 +1,14 @@
 /** STEP 4 (alt): Answer ALL questions in a single Promise.all — no fan-out overhead. Like OmniSource's approach. */
-import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, trackActive, getPopulatedQuestions, terminateFinding } from "../lib/kv.ts";
-import { enqueueStep, publishStep } from "../lib/queue.ts";
-import { upload as pineconeUpload } from "../providers/pinecone.ts";
-import { askQuestion, summarize } from "../providers/groq.ts";
-import { query as vectorQuery } from "../providers/pinecone.ts";
-import { parseAst, evaluateAutoYes } from "../providers/question-expr.ts";
-import { answerQuestion } from "../types/mod.ts";
-import type { IQuestion, IAnsweredQuestion, ILlmQuestionAnswer } from "../types/mod.ts";
+import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, getPopulatedQuestions } from "../src/audit/domain/data/audit-repository/mod.ts";
+import { trackActive, terminateFinding } from "../src/audit/domain/data/stats-repository/mod.ts";
+import { enqueueStep, publishStep } from "../src/core/domain/data/qstash/mod.ts";
+import { upload as pineconeUpload } from "../src/audit/domain/data/pinecone/mod.ts";
+import { askQuestion, summarize } from "../src/audit/domain/data/groq/mod.ts";
+import { query as vectorQuery } from "../src/audit/domain/data/pinecone/mod.ts";
+import { parseAst, evaluateAutoYes } from "../src/audit/domain/business/question-expr/mod.ts";
+import { answerQuestion } from "../src/core/dto/types.ts";
+import type { IQuestion, IAnsweredQuestion } from "../src/core/dto/types.ts";
+type ILlmQuestionAnswer = { answer: string; thinking: string; defense: string };
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -50,7 +52,7 @@ async function askLlmOne(
 
   // Parse AST
   const questionWithAst = parseAst(question);
-  const ast = questionWithAst.astResults.ast ?? [];
+  const ast = questionWithAst.astResults?.ast ?? [];
 
   // For short transcripts (≤8000 chars) skip RAG entirely — the full text fits comfortably
   // in the LLM context window and is far more reliable than a semantic chunk retrieval that

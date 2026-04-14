@@ -188,3 +188,27 @@ export async function setPartnerAssignment(orgId: OrgId, officeName: string, con
   else delete current[officeName];
   await db.set(orgKey(orgId, "qlab-partner-assignments"), current);
 }
+
+// ── Serve Config (for pipeline steps) ────────────────────────────────────────
+
+const QLQUESTION_DEFAULTS = { temperature: 0.8, numDocs: 4, egregious: false, weight: 5 };
+
+export async function serveConfig(orgId: OrgId, configNameOrId: string) {
+  let config = await getConfig(orgId, configNameOrId);
+  if (!config) {
+    const all = await listConfigs(orgId);
+    config = all.find((c) => c.name === configNameOrId) ?? null;
+  }
+  if (!config) return [];
+  const questions = await getQuestionsForConfig(orgId, config.id);
+  return questions.map((q) => ({
+    header: q.name,
+    unpopulated: q.text,
+    populated: q.text,
+    autoYesExp: "",
+    temperature: q.temperature ?? QLQUESTION_DEFAULTS.temperature,
+    numDocs: q.numDocs ?? QLQUESTION_DEFAULTS.numDocs,
+    egregious: q.egregious ?? QLQUESTION_DEFAULTS.egregious,
+    weight: q.weight ?? QLQUESTION_DEFAULTS.weight,
+  }));
+}

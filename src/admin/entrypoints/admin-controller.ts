@@ -239,20 +239,46 @@ export class AdminConfigController {
   // -- State management --
   @Post("wipe-kv") @ReturnedType(OkMessageResponse)
   async wipeKv() { return { ok: true, message: "wipe-kv — destructive, pending safe implementation" }; }
-  @Post("seed") @ReturnedType(OkMessageResponse)
-  async seed(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  @Post("seed") @ReturnedType(OkResponse)
+  async seed(@Body() body: GenericBodyRequest) {
+    const { createOrg, createUser } = await import("../../core/domain/business/auth/mod.ts");
+    const orgId = await createOrg("Auto-Bot Dev", "admin@autobot.dev");
+    try { await createUser(orgId, "admin@autobot.dev", "admin123", "admin"); } catch { /* exists */ }
+    return { ok: true, orgId };
+  }
   @Get("seed") @ReturnedType(MessageResponse)
-  async seedDryRun() { return { message: "Not yet implemented" }; }
-  @Post("init-org") @ReturnedType(OkMessageResponse)
-  async initOrg(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
-  @Post("force-nos") @ReturnedType(OkMessageResponse)
-  async forceNos(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async seedDryRun() { return { message: "Seed would create default org + admin user" }; }
+  @Post("init-org") @ReturnedType(OkResponse)
+  async initOrg(@Body() body: GenericBodyRequest) {
+    const b = body as any;
+    if (!b.name) return { error: "name required" };
+    const { createOrg, createUser } = await import("../../core/domain/business/auth/mod.ts");
+    const orgId = await createOrg(b.name, b.name);
+    if (b.email && b.password) {
+      try { await createUser(orgId, b.email, b.password, "admin"); } catch { /* exists */ }
+    }
+    return { ok: true, orgId };
+  }
+  @Post("force-nos") @ReturnedType(OkResponse)
+  async forceNos(@Body() body: GenericBodyRequest) {
+    const b = body as any;
+    if (!b.findingId) return { error: "findingId required" };
+    const { getFinding, saveFinding } = await import("../../audit/domain/data/audit-repository/mod.ts");
+    const finding = await getFinding(ORG(), b.findingId);
+    if (!finding) return { error: "finding not found" };
+    let flipped = 0;
+    for (const q of (finding.answeredQuestions ?? [])) {
+      if (q.answer === "Yes") { q.answer = "No"; q.thinking = "[FORCED NO] " + (q.thinking || ""); flipped++; }
+    }
+    await saveFinding(ORG(), finding);
+    return { ok: true, flipped };
+  }
   @Post("dump-state") @ReturnedType(OkMessageResponse)
-  async dumpState() { return { ok: true, message: "Not yet implemented" }; }
+  async dumpState() { return { ok: true, message: "State dump — use KV export tools directly" }; }
   @Post("import-state") @ReturnedType(OkMessageResponse)
-  async importState(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async importState(@Body() body: GenericBodyRequest) { return { ok: true, message: "State import — use KV import tools directly" }; }
   @Post("pull-state") @ReturnedType(OkMessageResponse)
-  async pullState(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async pullState(@Body() body: GenericBodyRequest) { return { ok: true, message: "State pull — use KV sync tools directly" }; }
 
   // -- Token usage --
   @Get("token-usage") @ReturnedType(TokenUsageResponse)

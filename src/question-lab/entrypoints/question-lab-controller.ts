@@ -42,7 +42,22 @@ export class QuestionLabController {
   }
 
   @Post("qlab/configs/import") @ReturnedType(OkMessageResponse)
-  async importConfig(@Body() body: any) { return { ok: true, message: "Not yet implemented" }; }
+  async importConfig(@Body() body: any) {
+    const { name, type, questions, dupeMode = "skip" } = body;
+    if (!name || !Array.isArray(questions)) return { error: "name and questions required" };
+    const configs = await repo.listConfigs(ORG());
+    const existing = configs.find((c) => c.name === name);
+    if (existing && dupeMode === "skip") return { ok: true, skipped: true, configName: name };
+    const config = existing && dupeMode === "overwrite"
+      ? existing
+      : await repo.createConfig(ORG(), name, type ?? "internal");
+    let imported = 0;
+    for (const q of questions) {
+      await repo.createQuestion(ORG(), config.id, q.name, q.text);
+      imported++;
+    }
+    return { ok: true, configId: config.id, imported };
+  }
 
   @Get("qlab/question") @ReturnedType(QLQuestionResponse)
   async getQuestion(@Query("id") id: string) { return (await repo.getQuestion(ORG(), id)) ?? { error: "not found" }; }
@@ -87,13 +102,40 @@ export class QuestionLabController {
   async deleteTest(@Body() body: { id: string }) { await repo.deleteTest(ORG(), body.id); return { ok: true }; }
 
   @Post("qlab/simulate") @ReturnedType(OkMessageResponse)
-  async simulate(@Body() body: any) { return { result: null, message: "Not yet implemented" }; }
+  async simulate(@Body() body: any) {
+    if (!body.question || !body.transcript) return { error: "question and transcript required" };
+    const { askQuestion } = await import("../../audit/domain/data/groq/mod.ts");
+    const result = await askQuestion(body.question, body.transcript, 0, body.temperature ?? 0.8);
+    return { result };
+  }
 
   @Get("qlab/snippet") @ReturnedType(MessageResponse)
-  async getSnippet(@Query("findingId") findingId: string) { return { snippet: "", message: "Not yet implemented" }; }
+  async getSnippet(@Query("findingId") findingId: string) {
+    if (!findingId) return { error: "findingId required" };
+    const { getTranscript } = await import("../../audit/domain/data/audit-repository/mod.ts");
+    const transcript = await getTranscript(ORG(), findingId);
+    return { snippet: transcript?.diarized?.slice(0, 2000) ?? transcript?.raw?.slice(0, 2000) ?? "" };
+  }
 
-  @Post("qlab/test-audit") @ReturnedType(OkMessageResponse)
-  async runTestAudit(@Body() body: any) { return { ok: true, message: "Not yet implemented" }; }
+  @Post("qlab/test-audit") @ReturnedType(OkResponse)
+  async runTestAudit(@Body() body: any) {
+    if (!body.rid || !body.configName) return { error: "rid and configName required" };
+    const { enqueueStep } = await import("../../core/domain/data/qstash/mod.ts");
+    const { nanoid } = await import("https://deno.land/x/nanoid@v3.0.0/mod.ts");
+    const findingId = nanoid();
+    // Create test finding and enqueue
+    const { saveFinding } = await import("../../audit/domain/data/audit-repository/mod.ts");
+    await saveFinding(ORG(), {
+      id: findingId, auditJobId: nanoid(), findingStatus: "pending",
+      feedback: { heading: "", text: "", viewUrl: "" },
+      record: { RecordId: body.rid }, recordingIdField: body.recordingIdField ?? "VoGenie",
+      qlabConfig: body.configName, isTest: true,
+      testEmailRecipients: body.testEmailRecipients ?? [],
+      owner: "test", startedAt: Date.now(),
+    });
+    await enqueueStep("init", { findingId, orgId: ORG() });
+    return { ok: true, findingId };
+  }
 
   @Get("qlab/test-runs") @ReturnedType(OkResponse)
   async getTestRuns(@Query("configId") configId: string) { return { runs: [] }; }

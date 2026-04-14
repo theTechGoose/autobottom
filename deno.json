@@ -8,9 +8,7 @@
     "shape-check": "shape-checker"
   },
   "imports": {
-    "@mrg-keystone/danet": "/Users/adam/Programming/keystone/keystone-suite/external/projects/danet/src/bootstrap/mod.ts",
-    "@foundation/": "/Users/adam/Programming/keystone/keystone-suite/external/projects/danet/src/foundation/",
-    "@types": "/Users/adam/Programming/keystone/keystone-suite/external/projects/danet/src/foundation/dto/types.ts",
+    "@mrg-keystone/danet": "jsr:@mrg-keystone/danet@^1.0.2",
     "@danet/core": "jsr:@danet/core@2",
     "@danet/swagger": "jsr:@danet/swagger@2",
     "#reflect-metadata": "npm:reflect-metadata@0.1.13",

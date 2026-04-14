@@ -8,12 +8,14 @@
     "jsr:@danet/zod@0.0.7": "0.0.7",
     "jsr:@dx/reflect@0.2.14": "0.2.14",
     "jsr:@hono/hono@4.6.3": "4.6.3",
+    "jsr:@mrg-keystone/danet@^1.0.2": "1.0.2",
     "jsr:@std/assert@*": "1.0.14",
     "jsr:@std/fmt@0.223.0": "0.223.0",
     "jsr:@std/internal@^1.0.10": "1.0.10",
     "jsr:@std/path@1.0.6": "1.0.6",
     "npm:@anatine/zod-openapi@2.2.6": "2.2.6_openapi3-ts@4.5.0_zod@3.23.8",
     "npm:@resvg/resvg-wasm@*": "2.6.2",
+    "npm:@types/node@*": "24.2.0",
     "npm:awesome-phonenumber@7.1.0": "7.1.0",
     "npm:groq-sdk@*": "0.33.0",
     "npm:handlebars@^4.7.8": "4.7.9",
@@ -63,6 +65,16 @@
     },
     "@hono/hono@4.6.3": {
       "integrity": "a1f5a18cd12a0db54755b0461dd5a4e2d93a6f85403073eb710103eacc42daf3"
+    },
+    "@mrg-keystone/danet@1.0.2": {
+      "integrity": "9ea2d52e1339a67317bb7ad7aad6c5bd12c03c2b07e8f47a6c881a29e68faba9",
+      "dependencies": [
+        "jsr:@danet/core@2",
+        "jsr:@danet/swagger",
+        "npm:handlebars",
+        "npm:reflect-metadata",
+        "npm:zod@3"
+      ]
     },
     "@std/assert@1.0.14": {
       "integrity": "68d0d4a43b365abc927f45a9b85c639ea18a9fab96ad92281e493e4ed84abaa4",
@@ -413,6 +425,7 @@
     "dependencies": [
       "jsr:@danet/core@2",
       "jsr:@danet/swagger@2",
+      "jsr:@mrg-keystone/danet@^1.0.2",
       "jsr:@std/assert@*",
       "npm:groq-sdk@*",
       "npm:handlebars@^4.7.8",

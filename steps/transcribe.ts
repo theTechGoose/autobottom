@@ -1,9 +1,9 @@
 /** STEP 2: Submit audio to AssemblyAI. Single-genie returns immediately; poll-transcript handles the wait. */
 import { getFinding, saveFinding, trackActive } from "../lib/kv.ts";
-import { enqueueStep } from "../lib/queue.ts";
-import { transcribe, uploadAudio, submitTranscription } from "../providers/assemblyai.ts";
-import { S3Ref } from "../lib/s3.ts";
-import { env } from "../env.ts";
+import { enqueueStep } from "../src/core/domain/data/qstash/mod.ts";
+import { transcribe, uploadAudio, submitTranscription } from "../src/audit/domain/data/assemblyai/mod.ts";
+import { S3Ref } from "../src/core/domain/data/s3/mod.ts";
+
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -39,7 +39,7 @@ export async function stepTranscribe(req: Request): Promise<Response> {
   if (multiKeys && multiKeys.length > 1) {
     const texts: string[] = [];
     for (const key of multiKeys) {
-      const ref = new S3Ref(env.s3Bucket, key);
+      const ref = new S3Ref(Deno.env.get("S3_BUCKET") ?? "", key);
       const bytes = await ref.get();
       if (!bytes) {
         console.warn(`[STEP-TRANSCRIBE] ${findingId}: Missing S3 file ${key}, skipping`);
@@ -78,7 +78,7 @@ export async function stepTranscribe(req: Request): Promise<Response> {
   // Use pre-uploaded URL from init if available, otherwise upload now
   let uploadUrl: string = finding.assemblyAiUploadUrl || "";
   if (!uploadUrl) {
-    const ref = new S3Ref(env.s3Bucket, s3Key);
+    const ref = new S3Ref(Deno.env.get("S3_BUCKET") ?? "", s3Key);
     const bytes = await ref.get();
     if (!bytes) {
       finding.rawTranscript = "Invalid Genie";

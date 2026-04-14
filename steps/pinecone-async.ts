@@ -1,13 +1,9 @@
-/** STEP 3b: Async Pinecone upload — runs off critical path alongside ask-batch.
- *  ask-batch falls back to rawTranscript if Pinecone isn't indexed yet. */
-import { getFinding } from "../lib/kv.ts";
-import { upload } from "../providers/pinecone.ts";
+/** STEP 3b: Async Pinecone upload — runs off critical path alongside ask-batch. */
+import { getFinding } from "../src/audit/domain/data/audit-repository/mod.ts";
+import { upload } from "../src/audit/domain/data/pinecone/mod.ts";
 
 function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
 export async function stepPineconeAsync(req: Request): Promise<Response> {
@@ -31,7 +27,6 @@ export async function stepPineconeAsync(req: Request): Promise<Response> {
     console.log(`[STEP-PINECONE] ${findingId}: Pinecone upload complete`);
   } catch (err) {
     console.error(`[STEP-PINECONE] ${findingId}: Upload failed:`, err);
-    // Non-fatal — ask-batch falls back to rawTranscript automatically
   }
 
   return json({ ok: true });

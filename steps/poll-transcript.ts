@@ -1,7 +1,7 @@
 /** STEP 2b: Poll AssemblyAI for a single-genie transcription result. Re-enqueues itself with delay if not done. */
 import { getFinding, saveFinding, trackActive } from "../lib/kv.ts";
-import { enqueueStep } from "../lib/queue.ts";
-import { pollTranscriptOnce, processTranscriptResult } from "../providers/assemblyai.ts";
+import { enqueueStep } from "../src/core/domain/data/qstash/mod.ts";
+import { pollTranscriptOnce, processTranscriptResult } from "../src/audit/domain/data/assemblyai/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

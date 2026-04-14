@@ -1,13 +1,10 @@
-/** STEP 2c: Async speaker diarization — runs in parallel with prepare, not on the critical path.
- *  Saves [AGENT]/[CUSTOMER] labels to the transcript KV when done. Never gates QA. */
-import { getFinding, saveFinding, saveTranscript, trackActive } from "../lib/kv.ts";
-import { diarize } from "../providers/groq.ts";
+/** STEP 2c: Async speaker diarization — runs in parallel with prepare, not on the critical path. */
+import { getFinding, saveFinding, saveTranscript } from "../src/audit/domain/data/audit-repository/mod.ts";
+import { trackActive } from "../src/audit/domain/data/stats-repository/mod.ts";
+import { diarize } from "../src/audit/domain/data/groq/mod.ts";
 
 function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
 export async function stepDiarizeAsync(req: Request): Promise<Response> {
@@ -18,13 +15,10 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
   if (!finding) return json({ error: "finding not found" }, 404);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
-  // Don't trackActive for finished findings — finalize already called trackCompleted()
-  // and re-adding here would leave ghost entries in the active audits list
   if (finding.findingStatus !== "finished") {
     trackActive(orgId, findingId, "diarize-async").catch(() => {});
   }
 
-  // Idempotency: skip if already diarized (QStash at-least-once delivery can cause duplicate runs)
   if (finding.diarizedTranscript) {
     console.log(`[STEP-DIARIZE] ${findingId}: Already diarized, skipping`);
     return json({ ok: true, skipped: true });
@@ -46,7 +40,6 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
     console.log(`[STEP-DIARIZE] ${findingId}: Diarization complete`);
   } catch (err) {
     console.error(`[STEP-DIARIZE] ${findingId}: Diarization failed:`, err);
-    // Raw transcript already saved in transcribe-cb — report falls back to it automatically
   }
 
   return json({ ok: true });

@@ -1,20 +1,16 @@
 /** STEP 7: Cleanup - delete Pinecone namespace and clean up KV state. */
-import { deleteNamespace } from "../providers/pinecone.ts";
+import { deleteNamespace } from "../src/audit/domain/data/pinecone/mod.ts";
 
 function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
 export async function stepCleanup(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId, pineconeNamespace } = body;
+  const { findingId, pineconeNamespace } = body;
 
   console.log(`[STEP-CLEANUP] ${findingId}: Cleaning up 24h-old audit (Pinecone + KV)...`);
 
-  // Delete Pinecone namespace
   const ns = pineconeNamespace ?? findingId;
   try {
     await deleteNamespace(ns);

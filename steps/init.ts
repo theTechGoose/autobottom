@@ -1,10 +1,12 @@
 /** STEP 1: Initialize finding, fetch recording, save to S3. */
-import { saveFinding, getFinding, trackActive, getPipelineConfig } from "../lib/kv.ts";
-import { enqueueStep } from "../lib/queue.ts";
-import { downloadRecording } from "../providers/genie.ts";
-import { uploadAudio } from "../providers/assemblyai.ts";
-import { S3Ref } from "../lib/s3.ts";
-import { env } from "../env.ts";
+import { getFinding, saveFinding } from "../src/audit/domain/data/audit-repository/mod.ts";
+import { trackActive } from "../src/audit/domain/data/stats-repository/mod.ts";
+import { getPipelineConfig } from "../src/admin/domain/data/admin-repository/mod.ts";
+import { enqueueStep } from "../src/core/domain/data/qstash/mod.ts";
+import { downloadRecording } from "../src/audit/domain/data/genie/mod.ts";
+import { uploadAudio } from "../src/audit/domain/data/assemblyai/mod.ts";
+import { S3Ref } from "../src/core/domain/data/s3/mod.ts";
+
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -72,7 +74,7 @@ export async function stepInit(req: Request): Promise<Response> {
           return null;
         }
         const key = `recordings/${finding.auditJobId}/${trimmed}.mp3`;
-        const ref = new S3Ref(env.s3Bucket, key);
+        const ref = new S3Ref(Deno.env.get("S3_BUCKET") ?? "", key);
         await ref.save(bytes);
         console.log(`[STEP-INIT] ${findingId}: Genie ${trimmed} saved (${bytes.byteLength} bytes)`);
         return { key, bytes };
@@ -123,7 +125,7 @@ export async function stepInit(req: Request): Promise<Response> {
         offset += r.bytes.byteLength;
       }
       const stitchedKey = `recordings/${finding.auditJobId}/stitched.mp3`;
-      const stitchedRef = new S3Ref(env.s3Bucket, stitchedKey);
+      const stitchedRef = new S3Ref(Deno.env.get("S3_BUCKET") ?? "", stitchedKey);
       await stitchedRef.save(stitched);
       finding.recordingPath = stitchedKey;
       console.log(`[STEP-INIT] ${findingId}: 🎵 Stitched ${successful.length} recordings → ${stitchedKey} (${totalBytes} bytes)`);
@@ -181,7 +183,7 @@ export async function stepInit(req: Request): Promise<Response> {
 
   // Save to S3
   const s3Key = `recordings/${finding.auditJobId}/${rid}.mp3`;
-  const ref = new S3Ref(env.s3Bucket, s3Key);
+  const ref = new S3Ref(Deno.env.get("S3_BUCKET") ?? "", s3Key);
   await ref.save(bytes);
 
   finding.s3RecordingKey = s3Key;

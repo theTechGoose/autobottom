@@ -3,6 +3,7 @@
 
 import { getKv } from "@core/data/deno-kv/mod.ts";
 import { publishStep } from "@core/data/qstash/mod.ts";
+import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 
 const STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -32,16 +33,22 @@ export async function getStuckFindings(thresholdMs = STUCK_THRESHOLD_MS): Promis
 }
 
 export async function runWatchdog(): Promise<{ recovered: number }> {
-  const stuck = await getStuckFindings();
-  let recovered = 0;
-  for (const s of stuck) {
-    try {
-      await publishStep(s.step, { findingId: s.findingId, orgId: s.orgId });
-      recovered++;
-      console.log(`🔧 [WATCHDOG] Re-published ${s.findingId} stuck at ${s.step} for ${Math.round(s.ageMs / 60000)}min`);
-    } catch (err) {
-      console.error(`❌ [WATCHDOG] Failed to re-publish ${s.findingId}:`, err);
+  return withSpan("watchdog.run", async (span) => {
+    const stuck = await getStuckFindings();
+    span.setAttribute("watchdog.stuck_count", stuck.length);
+    metric("autobottom.watchdog.stuck_found", stuck.length);
+    let recovered = 0;
+    for (const s of stuck) {
+      try {
+        await publishStep(s.step, { findingId: s.findingId, orgId: s.orgId });
+        recovered++;
+        console.log(`🔧 [WATCHDOG] Re-published ${s.findingId} stuck at ${s.step} for ${Math.round(s.ageMs / 60000)}min`);
+      } catch (err) {
+        console.error(`❌ [WATCHDOG] Failed to re-publish ${s.findingId}:`, err);
+      }
     }
-  }
-  return { recovered };
+    span.setAttribute("watchdog.recovered", recovered);
+    metric("autobottom.watchdog.recovered", recovered);
+    return { recovered };
+  }, {}, "internal");
 }

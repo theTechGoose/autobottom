@@ -1,3 +1,3 @@
 import { assertEquals } from "#assert";
-import { MODULE_NAME } from "./mod.ts";
-Deno.test("cron module name", () => { assertEquals(MODULE_NAME, "cron"); });
+import { registerCrons } from "./mod.ts";
+Deno.test("registerCrons is a function", () => { assertEquals(typeof registerCrons, "function"); });

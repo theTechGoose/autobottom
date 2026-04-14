@@ -6,6 +6,8 @@ import { Module } from "@danet/core";
 // console.* call gets auto-mirrored to DD Logs and every withSpan has a tracer.
 import { initOtel } from "@core/data/datadog-otel/mod.ts";
 initOtel();
+import { registerCrons } from "@cron/domain/business/cron-core/mod.ts";
+registerCrons();
 
 // Module imports
 import { AuthController } from "@core/business/auth/mod.ts";

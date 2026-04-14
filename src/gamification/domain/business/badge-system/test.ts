@@ -1,5 +1,5 @@
 /** Tests for badge system — level calculation, badge eligibility. */
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { getLevel, LEVEL_THRESHOLDS, AGENT_LEVEL_THRESHOLDS, checkBadges, DEFAULT_BADGE_STATS } from "./mod.ts";
 import type { BadgeCheckState } from "./mod.ts";
 

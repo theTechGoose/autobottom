@@ -1,6 +1,6 @@
 /** Smoke tests for gamification repository. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import {
   listSoundPacks, saveSoundPack, getSoundPack, deleteSoundPack,
   saveGamificationSettings, getGamificationSettings,

@@ -1,10 +1,10 @@
 /** Report query engine — evaluates criteria rules against finalized findings
  *  and returns structured section results for email rendering. */
 
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
-import { queryAuditDoneIndex } from "../../../../audit/domain/data/stats-repository/mod.ts";
-import { getFinding } from "../../../../audit/domain/data/audit-repository/mod.ts";
-import { getEmailTemplate } from "../../data/email-repository/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
+import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { getEmailTemplate } from "@reporting/domain/data/email-repository/mod.ts";
 import type {
   EmailReportConfig,
   DateRangeConfig,
@@ -12,10 +12,10 @@ import type {
   CriteriaRule,
   ReportColumnKey,
 } from "@core/dto/types.ts";
-import { getAppeal } from "../../../../judge/domain/data/judge-repository/mod.ts";
+import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { renderSections, renderFullEmail, renderWeeklySummary } from "./report-renderer.ts";
 import type { WeeklySummaryData } from "./report-renderer.ts";
-import { sendEmail } from "../../data/postmark/mod.ts";
+import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
 
 export type AppealStatus = "none" | "pending" | "complete";
 

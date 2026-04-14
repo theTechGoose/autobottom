@@ -1,8 +1,8 @@
 /** Review queue service — FIFO ordering, claim/decide/back logic.
  *  Pure business logic for queue operations. KV interactions via getKv(). */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewItem, ReviewDecision } from "@core/dto/types.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000; // 30 minutes

@@ -1,8 +1,8 @@
 /** Gamification repository — sound packs, settings, badges, game state, store.
  *  Ported from lib/kv.ts gamification sections. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { BadgeStats, BadgeDef, GameState } from "@core/dto/types.ts";
 
 // ── Sound Packs ──────────────────────────────────────────────────────────────
@@ -157,7 +157,7 @@ export async function purchaseStoreItem(orgId: OrgId, email: string, itemId: str
 
 // ── Award XP ─────────────────────────────────────────────────────────────────
 
-import { getLevel, LEVEL_THRESHOLDS, AGENT_LEVEL_THRESHOLDS } from "../../business/badge-system/mod.ts";
+import { getLevel, LEVEL_THRESHOLDS, AGENT_LEVEL_THRESHOLDS } from "@gamification/domain/business/badge-system/mod.ts";
 
 export async function awardXp(
   orgId: OrgId, email: string, xpAmount: number, role: "reviewer" | "judge" | "manager" | "agent",

@@ -4,14 +4,14 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import * as cfg from "@admin/domain/data/admin-repository/mod.ts";
 import * as stats from "@audit/domain/data/stats-repository/mod.ts";
-import { pauseAllQueues, resumeAllQueues, getQueueCounts } from "@core/domain/data/qstash/mod.ts";
-import { publishStep } from "@core/domain/data/qstash/mod.ts";
+import { pauseAllQueues, resumeAllQueues, getQueueCounts } from "@core/data/qstash/mod.ts";
+import { publishStep } from "@core/data/qstash/mod.ts";
 import { clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getTokenUsage } from "@audit/domain/data/groq/mod.ts";
-import { ReturnedType, Description, BodyType } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { PipelineConfigResponse, ParallelismResponse, WebhookConfigResponse, BadWordConfigResponse, BypassConfigResponse, BonusConfigResponse, DimensionsResponse, PartnerDimensionsResponse, QueueCountsResponse, OkResponse, OkMessageResponse, ClearedResponse, TerminatedResponse, TokenUsageResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Admin — pipeline config, settings, queue management, backfills")

@@ -2,18 +2,18 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Req, Query, Body, HttpContext } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description, BodyType } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { AuditQueuedResponse, FindingResponse, MessageResponse, PipelineStatsResponse } from "@core/dto/responses.ts";
 import { getStats } from "@audit/domain/data/stats-repository/mod.ts";
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
-import { authenticate } from "@core/domain/business/auth/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
-import { KvRepository } from "@core/domain/business/repository-base/mod.ts";
+import { authenticate } from "@core/business/auth/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { KvRepository } from "@core/business/repository-base/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
-import { enqueueStep } from "@core/domain/data/qstash/mod.ts";
-import { S3Ref } from "@core/domain/data/s3/mod.ts";
+import { enqueueStep } from "@core/data/qstash/mod.ts";
+import { S3Ref } from "@core/data/s3/mod.ts";
 
 const findingRepo = new KvRepository("audit-finding");
 const jobRepo = new KvRepository("audit-job");

@@ -1,5 +1,5 @@
 /** Smoke tests for question-lab repository. */
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import {
   listConfigs, createConfig, getConfig, updateConfig, deleteConfig,
   createQuestion, getQuestion, updateQuestion, deleteQuestion, getQuestionsForConfig, restoreVersion,

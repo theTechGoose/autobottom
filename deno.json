@@ -5,9 +5,7 @@
     "dev": "deno run -A --unstable-raw-imports --unstable-cron --unstable-kv --env --watch bootstrap/mod.ts",
     "check": "deno check bootstrap/mod.ts",
     "test": "deno test -A --unstable-raw-imports --unstable-kv",
-    "test:email": "deno run --allow-net --allow-env --allow-read --env test/email-pipeline.ts",
-    "test:sheets": "deno run --allow-net --allow-env --allow-read --env test/manual/fire-sheets-cron.ts",
-    "test:qlab-mode": "deno run --allow-all --unstable-kv --env test-qlab-mode.ts"
+    "shape-check": "shape-checker"
   },
   "imports": {
     "@mrg-keystone/danet": "/Users/adam/Programming/keystone/keystone-suite/external/projects/danet/src/bootstrap/mod.ts",
@@ -22,6 +20,9 @@
     "#danet/swagger": "jsr:@danet/swagger@2",
     "#zod": "npm:zod@3",
     "#assert": "jsr:@std/assert",
+    "#danet/swagger-decorators": "jsr:@danet/swagger@2/decorators",
+    "#groq-sdk": "npm:groq-sdk",
+    "#openai": "npm:openai",
     "@core/": "./src/core/",
     "@audit/": "./src/audit/",
     "@review/": "./src/review/",

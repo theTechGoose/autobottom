@@ -1,8 +1,8 @@
 /** Stats repository — pipeline tracking, audit-done-idx, chargeback/wire entries.
  *  Ported from lib/kv.ts tracking/stats/index/chargeback/wire sections. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 

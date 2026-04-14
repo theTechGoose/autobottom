@@ -1,6 +1,6 @@
 /** Smoke tests for stats repository — tracking, index, chargebacks, wire. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import {
   trackActive, trackCompleted, trackError, clearErrors, trackRetry,
   writeAuditDoneIndex, queryAuditDoneIndex, findAuditsByRecordId,

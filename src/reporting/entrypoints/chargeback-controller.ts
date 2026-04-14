@@ -2,15 +2,15 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, BodyType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import { ChargebackReportResponse, WireReportResponse, OkResponse, OkMessageResponse, EmailConfigListResponse, EmailPreviewResponse, MessageResponse } from "@core/dto/responses.ts";
-import { GenericBodyRequest } from "@core/dto/requests.ts";
+import { GenericBodyRequest, PostToSheetRequest } from "@core/dto/requests.ts";
 import { queryChargebackReport, queryWireReport } from "@reporting/domain/business/chargeback-report/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { getChargebackEntries, getWireDeductionEntries } from "@audit/domain/data/stats-repository/mod.ts";
 
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Chargebacks & Wire Deductions — report data for dashboard and sheets")
@@ -41,7 +41,7 @@ export class ChargebackController {
     return { items: await queryWireReport(ORG(), s, u, reviewedIds, bypassCfg.patterns) };
   }
 
-  @Post("post-to-sheet") @ReturnedType(OkMessageResponse)
+  @Post("post-to-sheet") @ReturnedType(OkMessageResponse) @BodyType(PostToSheetRequest)
   async postToSheet(@Body() body: { since: number; until: number; tabs: string }) {
     if (!body.since || !body.until || !body.tabs) return { error: "since, until, tabs required" };
     return { ok: true, message: "Sheets export requires SA credentials from S3 — use admin dashboard" };

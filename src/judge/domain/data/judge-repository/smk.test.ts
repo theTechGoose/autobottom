@@ -1,5 +1,5 @@
 /** Smoke tests for judge repository. */
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { populateJudgeQueue, recordJudgeDecision, getJudgeStats, getAppeal, dismissFindingFromJudgeQueue } from "./mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };

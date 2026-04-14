@@ -2,13 +2,13 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description, BodyType } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import * as emailRepo from "@reporting/domain/data/email-repository/mod.ts";
 
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Webhooks & Email Templates — inbound webhook handlers and template CRUD")

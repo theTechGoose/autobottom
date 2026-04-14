@@ -1,7 +1,7 @@
 /** Chat/messaging repository. Ported from lib/kv.ts messaging section. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 export interface Message { id: string; from: string; to: string; body: string; ts: number; read: boolean; }
 

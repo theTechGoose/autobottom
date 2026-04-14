@@ -1,6 +1,6 @@
 /** Tests for chargeback report filtering and classification. */
 
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "#assert";
 import type { ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
 
 // Inline the pure filtering logic to test without KV

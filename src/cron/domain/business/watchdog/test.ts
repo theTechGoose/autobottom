@@ -1,6 +1,6 @@
 /** Tests for watchdog stuck-finding detection logic. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 
 interface StuckFinding {
   orgId: string; findingId: string; step: string; ts: number; ageMs: number;

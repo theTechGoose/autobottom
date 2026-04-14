@@ -1,8 +1,8 @@
 /** Judge queue repository — appeals, decisions, queue ops.
  *  Ported from judge/kv.ts core queue operations. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;

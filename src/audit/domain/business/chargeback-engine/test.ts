@@ -1,6 +1,6 @@
 /** Tests for chargeback/omission classification engine. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import {
   computeFailedQuestions, splitHeaders, buildChargebackEntry,
   buildWireDeductionEntry, classifyChargebacks, isOfficeBypassed,

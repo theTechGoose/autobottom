@@ -1,6 +1,6 @@
 /** Smoke tests for email report config + template repository. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import {
   listEmailReportConfigs, getEmailReportConfig, saveEmailReportConfig, deleteEmailReportConfig,
   listEmailTemplates, getEmailTemplate, saveEmailTemplate, deleteEmailTemplate,

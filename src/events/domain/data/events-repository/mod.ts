@@ -1,8 +1,8 @@
 /** Events repository — personal events, broadcast events, prefab subscriptions.
  *  Ported from lib/kv.ts SSE events + broadcast sections. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 const DAY_MS = 86_400_000;
 

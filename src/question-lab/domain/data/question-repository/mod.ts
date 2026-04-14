@@ -1,8 +1,8 @@
 /** Question Lab repository — config, question, test, assignment CRUD.
  *  Ported from question-lab/kv.ts. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 /** Smoke tests for genie adapter — tests pure validation logic only. */
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { isValidAudio } from "./mod.ts";
 
 Deno.test("isValidAudio — MP3 ID3 header detected", () => {

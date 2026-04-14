@@ -1,5 +1,5 @@
 /** Smoke tests for events repository. */
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { emitEvent, getEvents, deleteEvents, savePrefabSubscriptions, getPrefabSubscriptions, emitBroadcastEvent, getBroadcastEvents } from "./mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };

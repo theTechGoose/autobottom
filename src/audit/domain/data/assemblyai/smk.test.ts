@@ -1,6 +1,6 @@
 /** Smoke tests for AssemblyAI adapter — tests pure role identification logic. */
 
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "#assert";
 import { identifyRoles, processTranscriptResult } from "./mod.ts";
 
 Deno.test("identifyRoles — most talkative speaker is AGENT", () => {

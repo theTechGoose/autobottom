@@ -2,12 +2,12 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, BodyType } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, QLConfigListResponse, QLConfigResponse, QLQuestionResponse, QLQuestionNamesResponse, BulkUpdateResponse, QLAssignmentsResponse, SoundPackListResponse, GamificationSettingsResponse, StoreItemListResponse, PurchaseResponse, BadgeListResponse, UnreadCountResponse, ConversationListResponse, UserListResponse, MessageSentResponse, EventsResponse, WeeklyDataResponse } from "@core/dto/responses.ts";
-import { GenericBodyRequest } from "@core/dto/requests.ts";
+import { GenericBodyRequest, CreateConfigRequest, IdRequest, CreateQuestionRequest, RestoreVersionRequest, BulkEgregiousRequest, CreateTestRequest, AssignmentRequest } from "@core/dto/requests.ts";
 import * as repo from "@question-lab/domain/data/question-repository/mod.ts";
 
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Question Lab — audit question configuration, editing, testing")
@@ -17,21 +17,21 @@ export class QuestionLabController {
   @Get("qlab/configs") @ReturnedType(QLConfigListResponse)
   async listConfigs() { return { configs: await repo.listConfigs(ORG()) }; }
 
-  @Post("qlab/configs") @ReturnedType(QLConfigResponse)
+  @Post("qlab/configs") @ReturnedType(QLConfigResponse) @BodyType(CreateConfigRequest)
   async createConfig(@Body() body: { name: string; type?: string }) {
     return repo.createConfig(ORG(), body.name, (body.type as "internal" | "partner") ?? "internal");
   }
 
-  @Post("qlab/configs/update") @ReturnedType(QLConfigResponse)
+  @Post("qlab/configs/update") @ReturnedType(QLConfigResponse) @BodyType(GenericBodyRequest)
   async updateConfig(@Body() body: any) {
     const { id, ...patch } = body;
     return (await repo.updateConfig(ORG(), id, patch)) ?? { error: "not found" };
   }
 
-  @Post("qlab/configs/delete") @ReturnedType(OkResponse)
+  @Post("qlab/configs/delete") @ReturnedType(OkResponse) @BodyType(IdRequest)
   async deleteConfig(@Body() body: { id: string }) { await repo.deleteConfig(ORG(), body.id); return { ok: true }; }
 
-  @Post("qlab/configs/clone") @ReturnedType(QLConfigResponse)
+  @Post("qlab/configs/clone") @ReturnedType(QLConfigResponse) @BodyType(IdRequest)
   async cloneConfig(@Body() body: { id: string }) {
     const src = await repo.getConfig(ORG(), body.id);
     if (!src) return { error: "not found" };
@@ -41,7 +41,7 @@ export class QuestionLabController {
     return clone;
   }
 
-  @Post("qlab/configs/import") @ReturnedType(OkMessageResponse)
+  @Post("qlab/configs/import") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async importConfig(@Body() body: any) {
     const { name, type, questions, dupeMode = "skip" } = body;
     if (!name || !Array.isArray(questions)) return { error: "name and questions required" };
@@ -62,21 +62,21 @@ export class QuestionLabController {
   @Get("qlab/question") @ReturnedType(QLQuestionResponse)
   async getQuestion(@Query("id") id: string) { return (await repo.getQuestion(ORG(), id)) ?? { error: "not found" }; }
 
-  @Post("qlab/questions") @ReturnedType(QLQuestionResponse)
+  @Post("qlab/questions") @ReturnedType(QLQuestionResponse) @BodyType(CreateQuestionRequest)
   async createQuestion(@Body() body: { configId: string; name: string; text: string }) {
     return repo.createQuestion(ORG(), body.configId, body.name, body.text);
   }
 
-  @Post("qlab/questions/update") @ReturnedType(QLQuestionResponse)
+  @Post("qlab/questions/update") @ReturnedType(QLQuestionResponse) @BodyType(GenericBodyRequest)
   async updateQuestion(@Body() body: any) {
     const { id, ...patch } = body;
     return (await repo.updateQuestion(ORG(), id, patch)) ?? { error: "not found" };
   }
 
-  @Post("qlab/questions/delete") @ReturnedType(OkResponse)
+  @Post("qlab/questions/delete") @ReturnedType(OkResponse) @BodyType(IdRequest)
   async deleteQuestion(@Body() body: { id: string }) { await repo.deleteQuestion(ORG(), body.id); return { ok: true }; }
 
-  @Post("qlab/questions/restore") @ReturnedType(QLQuestionResponse)
+  @Post("qlab/questions/restore") @ReturnedType(QLQuestionResponse) @BodyType(RestoreVersionRequest)
   async restoreVersion(@Body() body: { id: string; versionIndex: number }) {
     return (await repo.restoreVersion(ORG(), body.id, body.versionIndex)) ?? { error: "not found" };
   }
@@ -84,24 +84,24 @@ export class QuestionLabController {
   @Get("qlab/question-names") @ReturnedType(QLQuestionNamesResponse)
   async getQuestionNames() { return { names: await repo.getAllQuestionNames(ORG()) }; }
 
-  @Post("qlab/questions/bulk-egregious") @ReturnedType(BulkUpdateResponse)
+  @Post("qlab/questions/bulk-egregious") @ReturnedType(BulkUpdateResponse) @BodyType(BulkEgregiousRequest)
   async bulkSetEgregious(@Body() body: { name: string; egregious: boolean }) {
     const count = await repo.bulkSetEgregious(ORG(), body.name, body.egregious);
     return { ok: true, updated: count };
   }
 
-  @Post("qlab/tests") @ReturnedType(OkResponse)
+  @Post("qlab/tests") @ReturnedType(OkResponse) @BodyType(CreateTestRequest)
   async createTest(@Body() body: { questionId: string; input: string; expectedAnswer: string }) {
     return repo.createTest(ORG(), body.questionId, body.input, body.expectedAnswer);
   }
 
-  @Post("qlab/tests/update") @ReturnedType(OkMessageResponse)
+  @Post("qlab/tests/update") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async updateTest(@Body() body: any) { return { ok: true, message: "Test update requires test result data — deferred to QA integration" }; }
 
-  @Post("qlab/tests/delete") @ReturnedType(OkResponse)
+  @Post("qlab/tests/delete") @ReturnedType(OkResponse) @BodyType(IdRequest)
   async deleteTest(@Body() body: { id: string }) { await repo.deleteTest(ORG(), body.id); return { ok: true }; }
 
-  @Post("qlab/simulate") @ReturnedType(OkMessageResponse)
+  @Post("qlab/simulate") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async simulate(@Body() body: any) {
     if (!body.question || !body.transcript) return { error: "question and transcript required" };
     const { askQuestion } = await import("../../audit/domain/data/groq/mod.ts");
@@ -117,7 +117,7 @@ export class QuestionLabController {
     return { snippet: transcript?.diarized?.slice(0, 2000) ?? transcript?.raw?.slice(0, 2000) ?? "" };
   }
 
-  @Post("qlab/test-audit") @ReturnedType(OkResponse)
+  @Post("qlab/test-audit") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async runTestAudit(@Body() body: any) {
     if (!body.rid || !body.configName) return { error: "rid and configName required" };
     const { enqueueStep } = await import("../../core/domain/data/qstash/mod.ts");
@@ -140,7 +140,7 @@ export class QuestionLabController {
   @Get("qlab/test-runs") @ReturnedType(OkResponse)
   async getTestRuns(@Query("configId") configId: string) { return { runs: [] }; }
 
-  @Post("qlab/test-emails") @ReturnedType(OkMessageResponse)
+  @Post("qlab/test-emails") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async updateTestEmails(@Body() body: any) {
     if (!body.configId || !body.emails) return { error: "configId, emails required" };
     const config = await repo.updateConfig(ORG(), body.configId, { testEmailRecipients: body.emails } as any);
@@ -153,7 +153,7 @@ export class QuestionLabController {
     return { internal, partner };
   }
 
-  @Post("qlab-assignments") @ReturnedType(OkResponse)
+  @Post("qlab-assignments") @ReturnedType(OkResponse) @BodyType(AssignmentRequest)
   async setAssignment(@Body() body: { type: string; key: string; value: string | null }) {
     if (body.type === "internal") await repo.setInternalAssignment(ORG(), body.key, body.value);
     else await repo.setPartnerAssignment(ORG(), body.key, body.value);

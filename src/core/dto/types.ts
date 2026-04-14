@@ -1,7 +1,7 @@
 /** Shared type definitions for the autobottom backend API. */
 
-export type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
-export type { Role, AuthContext, OrgRecord, UserRecord } from "@core/domain/business/auth/mod.ts";
+export type { OrgId } from "@core/data/deno-kv/mod.ts";
+export type { Role, AuthContext, OrgRecord, UserRecord } from "@core/business/auth/mod.ts";
 
 // ── Audit types ──────────────────────────────────────────────────────────────
 

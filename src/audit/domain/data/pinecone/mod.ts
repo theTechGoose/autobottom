@@ -1,5 +1,5 @@
 /** Pinecone vector store adapter for RAG retrieval. Ported from providers/pinecone.ts. */
-import OpenAI from "npm:openai";
+import OpenAI from "#openai";
 
 function getOpenAI() { return new OpenAI({ apiKey: Deno.env.get("OPEN_AI_KEY") }); }
 

@@ -1,8 +1,8 @@
 /** Watchdog — detects and re-publishes stuck pipeline steps.
  *  Ported from the hourly cron in main.ts. */
 
-import { getKv } from "@core/domain/data/deno-kv/mod.ts";
-import { publishStep } from "@core/domain/data/qstash/mod.ts";
+import { getKv } from "@core/data/deno-kv/mod.ts";
+import { publishStep } from "@core/data/qstash/mod.ts";
 
 const STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 

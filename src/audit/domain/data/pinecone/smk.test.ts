@@ -1,6 +1,6 @@
 /** Smoke tests for Pinecone adapter — tests pure chunking logic only. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { chunkText } from "./mod.ts";
 
 Deno.test("chunkText — short text returns single chunk", () => {

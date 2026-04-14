@@ -2,13 +2,13 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description, BodyType } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { ReviewBufferResponse, DecisionResponse, ReviewStatsResponse, OkResponse, OkMessageResponse, ReviewerConfigResponse, MessageResponse, GamificationSettingsResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, ReviewDecideRequest, ReviewBackRequest } from "@core/dto/requests.ts";
 import { recordDecision, getReviewStats, getReviewedFindingIds, clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Review — human-in-the-loop audit verification")

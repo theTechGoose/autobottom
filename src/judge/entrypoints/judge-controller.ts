@@ -2,14 +2,14 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, BodyType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import { JudgeStatsResponse, ReviewBufferResponse, DecisionResponse, OkResponse, OkMessageResponse, ReviewerListResponse, ReviewerConfigResponse, DismissResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, JudgeDecideRequest, DeleteEmailRequest, ReviewerConfigRequest, FindingIdRequest } from "@core/dto/requests.ts";
 import { recordJudgeDecision, getJudgeStats, getAppeal, dismissFindingFromJudgeQueue, clearJudgeQueue } from "@judge/domain/data/judge-repository/mod.ts";
 import { getReviewerConfig, saveReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
-import { listUsers } from "@core/domain/business/auth/mod.ts";
+import { listUsers } from "@core/business/auth/mod.ts";
 
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Judge — appeal review and reviewer management")
@@ -74,12 +74,12 @@ export class JudgeController {
     return { ok: true };
   }
 
-  @Post("dismiss-finding") @ReturnedType(DismissResponse) @Description("Dismiss finding from judge queue")
+  @Post("dismiss-finding") @ReturnedType(DismissResponse) @Description("Dismiss finding from judge queue") @BodyType(FindingIdRequest)
   async dismissFinding(@Body() body: { findingId: string }) {
     return dismissFindingFromJudgeQueue(ORG(), body.findingId);
   }
 
-  @Post("dismiss-appeal") @ReturnedType(OkResponse) @Description("Dismiss appeal")
+  @Post("dismiss-appeal") @ReturnedType(OkResponse) @Description("Dismiss appeal") @BodyType(FindingIdRequest)
   async dismissAppeal(@Body() body: { findingId: string }) {
     await dismissFindingFromJudgeQueue(ORG(), body.findingId);
     return { ok: true };
@@ -91,6 +91,6 @@ export class JudgeController {
   @Get("gamification") @ReturnedType(OkResponse) @Description("Get gamification settings")
   async getGamification() { return {}; }
 
-  @Post("gamification") @ReturnedType(OkResponse) @Description("Save gamification settings")
+  @Post("gamification") @ReturnedType(OkResponse) @Description("Save gamification settings") @BodyType(GenericBodyRequest)
   async saveGamification(@Body() body: GenericBodyRequest) { return { ok: true }; }
 }

@@ -1,7 +1,7 @@
 /** Email report config + template repository. Ported from lib/kv.ts. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { EmailReportConfig } from "@core/dto/types.ts";
 
 // ── Email Report Configs ─────────────────────────────────────────────────────

@@ -1,14 +1,14 @@
 import { Module } from "@danet/core";
-import { AuthController } from "@core/entrypoints/auth-controller.ts";
+import { AuthController } from "@core/business/auth/controller.ts";
 
 // Re-export core components for consumers
-export { KvRepository } from "@core/domain/business/repository-base/mod.ts";
-export type { OrgId, SetOptions } from "@core/domain/business/repository-base/mod.ts";
-export { getKv, orgKey, resetKv } from "@core/domain/data/deno-kv/mod.ts";
-export { S3Ref } from "@core/domain/data/s3/mod.ts";
-export * from "@core/domain/business/auth/mod.ts";
-export { AuthGuard, getAuthFromContext, resolveOrgId } from "@core/domain/business/auth/guard.ts";
-export * from "@core/domain/data/qstash/mod.ts";
+export { KvRepository } from "@core/business/repository-base/mod.ts";
+export type { OrgId, SetOptions } from "@core/business/repository-base/mod.ts";
+export { getKv, orgKey, resetKv } from "@core/data/deno-kv/mod.ts";
+export { S3Ref } from "@core/data/s3/mod.ts";
+export * from "@core/business/auth/mod.ts";
+export { AuthGuard, getAuthFromContext, resolveOrgId } from "@core/business/auth/guard.ts";
+export * from "@core/data/qstash/mod.ts";
 export * from "@core/dto/types.ts";
 
 @Module({

@@ -2,7 +2,7 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Post, Req } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, Description } from "#danet/swagger-decorators";
 import { StepResponse } from "@core/dto/responses.ts";
 import {
   stepInit, stepTranscribe, stepTranscribeCb, stepPollTranscript,

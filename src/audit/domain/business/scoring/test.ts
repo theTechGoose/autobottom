@@ -1,6 +1,6 @@
 /** Tests for scoring engine: bonus flips, score calculation, auto-complete. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { applyBonusFlips, calculateScore, getAutoCompleteReason } from "./mod.ts";
 import type { ScoringQuestion } from "./mod.ts";
 

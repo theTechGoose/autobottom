@@ -2,12 +2,12 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, BodyType } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, QLConfigListResponse, QLConfigResponse, QLQuestionResponse, QLQuestionNamesResponse, BulkUpdateResponse, QLAssignmentsResponse, SoundPackListResponse, GamificationSettingsResponse, StoreItemListResponse, PurchaseResponse, BadgeListResponse, UnreadCountResponse, ConversationListResponse, UserListResponse, MessageSentResponse, EventsResponse, WeeklyDataResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { listEmailReportConfigs } from "@reporting/domain/data/email-repository/mod.ts";
 
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Weekly Builder — schedule and publish weekly email reports")
@@ -21,7 +21,7 @@ export class WeeklyBuilderController {
     return { reports: weekly, schedules: weekly.map((c) => ({ id: c.id, name: c.name, schedule: c.schedule })) };
   }
 
-  @Post("publish") @ReturnedType(OkResponse)
+  @Post("publish") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async publish(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.id) return { error: "report config id required" };
@@ -33,7 +33,7 @@ export class WeeklyBuilderController {
     return { ok: true };
   }
 
-  @Post("test-send") @ReturnedType(OkResponse)
+  @Post("test-send") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async testSend(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.id) return { error: "report config id required" };

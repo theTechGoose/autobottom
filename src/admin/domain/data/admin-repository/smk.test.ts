@@ -1,6 +1,6 @@
 /** Smoke tests for admin config repository. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import {
   getPipelineConfig, setPipelineConfig,
   getWebhookConfig, saveWebhookConfig,

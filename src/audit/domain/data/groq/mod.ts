@@ -1,5 +1,5 @@
 /** Groq LLM adapter for QA, diarization, feedback. Ported from providers/groq.ts. */
-import Groq from "npm:groq-sdk";
+import Groq from "#groq-sdk";
 import type { ChatCompletion } from "npm:groq-sdk/resources/chat/completions";
 
 function getClient() { return new Groq({ apiKey: Deno.env.get("GROQ_API_KEY") }); }

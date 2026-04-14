@@ -1,6 +1,6 @@
 /** Smoke tests for audit repository — uses in-memory Deno KV. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import {
   getFinding, saveFinding, getJob, saveJob,
   claimAuditDedup, setBatchCounter, decrementBatchCounter,

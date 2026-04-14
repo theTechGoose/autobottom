@@ -1,6 +1,6 @@
 /** Tests for review queue FIFO ordering and selection logic. */
 
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { selectOldestFinding } from "./mod.ts";
 import type { ReviewItem } from "@core/dto/types.ts";
 

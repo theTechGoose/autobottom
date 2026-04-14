@@ -414,7 +414,9 @@
       "jsr:@danet/core@2",
       "jsr:@danet/swagger@2",
       "jsr:@std/assert@*",
+      "npm:groq-sdk@*",
       "npm:handlebars@^4.7.8",
+      "npm:openai@*",
       "npm:openapi3-ts@4.5.0",
       "npm:reflect-metadata@0.1.13",
       "npm:zod@3"

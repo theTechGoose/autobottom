@@ -1,5 +1,5 @@
 /** Bad word detection — checks package transcripts for prohibited phrases and sends email alerts. */
-import { sendEmail } from "../../../../reporting/domain/data/postmark/mod.ts";
+import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
 export interface BadWordEntry { word: string; exclusions?: { word: string; buffer: number; type: string }[] }
 export type BadWordConfig = { enabled: boolean; emails: string[]; words: (BadWordEntry | string)[]; allOffices: boolean; officePatterns: string[] };
 

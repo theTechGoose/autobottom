@@ -13,15 +13,15 @@
  */
 
 // Re-export original step handlers — these are the production implementations
-export { stepInit } from "../../../../../steps/init.ts";
-export { stepTranscribe } from "../../../../../steps/transcribe.ts";
-export { stepTranscribeCb } from "../../../../../steps/transcribe-cb.ts";
-export { stepPollTranscript } from "../../../../../steps/poll-transcript.ts";
-export { stepDiarizeAsync } from "../../../../../steps/diarize-async.ts";
-export { stepPineconeAsync } from "../../../../../steps/pinecone-async.ts";
-export { stepPrepare } from "../../../../../steps/prepare.ts";
-export { stepAskBatch } from "../../../../../steps/ask-batch.ts";
-export { stepAskAll } from "../../../../../steps/ask-all.ts";
-export { stepFinalize } from "../../../../../steps/finalize.ts";
-export { stepCleanup } from "../../../../../steps/cleanup.ts";
-export { stepBadWordCheck } from "../../../../../steps/bad-word-check.ts";
+export { stepInit } from "../pipeline-steps/init.ts";
+export { stepTranscribe } from "../pipeline-steps/transcribe.ts";
+export { stepTranscribeCb } from "../pipeline-steps/transcribe-cb.ts";
+export { stepPollTranscript } from "../pipeline-steps/poll-transcript.ts";
+export { stepDiarizeAsync } from "../pipeline-steps/diarize-async.ts";
+export { stepPineconeAsync } from "../pipeline-steps/pinecone-async.ts";
+export { stepPrepare } from "../pipeline-steps/prepare.ts";
+export { stepAskBatch } from "../pipeline-steps/ask-batch.ts";
+export { stepAskAll } from "../pipeline-steps/ask-all.ts";
+export { stepFinalize } from "../pipeline-steps/finalize.ts";
+export { stepCleanup } from "../pipeline-steps/cleanup.ts";
+export { stepBadWordCheck } from "../pipeline-steps/bad-word-check.ts";

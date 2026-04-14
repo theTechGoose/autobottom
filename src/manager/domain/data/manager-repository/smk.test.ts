@@ -1,5 +1,5 @@
 /** Smoke tests for manager repository. */
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { populateManagerQueue, getManagerQueue, submitRemediation, getManagerStats } from "./mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };

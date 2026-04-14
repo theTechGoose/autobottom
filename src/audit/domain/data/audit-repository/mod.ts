@@ -1,8 +1,8 @@
 /** Audit data repository — findings, jobs, batches, transcripts, cache, dedup.
  *  Ported from lib/kv.ts finding/job/batch/cache/transcript sections. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 const DEDUP_TTL_MS = 5 * 60 * 1000;
 const CACHE_TTL_MS = 10 * 60 * 1000;

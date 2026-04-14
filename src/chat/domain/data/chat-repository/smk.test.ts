@@ -1,5 +1,5 @@
 /** Smoke tests for chat repository. */
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { sendMessage, getConversation, getUnreadCount, markConversationRead, getConversationList } from "./mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };

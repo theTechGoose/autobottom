@@ -2,12 +2,12 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, BodyType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import { ChargebackReportResponse, WireReportResponse, OkResponse, OkMessageResponse, EmailConfigListResponse, EmailPreviewResponse, MessageResponse } from "@core/dto/responses.ts";
-import { GenericBodyRequest } from "@core/dto/requests.ts";
+import { GenericBodyRequest, IdRequest } from "@core/dto/requests.ts";
 import * as repo from "@reporting/domain/data/email-repository/mod.ts";
 
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Email Reports — CRUD for scheduled email report configurations")
@@ -17,19 +17,19 @@ export class EmailReportController {
   @Get("") @ReturnedType(EmailConfigListResponse)
   async list() { return { configs: await repo.listEmailReportConfigs(ORG()) }; }
 
-  @Post("") @ReturnedType(OkResponse)
+  @Post("") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async save(@Body() body: GenericBodyRequest) {
     const config = await repo.saveEmailReportConfig(ORG(), body as any);
     return { ok: true, config };
   }
 
-  @Post("delete") @ReturnedType(OkResponse)
+  @Post("delete") @ReturnedType(OkResponse) @BodyType(IdRequest)
   async doDelete(@Body() body: { id: string }) {
     await repo.deleteEmailReportConfig(ORG(), body.id);
     return { ok: true };
   }
 
-  @Post("preview") @ReturnedType(EmailPreviewResponse)
+  @Post("preview") @ReturnedType(EmailPreviewResponse) @BodyType(GenericBodyRequest)
   async preview(@Body() body: GenericBodyRequest) {
     const configId = (body as any).id ?? (body as any).configId;
     if (!configId) return { error: "id required" };
@@ -42,7 +42,7 @@ export class EmailReportController {
     return { html };
   }
 
-  @Post("preview-inline") @ReturnedType(EmailPreviewResponse)
+  @Post("preview-inline") @ReturnedType(EmailPreviewResponse) @BodyType(GenericBodyRequest)
   async previewInline(@Body() body: GenericBodyRequest) { return { html: "" }; }
 
   @Get("preview-view") @ReturnedType(EmailPreviewResponse)
@@ -51,7 +51,7 @@ export class EmailReportController {
     return preview ?? { html: "" };
   }
 
-  @Post("send-now") @ReturnedType(OkResponse)
+  @Post("send-now") @ReturnedType(OkResponse) @BodyType(IdRequest)
   async sendNow(@Body() body: { id: string }) {
     if (!body.id) return { error: "id required" };
     const config = await repo.getEmailReportConfig(ORG(), body.id);

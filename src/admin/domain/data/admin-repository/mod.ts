@@ -1,8 +1,8 @@
 /** Admin config repository — pipeline, webhooks, bypass, bonus, dimensions, scopes.
  *  Ported from lib/kv.ts config sections. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { PipelineConfig, WebhookConfig, BadWordConfig, OfficeBypassConfig, BonusPointsConfig } from "@core/dto/types.ts";
 
 type WebhookKind = "terminate" | "appeal" | "manager" | "judge" | "judge-finish" | "review" | "re-audit-receipt";

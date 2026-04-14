@@ -1,7 +1,7 @@
 /** Tests that all DTO classes can be constructed via Reflect.construct —
  *  the exact call @danet/swagger makes in generateTypeSchema. */
 
-import { assert } from "jsr:@std/assert";
+import { assert } from "#assert";
 import * as R from "./responses.ts";
 import * as Q from "./requests.ts";
 

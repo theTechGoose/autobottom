@@ -1,7 +1,7 @@
 /** Manager queue repository. Ported from manager/kv.ts. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 export interface ManagerQueueItem { findingId: string; addedAt: number; status: string; }
 

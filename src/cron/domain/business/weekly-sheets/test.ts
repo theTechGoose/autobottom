@@ -1,6 +1,6 @@
 /** Tests for weekly sheets date window calculation. */
 
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "#assert";
 import { prevWeekWindow } from "./mod.ts";
 
 Deno.test("prevWeekWindow — Monday gives previous Mon-Sun", () => {

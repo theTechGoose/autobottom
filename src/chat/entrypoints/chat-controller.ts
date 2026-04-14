@@ -2,20 +2,20 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
-import { ReturnedType, BodyType } from "jsr:@danet/swagger@2/decorators";
+import { ReturnedType, BodyType } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, QLConfigListResponse, QLConfigResponse, QLQuestionResponse, QLQuestionNamesResponse, BulkUpdateResponse, QLAssignmentsResponse, SoundPackListResponse, GamificationSettingsResponse, StoreItemListResponse, PurchaseResponse, BadgeListResponse, UnreadCountResponse, ConversationListResponse, UserListResponse, MessageSentResponse, EventsResponse, WeeklyDataResponse } from "@core/dto/responses.ts";
-import { GenericBodyRequest } from "@core/dto/requests.ts";
+import { GenericBodyRequest, SendMessageRequest } from "@core/dto/requests.ts";
 import { sendMessage, getUnreadCount, getConversationList } from "@chat/domain/data/chat-repository/mod.ts";
-import { listUsers } from "@core/domain/business/auth/mod.ts";
+import { listUsers } from "@core/business/auth/mod.ts";
 
-import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+import { defaultOrgId } from "@core/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Chat — internal messaging between team members")
 @Controller("api")
 export class ChatController {
 
-  @Post("messages") @ReturnedType(MessageSentResponse)
+  @Post("messages") @ReturnedType(MessageSentResponse) @BodyType(SendMessageRequest)
   async doSendMessage(@Body() body: { from: string; to: string; body: string }) {
     if (!body.from || !body.to || !body.body) return { error: "from, to, body required" };
     return sendMessage(ORG(), body.from, body.to, body.body);

@@ -1,5 +1,5 @@
 /** Tests for question expression parsing and evaluation. */
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { evaluateAutoYes } from "./mod.ts";
 
 Deno.test("evaluateAutoYes — ~ (contains) operator", () => {

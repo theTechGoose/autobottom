@@ -1,5 +1,5 @@
 /** Smoke tests for bad word detection — pure logic only. */
-import { assertEquals, assert } from "jsr:@std/assert";
+import { assertEquals, assert } from "#assert";
 import { detectBadWords } from "./mod.ts";
 
 Deno.test("detectBadWords — finds simple word match", () => {

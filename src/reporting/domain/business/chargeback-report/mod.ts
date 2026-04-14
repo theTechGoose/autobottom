@@ -1,8 +1,8 @@
 /** Chargeback report service — queries audit-done-idx and builds
  *  chargeback/omission/wire entries from reviewed findings. */
 
-import { getKv, orgKey } from "@core/domain/data/deno-kv/mod.ts";
-import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
 import { classifyChargebacks, isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 

@@ -3,7 +3,9 @@ import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Req, Query, Body, HttpContext } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
-import { AuditQueuedResponse, FindingResponse, MessageResponse } from "@core/dto/responses.ts";
+import { AuditQueuedResponse, FindingResponse, MessageResponse, PipelineStatsResponse } from "@core/dto/responses.ts";
+import { getStats } from "@audit/domain/data/stats-repository/mod.ts";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { authenticate } from "@core/domain/business/auth/mod.ts";
@@ -98,9 +100,18 @@ export class AuditController {
     return finding;
   }
 
-  @Get("stats") @ReturnedType(MessageResponse) @Description("Get pipeline stats")
+  @Get("stats") @ReturnedType(PipelineStatsResponse) @Description("Get pipeline stats")
   async getStats() {
-    // TODO: port getStats from lib/kv.ts
-    return { message: "stats endpoint — pending full port" };
+    const orgId = defaultOrgId();
+    const stats = await getStats(orgId);
+    return {
+      inPipe: stats.active.length,
+      active: stats.active,
+      completed24h: stats.completedCount,
+      errors24h: stats.errors.length,
+      errors: stats.errors,
+      retries24h: stats.retries.length,
+      retries: stats.retries,
+    };
   }
 }

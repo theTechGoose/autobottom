@@ -32,5 +32,5 @@ export class UserController {
   }
 
   @Get("api/me") @ReturnedType(MessageResponse)
-  async me() { return { message: "admin me — requires auth context injection" }; }
+  async me() { return { message: "Requires auth context — not yet implemented" }; }
 }

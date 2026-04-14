@@ -32,7 +32,7 @@ export class EmailReportController {
   @Post("preview") @ReturnedType(EmailPreviewResponse)
   async preview(@Body() body: GenericBodyRequest) {
     // TODO: wire to report engine for rendering
-    return { html: "", message: "preview rendering pending report engine port" };
+    return { html: "", message: "Not yet implemented" };
   }
 
   @Post("preview-inline") @ReturnedType(EmailPreviewResponse)
@@ -47,6 +47,6 @@ export class EmailReportController {
   @Post("send-now") @ReturnedType(OkMessageResponse)
   async sendNow(@Body() body: { id: string }) {
     // TODO: wire to runReport from report engine
-    return { ok: true, message: "send-now pending report engine port" };
+    return { ok: true, message: "Not yet implemented" };
   }
 }

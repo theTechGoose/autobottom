@@ -19,7 +19,7 @@ export class JudgeController {
   @Get("next") @ReturnedType(ReviewBufferResponse) @Description("Claim next judge items")
   async next() {
     // TODO: wire to full claimNextItem with transcript enrichment
-    return { buffer: [], remaining: 0, message: "judge claimNextItem pending full port" };
+    return { buffer: [], remaining: 0, message: "Not yet implemented" };
   }
 
   @Post("decide") @ReturnedType(DecisionResponse) @Description("Uphold or overturn an appealed question")
@@ -32,13 +32,13 @@ export class JudgeController {
   }
 
   @Post("back") @ReturnedType(OkMessageResponse) @Description("Undo last judge decision")
-  async back(@Body() body: GenericBodyRequest) { return { ok: true, message: "judge back pending port" }; }
+  async back(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
 
   @Get("stats") @ReturnedType(JudgeStatsResponse) @Description("Judge queue statistics")
   async stats() { return getJudgeStats(ORG()); }
 
   @Get("me") @ReturnedType(MessageResponse) @Description("Get current judge info")
-  async me() { return { message: "judge me — requires auth context" }; }
+  async me() { return { message: "Requires auth context — not yet implemented" }; }
 
   @Get("reviewers") @ReturnedType(ReviewerListResponse) @Description("List all reviewers")
   async listReviewers() {

@@ -42,7 +42,7 @@ export class QuestionLabController {
   }
 
   @Post("qlab/configs/import") @ReturnedType(OkMessageResponse)
-  async importConfig(@Body() body: any) { return { ok: true, message: "import pending full port" }; }
+  async importConfig(@Body() body: any) { return { ok: true, message: "Not yet implemented" }; }
 
   @Get("qlab/question") @ReturnedType(QLQuestionResponse)
   async getQuestion(@Query("id") id: string) { return (await repo.getQuestion(ORG(), id)) ?? { error: "not found" }; }
@@ -81,25 +81,25 @@ export class QuestionLabController {
   }
 
   @Post("qlab/tests/update") @ReturnedType(OkMessageResponse)
-  async updateTest(@Body() body: any) { return { ok: true, message: "test update pending port" }; }
+  async updateTest(@Body() body: any) { return { ok: true, message: "Not yet implemented" }; }
 
   @Post("qlab/tests/delete") @ReturnedType(OkResponse)
   async deleteTest(@Body() body: { id: string }) { await repo.deleteTest(ORG(), body.id); return { ok: true }; }
 
   @Post("qlab/simulate") @ReturnedType(OkMessageResponse)
-  async simulate(@Body() body: any) { return { result: null, message: "simulate pending LLM wiring" }; }
+  async simulate(@Body() body: any) { return { result: null, message: "Not yet implemented" }; }
 
   @Get("qlab/snippet") @ReturnedType(MessageResponse)
-  async getSnippet(@Query("findingId") findingId: string) { return { snippet: "", message: "snippet pending port" }; }
+  async getSnippet(@Query("findingId") findingId: string) { return { snippet: "", message: "Not yet implemented" }; }
 
   @Post("qlab/test-audit") @ReturnedType(OkMessageResponse)
-  async runTestAudit(@Body() body: any) { return { ok: true, message: "test audit pending pipeline wiring" }; }
+  async runTestAudit(@Body() body: any) { return { ok: true, message: "Not yet implemented" }; }
 
   @Get("qlab/test-runs") @ReturnedType(OkResponse)
   async getTestRuns(@Query("configId") configId: string) { return { runs: [] }; }
 
   @Post("qlab/test-emails") @ReturnedType(OkMessageResponse)
-  async updateTestEmails(@Body() body: any) { return { ok: true, message: "pending port" }; }
+  async updateTestEmails(@Body() body: any) { return { ok: true, message: "Not yet implemented" }; }
 
   @Get("qlab-assignments") @ReturnedType(QLAssignmentsResponse)
   async getAssignments() {
@@ -115,5 +115,5 @@ export class QuestionLabController {
   }
 
   @Get("qlab/serve") @ReturnedType(MessageResponse)
-  async serveConfig(@Query("name") name: string) { return { config: null, message: "serve pending port" }; }
+  async serveConfig(@Query("name") name: string) { return { config: null, message: "Not yet implemented" }; }
 }

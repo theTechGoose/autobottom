@@ -44,7 +44,7 @@ export class DashboardController {
   @Get("delete-finding") @ReturnedType(OkMessageResponse)
   async deleteFinding(@Query("findingId") findingId: string) {
     // TODO: port adminDeleteFinding from judge/kv.ts
-    return { ok: true, findingId, message: "delete pending full port" };
+    return { ok: true, findingId, message: "Not yet implemented" };
   }
 
   @Get("audits-by-record") @ReturnedType(AuditsDataResponse)

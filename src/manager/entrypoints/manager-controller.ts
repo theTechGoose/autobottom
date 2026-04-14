@@ -37,10 +37,10 @@ export class ManagerController {
   async stats() { return getManagerStats(ORG()); }
 
   @Get("me") @ReturnedType(MessageResponse) @Description("Get current manager info")
-  async me() { return { message: "manager me — requires auth context" }; }
+  async me() { return { message: "Requires auth context — not yet implemented" }; }
 
   @Get("game-state") @ReturnedType(MessageResponse) @Description("Get manager game state")
-  async gameState() { return { message: "requires auth email" }; }
+  async gameState() { return { message: "Requires auth context — not yet implemented" }; }
 
   @Get("agents") @ReturnedType(AgentListResponse) @Description("List team agents")
   async listAgents() { return { agents: await listUsers(ORG(), "user") }; }
@@ -60,7 +60,7 @@ export class ManagerController {
   }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill manager queue")
-  async backfill() { return { ok: true, message: "manager backfill pending port" }; }
+  async backfill() { return { ok: true, message: "Not yet implemented" }; }
 
   @Get("prefab-subscriptions") @ReturnedType(OkResponse) @Description("Get prefab subscriptions")
   async getPrefabs() { return getPrefabSubscriptions(ORG()); }

@@ -144,49 +144,49 @@ export class AdminConfigController {
   async terminateAll() { const count = await stats.terminateAllActive(ORG()); return { ok: true, terminated: count }; }
 
   @Post("reset-finding") @ReturnedType(OkMessageResponse)
-  async resetFinding(@Body() body: GenericBodyRequest) { return { ok: true, message: "reset-finding — complex logic pending full port" }; }
+  async resetFinding(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("flip-answer") @ReturnedType(OkMessageResponse)
-  async flipAnswer(@Body() body: GenericBodyRequest) { return { ok: true, message: "flip-answer — complex logic pending full port" }; }
+  async flipAnswer(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("bulk-flip") @ReturnedType(OkMessageResponse)
-  async bulkFlip(@Body() body: GenericBodyRequest) { return { ok: true, message: "bulk-flip — complex logic pending full port" }; }
+  async bulkFlip(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
 
   // -- Backfills --
   @Post("backfill-review-scores") @ReturnedType(OkMessageResponse)
-  async backfillReviewScores(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillReviewScores(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("backfill-chargeback-entries") @ReturnedType(OkMessageResponse)
-  async backfillChargebackEntries(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillChargebackEntries(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse)
-  async backfillPartnerDimensions(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillPartnerDimensions(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("backfill-audit-index") @ReturnedType(OkMessageResponse)
-  async backfillAuditIndex(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillAuditIndex(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("backfill-stale-scores") @ReturnedType(OkMessageResponse)
-  async backfillStaleScores(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillStaleScores(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("deduplicate-findings") @ReturnedType(OkMessageResponse)
-  async deduplicateFindings(@Body() body: GenericBodyRequest) { return { ok: true, message: "dedup pending full port" }; }
+  async deduplicateFindings(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
 
   // -- Purge --
   @Post("purge-old-audits") @ReturnedType(OkMessageResponse)
-  async purgeOldAudits(@Body() body: GenericBodyRequest) { return { ok: true, message: "purge pending full port" }; }
+  async purgeOldAudits(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("purge-bypassed-wire-deductions") @ReturnedType(OkMessageResponse)
-  async purgeBypassedWireDeductions() { return { ok: true, message: "purge pending full port" }; }
+  async purgeBypassedWireDeductions() { return { ok: true, message: "Not yet implemented" }; }
 
   // -- State management --
   @Post("wipe-kv") @ReturnedType(OkMessageResponse)
   async wipeKv() { return { ok: true, message: "wipe-kv — destructive, pending safe implementation" }; }
   @Post("seed") @ReturnedType(OkMessageResponse)
-  async seed(@Body() body: GenericBodyRequest) { return { ok: true, message: "seed pending full port" }; }
+  async seed(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Get("seed") @ReturnedType(MessageResponse)
-  async seedDryRun() { return { message: "seed dry run pending full port" }; }
+  async seedDryRun() { return { message: "Not yet implemented" }; }
   @Post("init-org") @ReturnedType(OkMessageResponse)
-  async initOrg(@Body() body: GenericBodyRequest) { return { ok: true, message: "init-org pending full port" }; }
+  async initOrg(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("force-nos") @ReturnedType(OkMessageResponse)
-  async forceNos(@Body() body: GenericBodyRequest) { return { ok: true, message: "force-nos pending full port" }; }
+  async forceNos(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("dump-state") @ReturnedType(OkMessageResponse)
-  async dumpState() { return { ok: true, message: "dump-state pending full port" }; }
+  async dumpState() { return { ok: true, message: "Not yet implemented" }; }
   @Post("import-state") @ReturnedType(OkMessageResponse)
-  async importState(@Body() body: GenericBodyRequest) { return { ok: true, message: "import-state pending full port" }; }
+  async importState(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
   @Post("pull-state") @ReturnedType(OkMessageResponse)
-  async pullState(@Body() body: GenericBodyRequest) { return { ok: true, message: "pull-state pending full port" }; }
+  async pullState(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
 
   // -- Token usage --
   @Get("token-usage") @ReturnedType(TokenUsageResponse)
@@ -194,5 +194,5 @@ export class AdminConfigController {
 
   // -- Unreviewed --
   @Get("unreviewed-audits") @ReturnedType(MessageResponse)
-  async getUnreviewedAudits() { return { audits: [], message: "pending full port with auth-scoped query" }; }
+  async getUnreviewedAudits() { return { audits: [], message: "Not yet implemented" }; }
 }

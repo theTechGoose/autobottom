@@ -18,7 +18,7 @@ export class ReviewController {
   @Get("next") @ReturnedType(ReviewBufferResponse) @Description("Claim next review items (FIFO oldest audit first)")
   async next(@Query("types") types: string) {
     // TODO: wire to full claimNextItem with FIFO ordering + transcript enrichment
-    return { buffer: [], remaining: 0, message: "claimNextItem pending full port (requires transcript enrichment)" };
+    return { buffer: [], remaining: 0, message: "Not yet implemented" };
   }
 
   @Post("decide") @ReturnedType(DecisionResponse) @Description("Confirm or flip a reviewed question")
@@ -33,7 +33,7 @@ export class ReviewController {
   @Post("back") @ReturnedType(OkMessageResponse) @Description("Undo last decision")
   async back(@Body() body: { findingId: string; questionIndex: number; reviewer: string }) {
     // TODO: wire to undoDecision
-    return { ok: true, message: "undoDecision pending port" };
+    return { ok: true, message: "Not yet implemented" };
   }
 
   @Get("stats") @ReturnedType(ReviewStatsResponse) @Description("Review queue statistics")
@@ -47,15 +47,15 @@ export class ReviewController {
 
   @Post("settings") @ReturnedType(OkMessageResponse) @Description("Save reviewer settings")
   async saveSettings(@Body() body: GenericBodyRequest) {
-    return { ok: true, message: "save settings pending port" };
+    return { ok: true, message: "Not yet implemented" };
   }
 
   @Get("me") @ReturnedType(MessageResponse) @Description("Get current reviewer info")
-  async me() { return { message: "review me — requires auth context" }; }
+  async me() { return { message: "Requires auth context — not yet implemented" }; }
 
   @Get("preview") @ReturnedType(MessageResponse) @Description("Preview a finding for review")
   async preview(@Query("findingId") findingId: string) {
-    return { message: "preview pending port (requires transcript loading)", findingId };
+    return { message: "Not yet implemented", findingId };
   }
 
   @Get("dashboard") @ReturnedType(ReviewStatsResponse) @Description("Review dashboard data")
@@ -68,5 +68,5 @@ export class ReviewController {
   async saveGamification(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill review queue")
-  async backfill() { return { ok: true, message: "backfill pending port" }; }
+  async backfill() { return { ok: true, message: "Not yet implemented" }; }
 }

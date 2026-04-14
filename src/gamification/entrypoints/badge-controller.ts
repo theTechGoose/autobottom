@@ -33,8 +33,8 @@ export class BadgeStoreController {
   }
 
   @Post("api/equip") @ReturnedType(OkMessageResponse)
-  async equip(@Body() body: GenericBodyRequest) { return { ok: true, message: "equip pending cosmetics port" }; }
+  async equip(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
 
   @Get("api/badges") @ReturnedType(BadgeListResponse)
-  async getBadges() { return { badges: [], message: "requires auth email for user-specific badges" }; }
+  async getBadges() { return { badges: [], message: "Requires auth context — not yet implemented" }; }
 }

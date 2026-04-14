@@ -22,8 +22,8 @@ export class WeeklyBuilderController {
   }
 
   @Post("publish") @ReturnedType(OkMessageResponse)
-  async publish(@Body() body: GenericBodyRequest) { return { ok: true, message: "publish pending report engine wiring" }; }
+  async publish(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
 
   @Post("test-send") @ReturnedType(OkMessageResponse)
-  async testSend(@Body() body: GenericBodyRequest) { return { ok: true, message: "test-send pending report engine wiring" }; }
+  async testSend(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
 }

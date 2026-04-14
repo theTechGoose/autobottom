@@ -14,13 +14,13 @@ const ORG = defaultOrgId;
 export class AgentApiController {
 
   @Get("dashboard") @ReturnedType(MessageResponse)
-  async dashboardData() { return { message: "agent dashboard — requires auth email for personalized data" }; }
+  async dashboardData() { return { message: "Requires auth context — not yet implemented" }; }
 
   @Get("me") @ReturnedType(MessageResponse)
-  async me() { return { message: "agent me — requires auth context" }; }
+  async me() { return { message: "Requires auth context — not yet implemented" }; }
 
   @Get("game-state") @ReturnedType(MessageResponse)
-  async gameState() { return { message: "requires auth email" }; }
+  async gameState() { return { message: "Requires auth context — not yet implemented" }; }
 
   @Get("store") @ReturnedType(StoreItemListResponse)
   async store() { return { items: await listCustomStoreItems(ORG()) }; }

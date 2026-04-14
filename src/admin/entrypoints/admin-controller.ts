@@ -10,6 +10,7 @@ import { clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getTokenUsage } from "@audit/domain/data/groq/mod.ts";
 import { ReturnedType, Description, BodyType } from "jsr:@danet/swagger@2/decorators";
 import { PipelineConfigResponse, ParallelismResponse, WebhookConfigResponse, BadWordConfigResponse, BypassConfigResponse, BonusConfigResponse, DimensionsResponse, PartnerDimensionsResponse, QueueCountsResponse, OkResponse, OkMessageResponse, ClearedResponse, TerminatedResponse, TokenUsageResponse, MessageResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
 const ORG = defaultOrgId;
 
@@ -22,7 +23,7 @@ export class AdminConfigController {
   async getPipelineConfig() { return cfg.getPipelineConfig(ORG()); }
 
   @Post("pipeline-config") @ReturnedType(PipelineConfigResponse)
-  async setPipelineConfig(@Body() body: Record<string, any>) { return cfg.setPipelineConfig(ORG(), body); }
+  async setPipelineConfig(@Body() body: GenericBodyRequest) { return cfg.setPipelineConfig(ORG(), body as any); }
 
   @Get("parallelism") @ReturnedType(ParallelismResponse)
   async getParallelism() { const c = await cfg.getPipelineConfig(ORG()); return { parallelism: c.parallelism }; }
@@ -34,64 +35,64 @@ export class AdminConfigController {
   @Get("settings/terminate") @ReturnedType(WebhookConfigResponse)
   async getTerminateSettings() { return (await cfg.getWebhookConfig(ORG(), "terminate")) ?? {}; }
   @Post("settings/terminate") @ReturnedType(OkResponse)
-  async saveTerminateSettings(@Body() body: Record<string, any>) { await cfg.saveWebhookConfig(ORG(), "terminate", body as any); return { ok: true }; }
+  async saveTerminateSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "terminate", body as any); return { ok: true }; }
 
   @Get("settings/appeal") @ReturnedType(WebhookConfigResponse)
   async getAppealSettings() { return (await cfg.getWebhookConfig(ORG(), "appeal")) ?? {}; }
   @Post("settings/appeal") @ReturnedType(OkResponse)
-  async saveAppealSettings(@Body() body: Record<string, any>) { await cfg.saveWebhookConfig(ORG(), "appeal", body as any); return { ok: true }; }
+  async saveAppealSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "appeal", body as any); return { ok: true }; }
 
   @Get("settings/manager") @ReturnedType(WebhookConfigResponse)
   async getManagerSettings() { return (await cfg.getWebhookConfig(ORG(), "manager")) ?? {}; }
   @Post("settings/manager") @ReturnedType(OkResponse)
-  async saveManagerSettings(@Body() body: Record<string, any>) { await cfg.saveWebhookConfig(ORG(), "manager", body as any); return { ok: true }; }
+  async saveManagerSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "manager", body as any); return { ok: true }; }
 
   @Get("settings/review") @ReturnedType(WebhookConfigResponse)
   async getReviewSettings() { return (await cfg.getWebhookConfig(ORG(), "review")) ?? {}; }
   @Post("settings/review") @ReturnedType(OkResponse)
-  async saveReviewSettings(@Body() body: Record<string, any>) { await cfg.saveWebhookConfig(ORG(), "review", body as any); return { ok: true }; }
+  async saveReviewSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "review", body as any); return { ok: true }; }
 
   @Get("settings/judge") @ReturnedType(WebhookConfigResponse)
   async getJudgeSettings() { return (await cfg.getWebhookConfig(ORG(), "judge")) ?? {}; }
   @Post("settings/judge") @ReturnedType(OkResponse)
-  async saveJudgeSettings(@Body() body: Record<string, any>) { await cfg.saveWebhookConfig(ORG(), "judge", body as any); return { ok: true }; }
+  async saveJudgeSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "judge", body as any); return { ok: true }; }
 
   @Get("settings/judge-finish") @ReturnedType(WebhookConfigResponse)
   async getJudgeFinishSettings() { return (await cfg.getWebhookConfig(ORG(), "judge-finish")) ?? {}; }
   @Post("settings/judge-finish") @ReturnedType(OkResponse)
-  async saveJudgeFinishSettings(@Body() body: Record<string, any>) { await cfg.saveWebhookConfig(ORG(), "judge-finish", body as any); return { ok: true }; }
+  async saveJudgeFinishSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "judge-finish", body as any); return { ok: true }; }
 
   @Get("settings/re-audit-receipt") @ReturnedType(WebhookConfigResponse)
   async getReAuditReceiptSettings() { return (await cfg.getWebhookConfig(ORG(), "re-audit-receipt")) ?? {}; }
   @Post("settings/re-audit-receipt") @ReturnedType(OkResponse)
-  async saveReAuditReceiptSettings(@Body() body: Record<string, any>) { await cfg.saveWebhookConfig(ORG(), "re-audit-receipt", body as any); return { ok: true }; }
+  async saveReAuditReceiptSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "re-audit-receipt", body as any); return { ok: true }; }
 
   @Get("settings/gamification") @ReturnedType(OkResponse)
   async getGamificationSettings() { return {}; } // gamification settings in own module
   @Post("settings/gamification") @ReturnedType(OkResponse)
-  async saveGamificationSettings(@Body() body: Record<string, any>) { return { ok: true }; }
+  async saveGamificationSettings(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   // -- Bad words / bonus / bypass --
   @Get("bad-word-config") @ReturnedType(BadWordConfigResponse)
   async getBadWordConfig() { return cfg.getBadWordConfig(ORG()); }
   @Post("bad-word-config") @ReturnedType(OkResponse)
-  async saveBadWordConfig(@Body() body: Record<string, any>) { await cfg.saveBadWordConfig(ORG(), body as any); return { ok: true }; }
+  async saveBadWordConfig(@Body() body: GenericBodyRequest) { await cfg.saveBadWordConfig(ORG(), body as any); return { ok: true }; }
 
   @Get("bonus-points-config") @ReturnedType(BonusConfigResponse)
   async getBonusPointsConfig() { return cfg.getBonusPointsConfig(ORG()); }
   @Post("bonus-points-config") @ReturnedType(OkResponse)
-  async saveBonusPointsConfig(@Body() body: Record<string, any>) { await cfg.saveBonusPointsConfig(ORG(), body as any); return { ok: true }; }
+  async saveBonusPointsConfig(@Body() body: GenericBodyRequest) { await cfg.saveBonusPointsConfig(ORG(), body as any); return { ok: true }; }
 
   @Get("office-bypass") @ReturnedType(BypassConfigResponse)
   async getOfficeBypass() { return cfg.getOfficeBypassConfig(ORG()); }
   @Post("office-bypass") @ReturnedType(OkResponse)
-  async saveOfficeBypass(@Body() body: Record<string, any>) { await cfg.saveOfficeBypassConfig(ORG(), body as any); return { ok: true }; }
+  async saveOfficeBypass(@Body() body: GenericBodyRequest) { await cfg.saveOfficeBypassConfig(ORG(), body as any); return { ok: true }; }
 
   // -- Dimensions --
   @Get("audit-dimensions") @ReturnedType(DimensionsResponse)
   async getAuditDimensions() { return cfg.getAuditDimensions(ORG()); }
   @Post("audit-dimensions") @ReturnedType(OkResponse)
-  async saveAuditDimensions(@Body() body: Record<string, any>) { await cfg.saveAuditDimensions(ORG(), body as any); return { ok: true }; }
+  async saveAuditDimensions(@Body() body: GenericBodyRequest) { await cfg.saveAuditDimensions(ORG(), body as any); return { ok: true }; }
 
   @Get("partner-dimensions") @ReturnedType(PartnerDimensionsResponse)
   async getPartnerDimensions() { return cfg.getPartnerDimensions(ORG()); }
@@ -109,7 +110,7 @@ export class AdminConfigController {
   @Get("queues") @ReturnedType(QueueCountsResponse)
   async getQueues() { return getQueueCounts(); }
   @Post("queues") @ReturnedType(OkResponse)
-  async setQueue(@Body() body: Record<string, any>) { return { ok: true }; }
+  async setQueue(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   @Post("pause-queues") @ReturnedType(OkResponse)
   async pauseQueues() { await pauseAllQueues(); return { ok: true }; }
@@ -143,29 +144,29 @@ export class AdminConfigController {
   async terminateAll() { const count = await stats.terminateAllActive(ORG()); return { ok: true, terminated: count }; }
 
   @Post("reset-finding") @ReturnedType(OkMessageResponse)
-  async resetFinding(@Body() body: Record<string, any>) { return { ok: true, message: "reset-finding — complex logic pending full port" }; }
+  async resetFinding(@Body() body: GenericBodyRequest) { return { ok: true, message: "reset-finding — complex logic pending full port" }; }
   @Post("flip-answer") @ReturnedType(OkMessageResponse)
-  async flipAnswer(@Body() body: Record<string, any>) { return { ok: true, message: "flip-answer — complex logic pending full port" }; }
+  async flipAnswer(@Body() body: GenericBodyRequest) { return { ok: true, message: "flip-answer — complex logic pending full port" }; }
   @Post("bulk-flip") @ReturnedType(OkMessageResponse)
-  async bulkFlip(@Body() body: Record<string, any>) { return { ok: true, message: "bulk-flip — complex logic pending full port" }; }
+  async bulkFlip(@Body() body: GenericBodyRequest) { return { ok: true, message: "bulk-flip — complex logic pending full port" }; }
 
   // -- Backfills --
   @Post("backfill-review-scores") @ReturnedType(OkMessageResponse)
-  async backfillReviewScores(@Body() body: Record<string, any>) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillReviewScores(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
   @Post("backfill-chargeback-entries") @ReturnedType(OkMessageResponse)
-  async backfillChargebackEntries(@Body() body: Record<string, any>) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillChargebackEntries(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse)
-  async backfillPartnerDimensions(@Body() body: Record<string, any>) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillPartnerDimensions(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
   @Post("backfill-audit-index") @ReturnedType(OkMessageResponse)
-  async backfillAuditIndex(@Body() body: Record<string, any>) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillAuditIndex(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
   @Post("backfill-stale-scores") @ReturnedType(OkMessageResponse)
-  async backfillStaleScores(@Body() body: Record<string, any>) { return { ok: true, message: "backfill pending full port" }; }
+  async backfillStaleScores(@Body() body: GenericBodyRequest) { return { ok: true, message: "backfill pending full port" }; }
   @Post("deduplicate-findings") @ReturnedType(OkMessageResponse)
-  async deduplicateFindings(@Body() body: Record<string, any>) { return { ok: true, message: "dedup pending full port" }; }
+  async deduplicateFindings(@Body() body: GenericBodyRequest) { return { ok: true, message: "dedup pending full port" }; }
 
   // -- Purge --
   @Post("purge-old-audits") @ReturnedType(OkMessageResponse)
-  async purgeOldAudits(@Body() body: Record<string, any>) { return { ok: true, message: "purge pending full port" }; }
+  async purgeOldAudits(@Body() body: GenericBodyRequest) { return { ok: true, message: "purge pending full port" }; }
   @Post("purge-bypassed-wire-deductions") @ReturnedType(OkMessageResponse)
   async purgeBypassedWireDeductions() { return { ok: true, message: "purge pending full port" }; }
 
@@ -173,19 +174,19 @@ export class AdminConfigController {
   @Post("wipe-kv") @ReturnedType(OkMessageResponse)
   async wipeKv() { return { ok: true, message: "wipe-kv — destructive, pending safe implementation" }; }
   @Post("seed") @ReturnedType(OkMessageResponse)
-  async seed(@Body() body: Record<string, any>) { return { ok: true, message: "seed pending full port" }; }
+  async seed(@Body() body: GenericBodyRequest) { return { ok: true, message: "seed pending full port" }; }
   @Get("seed") @ReturnedType(MessageResponse)
   async seedDryRun() { return { message: "seed dry run pending full port" }; }
   @Post("init-org") @ReturnedType(OkMessageResponse)
-  async initOrg(@Body() body: Record<string, any>) { return { ok: true, message: "init-org pending full port" }; }
+  async initOrg(@Body() body: GenericBodyRequest) { return { ok: true, message: "init-org pending full port" }; }
   @Post("force-nos") @ReturnedType(OkMessageResponse)
-  async forceNos(@Body() body: Record<string, any>) { return { ok: true, message: "force-nos pending full port" }; }
+  async forceNos(@Body() body: GenericBodyRequest) { return { ok: true, message: "force-nos pending full port" }; }
   @Post("dump-state") @ReturnedType(OkMessageResponse)
   async dumpState() { return { ok: true, message: "dump-state pending full port" }; }
   @Post("import-state") @ReturnedType(OkMessageResponse)
-  async importState(@Body() body: Record<string, any>) { return { ok: true, message: "import-state pending full port" }; }
+  async importState(@Body() body: GenericBodyRequest) { return { ok: true, message: "import-state pending full port" }; }
   @Post("pull-state") @ReturnedType(OkMessageResponse)
-  async pullState(@Body() body: Record<string, any>) { return { ok: true, message: "pull-state pending full port" }; }
+  async pullState(@Body() body: GenericBodyRequest) { return { ok: true, message: "pull-state pending full port" }; }
 
   // -- Token usage --
   @Get("token-usage") @ReturnedType(TokenUsageResponse)

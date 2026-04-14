@@ -4,6 +4,7 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
 import { ReviewBufferResponse, DecisionResponse, ReviewStatsResponse, OkResponse, OkMessageResponse, ReviewerConfigResponse, MessageResponse, GamificationSettingsResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { recordDecision, getReviewStats, getReviewedFindingIds, clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
@@ -45,7 +46,7 @@ export class ReviewController {
   }
 
   @Post("settings") @ReturnedType(OkMessageResponse) @Description("Save reviewer settings")
-  async saveSettings(@Body() body: Record<string, any>) {
+  async saveSettings(@Body() body: GenericBodyRequest) {
     return { ok: true, message: "save settings pending port" };
   }
 
@@ -64,7 +65,7 @@ export class ReviewController {
   async getGamification() { return {}; }
 
   @Post("gamification") @ReturnedType(OkResponse) @Description("Save gamification settings")
-  async saveGamification(@Body() body: Record<string, any>) { return { ok: true }; }
+  async saveGamification(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill review queue")
   async backfill() { return { ok: true, message: "backfill pending port" }; }

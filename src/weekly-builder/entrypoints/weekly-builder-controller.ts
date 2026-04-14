@@ -4,6 +4,7 @@ import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType } from "jsr:@danet/swagger@2/decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, QLConfigListResponse, QLConfigResponse, QLQuestionResponse, QLQuestionNamesResponse, BulkUpdateResponse, QLAssignmentsResponse, SoundPackListResponse, GamificationSettingsResponse, StoreItemListResponse, PurchaseResponse, BadgeListResponse, UnreadCountResponse, ConversationListResponse, UserListResponse, MessageSentResponse, EventsResponse, WeeklyDataResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { listEmailReportConfigs } from "@reporting/domain/data/email-repository/mod.ts";
 
 import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
@@ -21,8 +22,8 @@ export class WeeklyBuilderController {
   }
 
   @Post("publish") @ReturnedType(OkMessageResponse)
-  async publish(@Body() body: Record<string, any>) { return { ok: true, message: "publish pending report engine wiring" }; }
+  async publish(@Body() body: GenericBodyRequest) { return { ok: true, message: "publish pending report engine wiring" }; }
 
   @Post("test-send") @ReturnedType(OkMessageResponse)
-  async testSend(@Body() body: Record<string, any>) { return { ok: true, message: "test-send pending report engine wiring" }; }
+  async testSend(@Body() body: GenericBodyRequest) { return { ok: true, message: "test-send pending report engine wiring" }; }
 }

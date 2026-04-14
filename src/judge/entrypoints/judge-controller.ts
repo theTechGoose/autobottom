@@ -4,6 +4,7 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
 import { JudgeStatsResponse, ReviewBufferResponse, DecisionResponse, OkResponse, OkMessageResponse, ReviewerListResponse, ReviewerConfigResponse, DismissResponse, MessageResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { recordJudgeDecision, getJudgeStats, getAppeal, dismissFindingFromJudgeQueue, clearJudgeQueue } from "@judge/domain/data/judge-repository/mod.ts";
 import { getReviewerConfig, saveReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { listUsers } from "@core/domain/business/auth/mod.ts";
@@ -31,7 +32,7 @@ export class JudgeController {
   }
 
   @Post("back") @ReturnedType(OkMessageResponse) @Description("Undo last judge decision")
-  async back(@Body() body: Record<string, any>) { return { ok: true, message: "judge back pending port" }; }
+  async back(@Body() body: GenericBodyRequest) { return { ok: true, message: "judge back pending port" }; }
 
   @Get("stats") @ReturnedType(JudgeStatsResponse) @Description("Judge queue statistics")
   async stats() { return getJudgeStats(ORG()); }
@@ -85,5 +86,5 @@ export class JudgeController {
   async getGamification() { return {}; }
 
   @Post("gamification") @ReturnedType(OkResponse) @Description("Save gamification settings")
-  async saveGamification(@Body() body: Record<string, any>) { return { ok: true }; }
+  async saveGamification(@Body() body: GenericBodyRequest) { return { ok: true }; }
 }

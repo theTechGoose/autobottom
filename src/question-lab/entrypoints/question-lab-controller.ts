@@ -4,6 +4,7 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType } from "jsr:@danet/swagger@2/decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, QLConfigListResponse, QLConfigResponse, QLQuestionResponse, QLQuestionNamesResponse, BulkUpdateResponse, QLAssignmentsResponse, SoundPackListResponse, GamificationSettingsResponse, StoreItemListResponse, PurchaseResponse, BadgeListResponse, UnreadCountResponse, ConversationListResponse, UserListResponse, MessageSentResponse, EventsResponse, WeeklyDataResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import * as repo from "@question-lab/domain/data/question-repository/mod.ts";
 
 import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
@@ -22,7 +23,7 @@ export class QuestionLabController {
   }
 
   @Post("qlab/configs/update") @ReturnedType(QLConfigResponse)
-  async updateConfig(@Body() body: Record<string, any>) {
+  async updateConfig(@Body() body: any) {
     const { id, ...patch } = body;
     return (await repo.updateConfig(ORG(), id, patch)) ?? { error: "not found" };
   }
@@ -41,7 +42,7 @@ export class QuestionLabController {
   }
 
   @Post("qlab/configs/import") @ReturnedType(OkMessageResponse)
-  async importConfig(@Body() body: Record<string, any>) { return { ok: true, message: "import pending full port" }; }
+  async importConfig(@Body() body: any) { return { ok: true, message: "import pending full port" }; }
 
   @Get("qlab/question") @ReturnedType(QLQuestionResponse)
   async getQuestion(@Query("id") id: string) { return (await repo.getQuestion(ORG(), id)) ?? { error: "not found" }; }
@@ -52,7 +53,7 @@ export class QuestionLabController {
   }
 
   @Post("qlab/questions/update") @ReturnedType(QLQuestionResponse)
-  async updateQuestion(@Body() body: Record<string, any>) {
+  async updateQuestion(@Body() body: any) {
     const { id, ...patch } = body;
     return (await repo.updateQuestion(ORG(), id, patch)) ?? { error: "not found" };
   }
@@ -80,25 +81,25 @@ export class QuestionLabController {
   }
 
   @Post("qlab/tests/update") @ReturnedType(OkMessageResponse)
-  async updateTest(@Body() body: Record<string, any>) { return { ok: true, message: "test update pending port" }; }
+  async updateTest(@Body() body: any) { return { ok: true, message: "test update pending port" }; }
 
   @Post("qlab/tests/delete") @ReturnedType(OkResponse)
   async deleteTest(@Body() body: { id: string }) { await repo.deleteTest(ORG(), body.id); return { ok: true }; }
 
   @Post("qlab/simulate") @ReturnedType(OkMessageResponse)
-  async simulate(@Body() body: Record<string, any>) { return { result: null, message: "simulate pending LLM wiring" }; }
+  async simulate(@Body() body: any) { return { result: null, message: "simulate pending LLM wiring" }; }
 
   @Get("qlab/snippet") @ReturnedType(MessageResponse)
   async getSnippet(@Query("findingId") findingId: string) { return { snippet: "", message: "snippet pending port" }; }
 
   @Post("qlab/test-audit") @ReturnedType(OkMessageResponse)
-  async runTestAudit(@Body() body: Record<string, any>) { return { ok: true, message: "test audit pending pipeline wiring" }; }
+  async runTestAudit(@Body() body: any) { return { ok: true, message: "test audit pending pipeline wiring" }; }
 
   @Get("qlab/test-runs") @ReturnedType(OkResponse)
   async getTestRuns(@Query("configId") configId: string) { return { runs: [] }; }
 
   @Post("qlab/test-emails") @ReturnedType(OkMessageResponse)
-  async updateTestEmails(@Body() body: Record<string, any>) { return { ok: true, message: "pending port" }; }
+  async updateTestEmails(@Body() body: any) { return { ok: true, message: "pending port" }; }
 
   @Get("qlab-assignments") @ReturnedType(QLAssignmentsResponse)
   async getAssignments() {

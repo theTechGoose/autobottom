@@ -4,6 +4,7 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import * as emailRepo from "@reporting/domain/data/email-repository/mod.ts";
 
@@ -15,25 +16,25 @@ const ORG = defaultOrgId;
 export class WebhookController {
 
   @Post("webhooks/audit-complete") @ReturnedType(OkResponse)
-  async auditComplete(@Body() body: Record<string, any>) {
+  async auditComplete(@Body() body: GenericBodyRequest) {
     await fireWebhook(ORG(), "terminate", body);
     return { ok: true };
   }
 
   @Post("webhooks/appeal-filed") @ReturnedType(OkResponse)
-  async appealFiled(@Body() body: Record<string, any>) {
+  async appealFiled(@Body() body: GenericBodyRequest) {
     await fireWebhook(ORG(), "appeal", body);
     return { ok: true };
   }
 
   @Post("webhooks/appeal-decided") @ReturnedType(OkResponse)
-  async appealDecided(@Body() body: Record<string, any>) {
+  async appealDecided(@Body() body: GenericBodyRequest) {
     await fireWebhook(ORG(), "judge", body);
     return { ok: true };
   }
 
   @Post("webhooks/manager-review") @ReturnedType(OkResponse)
-  async managerReview(@Body() body: Record<string, any>) {
+  async managerReview(@Body() body: GenericBodyRequest) {
     await fireWebhook(ORG(), "manager", body);
     return { ok: true };
   }
@@ -47,7 +48,7 @@ export class WebhookController {
   }
 
   @Post("admin/email-templates") @ReturnedType(OkResponse)
-  async saveTemplate(@Body() body: Record<string, any>) {
+  async saveTemplate(@Body() body: GenericBodyRequest) {
     const template = await emailRepo.saveEmailTemplate(ORG(), body as any);
     return { ok: true, template };
   }

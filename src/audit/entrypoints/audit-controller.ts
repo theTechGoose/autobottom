@@ -4,6 +4,7 @@ import { Controller, Get, Post, Req, Query, Body, HttpContext } from "@danet/cor
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
 import { AuditQueuedResponse, FindingResponse, MessageResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { authenticate } from "@core/domain/business/auth/mod.ts";
 import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
@@ -20,7 +21,7 @@ const jobRepo = new KvRepository("audit-job");
 export class AuditController {
 
   @Post("test-by-rid") @ReturnedType(AuditQueuedResponse) @Description("Create date-leg audit from QuickBase record ID")
-  async createDateLegAudit(@Body() body: Record<string, any>, @Query("rid") rid: string, @Query("callback_url") callbackUrl: string, @Query("qlab_config") qlabConfig: string, @Query("override") override: string, @Query("audit_id") auditId: string) {
+  async createDateLegAudit(@Body() body: any, @Query("rid") rid: string, @Query("callback_url") callbackUrl: string, @Query("qlab_config") qlabConfig: string, @Query("override") override: string, @Query("audit_id") auditId: string) {
     if (!rid) return { error: "rid parameter required" };
 
     const record = await getDateLegByRid(rid) ?? body?.record ?? { RecordId: rid };
@@ -55,7 +56,7 @@ export class AuditController {
   }
 
   @Post("package-by-rid") @ReturnedType(AuditQueuedResponse) @Description("Create package audit from QuickBase record ID")
-  async createPackageAudit(@Body() body: Record<string, any>, @Query("rid") rid: string, @Query("callback_url") callbackUrl: string, @Query("qlab_config") qlabConfig: string) {
+  async createPackageAudit(@Body() body: any, @Query("rid") rid: string, @Query("callback_url") callbackUrl: string, @Query("qlab_config") qlabConfig: string) {
     if (!rid) return { error: "rid parameter required" };
 
     const record = await getPackageByRid(rid) ?? body?.record ?? { RecordId: rid };

@@ -4,6 +4,7 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
 import { ChargebackReportResponse, WireReportResponse, OkResponse, OkMessageResponse, EmailConfigListResponse, EmailPreviewResponse, MessageResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import * as repo from "@reporting/domain/data/email-repository/mod.ts";
 
 import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
@@ -17,7 +18,7 @@ export class EmailReportController {
   async list() { return { configs: await repo.listEmailReportConfigs(ORG()) }; }
 
   @Post("") @ReturnedType(OkResponse)
-  async save(@Body() body: Record<string, any>) {
+  async save(@Body() body: GenericBodyRequest) {
     const config = await repo.saveEmailReportConfig(ORG(), body as any);
     return { ok: true, config };
   }
@@ -29,13 +30,13 @@ export class EmailReportController {
   }
 
   @Post("preview") @ReturnedType(EmailPreviewResponse)
-  async preview(@Body() body: Record<string, any>) {
+  async preview(@Body() body: GenericBodyRequest) {
     // TODO: wire to report engine for rendering
     return { html: "", message: "preview rendering pending report engine port" };
   }
 
   @Post("preview-inline") @ReturnedType(EmailPreviewResponse)
-  async previewInline(@Body() body: Record<string, any>) { return { html: "" }; }
+  async previewInline(@Body() body: GenericBodyRequest) { return { html: "" }; }
 
   @Get("preview-view") @ReturnedType(EmailPreviewResponse)
   async previewView(@Query("configId") configId: string) {

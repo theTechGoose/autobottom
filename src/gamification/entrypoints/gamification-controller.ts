@@ -4,6 +4,7 @@ import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType } from "jsr:@danet/swagger@2/decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, QLConfigListResponse, QLConfigResponse, QLQuestionResponse, QLQuestionNamesResponse, BulkUpdateResponse, QLAssignmentsResponse, SoundPackListResponse, GamificationSettingsResponse, StoreItemListResponse, PurchaseResponse, BadgeListResponse, UnreadCountResponse, ConversationListResponse, UserListResponse, MessageSentResponse, EventsResponse, WeeklyDataResponse } from "@core/dto/responses.ts";
+import { GenericBodyRequest } from "@core/dto/requests.ts";
 import * as gam from "@gamification/domain/data/gamification-repository/mod.ts";
 
 import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
@@ -17,13 +18,13 @@ export class GamificationPageController {
   async listPacks() { return { packs: await gam.listSoundPacks(ORG()) }; }
 
   @Post("pack") @ReturnedType(OkResponse)
-  async savePack(@Body() body: Record<string, any>) { await gam.saveSoundPack(ORG(), body as any); return { ok: true }; }
+  async savePack(@Body() body: GenericBodyRequest) { await gam.saveSoundPack(ORG(), body as any); return { ok: true }; }
 
   @Post("pack/delete") @ReturnedType(OkResponse)
   async deletePack(@Body() body: { packId: string }) { await gam.deleteSoundPack(ORG(), body.packId); return { ok: true }; }
 
   @Post("upload-sound") @ReturnedType(OkMessageResponse)
-  async uploadSound(@Body() body: Record<string, any>) { return { ok: true, message: "upload requires S3 wiring" }; }
+  async uploadSound(@Body() body: GenericBodyRequest) { return { ok: true, message: "upload requires S3 wiring" }; }
 
   @Post("seed") @ReturnedType(OkMessageResponse)
   async seedSoundPacks() { return { ok: true, message: "seed pending port" }; }
@@ -32,5 +33,5 @@ export class GamificationPageController {
   async getSettings() { return (await gam.getGamificationSettings(ORG())) ?? {}; }
 
   @Post("settings") @ReturnedType(OkResponse)
-  async saveSettings(@Body() body: Record<string, any>) { await gam.saveGamificationSettings(ORG(), body as any); return { ok: true }; }
+  async saveSettings(@Body() body: GenericBodyRequest) { await gam.saveGamificationSettings(ORG(), body as any); return { ok: true }; }
 }

@@ -27,7 +27,7 @@ export interface QBQueryOptions {
   sortBy?: { fieldId: number; order: "ASC" | "DESC" }[];
 }
 
-export async function queryRecords(opts: QBQueryOptions, attempt = 0): Promise<any[]> {
+async function queryRecordsInner(opts: QBQueryOptions, attempt = 0): Promise<any[]> {
   const body: any = { from: opts.tableId, where: opts.where, select: opts.select };
   if (opts.sortBy) body.sortBy = opts.sortBy;
 
@@ -48,7 +48,7 @@ export async function queryRecords(opts: QBQueryOptions, attempt = 0): Promise<a
       const delay = QB_RETRY_DELAYS[attempt];
       console.warn(`[QB] ⚠️ queryRecords attempt ${attempt + 1} ${label} — retrying in ${delay}ms`);
       await new Promise((r) => setTimeout(r, delay));
-      return queryRecords(opts, attempt + 1);
+      return queryRecordsInner(opts, attempt + 1);
     }
     throw new Error(`QuickBase query failed after ${attempt + 1} attempts: ${label}`);
   } finally {
@@ -62,13 +62,22 @@ export async function queryRecords(opts: QBQueryOptions, attempt = 0): Promise<a
       const delay = QB_RETRY_DELAYS[attempt];
       console.warn(`[QB] ⚠️ queryRecords attempt ${attempt + 1} got ${res.status} — retrying in ${delay}ms`);
       await new Promise((r) => setTimeout(r, delay));
-      return queryRecords(opts, attempt + 1);
+      return queryRecordsInner(opts, attempt + 1);
     }
     throw new Error(`QuickBase query failed: ${res.status} ${text}`);
   }
 
   const data = await res.json();
   return data.data ?? [];
+}
+
+export async function queryRecords(opts: QBQueryOptions, attempt = 0): Promise<any[]> {
+  return withSpan("quickbase.queryRecords", async (span) => {
+    span.setAttribute("quickbase.table_id", opts.tableId);
+    const result = await queryRecordsInner(opts, attempt);
+    metric("autobottom.quickbase.query", 1);
+    return result;
+  }, {}, "client");
 }
 
 // ── Date Legs ────────────────────────────────────────────────────────────────
@@ -78,7 +87,9 @@ const DL = { RECORD_ID: 3, VO_GENIE: 145, RELATED_DEST: 292, GUEST_NAME: 32, VO_
 const DATE_LEG_AUTOYES_FIELDS = [8, 10, 32, 33, 49, 297, 314, 460, 553, 594, 706];
 
 export async function getDateLegByRid(rid: string): Promise<Record<string, any> | null> {
-  const records = await queryRecords({
+  return withSpan("quickbase.getDateLegByRid", async (span) => {
+    span.setAttribute("quickbase.rid", rid);
+    const records = await queryRecords({
     tableId: DATE_LEGS_TABLE,
     where: `{${DL.RECORD_ID}.EX.'${rid}'}`,
     select: [DL.RECORD_ID, DL.VO_GENIE, DL.RELATED_DEST, DL.DEST_DISPLAY, DL.GUEST_NAME, DL.VO_NAME, DL.VO_EMAIL, DL.SUPERVISOR_EMAIL, DL.ACTIVATING_OFFICE, DL.SHIFT, ...DATE_LEG_AUTOYES_FIELDS],
@@ -95,6 +106,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     ActivatingOffice: String(r[DL.ACTIVATING_OFFICE]?.value ?? ""), Shift: String(r[DL.SHIFT]?.value ?? ""),
     ...autoYes,
   };
+  }, {}, "client");
 }
 
 // ── Packages ─────────────────────────────────────────────────────────────────
@@ -104,21 +116,25 @@ const PK = { RECORD_ID: 3, GENIE_NUMBER: 18, RELATED_OFFICE_ID: 45, OFFICE_NAME:
 const PACKAGE_AUTOYES_FIELDS = [67, 145, 306, 345];
 
 export async function getPackageByRid(rid: string): Promise<Record<string, any> | null> {
-  const records = await queryRecords({
-    tableId: PACKAGES_TABLE,
-    where: `{${PK.RECORD_ID}.EX.'${rid}'}`,
-    select: [PK.RECORD_ID, PK.GENIE_NUMBER, PK.RELATED_OFFICE_ID, PK.OFFICE_NAME, PK.GM_EMAIL, PK.GUEST_NAME, PK.VO_NAME, ...PACKAGE_AUTOYES_FIELDS],
-  });
-  if (records.length === 0) return null;
-  const r = records[0];
-  const autoYes: Record<string, string> = {};
-  for (const fid of PACKAGE_AUTOYES_FIELDS) autoYes[String(fid)] = r[fid]?.value != null ? String(r[fid].value) : "";
-  return {
-    RecordId: r[PK.RECORD_ID]?.value ?? rid, GenieNumber: cleanGenieId(r[PK.GENIE_NUMBER]?.value),
-    RelatedOfficeId: r[PK.RELATED_OFFICE_ID]?.value ?? 0, OfficeName: String(r[PK.OFFICE_NAME]?.value ?? ""),
-    GmEmail: r[PK.GM_EMAIL]?.value ?? "", GuestName: String(r[PK.GUEST_NAME]?.value ?? ""),
-    VoName: String(r[PK.VO_NAME]?.value ?? ""), ...autoYes,
-  };
+  return withSpan("quickbase.getPackageByRid", async (span) => {
+    span.setAttribute("quickbase.rid", rid);
+    const records = await queryRecords({
+      tableId: PACKAGES_TABLE,
+      where: `{${PK.RECORD_ID}.EX.'${rid}'}`,
+      select: [PK.RECORD_ID, PK.GENIE_NUMBER, PK.RELATED_OFFICE_ID, PK.OFFICE_NAME, PK.GM_EMAIL, PK.GUEST_NAME, PK.VO_NAME, ...PACKAGE_AUTOYES_FIELDS],
+    });
+    if (records.length === 0) return null;
+    const r = records[0];
+    const autoYes: Record<string, string> = {};
+    for (const fid of PACKAGE_AUTOYES_FIELDS) autoYes[String(fid)] = r[fid]?.value != null ? String(r[fid].value) : "";
+    metric("autobottom.quickbase.get_package", 1);
+    return {
+      RecordId: r[PK.RECORD_ID]?.value ?? rid, GenieNumber: cleanGenieId(r[PK.GENIE_NUMBER]?.value),
+      RelatedOfficeId: r[PK.RELATED_OFFICE_ID]?.value ?? 0, OfficeName: String(r[PK.OFFICE_NAME]?.value ?? ""),
+      GmEmail: r[PK.GM_EMAIL]?.value ?? "", GuestName: String(r[PK.GUEST_NAME]?.value ?? ""),
+      VoName: String(r[PK.VO_NAME]?.value ?? ""), ...autoYes,
+    };
+  }, {}, "client");
 }
 
 // ── Audit Questions ──────────────────────────────────────────────────────────
@@ -133,14 +149,18 @@ const QF = {
 
 export async function getQuestionsForDestination(destinationId: string): Promise<Array<{ header: string; question: string; autoYes: string }>> {
   if (!destinationId) { console.warn("[QB] No destinationId provided"); return []; }
-  const records = await queryRecords({
-    tableId: QUESTIONS_TABLE,
-    where: `{${QF.RELATED_DEST}.EX.'${destinationId}'}`,
-    select: [QF.REPORT_LABEL, QF.QUESTION, QF.AUTOYES],
-  });
-  return records.map((r: any) => ({
-    header: r[QF.REPORT_LABEL]?.value ?? "",
-    question: r[QF.QUESTION]?.value ?? "",
-    autoYes: r[QF.AUTOYES]?.value ?? "",
-  }));
+  return withSpan("quickbase.getQuestionsForDestination", async (span) => {
+    span.setAttribute("quickbase.destination_id", destinationId);
+    const records = await queryRecords({
+      tableId: QUESTIONS_TABLE,
+      where: `{${QF.RELATED_DEST}.EX.'${destinationId}'}`,
+      select: [QF.REPORT_LABEL, QF.QUESTION, QF.AUTOYES],
+    });
+    metric("autobottom.quickbase.get_questions", 1);
+    return records.map((r: any) => ({
+      header: r[QF.REPORT_LABEL]?.value ?? "",
+      question: r[QF.QUESTION]?.value ?? "",
+      autoYes: r[QF.AUTOYES]?.value ?? "",
+    }));
+  }, {}, "client");
 }

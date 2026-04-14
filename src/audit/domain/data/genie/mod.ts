@@ -291,15 +291,19 @@ async function tryStrategy(role: AccountRole, contract: number, tag: string): Pr
  *  2. static-secondary — sync search, then async job fallback
  */
 export async function downloadRecording(genieId: number, findingId?: string): Promise<Uint8Array | null> {
-  const tag = findingId ?? String(genieId);
-  console.log(`[GENIE] 🚀 download begin: contract=${genieId} ${tag}`);
+  return withSpan("genie.downloadRecording", async (span) => {
+    span.setAttributes({ "genie.contract_id": genieId, "genie.finding_id": findingId ?? "" });
+    const tag = findingId ?? String(genieId);
+    console.log(`[GENIE] 🚀 download begin: contract=${genieId} ${tag}`);
 
-  for (const role of ["primary", "secondary"] as AccountRole[]) {
-    const bytes = await tryStrategy(role, genieId, tag);
-    if (bytes) return bytes;
-    console.log(`[GENIE] ⚠️ ${role} failed, trying next...`);
-  }
+    for (const role of ["primary", "secondary"] as AccountRole[]) {
+      const bytes = await tryStrategy(role, genieId, tag);
+      if (bytes) { metric("autobottom.genie.download", 1); return bytes; }
+      console.log(`[GENIE] ⚠️ ${role} failed, trying next...`);
+    }
 
-  console.error(`[GENIE] ❌ all strategies exhausted: contract=${genieId}`);
-  return null;
+    console.error(`[GENIE] ❌ all strategies exhausted: contract=${genieId}`);
+    metric("autobottom.genie.download_failed", 1);
+    return null;
+  }, {}, "client");
 }

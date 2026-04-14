@@ -64,27 +64,35 @@ export class S3Ref {
   }
 
   async save(data: Uint8Array | string): Promise<void> {
-    const body = typeof data === "string" ? new TextEncoder().encode(data) : data;
-    const payloadHash = await sha256(body);
-    const headers: Record<string, string> = { "content-type": "application/octet-stream" };
-    const url = await signV4("PUT", this.bucket, this.key, payloadHash, headers);
-    const res = await fetch(url, { method: "PUT", headers, body: body as BodyInit });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`S3 PUT failed: ${res.status} ${text}`);
-    }
+    return withSpan("s3.save", async (span) => {
+      const body = typeof data === "string" ? new TextEncoder().encode(data) : data;
+      span.setAttributes({ "s3.bucket": this.bucket, "s3.key": this.key, "s3.bytes": body.byteLength });
+      const payloadHash = await sha256(body);
+      const headers: Record<string, string> = { "content-type": "application/octet-stream" };
+      const url = await signV4("PUT", this.bucket, this.key, payloadHash, headers);
+      const res = await fetch(url, { method: "PUT", headers, body: body as BodyInit });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`S3 PUT failed: ${res.status} ${text}`);
+      }
+      metric("autobottom.s3.save", 1);
+    }, {}, "client");
   }
 
   async get(): Promise<Uint8Array | null> {
-    const headers: Record<string, string> = {};
-    const url = await signV4("GET", this.bucket, this.key, "UNSIGNED-PAYLOAD", headers);
-    const res = await fetch(url, { headers });
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      const text = await res.text();
-      if (text.includes("NoSuchKey")) return null;
-      throw new Error(`S3 GET failed: ${res.status} ${text}`);
-    }
-    return new Uint8Array(await res.arrayBuffer());
+    return withSpan("s3.get", async (span) => {
+      span.setAttributes({ "s3.bucket": this.bucket, "s3.key": this.key });
+      const headers: Record<string, string> = {};
+      const url = await signV4("GET", this.bucket, this.key, "UNSIGNED-PAYLOAD", headers);
+      const res = await fetch(url, { headers });
+      if (res.status === 404) { span.setAttribute("s3.found", false); return null; }
+      if (!res.ok) {
+        const text = await res.text();
+        if (text.includes("NoSuchKey")) { span.setAttribute("s3.found", false); return null; }
+        throw new Error(`S3 GET failed: ${res.status} ${text}`);
+      }
+      metric("autobottom.s3.get", 1);
+      return new Uint8Array(await res.arrayBuffer());
+    }, {}, "client");
   }
 }

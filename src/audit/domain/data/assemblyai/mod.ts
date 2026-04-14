@@ -21,128 +21,145 @@ export interface TranscriptResult {
 }
 
 export async function uploadAudio(bytes: Uint8Array, timeoutMs = 60_000): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${BASE}/upload`, {
-      method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/octet-stream" },
-      body: bytes as BodyInit,
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`AssemblyAI upload failed: ${res.status} ${await res.text()}`);
-    const data = await res.json();
-    return data.upload_url;
-  } finally {
-    clearTimeout(timer);
-  }
+  return withSpan("assemblyai.uploadAudio", async (span) => {
+    span.setAttribute("assemblyai.payload_bytes", bytes.byteLength);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${BASE}/upload`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/octet-stream" },
+        body: bytes as BodyInit,
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`AssemblyAI upload failed: ${res.status} ${await res.text()}`);
+      const data = await res.json();
+      metric("autobottom.assemblyai.upload", 1);
+      return data.upload_url;
+    } finally {
+      clearTimeout(timer);
+    }
+  }, {}, "client");
 }
 
 export async function transcribe(audioBytes: Uint8Array, maxAttempts = 3, delayMs = 1500, findingId?: string): Promise<string> {
-  let lastError: unknown;
-  const tag = findingId ? `${findingId}: ` : "";
+  return withSpan("assemblyai.transcribe", async () => {
+    let lastError: unknown;
+    const tag = findingId ? `${findingId}: ` : "";
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const uploadUrl = await uploadAudio(audioBytes);
-      const submitRes = await fetch(`${BASE}/transcript`, {
-        method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ audio_url: uploadUrl, language_code: "en_us", punctuate: true, format_text: true, speaker_labels: true }),
-      });
-      if (!submitRes.ok) throw new Error(`AssemblyAI submit failed: ${submitRes.status}`);
-      let transcript = await submitRes.json();
-      if (transcript.status === "error") throw new Error(transcript.error || "AssemblyAI transcription error");
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const uploadUrl = await uploadAudio(audioBytes);
+        const submitRes = await fetch(`${BASE}/transcript`, {
+          method: "POST",
+          headers: { ...authHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ audio_url: uploadUrl, language_code: "en_us", punctuate: true, format_text: true, speaker_labels: true }),
+        });
+        if (!submitRes.ok) throw new Error(`AssemblyAI submit failed: ${submitRes.status}`);
+        let transcript = await submitRes.json();
+        if (transcript.status === "error") throw new Error(transcript.error || "AssemblyAI transcription error");
 
-      while (transcript.status === "queued" || transcript.status === "processing") {
-        await sleep(3000);
-        try {
-          const pollRes = await fetch(`${BASE}/transcript/${transcript.id}`, { headers: authHeaders() });
-          if (!pollRes.ok) continue;
-          transcript = await pollRes.json();
-        } catch { continue; }
-        if (transcript.status === "error") throw new Error(transcript.error || "AssemblyAI error during polling");
-      }
-
-      if (transcript.status !== "completed") throw new Error(`Transcription status: ${transcript.status}`);
-
-      if (transcript.utterances?.length > 0) {
-        const labeled = identifyRoles(transcript.utterances);
-        const text = labeled.map((u) => `${u.role}: ${u.text}`).join("\n");
-        if (text.trim().length > 0) {
-          console.log(`[ASSEMBLYAI] ${tag}transcription done (attempt ${attempt})`);
-          return text;
+        while (transcript.status === "queued" || transcript.status === "processing") {
+          await sleep(3000);
+          try {
+            const pollRes = await fetch(`${BASE}/transcript/${transcript.id}`, { headers: authHeaders() });
+            if (!pollRes.ok) continue;
+            transcript = await pollRes.json();
+          } catch { continue; }
+          if (transcript.status === "error") throw new Error(transcript.error || "AssemblyAI error during polling");
         }
+
+        if (transcript.status !== "completed") throw new Error(`Transcription status: ${transcript.status}`);
+
+        if (transcript.utterances?.length > 0) {
+          const labeled = identifyRoles(transcript.utterances);
+          const text = labeled.map((u) => `${u.role}: ${u.text}`).join("\n");
+          if (text.trim().length > 0) {
+            console.log(`[ASSEMBLYAI] ${tag}transcription done (attempt ${attempt})`);
+            metric("autobottom.assemblyai.transcribe", 1);
+            return text;
+          }
+        }
+        metric("autobottom.assemblyai.transcribe", 1);
+        return transcript.text || "";
+      } catch (err) {
+        lastError = err;
+        console.error(`[ASSEMBLYAI] ${tag}attempt ${attempt} failed:`, err);
+        if (attempt < maxAttempts) await sleep(delayMs);
       }
-      return transcript.text || "";
-    } catch (err) {
-      lastError = err;
-      console.error(`[ASSEMBLYAI] ${tag}attempt ${attempt} failed:`, err);
-      if (attempt < maxAttempts) await sleep(delayMs);
     }
-  }
-  throw new Error(`Transcription failed after ${maxAttempts} attempts: ${String(lastError)}`);
+    throw new Error(`Transcription failed after ${maxAttempts} attempts: ${String(lastError)}`);
+  }, {}, "client");
 }
 
 export async function transcribeWithUtterances(audioBytes: Uint8Array, maxAttempts = 3, delayMs = 1500, findingId?: string): Promise<TranscriptResult> {
-  let lastError: unknown;
-  const tag = findingId ? `${findingId}: ` : "";
+  return withSpan("assemblyai.transcribeWithUtterances", async () => {
+    let lastError: unknown;
+    const tag = findingId ? `${findingId}: ` : "";
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const uploadUrl = await uploadAudio(audioBytes);
-      const submitRes = await fetch(`${BASE}/transcript`, {
-        method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ audio_url: uploadUrl, language_code: "en_us", punctuate: true, format_text: true, speaker_labels: true }),
-      });
-      if (!submitRes.ok) throw new Error(`AssemblyAI submit failed: ${submitRes.status}`);
-      let transcript = await submitRes.json();
-      if (transcript.status === "error") throw new Error(transcript.error || "AssemblyAI transcription error");
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const uploadUrl = await uploadAudio(audioBytes);
+        const submitRes = await fetch(`${BASE}/transcript`, {
+          method: "POST",
+          headers: { ...authHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ audio_url: uploadUrl, language_code: "en_us", punctuate: true, format_text: true, speaker_labels: true }),
+        });
+        if (!submitRes.ok) throw new Error(`AssemblyAI submit failed: ${submitRes.status}`);
+        let transcript = await submitRes.json();
+        if (transcript.status === "error") throw new Error(transcript.error || "AssemblyAI transcription error");
 
-      while (transcript.status === "queued" || transcript.status === "processing") {
-        await sleep(3000);
-        try {
-          const pollRes = await fetch(`${BASE}/transcript/${transcript.id}`, { headers: authHeaders() });
-          if (!pollRes.ok) continue;
-          transcript = await pollRes.json();
-        } catch { continue; }
-        if (transcript.status === "error") throw new Error(transcript.error || "AssemblyAI error during polling");
+        while (transcript.status === "queued" || transcript.status === "processing") {
+          await sleep(3000);
+          try {
+            const pollRes = await fetch(`${BASE}/transcript/${transcript.id}`, { headers: authHeaders() });
+            if (!pollRes.ok) continue;
+            transcript = await pollRes.json();
+          } catch { continue; }
+          if (transcript.status === "error") throw new Error(transcript.error || "AssemblyAI error during polling");
+        }
+
+        if (transcript.status !== "completed") throw new Error(`Transcription status: ${transcript.status}`);
+
+        const labeled = transcript.utterances?.length > 0 ? identifyRoles(transcript.utterances) : [];
+        const text = labeled.length > 0 ? labeled.map((u) => `${u.role}: ${u.text}`).join("\n") : (transcript.text || "");
+        console.log(`[ASSEMBLYAI] ${tag}transcription done (attempt ${attempt})`);
+        metric("autobottom.assemblyai.transcribe_utterances", 1);
+        return { text, utterances: labeled };
+      } catch (err) {
+        lastError = err;
+        console.error(`[ASSEMBLYAI] ${tag}attempt ${attempt} failed:`, err);
+        if (attempt < maxAttempts) await sleep(delayMs);
       }
-
-      if (transcript.status !== "completed") throw new Error(`Transcription status: ${transcript.status}`);
-
-      const labeled = transcript.utterances?.length > 0 ? identifyRoles(transcript.utterances) : [];
-      const text = labeled.length > 0 ? labeled.map((u) => `${u.role}: ${u.text}`).join("\n") : (transcript.text || "");
-      console.log(`[ASSEMBLYAI] ${tag}transcription done (attempt ${attempt})`);
-      return { text, utterances: labeled };
-    } catch (err) {
-      lastError = err;
-      console.error(`[ASSEMBLYAI] ${tag}attempt ${attempt} failed:`, err);
-      if (attempt < maxAttempts) await sleep(delayMs);
     }
-  }
-  throw new Error(`Transcription failed after ${maxAttempts} attempts: ${String(lastError)}`);
+    throw new Error(`Transcription failed after ${maxAttempts} attempts: ${String(lastError)}`);
+  }, {}, "client");
 }
 
 export async function submitTranscription(uploadUrl: string, findingId?: string): Promise<string> {
-  const tag = findingId ? `${findingId}: ` : "";
-  const res = await fetch(`${BASE}/transcript`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ audio_url: uploadUrl, language_code: "en_us", punctuate: true, format_text: true, speaker_labels: true }),
-  });
-  if (!res.ok) throw new Error(`AssemblyAI submit failed: ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  if (data.status === "error") throw new Error(data.error || "AssemblyAI submit error");
-  console.log(`[ASSEMBLYAI] ${tag}submitted transcript ${data.id}`);
-  return data.id;
+  return withSpan("assemblyai.submitTranscription", async () => {
+    const tag = findingId ? `${findingId}: ` : "";
+    const res = await fetch(`${BASE}/transcript`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ audio_url: uploadUrl, language_code: "en_us", punctuate: true, format_text: true, speaker_labels: true }),
+    });
+    if (!res.ok) throw new Error(`AssemblyAI submit failed: ${res.status} ${await res.text()}`);
+    const data = await res.json();
+    if (data.status === "error") throw new Error(data.error || "AssemblyAI submit error");
+    console.log(`[ASSEMBLYAI] ${tag}submitted transcript ${data.id}`);
+    metric("autobottom.assemblyai.submit", 1);
+    return data.id;
+  }, {}, "client");
 }
 
 export async function pollTranscriptOnce(transcriptId: string): Promise<any> {
-  const res = await fetch(`${BASE}/transcript/${transcriptId}`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`AssemblyAI poll failed: ${res.status} ${await res.text()}`);
-  return res.json();
+  return withSpan("assemblyai.pollTranscriptOnce", async () => {
+    const res = await fetch(`${BASE}/transcript/${transcriptId}`, { headers: authHeaders() });
+    if (!res.ok) throw new Error(`AssemblyAI poll failed: ${res.status} ${await res.text()}`);
+    metric("autobottom.assemblyai.poll", 1);
+    return res.json();
+  }, {}, "client");
 }
 
 export function processTranscriptResult(transcript: any, snipStart?: number | null, snipEnd?: number | null): TranscriptResult {

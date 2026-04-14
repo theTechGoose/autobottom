@@ -62,47 +62,57 @@ function chunkText(text: string, maxChunkSize = 2000, overlap = 200): string[] {
 }
 
 export async function upload(findingId: string, text: string): Promise<void> {
-  const chunks = chunkText(text);
-  const host = await getPineconeHost();
-  const { key } = PINECONE_HOST();
-  const vectors = await Promise.all(chunks.map(async (chunk, i) => {
-    const values = await embed(chunk);
-    return { id: `${findingId}-${i}`, values, metadata: { text: chunk } };
-  }));
-  for (let i = 0; i < vectors.length; i += 100) {
-    const batch = vectors.slice(i, i + 100);
-    const res = await timedFetch(`https://${host}/vectors/upsert`, {
-      method: "POST", headers: { "Api-Key": key, "Content-Type": "application/json" },
-      body: JSON.stringify({ vectors: batch, namespace: findingId }),
-    });
-    if (!res.ok) throw new Error(`Pinecone upsert failed: ${res.status} ${await res.text()}`);
-    await res.json();
-  }
+  return withSpan("pinecone.upload", async (span) => {
+    const chunks = chunkText(text);
+    span.setAttribute("pinecone.chunks", chunks.length);
+    const host = await getPineconeHost();
+    const { key } = PINECONE_HOST();
+    const vectors = await Promise.all(chunks.map(async (chunk, i) => {
+      const values = await embed(chunk);
+      return { id: `${findingId}-${i}`, values, metadata: { text: chunk } };
+    }));
+    for (let i = 0; i < vectors.length; i += 100) {
+      const batch = vectors.slice(i, i + 100);
+      const res = await timedFetch(`https://${host}/vectors/upsert`, {
+        method: "POST", headers: { "Api-Key": key, "Content-Type": "application/json" },
+        body: JSON.stringify({ vectors: batch, namespace: findingId }),
+      });
+      if (!res.ok) throw new Error(`Pinecone upsert failed: ${res.status} ${await res.text()}`);
+      await res.json();
+    }
+    metric("autobottom.pinecone.upload", 1);
+  }, {}, "client");
 }
 
 export async function query(findingId: string, question: string, numDocs = 4): Promise<string> {
-  const host = await getPineconeHost();
-  const { key } = PINECONE_HOST();
-  const queryVector = await embed(question);
-  const res = await timedFetch(`https://${host}/query`, {
-    method: "POST", headers: { "Api-Key": key, "Content-Type": "application/json" },
-    body: JSON.stringify({ vector: queryVector, topK: numDocs, namespace: findingId, includeMetadata: true }),
-  });
-  if (!res.ok) throw new Error(`Pinecone query failed: ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  const matches = (data.matches ?? []) as Array<{ score: number; metadata?: { text?: string } }>;
-  const topScore = matches[0]?.score ?? 0;
-  return matches.filter((m) => topScore - m.score < 0.2).map((m) => m.metadata?.text ?? "").filter(Boolean).join("\n\n --- \n\n");
+  return withSpan("pinecone.query", async () => {
+    const host = await getPineconeHost();
+    const { key } = PINECONE_HOST();
+    const queryVector = await embed(question);
+    const res = await timedFetch(`https://${host}/query`, {
+      method: "POST", headers: { "Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ vector: queryVector, topK: numDocs, namespace: findingId, includeMetadata: true }),
+    });
+    if (!res.ok) throw new Error(`Pinecone query failed: ${res.status} ${await res.text()}`);
+    const data = await res.json();
+    const matches = (data.matches ?? []) as Array<{ score: number; metadata?: { text?: string } }>;
+    const topScore = matches[0]?.score ?? 0;
+    metric("autobottom.pinecone.query", 1);
+    return matches.filter((m) => topScore - m.score < 0.2).map((m) => m.metadata?.text ?? "").filter(Boolean).join("\n\n --- \n\n");
+  }, {}, "client");
 }
 
 export async function deleteNamespace(findingId: string): Promise<void> {
-  const host = await getPineconeHost();
-  const { key } = PINECONE_HOST();
-  const res = await timedFetch(`https://${host}/vectors/delete`, {
-    method: "POST", headers: { "Api-Key": key, "Content-Type": "application/json" },
-    body: JSON.stringify({ deleteAll: true, namespace: findingId }),
-  });
-  if (!res.ok) console.error(`[PINECONE] delete namespace failed: ${res.status} ${await res.text()}`);
+  return withSpan("pinecone.deleteNamespace", async () => {
+    const host = await getPineconeHost();
+    const { key } = PINECONE_HOST();
+    const res = await timedFetch(`https://${host}/vectors/delete`, {
+      method: "POST", headers: { "Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ deleteAll: true, namespace: findingId }),
+    });
+    if (!res.ok) console.error(`[PINECONE] delete namespace failed: ${res.status} ${await res.text()}`);
+    metric("autobottom.pinecone.delete", 1);
+  }, {}, "client");
 }
 
 /** Exported for testing. */

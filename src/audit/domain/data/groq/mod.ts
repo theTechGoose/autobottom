@@ -93,7 +93,7 @@ export function makeUserPrompt(question: string, transcript: string): string {
 
 export interface LlmAnswer { answer: string; thinking: string; defense: string; }
 
-export async function askQuestion(question: string, transcript: string, modelIndex = 0, temperature = 0.8): Promise<LlmAnswer> {
+async function askQuestionInner(question: string, transcript: string, modelIndex = 0, temperature = 0.8): Promise<LlmAnswer> {
   const model: GroqModel = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
   const userPrompt = makeUserPrompt(question, transcript);
@@ -122,18 +122,35 @@ export async function askQuestion(question: string, transcript: string, modelInd
     if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
       console.warn(`[LLM-FALLBACK] ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
       await new Promise((r) => setTimeout(r, 1000));
-      return askQuestion(question, transcript, nextIndex, temperature);
+      return askQuestionInner(question, transcript, nextIndex, temperature);
     }
     throw e;
   }
 }
 
+export async function askQuestion(question: string, transcript: string, modelIndex = 0, temperature = 0.8): Promise<LlmAnswer> {
+  return withSpan("groq.askQuestion", async (span) => {
+    span.setAttribute("groq.model_index", modelIndex);
+    const result = await askQuestionInner(question, transcript, modelIndex, temperature);
+    metric("autobottom.groq.ask", 1);
+    return result;
+  }, {}, "client");
+}
+
 export async function generateFeedback(failedQuestions: string): Promise<string> {
-  return groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: "The following is a list of questions that failed an audit. Please provide a summary of why the team member failed the audit and what they can do to improve.\n\nSummary:" }, { role: "user", content: failedQuestions }], max_tokens: 8000 }, "generateFeedback");
+  return withSpan("groq.generateFeedback", async () => {
+    const result = await groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: "The following is a list of questions that failed an audit. Please provide a summary of why the team member failed the audit and what they can do to improve.\n\nSummary:" }, { role: "user", content: failedQuestions }], max_tokens: 8000 }, "generateFeedback");
+    metric("autobottom.groq.feedback", 1);
+    return result;
+  }, {}, "client");
 }
 
 export async function summarize(texts: string[]): Promise<string> {
-  return groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: "please give a summary.\n\nsummary:" }, { role: "user", content: texts.join("\n") }], max_tokens: 8000 }, "summarize");
+  return withSpan("groq.summarize", async () => {
+    const result = await groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: "please give a summary.\n\nsummary:" }, { role: "user", content: texts.join("\n") }], max_tokens: 8000 }, "summarize");
+    metric("autobottom.groq.summarize", 1);
+    return result;
+  }, {}, "client");
 }
 
 async function groqCallWithRetry(params: Parameters<ReturnType<typeof getClient>["chat"]["completions"]["create"]>[0], trackLabel: string, modelIndex = 0): Promise<string> {
@@ -163,23 +180,27 @@ async function groqCallWithRetry(params: Parameters<ReturnType<typeof getClient>
 }
 
 export async function diarize(rawTranscript: string, maxAttempts = 4): Promise<string> {
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-    { role: "system", content: DIARIZATION_SYSTEM },
-    { role: "user", content: rawTranscript },
-  ];
-  for (let j = 0; j < maxAttempts; j++) {
-    const diarized = await groqCallWithRetry({ model: MODEL, messages, max_tokens: 8000 }, "diarize");
-    messages.push({ role: "assistant", content: diarized });
-    const [managerText, qaAnswer] = await Promise.all([
-      groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_MANAGER }, { role: "user", content: diarized }], response_format: { type: "json_object" }, max_tokens: 8000 }, "diarize-manager"),
-      groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_QA }, { role: "user", content: diarized }], max_tokens: 100 }, "diarize-qa"),
-    ]);
-    if (qaAnswer.trim() === "Yes") return diarized;
-    const manager = parseLlmJson<{ isCorrect: boolean; thinking: string; feedback: string | null }>(managerText, { isCorrect: true, thinking: "", feedback: null });
-    if (manager.feedback) messages.push({ role: "user", content: manager.feedback });
-  }
-  const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
-  return lastAssistant?.content ?? rawTranscript;
+  return withSpan("groq.diarize", async (span) => {
+    span.setAttribute("groq.max_attempts", maxAttempts);
+    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: DIARIZATION_SYSTEM },
+      { role: "user", content: rawTranscript },
+    ];
+    for (let j = 0; j < maxAttempts; j++) {
+      const diarized = await groqCallWithRetry({ model: MODEL, messages, max_tokens: 8000 }, "diarize");
+      messages.push({ role: "assistant", content: diarized });
+      const [managerText, qaAnswer] = await Promise.all([
+        groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_MANAGER }, { role: "user", content: diarized }], response_format: { type: "json_object" }, max_tokens: 8000 }, "diarize-manager"),
+        groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_QA }, { role: "user", content: diarized }], max_tokens: 100 }, "diarize-qa"),
+      ]);
+      if (qaAnswer.trim() === "Yes") { metric("autobottom.groq.diarize", 1); return diarized; }
+      const manager = parseLlmJson<{ isCorrect: boolean; thinking: string; feedback: string | null }>(managerText, { isCorrect: true, thinking: "", feedback: null });
+      if (manager.feedback) messages.push({ role: "user", content: manager.feedback });
+    }
+    const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
+    metric("autobottom.groq.diarize", 1);
+    return lastAssistant?.content ?? rawTranscript;
+  }, {}, "client");
 }
 
 function parseLlmJson<T>(text: string, fallback: T): T {

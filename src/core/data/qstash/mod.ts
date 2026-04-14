@@ -70,75 +70,101 @@ async function enqueue(queueName: string, targetUrl: string, body: unknown, dela
 }
 
 export function enqueueStep(step: string, body: unknown, delaySeconds?: number): Promise<string> {
-  const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
-  const url = `${selfUrl()}/audit/step/${step}`;
-  const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "120s" } : undefined;
-  return enqueue(queueName, url, body, delaySeconds, extraHeaders);
+  return withSpan("qstash.enqueueStep", async (span) => {
+    span.setAttribute("qstash.step", step);
+    const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
+    const url = `${selfUrl()}/audit/step/${step}`;
+    const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "120s" } : undefined;
+    const result = await enqueue(queueName, url, body, delaySeconds, extraHeaders);
+    metric("autobottom.qstash.enqueue", 1, { step });
+    return result;
+  }, {}, "client");
 }
 
 export async function publishStep(step: string, body: unknown): Promise<string> {
-  const url = `${selfUrl()}/audit/step/${step}`;
-  if (isLocalMode()) return localEnqueue(url, body);
-  const timeout: Record<string, string> = step === "ask-all" ? { "Upstash-Timeout": "900s" } : {};
-  const res = await fetch(`${qstashUrl()}/v2/publish/${url}`, {
-    method: "POST",
-    headers: { ...qstashAuth(), "Content-Type": "application/json", "Upstash-Retries": "0", ...timeout },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`QStash publish failed: ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  return data.messageId;
+  return withSpan("qstash.publishStep", async (span) => {
+    span.setAttribute("qstash.step", step);
+    const url = `${selfUrl()}/audit/step/${step}`;
+    if (isLocalMode()) return localEnqueue(url, body);
+    const timeout: Record<string, string> = step === "ask-all" ? { "Upstash-Timeout": "900s" } : {};
+    const res = await fetch(`${qstashUrl()}/v2/publish/${url}`, {
+      method: "POST",
+      headers: { ...qstashAuth(), "Content-Type": "application/json", "Upstash-Retries": "0", ...timeout },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`QStash publish failed: ${res.status} ${await res.text()}`);
+    const data = await res.json();
+    metric("autobottom.qstash.publish", 1, { step });
+    return data.messageId;
+  }, {}, "client");
 }
 
 export function enqueueCleanup(body: unknown, delaySeconds: number): Promise<string> {
-  const url = `${selfUrl()}/audit/step/cleanup`;
-  return enqueue(CLEANUP_QUEUE, url, body, delaySeconds);
+  return withSpan("qstash.enqueueCleanup", async () => {
+    const url = `${selfUrl()}/audit/step/cleanup`;
+    const result = await enqueue(CLEANUP_QUEUE, url, body, delaySeconds);
+    metric("autobottom.qstash.enqueue_cleanup", 1);
+    return result;
+  }, {}, "client");
 }
 
 export async function pauseAllQueues(): Promise<void> {
-  if (isLocalMode()) return;
-  await Promise.all(ALL_QUEUES.map(async (q) => {
-    const res = await fetch(`${qstashUrl()}/v2/queues/${q}/pause`, { method: "POST", headers: qstashAuth() });
-    if (!res.ok) console.error(`[QSTASH] pause ${q} failed: ${res.status} ${await res.text()}`);
-  }));
+  return withSpan("qstash.pauseAllQueues", async () => {
+    if (isLocalMode()) return;
+    await Promise.all(ALL_QUEUES.map(async (q) => {
+      const res = await fetch(`${qstashUrl()}/v2/queues/${q}/pause`, { method: "POST", headers: qstashAuth() });
+      if (!res.ok) console.error(`[QSTASH] pause ${q} failed: ${res.status} ${await res.text()}`);
+    }));
+    metric("autobottom.qstash.pause", 1);
+  }, {}, "client");
 }
 
 export async function resumeAllQueues(): Promise<void> {
-  if (isLocalMode()) return;
-  await Promise.all(ALL_QUEUES.map(async (q) => {
-    const res = await fetch(`${qstashUrl()}/v2/queues/${q}/resume`, { method: "POST", headers: qstashAuth() });
-    if (!res.ok) console.error(`[QSTASH] resume ${q} failed: ${res.status} ${await res.text()}`);
-  }));
+  return withSpan("qstash.resumeAllQueues", async () => {
+    if (isLocalMode()) return;
+    await Promise.all(ALL_QUEUES.map(async (q) => {
+      const res = await fetch(`${qstashUrl()}/v2/queues/${q}/resume`, { method: "POST", headers: qstashAuth() });
+      if (!res.ok) console.error(`[QSTASH] resume ${q} failed: ${res.status} ${await res.text()}`);
+    }));
+    metric("autobottom.qstash.resume", 1);
+  }, {}, "client");
 }
 
 export async function purgeAllQueues(): Promise<number> {
-  if (isLocalMode()) return 0;
-  let total = 0;
-  await Promise.all(ALL_QUEUES.map(async (q) => {
-    let cursor: string | undefined;
-    do {
-      const url = new URL(`${qstashUrl()}/v2/messages`);
-      url.searchParams.set("queueName", q);
-      if (cursor) url.searchParams.set("cursor", cursor);
-      const res = await fetch(url.toString(), { headers: qstashAuth() });
-      if (!res.ok) { console.error(`[QSTASH] list ${q} failed: ${res.status}`); return; }
-      const { messages = [], cursor: next } = await res.json();
-      cursor = next;
-      await Promise.all((messages as { messageId: string }[]).map(async (m) => {
-        const del = await fetch(`${qstashUrl()}/v2/messages/${m.messageId}`, { method: "DELETE", headers: qstashAuth() });
-        if (del.ok) total++;
-      }));
-    } while (cursor);
-  }));
-  return total;
+  return withSpan("qstash.purgeAllQueues", async (span) => {
+    if (isLocalMode()) return 0;
+    let total = 0;
+    await Promise.all(ALL_QUEUES.map(async (q) => {
+      let cursor: string | undefined;
+      do {
+        const url = new URL(`${qstashUrl()}/v2/messages`);
+        url.searchParams.set("queueName", q);
+        if (cursor) url.searchParams.set("cursor", cursor);
+        const res = await fetch(url.toString(), { headers: qstashAuth() });
+        if (!res.ok) { console.error(`[QSTASH] list ${q} failed: ${res.status}`); return; }
+        const { messages = [], cursor: next } = await res.json();
+        cursor = next;
+        await Promise.all((messages as { messageId: string }[]).map(async (m) => {
+          const del = await fetch(`${qstashUrl()}/v2/messages/${m.messageId}`, { method: "DELETE", headers: qstashAuth() });
+          if (del.ok) total++;
+        }));
+      } while (cursor);
+    }));
+    span.setAttribute("qstash.purged_count", total);
+    metric("autobottom.qstash.purge", 1);
+    return total;
+  }, {}, "client");
 }
 
 export async function getQueueCounts(): Promise<Record<string, number>> {
-  if (isLocalMode()) return Object.fromEntries(ALL_QUEUES.map((q) => [q, 0]));
-  const pairs = await Promise.all(ALL_QUEUES.map(async (q) => {
-    const res = await fetch(`${qstashUrl()}/v2/queues/${q}`, { headers: qstashAuth() });
-    const data = res.ok ? await res.json() : {};
-    return [q, data.messageCount ?? 0] as [string, number];
-  }));
-  return Object.fromEntries(pairs);
+  return withSpan("qstash.getQueueCounts", async () => {
+    if (isLocalMode()) return Object.fromEntries(ALL_QUEUES.map((q) => [q, 0]));
+    const pairs = await Promise.all(ALL_QUEUES.map(async (q) => {
+      const res = await fetch(`${qstashUrl()}/v2/queues/${q}`, { headers: qstashAuth() });
+      const data = res.ok ? await res.json() : {};
+      return [q, data.messageCount ?? 0] as [string, number];
+    }));
+    metric("autobottom.qstash.get_counts", 1);
+    return Object.fromEntries(pairs);
+  }, {}, "client");
 }

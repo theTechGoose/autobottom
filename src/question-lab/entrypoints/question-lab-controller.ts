@@ -104,7 +104,7 @@ export class QuestionLabController {
   @Post("qlab/simulate") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async simulate(@Body() body: any) {
     if (!body.question || !body.transcript) return { error: "question and transcript required" };
-    const { askQuestion } = await import("../../audit/domain/data/groq/mod.ts");
+    const { askQuestion } = await import("@audit/domain/data/groq/mod.ts");
     const result = await askQuestion(body.question, body.transcript, 0, body.temperature ?? 0.8);
     return { result };
   }
@@ -112,7 +112,7 @@ export class QuestionLabController {
   @Get("qlab/snippet") @ReturnedType(MessageResponse)
   async getSnippet(@Query("findingId") findingId: string) {
     if (!findingId) return { error: "findingId required" };
-    const { getTranscript } = await import("../../audit/domain/data/audit-repository/mod.ts");
+    const { getTranscript } = await import("@audit/domain/data/audit-repository/mod.ts");
     const transcript = await getTranscript(ORG(), findingId);
     return { snippet: transcript?.diarized?.slice(0, 2000) ?? transcript?.raw?.slice(0, 2000) ?? "" };
   }
@@ -120,11 +120,11 @@ export class QuestionLabController {
   @Post("qlab/test-audit") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async runTestAudit(@Body() body: any) {
     if (!body.rid || !body.configName) return { error: "rid and configName required" };
-    const { enqueueStep } = await import("../../core/domain/data/qstash/mod.ts");
+    const { enqueueStep } = await import("@core/data/qstash/mod.ts");
     const { nanoid } = await import("https://deno.land/x/nanoid@v3.0.0/mod.ts");
     const findingId = nanoid();
     // Create test finding and enqueue
-    const { saveFinding } = await import("../../audit/domain/data/audit-repository/mod.ts");
+    const { saveFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
     await saveFinding(ORG(), {
       id: findingId, auditJobId: nanoid(), findingStatus: "pending",
       feedback: { heading: "", text: "", viewUrl: "" },

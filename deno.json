@@ -22,6 +22,7 @@
     "#assert": "jsr:@std/assert",
     "#danet/swagger-decorators": "jsr:@danet/swagger@2/decorators",
     "#groq-sdk": "npm:groq-sdk",
+    "#groq-sdk/resources/chat/completions": "npm:groq-sdk/resources/chat/completions",
     "#openai": "npm:openai",
     "@core/": "./src/core/",
     "@audit/": "./src/audit/",

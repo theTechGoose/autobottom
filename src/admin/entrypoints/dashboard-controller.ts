@@ -44,8 +44,8 @@ export class DashboardController {
   @Get("delete-finding") @ReturnedType(OkMessageResponse)
   async deleteFinding(@Query("findingId") findingId: string) {
     if (!findingId) return { error: "findingId required" };
-    const { adminDeleteFinding } = await import("../../../judge/kv.ts");
-    await adminDeleteFinding(ORG(), findingId);
+    const { adminDeleteFindingLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
+    await adminDeleteFindingLegacy(ORG(), findingId);
     return { ok: true, findingId };
   }
 

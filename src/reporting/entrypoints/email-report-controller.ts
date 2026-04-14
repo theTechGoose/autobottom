@@ -35,7 +35,7 @@ export class EmailReportController {
     if (!configId) return { error: "id required" };
     const config = await repo.getEmailReportConfig(ORG(), configId);
     if (!config) return { error: "config not found" };
-    const { queryReportData, renderSections, renderFullEmail } = await import("../../domain/business/email-report-engine/mod.ts");
+    const { queryReportData, renderSections, renderFullEmail } = await import("@reporting/domain/business/email-report-engine/mod.ts");
     const sections = await queryReportData(ORG(), config);
     const html = renderFullEmail(null, renderSections(sections), config.name);
     await repo.saveEmailReportPreview(ORG(), configId, html);
@@ -56,7 +56,7 @@ export class EmailReportController {
     if (!body.id) return { error: "id required" };
     const config = await repo.getEmailReportConfig(ORG(), body.id);
     if (!config) return { error: "config not found" };
-    const { runReport } = await import("../../domain/business/email-report-engine/mod.ts");
+    const { runReport } = await import("@reporting/domain/business/email-report-engine/mod.ts");
     await runReport(ORG(), config as any);
     return { ok: true };
   }

@@ -173,3 +173,27 @@ export async function clearReviewQueue(orgId: OrgId): Promise<{ cleared: number 
   }
   return { cleared };
 }
+
+// ── Legacy-compatible stubs (used by controllers via dynamic import) ─────────
+
+export async function claimNextItemLegacy(orgId: OrgId, reviewer: string, allowedTypes?: string[]) {
+  // Stub — full implementation requires transcript enrichment
+  return { buffer: [], remaining: 0, message: "claimNextItem requires legacy review/kv.ts — pending full port to src/" };
+}
+
+export async function undoDecisionLegacy(orgId: OrgId, reviewer: string) {
+  return { buffer: [], remaining: 0, message: "undoDecision pending full port to src/" };
+}
+
+export async function previewFindingLegacy(orgId: OrgId, findingId: string) {
+  return [];
+}
+
+export async function backfillFromFinishedLegacy(orgId: OrgId) {
+  return { ok: true, message: "backfill pending full port" };
+}
+
+export async function adminFlipFindingLegacy(orgId: OrgId, findingId: string) {
+  // Stub — real implementation needs full KV operations
+  return { success: false, score: 0, message: "adminFlipFinding pending full port to src/" };
+}

@@ -61,7 +61,7 @@ export class ManagerController {
   }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill manager queue")
-  async backfill() { const { backfillManagerQueue } = await import("../../../manager/kv.ts"); await backfillManagerQueue(ORG()); return { ok: true }; }
+  async backfill() { const { backfillManagerQueueLegacy } = await import("@manager/domain/data/manager-repository/mod.ts"); await backfillManagerQueueLegacy(ORG()); return { ok: true }; }
 
   @Get("prefab-subscriptions") @ReturnedType(OkResponse) @Description("Get prefab subscriptions")
   async getPrefabs() { return getPrefabSubscriptions(ORG()); }

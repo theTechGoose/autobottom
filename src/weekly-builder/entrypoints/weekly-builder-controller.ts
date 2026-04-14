@@ -25,10 +25,10 @@ export class WeeklyBuilderController {
   async publish(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.id) return { error: "report config id required" };
-    const { getEmailReportConfig } = await import("../../reporting/domain/data/email-repository/mod.ts");
+    const { getEmailReportConfig } = await import("@reporting/domain/data/email-repository/mod.ts");
     const config = await getEmailReportConfig(ORG(), b.id);
     if (!config) return { error: "config not found" };
-    const { runReport } = await import("../../reporting/domain/business/email-report-engine/mod.ts");
+    const { runReport } = await import("@reporting/domain/business/email-report-engine/mod.ts");
     await runReport(ORG(), config as any);
     return { ok: true };
   }
@@ -37,11 +37,11 @@ export class WeeklyBuilderController {
   async testSend(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.id) return { error: "report config id required" };
-    const { getEmailReportConfig } = await import("../../reporting/domain/data/email-repository/mod.ts");
+    const { getEmailReportConfig } = await import("@reporting/domain/data/email-repository/mod.ts");
     const config = await getEmailReportConfig(ORG(), b.id);
     if (!config) return { error: "config not found" };
     const testConfig = { ...config, recipients: b.recipients ?? config.recipients };
-    const { runReport } = await import("../../reporting/domain/business/email-report-engine/mod.ts");
+    const { runReport } = await import("@reporting/domain/business/email-report-engine/mod.ts");
     await runReport(ORG(), testConfig as any);
     return { ok: true };
   }

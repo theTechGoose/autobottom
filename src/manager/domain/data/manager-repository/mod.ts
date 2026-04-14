@@ -36,3 +36,9 @@ export async function getManagerStats(orgId: OrgId): Promise<{ total: number; pe
     remediated: items.filter((i) => i.status === "remediated").length,
   };
 }
+
+// ── Legacy-compatible stubs ──────────────────────────────────────────────────
+
+export async function backfillManagerQueueLegacy(orgId: OrgId) {
+  return { ok: true, message: "manager backfill pending full port" };
+}

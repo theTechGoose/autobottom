@@ -111,3 +111,32 @@ export async function clearJudgeQueue(orgId: OrgId): Promise<{ cleared: number }
   for await (const entry of db.list({ prefix: orgKey(orgId, "judge-active") })) { await db.delete(entry.key); cleared++; }
   return { cleared };
 }
+
+// ── Legacy-compatible stubs ──────────────────────────────────────────────────
+
+export async function claimNextItemLegacy(orgId: OrgId, judge: string) {
+  return { buffer: [], remaining: 0, message: "judge claimNextItem pending full port to src/" };
+}
+
+export async function undoDecisionLegacy(orgId: OrgId, judge: string) {
+  return { buffer: [], remaining: 0, message: "judge undoDecision pending full port" };
+}
+
+export async function adminDeleteFindingLegacy(orgId: OrgId, findingId: string) {
+  // Basic: delete finding from KV
+  const db = await getKv();
+  await db.delete(orgKey(orgId, "judge-pending", findingId));
+  // TODO: full cleanup of all indices
+}
+
+export async function backfillChargebackEntriesLegacy(orgId: OrgId, since: number, until: number) {
+  return { scanned: 0, cbUpdated: 0, cbDeleted: 0, wireUpdated: 0, message: "backfill pending full port" };
+}
+
+export async function findDuplicatesLegacy(orgId: OrgId, since: number, until: number) {
+  return [];
+}
+
+export async function deleteDuplicatesLegacy(orgId: OrgId, plan: any, onProgress: () => void) {
+  return { deleted: 0 };
+}

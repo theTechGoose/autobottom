@@ -18,7 +18,7 @@ export class ReviewController {
   @Get("next") @ReturnedType(ReviewBufferResponse) @Description("Claim next review items (FIFO oldest audit first)")
   async next(@Query("types") types: string, @Query("reviewer") reviewer: string) {
     if (!reviewer) return { error: "reviewer query param required" };
-    const { claimNextItem } = await import("../../../review/kv.ts");
+    const { claimNextItemLegacy: claimNextItem } = await import("@review/domain/business/review-queue/mod.ts");
     const allowedTypes = types ? types.split(",").map((t: string) => t.trim()) : undefined;
     return claimNextItem(ORG(), reviewer, allowedTypes);
   }
@@ -35,7 +35,7 @@ export class ReviewController {
   @Post("back") @ReturnedType(ReviewBufferResponse) @Description("Undo last decision") @BodyType(ReviewBackRequest)
   async back(@Body() body: { findingId: string; questionIndex: number; reviewer: string }) {
     if (!body.reviewer) return { error: "reviewer required" };
-    const { undoDecision } = await import("../../../review/kv.ts");
+    const { undoDecisionLegacy: undoDecision } = await import("@review/domain/business/review-queue/mod.ts");
     return undoDecision(ORG(), body.reviewer);
   }
 
@@ -52,7 +52,7 @@ export class ReviewController {
   async saveSettings(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.email || !b.config) return { error: "email and config required" };
-    const { saveReviewerConfig } = await import("../../../admin/domain/data/admin-repository/mod.ts");
+    const { saveReviewerConfig } = await import("@admin/domain/data/admin-repository/mod.ts");
     await saveReviewerConfig(ORG(), b.email, b.config);
     return { ok: true };
   }
@@ -63,7 +63,7 @@ export class ReviewController {
   @Get("preview") @ReturnedType(ReviewBufferResponse) @Description("Preview a finding for review")
   async preview(@Query("findingId") findingId: string) {
     if (!findingId) return { error: "findingId required" };
-    const { previewFinding } = await import("../../../review/kv.ts");
+    const { previewFindingLegacy: previewFinding } = await import("@review/domain/business/review-queue/mod.ts");
     const items = await previewFinding(ORG(), findingId);
     return { buffer: items ?? [], remaining: 0 };
   }
@@ -78,5 +78,5 @@ export class ReviewController {
   async saveGamification(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill review queue")
-  async backfill() { const { backfillFromFinished } = await import("../../../review/kv.ts"); await backfillFromFinished(ORG()); return { ok: true }; }
+  async backfill() { const { backfillFromFinishedLegacy: backfillFromFinished } = await import("@review/domain/business/review-queue/mod.ts"); await backfillFromFinished(ORG()); return { ok: true }; }
 }

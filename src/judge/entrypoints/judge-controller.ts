@@ -19,7 +19,7 @@ export class JudgeController {
   @Get("next") @ReturnedType(ReviewBufferResponse) @Description("Claim next judge items")
   async next(@Query("judge") judge: string) {
     if (!judge) return { error: "judge query param required" };
-    const { claimNextItem } = await import("../../../judge/kv.ts");
+    const { claimNextItemLegacy: claimNextItem } = await import("@judge/domain/data/judge-repository/mod.ts");
     return claimNextItem(ORG(), judge);
   }
 
@@ -36,7 +36,7 @@ export class JudgeController {
   async back(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.judge) return { error: "judge required" };
-    const { undoDecision } = await import("../../../judge/kv.ts");
+    const { undoDecisionLegacy: undoDecision } = await import("@judge/domain/data/judge-repository/mod.ts");
     return undoDecision(ORG(), b.judge);
   }
 

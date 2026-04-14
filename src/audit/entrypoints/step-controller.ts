@@ -1,15 +1,15 @@
-/** Pipeline step controller — delegates to original step implementations.
- *  Each step receives the raw request and returns the step's response body. */
+/** Pipeline step controller — delegates to original step implementations. */
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Post, Req } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
+import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { StepResponse } from "@core/dto/responses.ts";
 import {
   stepInit, stepTranscribe, stepTranscribeCb, stepPollTranscript,
   stepDiarizeAsync, stepPineconeAsync, stepPrepare,
   stepAskBatch, stepAskAll, stepFinalize, stepCleanup, stepBadWordCheck,
 } from "@audit/domain/business/pipeline-orchestrator/mod.ts";
 
-/** Call an original step handler (which returns Response) and extract its JSON body. */
 async function callStep(stepFn: (req: Request) => Promise<Response>, req: Request) {
   const response = await stepFn(req);
   try { return await response.json(); }
@@ -20,39 +20,39 @@ async function callStep(stepFn: (req: Request) => Promise<Response>, req: Reques
 @Controller("audit/step")
 export class StepController {
 
-  @Post("init")
+  @Post("init") @ReturnedType(StepResponse) @Description("Initialize audit — fetch recording, save to S3")
   async init(@Req req: Request) { return callStep(stepInit, req); }
 
-  @Post("transcribe")
+  @Post("transcribe") @ReturnedType(StepResponse) @Description("Submit audio for transcription")
   async transcribe(@Req req: Request) { return callStep(stepTranscribe, req); }
 
-  @Post("poll-transcript")
+  @Post("poll-transcript") @ReturnedType(StepResponse) @Description("Poll transcription status")
   async pollTranscript(@Req req: Request) { return callStep(stepPollTranscript, req); }
 
-  @Post("transcribe-complete")
+  @Post("transcribe-complete") @ReturnedType(StepResponse) @Description("Handle transcription completion callback")
   async transcribeComplete(@Req req: Request) { return callStep(stepTranscribeCb, req); }
 
-  @Post("diarize-async")
+  @Post("diarize-async") @ReturnedType(StepResponse) @Description("Speaker diarization via LLM")
   async diarizeAsync(@Req req: Request) { return callStep(stepDiarizeAsync, req); }
 
-  @Post("pinecone-async")
+  @Post("pinecone-async") @ReturnedType(StepResponse) @Description("Upload transcript to vector store")
   async pineconeAsync(@Req req: Request) { return callStep(stepPineconeAsync, req); }
 
-  @Post("prepare")
+  @Post("prepare") @ReturnedType(StepResponse) @Description("Prepare questions for audit")
   async prepare(@Req req: Request) { return callStep(stepPrepare, req); }
 
-  @Post("ask-batch")
+  @Post("ask-batch") @ReturnedType(StepResponse) @Description("Ask a batch of audit questions via LLM")
   async askBatch(@Req req: Request) { return callStep(stepAskBatch, req); }
 
-  @Post("ask-all")
+  @Post("ask-all") @ReturnedType(StepResponse) @Description("Ask all remaining questions")
   async askAll(@Req req: Request) { return callStep(stepAskAll, req); }
 
-  @Post("finalize")
+  @Post("finalize") @ReturnedType(StepResponse) @Description("Finalize audit — score, chargebacks, queue routing")
   async finalize(@Req req: Request) { return callStep(stepFinalize, req); }
 
-  @Post("cleanup")
+  @Post("cleanup") @ReturnedType(StepResponse) @Description("Clean up temporary data after audit")
   async cleanup(@Req req: Request) { return callStep(stepCleanup, req); }
 
-  @Post("bad-word-check")
+  @Post("bad-word-check") @ReturnedType(StepResponse) @Description("Scan transcript for profanity")
   async badWordCheck(@Req req: Request) { return callStep(stepBadWordCheck, req); }
 }

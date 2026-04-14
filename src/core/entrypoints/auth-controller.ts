@@ -2,13 +2,15 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
+import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { LoginResponse, RegisterResponse, LogoutResponse } from "@core/dto/responses.ts";
 import { verifyUser, createSession, createUser, createOrg, sessionCookie, clearSessionCookie } from "@core/domain/business/auth/mod.ts";
 
 @SwaggerDescription("Auth — login, register, logout")
 @Controller("")
 export class AuthController {
 
-  @Post("login")
+  @Post("login") @ReturnedType(LoginResponse) @Description("Authenticate and get session token")
   async login(@Body() body: { email: string; password: string }) {
     if (!body.email || !body.password) return { error: "email and password required" };
     const auth = await verifyUser(body.email, body.password);
@@ -17,7 +19,7 @@ export class AuthController {
     return { ok: true, token, cookie: sessionCookie(token), email: auth.email, orgId: auth.orgId, role: auth.role };
   }
 
-  @Post("register")
+  @Post("register") @ReturnedType(RegisterResponse) @Description("Register new org and admin user")
   async register(@Body() body: { email: string; password: string; orgName?: string; orgId?: string }) {
     if (!body.email || !body.password) return { error: "email and password required" };
     const orgId = body.orgId ?? await createOrg(body.orgName ?? "Default Org", body.email);
@@ -27,7 +29,7 @@ export class AuthController {
     return { ok: true, token, cookie: sessionCookie(token), orgId };
   }
 
-  @Post("logout")
+  @Post("logout") @ReturnedType(LogoutResponse) @Description("Clear session cookie")
   async logout() {
     return { ok: true, cookie: clearSessionCookie() };
   }

@@ -2,6 +2,8 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Req, Query, Body, HttpContext } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
+import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { AuditQueuedResponse, FindingResponse, MessageResponse } from "@core/dto/responses.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { authenticate } from "@core/domain/business/auth/mod.ts";
 import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
@@ -17,7 +19,7 @@ const jobRepo = new KvRepository("audit-job");
 @Controller("audit")
 export class AuditController {
 
-  @Post("test-by-rid")
+  @Post("test-by-rid") @ReturnedType(AuditQueuedResponse) @Description("Create date-leg audit from QuickBase record ID")
   async createDateLegAudit(@Body() body: Record<string, any>, @Query("rid") rid: string, @Query("callback_url") callbackUrl: string, @Query("qlab_config") qlabConfig: string, @Query("override") override: string, @Query("audit_id") auditId: string) {
     if (!rid) return { error: "rid parameter required" };
 
@@ -52,7 +54,7 @@ export class AuditController {
     return { jobId, findingId, status: "queued" };
   }
 
-  @Post("package-by-rid")
+  @Post("package-by-rid") @ReturnedType(AuditQueuedResponse) @Description("Create package audit from QuickBase record ID")
   async createPackageAudit(@Body() body: Record<string, any>, @Query("rid") rid: string, @Query("callback_url") callbackUrl: string, @Query("qlab_config") qlabConfig: string) {
     if (!rid) return { error: "rid parameter required" };
 
@@ -86,7 +88,7 @@ export class AuditController {
     return { jobId, findingId, status: "queued" };
   }
 
-  @Get("finding")
+  @Get("finding") @ReturnedType(FindingResponse) @Description("Get audit finding by ID")
   async getFinding(@Query("id") id: string) {
     if (!id) return { error: "id parameter required" };
     const orgId = "default" as OrgId;
@@ -95,7 +97,7 @@ export class AuditController {
     return finding;
   }
 
-  @Get("stats")
+  @Get("stats") @ReturnedType(MessageResponse) @Description("Get pipeline stats")
   async getStats() {
     // TODO: port getStats from lib/kv.ts
     return { message: "stats endpoint — pending full port" };

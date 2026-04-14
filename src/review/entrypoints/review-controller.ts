@@ -2,6 +2,8 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
+import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ReviewBufferResponse, DecisionResponse, ReviewStatsResponse, OkResponse, OkMessageResponse, ReviewerConfigResponse, MessageResponse, GamificationSettingsResponse } from "@core/dto/responses.ts";
 import { recordDecision, getReviewStats, getReviewedFindingIds, clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
@@ -12,13 +14,13 @@ const ORG = defaultOrgId;
 @Controller("review/api")
 export class ReviewController {
 
-  @Get("next")
+  @Get("next") @ReturnedType(ReviewBufferResponse) @Description("Claim next review items (FIFO oldest audit first)")
   async next(@Query("types") types: string) {
     // TODO: wire to full claimNextItem with FIFO ordering + transcript enrichment
     return { buffer: [], remaining: 0, message: "claimNextItem pending full port (requires transcript enrichment)" };
   }
 
-  @Post("decide")
+  @Post("decide") @ReturnedType(DecisionResponse) @Description("Confirm or flip a reviewed question")
   async decide(@Body() body: { findingId: string; questionIndex: number; decision: "confirm" | "flip"; reviewer: string }) {
     if (!body.findingId || body.questionIndex == null || !body.decision || !body.reviewer) {
       return { error: "findingId, questionIndex, decision, reviewer required" };
@@ -27,43 +29,43 @@ export class ReviewController {
     return { ok: true, ...result };
   }
 
-  @Post("back")
+  @Post("back") @ReturnedType(OkMessageResponse) @Description("Undo last decision")
   async back(@Body() body: { findingId: string; questionIndex: number; reviewer: string }) {
     // TODO: wire to undoDecision
     return { ok: true, message: "undoDecision pending port" };
   }
 
-  @Get("stats")
+  @Get("stats") @ReturnedType(ReviewStatsResponse) @Description("Review queue statistics")
   async stats() { return getReviewStats(ORG()); }
 
-  @Get("settings")
+  @Get("settings") @ReturnedType(ReviewerConfigResponse) @Description("Get reviewer settings")
   async getSettings(@Query("email") email: string) {
     if (!email) return { error: "email required" };
     return (await getReviewerConfig(ORG(), email)) ?? { allowedTypes: ["date-leg", "package"] };
   }
 
-  @Post("settings")
+  @Post("settings") @ReturnedType(OkMessageResponse) @Description("Save reviewer settings")
   async saveSettings(@Body() body: Record<string, any>) {
     return { ok: true, message: "save settings pending port" };
   }
 
-  @Get("me")
+  @Get("me") @ReturnedType(MessageResponse) @Description("Get current reviewer info")
   async me() { return { message: "review me — requires auth context" }; }
 
-  @Get("preview")
+  @Get("preview") @ReturnedType(MessageResponse) @Description("Preview a finding for review")
   async preview(@Query("findingId") findingId: string) {
     return { message: "preview pending port (requires transcript loading)", findingId };
   }
 
-  @Get("dashboard")
+  @Get("dashboard") @ReturnedType(ReviewStatsResponse) @Description("Review dashboard data")
   async dashboardData() { return getReviewStats(ORG()); }
 
-  @Get("gamification")
+  @Get("gamification") @ReturnedType(GamificationSettingsResponse) @Description("Get gamification settings")
   async getGamification() { return {}; }
 
-  @Post("gamification")
+  @Post("gamification") @ReturnedType(OkResponse) @Description("Save gamification settings")
   async saveGamification(@Body() body: Record<string, any>) { return { ok: true }; }
 
-  @Post("backfill")
+  @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill review queue")
   async backfill() { return { ok: true, message: "backfill pending port" }; }
 }

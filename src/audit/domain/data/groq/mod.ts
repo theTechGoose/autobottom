@@ -1,4 +1,5 @@
 /** Groq LLM adapter for QA, diarization, feedback. Ported from providers/groq.ts. */
+import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 import Groq from "#groq-sdk";
 import type { ChatCompletion } from "#groq-sdk/resources/chat/completions";
 

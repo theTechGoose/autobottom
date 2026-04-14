@@ -1,4 +1,5 @@
 /** QuickBase API client. Ported from providers/quickbase.ts. */
+import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 
 function cleanGenieId(raw: unknown): string {
   const str = String(raw ?? "").trim();

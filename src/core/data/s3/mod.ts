@@ -2,6 +2,7 @@
  * S3 adapter using native fetch + AWS Signature V4.
  * Ported from lib/s3.ts — deploy-compatible, no AWS SDK dependency.
  */
+import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 
 const region = () => Deno.env.get("AWS_REGION") ?? "us-east-1";
 const accessKey = () => Deno.env.get("AWS_ACCESS_KEY_ID") ?? "";

@@ -1,4 +1,5 @@
 /** AssemblyAI transcription adapter. Ported from providers/assemblyai.ts. */
+import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const BASE = "https://api.assemblyai.com/v2";

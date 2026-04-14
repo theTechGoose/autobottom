@@ -1,4 +1,5 @@
 /** QStash queue adapter for audit pipeline step orchestration. Ported from lib/queue.ts. */
+import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 
 const TRANSCRIBE_QUEUE = "audit-transcribe";
 const QUESTIONS_QUEUE = "audit-questions";

@@ -1,4 +1,5 @@
 /** Pinecone vector store adapter for RAG retrieval. Ported from providers/pinecone.ts. */
+import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 import OpenAI from "#openai";
 
 function getOpenAI() { return new OpenAI({ apiKey: Deno.env.get("OPEN_AI_KEY") }); }

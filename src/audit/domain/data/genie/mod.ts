@@ -1,4 +1,5 @@
 /** Genie recording provider - fetches recording URLs and downloads audio. */
+import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

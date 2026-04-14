@@ -2,6 +2,8 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
+import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { ChargebackReportResponse, WireReportResponse, OkResponse, OkMessageResponse, EmailConfigListResponse, EmailPreviewResponse, MessageResponse } from "@core/dto/responses.ts";
 import { queryChargebackReport, queryWireReport } from "@reporting/domain/business/chargeback-report/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
@@ -14,7 +16,7 @@ const ORG = defaultOrgId;
 @Controller("admin")
 export class ChargebackController {
 
-  @Get("chargebacks")
+  @Get("chargebacks") @ReturnedType(ChargebackReportResponse)
   async getChargebacks(@Query("since") since: string, @Query("until") until: string) {
     if (!since) return { error: "since required" };
     const s = parseInt(since);
@@ -26,7 +28,7 @@ export class ChargebackController {
     return queryChargebackReport(ORG(), s, u, reviewedIds, bypassCfg.patterns);
   }
 
-  @Get("wire-deductions")
+  @Get("wire-deductions") @ReturnedType(WireReportResponse)
   async getWireDeductions(@Query("since") since: string, @Query("until") until: string) {
     if (!since) return { error: "since required" };
     const s = parseInt(since);
@@ -38,14 +40,14 @@ export class ChargebackController {
     return { items: await queryWireReport(ORG(), s, u, reviewedIds, bypassCfg.patterns) };
   }
 
-  @Post("post-to-sheet")
+  @Post("post-to-sheet") @ReturnedType(OkMessageResponse)
   async postToSheet(@Body() body: { since: number; until: number; tabs: string }) {
     if (!body.since || !body.until || !body.tabs) return { error: "since, until, tabs required" };
     // TODO: wire to Google Sheets export with actual SA credentials from S3
     return { ok: true, posted: [], message: "sheets export pending SA credential wiring" };
   }
 
-  @Get("trigger-weekly-sheets")
+  @Get("trigger-weekly-sheets") @ReturnedType(OkMessageResponse)
   async triggerWeeklySheets() {
     return { ok: true, message: "weekly sheets trigger pending cron wiring" };
   }

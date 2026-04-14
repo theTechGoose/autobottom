@@ -2,6 +2,8 @@
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
+import { ReturnedType, Description } from "jsr:@danet/swagger@2/decorators";
+import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
 import { createUser, deleteUser, listUsers } from "@core/domain/business/auth/mod.ts";
 import type { Role } from "@core/domain/business/auth/mod.ts";
 
@@ -12,7 +14,7 @@ const ORG = defaultOrgId;
 @Controller("admin")
 export class UserController {
 
-  @Get("users")
+  @Get("users") @ReturnedType(UserListResponse)
   async listUsers() { return { users: await listUsers(ORG()) }; }
 
   @Post("users")
@@ -22,13 +24,13 @@ export class UserController {
     return { ok: true };
   }
 
-  @Post("users/delete")
+  @Post("users/delete") @ReturnedType(OkResponse)
   async doDeleteUser(@Body() body: { email: string }) {
     if (!body.email) return { error: "email required" };
     await deleteUser(ORG(), body.email);
     return { ok: true };
   }
 
-  @Get("api/me")
+  @Get("api/me") @ReturnedType(MessageResponse)
   async me() { return { message: "admin me — requires auth context injection" }; }
 }

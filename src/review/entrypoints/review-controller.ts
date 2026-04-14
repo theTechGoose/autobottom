@@ -16,9 +16,11 @@ const ORG = defaultOrgId;
 export class ReviewController {
 
   @Get("next") @ReturnedType(ReviewBufferResponse) @Description("Claim next review items (FIFO oldest audit first)")
-  async next(@Query("types") types: string) {
-    // TODO: wire to full claimNextItem with FIFO ordering + transcript enrichment
-    return { buffer: [], remaining: 0, message: "Not yet implemented" };
+  async next(@Query("types") types: string, @Query("reviewer") reviewer: string) {
+    if (!reviewer) return { error: "reviewer query param required" };
+    const { claimNextItem } = await import("../../../review/kv.ts");
+    const allowedTypes = types ? types.split(",").map((t: string) => t.trim()) : undefined;
+    return claimNextItem(ORG(), reviewer, allowedTypes);
   }
 
   @Post("decide") @ReturnedType(DecisionResponse) @Description("Confirm or flip a reviewed question")
@@ -30,10 +32,11 @@ export class ReviewController {
     return { ok: true, ...result };
   }
 
-  @Post("back") @ReturnedType(OkMessageResponse) @Description("Undo last decision")
+  @Post("back") @ReturnedType(ReviewBufferResponse) @Description("Undo last decision")
   async back(@Body() body: { findingId: string; questionIndex: number; reviewer: string }) {
-    // TODO: wire to undoDecision
-    return { ok: true, message: "Not yet implemented" };
+    if (!body.reviewer) return { error: "reviewer required" };
+    const { undoDecision } = await import("../../../review/kv.ts");
+    return undoDecision(ORG(), body.reviewer);
   }
 
   @Get("stats") @ReturnedType(ReviewStatsResponse) @Description("Review queue statistics")
@@ -45,17 +48,24 @@ export class ReviewController {
     return (await getReviewerConfig(ORG(), email)) ?? { allowedTypes: ["date-leg", "package"] };
   }
 
-  @Post("settings") @ReturnedType(OkMessageResponse) @Description("Save reviewer settings")
+  @Post("settings") @ReturnedType(OkResponse) @Description("Save reviewer settings")
   async saveSettings(@Body() body: GenericBodyRequest) {
-    return { ok: true, message: "Not yet implemented" };
+    const b = body as any;
+    if (!b.email || !b.config) return { error: "email and config required" };
+    const { saveReviewerConfig } = await import("../../../admin/domain/data/admin-repository/mod.ts");
+    await saveReviewerConfig(ORG(), b.email, b.config);
+    return { ok: true };
   }
 
   @Get("me") @ReturnedType(MessageResponse) @Description("Get current reviewer info")
-  async me() { return { message: "Requires auth context — not yet implemented" }; }
+  async me() { return { message: "Requires auth context — use session cookie" }; }
 
-  @Get("preview") @ReturnedType(MessageResponse) @Description("Preview a finding for review")
+  @Get("preview") @ReturnedType(ReviewBufferResponse) @Description("Preview a finding for review")
   async preview(@Query("findingId") findingId: string) {
-    return { message: "Not yet implemented", findingId };
+    if (!findingId) return { error: "findingId required" };
+    const { previewFinding } = await import("../../../review/kv.ts");
+    const items = await previewFinding(ORG(), findingId);
+    return { buffer: items ?? [], remaining: 0 };
   }
 
   @Get("dashboard") @ReturnedType(ReviewStatsResponse) @Description("Review dashboard data")

@@ -21,9 +21,28 @@ export class WeeklyBuilderController {
     return { reports: weekly, schedules: weekly.map((c) => ({ id: c.id, name: c.name, schedule: c.schedule })) };
   }
 
-  @Post("publish") @ReturnedType(OkMessageResponse)
-  async publish(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  @Post("publish") @ReturnedType(OkResponse)
+  async publish(@Body() body: GenericBodyRequest) {
+    const b = body as any;
+    if (!b.id) return { error: "report config id required" };
+    const { getEmailReportConfig } = await import("../../reporting/domain/data/email-repository/mod.ts");
+    const config = await getEmailReportConfig(ORG(), b.id);
+    if (!config) return { error: "config not found" };
+    const { runReport } = await import("../../reporting/domain/business/email-report-engine/mod.ts");
+    await runReport(ORG(), config as any);
+    return { ok: true };
+  }
 
-  @Post("test-send") @ReturnedType(OkMessageResponse)
-  async testSend(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  @Post("test-send") @ReturnedType(OkResponse)
+  async testSend(@Body() body: GenericBodyRequest) {
+    const b = body as any;
+    if (!b.id) return { error: "report config id required" };
+    const { getEmailReportConfig } = await import("../../reporting/domain/data/email-repository/mod.ts");
+    const config = await getEmailReportConfig(ORG(), b.id);
+    if (!config) return { error: "config not found" };
+    const testConfig = { ...config, recipients: b.recipients ?? config.recipients };
+    const { runReport } = await import("../../reporting/domain/business/email-report-engine/mod.ts");
+    await runReport(ORG(), testConfig as any);
+    return { ok: true };
+  }
 }

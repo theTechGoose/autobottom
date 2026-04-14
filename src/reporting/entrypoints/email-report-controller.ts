@@ -31,8 +31,15 @@ export class EmailReportController {
 
   @Post("preview") @ReturnedType(EmailPreviewResponse)
   async preview(@Body() body: GenericBodyRequest) {
-    // TODO: wire to report engine for rendering
-    return { html: "", message: "Not yet implemented" };
+    const configId = (body as any).id ?? (body as any).configId;
+    if (!configId) return { error: "id required" };
+    const config = await repo.getEmailReportConfig(ORG(), configId);
+    if (!config) return { error: "config not found" };
+    const { queryReportData, renderSections, renderFullEmail } = await import("../../domain/business/email-report-engine/mod.ts");
+    const sections = await queryReportData(ORG(), config);
+    const html = renderFullEmail(null, renderSections(sections), config.name);
+    await repo.saveEmailReportPreview(ORG(), configId, html);
+    return { html };
   }
 
   @Post("preview-inline") @ReturnedType(EmailPreviewResponse)
@@ -44,9 +51,13 @@ export class EmailReportController {
     return preview ?? { html: "" };
   }
 
-  @Post("send-now") @ReturnedType(OkMessageResponse)
+  @Post("send-now") @ReturnedType(OkResponse)
   async sendNow(@Body() body: { id: string }) {
-    // TODO: wire to runReport from report engine
-    return { ok: true, message: "Not yet implemented" };
+    if (!body.id) return { error: "id required" };
+    const config = await repo.getEmailReportConfig(ORG(), body.id);
+    if (!config) return { error: "config not found" };
+    const { runReport } = await import("../../domain/business/email-report-engine/mod.ts");
+    await runReport(ORG(), config as any);
+    return { ok: true };
   }
 }

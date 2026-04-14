@@ -17,9 +17,10 @@ const ORG = defaultOrgId;
 export class JudgeController {
 
   @Get("next") @ReturnedType(ReviewBufferResponse) @Description("Claim next judge items")
-  async next() {
-    // TODO: wire to full claimNextItem with transcript enrichment
-    return { buffer: [], remaining: 0, message: "Not yet implemented" };
+  async next(@Query("judge") judge: string) {
+    if (!judge) return { error: "judge query param required" };
+    const { claimNextItem } = await import("../../../judge/kv.ts");
+    return claimNextItem(ORG(), judge);
   }
 
   @Post("decide") @ReturnedType(DecisionResponse) @Description("Uphold or overturn an appealed question")
@@ -31,8 +32,13 @@ export class JudgeController {
     return { ok: true, ...result };
   }
 
-  @Post("back") @ReturnedType(OkMessageResponse) @Description("Undo last judge decision")
-  async back(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  @Post("back") @ReturnedType(ReviewBufferResponse) @Description("Undo last judge decision")
+  async back(@Body() body: GenericBodyRequest) {
+    const b = body as any;
+    if (!b.judge) return { error: "judge required" };
+    const { undoDecision } = await import("../../../judge/kv.ts");
+    return undoDecision(ORG(), b.judge);
+  }
 
   @Get("stats") @ReturnedType(JudgeStatsResponse) @Description("Judge queue statistics")
   async stats() { return getJudgeStats(ORG()); }

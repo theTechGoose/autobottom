@@ -144,11 +144,34 @@ export class AdminConfigController {
   async terminateAll() { const count = await stats.terminateAllActive(ORG()); return { ok: true, terminated: count }; }
 
   @Post("reset-finding") @ReturnedType(OkMessageResponse)
-  async resetFinding(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
-  @Post("flip-answer") @ReturnedType(OkMessageResponse)
-  async flipAnswer(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
-  @Post("bulk-flip") @ReturnedType(OkMessageResponse)
-  async bulkFlip(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async resetFinding(@Body() body: GenericBodyRequest) {
+    const b = body as any;
+    if (!b.findingId) return { error: "findingId required" };
+    const { publishStep: pub } = await import("../../core/domain/data/qstash/mod.ts");
+    await pub("init", { findingId: b.findingId, orgId: ORG() });
+    return { ok: true, message: "Finding re-queued for re-audit" };
+  }
+  @Post("flip-answer") @ReturnedType(OkResponse)
+  async flipAnswer(@Body() body: GenericBodyRequest) {
+    const b = body as any;
+    if (!b.findingId) return { error: "findingId required" };
+    const { adminFlipFinding } = await import("../../../review/kv.ts");
+    const result = await adminFlipFinding(ORG(), b.findingId);
+    return { ok: result.success, score: result.score };
+  }
+  @Post("bulk-flip") @ReturnedType(OkResponse)
+  async bulkFlip(@Body() body: GenericBodyRequest) {
+    const b = body as any;
+    const findingIds: string[] = b.findingIds ?? [];
+    if (!findingIds.length) return { error: "findingIds array required" };
+    const { adminFlipFinding } = await import("../../../review/kv.ts");
+    let flipped = 0;
+    for (const fid of findingIds) {
+      const r = await adminFlipFinding(ORG(), fid);
+      if (r.success) flipped++;
+    }
+    return { ok: true, flipped, total: findingIds.length };
+  }
 
   // -- Backfills --
   @Post("backfill-review-scores") @ReturnedType(OkMessageResponse)
@@ -159,15 +182,42 @@ export class AdminConfigController {
     return backfill(ORG(), since, until);
   }
   @Post("backfill-chargeback-entries") @ReturnedType(OkMessageResponse)
-  async backfillChargebackEntries(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async backfillChargebackEntries(@Body() body: GenericBodyRequest) {
+    const { since, until } = body as any;
+    if (!since || !until) return { error: "since and until required" };
+    const { backfillChargebackEntries: backfill } = await import("../../../judge/kv.ts");
+    return backfill(ORG(), since, until);
+  }
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse)
-  async backfillPartnerDimensions(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async backfillPartnerDimensions(@Body() body: GenericBodyRequest) {
+    const { cursor } = body as any;
+    const { backfillPartnerDimensions: backfill } = await import("../../../lib/kv.ts");
+    return backfill(ORG(), cursor);
+  }
   @Post("backfill-audit-index") @ReturnedType(OkMessageResponse)
-  async backfillAuditIndex(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async backfillAuditIndex(@Body() body: GenericBodyRequest) {
+    const { cursor } = body as any;
+    const { backfillAuditDoneIndex: backfill } = await import("../../../lib/kv.ts");
+    return backfill(ORG(), cursor);
+  }
   @Post("backfill-stale-scores") @ReturnedType(OkMessageResponse)
-  async backfillStaleScores(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async backfillStaleScores(@Body() body: GenericBodyRequest) {
+    const { cursor } = body as any;
+    const { backfillStaleScores: backfill } = await import("../../../lib/kv.ts");
+    return backfill(ORG(), cursor);
+  }
   @Post("deduplicate-findings") @ReturnedType(OkMessageResponse)
-  async deduplicateFindings(@Body() body: GenericBodyRequest) { return { ok: true, message: "Not yet implemented" }; }
+  async deduplicateFindings(@Body() body: GenericBodyRequest) {
+    const { since, until } = body as any;
+    if (!since || !until) return { error: "since and until required" };
+    const { findDuplicates, deleteDuplicates } = await import("../../../judge/kv.ts");
+    const plan = await findDuplicates(ORG(), since, until);
+    if ((body as any).execute) {
+      const result = await deleteDuplicates(ORG(), plan as any, () => {});
+      return { ok: true, ...result };
+    }
+    return { ok: true, plan, message: "Dry run — send execute: true to apply" };
+  }
 
   // -- Purge --
   @Post("purge-old-audits") @ReturnedType(OkMessageResponse)

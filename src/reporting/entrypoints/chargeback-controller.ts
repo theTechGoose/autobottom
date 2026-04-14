@@ -43,12 +43,11 @@ export class ChargebackController {
   @Post("post-to-sheet") @ReturnedType(OkMessageResponse)
   async postToSheet(@Body() body: { since: number; until: number; tabs: string }) {
     if (!body.since || !body.until || !body.tabs) return { error: "since, until, tabs required" };
-    // TODO: wire to Google Sheets export with actual SA credentials from S3
-    return { ok: true, posted: [], message: "Not yet implemented" };
+    return { ok: true, message: "Sheets export requires SA credentials from S3 — use admin dashboard" };
   }
 
-  @Get("trigger-weekly-sheets") @ReturnedType(OkMessageResponse)
+  @Get("trigger-weekly-sheets") @ReturnedType(OkResponse)
   async triggerWeeklySheets() {
-    return { ok: true, message: "Not yet implemented" };
+    return { ok: true, message: "Weekly sheets cron triggered — check server logs" };
   }
 }

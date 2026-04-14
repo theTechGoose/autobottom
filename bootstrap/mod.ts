@@ -46,7 +46,11 @@ import { EventsModule } from "@events/mod-root.ts";
 class AppModule {}
 
 const port = Number(Deno.env.get("PORT") ?? 3000);
-const server = await bootstrapServer(AppModule, { port });
+// Swagger disabled on Deno Deploy — @mrg-keystone/danet's JSR version crashes
+// on Deno.readTextFileSync for the index page template (JSR URLs aren't file URLs).
+// Enable locally with the local danet fork for development.
+const enableSwagger = Deno.env.get("ENABLE_SWAGGER") === "true";
+const server = await bootstrapServer(AppModule, { port, swagger: enableSwagger });
 console.log(`🚀 Autobottom API running on port ${port}`);
-console.log(`📖 Swagger UI at http://localhost:${port}/docs`);
+if (enableSwagger) console.log(`📖 Swagger UI at http://localhost:${port}/docs`);
 await server.listen();

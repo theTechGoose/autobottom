@@ -5,6 +5,7 @@
 // ── Generic ──────────────────────────────────────────────────────────────────
 
 export class OkResponse { ok = true; }
+export class HealthResponse { status = "ok"; service = "autobottom"; version = "2.0.0"; }
 export class ErrorResponse { error = ""; }
 export class MessageResponse { message = ""; }
 export class OkMessageResponse { ok = true; message = ""; }

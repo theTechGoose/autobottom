@@ -286,12 +286,15 @@ import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
-import { LoginResponse, RegisterResponse, LogoutResponse } from "@core/dto/responses.ts";
+import { LoginResponse, RegisterResponse, LogoutResponse, HealthResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 
 @SwaggerDescription("Auth — login, register, logout")
 @Controller("")
 export class AuthController {
+
+  @Get("/") @ReturnedType(HealthResponse) @Description("Health check — confirms the API is running")
+  health() { return { status: "ok", service: "autobottom", version: "2.0.0" }; }
 
   @Post("login") @ReturnedType(LoginResponse) @Description("Authenticate and get session token")
   async login(@Body() body: { email: string; password: string }) {

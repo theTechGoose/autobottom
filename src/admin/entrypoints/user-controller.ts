@@ -17,7 +17,7 @@ export class UserController {
   @Get("users") @ReturnedType(UserListResponse)
   async listUsers() { return { users: await listUsers(ORG()) }; }
 
-  @Post("users")
+  @Post("users") @ReturnedType(OkResponse)
   async addUser(@Body() body: { email: string; password: string; role: string; supervisor?: string }) {
     if (!body.email || !body.password || !body.role) return { error: "email, password, role required" };
     await createUser(ORG(), body.email, body.password, body.role as Role, body.supervisor);

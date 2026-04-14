@@ -46,7 +46,7 @@ export class WebhookController {
     return { template: await emailRepo.getEmailTemplate(ORG(), id) };
   }
 
-  @Post("admin/email-templates")
+  @Post("admin/email-templates") @ReturnedType(OkResponse)
   async saveTemplate(@Body() body: Record<string, any>) {
     const template = await emailRepo.saveEmailTemplate(ORG(), body as any);
     return { ok: true, template };

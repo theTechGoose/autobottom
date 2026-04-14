@@ -45,7 +45,7 @@ export class ManagerController {
   @Get("agents") @ReturnedType(AgentListResponse) @Description("List team agents")
   async listAgents() { return { agents: await listUsers(ORG(), "user") }; }
 
-  @Post("agents")
+  @Post("agents") @ReturnedType(OkResponse)
   async createAgent(@Body() body: { email: string; password: string; supervisor?: string }) {
     if (!body.email || !body.password) return { error: "email, password required" };
     await createUser(ORG(), body.email, body.password, "user", body.supervisor);

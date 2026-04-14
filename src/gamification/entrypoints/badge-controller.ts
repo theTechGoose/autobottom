@@ -16,7 +16,7 @@ export class BadgeStoreController {
   @Get("admin/badge-editor/items") @ReturnedType(StoreItemListResponse)
   async listBadgeItems() { return { items: await listCustomStoreItems(ORG()) }; }
 
-  @Post("admin/badge-editor/item")
+  @Post("admin/badge-editor/item") @ReturnedType(OkResponse)
   async saveBadgeItem(@Body() body: Record<string, any>) { await saveCustomStoreItem(ORG(), body as any); return { ok: true }; }
 
   @Post("admin/badge-editor/item/delete") @ReturnedType(OkResponse)

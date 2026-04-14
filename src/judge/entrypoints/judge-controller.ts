@@ -45,7 +45,7 @@ export class JudgeController {
     return { reviewers: users };
   }
 
-  @Post("reviewers")
+  @Post("reviewers") @ReturnedType(OkMessageResponse) @Description("Create reviewer account")
   async createReviewer(@Body() body: { email: string; password: string }) {
     // User creation handled via admin/users endpoint
     return { ok: true, message: "use POST /admin/users to create reviewer accounts" };

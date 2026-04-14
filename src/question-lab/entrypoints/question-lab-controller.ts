@@ -16,7 +16,7 @@ export class QuestionLabController {
   @Get("qlab/configs") @ReturnedType(QLConfigListResponse)
   async listConfigs() { return { configs: await repo.listConfigs(ORG()) }; }
 
-  @Post("qlab/configs")
+  @Post("qlab/configs") @ReturnedType(QLConfigResponse)
   async createConfig(@Body() body: { name: string; type?: string }) {
     return repo.createConfig(ORG(), body.name, (body.type as "internal" | "partner") ?? "internal");
   }
@@ -43,10 +43,10 @@ export class QuestionLabController {
   @Post("qlab/configs/import") @ReturnedType(OkMessageResponse)
   async importConfig(@Body() body: Record<string, any>) { return { ok: true, message: "import pending full port" }; }
 
-  @Get("qlab/question")
+  @Get("qlab/question") @ReturnedType(QLQuestionResponse)
   async getQuestion(@Query("id") id: string) { return (await repo.getQuestion(ORG(), id)) ?? { error: "not found" }; }
 
-  @Post("qlab/questions")
+  @Post("qlab/questions") @ReturnedType(QLQuestionResponse)
   async createQuestion(@Body() body: { configId: string; name: string; text: string }) {
     return repo.createQuestion(ORG(), body.configId, body.name, body.text);
   }
@@ -74,7 +74,7 @@ export class QuestionLabController {
     return { ok: true, updated: count };
   }
 
-  @Post("qlab/tests")
+  @Post("qlab/tests") @ReturnedType(OkResponse)
   async createTest(@Body() body: { questionId: string; input: string; expectedAnswer: string }) {
     return repo.createTest(ORG(), body.questionId, body.input, body.expectedAnswer);
   }

@@ -16,7 +16,7 @@ export class EmailReportController {
   @Get("") @ReturnedType(EmailConfigListResponse)
   async list() { return { configs: await repo.listEmailReportConfigs(ORG()) }; }
 
-  @Post("")
+  @Post("") @ReturnedType(OkResponse)
   async save(@Body() body: Record<string, any>) {
     const config = await repo.saveEmailReportConfig(ORG(), body as any);
     return { ok: true, config };

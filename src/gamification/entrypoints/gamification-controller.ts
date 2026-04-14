@@ -16,7 +16,7 @@ export class GamificationPageController {
   @Get("packs") @ReturnedType(SoundPackListResponse)
   async listPacks() { return { packs: await gam.listSoundPacks(ORG()) }; }
 
-  @Post("pack")
+  @Post("pack") @ReturnedType(OkResponse)
   async savePack(@Body() body: Record<string, any>) { await gam.saveSoundPack(ORG(), body as any); return { ok: true }; }
 
   @Post("pack/delete") @ReturnedType(OkResponse)

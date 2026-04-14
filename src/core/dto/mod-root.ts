@@ -9,3 +9,19 @@ export { AuthGuard, getAuthFromContext, resolveOrgId } from "@core/business/auth
 export * from "@core/data/qstash/mod.ts";
 export * from "@core/dto/types.ts";
 
+// Datadog OTel
+export {
+  initOtel,
+  isOtelInitialized,
+  withSpan,
+  withRequest,
+  runStep,
+  log as otelLog,
+  metric,
+  flushOtel,
+  shutdownOtel,
+  verifyDatadogIntake,
+  type Span,
+  type ProbeResult,
+} from "@core/data/datadog-otel/mod.ts";
+

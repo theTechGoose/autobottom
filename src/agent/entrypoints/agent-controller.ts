@@ -4,7 +4,8 @@ import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { getGameState, purchaseStoreItem, listCustomStoreItems } from "@gamification/domain/data/gamification-repository/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Agent — team member dashboard, game state, store")
 @Controller("agent/api")

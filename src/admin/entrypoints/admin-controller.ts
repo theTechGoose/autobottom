@@ -8,9 +8,8 @@ import { pauseAllQueues, resumeAllQueues, getQueueCounts } from "@core/domain/da
 import { publishStep } from "@core/domain/data/qstash/mod.ts";
 import { clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getTokenUsage } from "@audit/domain/data/groq/mod.ts";
-
-// TODO: orgId should come from auth middleware. Using hardcoded default for now.
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Admin — pipeline config, settings, queue management, backfills")
 @Controller("admin")

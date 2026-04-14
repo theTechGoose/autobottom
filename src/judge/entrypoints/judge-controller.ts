@@ -6,7 +6,8 @@ import { recordJudgeDecision, getJudgeStats, getAppeal, dismissFindingFromJudgeQ
 import { getReviewerConfig, saveReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { listUsers } from "@core/domain/business/auth/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Judge — appeal review and reviewer management")
 @Controller("judge/api")

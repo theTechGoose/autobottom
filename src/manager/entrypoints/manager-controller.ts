@@ -8,7 +8,8 @@ import { createUser, deleteUser, listUsers } from "@core/domain/business/auth/mo
 import { getGameState } from "@gamification/domain/data/gamification-repository/mod.ts";
 import { getPrefabSubscriptions, savePrefabSubscriptions } from "@events/domain/data/events-repository/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Manager — failure remediation and team management")
 @Controller("manager/api")

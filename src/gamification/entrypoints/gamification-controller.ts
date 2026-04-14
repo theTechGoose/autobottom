@@ -4,7 +4,8 @@ import { Controller, Get, Post, Body } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import * as gam from "@gamification/domain/data/gamification-repository/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Gamification — sound packs, badges, XP settings")
 @Controller("gamification/api")

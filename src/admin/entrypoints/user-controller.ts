@@ -5,7 +5,8 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { createUser, deleteUser, listUsers } from "@core/domain/business/auth/mod.ts";
 import type { Role } from "@core/domain/business/auth/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Users — org and user CRUD, auth endpoints")
 @Controller("admin")

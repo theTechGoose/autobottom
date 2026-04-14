@@ -4,7 +4,8 @@ import { Controller, Get, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { getEvents, getBroadcastEvents } from "@events/domain/data/events-repository/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Events — Server-Sent Events for real-time updates")
 @Controller("api")

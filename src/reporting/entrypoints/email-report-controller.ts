@@ -4,7 +4,8 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import * as repo from "@reporting/domain/data/email-repository/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Email Reports — CRUD for scheduled email report configurations")
 @Controller("admin/email-reports")

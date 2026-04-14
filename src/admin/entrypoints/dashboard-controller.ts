@@ -5,7 +5,8 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId } from "@audit/domain/data/stats-repository/mod.ts";
 import { getReviewStats } from "@review/domain/business/review-queue/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Dashboard — admin analytics data, audit history, review queue data")
 @Controller("admin")

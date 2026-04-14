@@ -5,7 +5,8 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import * as emailRepo from "@reporting/domain/data/email-repository/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Webhooks & Email Templates — inbound webhook handlers and template CRUD")
 @Controller("")

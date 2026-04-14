@@ -5,7 +5,8 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { recordDecision, getReviewStats, getReviewedFindingIds, clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Review — human-in-the-loop audit verification")
 @Controller("review/api")

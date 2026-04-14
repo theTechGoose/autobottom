@@ -5,7 +5,8 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { sendMessage, getUnreadCount, getConversationList } from "@chat/domain/data/chat-repository/mod.ts";
 import { listUsers } from "@core/domain/business/auth/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Chat — internal messaging between team members")
 @Controller("api")

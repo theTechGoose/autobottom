@@ -7,7 +7,8 @@ import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { getChargebackEntries, getWireDeductionEntries } from "@audit/domain/data/stats-repository/mod.ts";
 
-const ORG = () => "default";
+import { defaultOrgId } from "@core/domain/business/auth/org-resolver.ts";
+const ORG = defaultOrgId;
 
 @SwaggerDescription("Chargebacks & Wire Deductions — report data for dashboard and sheets")
 @Controller("admin")

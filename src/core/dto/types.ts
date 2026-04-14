@@ -267,3 +267,6 @@ export function answerQuestion(q: any, answer: { answer: string; thinking: strin
 
 export interface AuditFinding { id: string; [key: string]: unknown; }
 export interface AuditJob { id: string; doneAuditIds: Array<{ auditId: string; auditRecord: string }>; status: string; [key: string]: unknown; }
+
+export type ReportColumnKey = "recordId" | "findingId" | "guestName" | "voName" | "department" | "score" | "appealStatus" | "finalizedAt" | "markedForReview";
+

@@ -3,8 +3,8 @@
  *  Styled to match autobottom's existing email aesthetic. */
 
 import type { SectionResult, ReportRow, AppealStatus } from "./report-engine.ts";
-import type { ReportColumnKey } from "./kv.ts";
-import { env } from "../env.ts";
+import type { ReportColumnKey } from "@core/dto/types.ts";
+
 
 const QB_RECORD_URL = "https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=";
 
@@ -76,7 +76,7 @@ function renderCell(col: ReportColumnKey, row: ReportRow): string {
     }
     case "findingId": {
       if (!row.findingId) return `<span style="color:${C.textDim};">&mdash;</span>`;
-      const url = `${env.selfUrl}/audit/report?id=${encodeURIComponent(row.findingId)}`;
+      const url = `${Deno.env.get("SELF_URL") ?? "http://localhost:3000"}/audit/report?id=${encodeURIComponent(row.findingId)}`;
       return `<a href="${url}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:11px;">${esc(row.findingId)}</a>`;
     }
     case "score": {

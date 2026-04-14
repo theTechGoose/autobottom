@@ -1,19 +1,21 @@
 /** Report query engine — evaluates criteria rules against finalized findings
  *  and returns structured section results for email rendering. */
 
-import type { OrgId } from "./org.ts";
-import { queryAuditDoneIndex, getFinding, getEmailTemplate } from "./kv.ts";
+import type { OrgId } from "@core/domain/data/deno-kv/mod.ts";
+import { queryAuditDoneIndex } from "../../../../audit/domain/data/stats-repository/mod.ts";
+import { getFinding } from "../../../../audit/domain/data/audit-repository/mod.ts";
+import { getEmailTemplate } from "../../data/email-repository/mod.ts";
 import type {
   EmailReportConfig,
   DateRangeConfig,
   AuditDoneIndexEntry,
   CriteriaRule,
   ReportColumnKey,
-} from "./kv.ts";
-import { getAppeal } from "../judge/kv.ts";
+} from "@core/dto/types.ts";
+import { getAppeal } from "../../../../judge/domain/data/judge-repository/mod.ts";
 import { renderSections, renderFullEmail, renderWeeklySummary } from "./report-renderer.ts";
 import type { WeeklySummaryData } from "./report-renderer.ts";
-import { sendEmail } from "../providers/postmark.ts";
+import { sendEmail } from "../../data/postmark/mod.ts";
 
 export type AppealStatus = "none" | "pending" | "complete";
 
@@ -94,7 +96,7 @@ export async function queryReportData(
     candidates = candidates.filter((e) => e.score < 100);
   }
 
-  const results: SectionResult[] = sections.map((s) => ({
+  const results: any[] = sections.map((s) => ({
     header: s.header,
     columns: s.columns,
     rows: [],
@@ -115,7 +117,7 @@ export async function queryReportData(
     hydrated.push(...results);
   }
 
-  const topFilters = config.topLevelFilters ?? [];
+  const topFilters = (config as any).topLevelFilters ?? [];
 
   for (const { entry, finding, appealRecord } of hydrated) {
     if (!finding) continue;
@@ -159,7 +161,7 @@ export async function queryReportData(
 
     for (let i = 0; i < sections.length; i++) {
       if (evaluateRules(finding, stat, appealStatus, reviewed, sections[i].criteria)) {
-        results[i].rows.push(extractRow(finding, stat, appealStatus, sections[i].columns, markedForReview));
+        results[i].rows.push(extractRow(finding, stat, appealStatus, sections[i].columns as any, markedForReview));
       }
     }
   }

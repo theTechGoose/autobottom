@@ -7,12 +7,18 @@ export type { Role, AuthContext, OrgRecord, UserRecord } from "@core/domain/busi
 
 export interface IQuestion {
   header: string;
+  unpopulated?: string;
   populated: string;
   autoYes?: string;
+  autoYesExp?: string;
   egregious?: boolean;
   weight?: number;
   temperature?: number;
   numDocs?: number;
+  astResults?: Record<string, unknown>;
+  autoYesVal?: boolean;
+  autoYesMsg?: string;
+  resolvedAst?: IQuestionAstNode[];
 }
 
 export interface IAnsweredQuestion extends IQuestion {
@@ -214,3 +220,50 @@ export type DateRangeConfig =
   | { mode: "rolling"; hours: number }
   | { mode: "fixed"; from: number; to: number }
   | { mode: "weekly"; startDay: number };
+
+// ── Question expression types (used by question-expr + pipeline steps) ───────
+
+export interface IQuestionSeed {
+  header: string;
+  unpopulated: string;
+  populated: string;
+  autoYesExp: string;
+  temperature?: number;
+  numDocs?: number;
+  egregious?: boolean;
+  weight?: number;
+}
+
+export interface IQuestionAstNode {
+  question: string;
+  flip: boolean;
+}
+
+export interface IAstResults {
+  ast?: IQuestionAstNode[][];
+  raw?: Array<Array<IAnsweredQuestion>>;
+  notResults?: Array<Array<boolean>>;
+  andResults?: Array<boolean>;
+  orResult?: boolean;
+}
+
+export function createQuestion(seed: IQuestionSeed & Partial<Record<string, unknown>>): IQuestion {
+  return {
+    header: seed.header,
+    unpopulated: seed.unpopulated,
+    populated: seed.populated,
+    autoYesExp: seed.autoYesExp,
+    astResults: {},
+    autoYesVal: false,
+    autoYesMsg: "default",
+  };
+}
+
+export function answerQuestion(q: Record<string, unknown>, answer: { answer: string; thinking: string; defense: string }): Record<string, unknown> {
+  return { ...q, ...answer };
+}
+
+// ── Audit finding/job types (used by pipeline steps) ─────────────────────────
+
+export interface AuditFinding { id: string; [key: string]: unknown; }
+export interface AuditJob { id: string; doneAuditIds: Array<{ auditId: string; auditRecord: string }>; status: string; [key: string]: unknown; }

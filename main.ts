@@ -22,7 +22,9 @@ const backendFetch = danetApp.router.fetch.bind(danetApp.router);
 import { App, staticFiles } from "@fresh/core";
 import type { State } from "./frontend/lib/auth.ts";
 
-const freshApp = new App<State>({ mode: "development" });
+const freshApp = new App<State>();
+freshApp.config.root = "./frontend";
+freshApp.config.mode = "development";
 freshApp.use(staticFiles());
 freshApp.fsRoutes();
 const frontendHandler = await freshApp.handler();

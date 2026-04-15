@@ -8,25 +8,25 @@ import * as fsRoute_1 from "../routes/_middleware.ts"
 import * as fsRoute_2 from "../routes/_500.tsx"
 import * as fsRoute_3 from "../routes/_404.tsx"
 
-export const clientEntry = "/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/fresh-runtime.js"
-export const version = "73dd940f22b24978269c29d418718a0057cb37bc"
+export const clientEntry = "/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/fresh-runtime.js"
+export const version = "a46ff10da89e83a0b845a2fbb51cec873f19d549"
 
 export const islands = new Map();
 const islandPreparer = new IslandPreparer();
-islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/SoundEngine.js", "SoundEngine", []);
-islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/HotkeyHandler.js", "HotkeyHandler", []);
-islandPreparer.prepare(islands, ChatInput, "/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/ChatInput.js", "ChatInput", []);
+islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/SoundEngine.js", "SoundEngine", []);
+islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/HotkeyHandler.js", "HotkeyHandler", []);
+islandPreparer.prepare(islands, ChatInput, "/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/ChatInput.js", "ChatInput", []);
 
 export const staticFiles = new Map([
   ["/favicon.svg", {"name":"/favicon.svg","hash":"66c0ae4b1956c0e76e490ca3f79bfd02bd385ff24c35908f25ef49e6bd286989","filePath":"static/favicon.svg","contentType":"image/svg+xml"}],
-  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/fresh-runtime.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/fresh-runtime.js","hash":"erqGD4HuIqQ","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/SoundEngine.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/HotkeyHandler.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/ChatInput.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-EAQD6YFO.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-HGON2IZK.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/metafile.json", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/metafile.json","hash":"43455f2fa75f50cf89298787961ed1244c25b2f36cbd204cef904c7e1b249de8","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/metafile.json","contentType":"application/json; charset=UTF-8"}],
-  ["/styles.css", {"name":"/styles.css","hash":"f989d02970308d03fd9f61f8fca331a073c5dc017b489f119f60f217413dfadd","filePath":"_fresh/static/styles.css","contentType":"text/css; charset=UTF-8"}]
+  ["/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/fresh-runtime.js", {"name":"/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/fresh-runtime.js","hash":"nAE4YEwFTgc","filePath":"_fresh/static/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/SoundEngine.js", {"name":"/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/HotkeyHandler.js", {"name":"/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/ChatInput.js", {"name":"/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/chunk-EAQD6YFO.js", {"name":"/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/chunk-HGON2IZK.js", {"name":"/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/metafile.json", {"name":"/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/metafile.json","hash":"43455f2fa75f50cf89298787961ed1244c25b2f36cbd204cef904c7e1b249de8","filePath":"_fresh/static/_fresh/js/a46ff10da89e83a0b845a2fbb51cec873f19d549/metafile.json","contentType":"application/json; charset=UTF-8"}],
+  ["/styles.css", {"name":"/styles.css","hash":"fb59ee0a4dba563d88740bb4b32b055f1f733e7d9a7051dc72b29028a2338216","filePath":"_fresh/static/styles.css","contentType":"text/css; charset=UTF-8"}]
 ]);
 
 export const entryAssets = [];
@@ -57,7 +57,9 @@ export const fsRoutes = [
   { id: "/api/admin/retry", mod: () => import("../routes/api/admin/retry.ts"), type: "route", pattern: "/api/admin/retry", routePattern: "/api/admin/retry" },
   { id: "/api/admin/stats", mod: () => import("../routes/api/admin/stats.tsx"), type: "route", pattern: "/api/admin/stats", routePattern: "/api/admin/stats" },
   { id: "/api/admin/users", mod: () => import("../routes/api/admin/users.ts"), type: "route", pattern: "/api/admin/users", routePattern: "/api/admin/users" },
+  { id: "/api/admin/test-audit", mod: () => import("../routes/api/admin/test-audit.ts"), type: "route", pattern: "/api/admin/test-audit", routePattern: "/api/admin/test-audit" },
   { id: "/api/admin/queue-action", mod: () => import("../routes/api/admin/queue-action.ts"), type: "route", pattern: "/api/admin/queue-action", routePattern: "/api/admin/queue-action" },
+  { id: "/api/admin/find-audit", mod: () => import("../routes/api/admin/find-audit.ts"), type: "route", pattern: "/api/admin/find-audit", routePattern: "/api/admin/find-audit" },
   { id: "/api/manager/remediate", mod: () => import("../routes/api/manager/remediate.ts"), type: "route", pattern: "/api/manager/remediate", routePattern: "/api/manager/remediate" },
   { id: "/api/manager/add-agent", mod: () => import("../routes/api/manager/add-agent.ts"), type: "route", pattern: "/api/manager/add-agent", routePattern: "/api/manager/add-agent" },
   { id: "/api/manager/delete-agent", mod: () => import("../routes/api/manager/delete-agent.ts"), type: "route", pattern: "/api/manager/delete-agent", routePattern: "/api/manager/delete-agent" },

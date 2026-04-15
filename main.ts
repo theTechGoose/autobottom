@@ -32,17 +32,24 @@ if (!Deno.env.get("API_URL")) {
 }
 
 // --- Route requests ---
-// Frontend pages and HTMX fragment routes — these go to Fresh
-const FRONTEND_PATHS = [
-  // Pages (GET → rendered HTML)
+// Frontend EXACT page paths — must match exactly (no prefix matching)
+const FRONTEND_EXACT_PAGES = new Set([
   "/admin/dashboard", "/admin/users", "/admin/audits", "/admin/weekly-builder",
-  "/review", "/judge", "/manager", "/agent", "/chat", "/store", "/question-lab",
-  // HTMX fragment routes (POST/GET → HTML fragments)
+  "/admin/webhooks", "/admin/email-reports", "/admin/email-templates",
+  "/admin/chargebacks-report", "/admin/bad-words", "/admin/offices",
+  "/admin/pipeline", "/admin/bonus-points", "/admin/dimensions",
+  "/admin/gamification", "/admin/manager-scopes",
+  "/review", "/review/dashboard",
+  "/judge", "/judge/dashboard",
+  "/manager", "/agent", "/chat", "/store", "/question-lab",
+]);
+
+// Frontend PREFIX paths — anything starting with these goes to Fresh
+const FRONTEND_PREFIX_PATHS = [
   "/api/login", "/api/register", "/api/logout",
   "/api/admin/", "/api/review/", "/api/judge/",
   "/api/manager/", "/api/agent/", "/api/chat/",
   "/api/store/buy",
-  // Static assets
   "/styles.css", "/favicon.svg", "/_fresh/",
 ];
 
@@ -59,8 +66,11 @@ const AUTH_PATHS = ["/login", "/register", "/logout"];
 function isBackendRequest(req: Request): boolean {
   const path = new URL(req.url).pathname;
 
-  // Frontend pages and HTMX routes always go to Fresh
-  if (FRONTEND_PATHS.some(p => path.startsWith(p))) return false;
+  // Exact frontend page matches
+  if (FRONTEND_EXACT_PAGES.has(path)) return false;
+
+  // Frontend prefix matches (HTMX fragments, static assets)
+  if (FRONTEND_PREFIX_PATHS.some(p => path.startsWith(p))) return false;
 
   // Auth page paths: POST → backend (JSON API), GET → frontend (HTML page)
   if (AUTH_PATHS.some(p => path === p)) return req.method === "POST";

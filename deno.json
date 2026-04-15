@@ -1,9 +1,12 @@
 {
   "unstable": ["cron", "kv", "raw-imports"],
   "tasks": {
-    "start": "deno run -A --unstable-raw-imports bootstrap/mod.ts",
-    "dev": "deno run -A --unstable-raw-imports --unstable-cron --unstable-kv --env --watch bootstrap/mod.ts",
-    "check": "deno check bootstrap/mod.ts",
+    "start": "deno run -A --unstable-raw-imports --unstable-cron --unstable-kv main.ts",
+    "start:api": "deno run -A --unstable-raw-imports bootstrap/mod.ts",
+    "start:frontend": "cd frontend && deno run -A main.ts",
+    "dev": "deno run -A --unstable-raw-imports --unstable-cron --unstable-kv --env --watch main.ts",
+    "dev:api": "deno run -A --unstable-raw-imports --unstable-cron --unstable-kv --env --watch bootstrap/mod.ts",
+    "check": "deno check main.ts",
     "test": "deno test -A --unstable-raw-imports --unstable-kv --ignore=frontend/",
     "shape-check": "bash fixtures/scripts/shape-check.sh"
   },
@@ -35,10 +38,16 @@
     "@weekly-builder/": "./src/weekly-builder/",
     "@admin/": "./src/admin/",
     "@cron/": "./src/cron/",
-    "@events/": "./src/events/"
+    "@events/": "./src/events/",
+    "@fresh/core": "jsr:@fresh/core@^2.0.0-rc.16",
+    "preact": "npm:preact@^10.25.4",
+    "preact/hooks": "npm:preact@^10.25.4/hooks",
+    "preact-render-to-string": "npm:preact-render-to-string@^6.5.0"
   },
   "compilerOptions": {
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
+    "emitDecoratorMetadata": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
   }
 }

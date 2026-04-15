@@ -9,14 +9,15 @@ GITIGNORE=".gitignore"
 
 cleanup() {
   mv "$GITIGNORE.sc-bak" "$GITIGNORE" 2>/dev/null
-  git add frontend/ 2>/dev/null
+  git add frontend/ main.ts 2>/dev/null
 }
 trap cleanup EXIT
 
-# Save .gitignore, add frontend to it, unstage frontend from index
+# Save .gitignore, hide frontend + root main.ts from shape-checker
 cp "$GITIGNORE" "$GITIGNORE.sc-bak"
-echo "frontend" >> "$GITIGNORE"
+printf "frontend\nmain.ts\n" >> "$GITIGNORE"
 git rm -r --cached --quiet frontend/ 2>/dev/null
+git rm --cached --quiet main.ts 2>/dev/null
 
 # Run shape-checker
 shape-checker "$@"

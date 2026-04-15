@@ -2,12 +2,14 @@ import "npm:reflect-metadata@0.1.13";
 import { bootstrapServer } from "@mrg-keystone/danet";
 import { Module } from "@danet/core";
 
-// Initialize Datadog OTel before any module loads so every subsequent
-// console.* call gets auto-mirrored to DD Logs and every withSpan has a tracer.
+// When run standalone, initialize OTel and crons here.
+// When imported by main.ts, these are handled there instead.
 import { initOtel } from "@core/data/datadog-otel/mod.ts";
-initOtel();
 import { registerCrons } from "@cron/domain/business/cron-core/mod.ts";
-registerCrons();
+if (import.meta.main) {
+  initOtel();
+  registerCrons();
+}
 
 // Module imports
 import { AuthController } from "@core/business/auth/mod.ts";
@@ -45,14 +47,14 @@ import { EventsModule } from "@events/mod-root.ts";
     EventsModule,
   ],
 })
-class AppModule {}
+export class AppModule {}
 
-const port = Number(Deno.env.get("PORT") ?? 3000);
-// Swagger disabled on Deno Deploy — @mrg-keystone/danet's JSR version crashes
-// on Deno.readTextFileSync for the index page template (JSR URLs aren't file URLs).
-// Enable locally with the local danet fork for development.
-const enableSwagger = Deno.env.get("ENABLE_SWAGGER") === "true";
-const server = await bootstrapServer(AppModule, { port, swagger: enableSwagger });
-console.log(`🚀 Autobottom API running on port ${port}`);
-if (enableSwagger) console.log(`📖 Swagger UI at http://localhost:${port}/docs`);
-await server.listen();
+// Only start the standalone server when run directly (not when imported by main.ts)
+if (import.meta.main) {
+  const port = Number(Deno.env.get("PORT") ?? 3000);
+  const enableSwagger = Deno.env.get("ENABLE_SWAGGER") === "true";
+  const server = await bootstrapServer(AppModule, { port, swagger: enableSwagger });
+  console.log(`🚀 Autobottom API running on port ${port}`);
+  if (enableSwagger) console.log(`📖 Swagger UI at http://localhost:${port}/docs`);
+  await server.listen();
+}

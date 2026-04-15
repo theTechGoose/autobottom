@@ -9,27 +9,27 @@ import * as fsRoute_1 from "../routes/_middleware.ts"
 import * as fsRoute_2 from "../routes/_500.tsx"
 import * as fsRoute_3 from "../routes/_404.tsx"
 
-export const clientEntry = "/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/fresh-runtime.js"
-export const version = "8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87"
+export const clientEntry = "/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/fresh-runtime.js"
+export const version = "78d51d5ef962adb94d3cc5f39721a463106ce099"
 
 export const islands = new Map();
 const islandPreparer = new IslandPreparer();
-islandPreparer.prepare(islands, ModalController, "/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/ModalController.js", "ModalController", []);
-islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/SoundEngine.js", "SoundEngine", []);
-islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/HotkeyHandler.js", "HotkeyHandler", []);
-islandPreparer.prepare(islands, ChatInput, "/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/ChatInput.js", "ChatInput", []);
+islandPreparer.prepare(islands, ModalController, "/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/ModalController.js", "ModalController", []);
+islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/SoundEngine.js", "SoundEngine", []);
+islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/HotkeyHandler.js", "HotkeyHandler", []);
+islandPreparer.prepare(islands, ChatInput, "/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/ChatInput.js", "ChatInput", []);
 
 export const staticFiles = new Map([
   ["/favicon.svg", {"name":"/favicon.svg","hash":"66c0ae4b1956c0e76e490ca3f79bfd02bd385ff24c35908f25ef49e6bd286989","filePath":"static/favicon.svg","contentType":"image/svg+xml"}],
-  ["/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/fresh-runtime.js", {"name":"/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/fresh-runtime.js","hash":"YWDdeEGL4VA","filePath":"_fresh/static/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/ModalController.js", {"name":"/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/ModalController.js","hash":"6EQlBVz4P9Q","filePath":"_fresh/static/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/ModalController.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/SoundEngine.js", {"name":"/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/HotkeyHandler.js", {"name":"/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/ChatInput.js", {"name":"/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/chunk-EAQD6YFO.js", {"name":"/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/chunk-HGON2IZK.js", {"name":"/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/metafile.json", {"name":"/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/metafile.json","hash":"882ba64f7c0070d0c8462c48d7f5502020ff795f0a5d99ce1e14701aec30def3","filePath":"_fresh/static/_fresh/js/8c8ef7bf75edf87d1aa475b7fb3ae8e9540e1f87/metafile.json","contentType":"application/json; charset=UTF-8"}],
-  ["/styles.css", {"name":"/styles.css","hash":"ee74397ef2af4e0b91efbcc15c8dfa94d8cb69c3f9e5b35e95c5d67890b906f8","filePath":"_fresh/static/styles.css","contentType":"text/css; charset=UTF-8"}]
+  ["/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/fresh-runtime.js", {"name":"/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/fresh-runtime.js","hash":"ohe/noMD85Q","filePath":"_fresh/static/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/ModalController.js", {"name":"/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/ModalController.js","hash":"6EQlBVz4P9Q","filePath":"_fresh/static/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/ModalController.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/SoundEngine.js", {"name":"/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/HotkeyHandler.js", {"name":"/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/ChatInput.js", {"name":"/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/chunk-EAQD6YFO.js", {"name":"/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/chunk-HGON2IZK.js", {"name":"/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/metafile.json", {"name":"/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/metafile.json","hash":"882ba64f7c0070d0c8462c48d7f5502020ff795f0a5d99ce1e14701aec30def3","filePath":"_fresh/static/_fresh/js/78d51d5ef962adb94d3cc5f39721a463106ce099/metafile.json","contentType":"application/json; charset=UTF-8"}],
+  ["/styles.css", {"name":"/styles.css","hash":"f80b342259920f527b5c05adbd5b3874a57877bb2127c06efdeae578c780bbcf","filePath":"_fresh/static/styles.css","contentType":"text/css; charset=UTF-8"}]
 ]);
 
 export const entryAssets = [];
@@ -72,6 +72,17 @@ export const fsRoutes = [
   { id: "/api/admin/stats", mod: () => import("../routes/api/admin/stats.tsx"), type: "route", pattern: "/api/admin/stats", routePattern: "/api/admin/stats" },
   { id: "/api/admin/users", mod: () => import("../routes/api/admin/users.ts"), type: "route", pattern: "/api/admin/users", routePattern: "/api/admin/users" },
   { id: "/api/admin/test-audit", mod: () => import("../routes/api/admin/test-audit.ts"), type: "route", pattern: "/api/admin/test-audit", routePattern: "/api/admin/test-audit" },
+  { id: "/api/admin/modal/offices", mod: () => import("../routes/api/admin/modal/offices.tsx"), type: "route", pattern: "/api/admin/modal/offices", routePattern: "/api/admin/modal/offices" },
+  { id: "/api/admin/modal/maintenance", mod: () => import("../routes/api/admin/modal/maintenance.tsx"), type: "route", pattern: "/api/admin/modal/maintenance", routePattern: "/api/admin/modal/maintenance" },
+  { id: "/api/admin/modal/bad-words", mod: () => import("../routes/api/admin/modal/bad-words.tsx"), type: "route", pattern: "/api/admin/modal/bad-words", routePattern: "/api/admin/modal/bad-words" },
+  { id: "/api/admin/modal/bonus-points", mod: () => import("../routes/api/admin/modal/bonus-points.tsx"), type: "route", pattern: "/api/admin/modal/bonus-points", routePattern: "/api/admin/modal/bonus-points" },
+  { id: "/api/admin/modal/email-templates", mod: () => import("../routes/api/admin/modal/email-templates.tsx"), type: "route", pattern: "/api/admin/modal/email-templates", routePattern: "/api/admin/modal/email-templates" },
+  { id: "/api/admin/modal/pipeline", mod: () => import("../routes/api/admin/modal/pipeline.tsx"), type: "route", pattern: "/api/admin/modal/pipeline", routePattern: "/api/admin/modal/pipeline" },
+  { id: "/api/admin/modal/impersonate", mod: () => import("../routes/api/admin/modal/impersonate.tsx"), type: "route", pattern: "/api/admin/modal/impersonate", routePattern: "/api/admin/modal/impersonate" },
+  { id: "/api/admin/modal/users", mod: () => import("../routes/api/admin/modal/users.tsx"), type: "route", pattern: "/api/admin/modal/users", routePattern: "/api/admin/modal/users" },
+  { id: "/api/admin/modal/webhook", mod: () => import("../routes/api/admin/modal/webhook.tsx"), type: "route", pattern: "/api/admin/modal/webhook", routePattern: "/api/admin/modal/webhook" },
+  { id: "/api/admin/modal/email-reports", mod: () => import("../routes/api/admin/modal/email-reports.tsx"), type: "route", pattern: "/api/admin/modal/email-reports", routePattern: "/api/admin/modal/email-reports" },
+  { id: "/api/admin/modal/chargebacks", mod: () => import("../routes/api/admin/modal/chargebacks.tsx"), type: "route", pattern: "/api/admin/modal/chargebacks", routePattern: "/api/admin/modal/chargebacks" },
   { id: "/api/admin/review-drill", mod: () => import("../routes/api/admin/review-drill.tsx"), type: "route", pattern: "/api/admin/review-drill", routePattern: "/api/admin/review-drill" },
   { id: "/api/admin/queue-action", mod: () => import("../routes/api/admin/queue-action.ts"), type: "route", pattern: "/api/admin/queue-action", routePattern: "/api/admin/queue-action" },
   { id: "/api/admin/find-audit", mod: () => import("../routes/api/admin/find-audit.ts"), type: "route", pattern: "/api/admin/find-audit", routePattern: "/api/admin/find-audit" },

@@ -5,6 +5,7 @@ import { apiFetch } from "../../lib/api.ts";
 import { StatCard } from "../../components/StatCard.tsx";
 import { DonutChart } from "../../components/DonutChart.tsx";
 import { timeAgo, scoreColor } from "../../lib/format.ts";
+import ModalController from "../../islands/ModalController.tsx";
 
 interface ActiveItem { findingId: string; recordId?: string; step: string; ts: number; }
 interface ErrorItem { findingId: string; step: string; error: string; ts: number; }
@@ -31,6 +32,7 @@ export default define.page(async function AdminDashboard(ctx) {
 
   return (
     <Layout title="Dashboard" section="admin" user={user}>
+      <ModalController />
       <div class="page-header"><h1>Dashboard</h1><p class="page-sub">Pipeline overview and configuration</p></div>
 
       {/* ===== STAT CARDS — auto-refresh every 30s ===== */}
@@ -215,6 +217,32 @@ export default define.page(async function AdminDashboard(ctx) {
           <button class="btn btn-danger" hx-post="/api/admin/queue-action" hx-vals='{"action":"clear-errors"}' hx-swap="none" hx-confirm="Clear all errors?">Clear Errors</button>
         </div>
       </div>
+      {/* ===== CONFIG MODALS — opened from sidebar, content loaded via HTMX ===== */}
+      {[
+        { id: "users-modal", title: "Users", sub: "Manage user accounts and roles", endpoint: "/api/admin/modal/users", wide: false },
+        { id: "webhook-modal", title: "Webhook Configuration", sub: "Configure outbound webhooks for pipeline events", endpoint: "/api/admin/modal/webhook", wide: false },
+        { id: "email-reports-modal", title: "Email Reports", sub: "Scheduled email report configurations", endpoint: "/api/admin/modal/email-reports", wide: true },
+        { id: "email-templates-modal", title: "Email Templates", sub: "Manage email notification templates", endpoint: "/api/admin/modal/email-templates", wide: false },
+        { id: "chargebacks-modal", title: "Chargebacks & Omissions", sub: "Review chargeback data and wire deductions", endpoint: "/api/admin/modal/chargebacks", wide: true },
+        { id: "maintenance-modal", title: "Data Maintenance", sub: "Purge, backfill, deduplicate, and clean up data", endpoint: "/api/admin/modal/maintenance", wide: false },
+        { id: "bad-words-modal", title: "Bad Words", sub: "Configure profanity scanning for transcripts", endpoint: "/api/admin/modal/bad-words", wide: false },
+        { id: "offices-modal", title: "Office Bypass", sub: "Configure office patterns to bypass auditing", endpoint: "/api/admin/modal/offices", wide: false },
+        { id: "pipeline-modal", title: "Pipeline Configuration", sub: "Configure audit pipeline behavior", endpoint: "/api/admin/modal/pipeline", wide: false },
+        { id: "bonus-points-modal", title: "Bonus Points", sub: "Configure bonus point awards", endpoint: "/api/admin/modal/bonus-points", wide: false },
+        { id: "impersonate-modal", title: "Impersonate User", sub: "View the app as another user", endpoint: "/api/admin/modal/impersonate", wide: false },
+      ].map((m) => (
+        <div key={m.id} id={m.id} class="modal-overlay">
+          <div class={`modal ${m.wide ? "modal-wide" : ""}`}>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+              <div><div class="modal-title">{m.title}</div><div class="modal-sub">{m.sub}</div></div>
+              <button data-close-modal={m.id} style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+            </div>
+            <div id={`${m.id}-content`} hx-get={m.endpoint} hx-trigger="modal-open" hx-swap="innerHTML">
+              <div style="color:var(--text-dim);font-size:12px;padding:20px;text-align:center;">Loading...</div>
+            </div>
+          </div>
+        </div>
+      ))}
     </Layout>
   );
 });

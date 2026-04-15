@@ -5,14 +5,16 @@ const adminUser = { email: "alice@example.com", orgId: "org1", role: "admin" as 
 const reviewerUser = { email: "bob@example.com", orgId: "org1", role: "reviewer" as const };
 const judgeUser = { email: "carol@example.com", orgId: "org1", role: "judge" as const };
 
-Deno.test("Sidebar — admin has Configuration section with Users, Audits, Question Lab", () => {
+Deno.test("Sidebar — admin has Configuration section with Users, Webhooks, Question Lab", () => {
   const html = renderHTML(<Sidebar user={adminUser} section="admin" />);
   assertContains(html, "Configuration");
   assertContains(html, "Users");
-  assertContains(html, "Audits");
+  assertContains(html, "Webhooks");
   assertContains(html, "Question Lab");
+  assertContains(html, "Pipeline");
+  assertContains(html, "Bad Words");
   assertContains(html, "/admin/users");
-  assertContains(html, "/admin/audits");
+  assertContains(html, "/admin/webhooks");
 });
 
 Deno.test("Sidebar — admin has Impersonate section with role view links", () => {

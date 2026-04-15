@@ -1,0 +1,21 @@
+{
+  "tasks": {
+    "dev": "deno run -A --watch=routes/,components/,islands/,lib/,static/ main.ts",
+    "build": "deno run -A main.ts build",
+    "start": "deno run -A main.ts",
+    "check": "deno check main.ts",
+    "test": "deno test -A"
+  },
+  "imports": {
+    "@fresh/core": "jsr:@fresh/core@^2.0.0-rc.16",
+    "preact": "npm:preact@^10.25.4",
+    "preact/hooks": "npm:preact@^10.25.4/hooks",
+    "@preact/signals": "npm:@preact/signals@^2.0.0",
+    "@std/assert": "jsr:@std/assert",
+    "preact-render-to-string": "npm:preact-render-to-string@^6.5.0"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
+  }
+}

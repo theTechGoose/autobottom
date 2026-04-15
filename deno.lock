@@ -8,6 +8,7 @@
     "jsr:@danet/zod@0.0.7": "0.0.7",
     "jsr:@dx/reflect@0.2.14": "0.2.14",
     "jsr:@hono/hono@4.6.3": "4.6.3",
+    "jsr:@mrg-keystone/danet@1.0.2": "1.0.2",
     "jsr:@mrg-keystone/danet@^1.0.2": "1.0.2",
     "jsr:@std/assert@*": "1.0.14",
     "jsr:@std/fmt@0.223.0": "0.223.0",

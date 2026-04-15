@@ -4,8 +4,8 @@
     "start": "deno run -A --unstable-raw-imports bootstrap/mod.ts",
     "dev": "deno run -A --unstable-raw-imports --unstable-cron --unstable-kv --env --watch bootstrap/mod.ts",
     "check": "deno check bootstrap/mod.ts",
-    "test": "deno test -A --unstable-raw-imports --unstable-kv",
-    "shape-check": "shape-checker"
+    "test": "deno test -A --unstable-raw-imports --unstable-kv --ignore=frontend/",
+    "shape-check": "bash fixtures/scripts/shape-check.sh"
   },
   "imports": {
     "@mrg-keystone/danet": "jsr:@mrg-keystone/danet@^1.0.2",

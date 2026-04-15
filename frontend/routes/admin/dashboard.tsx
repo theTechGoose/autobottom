@@ -136,25 +136,28 @@ export default define.page(async function AdminDashboard(ctx) {
         <div id="test-result" style="margin-top:8px;"></div>
       </div>
 
-      {/* ===== RECENTLY COMPLETED ===== */}
+      {/* ===== RECENTLY COMPLETED (24H) ===== */}
       <div class="tbl" style="margin-top:16px;">
-        <div class="tbl-title">Recently Completed</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div class="tbl-title" style="margin-bottom:0;">Recently Completed (24h)</div>
+          <a href="/admin/audits" class="tbl-link" style="font-size:11px;">View All &rarr;</a>
+        </div>
         <table class="data-table">
-          <thead><tr><th>Finding</th><th>QB Record</th><th>Type</th><th>Score</th><th>Started</th><th>Completed</th><th>Duration</th></tr></thead>
+          <thead><tr><th>Finding ID</th><th>QB Record</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead>
           <tbody>
             {recentList.length === 0 ? (
-              <tr class="empty-row"><td colSpan={7}>No recent audits</td></tr>
+              <tr class="empty-row"><td colSpan={6}>No recent audits</td></tr>
             ) : recentList.map((a) => {
               const dur = a.startedAt && a.completedAt ? Math.round((a.completedAt - a.startedAt) / 1000) : null;
+              const durStr = dur != null ? (dur >= 60 ? `${Math.floor(dur / 60)}m ${dur % 60}s` : `${dur}s`) : "\u2014";
               return (
                 <tr key={a.findingId}>
-                  <td class="mono">{a.findingId?.slice(0, 8)}</td>
+                  <td><a href={`/admin/audits?findingId=${a.findingId}`} class="tbl-link mono">{a.findingId?.slice(0, 20)}</a></td>
                   <td class="mono">{a.recordId ?? "\u2014"}</td>
-                  <td>{a.type ? <span class={`pill ${a.type === "internal" ? "pill-blue" : "pill-purple"}`}>{a.type}</span> : "\u2014"}</td>
-                  <td>{a.score != null ? <span class={`pill pill-${scoreColor(a.score)}`}>{a.score}%</span> : "\u2014"}</td>
+                  <td>{a.score != null ? <span style={`color:${a.score === 100 ? "var(--green)" : a.score >= 80 ? "var(--cyan)" : "var(--red)"};font-weight:700;font-variant-numeric:tabular-nums;`}>{a.score}%</span> : "\u2014"}</td>
                   <td class="time-ago">{a.startedAt ? timeAgo(a.startedAt) : "\u2014"}</td>
                   <td class="time-ago">{timeAgo(a.completedAt)}</td>
-                  <td class="mono" style="color:var(--yellow);">{dur != null ? `${dur}s` : "\u2014"}</td>
+                  <td class="mono" style="color:var(--yellow);font-variant-numeric:tabular-nums;">{durStr}</td>
                 </tr>
               );
             })}

@@ -192,6 +192,8 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .time-ago { color: var(--text-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
 .mono { font-family: var(--mono); font-size: 11px; }
 .empty-row td { text-align: center; color: var(--text-dim); font-style: italic; padding: 14px; font-size: 11px; }
+.tbl-link { color: var(--blue); font-size: 11px; text-decoration: none; font-weight: 600; }
+.tbl-link:hover { text-decoration: underline; }
 
 .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .panel { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }

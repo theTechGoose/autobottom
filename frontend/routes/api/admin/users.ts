@@ -36,7 +36,7 @@ export const handler = define.handlers({
           headers: { "content-type": "text/html" },
         });
       }
-      return new Response(null, { status: 303, headers: { location: "/admin/users", "hx-redirect": "/admin/users" } });
+      return new Response(null, { status: 303, headers: { location: "/admin/users", "HX-Redirect": "/admin/users" } });
     } catch {
       return new Response(`<span class="error-text">Network error</span>`, {
         headers: { "content-type": "text/html" },

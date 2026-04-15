@@ -37,7 +37,7 @@ export const handler = define.handlers({
         headers: {
           location: redirect,
           "set-cookie": data.cookie,
-          "hx-redirect": redirect,
+          "HX-Redirect": redirect,
         },
       });
     } catch {

@@ -36,7 +36,7 @@ export const handler = define.handlers({
         headers: {
           location: "/admin/dashboard",
           "set-cookie": data.cookie,
-          "hx-redirect": "/admin/dashboard",
+          "HX-Redirect": "/admin/dashboard",
         },
       });
     } catch {

@@ -7,7 +7,7 @@ export const handler = define.handlers({
     try {
       const body = await ctx.req.json();
       await apiPost("/api/store/buy", ctx.req, body);
-      return new Response(null, { status: 303, headers: { location: "/store", "hx-redirect": "/store" } });
+      return new Response(null, { status: 303, headers: { location: "/store", "HX-Redirect": "/store" } });
     } catch (e) {
       return Response.json({ error: String(e) }, { status: 500 });
     }

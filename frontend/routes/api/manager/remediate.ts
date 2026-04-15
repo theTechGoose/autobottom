@@ -13,7 +13,7 @@ export const handler = define.handlers({
         return new Response(`<span class="error-text">Finding ID and notes required</span>`, { headers: { "content-type": "text/html" } });
       }
       await apiPost("/manager/api/remediate", ctx.req, { findingId, notes, username });
-      return new Response(null, { status: 303, headers: { location: "/manager", "hx-redirect": "/manager" } });
+      return new Response(null, { status: 303, headers: { location: "/manager", "HX-Redirect": "/manager" } });
     } catch (e) {
       return new Response(`<span class="error-text">${e}</span>`, { headers: { "content-type": "text/html" } });
     }

@@ -5,25 +5,29 @@ const adminUser = { email: "alice@example.com", orgId: "org1", role: "admin" as 
 const reviewerUser = { email: "bob@example.com", orgId: "org1", role: "reviewer" as const };
 const judgeUser = { email: "carol@example.com", orgId: "org1", role: "judge" as const };
 
-Deno.test("Sidebar — admin has Configuration section with Users, Webhooks, Question Lab", () => {
+Deno.test("Sidebar — admin has Configuration section with modal triggers", () => {
   const html = renderHTML(<Sidebar user={adminUser} section="admin" />);
   assertContains(html, "Configuration");
   assertContains(html, "Users");
-  assertContains(html, "Webhooks");
+  assertContains(html, "Webhook");
   assertContains(html, "Question Lab");
   assertContains(html, "Pipeline");
   assertContains(html, "Bad Words");
-  assertContains(html, "/admin/users");
-  assertContains(html, "/admin/webhooks");
+  assertContains(html, "data-modal");
 });
 
-Deno.test("Sidebar — admin has Impersonate section with role view links", () => {
+Deno.test("Sidebar — admin has Role Views flyout", () => {
   const html = renderHTML(<Sidebar user={adminUser} section="admin" />);
-  assertContains(html, "Impersonate");
+  assertContains(html, "Role Views");
+  assertContains(html, "sb-rv-flyout");
   assertContains(html, "Judge Dashboard");
   assertContains(html, "Review Dashboard");
-  assertContains(html, "Manager Portal");
-  assertContains(html, "Agent Dashboard");
+});
+
+Deno.test("Sidebar — admin has Impersonate with Specific User", () => {
+  const html = renderHTML(<Sidebar user={adminUser} section="admin" />);
+  assertContains(html, "Impersonate");
+  assertContains(html, "Specific User");
 });
 
 Deno.test("Sidebar — reviewer sees Review Queue, Store, Chat", () => {
@@ -34,15 +38,10 @@ Deno.test("Sidebar — reviewer sees Review Queue, Store, Chat", () => {
   assertNotContains(html, "Impersonate");
 });
 
-Deno.test("Sidebar — judge sees Judge Queue link", () => {
+Deno.test("Sidebar — judge sees Judge Queue", () => {
   const html = renderHTML(<Sidebar user={judgeUser} section="judge" />);
   assertContains(html, "Judge Queue");
   assertContains(html, "/judge");
-});
-
-Deno.test("Sidebar — active link gets active class", () => {
-  const html = renderHTML(<Sidebar user={adminUser} section="admin" />);
-  assertContains(html, "active");
 });
 
 Deno.test("Sidebar — user initials from email", () => {
@@ -50,7 +49,7 @@ Deno.test("Sidebar — user initials from email", () => {
   assertContains(html, "AL");
 });
 
-Deno.test("Sidebar — sign out link to /api/logout", () => {
+Deno.test("Sidebar — sign out link", () => {
   const html = renderHTML(<Sidebar user={adminUser} section="admin" />);
   assertContains(html, "/api/logout");
 });

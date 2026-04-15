@@ -40,6 +40,29 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .sb-section { padding: 14px 14px 6px; }
 .sb-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 8px; padding: 0 4px; }
 
+/* Sidebar link items (both <a> and <div> modal triggers) */
+.sb-link {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  cursor: pointer; user-select: none; border-radius: 8px; margin-bottom: 4px;
+  background: var(--bg); border: 1px solid var(--border); transition: border-color 0.15s;
+  text-decoration: none; color: var(--text);
+}
+.sb-link:hover { border-color: var(--border-hover); }
+.sb-link.active { border-color: rgba(88,166,255,0.4); background: var(--blue-bg); }
+.sb-link-label { font-size: 12px; font-weight: 600; color: var(--text-bright); flex: 1; }
+.sb-link-arrow { color: var(--text-dim); flex-shrink: 0; }
+
+/* Role Views flyout */
+.sb-rv-wrap { position: relative; }
+.sb-rv-flyout { position: absolute; left: 100%; top: 50%; transform: translateY(-50%); opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; z-index: 9999; padding-left: 8px; }
+.sb-rv-wrap:hover .sb-rv-flyout { opacity: 1; pointer-events: auto; }
+.sb-rv-panel { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 12px; padding: 8px; min-width: 200px; box-shadow: 0 12px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03); backdrop-filter: blur(12px); }
+.rv-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); padding: 4px 8px 8px; }
+.sb-rv-panel a { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; text-decoration: none; color: var(--text); font-size: 12px; font-weight: 500; transition: all 0.15s; }
+.sb-rv-panel a:hover { background: var(--bg-surface); color: var(--text-bright); transform: translateX(2px); }
+.rm-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+/* Legacy nav-link style (keep for non-admin) */
 .sb-nav-link {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px;
   text-decoration: none; color: var(--text-muted); font-size: 13px; font-weight: 500;
@@ -47,8 +70,6 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 }
 .sb-nav-link:hover { background: var(--bg-surface); color: var(--text-bright); }
 .sb-nav-link.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
-.sb-nav-icon { width: 20px; text-align: center; font-size: 14px; }
-.sb-nav-arrow { margin-left: auto; font-size: 14px; color: var(--text-dim); }
 
 .sb-footer { margin-top: auto; border-top: 1px solid var(--border); }
 .sb-user { padding: 14px 18px 8px; display: flex; align-items: center; gap: 8px; }

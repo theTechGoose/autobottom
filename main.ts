@@ -30,6 +30,15 @@ if (!Deno.env.get("API_URL")) {
 }
 
 // --- Route requests ---
+// Frontend HTMX fragment routes — these must go to Fresh, not danet
+const FRONTEND_API_PREFIXES = [
+  "/api/login", "/api/register", "/api/logout",
+  "/api/admin/", "/api/review/", "/api/judge/",
+  "/api/manager/", "/api/agent/", "/api/chat/",
+  "/api/store/buy",  // frontend buy handler (POST); /api/store (GET) stays backend
+];
+
+// Backend API routes — everything else under these prefixes goes to danet
 const BACKEND_PREFIXES = [
   "/admin", "/audit", "/review/api", "/judge/api", "/manager/api",
   "/agent/api", "/api/qlab", "/api/messages", "/api/users", "/api/events",
@@ -41,8 +50,16 @@ const AUTH_PATHS = ["/login", "/register", "/logout"];
 
 function isBackendRequest(req: Request): boolean {
   const path = new URL(req.url).pathname;
+
+  // Frontend HTMX routes always go to Fresh
+  if (FRONTEND_API_PREFIXES.some(p => path.startsWith(p))) return false;
+
+  // Auth page paths: POST → backend (JSON API), GET → frontend (HTML page)
   if (AUTH_PATHS.some(p => path === p)) return req.method === "POST";
+
+  // Health check JSON
   if (path === "/" && req.headers.get("accept")?.includes("application/json")) return true;
+
   return BACKEND_PREFIXES.some(p => path.startsWith(p));
 }
 

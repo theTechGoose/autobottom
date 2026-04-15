@@ -25,7 +25,7 @@ export default define.page(async function AdminUsers(ctx) {
           <h1>User Management</h1>
           <p class="page-sub">{users.length} users</p>
         </div>
-        <button class="btn btn-primary" onclick="document.getElementById('add-modal').classList.add('open')">Add User</button>
+        <button class="btn btn-primary" onClick={() => document.getElementById('add-modal')?.classList.add('open')}>Add User</button>
       </div>
 
       <div id="user-list">
@@ -58,7 +58,7 @@ export default define.page(async function AdminUsers(ctx) {
       </div>
 
       {/* Add user modal */}
-      <div id="add-modal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('open')">
+      <div id="add-modal" class="modal-overlay" onClick={(e: Event) => { if (e.target === e.currentTarget) (e.currentTarget as HTMLElement).classList.remove('open'); }}>
         <div class="modal">
           <div class="modal-title">Add User</div>
           <div class="modal-sub">Create a new user account</div>
@@ -87,7 +87,7 @@ export default define.page(async function AdminUsers(ctx) {
             </div>
             <div id="add-result" class="auth-error"></div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-ghost" onclick="document.getElementById('add-modal').classList.remove('open')">Cancel</button>
+              <button type="button" class="btn btn-ghost" onClick={() => document.getElementById('add-modal')?.classList.remove('open')}>Cancel</button>
               <button type="submit" class="btn btn-primary">Create User</button>
             </div>
           </form>

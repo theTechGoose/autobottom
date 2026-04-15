@@ -50,7 +50,7 @@ export default define.page(async function ManagerPage(ctx) {
                 <td>
                   <button
                     class="btn btn-ghost btn-sm"
-                    onclick={`document.getElementById('remediate-modal').classList.add('open');document.getElementById('rem-findingId').value='${item.findingId}'`}
+                    onClick={() => { document.getElementById('remediate-modal')?.classList.add('open'); (document.getElementById('rem-findingId') as HTMLInputElement).value = item.findingId; }}
                   >Remediate</button>
                 </td>
               </tr>
@@ -63,7 +63,7 @@ export default define.page(async function ManagerPage(ctx) {
       <div class="tbl">
         <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
           <span>Team Agents ({agents.length})</span>
-          <button class="btn btn-primary btn-sm" onclick="document.getElementById('add-agent-modal').classList.add('open')">Add Agent</button>
+          <button class="btn btn-primary btn-sm" onClick={() => document.getElementById('add-agent-modal')?.classList.add('open')}>Add Agent</button>
         </div>
         <table class="data-table">
           <thead><tr><th>Email</th><th>Role</th><th>Supervisor</th><th>Action</th></tr></thead>
@@ -85,7 +85,7 @@ export default define.page(async function ManagerPage(ctx) {
       </div>
 
       {/* Remediate modal */}
-      <div id="remediate-modal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('open')">
+      <div id="remediate-modal" class="modal-overlay" onClick={(e: Event) => { if (e.target === e.currentTarget) (e.currentTarget as HTMLElement).classList.remove('open'); }}>
         <div class="modal">
           <div class="modal-title">Submit Remediation</div>
           <div class="modal-sub">Document what was discussed with the team member</div>
@@ -98,7 +98,7 @@ export default define.page(async function ManagerPage(ctx) {
             </div>
             <div id="rem-result" class="auth-error"></div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-ghost" onclick="document.getElementById('remediate-modal').classList.remove('open')">Cancel</button>
+              <button type="button" class="btn btn-ghost" onClick={() => document.getElementById('remediate-modal')?.classList.remove('open')}>Cancel</button>
               <button type="submit" class="btn btn-primary">Submit</button>
             </div>
           </form>
@@ -106,7 +106,7 @@ export default define.page(async function ManagerPage(ctx) {
       </div>
 
       {/* Add agent modal */}
-      <div id="add-agent-modal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('open')">
+      <div id="add-agent-modal" class="modal-overlay" onClick={(e: Event) => { if (e.target === e.currentTarget) (e.currentTarget as HTMLElement).classList.remove('open'); }}>
         <div class="modal">
           <div class="modal-title">Add Agent</div>
           <form hx-post="/api/manager/add-agent" hx-target="#agent-result" hx-swap="innerHTML">
@@ -121,7 +121,7 @@ export default define.page(async function ManagerPage(ctx) {
             <input type="hidden" name="supervisor" value={user.email} />
             <div id="agent-result" class="auth-error"></div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-ghost" onclick="document.getElementById('add-agent-modal').classList.remove('open')">Cancel</button>
+              <button type="button" class="btn btn-ghost" onClick={() => document.getElementById('add-agent-modal')?.classList.remove('open')}>Cancel</button>
               <button type="submit" class="btn btn-primary">Create Agent</button>
             </div>
           </form>

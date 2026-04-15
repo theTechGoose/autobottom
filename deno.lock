@@ -35,6 +35,7 @@
     "jsr:@std/uuid@^1.0.9": "1.1.0",
     "npm:@anatine/zod-openapi@2.2.6": "2.2.6_openapi3-ts@4.5.0_zod@3.23.8",
     "npm:@opentelemetry/api@^1.9.0": "1.9.1",
+    "npm:@preact/signals@^2.5.1": "2.9.0_preact@10.29.1",
     "npm:@resvg/resvg-wasm@*": "2.6.2",
     "npm:@types/node@*": "24.2.0",
     "npm:awesome-phonenumber@7.1.0": "7.1.0",
@@ -124,6 +125,7 @@
         "jsr:@std/semver",
         "jsr:@std/uuid",
         "npm:@opentelemetry/api",
+        "npm:@preact/signals",
         "npm:esbuild",
         "npm:esbuild-wasm",
         "npm:preact-render-to-string@^6.6.3",
@@ -349,6 +351,16 @@
     },
     "@opentelemetry/api@1.9.1": {
       "integrity": "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="
+    },
+    "@preact/signals-core@1.14.1": {
+      "integrity": "sha512-vxPpfXqrwUe9lpjqfYNjAF/0RF/eFGeLgdJzdmIIZjpOnTmGmAB4BjWone562mJGMRP4frU6iZ6ei3PDsu52Ng=="
+    },
+    "@preact/signals@2.9.0_preact@10.29.1": {
+      "integrity": "sha512-hYrY0KyUqkDgOl1qba/JGn6y81pXnurn21PMaxfcMwdncdZ3M/oVdmpTvEnsGjh48dIwDVc7bjWHqIsngSjYug==",
+      "dependencies": [
+        "@preact/signals-core",
+        "preact"
+      ]
     },
     "@resvg/resvg-wasm@2.6.2": {
       "integrity": "sha512-FqALmHI8D4o6lk/LRWDnhw95z5eO+eAa6ORjVg09YRR7BkcM6oPHU9uyC0gtQG5vpFLvgpeU4+zEAz2H8APHNw=="

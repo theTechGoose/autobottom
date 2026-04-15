@@ -34,7 +34,7 @@ export default define.page(async function ChatPage(ctx) {
             <span class="chat-sidebar-title">Messages</span>
             <select
               class="chat-new-convo"
-              onchange={`if(this.value)window.location='/chat?peer='+encodeURIComponent(this.value);this.value=''`}
+              onChange={(e: Event) => { const v = (e.target as HTMLSelectElement).value; if (v) globalThis.location.href = '/chat?peer=' + encodeURIComponent(v); }}
             >
               <option value="">New chat...</option>
               {users.filter(u => u.email !== user.email).map(u => (

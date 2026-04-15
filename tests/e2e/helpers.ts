@@ -7,28 +7,44 @@ let serverProcess: Deno.ChildProcess | null = null;
 
 /** Start the unified server on E2E_PORT. Returns when server is ready. */
 export async function startServer(): Promise<void> {
-  if (serverProcess) return; // already running
+  if (serverProcess) return;
+
+  // Kill anything on the port first
+  try {
+    const lsof = new Deno.Command("lsof", { args: ["-ti", `:${E2E_PORT}`], stdout: "piped" });
+    const out = await lsof.output();
+    const pids = new TextDecoder().decode(out.stdout).trim();
+    if (pids) {
+      for (const pid of pids.split("\n")) {
+        try { Deno.kill(parseInt(pid), "SIGTERM"); } catch { /* ok */ }
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  } catch { /* no process on port */ }
 
   const cmd = new Deno.Command("deno", {
     args: ["run", "-A", "--unstable-raw-imports", "--unstable-cron", "--unstable-kv", "main.ts"],
     env: { ...Deno.env.toObject(), PORT: String(E2E_PORT) },
-    stdout: "piped",
-    stderr: "piped",
+    stdout: "null",  // discard — prevents pipe buffer blocking
+    stderr: "null",
   });
   serverProcess = cmd.spawn();
 
-  // Wait for server to be ready (poll health endpoint)
-  for (let i = 0; i < 30; i++) {
+  // Poll until server responds
+  for (let i = 0; i < 40; i++) {
     try {
       const res = await fetch(`${BASE}/cron/status`);
       if (res.ok) {
+        await res.body?.cancel();
         console.log(`[E2E] Server ready on port ${E2E_PORT}`);
         return;
       }
-    } catch { /* not ready yet */ }
-    await new Promise(r => setTimeout(r, 1000));
+      await res.body?.cancel();
+    } catch { /* not ready */ }
+    await new Promise(r => setTimeout(r, 500));
   }
-  throw new Error("E2E server failed to start within 30s");
+  stopServer();
+  throw new Error("E2E server failed to start within 20s");
 }
 
 /** Stop the server subprocess. */
@@ -56,10 +72,11 @@ export async function createTestSession(): Promise<{ cookie: string; email: stri
   });
   const regCookie = regRes.headers.get("set-cookie") ?? "";
   if (!regCookie.includes("session=")) {
-    throw new Error(`Register failed: status=${regRes.status}, no cookie`);
+    const body = await regRes.text().catch(() => "");
+    throw new Error(`Register failed: status=${regRes.status}, body=${body.slice(0, 200)}`);
   }
 
-  // Login (to get a fresh session)
+  // Login
   const loginRes = await fetch(`${BASE}/api/login`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -69,7 +86,8 @@ export async function createTestSession(): Promise<{ cookie: string; email: stri
   const loginCookie = loginRes.headers.get("set-cookie") ?? "";
   const sessionMatch = loginCookie.match(/session=([^;]+)/);
   if (!sessionMatch) {
-    throw new Error(`Login failed: status=${loginRes.status}, no cookie`);
+    const body = await loginRes.text().catch(() => "");
+    throw new Error(`Login failed: status=${loginRes.status}, body=${body.slice(0, 200)}`);
   }
 
   return { cookie: `session=${sessionMatch[1]}`, email };

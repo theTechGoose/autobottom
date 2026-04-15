@@ -5,13 +5,23 @@ const adminUser = { email: "alice@example.com", orgId: "org1", role: "admin" as 
 const reviewerUser = { email: "bob@example.com", orgId: "org1", role: "reviewer" as const };
 const judgeUser = { email: "carol@example.com", orgId: "org1", role: "judge" as const };
 
-Deno.test("Sidebar — admin sees Dashboard, Users, Audits links", () => {
+Deno.test("Sidebar — admin has Configuration section with Users, Audits, Question Lab", () => {
   const html = renderHTML(<Sidebar user={adminUser} section="admin" />);
-  assertContains(html, "Dashboard");
+  assertContains(html, "Configuration");
   assertContains(html, "Users");
   assertContains(html, "Audits");
-  assertContains(html, "/admin/dashboard");
+  assertContains(html, "Question Lab");
   assertContains(html, "/admin/users");
+  assertContains(html, "/admin/audits");
+});
+
+Deno.test("Sidebar — admin has Impersonate section with role view links", () => {
+  const html = renderHTML(<Sidebar user={adminUser} section="admin" />);
+  assertContains(html, "Impersonate");
+  assertContains(html, "Judge Dashboard");
+  assertContains(html, "Review Dashboard");
+  assertContains(html, "Manager Portal");
+  assertContains(html, "Agent Dashboard");
 });
 
 Deno.test("Sidebar — reviewer sees Review Queue, Store, Chat", () => {
@@ -19,7 +29,7 @@ Deno.test("Sidebar — reviewer sees Review Queue, Store, Chat", () => {
   assertContains(html, "Review Queue");
   assertContains(html, "Store");
   assertContains(html, "Chat");
-  assertNotContains(html, "/admin/users");
+  assertNotContains(html, "Impersonate");
 });
 
 Deno.test("Sidebar — judge sees Judge Queue link", () => {

@@ -48,6 +48,7 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .sb-nav-link:hover { background: var(--bg-surface); color: var(--text-bright); }
 .sb-nav-link.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .sb-nav-icon { width: 20px; text-align: center; font-size: 14px; }
+.sb-nav-arrow { margin-left: auto; font-size: 14px; color: var(--text-dim); }
 
 .sb-footer { margin-top: auto; border-top: 1px solid var(--border); }
 .sb-user { padding: 14px 18px 8px; display: flex; align-items: center; gap: 8px; }

@@ -8,25 +8,25 @@ import * as fsRoute_1 from "../routes/_middleware.ts"
 import * as fsRoute_2 from "../routes/_500.tsx"
 import * as fsRoute_3 from "../routes/_404.tsx"
 
-export const clientEntry = "/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/fresh-runtime.js"
-export const version = "628b02d27fd3598b0857f3df164ce81e6efcc01a"
+export const clientEntry = "/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/fresh-runtime.js"
+export const version = "73dd940f22b24978269c29d418718a0057cb37bc"
 
 export const islands = new Map();
 const islandPreparer = new IslandPreparer();
-islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/SoundEngine.js", "SoundEngine", []);
-islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/HotkeyHandler.js", "HotkeyHandler", []);
-islandPreparer.prepare(islands, ChatInput, "/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/ChatInput.js", "ChatInput", []);
+islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/SoundEngine.js", "SoundEngine", []);
+islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/HotkeyHandler.js", "HotkeyHandler", []);
+islandPreparer.prepare(islands, ChatInput, "/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/ChatInput.js", "ChatInput", []);
 
 export const staticFiles = new Map([
   ["/favicon.svg", {"name":"/favicon.svg","hash":"66c0ae4b1956c0e76e490ca3f79bfd02bd385ff24c35908f25ef49e6bd286989","filePath":"static/favicon.svg","contentType":"image/svg+xml"}],
-  ["/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/fresh-runtime.js", {"name":"/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/fresh-runtime.js","hash":"TRDQISuIurc","filePath":"_fresh/static/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/SoundEngine.js", {"name":"/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/HotkeyHandler.js", {"name":"/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/ChatInput.js", {"name":"/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/chunk-EAQD6YFO.js", {"name":"/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/chunk-HGON2IZK.js", {"name":"/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/metafile.json", {"name":"/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/metafile.json","hash":"43455f2fa75f50cf89298787961ed1244c25b2f36cbd204cef904c7e1b249de8","filePath":"_fresh/static/_fresh/js/628b02d27fd3598b0857f3df164ce81e6efcc01a/metafile.json","contentType":"application/json; charset=UTF-8"}],
-  ["/styles.css", {"name":"/styles.css","hash":"ec04680deda3d029b996340b399a6e73dbe893df7800efe6fa497a53d504ce5d","filePath":"_fresh/static/styles.css","contentType":"text/css; charset=UTF-8"}]
+  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/fresh-runtime.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/fresh-runtime.js","hash":"erqGD4HuIqQ","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/SoundEngine.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/HotkeyHandler.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/ChatInput.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-EAQD6YFO.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-HGON2IZK.js", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/metafile.json", {"name":"/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/metafile.json","hash":"43455f2fa75f50cf89298787961ed1244c25b2f36cbd204cef904c7e1b249de8","filePath":"_fresh/static/_fresh/js/73dd940f22b24978269c29d418718a0057cb37bc/metafile.json","contentType":"application/json; charset=UTF-8"}],
+  ["/styles.css", {"name":"/styles.css","hash":"f989d02970308d03fd9f61f8fca331a073c5dc017b489f119f60f217413dfadd","filePath":"_fresh/static/styles.css","contentType":"text/css; charset=UTF-8"}]
 ]);
 
 export const entryAssets = [];

@@ -1,4 +1,4 @@
-/** 280px fixed sidebar — role-aware navigation links. */
+/** 280px fixed sidebar — role-aware navigation with section groupings matching production. */
 import type { User, Role } from "../lib/auth.ts";
 
 interface SidebarProps {
@@ -12,42 +12,109 @@ interface NavLink {
   icon: string;
 }
 
-const NAV: Record<Role, NavLink[]> = {
-  admin: [
-    { href: "/admin/dashboard", label: "Dashboard", icon: "layout-dashboard" },
-    { href: "/admin/users", label: "Users", icon: "users" },
-    { href: "/admin/audits", label: "Audits", icon: "file-text" },
-    { href: "/admin/weekly-builder", label: "Weekly Builder", icon: "mail" },
-    { href: "/question-lab", label: "Question Lab", icon: "flask" },
-    { href: "/store", label: "Badge Store", icon: "trophy" },
-    { href: "/chat", label: "Chat", icon: "message" },
-  ],
-  reviewer: [
-    { href: "/review", label: "Review Queue", icon: "play-circle" },
-    { href: "/review/dashboard", label: "Dashboard", icon: "layout-dashboard" },
-    { href: "/store", label: "Store", icon: "trophy" },
-    { href: "/chat", label: "Chat", icon: "message" },
-  ],
-  judge: [
-    { href: "/judge", label: "Judge Queue", icon: "scale" },
-    { href: "/judge/dashboard", label: "Dashboard", icon: "layout-dashboard" },
-    { href: "/store", label: "Store", icon: "trophy" },
-    { href: "/chat", label: "Chat", icon: "message" },
-  ],
-  manager: [
-    { href: "/manager", label: "Queue", icon: "clipboard-list" },
-    { href: "/store", label: "Store", icon: "trophy" },
-    { href: "/chat", label: "Chat", icon: "message" },
-  ],
-  user: [
-    { href: "/agent", label: "Dashboard", icon: "bar-chart" },
-    { href: "/store", label: "Store", icon: "trophy" },
-    { href: "/chat", label: "Chat", icon: "message" },
-  ],
+interface NavSection {
+  label: string;
+  links: NavLink[];
+}
+
+const ICON_MAP: Record<string, string> = {
+  "chat": "💬", "flask": "🧪", "webhook": "⚡", "mail": "📧",
+  "clipboard-list": "📋", "trash": "🗑️", "alert-triangle": "⚠️",
+  "users": "👥", "settings": "⚙️", "trophy": "🏆", "shopping-bag": "🛍️",
+  "scale": "⚖️", "play-circle": "▶️", "bar-chart": "📈",
+  "layout-dashboard": "📊", "file-text": "📄", "user-cog": "👤",
+  "log-out": "🚪",
+};
+
+function icon(name: string): string {
+  return ICON_MAP[name] ?? "•";
+}
+
+const ADMIN_SECTIONS: NavSection[] = [
+  {
+    label: "Navigation",
+    links: [
+      { href: "/chat", label: "Chat", icon: "chat" },
+    ],
+  },
+  {
+    label: "Configuration",
+    links: [
+      { href: "/question-lab", label: "Question Lab", icon: "flask" },
+      { href: "/admin/users", label: "Users", icon: "users" },
+      { href: "/admin/audits", label: "Audits", icon: "file-text" },
+      { href: "/admin/weekly-builder", label: "Weekly Builder", icon: "mail" },
+      { href: "/admin/dashboard", label: "Pipeline", icon: "settings" },
+      { href: "/store", label: "Badge Store", icon: "shopping-bag" },
+    ],
+  },
+  {
+    label: "Impersonate",
+    links: [
+      { href: "/judge/dashboard", label: "Judge Dashboard", icon: "scale" },
+      { href: "/review/dashboard", label: "Review Dashboard", icon: "play-circle" },
+      { href: "/manager", label: "Manager Portal", icon: "clipboard-list" },
+      { href: "/agent", label: "Agent Dashboard", icon: "bar-chart" },
+    ],
+  },
+];
+
+const REVIEWER_SECTIONS: NavSection[] = [
+  {
+    label: "Navigation",
+    links: [
+      { href: "/review", label: "Review Queue", icon: "play-circle" },
+      { href: "/review/dashboard", label: "Dashboard", icon: "layout-dashboard" },
+      { href: "/store", label: "Store", icon: "trophy" },
+      { href: "/chat", label: "Chat", icon: "chat" },
+    ],
+  },
+];
+
+const JUDGE_SECTIONS: NavSection[] = [
+  {
+    label: "Navigation",
+    links: [
+      { href: "/judge", label: "Judge Queue", icon: "scale" },
+      { href: "/judge/dashboard", label: "Dashboard", icon: "layout-dashboard" },
+      { href: "/store", label: "Store", icon: "trophy" },
+      { href: "/chat", label: "Chat", icon: "chat" },
+    ],
+  },
+];
+
+const MANAGER_SECTIONS: NavSection[] = [
+  {
+    label: "Navigation",
+    links: [
+      { href: "/manager", label: "Queue", icon: "clipboard-list" },
+      { href: "/store", label: "Store", icon: "trophy" },
+      { href: "/chat", label: "Chat", icon: "chat" },
+    ],
+  },
+];
+
+const USER_SECTIONS: NavSection[] = [
+  {
+    label: "Navigation",
+    links: [
+      { href: "/agent", label: "Dashboard", icon: "bar-chart" },
+      { href: "/store", label: "Store", icon: "trophy" },
+      { href: "/chat", label: "Chat", icon: "chat" },
+    ],
+  },
+];
+
+const ROLE_SECTIONS: Record<Role, NavSection[]> = {
+  admin: ADMIN_SECTIONS,
+  reviewer: REVIEWER_SECTIONS,
+  judge: JUDGE_SECTIONS,
+  manager: MANAGER_SECTIONS,
+  user: USER_SECTIONS,
 };
 
 export function Sidebar({ user, section }: SidebarProps) {
-  const links = NAV[user.role] ?? NAV.user;
+  const sections = ROLE_SECTIONS[user.role] ?? USER_SECTIONS;
   const initials = user.email.slice(0, 2).toUpperCase();
 
   return (
@@ -61,19 +128,22 @@ export function Sidebar({ user, section }: SidebarProps) {
       </div>
 
       <nav class="sb-nav">
-        <div class="sb-section">
-          <div class="sb-label">Navigation</div>
-          {links.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              class={`sb-nav-link ${section && link.href.includes(section) ? "active" : ""}`}
-            >
-              <span class="sb-nav-icon">{link.icon === "layout-dashboard" ? "📊" : link.icon === "users" ? "👥" : link.icon === "file-text" ? "📄" : link.icon === "mail" ? "📧" : link.icon === "flask" ? "🧪" : link.icon === "trophy" ? "🏆" : link.icon === "message" ? "💬" : link.icon === "play-circle" ? "▶️" : link.icon === "scale" ? "⚖️" : link.icon === "clipboard-list" ? "📋" : link.icon === "bar-chart" ? "📈" : "•"}</span>
-              <span>{link.label}</span>
-            </a>
-          ))}
-        </div>
+        {sections.map((sec) => (
+          <div key={sec.label} class="sb-section">
+            <div class="sb-label">{sec.label}</div>
+            {sec.links.map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                class={`sb-nav-link ${section && link.href.includes(section) ? "active" : ""}`}
+              >
+                <span class="sb-nav-icon">{icon(link.icon)}</span>
+                <span>{link.label}</span>
+                <span class="sb-nav-arrow">›</span>
+              </a>
+            ))}
+          </div>
+        ))}
       </nav>
 
       <div class="sb-footer">
@@ -85,7 +155,7 @@ export function Sidebar({ user, section }: SidebarProps) {
           </div>
         </div>
         <div class="sb-settings">
-          <a href="/api/logout" class="sb-logout-btn">Sign Out</a>
+          <a href="/api/logout" class="sb-logout-btn">🚪 Sign Out</a>
         </div>
       </div>
     </aside>

@@ -6,7 +6,13 @@ export const handler = define.handlers({
   GET() {
     const html = renderToString(
       <div>
-        <div class="modal-sub" style="margin-bottom:16px;">Select an operation. Destructive operations will ask for confirmation.</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">
+          <div>
+            <div class="modal-title">Data Maintenance</div>
+            <div class="modal-sub">Purge, backfill, deduplicate, and clean up data</div>
+          </div>
+          <button data-close-modal="maintenance-modal" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+        </div>
 
         <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
           <button class="sf-btn ghost" style="justify-content:flex-start;padding:10px 14px;" hx-post="/api/admin/config-save" hx-vals='{"endpoint":"/admin/backfill-stale-scores"}' hx-target="#maint-msg" hx-swap="innerHTML" hx-confirm="Backfill stale scores? This recalculates scores for findings missing score data.">

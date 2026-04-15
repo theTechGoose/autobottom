@@ -17,7 +17,8 @@ export const handler = define.handlers({
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
           <div class="modal-title" style="margin-bottom:0;">Offices</div>
-          <div style="display:flex;gap:4px;">
+          <div style="display:flex;gap:4px;align-items:center;">
+
             <button
               class={`sf-btn ghost um-tab ${tab === "offices" ? "active" : ""}`}
               hx-get="/api/admin/modal/offices?tab=offices"

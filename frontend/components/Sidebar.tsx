@@ -67,7 +67,8 @@ const ADMIN_SECTIONS: SbSection[] = [
       { label: "Users", icon: Icon.users, color: "rgba(139,92,246,0.10)", modalId: "users-modal" },
       { label: "Pipeline", icon: Icon.settings, color: "rgba(210,153,34,0.10)", modalId: "pipeline-modal" },
       { label: "Bonus Points", icon: Icon.trophy, color: "rgba(139,92,246,0.10)", modalId: "bonus-points-modal" },
-      { label: "Badge Store", icon: Icon.shoppingBag, color: "rgba(57,208,216,0.10)", href: "/store" },
+      { label: "Gamification", icon: Icon.trophy, color: "rgba(63,185,80,0.12)", href: "/gamification" },
+      { label: "Badge Editor", icon: Icon.shoppingBag, color: "rgba(57,208,216,0.10)", href: "/store" },
     ],
   },
   {
@@ -177,8 +178,11 @@ export function Sidebar({ user, section }: SidebarProps) {
             <div class="sb-role">{user.role}</div>
           </div>
         </div>
-        <div class="sb-settings">
-          <a href="/api/logout" class="sb-logout-btn">{Icon.logOut(14)} Sign Out</a>
+        <div class="sb-settings" style="padding:6px 14px 14px;">
+          <a href="/api/logout" class="sb-link" style="text-decoration:none;color:inherit;">
+            <div style="width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:var(--red-bg);color:var(--red);flex-shrink:0;">{Icon.logOut(15)}</div>
+            <span class="sb-link-label">Logout</span>
+          </a>
         </div>
       </div>
     </aside>

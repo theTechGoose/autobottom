@@ -43,22 +43,26 @@ export default function ModalController() {
 
       // Role Views flyout toggle on click
       const rvWrap = target.closest(".sb-rv-wrap");
-      if (rvWrap) {
-        const rvLink = target.closest(".sb-rv-wrap > .sb-link");
-        if (rvLink) {
-          e.preventDefault();
-          e.stopPropagation();
-          const flyout = rvWrap.querySelector(".sb-rv-flyout");
-          if (flyout) {
-            const isOpen = flyout.classList.contains("open");
-            closeAllFlyouts();
-            if (!isOpen) flyout.classList.add("open");
+      if (rvWrap && !target.closest(".sb-rv-flyout")) {
+        e.preventDefault();
+        e.stopPropagation();
+        const flyout = rvWrap.querySelector(".sb-rv-flyout") as HTMLElement | null;
+        if (flyout) {
+          const isOpen = flyout.classList.contains("open");
+          closeAllFlyouts();
+          if (!isOpen) {
+            // Position fixed flyout relative to the trigger
+            const rect = rvWrap.getBoundingClientRect();
+            flyout.style.left = `${rect.right + 8}px`;
+            flyout.style.top = `${rect.top + rect.height / 2}px`;
+            flyout.style.transform = "translateY(-50%)";
+            flyout.classList.add("open");
           }
-          return;
         }
-        // Click inside the flyout panel (on a link) — let it through
         return;
       }
+      // Click inside flyout panel (on a link) — let it navigate
+      if (target.closest(".sb-rv-flyout")) return;
 
       // Click outside flyout closes it
       if (!target.closest(".sb-rv-flyout")) {

@@ -39,7 +39,13 @@ export const handler = define.handlers({
 
     const html = renderToString(
       <div>
-        <div class="modal-title" style="margin-bottom:12px;">Webhook Configuration</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">
+          <div>
+            <div class="modal-title">Webhook Configuration</div>
+            <div class="modal-sub">Configure outbound webhooks for pipeline events</div>
+          </div>
+          <button data-close-modal="webhook-modal" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+        </div>
 
         {/* Tabs */}
         <div class="wh-tabs">

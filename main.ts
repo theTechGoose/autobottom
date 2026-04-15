@@ -12,9 +12,11 @@ registerCrons();
 // --- Backend: initialize danet app, extract Hono handler ---
 import { DanetApplication } from "@danet/core";
 import { AppModule } from "./bootstrap/mod.ts";
+import { authenticate } from "@core/business/auth/mod.ts";
 
 const danetApp = new DanetApplication();
 await danetApp.init(AppModule);
+
 // @ts-ignore — router is Hono app with .fetch()
 const backendFetch: (req: Request) => Promise<Response> = danetApp.router.fetch.bind(danetApp.router);
 
@@ -70,7 +72,17 @@ function isBackendRequest(req: Request): boolean {
   return BACKEND_PREFIXES.some(p => path.startsWith(p));
 }
 
-Deno.serve({ port }, (req, info) => {
+Deno.serve({ port }, async (req, info) => {
+  const path = new URL(req.url).pathname;
+
+  // /admin/api/me — handled directly because danet's @Req decorator
+  // doesn't work when calling router.fetch() (bypasses danet's request lifecycle).
+  if (path === "/admin/api/me") {
+    const auth = await authenticate(req);
+    if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return Response.json({ email: auth.email, orgId: auth.orgId, role: auth.role });
+  }
+
   if (isBackendRequest(req)) {
     return backendFetch(req);
   }

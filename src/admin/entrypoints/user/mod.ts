@@ -1,11 +1,11 @@
 /** User + org management controller — wired to auth service. */
 import "npm:reflect-metadata@0.1.13";
-import { Controller, Get, Post, Body } from "@danet/core";
+import { Controller, Get, Post, Body, Req } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
 import { CreateUserRequest, DeleteEmailRequest } from "@core/dto/requests.ts";
-import { createUser, deleteUser, listUsers } from "@core/business/auth/mod.ts";
+import { createUser, deleteUser, listUsers, authenticate } from "@core/business/auth/mod.ts";
 import type { Role } from "@core/business/auth/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
@@ -33,5 +33,14 @@ export class UserController {
   }
 
   @Get("api/me") @ReturnedType(MessageResponse)
-  async me() { return { message: "Requires auth context — not yet implemented" }; }
+  async me(@Req req: Request) {
+    try {
+      const auth = await authenticate(req);
+      if (!auth) return { error: "unauthorized" };
+      return { email: auth.email, orgId: auth.orgId, role: auth.role };
+    } catch (e) {
+      console.error("[ME] authenticate error:", e);
+      return { error: "unauthorized" };
+    }
+  }
 }

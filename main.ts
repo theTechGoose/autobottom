@@ -30,15 +30,21 @@ if (!Deno.env.get("API_URL")) {
 }
 
 // --- Route requests ---
-// Frontend HTMX fragment routes — these must go to Fresh, not danet
-const FRONTEND_API_PREFIXES = [
+// Frontend pages and HTMX fragment routes — these go to Fresh
+const FRONTEND_PATHS = [
+  // Pages (GET → rendered HTML)
+  "/admin/dashboard", "/admin/users", "/admin/audits", "/admin/weekly-builder",
+  "/review", "/judge", "/manager", "/agent", "/chat", "/store", "/question-lab",
+  // HTMX fragment routes (POST/GET → HTML fragments)
   "/api/login", "/api/register", "/api/logout",
   "/api/admin/", "/api/review/", "/api/judge/",
   "/api/manager/", "/api/agent/", "/api/chat/",
-  "/api/store/buy",  // frontend buy handler (POST); /api/store (GET) stays backend
+  "/api/store/buy",
+  // Static assets
+  "/styles.css", "/favicon.svg", "/_fresh/",
 ];
 
-// Backend API routes — everything else under these prefixes goes to danet
+// Backend API routes — everything under these prefixes goes to danet
 const BACKEND_PREFIXES = [
   "/admin", "/audit", "/review/api", "/judge/api", "/manager/api",
   "/agent/api", "/api/qlab", "/api/messages", "/api/users", "/api/events",
@@ -51,15 +57,16 @@ const AUTH_PATHS = ["/login", "/register", "/logout"];
 function isBackendRequest(req: Request): boolean {
   const path = new URL(req.url).pathname;
 
-  // Frontend HTMX routes always go to Fresh
-  if (FRONTEND_API_PREFIXES.some(p => path.startsWith(p))) return false;
+  // Frontend pages and HTMX routes always go to Fresh
+  if (FRONTEND_PATHS.some(p => path.startsWith(p))) return false;
 
   // Auth page paths: POST → backend (JSON API), GET → frontend (HTML page)
   if (AUTH_PATHS.some(p => path === p)) return req.method === "POST";
 
-  // Health check JSON
-  if (path === "/" && req.headers.get("accept")?.includes("application/json")) return true;
+  // Root: GET from browser → Fresh (redirect to dashboard), JSON accept → backend health check
+  if (path === "/") return req.headers.get("accept")?.includes("application/json") === true;
 
+  // Everything else with a known backend prefix → danet
   return BACKEND_PREFIXES.some(p => path.startsWith(p));
 }
 

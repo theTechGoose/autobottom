@@ -1,4 +1,4 @@
-/** HTMX register handler — proxies to backend, sets session cookie, redirects. */
+/** Register handler — regular form POST, sets cookie, 303 redirects (browser handles natively). */
 import { define } from "../../lib/define.ts";
 
 const API_URL = () => Deno.env.get("API_URL") ?? "http://localhost:3000";
@@ -12,9 +12,7 @@ export const handler = define.handlers({
     console.log(`[REGISTER] attempt: ${email} org=${orgName}`);
 
     if (!email || !password || !orgName) {
-      return new Response(`<span class="error-text">All fields required</span>`, {
-        headers: { "content-type": "text/html" },
-      });
+      return new Response(null, { status: 302, headers: { location: "/register" } });
     }
 
     try {
@@ -27,28 +25,21 @@ export const handler = define.handlers({
       console.log(`[REGISTER] backend response: ${res.status}`, JSON.stringify(data).slice(0, 200));
 
       if (!res.ok || data.error) {
-        return new Response(`<span class="error-text">${data.error ?? "Registration failed"}</span>`, {
-          headers: { "content-type": "text/html" },
-        });
+        console.log(`[REGISTER] failed: ${data.error}`);
+        return new Response(null, { status: 302, headers: { location: "/register" } });
       }
 
-      // Return 200 with HX-Redirect — NOT 303.
-      // HTMX follows 303 redirects via AJAX before reading HX-Redirect,
-      // which causes the redirected page HTML to get swapped into the form.
-      // A 200 with HX-Redirect tells HTMX to do window.location = url.
-      console.log(`[REGISTER] success, redirecting to /admin/dashboard`);
+      console.log(`[REGISTER] success, cookie set, redirecting to /admin/dashboard`);
       return new Response(null, {
-        status: 200,
+        status: 303,
         headers: {
+          location: "/admin/dashboard",
           "set-cookie": data.cookie,
-          "HX-Redirect": "/admin/dashboard",
         },
       });
     } catch (e) {
       console.error(`[REGISTER] error:`, e);
-      return new Response(`<span class="error-text">Network error — is the API running?</span>`, {
-        headers: { "content-type": "text/html" },
-      });
+      return new Response(null, { status: 302, headers: { location: "/register" } });
     }
   },
 });

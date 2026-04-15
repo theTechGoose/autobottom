@@ -8,24 +8,24 @@ import * as fsRoute_1 from "../routes/_middleware.ts"
 import * as fsRoute_2 from "../routes/_500.tsx"
 import * as fsRoute_3 from "../routes/_404.tsx"
 
-export const clientEntry = "/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/fresh-runtime.js"
-export const version = "ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd"
+export const clientEntry = "/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/fresh-runtime.js"
+export const version = "5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41"
 
 export const islands = new Map();
 const islandPreparer = new IslandPreparer();
-islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/SoundEngine.js", "SoundEngine", []);
-islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/HotkeyHandler.js", "HotkeyHandler", []);
-islandPreparer.prepare(islands, ChatInput, "/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/ChatInput.js", "ChatInput", []);
+islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/SoundEngine.js", "SoundEngine", []);
+islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/HotkeyHandler.js", "HotkeyHandler", []);
+islandPreparer.prepare(islands, ChatInput, "/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/ChatInput.js", "ChatInput", []);
 
 export const staticFiles = new Map([
   ["/favicon.svg", {"name":"/favicon.svg","hash":"66c0ae4b1956c0e76e490ca3f79bfd02bd385ff24c35908f25ef49e6bd286989","filePath":"static/favicon.svg","contentType":"image/svg+xml"}],
-  ["/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/fresh-runtime.js", {"name":"/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/fresh-runtime.js","hash":"kq1eqFRV4u8","filePath":"_fresh/static/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/SoundEngine.js", {"name":"/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/HotkeyHandler.js", {"name":"/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/ChatInput.js", {"name":"/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/chunk-EAQD6YFO.js", {"name":"/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/chunk-HGON2IZK.js", {"name":"/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/metafile.json", {"name":"/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/metafile.json","hash":"43455f2fa75f50cf89298787961ed1244c25b2f36cbd204cef904c7e1b249de8","filePath":"_fresh/static/_fresh/js/ff7f4f2da7ed85bf9b0ccda4c9b426c85f3645dd/metafile.json","contentType":"application/json; charset=UTF-8"}],
+  ["/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/fresh-runtime.js", {"name":"/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/fresh-runtime.js","hash":"aKINQecTyzU","filePath":"_fresh/static/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/SoundEngine.js", {"name":"/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/HotkeyHandler.js", {"name":"/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/ChatInput.js", {"name":"/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/chunk-EAQD6YFO.js", {"name":"/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/chunk-HGON2IZK.js", {"name":"/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/metafile.json", {"name":"/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/metafile.json","hash":"43455f2fa75f50cf89298787961ed1244c25b2f36cbd204cef904c7e1b249de8","filePath":"_fresh/static/_fresh/js/5c4eb75e298665f6c4b4ec10a0d9bd8dfdd5cb41/metafile.json","contentType":"application/json; charset=UTF-8"}],
   ["/styles.css", {"name":"/styles.css","hash":"ec04680deda3d029b996340b399a6e73dbe893df7800efe6fa497a53d504ce5d","filePath":"_fresh/static/styles.css","contentType":"text/css; charset=UTF-8"}]
 ]);
 

@@ -35,10 +35,6 @@ if (!Deno.env.get("API_URL")) {
 // Frontend EXACT page paths — must match exactly (no prefix matching)
 const FRONTEND_EXACT_PAGES = new Set([
   "/admin/dashboard", "/admin/users", "/admin/audits", "/admin/weekly-builder",
-  "/admin/webhooks", "/admin/email-reports", "/admin/email-templates",
-  "/admin/chargebacks-report", "/admin/bad-words", "/admin/offices",
-  "/admin/pipeline", "/admin/bonus-points", "/admin/dimensions",
-  "/admin/gamification", "/admin/manager-scopes",
   "/review", "/review/dashboard",
   "/judge", "/judge/dashboard",
   "/manager", "/agent", "/chat", "/store", "/question-lab",

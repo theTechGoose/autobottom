@@ -71,10 +71,11 @@ export default define.page(async function AdminDashboard(ctx) {
           <table class="data-table" style="margin-top:10px;">
             <thead><tr><th></th><th>Pending</th><th>Decided</th></tr></thead>
             <tbody>
-              <tr><td style="font-weight:600;color:var(--text-bright);">Internal</td><td class="mono" style="color:var(--yellow);">{r.pending ?? 0}</td><td class="mono" style="color:var(--green);">{r.decided ?? 0}</td></tr>
-              <tr><td style="font-weight:600;color:var(--text-bright);">Partner</td><td class="mono" style="color:var(--yellow);">0</td><td class="mono" style="color:var(--green);">0</td></tr>
+              <tr style="cursor:pointer;" hx-get="/api/admin/review-drill?type=internal" hx-target="#review-drill" hx-swap="innerHTML"><td style="font-weight:600;color:var(--text-bright);">Internal</td><td class="mono" style="color:var(--yellow);">{r.pending ?? 0}</td><td class="mono" style="color:var(--green);">{r.decided ?? 0}</td></tr>
+              <tr style="cursor:pointer;" hx-get="/api/admin/review-drill?type=partner" hx-target="#review-drill" hx-swap="innerHTML"><td style="font-weight:600;color:var(--text-bright);">Partner</td><td class="mono" style="color:var(--yellow);">0</td><td class="mono" style="color:var(--green);">0</td></tr>
             </tbody>
           </table>
+          <div id="review-drill"></div>
         </div>
         <div class="panel">
           <div class="panel-title">Token Usage (1h)</div>

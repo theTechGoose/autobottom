@@ -75,17 +75,19 @@ function isBackendRequest(req: Request): boolean {
 Deno.serve({ port }, async (req, info) => {
   const path = new URL(req.url).pathname;
 
-  // /admin/api/me — handled directly because danet's @Req decorator
-  // doesn't work when calling router.fetch() (bypasses danet's request lifecycle).
+  // /admin/api/me — handled directly (danet's @Req doesn't work via router.fetch)
   if (path === "/admin/api/me") {
+    console.log(`[ROUTER] ${req.method} ${path} → direct auth handler`);
     const auth = await authenticate(req);
     if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
     return Response.json({ email: auth.email, orgId: auth.orgId, role: auth.role });
   }
 
   if (isBackendRequest(req)) {
+    console.log(`[ROUTER] ${req.method} ${path} → backend (danet)`);
     return backendFetch(req);
   }
+  console.log(`[ROUTER] ${req.method} ${path} → frontend (Fresh)`);
   return frontendHandler(req, info);
 });
 

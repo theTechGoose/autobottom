@@ -8,7 +8,9 @@ export async function apiFetch<T = unknown>(
   init?: RequestInit,
 ): Promise<T> {
   const cookie = req.headers.get("cookie") ?? "";
-  const res = await fetch(`${API_URL()}${path}`, {
+  const url = `${API_URL()}${path}`;
+  console.log(`[API_FETCH] ${init?.method ?? "GET"} ${url} cookie=${cookie ? "yes" : "no"}`);
+  const res = await fetch(url, {
     ...init,
     headers: {
       ...(init?.headers as Record<string, string> | undefined),

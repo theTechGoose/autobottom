@@ -16,18 +16,12 @@ import { AppModule } from "./bootstrap/mod.ts";
 const danetApp = new DanetApplication();
 await danetApp.init(AppModule);
 // @ts-ignore — router is Hono app with .fetch()
-const backendFetch = danetApp.router.fetch.bind(danetApp.router);
+const backendFetch: (req: Request) => Promise<Response> = danetApp.router.fetch.bind(danetApp.router);
 
-// --- Frontend: initialize Fresh app, extract handler ---
-import { App, staticFiles } from "@fresh/core";
-import type { State } from "./frontend/lib/auth.ts";
-
-const freshApp = new App<State>();
-freshApp.config.root = "./frontend";
-freshApp.config.mode = "development";
-freshApp.use(staticFiles());
-freshApp.fsRoutes();
-const frontendHandler = await freshApp.handler();
+// --- Frontend: import pre-built Fresh handler from _fresh/server.js ---
+// @ts-ignore — generated file, not type-checked
+const freshServer = await import("./frontend/_fresh/server.js");
+const frontendHandler: (req: Request, info?: Deno.ServeHandlerInfo) => Promise<Response> = freshServer.default.fetch;
 
 // --- Set API_URL for frontend SSR fetches (same origin) ---
 const port = Number(Deno.env.get("PORT") ?? 3000);
@@ -43,22 +37,12 @@ const BACKEND_PREFIXES = [
   "/webhooks", "/docs",
 ];
 
-// /login and /register: POST → backend (auth API), GET → frontend (HTML page)
 const AUTH_PATHS = ["/login", "/register", "/logout"];
 
 function isBackendRequest(req: Request): boolean {
   const path = new URL(req.url).pathname;
-
-  // Auth paths: POST goes to backend, GET goes to frontend
-  if (AUTH_PATHS.some(p => path === p)) {
-    return req.method === "POST";
-  }
-
-  // Health check
-  if (path === "/" && req.headers.get("accept")?.includes("application/json")) {
-    return true;
-  }
-
+  if (AUTH_PATHS.some(p => path === p)) return req.method === "POST";
+  if (path === "/" && req.headers.get("accept")?.includes("application/json")) return true;
   return BACKEND_PREFIXES.some(p => path.startsWith(p));
 }
 
@@ -70,5 +54,3 @@ Deno.serve({ port }, (req, info) => {
 });
 
 console.log(`🚀 Autobottom running on port ${port} (API + Frontend)`);
-
-

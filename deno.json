@@ -1,6 +1,7 @@
 {
   "unstable": ["cron", "kv", "raw-imports"],
   "tasks": {
+    "build": "cd frontend && deno run -A build.ts",
     "start": "deno run -A --unstable-raw-imports --unstable-cron --unstable-kv main.ts",
     "start:api": "deno run -A --unstable-raw-imports bootstrap/mod.ts",
     "start:frontend": "cd frontend && deno run -A main.ts",
@@ -39,7 +40,8 @@
     "@admin/": "./src/admin/",
     "@cron/": "./src/cron/",
     "@events/": "./src/events/",
-    "@fresh/core": "jsr:@fresh/core@^2.0.0-rc.16",
+    "@fresh/core": "jsr:@fresh/core@^2.2.0",
+    "fresh/internal": "jsr:@fresh/core@^2.2.0/internal",
     "preact": "npm:preact@^10.25.4",
     "preact/hooks": "npm:preact@^10.25.4/hooks",
     "preact-render-to-string": "npm:preact-render-to-string@^6.5.0"

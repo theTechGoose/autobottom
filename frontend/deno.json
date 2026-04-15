@@ -7,7 +7,7 @@
     "test": "deno test -A"
   },
   "imports": {
-    "@fresh/core": "jsr:@fresh/core@^2.0.0-rc.16",
+    "@fresh/core": "jsr:@fresh/core@^2.2.0",
     "preact": "npm:preact@^10.25.4",
     "preact/hooks": "npm:preact@^10.25.4/hooks",
     "@preact/signals": "npm:@preact/signals@^2.0.0",

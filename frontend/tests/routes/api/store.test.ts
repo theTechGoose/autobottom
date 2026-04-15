@@ -11,7 +11,7 @@ Deno.test("store buy — success redirects to /store", async () => {
       body: JSON.stringify({ email: "a@co.com", itemId: "badge-1", price: 10 }),
     });
     const res = await (buyHandler as any).POST({ req, state: {} });
-    assertEquals(res.status, 303);
+    assertEquals(res.status, 200);
     assertEquals(res.headers.get("hx-redirect"), "/store");
   } finally { mock.restore(); }
 });

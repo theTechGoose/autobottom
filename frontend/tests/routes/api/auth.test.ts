@@ -46,9 +46,9 @@ Deno.test("login — success sets cookie and redirects", async () => {
   try {
     const ctx = { req: formReq("/api/login", { email: "a@b.com", password: "pass" }), state: {} };
     const res = await (loginHandler as any).POST(ctx);
-    assertEquals(res.status, 303);
+    assertEquals(res.status, 200);
     assertEquals(res.headers.get("set-cookie"), "session=xyz123; Path=/; HttpOnly");
-    assertEquals(res.headers.get("hx-redirect"), "/admin/dashboard");
+    assertEquals(res.headers.get("HX-Redirect"), "/admin/dashboard");
   } finally { mock.restore(); }
 });
 
@@ -57,7 +57,7 @@ Deno.test("login — reviewer role redirects to /review", async () => {
   try {
     const ctx = { req: formReq("/api/login", { email: "r@b.com", password: "pass" }), state: {} };
     const res = await (loginHandler as any).POST(ctx);
-    assertEquals(res.headers.get("hx-redirect"), "/review");
+    assertEquals(res.headers.get("HX-Redirect"), "/review");
   } finally { mock.restore(); }
 });
 
@@ -86,9 +86,9 @@ Deno.test("register — success sets cookie and redirects", async () => {
   try {
     const ctx = { req: formReq("/api/register", { orgName: "Test", email: "a@b.com", password: "pass123" }), state: {} };
     const res = await (registerHandler as any).POST(ctx);
-    assertEquals(res.status, 303);
+    assertEquals(res.status, 200);
     assertEquals(res.headers.get("set-cookie"), "session=reg123");
-    assertEquals(res.headers.get("hx-redirect"), "/admin/dashboard");
+    assertEquals(res.headers.get("HX-Redirect"), "/admin/dashboard");
   } finally { mock.restore(); }
 });
 

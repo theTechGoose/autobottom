@@ -7,7 +7,7 @@ export const handler = define.handlers({
     try {
       const body = await ctx.req.json();
       await apiPost("/admin/users/delete", ctx.req, { email: body.email });
-      return new Response(null, { status: 303, headers: { location: "/admin/users", "HX-Redirect": "/admin/users" } });
+      return new Response(null, { status: 200, headers: { "HX-Redirect": "/admin/users" } });
     } catch (e) {
       return new Response(String(e), { status: 500 });
     }

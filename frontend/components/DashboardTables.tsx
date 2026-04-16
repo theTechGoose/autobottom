@@ -48,26 +48,50 @@ export function DashboardTables({ recent, active, errors, logsBase }: Props) {
       <div class="tbl" style="margin-top:16px;">
         <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
           <span>Active Audits</span>
-          <div style="display:flex;gap:6px;">
-            <button class="sf-btn" hx-post="/api/admin/queue-action" hx-vals='{"action":"resume"}' hx-swap="none" style="font-size:9px;padding:3px 10px;">Resume Queues</button>
-            <button class="sf-btn danger" hx-post="/api/admin/queue-action" hx-vals='{"action":"terminate-all"}' hx-swap="none" hx-confirm="Terminate ALL running audits?" style="font-size:9px;padding:3px 10px;">Terminate Running</button>
-            <button class="sf-btn danger" hx-post="/api/admin/queue-action" hx-vals='{"action":"clear-review"}' hx-swap="none" hx-confirm="Clear the review queue?" style="font-size:9px;padding:3px 10px;">Clear Queue</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            {/* Visible status slot fed by queue-action responses; cleared ~2s after success. */}
+            <span id="queue-action-status" style="font-size:10px;min-width:80px;text-align:right;"></span>
+            <button class="sf-btn"
+                    hx-post="/api/admin/queue-action"
+                    hx-vals='{"action":"resume"}'
+                    hx-target="#queue-action-status"
+                    hx-swap="innerHTML"
+                    hx-on--after-request="setTimeout(() => { const el = document.getElementById('queue-action-status'); if (el) el.innerHTML = ''; }, 2500); if (event.detail.successful) htmx.trigger('#dashboard-tables', 'refresh');"
+                    style="font-size:9px;padding:3px 10px;">Resume Queues</button>
+            <button class="sf-btn danger"
+                    hx-post="/api/admin/queue-action"
+                    hx-vals='{"action":"terminate-all"}'
+                    hx-target="#queue-action-status"
+                    hx-swap="innerHTML"
+                    hx-confirm="Terminate ALL running audits?"
+                    hx-on--after-request="setTimeout(() => { const el = document.getElementById('queue-action-status'); if (el) el.innerHTML = ''; }, 2500); if (event.detail.successful) htmx.trigger('#dashboard-tables', 'refresh');"
+                    style="font-size:9px;padding:3px 10px;">Terminate Running</button>
+            <button class="sf-btn danger"
+                    hx-post="/api/admin/queue-action"
+                    hx-vals='{"action":"clear-review"}'
+                    hx-target="#queue-action-status"
+                    hx-swap="innerHTML"
+                    hx-confirm="Clear the review queue?"
+                    hx-on--after-request="setTimeout(() => { const el = document.getElementById('queue-action-status'); if (el) el.innerHTML = ''; }, 2500); if (event.detail.successful) htmx.trigger('#dashboard-tables', 'refresh');"
+                    style="font-size:9px;padding:3px 10px;">Clear Queue</button>
           </div>
         </div>
         <table class="data-table">
-          <thead><tr><th>Finding ID</th><th>QB Record</th><th>Step</th><th>Started</th><th>Duration</th><th></th></tr></thead>
+          <thead><tr><th>Finding ID</th><th>QB Record</th><th>Step</th><th>Started</th><th>Duration</th><th>Actions</th></tr></thead>
           <tbody>
             {active.length === 0 ? (
               <tr class="empty-row"><td colSpan={6}>No active audits</td></tr>
             ) : active.map((a) => {
               const fid = a.findingId || "\u2014";
-              const fidHref = logsUrl(fid, logsBase);
+              // Finding ID links to the audit report page instead of Deno Deploy logs
+              // (those go stale when the preview deployment hash changes).
+              const reportHref = fid !== "\u2014" ? `/audit/report?id=${encodeURIComponent(fid)}` : null;
               const qbHref = qbUrl(a.recordId, a.isPackage);
               const dur = a.ts ? Date.now() - a.ts : null;
               return (
                 <tr key={fid}>
-                  <td>{fidHref
-                    ? <a href={fidHref} target="_blank" rel="noopener" class="tbl-link mono" style="font-size:10px;">{fid}</a>
+                  <td>{reportHref
+                    ? <a href={reportHref} target="_blank" rel="noopener" class="tbl-link mono" style="font-size:10px;">{fid}</a>
                     : <span class="mono">{fid}</span>}</td>
                   <td>{qbHref
                     ? <a href={qbHref} target="_blank" rel="noopener" class="tbl-link">{a.recordId}</a>
@@ -75,7 +99,19 @@ export function DashboardTables({ recent, active, errors, logsBase }: Props) {
                   <td><span class="step-badge">{a.step ?? "\u2014"}</span></td>
                   <td class="time-ago">{a.startedAt ? timeAgo(a.startedAt) : (a.ts ? timeAgo(a.ts) : "\u2014")}</td>
                   <td class="mono" style="color:var(--yellow);">{dur != null ? fmtDur(dur) : "\u2014"}</td>
-                  <td></td>
+                  <td style="display:flex;gap:4px;">
+                    <button class="sf-btn"
+                            hx-get={`/api/admin/retry?findingId=${encodeURIComponent(fid)}`}
+                            hx-swap="none"
+                            hx-on--after-request="if (event.detail.successful) htmx.trigger('#dashboard-tables', 'refresh');"
+                            style="font-size:10px;padding:3px 8px;">Retry</button>
+                    <button class="sf-btn danger"
+                            hx-post={`/api/admin/terminate-finding?findingId=${encodeURIComponent(fid)}`}
+                            hx-swap="none"
+                            hx-confirm="Stop this audit?"
+                            hx-on--after-request="if (event.detail.successful) htmx.trigger('#dashboard-tables', 'refresh');"
+                            style="font-size:10px;padding:3px 8px;">Stop</button>
+                  </td>
                 </tr>
               );
             })}
@@ -95,10 +131,14 @@ export function DashboardTables({ recent, active, errors, logsBase }: Props) {
             {errors.length === 0 ? (
               <tr class="empty-row"><td colSpan={5}>No errors</td></tr>
             ) : errors.map((e) => {
+              const fid = e.findingId || "\u2014";
+              const reportHref = fid !== "\u2014" ? `/audit/report?id=${encodeURIComponent(fid)}` : null;
               const logsHref = logsUrl(e.findingId, logsBase);
               return (
                 <tr key={e.findingId}>
-                  <td class="mono">{e.findingId?.slice(0, 12)}</td>
+                  <td>{reportHref
+                    ? <a href={reportHref} target="_blank" rel="noopener" class="tbl-link mono" style="font-size:10px;">{fid.slice(0, 12)}</a>
+                    : <span class="mono">{fid.slice(0, 12)}</span>}</td>
                   <td>{logsHref ? <a href={logsHref} target="_blank" rel="noopener" class="tbl-link" style="font-size:10px;">logs</a> : "\u2014"}</td>
                   <td><span class="step-badge">{e.step}</span></td>
                   <td class="error-msg">{e.error}</td>

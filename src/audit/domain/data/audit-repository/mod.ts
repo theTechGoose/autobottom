@@ -48,14 +48,20 @@ async function hashString(input: string): Promise<string> {
 
 // ── Finding CRUD (chunked) ──────────────────────────────────────────────────
 
+// Key schema MUST match the writer side in src/audit/entrypoints/audit/mod.ts,
+// which uses `new KvRepository("audit-finding").setChunked(orgId, [findingId], ...)`.
+// That produces key [orgId, "audit-finding", findingId]. Previously these two
+// functions used ["__audit-finding__", orgId, findingId] — a ghost schema no
+// writer ever used — so stepInit's getFinding always returned null and the
+// pipeline died at step 1.
 export async function getFinding(orgId: OrgId, id: string): Promise<Record<string, any> | null> {
   const db = await getKv();
-  return chunkedGet<Record<string, any>>(db, ["__audit-finding__", orgId, id]);
+  return chunkedGet<Record<string, any>>(db, [orgId, "audit-finding", id]);
 }
 
 export async function saveFinding(orgId: OrgId, finding: Record<string, any>): Promise<void> {
   const db = await getKv();
-  await chunkedSet(db, ["__audit-finding__", orgId, finding.id], finding);
+  await chunkedSet(db, [orgId, "audit-finding", finding.id], finding);
 }
 
 // ── Audit Deduplication ─────────────────────────────────────────────────────

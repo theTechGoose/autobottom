@@ -117,7 +117,7 @@ export default define.page(async function AdminDashboard(ctx) {
       {/* ===== DASHBOARD TABLES (Active Audits / Recent Errors / Recently Completed)
              — auto-refresh every 10s. Action buttons (Resume/Terminate/Clear/etc.) are
              inline with each table's title, NOT in a separate Queue Management panel. */}
-      <div id="dashboard-tables" hx-get="/api/admin/dashboard/refresh" hx-trigger="every 10s" hx-swap="innerHTML">
+      <div id="dashboard-tables" hx-get="/api/admin/dashboard/refresh" hx-trigger="every 10s, refresh" hx-swap="innerHTML">
         <DashboardTables recent={recentList} active={activeList} errors={errorList} logsBase={logsBase} />
       </div>
       {/* ===== CONFIG MODALS — opened from sidebar, content loaded via HTMX ===== */}

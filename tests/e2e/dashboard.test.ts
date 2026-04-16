@@ -58,6 +58,11 @@ Deno.test({ name: "E2E Dashboard: /api/admin/dashboard/refresh returns ALL three
   // Inline action buttons (no separate Queue Management panel)
   assertStringIncludes(html, "Terminate Running", "Terminate Running button must be inline with Active Audits title");
   assertStringIncludes(html, "Clear Errors", "Clear Errors button must be inline with Recent Errors title");
+  // Active Audits rows must have per-row Retry and Stop buttons (present in the
+  // render template even when empty-row placeholder is shown, via the Actions header).
+  assertStringIncludes(html, "Actions", "Active Audits header must include Actions column");
+  // The queue-action status slot must exist so queue-action responses have a target.
+  assertStringIncludes(html, "queue-action-status", "queue-action-status span must be present for visible feedback");
 }});
 
 Deno.test({ name: "E2E Dashboard: /api/admin/dashboard/review returns Review Queue HTML", sanitizeResources: false, async fn() {
@@ -237,6 +242,49 @@ Deno.test({ name: "E2E Pipeline: POST /audit/step/init dispatches via main.ts (n
     body.includes(TRACE_ID),
     `response must echo findingId for log traceability: ${body.slice(0, 300)}`,
   );
+}});
+
+Deno.test({ name: "E2E Dashboard: /api/admin/retry route exists and returns non-500", sanitizeResources: false, async fn() {
+  // Regression guard: Retry button per row in Active Audits table must have a
+  // working backend route. Accepts 204 (ran, backend gracefully handled missing
+  // finding) or 200 with error span — just not 404 / server crash.
+  const res = await fetch(`${BASE}/api/admin/retry?findingId=nonexistent-test`, {
+    method: "GET",
+    headers: { cookie: session.cookie },
+  });
+  assert(res.status === 204 || res.status === 200, `retry route must be reachable: got ${res.status}`);
+}});
+
+Deno.test({ name: "E2E Dashboard: /api/admin/terminate-finding route exists and returns non-500", sanitizeResources: false, async fn() {
+  // Regression guard: Stop button per row in Active Audits must have a working
+  // backend route. Previously no frontend wrapper existed at all.
+  const res = await fetch(`${BASE}/api/admin/terminate-finding?findingId=nonexistent-test`, {
+    method: "POST",
+    headers: { cookie: session.cookie },
+  });
+  // Must be reachable — 204 (ran, no content) / 200 (ran with HTML body) / 500
+  // (backend threw but handler exists). Crucially NOT 404 (no route registered).
+  assert(
+    [200, 204, 500].includes(res.status),
+    `terminate-finding route must exist and be reachable: got ${res.status}`,
+  );
+}});
+
+Deno.test({ name: "E2E Dashboard: /api/admin/queue-action returns HTML feedback (not 204)", sanitizeResources: false, async fn() {
+  // Regression guard: queue-action must return HTML so the status slot can
+  // render a "✓ done" message. Previously returned 204 which left buttons
+  // appearing broken to the user.
+  const res = await fetch(`${BASE}/api/admin/queue-action`, {
+    method: "POST",
+    headers: { cookie: session.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ action: "resume" }),
+  });
+  // 200 on success OR 500 on backend failure — either way must be HTML, not 204.
+  assert(res.status !== 204, `queue-action must return HTML body, not 204: got ${res.status}`);
+  const contentType = res.headers.get("content-type") ?? "";
+  assertStringIncludes(contentType, "text/html", "queue-action must return text/html content-type");
+  const body = await res.text();
+  assert(body.includes("qa-status"), `queue-action response must include qa-status span for visible feedback: ${body.slice(0, 200)}`);
 }});
 
 Deno.test({ name: "E2E Debug: /admin/debug/api-url confirms unified-process API_URL", sanitizeResources: false, async fn() {

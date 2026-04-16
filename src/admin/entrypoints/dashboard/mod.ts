@@ -126,6 +126,23 @@ export class DashboardController {
     for await (const e of db.list({ prefix: orgKey(orgId, "error-tracking") })) {
       if (errors.length < 5) errors.push({ key: e.key, value: e.value });
     }
-    return { orgId, active, activeCount: active.length, completedCount, recentCompletedSample: completed, errors };
+    // audit-finding keys use the chunked-storage meta marker [..., "_n"]; count
+    // unique finding IDs by collecting the third key part when we see an _n entry.
+    const findingIds = new Set<string>();
+    for await (const e of db.list({ prefix: orgKey(orgId, "audit-finding") })) {
+      // key shape: [orgId, "audit-finding", findingId, (0|1|..|"_n")]
+      const findingId = e.key[2];
+      if (typeof findingId === "string") findingIds.add(findingId);
+    }
+    return {
+      orgId,
+      active,
+      activeCount: active.length,
+      completedCount,
+      recentCompletedSample: completed,
+      errors,
+      findingCount: findingIds.size,
+      findingSample: Array.from(findingIds).slice(0, 10),
+    };
   }
 }

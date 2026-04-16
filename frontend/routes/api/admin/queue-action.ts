@@ -16,11 +16,24 @@ export const handler = define.handlers({
       const body = await ctx.req.json();
       const action = body.action;
       const endpoint = ACTIONS[action];
-      if (!endpoint) return new Response("Unknown action", { status: 400 });
+      if (!endpoint) {
+        return new Response(`<span class="qa-status err">Unknown action: ${action}</span>`, {
+          status: 400,
+          headers: { "content-type": "text/html" },
+        });
+      }
       await apiPost(endpoint, ctx.req, {});
-      return new Response(null, { status: 204 });
+      // Small HTML snippet so the visible status slot shows success — the
+      // caller button's after-request hook clears it after ~2s.
+      return new Response(`<span class="qa-status ok">✓ ${action} done</span>`, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
     } catch (e) {
-      return new Response(String(e), { status: 500 });
+      return new Response(`<span class="qa-status err">✗ ${String(e)}</span>`, {
+        status: 500,
+        headers: { "content-type": "text/html" },
+      });
     }
   },
 });

@@ -1,4 +1,5 @@
 /** QStash queue adapter for audit pipeline step orchestration. Ported from lib/queue.ts. */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 
 const TRANSCRIBE_QUEUE = "audit-transcribe";
@@ -21,7 +22,32 @@ const STEP_QUEUE: Record<string, string> = {
   "bad-word-check": CLEANUP_QUEUE,
 };
 
-function selfUrl(): string { return Deno.env.get("SELF_URL") ?? "http://localhost:3000"; }
+/** Request-scoped origin store. When an HTTP request is in flight on a branch
+ *  preview deployment, we capture `new URL(req.url).origin` here so QStash
+ *  callbacks go back to THIS deployment, not wherever SELF_URL env points.
+ *
+ *  Why: Deno Deploy branch previews have auto-generated hostnames
+ *  (autobottom-<hash>.thetechgoose.deno.net). Env vars are shared across
+ *  deployments, so SELF_URL in .env is always the main prod URL. Without this,
+ *  QStash delivers step callbacks to main prod instead of the preview. */
+const requestOriginStore = new AsyncLocalStorage<string>();
+
+/** Wrap an async request handler so that selfUrl() reads back the request's origin. */
+export function runWithOrigin<T>(origin: string, fn: () => Promise<T>): Promise<T> {
+  return requestOriginStore.run(origin, fn);
+}
+
+function selfUrl(): string {
+  // Prefer the origin of the current inbound request (set by main.ts handler).
+  // Falls back to env var for cron/background callers that have no active request.
+  const scoped = requestOriginStore.getStore();
+  if (scoped) return scoped;
+  return Deno.env.get("SELF_URL") ?? "http://localhost:3000";
+}
+
+/** Expose the current effective self-URL for debug endpoints. Always returns a
+ *  string — AsyncLocalStorage origin when inside a request, env var otherwise. */
+export function getSelfUrl(): string { return selfUrl(); }
 function qstashUrl(): string { return Deno.env.get("QSTASH_URL") ?? "https://qstash.upstash.io"; }
 function qstashToken(): string { return Deno.env.get("QSTASH_TOKEN") ?? ""; }
 function isLocalMode(): boolean { return Deno.env.get("LOCAL_QUEUE") === "true"; }
@@ -74,6 +100,7 @@ export function enqueueStep(step: string, body: unknown, delaySeconds?: number):
     span.setAttribute("qstash.step", step);
     const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
     const url = `${selfUrl()}/audit/step/${step}`;
+    console.log(`📮 [QSTASH] enqueueStep step=${step} callback=${url}`);
     const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "120s" } : undefined;
     const result = await enqueue(queueName, url, body, delaySeconds, extraHeaders);
     metric("autobottom.qstash.enqueue", 1, { step });

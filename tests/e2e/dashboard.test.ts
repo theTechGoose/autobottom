@@ -67,6 +67,17 @@ Deno.test({ name: "E2E Dashboard: /api/admin/dashboard/review returns Review Que
   assertStringIncludes(html, "Partner", "must include Partner row");
 }});
 
+Deno.test({ name: "E2E Debug: /admin/debug/self-url returns the REQUEST origin (not env fallback)", sanitizeResources: false, async fn() {
+  // Regression guard for the "branch preview has wrong SELF_URL" bug that stopped
+  // audits from running. The AsyncLocalStorage fix in main.ts should make this
+  // endpoint return BASE (the request origin) regardless of what env var is set to.
+  const res = await fetch(`${BASE}/admin/debug/self-url`, { headers: { cookie: session.cookie } });
+  assertEquals(res.status, 200);
+  const body = await res.json() as { selfUrl: string; envSelfUrl: string | null; source: string };
+  assertEquals(body.selfUrl, BASE, `selfUrl must match the request origin (got ${body.selfUrl}, expected ${BASE})`);
+  assertEquals(body.source, "async-local-storage", "must come from ALS, not env fallback");
+}});
+
 Deno.test({ name: "E2E Audit Report: GET /audit/report?id=X renders a page (not 404)", sanitizeResources: false, async fn() {
   const res = await fetch(`${BASE}/audit/report?id=nonexistent-test-id`, { headers: { cookie: session.cookie } });
   assertEquals(res.status, 200, "report page must exist so Find Audit clicks don't 404");

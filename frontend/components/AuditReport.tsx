@@ -1,0 +1,237 @@
+/** Audit report UI — ported from production handleGetReport (main:controller.ts).
+ *  Single component file for simplicity. Renders:
+ *    - Hero: audit ID, status badge (PASSED/FAILED/pending), audio player
+ *    - Score block: big percentage, pass/fail counts
+ *    - Record + Guest metadata grids
+ *    - Transcript with speaker attribution
+ *    - Questions list with verdict, thinking, defense (native <details> for expand)
+ *
+ *  Design principle: no client JS. Native HTML controls (<audio controls>, <details>)
+ *  handle all interactivity. Server does all rendering. */
+
+interface AnsweredQuestion {
+  header?: string;
+  answer?: string;
+  thinking?: string;
+  defense?: string;
+  snippet?: string;
+}
+
+interface Finding {
+  id: string;
+  findingStatus?: string;
+  recordingIdField?: string;
+  record?: Record<string, unknown>;
+  answeredQuestions?: AnsweredQuestion[];
+  diarizedTranscript?: string;
+  rawTranscript?: string;
+  feedback?: { heading?: string; text?: string };
+  startedAt?: number;
+  completedAt?: number;
+}
+
+const QB_DATE_URL = "https://monsterrg.quickbase.com/db/bpb28qsnn?a=dr&rid=";
+const QB_PKG_URL = "https://monsterrg.quickbase.com/db/bttffb64u?a=dr&rid=";
+
+function isYes(a: string | undefined): boolean {
+  const s = String(a ?? "").trim().toLowerCase();
+  return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
+}
+
+function scoreColor(pct: number): string {
+  if (pct === 100) return "var(--green)";
+  if (pct >= 80) return "var(--cyan)";
+  return "var(--red)";
+}
+
+function formatTranscript(text: string): string {
+  return text
+    .replace(/\[AGENT\]/g, '[TEAM MEMBER]')
+    .replace(/\[CUSTOMER\]/g, '[GUEST]');
+}
+
+export function AuditReport({ finding, id }: { finding: Finding; id: string }) {
+  const questions = finding.answeredQuestions ?? [];
+  const total = questions.length;
+  const yesCount = questions.filter(q => isYes(q.answer)).length;
+  const noCount = total - yesCount;
+  const passRate = total > 0 ? Math.round((yesCount / total) * 100) : 0;
+  const passed = noCount === 0 && total > 0;
+  const finished = finding.findingStatus === "finished";
+
+  const record = (finding.record ?? {}) as Record<string, unknown>;
+  const recordId = String(record.RecordId ?? "");
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const crmUrl = recordId ? (isPackage ? QB_PKG_URL : QB_DATE_URL) + recordId : null;
+
+  // Transcript: prefer diarized (speaker-labeled), fall back to raw
+  const diarized = finding.diarizedTranscript ?? "";
+  const hasSpeakerLabels = diarized.includes("[AGENT]") || diarized.includes("[CUSTOMER]");
+  const transcriptText = hasSpeakerLabels ? diarized : (finding.rawTranscript ?? "");
+
+  // Record metadata
+  const meta = {
+    recordId: record.RecordId ?? "—",
+    recordingId: (finding as unknown as { recordingId?: string }).recordingId ?? record.VoGenie ?? "—",
+    destination: record.DestinationDisplay ?? record["314"] ?? "—",
+    teamMember: record.VoName ?? record["33"] ?? record.GuestName ?? "—",
+    date: record["10"] ?? record["8"] ?? "—",
+  };
+
+  const guest = {
+    guestName: record.GuestName ?? record["32"] ?? "—",
+    spouseName: record["33"] ?? "—",
+    maritalStatus: record["49"] ?? "—",
+    arrival: record["8"] ?? "—",
+    departure: record["10"] ?? "—",
+    wgs: record["553"] === "yes",
+    mcc: record["594"] === "yes",
+  };
+
+  // Score badge color + label
+  let statusBadge;
+  if (!finished) {
+    statusBadge = <span class="rpt-badge pending">{(finding.findingStatus ?? "unknown").toUpperCase()}</span>;
+  } else if (passed) {
+    statusBadge = <span class="rpt-badge pass">PASSED</span>;
+  } else {
+    statusBadge = <span class="rpt-badge fail">FAILED</span>;
+  }
+
+  return (
+    <div class="rpt-body">
+      {/* ===== Hero ===== */}
+      <div class="rpt-hero">
+        <div class="rpt-hero-top">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <span class="rpt-hero-label">Audit Report</span>
+            <code class="rpt-hero-id">{id}</code>
+            {statusBadge}
+            <span style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">{finding.findingStatus ?? ""}</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <a href="/admin/dashboard" class="sf-btn ghost" style="text-decoration:none;font-size:11px;">&larr; Dashboard</a>
+          </div>
+        </div>
+
+        {/* Audio */}
+        {finished && (
+          <div style="padding:16px 28px;">
+            <audio controls preload="none" style="width:100%;max-width:600px;">
+              <source src={`/audit/recording?id=${encodeURIComponent(id)}`} type="audio/mpeg" />
+              Your browser does not support the audio element.
+            </audio>
+          </div>
+        )}
+      </div>
+
+      {/* ===== Score block ===== */}
+      {total > 0 ? (
+        <div class="rpt-score">
+          <div style={`font-size:72px;font-weight:800;color:${scoreColor(passRate)};font-variant-numeric:tabular-nums;line-height:1;`}>
+            {passRate}%
+          </div>
+          <div class="rpt-score-bar" style={`--pct:${passRate}%;`}></div>
+          <div style="display:flex;gap:24px;justify-content:center;margin-top:14px;font-size:11px;color:var(--text-muted);">
+            <span style="color:var(--green);">● {yesCount} passed</span>
+            <span style="color:var(--red);">● {noCount} failed</span>
+            <span style="color:var(--text-dim);">● {total} total</span>
+          </div>
+        </div>
+      ) : (
+        <div class="rpt-score">
+          <div style="font-size:16px;color:var(--text-dim);padding:40px 0;">Audit not yet complete — score pending</div>
+        </div>
+      )}
+
+      {/* ===== Record metadata grid ===== */}
+      <div class="rpt-grid">
+        <Field label="Record ID">{crmUrl
+          ? <a href={crmUrl} target="_blank" rel="noopener" class="tbl-link">{meta.recordId}</a>
+          : meta.recordId}</Field>
+        <Field label="Recording ID">{meta.recordingId}</Field>
+        <Field label="Destination">{meta.destination}</Field>
+        <Field label="Team Member">{meta.teamMember}</Field>
+        <Field label="Date">{meta.date}</Field>
+      </div>
+
+      {/* ===== Guest metadata grid ===== */}
+      <div class="rpt-grid">
+        <Field label="Guest Name">{guest.guestName}</Field>
+        <Field label="Spouse Name">{guest.spouseName}</Field>
+        <Field label="Marital Status">{guest.maritalStatus}</Field>
+        <Field label="Arrival">{guest.arrival}</Field>
+        <Field label="Departure">{guest.departure}</Field>
+        <Field label="WGS / MCC">
+          <span style={`color:${guest.wgs ? "var(--green)" : "var(--text-dim)"};margin-right:14px;`}>{guest.wgs ? "☑" : "☐"} WGS</span>
+          <span style={`color:${guest.mcc ? "var(--green)" : "var(--text-dim)"};`}>{guest.mcc ? "☑" : "☐"} MCC</span>
+        </Field>
+      </div>
+
+      {/* ===== Transcript ===== */}
+      <div class="rpt-section">
+        <div class="rpt-section-title">Transcript</div>
+        <div class="rpt-transcript">
+          {transcriptText
+            ? formatTranscript(transcriptText).split(/\r?\n/).map((line, i) => {
+                const tm = line.startsWith("[TEAM MEMBER]");
+                const gu = line.startsWith("[GUEST]");
+                if (tm) return <div key={i} style="margin-bottom:8px;"><span class="rpt-speaker team">[TEAM MEMBER]</span>:{line.slice(13)}</div>;
+                if (gu) return <div key={i} style="margin-bottom:8px;"><span class="rpt-speaker guest">[GUEST]</span>:{line.slice(7)}</div>;
+                return <div key={i} style="margin-bottom:4px;">{line}</div>;
+              })
+            : <em style="color:var(--text-dim);">No transcript available</em>
+          }
+        </div>
+      </div>
+
+      {/* ===== Questions ===== */}
+      {total > 0 && (
+        <div class="rpt-section">
+          <div class="rpt-section-title">Questions ({total})</div>
+          {questions.map((q, i) => {
+            const yes = isYes(q.answer);
+            return (
+              <details key={i} class={`rpt-q ${yes ? "pass" : "fail"}`}>
+                <summary>
+                  <span class="rpt-q-num">{i + 1}</span>
+                  <span class="rpt-q-title">{q.header ?? "Untitled question"}</span>
+                  <span class={`rpt-q-verdict ${yes ? "yes" : "no"}`}>{yes ? "Yes" : "No"}</span>
+                </summary>
+                <div class="rpt-q-body">
+                  {q.snippet && (
+                    <div class="rpt-q-block">
+                      <div class="rpt-q-label">Transcript Context</div>
+                      <pre class="rpt-q-snippet">{formatTranscript(q.snippet)}</pre>
+                    </div>
+                  )}
+                  {q.thinking && (
+                    <div class="rpt-q-block blue">
+                      <div class="rpt-q-label">Reasoning</div>
+                      <div class="rpt-q-text">{q.thinking}</div>
+                    </div>
+                  )}
+                  {q.defense && (
+                    <div class="rpt-q-block purple">
+                      <div class="rpt-q-label">Defense</div>
+                      <div class="rpt-q-text">{q.defense}</div>
+                    </div>
+                  )}
+                </div>
+              </details>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: preact.ComponentChildren }) {
+  return (
+    <div class="rpt-field">
+      <div class="rpt-field-label">{label}</div>
+      <div class="rpt-field-value">{children}</div>
+    </div>
+  );
+}

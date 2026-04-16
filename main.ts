@@ -5,6 +5,8 @@ import "npm:reflect-metadata@0.1.13";
 import { initOtel } from "@core/data/datadog-otel/mod.ts";
 initOtel();
 
+import { runWithOrigin } from "@core/data/qstash/mod.ts";
+
 // Register cron jobs
 import { registerCrons } from "@cron/domain/business/cron-core/mod.ts";
 registerCrons();
@@ -79,23 +81,29 @@ function isBackendRequest(req: Request): boolean {
   return BACKEND_PREFIXES.some(p => path.startsWith(p));
 }
 
-Deno.serve({ port }, async (req, info) => {
-  const path = new URL(req.url).pathname;
+Deno.serve({ port }, (req, info) => {
+  // Wrap the entire request lifecycle in AsyncLocalStorage so QStash callbacks
+  // use this deployment's origin (not the inherited SELF_URL from .env).
+  // Critical for branch preview deployments where the hostname is dynamic.
+  const origin = new URL(req.url).origin;
+  return runWithOrigin(origin, async () => {
+    const path = new URL(req.url).pathname;
 
-  // /admin/api/me — handled directly (danet's @Req doesn't work via router.fetch)
-  if (path === "/admin/api/me") {
-    console.log(`[ROUTER] ${req.method} ${path} → direct auth handler`);
-    const auth = await authenticate(req);
-    if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
-    return Response.json({ email: auth.email, orgId: auth.orgId, role: auth.role });
-  }
+    // /admin/api/me — handled directly (danet's @Req doesn't work via router.fetch)
+    if (path === "/admin/api/me") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct auth handler`);
+      const auth = await authenticate(req);
+      if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+      return Response.json({ email: auth.email, orgId: auth.orgId, role: auth.role });
+    }
 
-  if (isBackendRequest(req)) {
-    console.log(`[ROUTER] ${req.method} ${path} → backend (danet)`);
-    return backendFetch(req);
-  }
-  console.log(`[ROUTER] ${req.method} ${path} → frontend (Fresh)`);
-  return frontendHandler(req, info);
+    if (isBackendRequest(req)) {
+      console.log(`[ROUTER] ${req.method} ${path} → backend (danet)`);
+      return backendFetch(req);
+    }
+    console.log(`[ROUTER] ${req.method} ${path} → frontend (Fresh)`);
+    return frontendHandler(req, info);
+  });
 });
 
 console.log(`🚀 Autobottom running on port ${port} (API + Frontend)`);

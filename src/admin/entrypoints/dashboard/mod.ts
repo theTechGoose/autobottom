@@ -61,6 +61,19 @@ export class DashboardController {
     return { audits: await findAuditsByRecordId(ORG(), recordId) };
   }
 
+  /** Debug: the effective SELF_URL for the current request. This is what
+   *  QStash callback URLs will use. Must match the CURRENT deployment's origin
+   *  (not whatever .env has) for audits to actually run on branch previews. */
+  @Get("debug/self-url") @ReturnedType(OkResponse)
+  async debugSelfUrl() {
+    const { getSelfUrl } = await import("@core/data/qstash/mod.ts");
+    return {
+      selfUrl: getSelfUrl(),
+      envSelfUrl: Deno.env.get("SELF_URL") ?? null,
+      source: getSelfUrl() === Deno.env.get("SELF_URL") ? "env" : "async-local-storage",
+    };
+  }
+
   /** Debug: dump active-tracking + completed-audit-stat KV entries for the current org.
    *  Useful for diagnosing "I started an audit and it disappeared" — shows what's
    *  actually stored vs what the dashboard is rendering. */

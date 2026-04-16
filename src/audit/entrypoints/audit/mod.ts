@@ -117,6 +117,39 @@ export class AuditController {
     return finding;
   }
 
+  @Get("recording") @Description("Stream audit recording audio from S3 as audio/mpeg")
+  async getRecording(@Query("id") id: string, @Query("idx") idxStr: string) {
+    if (!id) return new Response(JSON.stringify({ error: "id parameter required" }), { status: 400, headers: { "content-type": "application/json" } });
+
+    const orgId = defaultOrgId() as OrgId;
+    const finding = await findingRepo.getChunked(orgId, id) as Record<string, unknown> | null;
+    if (!finding) return new Response(JSON.stringify({ error: "finding not found" }), { status: 404, headers: { "content-type": "application/json" } });
+
+    const idx = parseInt(idxStr ?? "0") || 0;
+    const keys = finding.s3RecordingKeys as string[] | undefined;
+    const recordingPath = keys?.length ? keys[Math.min(idx, keys.length - 1)] : (finding.recordingPath as string | undefined);
+    if (!recordingPath) return new Response(JSON.stringify({ error: "no recording path" }), { status: 404, headers: { "content-type": "application/json" } });
+
+    const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
+    if (!bucket) return new Response(JSON.stringify({ error: "S3 bucket not configured" }), { status: 500, headers: { "content-type": "application/json" } });
+
+    const s3 = new S3Ref(bucket, recordingPath);
+    const bytes = await s3.get();
+    if (!bytes) return new Response(JSON.stringify({ error: "recording not found in S3" }), { status: 404, headers: { "content-type": "application/json" } });
+
+    // Return full file with proper headers for <audio controls>. Range support is
+    // nice-to-have; native browsers work fine with a full download for short clips.
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "content-type": "audio/mpeg",
+        "content-length": String(bytes.byteLength),
+        "accept-ranges": "bytes",
+        "cache-control": "private, max-age=300",
+      },
+    });
+  }
+
   @Get("stats") @ReturnedType(PipelineStatsResponse) @Description("Get pipeline stats")
   async getStats() {
     const orgId = defaultOrgId();

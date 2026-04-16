@@ -1,65 +1,68 @@
-/** Audit report page — GET /audit/report?id=X.
- *  Currently a JSON-dump placeholder. The production-equivalent full-HTML report is
- *  thousands of lines and hasn't been ported yet — this unblocks the Find Audit flow
- *  (Dashboard → View Report) so clicks don't 404. */
+/** Audit report page — GET /audit/report?id=X. Uses <AuditReport> component.
+ *  Ported from production's handleGetReport (main:controller.ts, ~1467 lines of inline HTML).
+ *  Our version is ~200 lines of Preact + ~60 lines of CSS, reusing existing classes. */
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
+import { AuditReport } from "../../components/AuditReport.tsx";
 
-export default define.page(async function AuditReport(ctx) {
+export default define.page(async function AuditReportPage(ctx) {
   const url = new URL(ctx.req.url);
-  // Trim the id — browsers URL-decode `+` to space, so if anything copied a leading
-  // space (like selecting the success message text), the ID gets a leading space and
-  // becomes " LhW..." which never matches any real finding. Also handle tab/newline.
+  // Trim — browsers URL-encode leading whitespace as `+`, so "copy/paste from
+  // success message with a space" becomes ` LhW-...` which never matches.
   const id = (url.searchParams.get("id") ?? "").trim();
   const user = ctx.state.user;
 
   if (!id) {
     return (
       <Layout title="Audit Report" section="admin" user={user} hideSidebar>
-        <div style="padding:48px;text-align:center;color:var(--text-dim);">
+        <div style="padding:60px;text-align:center;color:var(--text-dim);">
           <h1 style="font-size:18px;color:var(--text-bright);margin-bottom:12px;">Missing finding ID</h1>
-          <p>Open a report with <code>/audit/report?id=&lt;findingId&gt;</code></p>
+          <p>Open with <code>/audit/report?id=&lt;findingId&gt;</code></p>
+          <p style="margin-top:16px;"><a href="/admin/dashboard" class="tbl-link">&larr; Dashboard</a></p>
         </div>
       </Layout>
     );
   }
 
-  let finding: Record<string, unknown> | { error: string } = { error: "not-loaded" };
+  // deno-lint-ignore no-explicit-any
+  let finding: any = null;
+  let errorMsg: string | null = null;
   try {
-    finding = await apiFetch<Record<string, unknown>>(`/audit/finding?id=${encodeURIComponent(id)}`, ctx.req);
+    const data = await apiFetch<Record<string, unknown>>(`/audit/finding?id=${encodeURIComponent(id)}`, ctx.req);
+    if (data && (data as { error?: string }).error) {
+      errorMsg = (data as { error: string }).error;
+    } else {
+      finding = data;
+    }
   } catch (e) {
-    finding = { error: (e as Error).message };
+    errorMsg = (e as Error).message;
   }
 
-  const err = (finding as { error?: string }).error;
-  const prettyJson = JSON.stringify(finding, null, 2);
+  if (errorMsg || !finding) {
+    return (
+      <Layout title={`Report ${id}`} section="admin" user={user} hideSidebar>
+        <div style="max-width:720px;margin:60px auto;padding:0 24px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <div>
+              <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1.5px;font-weight:700;">Audit Report</div>
+              <h1 style="font-size:18px;color:var(--text-bright);font-family:var(--mono);margin-top:2px;">{id}</h1>
+            </div>
+            <a href="/admin/dashboard" class="sf-btn ghost" style="text-decoration:none;">&larr; Dashboard</a>
+          </div>
+          <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:16px 20px;color:var(--red);font-size:13px;">
+            {errorMsg === "not found"
+              ? <>No audit finding with id <code>{id}</code> was found. It may have been deleted, or this report was run on a different deployment.</>
+              : <>Failed to load finding: {errorMsg}</>}
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout title={`Report ${id}`} section="admin" user={user} hideSidebar>
-      <div style="max-width:1000px;margin:0 auto;padding:32px 24px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-          <div>
-            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1.5px;font-weight:700;">Audit Report</div>
-            <h1 style="font-size:18px;color:var(--text-bright);font-family:var(--mono);margin-top:2px;">{id}</h1>
-          </div>
-          <a href="/admin/dashboard" class="btn btn-ghost" style="text-decoration:none;">&larr; Dashboard</a>
-        </div>
-
-        {err ? (
-          <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:16px 20px;color:var(--red);font-size:13px;">
-            Failed to load finding: {err}
-          </div>
-        ) : (
-          <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:10px;padding:18px 22px;">
-            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;">Finding data</div>
-            <pre style="font-family:var(--mono);font-size:11px;color:var(--text);background:var(--bg);padding:14px 16px;border-radius:6px;overflow:auto;max-height:70vh;line-height:1.5;white-space:pre-wrap;word-break:break-word;">{prettyJson}</pre>
-          </div>
-        )}
-        <div style="margin-top:12px;font-size:11px;color:var(--text-dim);text-align:center;">
-          Full report UI is pending port from legacy codebase.
-        </div>
-      </div>
+      <AuditReport finding={finding} id={id} />
     </Layout>
   );
 });

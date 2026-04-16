@@ -13,7 +13,11 @@
     "test:e2e:modals": "deno test -A --unstable-raw-imports --unstable-kv tests/e2e/modal-endpoints.test.ts",
     "test:e2e:dashboard": "deno test -A --unstable-raw-imports --unstable-kv tests/e2e/dashboard.test.ts",
     "verify": "deno task check && deno task shape-check && deno task test:e2e",
-    "shape-check": "bash fixtures/scripts/shape-check.sh"
+    "shape-check": "bash fixtures/scripts/shape-check.sh",
+    "logs:prod": "deployctl logs --project=autobottom --prod --limit=200",
+    "logs:preview": "deployctl logs --project=autobottom --limit=200",
+    "logs:audit": "deployctl logs --project=autobottom --prod --filter=AUDIT --limit=200",
+    "logs:qstash": "deployctl logs --project=autobottom --prod --filter=QSTASH --limit=200"
   },
   "imports": {
     "@mrg-keystone/danet": "jsr:@mrg-keystone/danet@^1.0.2",

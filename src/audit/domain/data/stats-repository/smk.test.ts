@@ -6,7 +6,7 @@ import {
   writeAuditDoneIndex, queryAuditDoneIndex, findAuditsByRecordId,
   saveChargebackEntry, getChargebackEntry, getChargebackEntries, deleteChargebackEntry,
   saveWireDeductionEntry, getWireDeductionEntry, getWireDeductionEntries, deleteWireDeductionEntry,
-  getStats,
+  getStats, terminateFinding, terminateAllActive,
 } from "./mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
 
@@ -36,6 +36,42 @@ Deno.test({ name: "retry — track", ...kvOpts, fn: async () => {
   await trackRetry(ORG, "f-retry", "transcribe", 2);
   const stats = await getStats(ORG);
   assert(stats.retries.some((r: any) => r.findingId === "f-retry"));
+}});
+
+Deno.test({ name: "terminateFinding — evicts active-tracking for that finding only", ...kvOpts, fn: async () => {
+  const ORG_T = "test-term-" + crypto.randomUUID().slice(0, 8);
+  await trackActive(ORG_T, "f-term-keep", "transcribe");
+  await trackActive(ORG_T, "f-term-drop", "finalize");
+  await terminateFinding(ORG_T, "f-term-drop");
+  const stats = await getStats(ORG_T);
+  const ids = stats.active.map((a: any) => a.findingId);
+  assert(ids.includes("f-term-keep"), "kept finding must remain active");
+  assert(!ids.includes("f-term-drop"), "terminated finding must be evicted");
+}});
+
+Deno.test({ name: "terminateAllActive — evicts every active-tracking entry for org", ...kvOpts, fn: async () => {
+  const ORG_T = "test-term-all-" + crypto.randomUUID().slice(0, 8);
+  await trackActive(ORG_T, "f-1", "transcribe");
+  await trackActive(ORG_T, "f-2", "finalize");
+  await trackActive(ORG_T, "f-3", "ask-all");
+  const before = await getStats(ORG_T);
+  assertEquals(before.active.length, 3, "precondition: 3 active");
+  const count = await terminateAllActive(ORG_T);
+  assertEquals(count, 3, "terminateAllActive must report 3 evicted");
+  const after = await getStats(ORG_T);
+  assertEquals(after.active.length, 0, "all active entries must be gone");
+}});
+
+Deno.test({ name: "terminateAllActive — does NOT evict other orgs' entries", ...kvOpts, fn: async () => {
+  const ORG_A = "test-term-iso-a-" + crypto.randomUUID().slice(0, 8);
+  const ORG_B = "test-term-iso-b-" + crypto.randomUUID().slice(0, 8);
+  await trackActive(ORG_A, "f-a", "transcribe");
+  await trackActive(ORG_B, "f-b", "transcribe");
+  await terminateAllActive(ORG_A);
+  const statsA = await getStats(ORG_A);
+  const statsB = await getStats(ORG_B);
+  assertEquals(statsA.active.length, 0, "ORG_A must be empty after terminate");
+  assert(statsB.active.some((a: any) => a.findingId === "f-b"), "ORG_B must be untouched");
 }});
 
 Deno.test({ name: "audit-done-idx — write and query by range", ...kvOpts, fn: async () => {

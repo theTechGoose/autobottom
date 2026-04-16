@@ -1,9 +1,10 @@
-/** HTMX fragment — returns fresh dashboard tables (Recently Completed, Active, Errors).
- *  Uses shared <DashboardTables> so SSR and refresh render identically. */
+/** HTMX fragment — returns fresh dashboard tables (Active, Errors, Recently Completed).
+ *  All three tables always render (empty-row when no data) so new audits become visible
+ *  within one refresh cycle. */
 import { define } from "../../../../lib/define.ts";
 import { apiFetch } from "../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
-import { DashboardTables, type ActiveItem, type ErrorItem, type CompletedItem } from "../../../../components/DashboardTables.tsx";
+import { DashboardTables, computeLogsBase, type ActiveItem, type ErrorItem, type CompletedItem } from "../../../../components/DashboardTables.tsx";
 
 interface DashboardData {
   pipeline: { active?: ActiveItem[]; errors?: ErrorItem[] };
@@ -14,11 +15,13 @@ export const handler = define.handlers({
   async GET(ctx) {
     try {
       const data = await apiFetch<DashboardData>("/admin/dashboard/data", ctx.req);
+      const logsBase = computeLogsBase(ctx.req.url);
       const html = renderToString(
         <DashboardTables
           recent={data.recentCompleted ?? []}
           active={data.pipeline?.active ?? []}
           errors={data.pipeline?.errors ?? []}
+          logsBase={logsBase}
         />
       );
       return new Response(html, { headers: { "content-type": "text/html" } });

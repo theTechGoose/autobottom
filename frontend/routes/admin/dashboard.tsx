@@ -4,13 +4,13 @@ import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import { StatGrid } from "../../components/StatGrid.tsx";
 import { DonutChart } from "../../components/DonutChart.tsx";
-import { DashboardTables, type ActiveItem, type ErrorItem, type CompletedItem } from "../../components/DashboardTables.tsx";
+import { DashboardTables, computeLogsBase, type ActiveItem, type ErrorItem, type CompletedItem } from "../../components/DashboardTables.tsx";
 import { TokenUsagePanel, type TokenData } from "../../components/TokenUsagePanel.tsx";
+import { ReviewQueuePanel, type ReviewStatsShape } from "../../components/ReviewQueuePanel.tsx";
 import ModalController from "../../islands/ModalController.tsx";
 
 interface PipelineStats { inPipe?: number; active?: ActiveItem[]; completed24h?: number; completedCount?: number; errors24h?: number; errors?: ErrorItem[]; retries24h?: number; retries?: unknown[]; }
-interface ReviewStats { pending?: number; decided?: number; pendingAuditCount?: number; }
-interface DashboardData { pipeline: PipelineStats; review: ReviewStats; recentCompleted: CompletedItem[]; }
+interface DashboardData { pipeline: PipelineStats; review: ReviewStatsShape; recentCompleted: CompletedItem[]; }
 
 export default define.page(async function AdminDashboard(ctx) {
   const user = ctx.state.user!;
@@ -26,6 +26,7 @@ export default define.page(async function AdminDashboard(ctx) {
   const activeList = p.active ?? [];
   const errorList = p.errors ?? [];
   const recentList = data.recentCompleted ?? [];
+  const logsBase = computeLogsBase(ctx.req.url);
 
   return (
     <Layout title="Dashboard" section="admin" user={user}>
@@ -55,19 +56,8 @@ export default define.page(async function AdminDashboard(ctx) {
 
       {/* ===== REVIEW QUEUE + TOKEN USAGE ===== */}
       <div class="panels">
-        <div class="panel">
-          <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;">
-            <span>Review Queue</span>
-            <button class="btn btn-danger" style="padding:3px 10px;font-size:10px;" hx-post="/api/admin/queue-action" hx-vals='{"action":"clear-review"}' hx-swap="none" hx-confirm="Clear the review queue?">Clear Queue</button>
-          </div>
-          <table class="data-table" style="margin-top:10px;">
-            <thead><tr><th></th><th>Pending</th><th>Decided</th></tr></thead>
-            <tbody>
-              <tr style="cursor:pointer;" hx-get="/api/admin/review-drill?type=internal" hx-target="#review-drill" hx-swap="innerHTML"><td style="font-weight:600;color:var(--text-bright);">Internal</td><td class="mono" style="color:var(--yellow);">{r.pending ?? 0}</td><td class="mono" style="color:var(--green);">{r.decided ?? 0}</td></tr>
-              <tr style="cursor:pointer;" hx-get="/api/admin/review-drill?type=partner" hx-target="#review-drill" hx-swap="innerHTML"><td style="font-weight:600;color:var(--text-bright);">Partner</td><td class="mono" style="color:var(--yellow);">0</td><td class="mono" style="color:var(--green);">0</td></tr>
-            </tbody>
-          </table>
-          <div id="review-drill"></div>
+        <div class="panel" id="review-queue-panel" hx-get="/api/admin/dashboard/review" hx-trigger="every 10s" hx-swap="innerHTML">
+          <ReviewQueuePanel r={r} />
         </div>
         <div class="panel">
           <div class="panel-title">Token Usage (1h)</div>
@@ -77,17 +67,24 @@ export default define.page(async function AdminDashboard(ctx) {
         </div>
       </div>
 
-      {/* ===== FIND AUDIT ===== */}
+      {/* ===== FIND AUDIT — native form, opens /audit/report?id=X in new tab ===== */}
       <div class="card" style="margin-top:16px;padding:14px 18px;">
         <div class="tbl-title">Find Audit</div>
-        <div style="display:flex;gap:10px;align-items:flex-end;">
-          <div class="form-group" style="margin-bottom:0;flex:1;">
-            <input type="text" id="find-finding-id" name="find-finding-id" placeholder="Finding ID..." style="font-family:var(--mono);font-size:13px;" />
-          </div>
-          <button class="btn btn-primary" style="height:40px;" hx-get="/api/admin/find-audit" hx-include="#find-finding-id" hx-target="#find-result" hx-swap="innerHTML">View Report</button>
-          <button class="btn btn-danger" style="height:40px;" hx-get="/api/admin/find-audit" hx-include="#find-finding-id" hx-vals='{"action":"delete"}' hx-target="#find-result" hx-swap="innerHTML" hx-confirm="Delete this finding?">Delete</button>
-        </div>
-        <div id="find-result" style="margin-top:8px;"></div>
+        <form method="GET" action="/audit/report" target="_blank" style="display:flex;gap:10px;align-items:center;">
+          <input type="text" name="id" placeholder="Finding ID..." required style="font-family:var(--mono);font-size:13px;flex:1;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text-bright);" />
+          <button class="btn btn-primary" type="submit" style="height:40px;">View Report</button>
+          <button
+            class="btn btn-danger"
+            type="button"
+            style="height:40px;"
+            hx-post="/api/admin/find-audit/delete"
+            hx-include="closest form"
+            hx-target="#find-result"
+            hx-swap="innerHTML"
+            hx-confirm="Delete this finding?"
+          >Delete</button>
+        </form>
+        <div id="find-result" style="margin-top:8px;font-size:11px;"></div>
       </div>
 
       {/* ===== FIND BY QB RECORD ===== */}
@@ -117,20 +114,11 @@ export default define.page(async function AdminDashboard(ctx) {
         <div id="test-result" style="margin-top:8px;"></div>
       </div>
 
-      {/* ===== DASHBOARD TABLES — auto-refresh every 10s ===== */}
+      {/* ===== DASHBOARD TABLES (Active Audits / Recent Errors / Recently Completed)
+             — auto-refresh every 10s. Action buttons (Resume/Terminate/Clear/etc.) are
+             inline with each table's title, NOT in a separate Queue Management panel. */}
       <div id="dashboard-tables" hx-get="/api/admin/dashboard/refresh" hx-trigger="every 10s" hx-swap="innerHTML">
-        <DashboardTables recent={recentList} active={activeList} errors={errorList} />
-      </div>
-
-      {/* ===== QUEUE MANAGEMENT ===== */}
-      <div class="panel" style="margin-top:16px;">
-        <div class="panel-title">Queue Management</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-ghost" hx-post="/api/admin/queue-action" hx-vals='{"action":"pause"}' hx-swap="none">Pause Queues</button>
-          <button class="btn btn-ghost" hx-post="/api/admin/queue-action" hx-vals='{"action":"resume"}' hx-swap="none">Resume Queues</button>
-          <button class="btn btn-danger" hx-post="/api/admin/queue-action" hx-vals='{"action":"terminate-all"}' hx-swap="none" hx-confirm="Terminate ALL in-pipe findings?">Terminate All</button>
-          <button class="btn btn-danger" hx-post="/api/admin/queue-action" hx-vals='{"action":"clear-errors"}' hx-swap="none" hx-confirm="Clear all errors?">Clear Errors</button>
-        </div>
+        <DashboardTables recent={recentList} active={activeList} errors={errorList} logsBase={logsBase} />
       </div>
       {/* ===== CONFIG MODALS — opened from sidebar, content loaded via HTMX ===== */}
       {[

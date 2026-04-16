@@ -38,6 +38,7 @@ const FRONTEND_EXACT_PAGES = new Set([
   "/review", "/review/dashboard",
   "/judge", "/judge/dashboard",
   "/manager", "/agent", "/chat", "/store", "/question-lab",
+  "/audit/report",
 ]);
 
 // Frontend PREFIX paths — anything starting with these goes to Fresh

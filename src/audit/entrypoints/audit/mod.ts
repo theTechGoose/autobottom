@@ -4,7 +4,7 @@ import { Controller, Get, Post, Req, Query, Body, HttpContext } from "@danet/cor
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { AuditQueuedResponse, FindingResponse, MessageResponse, PipelineStatsResponse } from "@core/dto/responses.ts";
-import { getStats } from "@audit/domain/data/stats-repository/mod.ts";
+import { getStats, trackActive } from "@audit/domain/data/stats-repository/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
@@ -52,6 +52,10 @@ export class AuditController {
     };
     await findingRepo.setChunked(orgId, [findingId], finding);
     await enqueueStep("init", { findingId, orgId });
+    // Mark as queued IMMEDIATELY so the audit shows up in the Active Audits table.
+    // stepInit will overwrite with "init" once QStash delivers. If QStash is slow/broken,
+    // the user still sees "this audit is stuck at queued" instead of nothing.
+    await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: false, startedAt: Date.now() }).catch(() => {});
 
     console.log(`🚀 [AUDIT] Date-leg audit started: job=${jobId} finding=${findingId} rid=${rid}`);
     return { jobId, findingId, status: "queued" };
@@ -87,6 +91,8 @@ export class AuditController {
     };
     await findingRepo.setChunked(orgId, [findingId], finding);
     await enqueueStep("init", { findingId, orgId });
+    // Mark as queued IMMEDIATELY (see createDateLegAudit for rationale).
+    await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: true, startedAt: Date.now() }).catch(() => {});
 
     console.log(`🚀 [AUDIT] Package audit started: job=${jobId} finding=${findingId} rid=${rid}`);
     return { jobId, findingId, status: "queued" };

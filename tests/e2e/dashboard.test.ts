@@ -42,11 +42,52 @@ Deno.test({ name: "E2E Dashboard: /api/admin/stats renders the 5 expected labels
   assert(!html.includes("Review Pending"), "refresh endpoint must not add extra cards");
 }});
 
-Deno.test({ name: "E2E Dashboard: /api/admin/dashboard/refresh returns table HTML", sanitizeResources: false, async fn() {
+Deno.test({ name: "E2E Dashboard: /api/admin/dashboard/refresh returns ALL three tables always-visible", sanitizeResources: false, async fn() {
   const res = await fetch(`${BASE}/api/admin/dashboard/refresh`, { headers: { cookie: session.cookie } });
   assertEquals(res.status, 200);
   const html = await res.text();
-  assertStringIncludes(html, "Recently Completed", "must include Recently Completed section");
+  // Regression guards: these sections must ALWAYS render (with empty-row when no data).
+  // Previous bug: tables were conditional on length > 0, so new audits never appeared.
+  assertStringIncludes(html, "Active Audits", "Active Audits table must always render");
+  assertStringIncludes(html, "Recent Errors (24h)", "Recent Errors table must always render");
+  assertStringIncludes(html, "Recently Completed (24h)", "Recently Completed table must always render");
+  // Empty-row placeholders when there's no data
+  assertStringIncludes(html, "No active audits", "empty Active Audits must show 'No active audits'");
+  // Inline action buttons (no separate Queue Management panel)
+  assertStringIncludes(html, "Terminate Running", "Terminate Running button must be inline with Active Audits title");
+  assertStringIncludes(html, "Clear Errors", "Clear Errors button must be inline with Recent Errors title");
+}});
+
+Deno.test({ name: "E2E Dashboard: /api/admin/dashboard/review returns Review Queue HTML", sanitizeResources: false, async fn() {
+  const res = await fetch(`${BASE}/api/admin/dashboard/review`, { headers: { cookie: session.cookie } });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "Review Queue", "must include Review Queue header");
+  assertStringIncludes(html, "Internal", "must include Internal row");
+  assertStringIncludes(html, "Partner", "must include Partner row");
+}});
+
+Deno.test({ name: "E2E Audit Report: GET /audit/report?id=X renders a page (not 404)", sanitizeResources: false, async fn() {
+  const res = await fetch(`${BASE}/audit/report?id=nonexistent-test-id`, { headers: { cookie: session.cookie } });
+  assertEquals(res.status, 200, "report page must exist so Find Audit clicks don't 404");
+  const html = await res.text();
+  assertStringIncludes(html, "nonexistent-test-id", "page should echo the finding ID");
+  assertStringIncludes(html, "Audit Report", "page should be titled Audit Report");
+}});
+
+Deno.test({ name: "E2E Dashboard: delete-finding endpoint accepts form POST", sanitizeResources: false, async fn() {
+  // Regression guard: Find Audit Delete button posts to /api/admin/find-audit/delete
+  const res = await fetch(`${BASE}/api/admin/find-audit/delete`, {
+    method: "POST",
+    headers: { cookie: session.cookie, "content-type": "application/x-www-form-urlencoded" },
+    body: "id=nonexistent-test",
+    redirect: "manual",
+  });
+  // Accepts: 200 with status message. NOT a redirect, NOT a 404.
+  assertEquals(res.status, 200, `expected 200 got ${res.status}`);
+  const html = await res.text();
+  // Should include either "Deleted" or "Delete failed" — endpoint ran
+  assert(html.includes("Deleted") || html.includes("Delete failed") || html.includes("Enter a finding"), `unexpected response: ${html.slice(0, 200)}`);
 }});
 
 Deno.test({ name: "E2E Dashboard: /api/admin/dashboard/tokens returns token panel HTML", sanitizeResources: false, async fn() {

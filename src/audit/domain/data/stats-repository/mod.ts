@@ -28,6 +28,8 @@ export async function trackCompleted(orgId: OrgId, findingId: string, meta?: Rec
 
 export async function terminateFinding(orgId: OrgId, findingId: string): Promise<void> {
   const db = await getKv();
+  const key = orgKey(orgId, "active-tracking", findingId);
+  console.log(`🛑 [TERMINATE] terminateFinding orgId=${orgId} fid=${findingId} key=${JSON.stringify(key)}`);
   try {
     const finding = await getFinding(orgId, findingId);
     if (finding && finding.findingStatus !== "finished") {
@@ -35,18 +37,21 @@ export async function terminateFinding(orgId: OrgId, findingId: string): Promise
       await saveFinding(orgId, finding);
     }
   } catch { /* best-effort */ }
-  await db.delete(orgKey(orgId, "active-tracking", findingId));
+  await db.delete(key);
   await db.delete(["watchdog-active", findingId]);
 }
 
 export async function terminateAllActive(orgId: OrgId): Promise<number> {
   const db = await getKv();
+  const prefix = orgKey(orgId, "active-tracking");
+  console.log(`🛑 [TERMINATE] terminateAllActive orgId=${orgId} prefix=${JSON.stringify(prefix)}`);
   let count = 0;
-  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "active-tracking") })) {
+  for await (const entry of db.list<Record<string, unknown>>({ prefix })) {
     const fid = (entry.value.findingId as string) || String(entry.key[entry.key.length - 1]);
     await terminateFinding(orgId, fid);
     count++;
   }
+  console.log(`🛑 [TERMINATE] terminateAllActive done orgId=${orgId} count=${count}`);
   return count;
 }
 
@@ -202,12 +207,14 @@ export async function getStats(orgId: OrgId): Promise<{
 }> {
   const db = await getKv();
 
+  const activePrefix = orgKey(orgId, "active-tracking");
   const active: Record<string, unknown>[] = [];
-  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "active-tracking") })) {
+  for await (const entry of db.list<Record<string, unknown>>({ prefix: activePrefix })) {
     const v = entry.value;
     const findingId = (v.findingId as string) || String(entry.key[entry.key.length - 1]);
     active.push({ ...v, findingId });
   }
+  console.log(`📊 [STATS] getStats orgId=${orgId} prefix=${JSON.stringify(activePrefix)} activeCount=${active.length}`);
 
   let completedCount = 0;
   for await (const _entry of db.list({ prefix: orgKey(orgId, "completed-audit-stat") })) {

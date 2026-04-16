@@ -77,15 +77,49 @@ Deno.test({ name: "E2E Debug: /admin/debug/step-dispatch confirms fix deployed",
   assertEquals(body.stepDispatchMovedToMain, true);
 }});
 
-Deno.test({ name: "E2E Debug: /admin/debug/self-url returns the REQUEST origin (not env fallback)", sanitizeResources: false, async fn() {
-  // Regression guard for the "branch preview has wrong SELF_URL" bug that stopped
-  // audits from running. The AsyncLocalStorage fix in main.ts should make this
-  // endpoint return BASE (the request origin) regardless of what env var is set to.
+Deno.test({ name: "E2E Debug: /admin/debug/self-url exposes all fallback sources and never emits loopback for QStash", sanitizeResources: false, async fn() {
+  // Regression guard for TWO bugs:
+  //  1. Branch preview SELF_URL: selfUrl must reflect the THIS-deployment origin,
+  //     not whatever SELF_URL env points to.
+  //  2. QStash loopback rejection: when the frontend SSR makes an internal
+  //     localhost fetch, ALS origin becomes localhost. selfUrl() must detect
+  //     that and fall back to a public URL (knownPublicOrigin, or the
+  //     DENO_DEPLOYMENT_ID-derived URL, or SELF_URL env) so QStash doesn't
+  //     reject the callback with "endpoint resolves to a loopback address".
   const res = await fetch(`${BASE}/admin/debug/self-url`, { headers: { cookie: session.cookie } });
   assertEquals(res.status, 200);
-  const body = await res.json() as { selfUrl: string; envSelfUrl: string | null; source: string };
-  assertEquals(body.selfUrl, BASE, `selfUrl must match the request origin (got ${body.selfUrl}, expected ${BASE})`);
-  assertEquals(body.source, "async-local-storage", "must come from ALS, not env fallback");
+  const body = await res.json() as {
+    selfUrl: string;
+    envSelfUrl: string | null;
+    source: string;
+    sources: {
+      scopedOrigin: string | null;
+      scopedIsLocalhost: boolean;
+      knownPublicOrigin: string | null;
+      deploymentId: string | null;
+      envSelfUrl: string | null;
+      effective: string;
+    };
+  };
+  // Sources must always be present for debugging.
+  assert(body.sources, "sources breakdown must be present");
+  assertEquals(body.sources.effective, body.selfUrl, "sources.effective must match top-level selfUrl");
+  // In local E2E, BASE is localhost and there's no DENO_DEPLOYMENT_ID — so selfUrl
+  // falls back to the localhost scoped origin. In a real deployment, it would
+  // resolve via async-local-storage (external host) or deno-deployment-id.
+  // The invariant we care about: if a public source is available, selfUrl MUST
+  // use it instead of localhost.
+  const hasPublicSource =
+    (body.sources.scopedOrigin !== null && !body.sources.scopedIsLocalhost) ||
+    body.sources.knownPublicOrigin !== null ||
+    body.sources.deploymentId !== null ||
+    body.sources.envSelfUrl !== null;
+  if (hasPublicSource) {
+    assert(
+      !body.selfUrl.startsWith("http://localhost") && !body.selfUrl.startsWith("http://127."),
+      `selfUrl must not be loopback when a public source exists: ${body.selfUrl}`,
+    );
+  }
 }});
 
 Deno.test({ name: "E2E Audit Report: GET /audit/report?id=X renders a page (not 404)", sanitizeResources: false, async fn() {

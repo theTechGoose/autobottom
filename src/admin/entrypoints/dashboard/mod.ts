@@ -87,11 +87,20 @@ export class DashboardController {
    *  (not whatever .env has) for audits to actually run on branch previews. */
   @Get("debug/self-url") @ReturnedType(OkResponse)
   async debugSelfUrl() {
-    const { getSelfUrl } = await import("@core/data/qstash/mod.ts");
+    const { getSelfUrl, getSelfUrlSources } = await import("@core/data/qstash/mod.ts");
+    const sources = getSelfUrlSources();
+    const effective = getSelfUrl();
+    let source: string;
+    if (sources.scopedOrigin && !sources.scopedIsLocalhost) source = "async-local-storage";
+    else if (sources.knownPublicOrigin) source = "known-public-origin-cache";
+    else if (sources.deploymentId) source = "deno-deployment-id";
+    else if (sources.envSelfUrl) source = "env";
+    else source = "fallback-localhost";
     return {
-      selfUrl: getSelfUrl(),
-      envSelfUrl: Deno.env.get("SELF_URL") ?? null,
-      source: getSelfUrl() === Deno.env.get("SELF_URL") ? "env" : "async-local-storage",
+      selfUrl: effective,
+      envSelfUrl: sources.envSelfUrl,
+      source,
+      sources,
     };
   }
 

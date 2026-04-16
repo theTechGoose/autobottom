@@ -32,22 +32,70 @@ const STEP_QUEUE: Record<string, string> = {
  *  QStash delivers step callbacks to main prod instead of the preview. */
 const requestOriginStore = new AsyncLocalStorage<string>();
 
+/** Cache of the first NON-localhost origin we've seen in this process. When the
+ *  frontend SSR makes an internal fetch to http://localhost:3000, the inner
+ *  runWithOrigin sets ALS to localhost — but QStash can't call back to a
+ *  loopback address. This cache lets selfUrl() recover the external hostname
+ *  that the original browser request came in on. */
+let knownPublicOrigin: string | null = null;
+
+function isLocalhostOrigin(origin: string): boolean {
+  return origin.startsWith("http://localhost") ||
+         origin.startsWith("http://127.") ||
+         origin.startsWith("http://[::1]") ||
+         origin.startsWith("http://0.0.0.0");
+}
+
 /** Wrap an async request handler so that selfUrl() reads back the request's origin. */
 export function runWithOrigin<T>(origin: string, fn: () => Promise<T>): Promise<T> {
+  // Remember the first external origin so subsequent localhost (internal)
+  // requests can still produce valid QStash callback URLs.
+  if (!isLocalhostOrigin(origin)) knownPublicOrigin = origin;
   return requestOriginStore.run(origin, fn);
 }
 
 function selfUrl(): string {
-  // Prefer the origin of the current inbound request (set by main.ts handler).
-  // Falls back to env var for cron/background callers that have no active request.
+  // 1. Prefer the current inbound request's origin if it's publicly reachable.
   const scoped = requestOriginStore.getStore();
-  if (scoped) return scoped;
-  return Deno.env.get("SELF_URL") ?? "http://localhost:3000";
+  if (scoped && !isLocalhostOrigin(scoped)) return scoped;
+  // 2. Fall back to the most recent external origin observed in this process
+  //    — handles internal Fresh→backend localhost fetches.
+  if (knownPublicOrigin) return knownPublicOrigin;
+  // 3. Construct this deployment's public URL from Deno Deploy's build hash.
+  //    Handles cron jobs and any call-site that runs before any HTTP request.
+  const deploymentId = Deno.env.get("DENO_DEPLOYMENT_ID");
+  if (deploymentId) return `https://autobottom-${deploymentId}.thetechgoose.deno.net`;
+  // 4. Env fallback (for local dev or non-Deploy hosts).
+  const envUrl = Deno.env.get("SELF_URL");
+  if (envUrl) return envUrl;
+  // 5. Last resort — only reachable when QStash is disabled (local dev).
+  return scoped ?? "http://localhost:3000";
 }
 
 /** Expose the current effective self-URL for debug endpoints. Always returns a
  *  string — AsyncLocalStorage origin when inside a request, env var otherwise. */
 export function getSelfUrl(): string { return selfUrl(); }
+
+/** Debug helper: dump every candidate source selfUrl() considers, so operators
+ *  can see exactly why the callback URL is what it is. */
+export function getSelfUrlSources(): {
+  scopedOrigin: string | null;
+  scopedIsLocalhost: boolean;
+  knownPublicOrigin: string | null;
+  deploymentId: string | null;
+  envSelfUrl: string | null;
+  effective: string;
+} {
+  const scoped = requestOriginStore.getStore() ?? null;
+  return {
+    scopedOrigin: scoped,
+    scopedIsLocalhost: scoped ? isLocalhostOrigin(scoped) : false,
+    knownPublicOrigin,
+    deploymentId: Deno.env.get("DENO_DEPLOYMENT_ID") ?? null,
+    envSelfUrl: Deno.env.get("SELF_URL") ?? null,
+    effective: selfUrl(),
+  };
+}
 function qstashUrl(): string { return Deno.env.get("QSTASH_URL") ?? "https://qstash.upstash.io"; }
 function qstashToken(): string { return Deno.env.get("QSTASH_TOKEN") ?? ""; }
 function isLocalMode(): boolean { return Deno.env.get("LOCAL_QUEUE") === "true"; }

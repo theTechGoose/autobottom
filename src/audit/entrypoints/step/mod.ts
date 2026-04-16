@@ -1,76 +1,65 @@
-/** Pipeline step controller — delegates to original step implementations with OTel instrumentation. */
+/** Pipeline step controller — NEUTRALIZED.
+ *
+ *  Historical note: this controller used `@Req` to grab the raw Request and
+ *  delegate to the step business logic. That pattern crashes when reached via
+ *  `router.fetch()` (our unified entrypoint in main.ts) because danet's @Req
+ *  decorator returns `undefined` in that path. See repo-root plan for full
+ *  investigation.
+ *
+ *  All step callbacks from QStash are now dispatched DIRECTLY in main.ts
+ *  (see STEP_HANDLERS map there) BEFORE the request reaches danet. These
+ *  stub methods exist only so the controller still registers with danet —
+ *  nothing should ever actually hit them. If something does, we return a
+ *  clear error instead of the cryptic @Req crash.
+ */
 import "npm:reflect-metadata@0.1.13";
-import { Controller, Post, Req } from "@danet/core";
+import { Controller, Post } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "#danet/swagger-decorators";
 import { StepResponse } from "@core/dto/responses.ts";
-import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
-import {
-  stepInit, stepTranscribe, stepTranscribeCb, stepPollTranscript,
-  stepDiarizeAsync, stepPineconeAsync, stepPrepare,
-  stepAskBatch, stepAskAll, stepFinalize, stepCleanup, stepBadWordCheck,
-} from "@audit/mod-root.ts";
 
-async function callStep(stepFn: (req: Request) => Promise<Response>, req: Request) {
-  const response = await stepFn(req);
-  try { return await response.json(); }
-  catch { return { ok: true }; }
+const MOVED_NOTE = "step callbacks are dispatched directly from main.ts; this controller is a no-op stub";
+
+function movedStub() {
+  return { ok: false, moved: true, note: MOVED_NOTE };
 }
 
-function trackStep(name: string, stepFn: (req: Request) => Promise<Response>) {
-  return async (req: Request) => {
-    return withSpan(`step.${name}`, async (span) => {
-      span.setAttribute("step.name", name);
-      metric("autobottom.step.started", 1, { step: name });
-      try {
-        const result = await callStep(stepFn, req);
-        metric("autobottom.step.completed", 1, { step: name });
-        return result;
-      } catch (err) {
-        metric("autobottom.step.failed", 1, { step: name, reason: "thrown" });
-        throw err;
-      }
-    }, { "step.name": name }, "internal");
-  };
-}
-
-@SwaggerDescription("Pipeline steps — QStash callback endpoints for audit processing")
+@SwaggerDescription("Pipeline steps — handled directly in main.ts, this controller is a no-op stub")
 @Controller("audit/step")
 export class StepController {
+  @Post("init") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  init() { return movedStub(); }
 
-  @Post("init") @ReturnedType(StepResponse) @Description("Initialize audit — fetch recording, save to S3")
-  async init(@Req req: Request) { return trackStep("init", stepInit)(req); }
+  @Post("transcribe") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  transcribe() { return movedStub(); }
 
-  @Post("transcribe") @ReturnedType(StepResponse) @Description("Submit audio for transcription")
-  async transcribe(@Req req: Request) { return trackStep("transcribe", stepTranscribe)(req); }
+  @Post("poll-transcript") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  pollTranscript() { return movedStub(); }
 
-  @Post("poll-transcript") @ReturnedType(StepResponse) @Description("Poll transcription status")
-  async pollTranscript(@Req req: Request) { return trackStep("poll-transcript", stepPollTranscript)(req); }
+  @Post("transcribe-complete") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  transcribeComplete() { return movedStub(); }
 
-  @Post("transcribe-complete") @ReturnedType(StepResponse) @Description("Handle transcription completion callback")
-  async transcribeComplete(@Req req: Request) { return trackStep("transcribe-complete", stepTranscribeCb)(req); }
+  @Post("diarize-async") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  diarizeAsync() { return movedStub(); }
 
-  @Post("diarize-async") @ReturnedType(StepResponse) @Description("Speaker diarization via LLM")
-  async diarizeAsync(@Req req: Request) { return trackStep("diarize-async", stepDiarizeAsync)(req); }
+  @Post("pinecone-async") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  pineconeAsync() { return movedStub(); }
 
-  @Post("pinecone-async") @ReturnedType(StepResponse) @Description("Upload transcript to vector store")
-  async pineconeAsync(@Req req: Request) { return trackStep("pinecone-async", stepPineconeAsync)(req); }
+  @Post("prepare") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  prepare() { return movedStub(); }
 
-  @Post("prepare") @ReturnedType(StepResponse) @Description("Prepare questions for audit")
-  async prepare(@Req req: Request) { return trackStep("prepare", stepPrepare)(req); }
+  @Post("ask-batch") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  askBatch() { return movedStub(); }
 
-  @Post("ask-batch") @ReturnedType(StepResponse) @Description("Ask a batch of audit questions via LLM")
-  async askBatch(@Req req: Request) { return trackStep("ask-batch", stepAskBatch)(req); }
+  @Post("ask-all") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  askAll() { return movedStub(); }
 
-  @Post("ask-all") @ReturnedType(StepResponse) @Description("Ask all remaining questions")
-  async askAll(@Req req: Request) { return trackStep("ask-all", stepAskAll)(req); }
+  @Post("finalize") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  finalize() { return movedStub(); }
 
-  @Post("finalize") @ReturnedType(StepResponse) @Description("Finalize audit — score, chargebacks, queue routing")
-  async finalize(@Req req: Request) { return trackStep("finalize", stepFinalize)(req); }
+  @Post("cleanup") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  cleanup() { return movedStub(); }
 
-  @Post("cleanup") @ReturnedType(StepResponse) @Description("Clean up temporary data after audit")
-  async cleanup(@Req req: Request) { return trackStep("cleanup", stepCleanup)(req); }
-
-  @Post("bad-word-check") @ReturnedType(StepResponse) @Description("Scan transcript for profanity")
-  async badWordCheck(@Req req: Request) { return trackStep("bad-word-check", stepBadWordCheck)(req); }
+  @Post("bad-word-check") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
+  badWordCheck() { return movedStub(); }
 }

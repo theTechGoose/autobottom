@@ -61,6 +61,14 @@ export class DashboardController {
     return { audits: await findAuditsByRecordId(ORG(), recordId) };
   }
 
+  /** Debug: confirms the "step dispatch moved to main.ts" fix shipped. If the
+   *  deployment serving THIS endpoint also has the main.ts step dispatch, then
+   *  /audit/step/* will never reach danet. */
+  @Get("debug/step-dispatch") @ReturnedType(OkResponse)
+  debugStepDispatch() {
+    return { ok: true, stepDispatchMovedToMain: true };
+  }
+
   /** Debug: the effective SELF_URL for the current request. This is what
    *  QStash callback URLs will use. Must match the CURRENT deployment's origin
    *  (not whatever .env has) for audits to actually run on branch previews. */

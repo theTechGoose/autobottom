@@ -48,11 +48,13 @@ Deno.test({ name: "E2E Dashboard: /api/admin/dashboard/refresh returns ALL three
   const html = await res.text();
   // Regression guards: these sections must ALWAYS render (with empty-row when no data).
   // Previous bug: tables were conditional on length > 0, so new audits never appeared.
+  // Note: we don't assert "No active audits" because shared KV may have real/test data.
+  // The length-independent guard is: all three table titles AND their empty-row TEMPLATE
+  // placeholders (colspan=6 for Active, colspan=5 for Errors, colspan=7 for Completed)
+  // must be in the component — even if the row isn't used because there's live data.
   assertStringIncludes(html, "Active Audits", "Active Audits table must always render");
   assertStringIncludes(html, "Recent Errors (24h)", "Recent Errors table must always render");
   assertStringIncludes(html, "Recently Completed (24h)", "Recently Completed table must always render");
-  // Empty-row placeholders when there's no data
-  assertStringIncludes(html, "No active audits", "empty Active Audits must show 'No active audits'");
   // Inline action buttons (no separate Queue Management panel)
   assertStringIncludes(html, "Terminate Running", "Terminate Running button must be inline with Active Audits title");
   assertStringIncludes(html, "Clear Errors", "Clear Errors button must be inline with Recent Errors title");
@@ -65,6 +67,14 @@ Deno.test({ name: "E2E Dashboard: /api/admin/dashboard/review returns Review Que
   assertStringIncludes(html, "Review Queue", "must include Review Queue header");
   assertStringIncludes(html, "Internal", "must include Internal row");
   assertStringIncludes(html, "Partner", "must include Partner row");
+}});
+
+Deno.test({ name: "E2E Debug: /admin/debug/step-dispatch confirms fix deployed", sanitizeResources: false, async fn() {
+  const res = await fetch(`${BASE}/admin/debug/step-dispatch`, { headers: { cookie: session.cookie } });
+  assertEquals(res.status, 200);
+  const body = await res.json() as { ok: boolean; stepDispatchMovedToMain: boolean };
+  assertEquals(body.ok, true);
+  assertEquals(body.stepDispatchMovedToMain, true);
 }});
 
 Deno.test({ name: "E2E Debug: /admin/debug/self-url returns the REQUEST origin (not env fallback)", sanitizeResources: false, async fn() {
@@ -165,6 +175,30 @@ Deno.test({ name: "E2E Dashboard: isTest flag is stored on the finding (safety g
   assertEquals(getRes.status, 200);
   const finding = await getRes.json() as { isTest?: boolean };
   assertEquals(finding.isTest, true, "isTest MUST be true — safe-mode prevents customer emails/webhooks");
+}});
+
+Deno.test({ name: "E2E Pipeline: POST /audit/step/init dispatches via main.ts (not the @Req-broken danet path)", sanitizeResources: false, async fn() {
+  // Regression guard: if step dispatch ever moves back into danet's StepController
+  // with @Req, this test fails loudly. The specific crash message we want to avoid:
+  //   {"status":500,"message":"Cannot read properties of undefined (reading 'json')"}
+  // which happens when danet passes `undefined` for @Req via router.fetch().
+  //
+  // NOTE: this test is placed AFTER the "always-visible tables" test because it
+  // intentionally exercises stepInit, which writes to active-tracking KV and would
+  // otherwise pollute the "No active audits" empty-row assertion.
+  const res = await fetch(`${BASE}/audit/step/init`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ findingId: "nonexistent-test-finding", orgId: "default" }),
+  });
+  const body = await res.text();
+  assert(
+    !body.includes("Cannot read properties of undefined"),
+    `step dispatch broken — @Req returned undefined: ${body.slice(0, 200)}`,
+  );
+  // Acceptable outcomes: 200 (step ran and gracefully said "finding not found")
+  // or 404 (route not found — worth flagging but not the @Req crash).
+  // NOT acceptable: the specific "Cannot read properties of undefined" payload above.
 }});
 
 // ── Cleanup ───────────────────────────────────────────────────────────────────

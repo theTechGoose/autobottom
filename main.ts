@@ -16,6 +16,31 @@ import { DanetApplication } from "@danet/core";
 import { AppModule } from "./bootstrap/mod.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
 
+// --- Pipeline step functions: dispatched DIRECTLY by this handler (bypassing
+// danet) because danet's @Req decorator returns undefined when reached via
+// router.fetch(), which crashes the step handlers. See plan notes (repo root
+// plan file) for the investigation. Same pattern as /admin/api/me above. ---
+import {
+  stepInit, stepTranscribe, stepTranscribeCb, stepPollTranscript,
+  stepDiarizeAsync, stepPineconeAsync, stepPrepare,
+  stepAskBatch, stepAskAll, stepFinalize, stepCleanup, stepBadWordCheck,
+} from "@audit/mod-root.ts";
+
+const STEP_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
+  "init": stepInit,
+  "transcribe": stepTranscribe,
+  "poll-transcript": stepPollTranscript,
+  "transcribe-complete": stepTranscribeCb,
+  "diarize-async": stepDiarizeAsync,
+  "pinecone-async": stepPineconeAsync,
+  "prepare": stepPrepare,
+  "ask-batch": stepAskBatch,
+  "ask-all": stepAskAll,
+  "finalize": stepFinalize,
+  "cleanup": stepCleanup,
+  "bad-word-check": stepBadWordCheck,
+};
+
 const danetApp = new DanetApplication();
 await danetApp.init(AppModule);
 
@@ -95,6 +120,29 @@ Deno.serve({ port }, (req, info) => {
       const auth = await authenticate(req);
       if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
       return Response.json({ email: auth.email, orgId: auth.orgId, role: auth.role });
+    }
+
+    // /audit/step/* — pipeline step callbacks from QStash. Handled directly
+    // because @Req returns undefined via router.fetch() (same reason /admin/api/me
+    // is direct). Without this bypass, QStash callbacks crash on req.json() and
+    // audits hang at findingStatus=pending forever.
+    if (path.startsWith("/audit/step/")) {
+      const stepName = path.slice("/audit/step/".length);
+      const stepHandler = STEP_HANDLERS[stepName];
+      if (!stepHandler) {
+        console.warn(`⚠️ [STEP] unknown step "${stepName}"`);
+        return new Response(`Unknown step: ${stepName}`, { status: 404 });
+      }
+      console.log(`🔧 [STEP] ${stepName} invoked via direct dispatch`);
+      try {
+        return await stepHandler(req);
+      } catch (err) {
+        console.error(`❌ [STEP] ${stepName} threw:`, err);
+        return Response.json(
+          { error: (err as Error).message, step: stepName },
+          { status: 500 },
+        );
+      }
     }
 
     if (isBackendRequest(req)) {

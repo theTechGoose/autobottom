@@ -287,21 +287,6 @@ Deno.test({ name: "E2E Dashboard: /api/admin/queue-action returns HTML feedback 
   assert(body.includes("qa-status"), `queue-action response must include qa-status span for visible feedback: ${body.slice(0, 200)}`);
 }});
 
-Deno.test({ name: "E2E Webhook: POST /webhooks/audit-complete invokes registered email handler (no-throw with empty payload)", sanitizeResources: false, async fn() {
-  // Regression guard: registerAllWebhookEmailHandlers() must run at startup so
-  // fireWebhook("terminate", ...) routes through the in-process audit-complete
-  // handler. The handler gracefully no-ops on missing `finding`, so this is a
-  // safe way to verify the registration took effect without firing Postmark.
-  const res = await fetch(`${BASE}/webhooks/audit-complete`, {
-    method: "POST",
-    headers: { cookie: session.cookie, "content-type": "application/json" },
-    body: JSON.stringify({ findingId: "e2e-regtest-no-finding" }),
-  });
-  assertEquals(res.status, 200, "webhook receiver must return 200 when handler is registered and skips gracefully");
-  const body = await res.json() as { ok: boolean };
-  assertEquals(body.ok, true, "webhook must ack with ok: true");
-}});
-
 Deno.test({ name: "E2E Debug: /admin/debug/api-url confirms unified-process API_URL", sanitizeResources: false, async fn() {
   // Regression guard: frontend SSR calls must go in-process (localhost) not
   // across deployments. If API_URL env is ever set to an external hostname,

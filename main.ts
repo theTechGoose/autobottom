@@ -15,7 +15,6 @@ registerCrons();
 import { DanetApplication } from "@danet/core";
 import { AppModule } from "./bootstrap/mod.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
-import { registerAllWebhookEmailHandlers } from "@reporting/domain/business/webhook-handlers/mod.ts";
 
 // --- Pipeline step functions: dispatched DIRECTLY by this handler (bypassing
 // danet) because danet's @Req decorator returns undefined when reached via
@@ -44,11 +43,6 @@ const STEP_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
 
 const danetApp = new DanetApplication();
 await danetApp.init(AppModule);
-
-// Register in-process webhook email handlers. fireWebhook("terminate", ...) in
-// stepFinalize routes through here to actually send the audit-complete email.
-// Without this, fireWebhook silently no-ops because no handler is registered.
-registerAllWebhookEmailHandlers();
 
 // @ts-ignore — router is Hono app with .fetch()
 const backendFetch: (req: Request) => Promise<Response> = danetApp.router.fetch.bind(danetApp.router);

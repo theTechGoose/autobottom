@@ -137,18 +137,11 @@ export class AdminConfigController {
 
   @Post("terminate-finding") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async terminateFinding(@Body() body: { findingId: string }) {
-    const orgId = ORG();
-    console.log(`🛑 [ADMIN] terminate-finding orgId=${orgId} fid=${body.findingId}`);
-    await stats.terminateFinding(orgId, body.findingId);
+    await stats.terminateFinding(ORG(), body.findingId);
     return { ok: true };
   }
   @Post("terminate-all") @ReturnedType(TerminatedResponse)
-  async terminateAll() {
-    const orgId = ORG();
-    console.log(`🛑 [ADMIN] terminate-all orgId=${orgId}`);
-    const count = await stats.terminateAllActive(orgId);
-    return { ok: true, terminated: count };
-  }
+  async terminateAll() { const count = await stats.terminateAllActive(ORG()); return { ok: true, terminated: count }; }
 
   @Post("reset-finding") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async resetFinding(@Body() body: GenericBodyRequest) {

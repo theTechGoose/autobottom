@@ -22,12 +22,10 @@ export class DashboardController {
 
   @Get("dashboard/data") @ReturnedType(DashboardDataResponse)
   async dashboardData() {
-    const orgId = ORG();
-    console.log(`📊 [DASH] dashboard/data orgId=${orgId}`);
     const [pipelineStats, reviewStats, recent] = await Promise.all([
-      getStats(orgId),
-      getReviewStats(orgId),
-      getRecentCompleted(orgId, 25),
+      getStats(ORG()),
+      getReviewStats(ORG()),
+      getRecentCompleted(ORG(), 25),
     ]);
     return { pipeline: pipelineStats, review: reviewStats, recentCompleted: recent };
   }

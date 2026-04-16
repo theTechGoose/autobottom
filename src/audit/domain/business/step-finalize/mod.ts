@@ -487,10 +487,6 @@ export async function stepFinalize(req: Request): Promise<Response> {
 
 async function postToDeno(finding: Record<string, any>) {
   const DENO_URL = Deno.env.get("KV_SERVICE_URL") ?? "";
-  if (!DENO_URL) {
-    console.log(`[DENO] ${finding.id}: KV_SERVICE_URL unset — skipping upload`);
-    return;
-  }
   const CHUNK_SIZE = 25_000; // Deno KV 64KB limit; UTF-16 strings cost 2 bytes/char
 
   const controller = new AbortController();

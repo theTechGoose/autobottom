@@ -5,9 +5,26 @@ export const BASE = `http://localhost:${E2E_PORT}`;
 
 let serverProcess: Deno.ChildProcess | null = null;
 
+/** Build the Fresh frontend so route changes are picked up in _fresh/ cache.
+ *  Required because main.ts imports ./frontend/_fresh/server.js which caches the route map. */
+async function buildFrontend(): Promise<void> {
+  const buildCmd = new Deno.Command("deno", {
+    args: ["run", "-A", "--unstable-raw-imports", "build.ts"],
+    cwd: "frontend",
+    stdout: "null",
+    stderr: "null",
+  });
+  const { success } = await buildCmd.output();
+  if (!success) throw new Error("Frontend build failed");
+  console.log("[E2E] Frontend built");
+}
+
 /** Start the unified server on E2E_PORT. Returns when server is ready. */
 export async function startServer(): Promise<void> {
   if (serverProcess) return;
+
+  // Rebuild frontend so any new sub-routes are included in _fresh/ cache
+  await buildFrontend();
 
   // Kill anything on the port first
   try {

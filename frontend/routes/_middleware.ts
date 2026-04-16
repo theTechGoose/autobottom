@@ -19,21 +19,24 @@ export default define.middleware(async (ctx) => {
     return ctx.next();
   }
 
-  // Authenticate directly in-process — no HTTP self-request
+  // Authenticate directly in-process — no HTTP self-request.
+  // CRITICAL: only the authenticate() call is wrapped in try/catch. Handler errors from
+  // ctx.next() must propagate as-is — if we catch them here they get misinterpreted as
+  // auth failures and we redirect to /login (confusing to debug). See tests/e2e/modal-endpoints.test.ts.
+  let auth: Awaited<ReturnType<typeof authenticate>> = null;
   try {
-    const auth = await authenticate(ctx.req);
-    if (auth?.email && auth?.role) {
-      console.log(`[MIDDLEWARE] ${path} — authenticated: ${auth.email} (${auth.role})`);
-      ctx.state.user = {
-        email: auth.email,
-        orgId: auth.orgId,
-        role: auth.role as "admin" | "judge" | "manager" | "reviewer" | "user",
-      };
-      return ctx.next();
-    }
-    console.log(`[MIDDLEWARE] ${path} — no valid session, redirecting to login`);
+    auth = await authenticate(ctx.req);
   } catch (e) {
     console.error(`[MIDDLEWARE] ${path} — auth error:`, e);
+  }
+
+  if (auth?.email && auth?.role) {
+    ctx.state.user = {
+      email: auth.email,
+      orgId: auth.orgId,
+      role: auth.role as "admin" | "judge" | "manager" | "reviewer" | "user",
+    };
+    return ctx.next();
   }
 
   // Unauthenticated — redirect to login

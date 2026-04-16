@@ -53,10 +53,13 @@ const freshServer = await import("./frontend/_fresh/server.js");
 const frontendHandler: (req: Request, info?: Deno.ServeHandlerInfo) => Promise<Response> = freshServer.default.fetch;
 
 // --- Set API_URL for frontend SSR fetches (same origin) ---
+// ALWAYS override — this is a unified process, the backend IS localhost. If a
+// stale env var points to another deployment, frontend SSR calls cross
+// deployments via external HTTP and split the pipeline across builds (audit
+// creation, enqueueStep, and step handlers end up on different deployments,
+// making logs impossible to correlate).
 const port = Number(Deno.env.get("PORT") ?? 3000);
-if (!Deno.env.get("API_URL")) {
-  Deno.env.set("API_URL", `http://localhost:${port}`);
-}
+Deno.env.set("API_URL", `http://localhost:${port}`);
 
 // --- Route requests ---
 // Frontend EXACT page paths — must match exactly (no prefix matching)
@@ -133,13 +136,19 @@ Deno.serve({ port }, (req, info) => {
         console.warn(`⚠️ [STEP] unknown step "${stepName}"`);
         return new Response(`Unknown step: ${stepName}`, { status: 404 });
       }
-      console.log(`🔧 [STEP] ${stepName} invoked via direct dispatch`);
+      // Peek findingId for log traceability — clone so the real handler still reads the body.
+      let findingId = "<unknown>";
+      try {
+        const peek = await req.clone().json().catch(() => null);
+        if (peek && typeof peek.findingId === "string") findingId = peek.findingId;
+      } catch { /* logging only — never break dispatch */ }
+      console.log(`🔧 [STEP] ${stepName} finding=${findingId} invoked via direct dispatch`);
       try {
         return await stepHandler(req);
       } catch (err) {
-        console.error(`❌ [STEP] ${stepName} threw:`, err);
+        console.error(`❌ [STEP] ${stepName} finding=${findingId} threw:`, err);
         return Response.json(
-          { error: (err as Error).message, step: stepName },
+          { error: (err as Error).message, step: stepName, findingId },
           { status: 500 },
         );
       }

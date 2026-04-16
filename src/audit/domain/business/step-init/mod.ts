@@ -30,10 +30,18 @@ export async function stepInit(req: Request): Promise<Response> {
 
   const pipelineCfg = await getPipelineConfig(orgId);
   console.log(`[STEP-INIT] ${findingId}: Starting... [parallelism=${pipelineCfg.parallelism}]`);
-  await trackActive(orgId, findingId, "init");
 
+  console.log(`[STEP-INIT] ${findingId}: trackActive(init) begin`);
+  await trackActive(orgId, findingId, "init");
+  console.log(`[STEP-INIT] ${findingId}: trackActive(init) done`);
+
+  console.log(`[STEP-INIT] ${findingId}: getFinding begin orgId=${orgId}`);
   const finding = await getFinding(orgId, findingId);
-  if (!finding) return json({ error: "finding not found" }, 404);
+  console.log(`[STEP-INIT] ${findingId}: getFinding done exists=${finding ? "yes" : "no"}`);
+  if (!finding) {
+    console.warn(`[STEP-INIT] ${findingId}: finding not found in KV under orgId=${orgId} — returning 404`);
+    return json({ error: "finding not found", findingId, orgId }, 404);
+  }
   console.log(`[STEP-INIT] ${findingId}: record keys=${JSON.stringify(Object.keys(finding.record ?? {}))} values=${JSON.stringify(finding.record ?? {})}`);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 

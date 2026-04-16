@@ -186,19 +186,34 @@ Deno.test({ name: "E2E Pipeline: POST /audit/step/init dispatches via main.ts (n
   // NOTE: this test is placed AFTER the "always-visible tables" test because it
   // intentionally exercises stepInit, which writes to active-tracking KV and would
   // otherwise pollute the "No active audits" empty-row assertion.
+  const TRACE_ID = "trace-test-id-" + Date.now();
   const res = await fetch(`${BASE}/audit/step/init`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ findingId: "nonexistent-test-finding", orgId: "default" }),
+    body: JSON.stringify({ findingId: TRACE_ID, orgId: "default" }),
   });
   const body = await res.text();
   assert(
     !body.includes("Cannot read properties of undefined"),
     `step dispatch broken — @Req returned undefined: ${body.slice(0, 200)}`,
   );
-  // Acceptable outcomes: 200 (step ran and gracefully said "finding not found")
-  // or 404 (route not found — worth flagging but not the @Req crash).
-  // NOT acceptable: the specific "Cannot read properties of undefined" payload above.
+  // Log traceability guard: error responses MUST echo findingId so future
+  // Deno Deploy log filters by finding ID never lose the trail.
+  assert(
+    body.includes(TRACE_ID),
+    `response must echo findingId for log traceability: ${body.slice(0, 300)}`,
+  );
+}});
+
+Deno.test({ name: "E2E Debug: /admin/debug/api-url confirms unified-process API_URL", sanitizeResources: false, async fn() {
+  // Regression guard: frontend SSR calls must go in-process (localhost) not
+  // across deployments. If API_URL env is ever set to an external hostname,
+  // audit creation/enqueue/step handlers run on different builds and logs
+  // can't be correlated by finding ID.
+  const res = await fetch(`${BASE}/admin/debug/api-url`, { headers: { cookie: session.cookie } });
+  assertEquals(res.status, 200);
+  const body = await res.json() as { apiUrl: string | null; inProcess: boolean };
+  assertEquals(body.inProcess, true, `API_URL must be localhost (unified process), got ${body.apiUrl}`);
 }});
 
 // ── Cleanup ───────────────────────────────────────────────────────────────────

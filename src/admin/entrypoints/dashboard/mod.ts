@@ -69,6 +69,19 @@ export class DashboardController {
     return { ok: true, stepDispatchMovedToMain: true };
   }
 
+  /** Debug: confirms API_URL is localhost (unified process) instead of an
+   *  external deployment hostname. If this ever returns inProcess=false, the
+   *  frontend SSR is crossing deployments and the pipeline can't be traced. */
+  @Get("debug/api-url") @ReturnedType(OkResponse)
+  debugApiUrl() {
+    const apiUrl = Deno.env.get("API_URL") ?? null;
+    return {
+      apiUrl,
+      expected: `http://localhost:${Deno.env.get("PORT") ?? 3000}`,
+      inProcess: apiUrl?.startsWith("http://localhost") === true,
+    };
+  }
+
   /** Debug: the effective SELF_URL for the current request. This is what
    *  QStash callback URLs will use. Must match the CURRENT deployment's origin
    *  (not whatever .env has) for audits to actually run on branch previews. */

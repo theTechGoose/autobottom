@@ -100,7 +100,8 @@ export function enqueueStep(step: string, body: unknown, delaySeconds?: number):
     span.setAttribute("qstash.step", step);
     const queueName = STEP_QUEUE[step] ?? QUESTIONS_QUEUE;
     const url = `${selfUrl()}/audit/step/${step}`;
-    console.log(`📮 [QSTASH] enqueueStep step=${step} callback=${url}`);
+    const findingId = (body as { findingId?: string })?.findingId ?? "<none>";
+    console.log(`📮 [QSTASH] enqueueStep step=${step} finding=${findingId} callback=${url}`);
     const extraHeaders = step === "ask-all" ? { "Upstash-Timeout": "120s" } : undefined;
     const result = await enqueue(queueName, url, body, delaySeconds, extraHeaders);
     metric("autobottom.qstash.enqueue", 1, { step });

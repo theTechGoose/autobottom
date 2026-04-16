@@ -1,4 +1,10 @@
-/** Admin dashboard data controller — wired to stats + review repos. */
+/** Admin dashboard data controller — wired to stats + review repos.
+ *  NOTE on orgId: danet's @Req decorator does NOT work when the controller is
+ *  reached via router.fetch() (the pattern used by our unified main.ts entry).
+ *  So we resolve orgId via defaultOrgId() which reads env (DEFAULT_ORG_ID /
+ *  CHARGEBACKS_ORG_ID). The audit controller uses the same mechanism so both
+ *  agree on which org's data to read/write. For true multi-org we'd need to
+ *  migrate main.ts to bypass routes that need per-request org context. */
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";

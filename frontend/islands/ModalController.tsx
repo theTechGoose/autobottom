@@ -122,6 +122,32 @@ export default function ModalController() {
       }
     });
 
+    // Refresh countdown indicator in the sidebar — shows next auto-refresh time.
+    // Watches for HTMX swaps on any [hx-trigger*="every"] element and resets from
+    // the interval declared in the trigger (falls back to 10s).
+    const countdownEl = document.getElementById("refresh-countdown");
+    if (countdownEl) {
+      let secondsLeft = 10;
+      const tick = () => {
+        secondsLeft -= 1;
+        if (secondsLeft <= 0) secondsLeft = 10;
+        countdownEl.textContent = `Refresh in ${secondsLeft}s`;
+      };
+      const timer = setInterval(tick, 1000);
+      // Reset countdown after any HTMX swap triggered by a recurring interval
+      document.addEventListener("htmx:afterSwap", (evt) => {
+        const target = (evt as CustomEvent).detail?.elt as HTMLElement | undefined;
+        const trigger = target?.getAttribute("hx-trigger") ?? "";
+        const match = trigger.match(/every\s+(\d+)s/);
+        if (match) {
+          secondsLeft = parseInt(match[1], 10);
+          countdownEl.textContent = `Refresh in ${secondsLeft}s`;
+        }
+      });
+      // Cleanup if island unmounts (shouldn't in practice but defensive)
+      return () => clearInterval(timer);
+    }
+
     // Expose globally for HTMX fragments
     (globalThis as any).__openModal = openModal;
     (globalThis as any).__closeModal = closeModal;

@@ -134,7 +134,7 @@ export function Sidebar({ user, section }: SidebarProps) {
         <h1>Auto-Bot</h1>
         <div class="sb-status">
           <span class="dot"></span>
-          <span>Operational</span>
+          <span id="refresh-countdown">Operational</span>
         </div>
       </div>
 

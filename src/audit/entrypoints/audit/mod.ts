@@ -31,8 +31,8 @@ export class AuditController {
 
     const jobId = auditId ?? nanoid();
     const job = { id: jobId, doneAuditIds: [], status: "running", timestamp: new Date().toISOString(), owner: body?.owner ?? "api", updateEndpoint: callbackUrl ?? "none", recordsToAudit: [rid] };
-    // TODO: need orgId from auth context — using placeholder for now
-    const orgId = "default" as OrgId;
+    // Use defaultOrgId() to match DashboardController — both read/write to the same org.
+    const orgId = defaultOrgId() as OrgId;
     await jobRepo.setChunked(orgId, [jobId], job);
 
     const findingId = nanoid();
@@ -64,7 +64,8 @@ export class AuditController {
     const record = await getPackageByRid(rid) ?? body?.record ?? { RecordId: rid };
     const recordingIdField = body?.recordingIdField ?? "GenieNumber";
 
-    const orgId = "default" as OrgId;
+    // Use defaultOrgId() to match DashboardController — both read/write to the same org.
+    const orgId = defaultOrgId() as OrgId;
     const jobId = nanoid();
     const job = { id: jobId, doneAuditIds: [], status: "running", timestamp: new Date().toISOString(), owner: body?.owner ?? "api", updateEndpoint: callbackUrl ?? "none", recordsToAudit: [rid] };
     await jobRepo.setChunked(orgId, [jobId], job);
@@ -94,7 +95,7 @@ export class AuditController {
   @Get("finding") @ReturnedType(FindingResponse) @Description("Get audit finding by ID")
   async getFinding(@Query("id") id: string) {
     if (!id) return { error: "id parameter required" };
-    const orgId = "default" as OrgId;
+    const orgId = defaultOrgId() as OrgId;
     const finding = await findingRepo.getChunked(orgId, id);
     if (!finding) return { error: "not found" };
     return finding;

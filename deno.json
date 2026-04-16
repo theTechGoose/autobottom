@@ -9,8 +9,9 @@
     "dev:api": "deno run -A --unstable-raw-imports --unstable-cron --unstable-kv --env --watch bootstrap/mod.ts",
     "check": "deno check main.ts",
     "test": "deno test -A --unstable-raw-imports --unstable-kv --ignore=frontend/,tests/e2e/",
-    "test:e2e": "deno test -A --unstable-raw-imports --unstable-kv tests/e2e/auth-flow.test.ts && deno test -A --unstable-raw-imports --unstable-kv tests/e2e/api-endpoints.test.ts && deno test -A --unstable-raw-imports --unstable-kv tests/e2e/modal-endpoints.test.ts",
+    "test:e2e": "deno test -A --unstable-raw-imports --unstable-kv tests/e2e/auth-flow.test.ts && deno test -A --unstable-raw-imports --unstable-kv tests/e2e/api-endpoints.test.ts && deno test -A --unstable-raw-imports --unstable-kv tests/e2e/modal-endpoints.test.ts && deno test -A --unstable-raw-imports --unstable-kv tests/e2e/dashboard.test.ts",
     "test:e2e:modals": "deno test -A --unstable-raw-imports --unstable-kv tests/e2e/modal-endpoints.test.ts",
+    "test:e2e:dashboard": "deno test -A --unstable-raw-imports --unstable-kv tests/e2e/dashboard.test.ts",
     "verify": "deno task check && deno task shape-check && deno task test:e2e",
     "shape-check": "bash fixtures/scripts/shape-check.sh"
   },

@@ -2,18 +2,15 @@
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
-import { StatCard } from "../../components/StatCard.tsx";
+import { StatGrid } from "../../components/StatGrid.tsx";
 import { DonutChart } from "../../components/DonutChart.tsx";
-import { timeAgo, scoreColor } from "../../lib/format.ts";
+import { DashboardTables, type ActiveItem, type ErrorItem, type CompletedItem } from "../../components/DashboardTables.tsx";
+import { TokenUsagePanel, type TokenData } from "../../components/TokenUsagePanel.tsx";
 import ModalController from "../../islands/ModalController.tsx";
 
-interface ActiveItem { findingId: string; recordId?: string; step: string; ts: number; }
-interface ErrorItem { findingId: string; step: string; error: string; ts: number; }
-interface CompletedItem { findingId: string; recordId?: string; score?: number; completedAt: number; startedAt?: number; type?: string; }
 interface PipelineStats { inPipe?: number; active?: ActiveItem[]; completed24h?: number; completedCount?: number; errors24h?: number; errors?: ErrorItem[]; retries24h?: number; retries?: unknown[]; }
 interface ReviewStats { pending?: number; decided?: number; pendingAuditCount?: number; }
 interface DashboardData { pipeline: PipelineStats; review: ReviewStats; recentCompleted: CompletedItem[]; }
-interface TokenData { total_tokens: number; prompt_tokens: number; completion_tokens: number; calls: number; by_function: Record<string, { total_tokens: number; calls: number }>; }
 
 export default define.page(async function AdminDashboard(ctx) {
   const user = ctx.state.user!;
@@ -34,30 +31,9 @@ export default define.page(async function AdminDashboard(ctx) {
     <Layout title="Dashboard" section="admin" user={user}>
       <ModalController />
 
-      {/* ===== STAT CARDS — auto-refresh every 30s ===== */}
-      <div id="stats-section" hx-get="/api/admin/stats" hx-trigger="every 30s" hx-swap="innerHTML">
-        <div class="stat-grid">
-          <StatCard label="In Pipeline" value={p.inPipe ?? 0} color="yellow" />
-          <div class="stat-card blue">
-            <div class="stat-label">Active</div>
-            <div class="stat-value">{activeList.length}</div>
-            <div class="stat-sub" style="line-height:1.6;">
-              {(() => {
-                const steps: Record<string, number> = {};
-                activeList.forEach(a => { steps[a.step] = (steps[a.step] ?? 0) + 1; });
-                const allSteps = ["ask-all", "cleanup", "genie-retry", "init", "prepare", "transcribe"];
-                return allSteps.map(s => {
-                  const count = steps[s] ?? 0;
-                  const active = count > 0;
-                  return <div key={s} style={`color:${active ? "var(--blue)" : "var(--text-dim)"};`}>{s}: {count}</div>;
-                });
-              })()}
-            </div>
-          </div>
-          <StatCard label="Completed (24h)" value={completed} color="green" />
-          <StatCard label="Errors (24h)" value={p.errors24h ?? errorList.length} color="red" sub={errorList.length ? `${errorList.length} unique` : "Clean"} />
-          <StatCard label="Retries (24h)" value={p.retries24h ?? 0} color="yellow" />
-        </div>
+      {/* ===== STAT CARDS — auto-refresh every 10s ===== */}
+      <div id="stats-section" hx-get="/api/admin/stats" hx-trigger="every 10s" hx-swap="innerHTML">
+        <StatGrid p={p} />
       </div>
 
       {/* ===== CHARTS ROW ===== */}
@@ -95,17 +71,8 @@ export default define.page(async function AdminDashboard(ctx) {
         </div>
         <div class="panel">
           <div class="panel-title">Token Usage (1h)</div>
-          <div style="font-size:20px;font-weight:700;color:var(--text-bright);margin-bottom:8px;font-variant-numeric:tabular-nums;">
-            {tokens.total_tokens.toLocaleString()} <small style="font-size:11px;color:var(--text-dim);font-weight:400;">tokens ({tokens.calls.toLocaleString()} calls)</small>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:3px;max-height:140px;overflow-y:auto;">
-            {Object.entries(tokens.by_function).sort(([,a],[,b]) => b.total_tokens - a.total_tokens).map(([fn, d]) => (
-              <div key={fn} style="display:flex;justify-content:space-between;align-items:center;padding:3px 7px;background:var(--bg);border-radius:4px;font-size:10px;">
-                <span style="color:var(--text-muted);font-family:var(--mono);">{fn}</span>
-                <span><span style="color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;">{d.total_tokens.toLocaleString()}</span> <span style="color:var(--text-dim);font-size:9px;margin-left:5px;">{d.calls} calls</span></span>
-              </div>
-            ))}
-            {Object.keys(tokens.by_function).length === 0 && <div style="color:var(--text-dim);font-size:11px;padding:10px;">No token usage</div>}
+          <div id="token-usage" hx-get="/api/admin/dashboard/tokens" hx-trigger="every 10s" hx-swap="innerHTML">
+            <TokenUsagePanel tokens={tokens} />
           </div>
         </div>
       </div>
@@ -150,79 +117,10 @@ export default define.page(async function AdminDashboard(ctx) {
         <div id="test-result" style="margin-top:8px;"></div>
       </div>
 
-      {/* ===== RECENTLY COMPLETED (24H) ===== */}
-      <div class="tbl" style="margin-top:16px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <div class="tbl-title" style="margin-bottom:0;">Recently Completed (24h)</div>
-          <a href="/admin/audits" class="tbl-link" style="font-size:11px;">View All &rarr;</a>
-        </div>
-        <table class="data-table">
-          <thead><tr><th>Finding ID</th><th>QB Record</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead>
-          <tbody>
-            {recentList.length === 0 ? (
-              <tr class="empty-row"><td colSpan={6}>No recent audits</td></tr>
-            ) : recentList.map((a) => {
-              const dur = a.startedAt && a.completedAt ? Math.round((a.completedAt - a.startedAt) / 1000) : null;
-              const durStr = dur != null ? (dur >= 60 ? `${Math.floor(dur / 60)}m ${dur % 60}s` : `${dur}s`) : "\u2014";
-              return (
-                <tr key={a.findingId}>
-                  <td><a href={`/admin/audits?findingId=${a.findingId}`} class="tbl-link mono">{a.findingId?.slice(0, 20)}</a></td>
-                  <td class="mono">{a.recordId ?? "\u2014"}</td>
-                  <td>{a.score != null ? <span style={`color:${a.score === 100 ? "var(--green)" : a.score >= 80 ? "var(--cyan)" : "var(--red)"};font-weight:700;font-variant-numeric:tabular-nums;`}>{a.score}%</span> : "\u2014"}</td>
-                  <td class="time-ago">{a.startedAt ? timeAgo(a.startedAt) : "\u2014"}</td>
-                  <td class="time-ago">{timeAgo(a.completedAt)}</td>
-                  <td class="mono" style="color:var(--yellow);font-variant-numeric:tabular-nums;">{durStr}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      {/* ===== DASHBOARD TABLES — auto-refresh every 10s ===== */}
+      <div id="dashboard-tables" hx-get="/api/admin/dashboard/refresh" hx-trigger="every 10s" hx-swap="innerHTML">
+        <DashboardTables recent={recentList} active={activeList} errors={errorList} />
       </div>
-
-      {/* ===== ACTIVE PIPELINE ===== */}
-      {activeList.length > 0 && (
-        <div class="tbl">
-          <div class="tbl-title">Active Pipeline ({activeList.length})</div>
-          <table class="data-table">
-            <thead><tr><th>Finding</th><th>QB Record</th><th>Step</th><th>Started</th><th>Duration</th></tr></thead>
-            <tbody>
-              {activeList.map((a) => {
-                const dur = a.ts ? Math.round((Date.now() - a.ts) / 1000) : null;
-                return (
-                  <tr key={a.findingId}>
-                    <td class="mono">{a.findingId?.slice(0, 8)}</td>
-                    <td class="mono">{a.recordId ?? "\u2014"}</td>
-                    <td><span class="step-badge">{a.step}</span></td>
-                    <td class="time-ago">{timeAgo(a.ts)}</td>
-                    <td class="mono" style="color:var(--yellow);">{dur != null ? `${dur}s` : "\u2014"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* ===== ERRORS ===== */}
-      {errorList.length > 0 && (
-        <div class="tbl">
-          <div class="tbl-title">Errors ({errorList.length})</div>
-          <table class="data-table">
-            <thead><tr><th>Finding</th><th>Step</th><th>Error</th><th>When</th><th>Action</th></tr></thead>
-            <tbody>
-              {errorList.map((e) => (
-                <tr key={e.findingId}>
-                  <td class="mono">{e.findingId?.slice(0, 8)}</td>
-                  <td><span class="step-badge">{e.step}</span></td>
-                  <td class="error-msg">{e.error}</td>
-                  <td class="time-ago">{timeAgo(e.ts)}</td>
-                  <td><button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;" hx-get={`/api/admin/retry?findingId=${e.findingId}&step=${e.step}`} hx-swap="none">Retry</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       {/* ===== QUEUE MANAGEMENT ===== */}
       <div class="panel" style="margin-top:16px;">

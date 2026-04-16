@@ -101,6 +101,19 @@ export default function ModalController() {
       input.value = String(next);
     });
 
+    // Copy-to-clipboard buttons: [data-copy="<text>"]
+    document.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest("[data-copy]") as HTMLElement | null;
+      if (!btn) return;
+      const text = btn.getAttribute("data-copy") ?? "";
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        const original = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(() => { btn.textContent = original; }, 1000);
+      }).catch(() => { /* clipboard blocked */ });
+    });
+
     // Escape key closes modals and flyouts
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {

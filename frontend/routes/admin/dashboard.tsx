@@ -115,7 +115,7 @@ export default define.page(async function AdminDashboard(ctx) {
         <div class="tbl-title">Find Audit</div>
         <div style="display:flex;gap:10px;align-items:flex-end;">
           <div class="form-group" style="margin-bottom:0;flex:1;">
-            <input type="text" id="find-finding-id" placeholder="Finding ID..." style="font-family:var(--mono);font-size:13px;" />
+            <input type="text" id="find-finding-id" name="find-finding-id" placeholder="Finding ID..." style="font-family:var(--mono);font-size:13px;" />
           </div>
           <button class="btn btn-primary" style="height:40px;" hx-get="/api/admin/find-audit" hx-include="#find-finding-id" hx-target="#find-result" hx-swap="innerHTML">View Report</button>
           <button class="btn btn-danger" style="height:40px;" hx-get="/api/admin/find-audit" hx-include="#find-finding-id" hx-vals='{"action":"delete"}' hx-target="#find-result" hx-swap="innerHTML" hx-confirm="Delete this finding?">Delete</button>
@@ -139,9 +139,9 @@ export default define.page(async function AdminDashboard(ctx) {
         <div class="tbl-title">Test Audit by RID</div>
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
           <div class="form-group" style="margin-bottom:0;flex:1;min-width:200px;">
-            <input type="text" id="test-rid" placeholder="Record ID..." style="font-family:var(--mono);font-size:13px;" />
+            <input type="text" id="test-rid" name="test-rid" placeholder="Record ID..." style="font-family:var(--mono);font-size:13px;" />
           </div>
-          <select id="test-type" style="height:40px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text-bright);padding:0 14px;font-size:13px;">
+          <select id="test-type" name="test-type" style="height:40px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text-bright);padding:0 14px;font-size:13px;">
             <option value="internal">Internal (Date Leg)</option>
             <option value="partner">Partner (Package)</option>
           </select>

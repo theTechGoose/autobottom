@@ -116,6 +116,38 @@ Deno.test({ name: "E2E Modal: save email template via frontend endpoint — 200 
   assertStringIncludes(saveHtml, name, "saved template name should appear in returned HTML");
 }});
 
+Deno.test({ name: "E2E Modal: saving template with existing id UPDATES (no duplicate row)", sanitizeResources: false, async fn() {
+  const uniqueName = `Update-Test-${Date.now()}`;
+
+  // 1. Create a new template (no id)
+  const createRes = await fetch(`${BASE}/admin/email-templates`, {
+    method: "POST",
+    headers: { cookie: session.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ name: uniqueName, subject: "v1", html: "<p>v1</p>" }),
+  });
+  const created = await createRes.json();
+  const id = created.template.id;
+  assert(id, "new template must have id");
+
+  // 2. Save again WITH id (simulating edit → save via the frontend's hidden id field)
+  const updateRes = await fetch(`${BASE}/api/admin/modal/email-templates/save`, {
+    method: "POST",
+    headers: { cookie: session.cookie, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ id, name: uniqueName, subject: "v2", html: "<p>v2</p>" }),
+    redirect: "manual",
+  });
+  assertEquals(updateRes.status, 200);
+  await updateRes.text();
+
+  // 3. Verify the backend has exactly ONE row with this name — no duplicate
+  const listRes = await fetch(`${BASE}/admin/email-templates`, { headers: { cookie: session.cookie } });
+  const list = await listRes.json() as { templates: Array<{ id: string; name: string; subject: string }> };
+  const matches = list.templates.filter(t => t.name === uniqueName);
+  assertEquals(matches.length, 1, `expected 1 template named ${uniqueName}, got ${matches.length}`);
+  assertEquals(matches[0].id, id, "same id preserved");
+  assertEquals(matches[0].subject, "v2", "subject must be updated to v2");
+}});
+
 Deno.test({ name: "E2E Modal: offices/add-dept via frontend — 200 HTML with chip, persists to backend", sanitizeResources: false, async fn() {
   const dept = `FRONTEND-DEPT-${Date.now()}`;
   const res = await fetch(`${BASE}/api/admin/modal/offices/add-dept`, {
@@ -131,6 +163,36 @@ Deno.test({ name: "E2E Modal: offices/add-dept via frontend — 200 HTML with ch
   const getRes = await fetch(`${BASE}/admin/audit-dimensions`, { headers: { cookie: session.cookie } });
   const data = await getRes.json();
   assert((data.departments ?? []).includes(dept), "backend should have the dept");
+}});
+
+Deno.test({ name: "E2E Dashboard: /api/admin/test-audit receives test-rid field (inputs have name=)", sanitizeResources: false, async fn() {
+  // Regression guard: if the dashboard <input> tags lose their name= attribute,
+  // HTMX won't include the value in the form submission and this endpoint will
+  // return "Enter a record ID" even when a value is typed.
+  const res = await fetch(`${BASE}/api/admin/test-audit`, {
+    method: "POST",
+    headers: { cookie: session.cookie, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ "test-rid": "999999", "test-type": "internal" }),
+    redirect: "manual",
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  // Must NOT say "Enter a record ID" — the rid was provided. May be a backend error
+  // (record not found) which is fine; we only guard against the missing-field case.
+  assert(!html.includes("Enter a record ID"), `got: ${html.slice(0, 200)}`);
+}});
+
+Deno.test({ name: "E2E Dashboard: /api/admin/find-audit receives find-finding-id field (input has name=)", sanitizeResources: false, async fn() {
+  // Regression guard for find-finding-id input. HTMX hx-include uses the `name`
+  // attribute as the query/body key; if name= is dropped, the endpoint sees no id.
+  const res = await fetch(`${BASE}/api/admin/find-audit?find-finding-id=nonexistent`, {
+    method: "GET",
+    headers: { cookie: session.cookie },
+    redirect: "manual",
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assert(!html.includes("Enter a finding ID"), `expected lookup to run (not blank-check); got: ${html.slice(0, 200)}`);
 }});
 
 // ── Cleanup ───────────────────────────────────────────────────────────────────

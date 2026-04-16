@@ -9,26 +9,26 @@ import * as fsRoute_1 from "../routes/_middleware.ts"
 import * as fsRoute_2 from "../routes/_500.tsx"
 import * as fsRoute_3 from "../routes/_404.tsx"
 
-export const clientEntry = "/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/fresh-runtime.js"
-export const version = "89e475fbd1685800f6f8478c2e305137fd37c032"
+export const clientEntry = "/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/fresh-runtime.js"
+export const version = "1572e0c879e8ebc824ab2033cc633410b9838f09"
 
 export const islands = new Map();
 const islandPreparer = new IslandPreparer();
-islandPreparer.prepare(islands, ModalController, "/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/ModalController.js", "ModalController", []);
-islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/SoundEngine.js", "SoundEngine", []);
-islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/HotkeyHandler.js", "HotkeyHandler", []);
-islandPreparer.prepare(islands, ChatInput, "/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/ChatInput.js", "ChatInput", []);
+islandPreparer.prepare(islands, ModalController, "/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/ModalController.js", "ModalController", []);
+islandPreparer.prepare(islands, SoundEngine, "/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/SoundEngine.js", "SoundEngine", []);
+islandPreparer.prepare(islands, HotkeyHandler, "/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/HotkeyHandler.js", "HotkeyHandler", []);
+islandPreparer.prepare(islands, ChatInput, "/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/ChatInput.js", "ChatInput", []);
 
 export const staticFiles = new Map([
   ["/favicon.svg", {"name":"/favicon.svg","hash":"66c0ae4b1956c0e76e490ca3f79bfd02bd385ff24c35908f25ef49e6bd286989","filePath":"static/favicon.svg","contentType":"image/svg+xml"}],
-  ["/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/fresh-runtime.js", {"name":"/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/fresh-runtime.js","hash":"ytQlMPjEtHo","filePath":"_fresh/static/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/ModalController.js", {"name":"/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/ModalController.js","hash":"5rTZ+7MLj5w","filePath":"_fresh/static/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/ModalController.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/SoundEngine.js", {"name":"/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/HotkeyHandler.js", {"name":"/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/ChatInput.js", {"name":"/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/chunk-EAQD6YFO.js", {"name":"/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/chunk-HGON2IZK.js", {"name":"/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
-  ["/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/metafile.json", {"name":"/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/metafile.json","hash":"7cd1f9f83efccf15f3c2ff3d45ce97063ac060aaf231d73f8ee8ad0e2b75c9b9","filePath":"_fresh/static/_fresh/js/89e475fbd1685800f6f8478c2e305137fd37c032/metafile.json","contentType":"application/json; charset=UTF-8"}],
+  ["/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/fresh-runtime.js", {"name":"/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/fresh-runtime.js","hash":"aABT7oO9TDA","filePath":"_fresh/static/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/fresh-runtime.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/ModalController.js", {"name":"/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/ModalController.js","hash":"iMtgX6qlGOs","filePath":"_fresh/static/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/ModalController.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/SoundEngine.js", {"name":"/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/SoundEngine.js","hash":"UPcnj8xwq8s","filePath":"_fresh/static/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/SoundEngine.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/HotkeyHandler.js", {"name":"/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/HotkeyHandler.js","hash":"lBON637qbSc","filePath":"_fresh/static/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/HotkeyHandler.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/ChatInput.js", {"name":"/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/ChatInput.js","hash":"3oOqlxUWt5Q","filePath":"_fresh/static/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/ChatInput.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/chunk-EAQD6YFO.js", {"name":"/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/chunk-EAQD6YFO.js","hash":"0ncFaEW88EI","filePath":"_fresh/static/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/chunk-EAQD6YFO.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/chunk-HGON2IZK.js", {"name":"/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/chunk-HGON2IZK.js","hash":"9dWO//DQy+8","filePath":"_fresh/static/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/chunk-HGON2IZK.js","contentType":"text/javascript; charset=UTF-8"}],
+  ["/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/metafile.json", {"name":"/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/metafile.json","hash":"54ea9f26963bcce6b14db52986a061fe4800510bafc138b97bf0cce496aff7b5","filePath":"_fresh/static/_fresh/js/1572e0c879e8ebc824ab2033cc633410b9838f09/metafile.json","contentType":"application/json; charset=UTF-8"}],
   ["/styles.css", {"name":"/styles.css","hash":"884eaa4da0746b1436ca486097f46f20d9e3817617badf41ef8e462b7b3662f8","filePath":"_fresh/static/styles.css","contentType":"text/css; charset=UTF-8"}]
 ]);
 

@@ -33,13 +33,27 @@ export default define.page(async function AdminDashboard(ctx) {
   return (
     <Layout title="Dashboard" section="admin" user={user}>
       <ModalController />
-      <div class="page-header"><h1>Dashboard</h1><p class="page-sub">Pipeline overview and configuration</p></div>
 
       {/* ===== STAT CARDS — auto-refresh every 30s ===== */}
       <div id="stats-section" hx-get="/api/admin/stats" hx-trigger="every 30s" hx-swap="innerHTML">
         <div class="stat-grid">
           <StatCard label="In Pipeline" value={p.inPipe ?? 0} color="yellow" />
-          <StatCard label="Active" value={activeList.length} color="blue" sub={activeList.slice(0, 3).map(a => `${a.step}: ${a.findingId?.slice(0, 6)}`).join(", ") || "none"} />
+          <div class="stat-card blue">
+            <div class="stat-label">Active</div>
+            <div class="stat-value">{activeList.length}</div>
+            <div class="stat-sub" style="line-height:1.6;">
+              {(() => {
+                const steps: Record<string, number> = {};
+                activeList.forEach(a => { steps[a.step] = (steps[a.step] ?? 0) + 1; });
+                const allSteps = ["ask-all", "cleanup", "genie-retry", "init", "prepare", "transcribe"];
+                return allSteps.map(s => {
+                  const count = steps[s] ?? 0;
+                  const active = count > 0;
+                  return <div key={s} style={`color:${active ? "var(--blue)" : "var(--text-dim)"};`}>{s}: {count}</div>;
+                });
+              })()}
+            </div>
+          </div>
           <StatCard label="Completed (24h)" value={completed} color="green" />
           <StatCard label="Errors (24h)" value={p.errors24h ?? errorList.length} color="red" sub={errorList.length ? `${errorList.length} unique` : "Clean"} />
           <StatCard label="Retries (24h)" value={p.retries24h ?? 0} color="yellow" />

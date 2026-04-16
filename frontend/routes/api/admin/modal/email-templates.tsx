@@ -11,12 +11,13 @@ const VARIABLES = [
   "totalQuestions", "crmUrl", "scoreVerbiage", "teamMember", "teamMemberFirst",
 ];
 
-// Default logo used only in preview render so {{logoUrl}} isn't a broken image.
-// Stored HTML keeps the {{logoUrl}} placeholder — webhook/email engine substitutes at send time.
+// Default AutoBot logo (cute green robot) used only in preview render so {{logoUrl}}
+// isn't a broken image. Stored HTML keeps the {{logoUrl}} placeholder — webhook/email
+// engine substitutes the real logo URL at send time.
 const PREVIEW_LOGO_DATA_URI =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30"><rect width="30" height="30" rx="6" fill="#1f6feb"/><text x="15" y="20" font-family="system-ui,sans-serif" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">AB</text></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none"><rect x="4" y="9" width="24" height="19" rx="4" fill="#0d1117"/><rect x="4" y="9" width="24" height="19" rx="4" fill="none" stroke="#3fb950" stroke-width="1.5"/><rect x="14.5" y="4" width="3" height="6" rx="1" fill="#3fb950"/><circle cx="16" cy="3.5" r="2.5" fill="#3fb950"/><rect x="7.5" y="14" width="6" height="5" rx="1.5" fill="#3fb950"/><rect x="9" y="15" width="2" height="1.5" rx="0.5" fill="#7ee787" opacity="0.7"/><rect x="18.5" y="14" width="6" height="5" rx="1.5" fill="#3fb950"/><rect x="20" y="15" width="2" height="1.5" rx="0.5" fill="#7ee787" opacity="0.7"/><rect x="9" y="23" width="3.5" height="2" rx="1" fill="#3fb950" opacity="0.65"/><rect x="14.25" y="23" width="3.5" height="2" rx="1" fill="#3fb950" opacity="0.65"/><rect x="19.5" y="23" width="3.5" height="2" rx="1" fill="#3fb950" opacity="0.65"/><circle cx="3.5" cy="17.5" r="1.5" fill="#3fb950" opacity="0.55"/><circle cx="28.5" cy="17.5" r="1.5" fill="#3fb950" opacity="0.55"/></svg>`,
   );
 
 function injectPreviewDefaults(html: string): string {
@@ -182,26 +183,24 @@ export async function renderTemplatesModal(
           </div>
 
           {/* Preview panel */}
-          <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;">
+          <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0;">
             <div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);flex-shrink:0;">
               Live Preview
             </div>
             {showEditor ? (
-              <div style="flex:1;overflow:auto;padding:0;background:#fff;">
-                {previewHtml ? (
-                  <iframe
-                    srcDoc={previewHtml}
-                    style="width:100%;height:100%;border:none;background:#fff;display:block;"
-                    sandbox="allow-same-origin"
-                  ></iframe>
-                ) : (
-                  <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);font-size:11px;background:var(--bg);">
-                    {isNew ? "Preview will appear after saving" : "No HTML content"}
-                  </div>
-                )}
-              </div>
+              previewHtml ? (
+                <iframe
+                  srcDoc={previewHtml}
+                  style="flex:1;width:100%;border:none;background:#fff;display:block;min-height:0;"
+                  sandbox="allow-same-origin"
+                ></iframe>
+              ) : (
+                <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:11px;background:var(--bg);min-height:0;">
+                  {isNew ? "Preview will appear after saving" : "No HTML content"}
+                </div>
+              )
             ) : (
-              <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:11px;">
+              <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:11px;min-height:0;">
                 Select a template to preview
               </div>
             )}

@@ -12,7 +12,8 @@ interface SidebarProps {
 interface SbItem {
   label: string;
   icon: (s?: number) => ComponentChildren;
-  color: string;
+  color: string;        // icon background (rgba)
+  iconColor?: string;   // icon foreground (var)
   href?: string;        // navigation link
   modalId?: string;     // modal trigger
 }
@@ -24,7 +25,7 @@ interface SbSection {
 
 function SbLink({ item, section }: { item: SbItem; section: string }) {
   const isActive = item.href && section && item.href.includes(section);
-  const iconStyle = `width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:${item.color};flex-shrink:0;`;
+  const iconStyle = `width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:${item.color};color:${item.iconColor ?? "var(--blue)"};flex-shrink:0;`;
 
   if (item.href) {
     return (
@@ -50,68 +51,68 @@ const ADMIN_SECTIONS: SbSection[] = [
   {
     label: "Navigation",
     items: [
-      { label: "Chat", icon: Icon.messageCircle, color: "rgba(57,208,216,0.10)", href: "/chat" },
+      { label: "Chat", icon: Icon.messageCircle, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/chat" },
     ],
   },
   {
     label: "Configuration",
     items: [
-      { label: "Question Lab", icon: Icon.flask, color: "rgba(63,185,80,0.12)", href: "/question-lab" },
-      { label: "Webhook", icon: Icon.webhook, color: "rgba(31,111,235,0.10)", modalId: "webhook-modal" },
-      { label: "Email Reports", icon: Icon.mail, color: "rgba(31,111,235,0.10)", modalId: "email-reports-modal" },
-      { label: "Email Templates", icon: Icon.mail, color: "rgba(57,208,216,0.10)", modalId: "email-templates-modal" },
-      { label: "Chargebacks & Omissions", icon: Icon.clipboardList, color: "rgba(210,153,34,0.10)", modalId: "chargebacks-modal" },
-      { label: "Data Maintenance", icon: Icon.trash, color: "rgba(248,81,73,0.10)", modalId: "maintenance-modal" },
-      { label: "Bad Words", icon: Icon.alertTriangle, color: "rgba(248,81,73,0.10)", modalId: "bad-words-modal" },
-      { label: "Offices", icon: Icon.clipboardList, color: "rgba(210,153,34,0.10)", modalId: "offices-modal" },
-      { label: "Users", icon: Icon.users, color: "rgba(139,92,246,0.10)", modalId: "users-modal" },
-      { label: "Pipeline", icon: Icon.settings, color: "rgba(210,153,34,0.10)", modalId: "pipeline-modal" },
-      { label: "Bonus Points", icon: Icon.trophy, color: "rgba(139,92,246,0.10)", modalId: "bonus-points-modal" },
-      { label: "Gamification", icon: Icon.trophy, color: "rgba(63,185,80,0.12)", href: "/gamification" },
-      { label: "Badge Editor", icon: Icon.shoppingBag, color: "rgba(57,208,216,0.10)", href: "/store" },
+      { label: "Question Lab", icon: Icon.flask, color: "var(--green-bg)", iconColor: "var(--green)", href: "/question-lab" },
+      { label: "Webhook", icon: Icon.webhook, color: "var(--blue-bg)", iconColor: "var(--blue)", modalId: "webhook-modal" },
+      { label: "Email Reports", icon: Icon.mail, color: "var(--blue-bg)", iconColor: "var(--blue)", modalId: "email-reports-modal" },
+      { label: "Email Templates", icon: Icon.mail, color: "var(--cyan-bg)", iconColor: "var(--cyan)", modalId: "email-templates-modal" },
+      { label: "Chargebacks & Omissions", icon: Icon.clipboardList, color: "var(--yellow-bg)", iconColor: "var(--yellow)", modalId: "chargebacks-modal" },
+      { label: "Data Maintenance", icon: Icon.trash, color: "var(--red-bg)", iconColor: "var(--red)", modalId: "maintenance-modal" },
+      { label: "Bad Words", icon: Icon.alertTriangle, color: "var(--red-bg)", iconColor: "var(--red)", modalId: "bad-words-modal" },
+      { label: "Offices", icon: Icon.clipboardList, color: "var(--yellow-bg)", iconColor: "var(--yellow)", modalId: "offices-modal" },
+      { label: "Users", icon: Icon.users, color: "var(--purple-bg)", iconColor: "var(--purple)", modalId: "users-modal" },
+      { label: "Pipeline", icon: Icon.settings, color: "var(--yellow-bg)", iconColor: "var(--yellow)", modalId: "pipeline-modal" },
+      { label: "Bonus Points", icon: Icon.trophy, color: "var(--purple-bg)", iconColor: "var(--purple)", modalId: "bonus-points-modal" },
+      { label: "Gamification", icon: Icon.trophy, color: "var(--green-bg)", iconColor: "var(--green)", href: "/gamification" },
+      { label: "Badge Editor", icon: Icon.shoppingBag, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/store" },
     ],
   },
   {
     label: "Impersonate",
     items: [
-      { label: "Specific User", icon: Icon.userCog, color: "rgba(210,153,34,0.10)", modalId: "impersonate-modal" },
+      { label: "Specific User", icon: Icon.userCog, color: "var(--yellow-bg)", iconColor: "var(--yellow)", modalId: "impersonate-modal" },
     ],
   },
 ];
 
 // Role view links for the flyout
 const ROLE_VIEWS = [
-  { label: "Judge Dashboard", href: "/judge/dashboard", icon: Icon.scale, color: "rgba(210,153,34,0.10)" },
-  { label: "Review Dashboard", href: "/review/dashboard", icon: Icon.playCircle, color: "rgba(139,92,246,0.10)" },
-  { label: "Manager Portal", href: "/manager", icon: Icon.clipboardList, color: "rgba(57,208,216,0.10)" },
-  { label: "Team Member Dashboard", href: "/agent", icon: Icon.barChart, color: "rgba(249,115,22,0.10)" },
+  { label: "Judge Dashboard", href: "/judge/dashboard", icon: Icon.scale, color: "rgba(210,153,34,0.10)", iconColor: "var(--yellow)" },
+  { label: "Review Dashboard", href: "/review/dashboard", icon: Icon.playCircle, color: "var(--purple-bg)", iconColor: "var(--purple)" },
+  { label: "Manager Portal", href: "/manager", icon: Icon.clipboardList, color: "var(--cyan-bg)", iconColor: "var(--cyan)" },
+  { label: "Team Member Dashboard", href: "/agent", icon: Icon.barChart, color: "rgba(249,115,22,0.10)", iconColor: "#f97316" },
 ];
 
 // Other roles — simpler navigation
 const REVIEWER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
-  { label: "Review Queue", icon: Icon.playCircle, color: "rgba(139,92,246,0.10)", href: "/review" },
-  { label: "Dashboard", icon: Icon.layoutDashboard, color: "rgba(139,92,246,0.10)", href: "/review/dashboard" },
-  { label: "Store", icon: Icon.trophy, color: "rgba(210,153,34,0.10)", href: "/store" },
-  { label: "Chat", icon: Icon.messageCircle, color: "rgba(57,208,216,0.10)", href: "/chat" },
+  { label: "Review Queue", icon: Icon.playCircle, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/review" },
+  { label: "Dashboard", icon: Icon.layoutDashboard, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/review/dashboard" },
+  { label: "Store", icon: Icon.trophy, color: "var(--yellow-bg)", iconColor: "var(--yellow)", href: "/store" },
+  { label: "Chat", icon: Icon.messageCircle, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/chat" },
 ]}];
 
 const JUDGE_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
-  { label: "Judge Queue", icon: Icon.scale, color: "rgba(20,184,166,0.10)", href: "/judge" },
-  { label: "Dashboard", icon: Icon.layoutDashboard, color: "rgba(20,184,166,0.10)", href: "/judge/dashboard" },
-  { label: "Store", icon: Icon.trophy, color: "rgba(210,153,34,0.10)", href: "/store" },
-  { label: "Chat", icon: Icon.messageCircle, color: "rgba(57,208,216,0.10)", href: "/chat" },
+  { label: "Judge Queue", icon: Icon.scale, color: "rgba(20,184,166,0.10)", iconColor: "#14b8a6", href: "/judge" },
+  { label: "Dashboard", icon: Icon.layoutDashboard, color: "rgba(20,184,166,0.10)", iconColor: "#14b8a6", href: "/judge/dashboard" },
+  { label: "Store", icon: Icon.trophy, color: "var(--yellow-bg)", iconColor: "var(--yellow)", href: "/store" },
+  { label: "Chat", icon: Icon.messageCircle, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/chat" },
 ]}];
 
 const MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
-  { label: "Queue", icon: Icon.clipboardList, color: "rgba(57,208,216,0.10)", href: "/manager" },
-  { label: "Store", icon: Icon.trophy, color: "rgba(210,153,34,0.10)", href: "/store" },
-  { label: "Chat", icon: Icon.messageCircle, color: "rgba(57,208,216,0.10)", href: "/chat" },
+  { label: "Queue", icon: Icon.clipboardList, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/manager" },
+  { label: "Store", icon: Icon.trophy, color: "var(--yellow-bg)", iconColor: "var(--yellow)", href: "/store" },
+  { label: "Chat", icon: Icon.messageCircle, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/chat" },
 ]}];
 
 const USER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
-  { label: "Dashboard", icon: Icon.barChart, color: "rgba(249,115,22,0.10)", href: "/agent" },
-  { label: "Store", icon: Icon.trophy, color: "rgba(210,153,34,0.10)", href: "/store" },
-  { label: "Chat", icon: Icon.messageCircle, color: "rgba(57,208,216,0.10)", href: "/chat" },
+  { label: "Dashboard", icon: Icon.barChart, color: "rgba(249,115,22,0.10)", iconColor: "#f97316", href: "/agent" },
+  { label: "Store", icon: Icon.trophy, color: "var(--yellow-bg)", iconColor: "var(--yellow)", href: "/store" },
+  { label: "Chat", icon: Icon.messageCircle, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/chat" },
 ]}];
 
 const ROLE_SECTION_MAP: Record<Role, SbSection[]> = {
@@ -159,7 +160,7 @@ export function Sidebar({ user, section }: SidebarProps) {
                   <div class="rv-title">View as role</div>
                   {ROLE_VIEWS.map((rv) => (
                     <a key={rv.href} href={rv.href}>
-                      <div class="rm-icon" style={`background:${rv.color}`}>{rv.icon(15)}</div>
+                      <div class="rm-icon" style={`background:${rv.color};color:${rv.iconColor}`}>{rv.icon(15)}</div>
                       <span>{rv.label}</span>
                     </a>
                   ))}

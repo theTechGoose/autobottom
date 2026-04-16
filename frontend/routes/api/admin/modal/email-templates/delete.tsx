@@ -1,6 +1,7 @@
-/** POST: Delete an email template. */
+/** POST: Delete an email template. Returns updated modal HTML directly (no redirect). */
 import { define } from "../../../../../lib/define.ts";
 import { apiPost } from "../../../../../lib/api.ts";
+import { renderTemplatesModal } from "../email-templates.tsx";
 
 export const handler = define.handlers({
   async POST(ctx) {
@@ -9,6 +10,6 @@ export const handler = define.handlers({
     if (id) {
       try { await apiPost("/admin/email-templates/delete", ctx.req, { id }); } catch {}
     }
-    return Response.redirect(new URL("/api/admin/modal/email-templates", ctx.req.url), 303);
+    return renderTemplatesModal(ctx.req, {});
   },
 });

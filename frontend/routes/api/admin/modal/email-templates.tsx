@@ -11,22 +11,22 @@ const VARIABLES = [
   "totalQuestions", "crmUrl", "scoreVerbiage", "teamMember", "teamMemberFirst",
 ];
 
-export const handler = define.handlers({
-  async GET(ctx) {
-    const url = new URL(ctx.req.url);
-    const activeId = url.searchParams.get("id");
-    const isNew = url.searchParams.get("new") === "1";
+export async function renderTemplatesModal(
+  req: Request,
+  opts: { activeId?: string; isNew?: boolean } = {},
+): Promise<Response> {
+  const { activeId, isNew } = opts;
 
-    let templates: Template[] = [];
-    try {
-      const d = await apiFetch<unknown>("/admin/email-templates", ctx.req);
-      templates = Array.isArray(d) ? d : [];
-    } catch {}
+  let templates: Template[] = [];
+  try {
+    const d = await apiFetch<unknown>("/admin/email-templates", req);
+    templates = Array.isArray(d) ? d : [];
+  } catch {}
 
-    const active = activeId ? templates.find(t => t.id === activeId) : null;
-    const showEditor = isNew || !!active;
+  const active = activeId ? templates.find(t => t.id === activeId) : null;
+  const showEditor = isNew || !!active;
 
-    const html = renderToString(
+  const html = renderToString(
       <div style="display:flex;flex-direction:column;height:100%;">
         {/* Header */}
         <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0;">
@@ -153,6 +153,15 @@ export const handler = define.handlers({
         </div>
       </div>
     );
-    return new Response(html, { headers: { "content-type": "text/html" } });
+  return new Response(html, { headers: { "content-type": "text/html" } });
+}
+
+export const handler = define.handlers({
+  GET(ctx) {
+    const url = new URL(ctx.req.url);
+    return renderTemplatesModal(ctx.req, {
+      activeId: url.searchParams.get("id") ?? undefined,
+      isNew: url.searchParams.get("new") === "1",
+    });
   },
 });

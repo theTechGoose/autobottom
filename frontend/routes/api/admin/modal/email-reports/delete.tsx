@@ -1,6 +1,7 @@
-/** POST: Delete an email report config. */
+/** POST: Delete an email report config. Returns updated modal HTML directly (no redirect). */
 import { define } from "../../../../../lib/define.ts";
 import { apiPost } from "../../../../../lib/api.ts";
+import { renderReportsModal } from "../email-reports.tsx";
 
 export const handler = define.handlers({
   async POST(ctx) {
@@ -9,6 +10,6 @@ export const handler = define.handlers({
     if (id) {
       try { await apiPost("/admin/email-reports/delete", ctx.req, { id }); } catch {}
     }
-    return Response.redirect(new URL("/api/admin/modal/email-reports", ctx.req.url), 303);
+    return renderReportsModal(ctx.req, { view: "list" });
   },
 });

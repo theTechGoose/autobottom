@@ -5,14 +5,15 @@ import { renderToString } from "preact-render-to-string";
 
 interface ReportConfig { id?: string; name?: string; recipients?: string[]; schedule?: string; enabled?: boolean; templateId?: string; }
 
-export const handler = define.handlers({
-  async GET(ctx) {
-    const url = new URL(ctx.req.url);
-    const view = url.searchParams.get("view") ?? "list";
-    const editId = url.searchParams.get("id");
+export async function renderReportsModal(
+  req: Request,
+  opts: { view?: "list" | "edit"; editId?: string } = {},
+): Promise<Response> {
+  const view = opts.view ?? "list";
+  const editId = opts.editId;
 
-    let configs: ReportConfig[] = [];
-    try { const d = await apiFetch<{ configs?: ReportConfig[] }>("/admin/email-reports", ctx.req); configs = d.configs ?? []; } catch {}
+  let configs: ReportConfig[] = [];
+  try { const d = await apiFetch<{ configs?: ReportConfig[] }>("/admin/email-reports", req); configs = d.configs ?? []; } catch {}
 
     // Edit view
     if (view === "edit") {
@@ -77,8 +78,8 @@ export const handler = define.handlers({
       return new Response(html, { headers: { "content-type": "text/html" } });
     }
 
-    // List view (default)
-    const html = renderToString(
+  // List view (default)
+  const html = renderToString(
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
           <div class="modal-title" style="margin-bottom:0;">Email Reports</div>
@@ -118,6 +119,15 @@ export const handler = define.handlers({
         </div>
       </div>
     );
-    return new Response(html, { headers: { "content-type": "text/html" } });
+  return new Response(html, { headers: { "content-type": "text/html" } });
+}
+
+export const handler = define.handlers({
+  GET(ctx) {
+    const url = new URL(ctx.req.url);
+    return renderReportsModal(ctx.req, {
+      view: (url.searchParams.get("view") as "list" | "edit") ?? "list",
+      editId: url.searchParams.get("id") ?? undefined,
+    });
   },
 });

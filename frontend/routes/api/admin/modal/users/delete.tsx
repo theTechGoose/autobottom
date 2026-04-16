@@ -1,6 +1,7 @@
 /** POST: Delete user, return refreshed members list. */
 import { define } from "../../../../../lib/define.ts";
 import { apiPost } from "../../../../../lib/api.ts";
+import { renderUsersModal } from "../users.tsx";
 
 export const handler = define.handlers({
   async POST(ctx) {
@@ -9,7 +10,7 @@ export const handler = define.handlers({
     if (email) {
       try { await apiPost("/admin/users/delete", ctx.req, { email }); } catch {}
     }
-    // Redirect back to list tab to show updated state
-    return new Response(null, { status: 200, headers: { "HX-Redirect": "/api/admin/modal/users?tab=list", "content-type": "text/html" } });
+    // Return the refreshed members list directly
+    return renderUsersModal(ctx.req, { tab: "list" });
   },
 });

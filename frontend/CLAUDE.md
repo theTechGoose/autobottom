@@ -92,6 +92,27 @@ Pages SSR a full HTML document on first load. Interactive sections use HTMX attr
 
 The `/api/*` routes return HTML fragments, not JSON.
 
+### CRITICAL: HTMX POST handlers must return HTML directly — NEVER use HTTP redirects.
+
+HTMX endpoints (anything under `routes/api/admin/modal/**/*.tsx` and similar HTMX-targeted routes) must return the updated HTML as the POST response body. Do NOT use `Response.redirect(...)` or `HX-Redirect` headers.
+
+**Why:** HTMX follows 3xx redirects via browser XHR, but the follow-up GET loses HTMX context in subtle ways. The correct pattern is to directly render and return the updated view's HTML as the POST response body.
+
+**Pattern:** Extract the modal's GET render into an exported function (e.g. `renderTemplatesModal(req, opts)`), then call it from both the GET handler and any POST save/delete sub-routes.
+
+```ts
+// GOOD:
+return renderTemplatesModal(ctx.req, { activeId: savedId });
+
+// BAD — fragile 303 redirect:
+return Response.redirect(new URL("/api/admin/modal/...", ctx.req.url), 303);
+
+// BAD — breaks out of modal with full page navigation:
+return new Response(null, { headers: { "HX-Redirect": "/api/..." } });
+```
+
+**Exceptions:** `routes/api/login.ts`, `register.ts`, `logout.ts` intentionally use 303 because they're hit by native form POST (no HTMX).
+
 ## Pages / Implementation Status
 | Page | Route | Status |
 |------|-------|--------|

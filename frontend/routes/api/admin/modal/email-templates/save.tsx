@@ -1,6 +1,7 @@
-/** POST: Create or update email template. */
+/** POST: Create or update email template. Returns updated modal HTML directly (no redirect). */
 import { define } from "../../../../../lib/define.ts";
 import { apiPost } from "../../../../../lib/api.ts";
+import { renderTemplatesModal } from "../email-templates.tsx";
 
 export const handler = define.handlers({
   async POST(ctx) {
@@ -16,13 +17,13 @@ export const handler = define.handlers({
     try {
       const result = await apiPost<{ id?: string }>("/admin/email-templates", ctx.req, payload);
       const savedId = result?.id ?? id;
-      // Redirect to show the saved template
-      if (savedId) {
-        return Response.redirect(new URL(`/api/admin/modal/email-templates?id=${savedId}`, ctx.req.url), 303);
-      }
-      return Response.redirect(new URL("/api/admin/modal/email-templates", ctx.req.url), 303);
+      // Return the updated modal directly — no redirect
+      return renderTemplatesModal(ctx.req, { activeId: savedId || undefined });
     } catch (e) {
-      return new Response(`<div style="color:var(--red);font-size:12px;padding:12px;">Error: ${(e as Error).message}</div>`, { headers: { "content-type": "text/html" } });
+      return new Response(
+        `<div style="color:var(--red);font-size:12px;padding:12px;">Error: ${(e as Error).message}</div>`,
+        { headers: { "content-type": "text/html" } },
+      );
     }
   },
 });

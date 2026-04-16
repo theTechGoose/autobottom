@@ -1,6 +1,7 @@
-/** POST: Create or update email report config. */
+/** POST: Create or update email report config. Returns updated modal HTML directly (no redirect). */
 import { define } from "../../../../../lib/define.ts";
 import { apiPost } from "../../../../../lib/api.ts";
+import { renderReportsModal } from "../email-reports.tsx";
 
 export const handler = define.handlers({
   async POST(ctx) {
@@ -17,10 +18,13 @@ export const handler = define.handlers({
     try {
       await apiPost("/admin/email-reports", ctx.req, payload);
     } catch (e) {
-      return new Response(`<div style="color:var(--red);font-size:12px;padding:12px;">Error: ${(e as Error).message}</div>`, { headers: { "content-type": "text/html" } });
+      return new Response(
+        `<div style="color:var(--red);font-size:12px;padding:12px;">Error: ${(e as Error).message}</div>`,
+        { headers: { "content-type": "text/html" } },
+      );
     }
 
-    // Redirect back to list
-    return Response.redirect(new URL("/api/admin/modal/email-reports", ctx.req.url), 303);
+    // Return list view directly — no redirect
+    return renderReportsModal(ctx.req, { view: "list" });
   },
 });

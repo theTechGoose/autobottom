@@ -16,18 +16,19 @@ const ROLES = [
   { role: "user", name: "Team Member", desc: "Call center team member.", icon: Icon.barChart, bg: "var(--cyan-bg)", fg: "var(--cyan)" },
 ];
 
-export const handler = define.handlers({
-  async GET(ctx) {
-    const url = new URL(ctx.req.url);
-    const tab = url.searchParams.get("tab") ?? "list";
-    const addRole = url.searchParams.get("role") ?? "";
+export async function renderUsersModal(
+  req: Request,
+  opts: { tab?: string; addRole?: string } = {},
+): Promise<Response> {
+  const tab = opts.tab ?? "list";
+  const addRole = opts.addRole ?? "";
 
-    let users: { email: string; role: string; supervisor?: string }[] = [];
-    try { const d = await apiFetch<{ users: typeof users }>("/admin/users", ctx.req); users = d.users ?? []; } catch {}
+  let users: { email: string; role: string; supervisor?: string }[] = [];
+  try { const d = await apiFetch<{ users: typeof users }>("/admin/users", req); users = d.users ?? []; } catch {}
 
-    const managers = users.filter(u => u.role === "manager");
-    const judges = users.filter(u => u.role === "judge");
-    const supervisors = [...judges, ...users.filter(u => u.role === "admin")];
+  const managers = users.filter(u => u.role === "manager");
+  const judges = users.filter(u => u.role === "judge");
+  const supervisors = [...judges, ...users.filter(u => u.role === "admin")];
 
     const html = renderToString(
       <div style="display:flex;flex-direction:column;height:100%;">
@@ -161,6 +162,15 @@ export const handler = define.handlers({
         </div>
       </div>
     );
-    return new Response(html, { headers: { "content-type": "text/html" } });
+  return new Response(html, { headers: { "content-type": "text/html" } });
+}
+
+export const handler = define.handlers({
+  GET(ctx) {
+    const url = new URL(ctx.req.url);
+    return renderUsersModal(ctx.req, {
+      tab: url.searchParams.get("tab") ?? "list",
+      addRole: url.searchParams.get("role") ?? "",
+    });
   },
 });

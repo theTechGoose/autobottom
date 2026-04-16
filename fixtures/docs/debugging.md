@@ -20,24 +20,41 @@ Reload your shell. Verify with `deployctl --version`.
 
 All log tasks use the `DEPLOYCTL_TOKEN` env var.
 
+### Finding the preview deployment ID
+
+Branch preview log commands need `PREVIEW_ID` — the build hash from Deno Deploy.
+
+1. Go to https://app.deno.com/thetechgoose/autobottom/builds
+2. Click the latest build on your branch (e.g. `refactor/danet-backend`)
+3. The URL ends with `/builds/<PREVIEW_ID>` — copy that hash
+4. Or: the preview subdomain looks like `autobottom-<PREVIEW_ID>.thetechgoose.deno.net`
+
 ```bash
-# All recent prod logs (200 lines)
+# Production logs (last 200 lines)
 deno task logs:prod
 
-# All recent preview-deployment logs (branch previews)
+# Branch preview logs — set PREVIEW_ID first
+export PREVIEW_ID=28dd37bksa97
 deno task logs:preview
+# or 500 lines:
+deno task logs:branch
 
-# Only lines containing "AUDIT" (filter defined in deno.json)
-deno task logs:audit
-
-# Only lines containing "QSTASH"
-deno task logs:qstash
+# AUDIT/QSTASH filtering uses grep (works on both prod and preview)
+deno task logs:prod 2>&1 | grep -E "AUDIT|QSTASH"
+PREVIEW_ID=28dd37bksa97 deno task logs:preview 2>&1 | grep -E "AUDIT|QSTASH|STEP"
 ```
 
-Pipe to grep/awk for further filtering:
+### Common filter patterns
+
 ```bash
-deno task logs:prod 2>&1 | grep -E "❌|error" | head -50
-deno task logs:prod 2>&1 | grep "📮 \[QSTASH\]" | tail -20
+# The full audit enqueue lifecycle for one audit
+PREVIEW_ID=xxx deno task logs:preview 2>&1 | grep -E "🚀|📮|✅|❌"
+
+# Only failures
+deno task logs:prod 2>&1 | grep -E "❌|ERROR"
+
+# QStash callback URLs (confirms ALS is writing the right origin)
+deno task logs:prod 2>&1 | grep "📮 \[QSTASH\]"
 ```
 
 ## What to Check When Audits Don't Run
@@ -73,7 +90,7 @@ Returns the current `active-tracking` entries, `completedCount`, and sample rece
 ### 3. Did enqueueStep actually call QStash with the right URL?
 
 ```bash
-deno task logs:qstash | head -20
+PREVIEW_ID=xxx deno task logs:preview 2>&1 | grep "📮"
 ```
 
 Look for lines like:
@@ -86,10 +103,37 @@ If the callback URL is wrong, the SELF_URL fix didn't take effect on that deploy
 ### 4. Did QStash deliver the callback?
 
 ```bash
-deno task logs:audit | grep "step=init"
+PREVIEW_ID=xxx deno task logs:preview 2>&1 | grep "\[STEP-INIT\]"
 ```
 
-If you see the enqueue log but no step callback logs, QStash either didn't deliver, or delivered to the wrong deployment.
+If you see the enqueue log (📮) but no `[STEP-INIT]` log lines, QStash either didn't deliver, or delivered to the wrong deployment (check the callback URL from step 3).
+
+### 5. Did trackActive run? (The queued state marker)
+
+The audit controller calls `trackActive(orgId, findingId, "queued", ...)` RIGHT AFTER enqueueing to QStash. This is what makes the audit appear in the Active Audits table instantly, without waiting for QStash delivery.
+
+```bash
+PREVIEW_ID=xxx deno task logs:preview 2>&1 | grep -E "trackActive|🚀 \[AUDIT\]"
+```
+
+Expected successful flow (in this order):
+```
+🚀 [AUDIT] Date-leg audit started: job=X finding=Y rid=Z orgId=monsterrg
+📮 [QSTASH] enqueueStep step=init callback=https://<preview>/audit/step/init
+✅ [AUDIT] trackActive(queued) succeeded orgId=monsterrg finding=Y
+```
+
+If you see `❌ [AUDIT] trackActive FAILED`, the error message tells you why. Common causes:
+- KV connection lost mid-request
+- orgId is undefined or empty
+- Key format collision with another writer
+
+**Shortcut:** the `/api/admin/test-audit` endpoint now returns this status inline. When you click "Start Audit" on the dashboard, the response shows:
+- ✅ Green audit ID link if everything worked
+- 📮 Callback URL if enqueue succeeded (confirms ALS)
+- ⚠️ Yellow warning if enqueue or trackActive failed, with the actual error
+
+No log access needed for the common failure modes.
 
 ## Environment Variables Reference
 

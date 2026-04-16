@@ -12,7 +12,7 @@ import { authenticate } from "@core/business/auth/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { KvRepository } from "@core/business/repository-base/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
-import { enqueueStep } from "@core/data/qstash/mod.ts";
+import { enqueueStep, getSelfUrl } from "@core/data/qstash/mod.ts";
 import { S3Ref } from "@core/data/s3/mod.ts";
 
 const findingRepo = new KvRepository("audit-finding");
@@ -51,19 +51,31 @@ export class AuditController {
       startedAt: Date.now(),
     };
     await findingRepo.setChunked(orgId, [findingId], finding);
-    await enqueueStep("init", { findingId, orgId });
-    // Mark as queued IMMEDIATELY so the audit shows up in the Active Audits table.
-    // stepInit will overwrite with "init" once QStash delivers. Let errors propagate —
-    // silent .catch() previously masked trackActive failures, making debugging impossible.
+
+    // Capture enqueue result + trackActive status so the frontend can surface any
+    // failure without requiring log access. This lets the user see "audit started
+    // BUT trackActive failed: <reason>" instead of a silent success that vanishes.
+    let enqueueResult: { ok: boolean; messageId?: string; callback?: string; error?: string };
+    try {
+      const messageId = await enqueueStep("init", { findingId, orgId });
+      enqueueResult = { ok: true, messageId, callback: `${getSelfUrl()}/audit/step/init` };
+    } catch (e) {
+      enqueueResult = { ok: false, error: (e as Error).message };
+      console.error(`❌ [AUDIT] enqueueStep FAILED orgId=${orgId} finding=${findingId}:`, e);
+    }
+
+    let trackActiveResult: { ok: boolean; error?: string };
     try {
       await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: false, startedAt: Date.now() });
+      trackActiveResult = { ok: true };
       console.log(`✅ [AUDIT] trackActive(queued) succeeded orgId=${orgId} finding=${findingId}`);
     } catch (e) {
+      trackActiveResult = { ok: false, error: (e as Error).message };
       console.error(`❌ [AUDIT] trackActive FAILED orgId=${orgId} finding=${findingId}:`, e);
     }
 
     console.log(`🚀 [AUDIT] Date-leg audit started: job=${jobId} finding=${findingId} rid=${rid} orgId=${orgId}`);
-    return { jobId, findingId, status: "queued" };
+    return { jobId, findingId, status: "queued", enqueue: enqueueResult, trackActive: trackActiveResult };
   }
 
   @Post("package-by-rid") @ReturnedType(AuditQueuedResponse) @Description("Create package audit from QuickBase record ID") @BodyType(GenericBodyRequest)
@@ -95,17 +107,28 @@ export class AuditController {
       startedAt: Date.now(),
     };
     await findingRepo.setChunked(orgId, [findingId], finding);
-    await enqueueStep("init", { findingId, orgId });
-    // Mark as queued IMMEDIATELY (see createDateLegAudit for rationale).
+
+    let enqueueResult: { ok: boolean; messageId?: string; callback?: string; error?: string };
+    try {
+      const messageId = await enqueueStep("init", { findingId, orgId });
+      enqueueResult = { ok: true, messageId, callback: `${getSelfUrl()}/audit/step/init` };
+    } catch (e) {
+      enqueueResult = { ok: false, error: (e as Error).message };
+      console.error(`❌ [AUDIT] enqueueStep FAILED orgId=${orgId} finding=${findingId}:`, e);
+    }
+
+    let trackActiveResult: { ok: boolean; error?: string };
     try {
       await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: true, startedAt: Date.now() });
+      trackActiveResult = { ok: true };
       console.log(`✅ [AUDIT] trackActive(queued) succeeded orgId=${orgId} finding=${findingId}`);
     } catch (e) {
+      trackActiveResult = { ok: false, error: (e as Error).message };
       console.error(`❌ [AUDIT] trackActive FAILED orgId=${orgId} finding=${findingId}:`, e);
     }
 
     console.log(`🚀 [AUDIT] Package audit started: job=${jobId} finding=${findingId} rid=${rid} orgId=${orgId}`);
-    return { jobId, findingId, status: "queued" };
+    return { jobId, findingId, status: "queued", enqueue: enqueueResult, trackActive: trackActiveResult };
   }
 
   @Get("finding") @ReturnedType(FindingResponse) @Description("Get audit finding by ID")

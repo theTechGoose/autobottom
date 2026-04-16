@@ -15,9 +15,10 @@
     "verify": "deno task check && deno task shape-check && deno task test:e2e",
     "shape-check": "bash fixtures/scripts/shape-check.sh",
     "logs:prod": "deployctl logs --project=autobottom --prod --limit=200",
-    "logs:preview": "deployctl logs --project=autobottom --limit=200",
-    "logs:audit": "deployctl logs --project=autobottom --prod --filter=AUDIT --limit=200",
-    "logs:qstash": "deployctl logs --project=autobottom --prod --filter=QSTASH --limit=200"
+    "logs:preview": "deployctl logs --project=autobottom --deployment=${PREVIEW_ID:?Set PREVIEW_ID env var to the branch preview build id (e.g. PREVIEW_ID=28dd37bksa97)} --limit=200",
+    "logs:branch": "deployctl logs --project=autobottom --deployment=${PREVIEW_ID:?Set PREVIEW_ID env var to the branch preview build id (e.g. PREVIEW_ID=28dd37bksa97)} --limit=500",
+    "logs:audit": "deployctl logs --project=autobottom --prod --limit=500",
+    "logs:audit:preview": "deployctl logs --project=autobottom --deployment=${PREVIEW_ID:?Set PREVIEW_ID env var} --limit=500"
   },
   "imports": {
     "@mrg-keystone/danet": "jsr:@mrg-keystone/danet@^1.0.2",

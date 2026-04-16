@@ -8,7 +8,10 @@ import { apiFetch } from "../../lib/api.ts";
 
 export default define.page(async function AuditReport(ctx) {
   const url = new URL(ctx.req.url);
-  const id = url.searchParams.get("id") ?? "";
+  // Trim the id — browsers URL-decode `+` to space, so if anything copied a leading
+  // space (like selecting the success message text), the ID gets a leading space and
+  // becomes " LhW..." which never matches any real finding. Also handle tab/newline.
+  const id = (url.searchParams.get("id") ?? "").trim();
   const user = ctx.state.user;
 
   if (!id) {

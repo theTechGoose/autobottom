@@ -15,7 +15,11 @@ export const handler = define.handlers({
         `${endpoint}?rid=${encodeURIComponent(rid)}`, ctx.req, { rid },
       );
       if (data.error) return new Response(`<span class="error-text">${data.error}</span>`, { headers: { "content-type": "text/html" } });
-      return new Response(`<span style="color:var(--green);font-size:12px;">Audit started: ${data.findingId ?? data.jobId ?? "queued"}</span>`, { headers: { "content-type": "text/html" } });
+      const id = data.findingId ?? data.jobId ?? "";
+      const link = id
+        ? `<a href="/audit/report?id=${encodeURIComponent(id)}" target="_blank" rel="noopener" style="color:var(--green);font-weight:600;text-decoration:underline;">${id}</a>`
+        : "queued";
+      return new Response(`<span style="color:var(--green);font-size:12px;">Audit started: ${link}</span>`, { headers: { "content-type": "text/html" } });
     } catch (e) {
       return new Response(`<span class="error-text">${e}</span>`, { headers: { "content-type": "text/html" } });
     }

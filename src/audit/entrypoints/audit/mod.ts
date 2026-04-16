@@ -53,11 +53,16 @@ export class AuditController {
     await findingRepo.setChunked(orgId, [findingId], finding);
     await enqueueStep("init", { findingId, orgId });
     // Mark as queued IMMEDIATELY so the audit shows up in the Active Audits table.
-    // stepInit will overwrite with "init" once QStash delivers. If QStash is slow/broken,
-    // the user still sees "this audit is stuck at queued" instead of nothing.
-    await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: false, startedAt: Date.now() }).catch(() => {});
+    // stepInit will overwrite with "init" once QStash delivers. Let errors propagate —
+    // silent .catch() previously masked trackActive failures, making debugging impossible.
+    try {
+      await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: false, startedAt: Date.now() });
+      console.log(`✅ [AUDIT] trackActive(queued) succeeded orgId=${orgId} finding=${findingId}`);
+    } catch (e) {
+      console.error(`❌ [AUDIT] trackActive FAILED orgId=${orgId} finding=${findingId}:`, e);
+    }
 
-    console.log(`🚀 [AUDIT] Date-leg audit started: job=${jobId} finding=${findingId} rid=${rid}`);
+    console.log(`🚀 [AUDIT] Date-leg audit started: job=${jobId} finding=${findingId} rid=${rid} orgId=${orgId}`);
     return { jobId, findingId, status: "queued" };
   }
 
@@ -92,9 +97,14 @@ export class AuditController {
     await findingRepo.setChunked(orgId, [findingId], finding);
     await enqueueStep("init", { findingId, orgId });
     // Mark as queued IMMEDIATELY (see createDateLegAudit for rationale).
-    await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: true, startedAt: Date.now() }).catch(() => {});
+    try {
+      await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: true, startedAt: Date.now() });
+      console.log(`✅ [AUDIT] trackActive(queued) succeeded orgId=${orgId} finding=${findingId}`);
+    } catch (e) {
+      console.error(`❌ [AUDIT] trackActive FAILED orgId=${orgId} finding=${findingId}:`, e);
+    }
 
-    console.log(`🚀 [AUDIT] Package audit started: job=${jobId} finding=${findingId} rid=${rid}`);
+    console.log(`🚀 [AUDIT] Package audit started: job=${jobId} finding=${findingId} rid=${rid} orgId=${orgId}`);
     return { jobId, findingId, status: "queued" };
   }
 

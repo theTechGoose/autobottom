@@ -60,4 +60,29 @@ export class DashboardController {
     if (!recordId) return { error: "recordId required" };
     return { audits: await findAuditsByRecordId(ORG(), recordId) };
   }
+
+  /** Debug: dump active-tracking + completed-audit-stat KV entries for the current org.
+   *  Useful for diagnosing "I started an audit and it disappeared" — shows what's
+   *  actually stored vs what the dashboard is rendering. */
+  @Get("debug/kv-state") @ReturnedType(OkResponse)
+  async debugKvState() {
+    const { getKv, orgKey } = await import("@core/data/deno-kv/mod.ts");
+    const db = await getKv();
+    const orgId = ORG();
+    const active: unknown[] = [];
+    const completed: unknown[] = [];
+    const errors: unknown[] = [];
+    for await (const e of db.list({ prefix: orgKey(orgId, "active-tracking") })) {
+      active.push({ key: e.key, value: e.value });
+    }
+    let completedCount = 0;
+    for await (const e of db.list({ prefix: orgKey(orgId, "completed-audit-stat") })) {
+      completedCount++;
+      if (completed.length < 5) completed.push({ key: e.key, value: e.value });
+    }
+    for await (const e of db.list({ prefix: orgKey(orgId, "error-tracking") })) {
+      if (errors.length < 5) errors.push({ key: e.key, value: e.value });
+    }
+    return { orgId, active, activeCount: active.length, completedCount, recentCompletedSample: completed, errors };
+  }
 }

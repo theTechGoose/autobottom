@@ -29,8 +29,8 @@ export const handler = define.handlers({
     let templates: { id: string; name: string }[] = [];
     try { config = await apiFetch(`/admin/settings/${activeKind}`, ctx.req); } catch {}
     try {
-      const tList = await apiFetch<unknown>("/admin/email-templates", ctx.req);
-      templates = Array.isArray(tList) ? tList : [];
+      const tList = await apiFetch<{ templates?: { id: string; name: string }[] } | { id: string; name: string }[]>("/admin/email-templates", ctx.req);
+      templates = Array.isArray(tList) ? tList : (tList.templates ?? []);
     } catch {}
 
     const kindInfo = KINDS.find(k => k.kind === activeKind) ?? KINDS[0];

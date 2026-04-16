@@ -5,7 +5,11 @@ import { renderToString } from "preact-render-to-string";
 
 async function renderScopeEditor(req: Request, email: string): Promise<Response> {
   let scope = { departments: [] as string[], shifts: [] as string[] };
-  try { scope = await apiFetch(`/admin/manager-scopes/${encodeURIComponent(email)}`, req); } catch {}
+  try {
+    const all = await apiFetch<Record<string, { departments?: string[]; shifts?: string[] }>>("/admin/manager-scopes", req);
+    const entry = all?.[email];
+    if (entry) scope = { departments: entry.departments ?? [], shifts: entry.shifts ?? [] };
+  } catch {}
 
   const html = renderToString(
     <div style="display:flex;flex-direction:column;gap:16px;height:100%;">
@@ -53,7 +57,11 @@ export const handler = define.handlers({
     const form = await ctx.req.formData();
 
     let scope = { departments: [] as string[], shifts: [] as string[] };
-    try { scope = await apiFetch(`/admin/manager-scopes/${encodeURIComponent(email)}`, ctx.req); } catch {}
+    try {
+      const all = await apiFetch<Record<string, { departments?: string[]; shifts?: string[] }>>("/admin/manager-scopes", ctx.req);
+      const entry = all?.[email];
+      if (entry) scope = { departments: entry.departments ?? [], shifts: entry.shifts ?? [] };
+    } catch {}
 
     if (action === "add-dept") {
       const dept = ((form.get("dept") as string) ?? "").trim();
@@ -67,7 +75,8 @@ export const handler = define.handlers({
       scope.shifts = scope.shifts.filter(s => s !== value);
     }
 
-    try { await apiPost(`/admin/manager-scopes/${encodeURIComponent(email)}`, ctx.req, scope); } catch {}
+    // Backend expects { email, scope } body
+    try { await apiPost("/admin/manager-scopes", ctx.req, { email, scope }); } catch {}
 
     // Return the updated scope editor HTML directly — no redirect
     return renderScopeEditor(ctx.req, email);

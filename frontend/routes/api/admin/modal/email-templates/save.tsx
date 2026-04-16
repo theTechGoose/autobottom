@@ -15,8 +15,9 @@ export const handler = define.handlers({
     if (id) payload.id = id;
 
     try {
-      const result = await apiPost<{ id?: string }>("/admin/email-templates", ctx.req, payload);
-      const savedId = result?.id ?? id;
+      // Backend returns { ok, template: { id, ... } }
+      const result = await apiPost<{ ok?: boolean; template?: { id?: string } }>("/admin/email-templates", ctx.req, payload);
+      const savedId = result?.template?.id ?? id;
       // Return the updated modal directly — no redirect
       return renderTemplatesModal(ctx.req, { activeId: savedId || undefined });
     } catch (e) {

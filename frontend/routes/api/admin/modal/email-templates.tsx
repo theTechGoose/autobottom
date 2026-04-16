@@ -19,8 +19,8 @@ export async function renderTemplatesModal(
 
   let templates: Template[] = [];
   try {
-    const d = await apiFetch<unknown>("/admin/email-templates", req);
-    templates = Array.isArray(d) ? d : [];
+    const d = await apiFetch<{ templates?: Template[] } | Template[]>("/admin/email-templates", req);
+    templates = Array.isArray(d) ? d : (d.templates ?? []);
   } catch {}
 
   const active = activeId ? templates.find(t => t.id === activeId) : null;

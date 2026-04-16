@@ -7,11 +7,21 @@ export const handler = define.handlers({
   async POST(ctx) {
     const form = await ctx.req.formData();
     const dept = (form.get("dept") as string)?.trim();
-    if (dept) {
-      try { await apiPost("/admin/audit-dimensions/add", ctx.req, { department: dept }); } catch {}
-    }
+
+    // Fetch current dimensions, add dept, save back whole object
     let depts: string[] = [];
-    try { const d = await apiFetch<{ departments?: string[] }>("/admin/audit-dimensions", ctx.req); depts = d.departments ?? []; } catch {}
+    let shifts: string[] = [];
+    try {
+      const d = await apiFetch<{ departments?: string[]; shifts?: string[] }>("/admin/audit-dimensions", ctx.req);
+      depts = d.departments ?? [];
+      shifts = d.shifts ?? [];
+    } catch {}
+
+    if (dept && !depts.includes(dept)) {
+      depts.push(dept);
+      try { await apiPost("/admin/audit-dimensions", ctx.req, { departments: depts, shifts }); } catch {}
+    }
+
     const html = renderToString(
       <>{depts.length === 0 ? (
         <div style="color:var(--text-dim);font-size:11px;padding:8px;">No offices added</div>

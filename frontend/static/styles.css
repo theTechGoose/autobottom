@@ -371,11 +371,11 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .verdict-undo:hover { border-color: var(--border-hover); color: var(--text-muted); }
 .verdict-undo kbd { font-size: 9px; font-family: var(--mono); font-weight: 700; padding: 1px 5px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; }
 
-/* ===== Review/Judge queue — verdict panel expansion (Commit E) ===== */
-.verdict-audit-header { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
-.verdict-audit-row { display: flex; gap: 10px; align-items: center; font-size: 12px; padding: 2px 0; }
-.verdict-audit-label { color: var(--text-dim); text-transform: uppercase; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; min-width: 56px; }
-.verdict-audit-value { color: var(--text-bright); font-weight: 600; }
+/* ===== Review/Judge queue — verdict panel expansion (Commit E, tightened in L) ===== */
+.verdict-audit-header { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
+.verdict-audit-row { display: flex; gap: 10px; align-items: center; font-size: 11px; padding: 1px 0; }
+.verdict-audit-label { color: var(--text-dim); text-transform: uppercase; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; min-width: 52px; }
+.verdict-audit-value { color: var(--text-bright); font-weight: 600; font-size: 12px; }
 .verdict-audit-value.mono { font-family: var(--mono); font-size: 11px; }
 .verdict-audit-badges { display: flex; gap: 6px; margin-top: 8px; }
 .verdict-type-pill { font-size: 9px; font-weight: 700; padding: 3px 10px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.8px; }
@@ -383,8 +383,8 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .verdict-type-pill.intl { background: rgba(139,92,246,0.12); color: var(--accent); border: 1px solid rgba(139,92,246,0.25); }
 .verdict-failed-count { font-size: 9px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: rgba(248,81,73,0.12); color: var(--red); border: 1px solid rgba(248,81,73,0.25); text-transform: uppercase; letter-spacing: 0.8px; }
 
-.verdict-defense-block { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
-.verdict-defense-quote { font-size: 13px; color: var(--text); line-height: 1.5; white-space: pre-wrap; }
+.verdict-defense-block { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.verdict-defense-quote { font-size: 12px; color: var(--text); line-height: 1.45; white-space: pre-wrap; font-style: italic; }
 
 .verdict-accordion { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
 .verdict-accordion > summary { cursor: pointer; padding: 10px 14px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); display: flex; align-items: center; justify-content: space-between; gap: 8px; list-style: none; }
@@ -408,8 +408,8 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .failed-q-pill.current .failed-q-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent-bg); }
 .failed-q-name { color: var(--text); flex: 1; }
 
-.verdict-meta-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
-.verdict-meta-chip { font-size: 10px; padding: 4px 10px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); text-decoration: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 4px; }
+.verdict-meta-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0; }
+.verdict-meta-chip { font-size: 9px; padding: 3px 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); text-decoration: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 3px; line-height: 1.4; }
 .verdict-meta-chip:hover { border-color: var(--border-hover); color: var(--text-bright); }
 .verdict-meta-chip.pulse { background: rgba(45,212,191,0.10); color: var(--teal); border-color: rgba(45,212,191,0.3); animation: pulse-final 1.8s ease-in-out infinite; }
 @keyframes pulse-final { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
@@ -597,6 +597,39 @@ textarea.sf-input { height: 48px; resize: vertical; }
   flex-shrink: 0;
 }
 
+/* Skip-tier indicator — accelerating seek (Commit L) */
+.bb-skip-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+  min-width: 56px;
+}
+.bb-skip-indicator.active { opacity: 1; }
+.bb-skip-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 24px;
+  text-align: right;
+}
+.bb-skip-bar-wrap {
+  width: 36px;
+  height: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bb-skip-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease-out;
+}
+
 /* Combo / session / level / streak */
 .bb-combo { display: flex; flex-direction: column; align-items: center; line-height: 1; flex-shrink: 0; }
 .bb-combo-num { font-family: var(--mono); font-size: 18px; font-weight: 800; }
@@ -733,8 +766,12 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .t-timestamp { display: inline-block; font-family: var(--mono); font-size: 9px; color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); padding: 1px 6px; border-radius: 3px; margin-right: 6px; cursor: pointer; vertical-align: baseline; }
 .t-timestamp:hover { color: var(--text-bright); border-color: var(--border-hover); }
 .t-speaker { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; margin-right: 6px; }
-.t-speaker-team { color: var(--blue); }
-.t-speaker-guest { color: var(--accent); }
+/* Speaker colors match prod (main:shared/queue-page.ts): review mode uses
+   pale blue/purple; judge mode uses teals via the data-mode override below. */
+.t-speaker-team { color: #79b8ff; }
+.t-speaker-guest { color: #d2b3ff; }
+.queue-layout[data-mode="judge"] .t-speaker-team { color: #5eead4; }
+.queue-layout[data-mode="judge"] .t-speaker-guest { color: #99f6e4; }
 .t-text { color: var(--text); }
 
 /* ===== Transcript interactivity (Commit G) ===== */

@@ -30,6 +30,8 @@ const SPEED_MIN = 0.5;
 const SPEED_MAX = 3.0;
 const COMBO_TIMEOUT_MS = 5000;
 const TYPE_FILTER_KEY_REVIEW = "review_typefilter";
+const SKIP_TIERS = [5, 10, 15]; // seconds per tier
+const SKIP_TIER_WINDOW_MS = 1000;
 
 function fmt(s: number): string {
   if (!isFinite(s) || s < 0) s = 0;
@@ -63,6 +65,7 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
   const [session, setSession] = useState(0);
   const [game, setGame] = useState<GameState>({});
   const [hasAudio, setHasAudio] = useState(!!initialFindingId);
+  const [skipTier, setSkipTier] = useState(-1); // -1 = hidden
   const [typeFilter, setTypeFilter] = useState<string>(
     typeof localStorage !== "undefined" ? (localStorage.getItem(TYPE_FILTER_KEY_REVIEW) ?? "") : "",
   );
@@ -79,6 +82,11 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
     let wfProgress = 0;
     let currentLoadFid: string | null = null;
     let lastDecision = 0;
+    // Skip-tier accelerating seek state
+    let tier = -1;
+    let lastSkipPress = 0;
+    let skipDecayTimer: number | null = null;
+    let skipHideTimer: number | null = null;
 
     function sizeCanvas() {
       const rect = canvas!.getBoundingClientRect();
@@ -187,11 +195,37 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       });
     }
 
+    function scheduleDecay() {
+      if (skipDecayTimer != null) clearTimeout(skipDecayTimer);
+      if (skipHideTimer != null) { clearTimeout(skipHideTimer); skipHideTimer = null; }
+      skipDecayTimer = setTimeout(function decayStep() {
+        if (tier > 0) {
+          tier--;
+          setSkipTier(tier);
+          skipDecayTimer = setTimeout(decayStep, 1000);
+        } else {
+          skipDecayTimer = null;
+          skipHideTimer = setTimeout(() => { tier = -1; setSkipTier(-1); }, 600);
+        }
+      }, 1000);
+    }
+
     // Event bus
     const onPlayToggle = () => togglePlay();
     const onSeek = (e: Event) => {
       const detail = (e as CustomEvent).detail as { delta?: number } | undefined;
-      skipBy(detail?.delta ?? SEEK_STEP);
+      const dir = (detail?.delta ?? SEEK_STEP) < 0 ? -1 : 1;
+      const now = Date.now();
+      if (now - lastSkipPress < SKIP_TIER_WINDOW_MS && tier < SKIP_TIERS.length - 1) {
+        tier++;
+      } else if (now - lastSkipPress >= SKIP_TIER_WINDOW_MS) {
+        tier = 0;
+      }
+      lastSkipPress = now;
+      setSkipTier(tier);
+      const amount = SKIP_TIERS[Math.max(0, tier)] * dir;
+      skipBy(amount);
+      scheduleDecay();
     };
     const onSpeedEv = (e: Event) => {
       const detail = (e as CustomEvent).detail as { delta?: number } | undefined;
@@ -281,6 +315,8 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("click", onChipClick);
       globalThis.removeEventListener("resize", sizeCanvas);
+      if (skipDecayTimer != null) clearTimeout(skipDecayTimer);
+      if (skipHideTimer != null) clearTimeout(skipHideTimer);
     };
   }, [initialFindingId, mode, speed]);
 
@@ -353,6 +389,15 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
         5s ⏭
       </button>
       <canvas class="bb-waveform" ref={canvasRef} style={hasAudio ? "" : "opacity:0.4"} />
+      <div class={`bb-skip-indicator ${skipTier >= 0 ? "active" : ""}`}>
+        <span class="bb-skip-label">{skipTier >= 0 ? `${SKIP_TIERS[skipTier]}s` : ""}</span>
+        <div class="bb-skip-bar-wrap">
+          <div
+            class="bb-skip-bar"
+            style={`width:${skipTier >= 0 ? ((skipTier + 1) / SKIP_TIERS.length) * 100 : 0}%`}
+          />
+        </div>
+      </div>
       <span class="bb-time" ref={timeRef}>0:00 / 0:00</span>
       <span class="bb-speed" style={speedVisible ? `color:${speedColor}` : "visibility:hidden"}>
         {speed.toFixed(1)}×

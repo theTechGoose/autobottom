@@ -29,7 +29,7 @@ export default define.page(async function JudgeQueue(ctx) {
     <Layout title="Judge Queue" section="judge" user={user} hideSidebar>
       <HotkeyHandler mode="judge" />
       <SoundEngine />
-      <div class="queue-layout" id="queue-content">
+      <div class="queue-layout" id="queue-content" data-mode="judge">
         <div class="queue-left">
           <VerdictPanel
             item={item}

@@ -28,7 +28,7 @@ export default define.page(async function ReviewQueue(ctx) {
     <Layout title="Review Queue" section="review" user={user} hideSidebar>
       <HotkeyHandler mode="review" />
       <SoundEngine />
-      <div class="queue-layout" id="queue-content">
+      <div class="queue-layout" id="queue-content" data-mode="review">
         <div class="queue-left">
           <VerdictPanel
             item={item}

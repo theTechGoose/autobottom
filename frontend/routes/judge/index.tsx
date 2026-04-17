@@ -1,4 +1,5 @@
-/** Judge queue page — split layout with verdict panel + transcript, appeal info. */
+/** Judge queue page — split layout with verdict panel + transcript, appeal info.
+ *  No sidebar — matches prod, which gives the queue the full viewport. */
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { VerdictPanel } from "../../components/VerdictPanel.tsx";
@@ -7,11 +8,10 @@ import { apiFetch } from "../../lib/api.ts";
 import type { ReviewItem } from "../../components/VerdictPanel.tsx";
 import HotkeyHandler from "../../islands/HotkeyHandler.tsx";
 import SoundEngine from "../../islands/SoundEngine.tsx";
-import QueueAudioPlayer from "../../islands/QueueAudioPlayer.tsx";
 import TranscriptInteractive from "../../islands/TranscriptInteractive.tsx";
 import QueueModals from "../../islands/QueueModals.tsx";
-import GamificationBar from "../../islands/GamificationBar.tsx";
 import JudgeModals from "../../islands/JudgeModals.tsx";
+import BottomBar from "../../islands/BottomBar.tsx";
 
 interface BufferResponse { buffer: ReviewItem[]; remaining: number; }
 
@@ -26,7 +26,7 @@ export default define.page(async function JudgeQueue(ctx) {
   const item = buffer[currentIndex] ?? null;
 
   return (
-    <Layout title="Judge Queue" section="judge" user={user}>
+    <Layout title="Judge Queue" section="judge" user={user} hideSidebar>
       <HotkeyHandler mode="judge" />
       <SoundEngine />
       <div class="queue-layout" id="queue-content">
@@ -49,8 +49,7 @@ export default define.page(async function JudgeQueue(ctx) {
           />
         </div>
       </div>
-      <GamificationBar mode="judge" email={user.email} />
-      <QueueAudioPlayer initialFindingId={item?.findingId ?? null} />
+      <BottomBar mode="judge" email={user.email} initialFindingId={item?.findingId ?? null} />
       <QueueModals />
       <JudgeModals />
     </Layout>

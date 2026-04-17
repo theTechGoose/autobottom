@@ -491,8 +491,173 @@ textarea.sf-input { height: 48px; resize: vertical; }
   flex-shrink: 0;
 }
 
-/* Push queue content up so it doesn't sit under the audio bar + gamification bar */
-.queue-layout { padding-bottom: 120px; }
+/* Push queue content up so it doesn't sit under the unified bottom bar */
+.queue-layout { padding-bottom: 72px; }
+
+/* ===== Unified bottom bar (Commit K) — replaces gamification + audio bars ===== */
+.bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 72px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  z-index: 100;
+  font-size: 11px;
+}
+.bottom-bar button { font-family: inherit; }
+.bottom-bar .bb-spacer { flex: 1; }
+
+/* Help hint */
+.bb-help {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.bb-help:hover { border-color: var(--accent); color: var(--text-bright); }
+.bb-help kbd {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 1px 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+/* Audio controls */
+.bb-skip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.bb-skip:hover:not(:disabled) { border-color: var(--accent); color: var(--text-bright); }
+.bb-skip:disabled { opacity: 0.35; cursor: not-allowed; }
+.bb-play {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+}
+.bb-play:hover:not(:disabled) { box-shadow: 0 0 12px rgba(139,92,246,0.4); }
+.bb-play:disabled { opacity: 0.4; cursor: not-allowed; }
+.bb-play svg { width: 12px; height: 12px; fill: #fff; }
+.bb-waveform {
+  flex: 0 1 260px;
+  min-width: 120px;
+  height: 40px;
+  cursor: pointer;
+  border-radius: 3px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.bb-time {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 80px;
+  text-align: center;
+}
+.bb-speed {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 2px 7px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* Combo / session / level / streak */
+.bb-combo { display: flex; flex-direction: column; align-items: center; line-height: 1; flex-shrink: 0; }
+.bb-combo-num { font-family: var(--mono); font-size: 18px; font-weight: 800; }
+.bb-combo-label { font-size: 8px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-top: 1px; }
+.bb-combo-dim .bb-combo-num { color: var(--text-dim); }
+.bb-combo-hot .bb-combo-num { color: var(--blue); }
+.bb-combo-fire .bb-combo-num { color: var(--accent); text-shadow: 0 0 8px rgba(139,92,246,0.4); }
+.bb-combo-inferno .bb-combo-num { color: var(--red); text-shadow: 0 0 10px rgba(248,113,113,0.5); }
+.bb-combo-godlike .bb-combo-num { color: var(--yellow); text-shadow: 0 0 14px rgba(251,191,36,0.6); }
+
+.bb-session { display: flex; flex-direction: column; align-items: center; line-height: 1; flex-shrink: 0; }
+.bb-session-num { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--text-bright); }
+.bb-session-label { font-size: 8px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-top: 1px; }
+
+.bb-level { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.bb-level-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--accent-bg);
+  color: var(--accent);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(139,92,246,0.25);
+}
+.bb-xp-track { width: 90px; height: 5px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+.bb-xp-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--blue)); transition: width 0.3s; }
+.bb-xp-num { font-family: var(--mono); font-size: 9px; color: var(--text-muted); min-width: 44px; }
+
+.bb-streak { font-size: 12px; font-weight: 700; color: var(--yellow); flex-shrink: 0; }
+
+/* Right chrome */
+.bb-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.bb-filter {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.bb-filter:focus { border-color: var(--accent); outline: none; }
+.bb-link {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.bb-link:hover { color: var(--text-bright); background: var(--bg); }
 
 /* ===== Gamification bar (Commit I) ===== */
 .gamification-bar {

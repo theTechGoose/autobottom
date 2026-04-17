@@ -5,7 +5,7 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { ReviewBufferResponse, DecisionResponse, ReviewStatsResponse, OkResponse, OkMessageResponse, ReviewerConfigResponse, MessageResponse, GamificationSettingsResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, ReviewDecideRequest, ReviewBackRequest } from "@core/dto/requests.ts";
-import { recordDecision, getReviewStats, getReviewedFindingIds, clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
+import { recordDecision, finalizeReviewedAudit, getReviewStats, getReviewedFindingIds, clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
@@ -30,6 +30,19 @@ export class ReviewController {
     }
     const result = await recordDecision(ORG(), body.findingId, body.questionIndex, body.decision, body.reviewer);
     return { ok: true, ...result, xpGained: body.decision === "flip" ? 15 : 10, newBadges: [] as string[] };
+  }
+
+  @Post("finalize") @ReturnedType(OkResponse) @Description("Finalize a reviewed audit — apply flips, recompute score, fire terminate webhook") @BodyType(GenericBodyRequest)
+  async finalize(@Body() body: GenericBodyRequest) {
+    const b = body as { findingId?: string; reviewer?: string };
+    if (!b.findingId || !b.reviewer) return { error: "findingId and reviewer required" };
+    try {
+      await finalizeReviewedAudit(ORG(), b.findingId, b.reviewer);
+      return { ok: true };
+    } catch (err) {
+      console.error(`❌ [REVIEW] finalize failed for ${b.findingId}:`, err);
+      return { ok: false, error: String(err) };
+    }
   }
 
   @Post("back") @ReturnedType(ReviewBufferResponse) @Description("Undo last decision") @BodyType(ReviewBackRequest)

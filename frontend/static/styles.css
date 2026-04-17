@@ -16,16 +16,29 @@
 
 body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
 
-/* ===== Admin impersonation banner (golden bar at page top) ===== */
+/* ===== Admin impersonation banner (golden bar at page top) =====
+ * Collapsed by default (6px strip), expands on hover/focus to show the
+ * dropdown + exit link. Pure CSS — no island state needed. */
 .admin-impersonation-bar {
   position: sticky; top: 0; z-index: 100;
   display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 20px;
+  padding: 0 20px;
   background: rgba(250,176,5,0.10);
   border-bottom: 1px solid rgba(250,176,5,0.35);
   color: #fab005;
   font-size: 12px;
+  height: 6px;
+  overflow: hidden;
+  transition: height 0.2s ease, padding 0.2s ease;
 }
+.admin-impersonation-bar:hover,
+.admin-impersonation-bar:focus-within {
+  height: auto;
+  padding: 10px 20px;
+}
+.admin-impersonation-bar > * { opacity: 0; transition: opacity 0.15s ease 0.05s; }
+.admin-impersonation-bar:hover > *,
+.admin-impersonation-bar:focus-within > * { opacity: 1; }
 .aib-left { display: flex; gap: 12px; align-items: center; }
 .aib-label { font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
 .aib-select { background: transparent; border: 1px solid rgba(250,176,5,0.4); color: #fab005; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-family: inherit; cursor: pointer; }

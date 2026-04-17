@@ -27,6 +27,8 @@ export const handler = define.handlers({
             data-xp-gained={String(decideResult.xpGained ?? 0)}
             data-decision={String(body.decision ?? "")}
             data-mode="review"
+            data-finding-id={String(body.findingId ?? "")}
+            data-reviewer={String(body.reviewer ?? "")}
             style="display:none"
           />
           <div class="queue-left">

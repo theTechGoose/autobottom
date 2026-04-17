@@ -315,20 +315,11 @@ export async function recordDecision(
 
   console.log(`✅ [REVIEW] ${findingId}/${questionIndex}: ${decision} by ${reviewer} (${newCount} remaining)`);
 
-  // Last decision for this audit triggers review-completion: apply flips back
-  // to the finding, recompute score, update indices, fire the terminate webhook
-  // (which sends the audit-complete email).
-  let auditComplete = false;
-  if (newCount <= 0) {
-    try {
-      await finalizeReviewedAudit(orgId, findingId, reviewer);
-      auditComplete = true;
-    } catch (err) {
-      console.error(`❌ [REVIEW] ${findingId}: finalization failed:`, err);
-    }
-  }
-
-  return { remaining: newCount, auditComplete };
+  // Client sees `auditComplete: true` when all items for this finding have
+  // been decided — but we DON'T finalize here. Finalization (score recalc +
+  // email webhook) requires an explicit /review/api/finalize call after the
+  // user confirms via the "type YES" modal.
+  return { remaining: newCount, auditComplete: newCount <= 0 };
 }
 
 // ── Finalize reviewed audit — port of main:review/kv.ts:postCorrectedAudit ───

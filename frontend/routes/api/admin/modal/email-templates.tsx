@@ -191,7 +191,7 @@ export async function renderTemplatesModal(
               previewHtml ? (
                 <iframe
                   srcDoc={previewHtml}
-                  style="flex:1;width:100%;border:none;background:#fff;display:block;min-height:0;"
+                  style="flex:1;width:100%;height:100%;border:none;background:#fff;display:block;min-height:0;"
                   sandbox="allow-same-origin"
                 ></iframe>
               ) : (

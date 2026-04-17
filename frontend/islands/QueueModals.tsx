@@ -18,6 +18,7 @@ export default function QueueModals() {
   const confettiCanvasRef = useRef<HTMLCanvasElement>(null);
   const confirmInputRef = useRef<HTMLInputElement>(null);
   const pendingDecisionRef = useRef<{ button: HTMLButtonElement | null }>({ button: null });
+  const pendingFinalizeRef = useRef<{ findingId: string; reviewer: string }>({ findingId: "", reviewer: "" });
 
   useEffect(() => {
     // ── Cheat sheet toggle ──
@@ -71,30 +72,15 @@ export default function QueueModals() {
       requestAnimationFrame(tick);
     }
 
-    // ── Confirm-last overlay ──
-    // Intercept confirm/flip clicks when the "Final for audit/appeal" pulse
-    // chip is present — that signals this is the last undecided question.
-    function isLastForAudit(): boolean {
-      return !!document.querySelector(".verdict-meta-chip.pulse");
-    }
+    // ── Confirm-then-finalize overlay ──
+    // Listen for the audit-complete signal fired by DecideEffects AFTER the
+    // final decision has been recorded. User types YES, we call /api/review/finalize
+    // which applies flips, recomputes score, fires the terminate webhook (email).
 
-    // One-shot bypass. Submit re-dispatches the original click via
-    // `btn.dispatchEvent(...)` — without this flag the capture-phase
-    // interceptor below would re-catch that synthetic click (isLastForAudit
-    // is still true since DOM hasn't swapped) and reopen the modal forever.
-    let bypassNextVerdictClick = false;
-
-    function onVerdictClick(e: Event) {
-      if (bypassNextVerdictClick) { bypassNextVerdictClick = false; return; }
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      const btn = target.closest<HTMLButtonElement>(".verdict-btn.confirm, .verdict-btn.flip, .verdict-btn.uphold, .verdict-btn.overturn");
-      if (!btn) return;
-      if (!isLastForAudit()) return;
-      // Hold the click — show confirm overlay first
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      pendingDecisionRef.current.button = btn;
+    function onAuditComplete(e: Event) {
+      const detail = (e as CustomEvent).detail as { findingId?: string; reviewer?: string } | undefined;
+      if (!detail?.findingId || !detail?.reviewer) return;
+      pendingFinalizeRef.current = { findingId: detail.findingId, reviewer: detail.reviewer };
       if (confirmOverlayRef.current) {
         confirmOverlayRef.current.style.display = "flex";
         if (confirmInputRef.current) {
@@ -103,58 +89,38 @@ export default function QueueModals() {
         }
       }
     }
+    document.addEventListener("queue:audit-complete", onAuditComplete);
 
     function cancelConfirm() {
       if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
-      pendingDecisionRef.current.button = null;
+      pendingFinalizeRef.current = { findingId: "", reviewer: "" };
     }
 
-    function submitConfirm() {
+    async function submitConfirm() {
       const typed = (confirmInputRef.current?.value ?? "").trim().toUpperCase();
       if (typed !== "YES") return;
-      const btn = pendingDecisionRef.current.button;
-      cancelConfirm();
-      if (btn) {
-        // Flip bypass BEFORE dispatching so our own interceptor lets this
-        // click pass through to HTMX's handler.
-        bypassNextVerdictClick = true;
-        btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true, detail: 1, relatedTarget: null }));
+      const { findingId, reviewer } = pendingFinalizeRef.current;
+      if (!findingId || !reviewer) { cancelConfirm(); return; }
+      try {
+        await fetch("/api/review/finalize", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ findingId, reviewer }),
+        });
+      } catch (err) {
+        console.error("[FINALIZE] call failed:", err);
       }
-    }
-
-    // Expose bypass flag to the inline Submit onClick below.
-    (confirmOverlayRef as unknown as { _setBypass?: () => void })._setBypass = () => { bypassNextVerdictClick = true; };
-
-    // Use capture phase so we intercept BEFORE HTMX's click handler fires.
-    document.addEventListener("click", onVerdictClick, true);
-
-    // ── Audit completion overlay ──
-    // Detected when an HTMX swap results in an empty queue (no .verdict-panel
-    // or empty state rendered). Celebrate once per session to avoid loops.
-    let justDecided = false;
-    const onDecideClick = (e: Event) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest(".verdict-btn")) justDecided = true;
-    };
-    document.addEventListener("click", onDecideClick);
-
-    const onSwap = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.target?.id !== "queue-content") return;
-      if (!justDecided) return;
-      justDecided = false;
-      // Empty state renders with .verdict-empty — treat that as completion
-      const empty = document.querySelector(".verdict-empty");
-      if (empty && completionOverlayRef.current) {
+      cancelConfirm();
+      // Completion celebration — confetti + flash of the overlay
+      if (completionOverlayRef.current) {
         completionOverlayRef.current.style.display = "flex";
         spawnConfetti();
         setTimeout(() => {
           if (completionOverlayRef.current) completionOverlayRef.current.style.display = "none";
         }, 4000);
       }
-    };
-    document.addEventListener("htmx:afterSwap", onSwap);
+    }
 
     // Escape closes everything
     const onKey = (e: KeyboardEvent) => {
@@ -170,15 +136,13 @@ export default function QueueModals() {
     // Wire confirm input Enter key
     const confirmInput = confirmInputRef.current;
     const onConfirmKey = (e: KeyboardEvent) => {
-      if (e.key === "Enter") { e.preventDefault(); submitConfirm(); }
+      if (e.key === "Enter") { e.preventDefault(); void submitConfirm(); }
     };
     confirmInput?.addEventListener("keydown", onConfirmKey);
 
     return () => {
       document.removeEventListener("queue:cheat-sheet-toggle", onCheat);
-      document.removeEventListener("click", onVerdictClick, true);
-      document.removeEventListener("click", onDecideClick);
-      document.removeEventListener("htmx:afterSwap", onSwap);
+      document.removeEventListener("queue:audit-complete", onAuditComplete);
       document.removeEventListener("keydown", onKey);
       confirmInput?.removeEventListener("keydown", onConfirmKey);
     };
@@ -189,10 +153,11 @@ export default function QueueModals() {
       {/* Confirmation overlay */}
       <div ref={confirmOverlayRef} class="queue-overlay" style="display:none">
         <div class="queue-overlay-box">
-          <div class="queue-overlay-title">Final Question for This Audit</div>
+          <div class="queue-overlay-title">Confirm Audit Finalization</div>
           <div class="queue-overlay-body">
-            This is the last item for this audit. Submitting will finalize the
-            review. Type <strong>YES</strong> to confirm.
+            All questions for this audit have been decided. Finalizing will
+            apply your flips, recompute the audit score, and send the
+            completion email. Type <strong>YES</strong> to confirm.
           </div>
           <input
             ref={confirmInputRef}
@@ -207,7 +172,7 @@ export default function QueueModals() {
               class="queue-overlay-btn"
               onClick={() => {
                 if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
-                pendingDecisionRef.current.button = null;
+                pendingFinalizeRef.current = { findingId: "", reviewer: "" };
               }}
             >
               Cancel
@@ -215,18 +180,27 @@ export default function QueueModals() {
             <button
               type="button"
               class="queue-overlay-btn primary"
-              onClick={() => {
+              onClick={async () => {
                 const typed = (confirmInputRef.current?.value ?? "").trim().toUpperCase();
                 if (typed !== "YES") return;
-                const btn = pendingDecisionRef.current.button;
+                const { findingId, reviewer } = pendingFinalizeRef.current;
                 if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
-                pendingDecisionRef.current.button = null;
-                // Signal the capture-phase interceptor to let this synthetic
-                // click through; otherwise it re-opens the modal and nothing
-                // ever posts to the decide endpoint.
-                const setBypass = (confirmOverlayRef as unknown as { _setBypass?: () => void })._setBypass;
-                setBypass?.();
-                if (btn) btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true, detail: 1, relatedTarget: null }));
+                pendingFinalizeRef.current = { findingId: "", reviewer: "" };
+                if (!findingId || !reviewer) return;
+                try {
+                  await fetch("/api/review/finalize", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({ findingId, reviewer }),
+                  });
+                } catch (err) { console.error("[FINALIZE] call failed:", err); }
+                if (completionOverlayRef.current) {
+                  completionOverlayRef.current.style.display = "flex";
+                  setTimeout(() => {
+                    if (completionOverlayRef.current) completionOverlayRef.current.style.display = "none";
+                  }, 4000);
+                }
               }}
             >
               Submit

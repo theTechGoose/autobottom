@@ -63,39 +63,14 @@ export default function DecideEffects() {
       setTimeout(() => el.remove(), 1300);
     };
 
-    const showAuditComplete = (c: number, f: number) => {
-      const total = c + f;
-      const rate = total > 0 ? Math.round((f / total) * 100) : 0;
-      let overlay = document.getElementById("audit-complete-overlay");
-      if (overlay) overlay.remove();
-      overlay = document.createElement("div");
-      overlay.id = "audit-complete-overlay";
-      overlay.className = "open";
-      overlay.innerHTML = `
-        <div class="aco-box">
-          <h2 style="font-size:18px;color:#e6edf3;margin-bottom:14px;">Audit reviewed 🎉</h2>
-          <div class="aco-stats">
-            <div><strong>${c}</strong> confirmed</div>
-            <div><strong>${f}</strong> flipped</div>
-            <div><strong>${rate}%</strong> flip rate</div>
-          </div>
-          <button class="aco-next">Next audit</button>
-        </div>
-      `;
-      document.body.appendChild(overlay);
-      overlay.querySelector<HTMLButtonElement>(".aco-next")?.addEventListener("click", () => {
-        overlay!.remove();
-        // Reset per-audit counts so the next audit's overlay is accurate.
-        confirms = 0; flips = 0;
-      });
-    };
-
-    const onSwap = (e: Event) => {
+    const onSwap = (_e: Event) => {
       const marker = document.getElementById("decide-effect-marker");
       if (!marker) return;
       const decision = marker.dataset.decision ?? "";
       const xp = Number(marker.dataset.xpGained ?? "0");
       const auditComplete = marker.dataset.auditComplete === "true";
+      const findingId = marker.dataset.findingId ?? "";
+      const reviewer = marker.dataset.reviewer ?? "";
 
       // Toast per decision type
       if (decision === "confirm") { toast("Confirmed fail", "toast-confirm"); confirms++; }
@@ -115,8 +90,14 @@ export default function DecideEffects() {
       else if (combo === 20) streakBanner("ULTRA", "s-ultra");
       else if (combo === 25) streakBanner("RAMPAGE", "s-rampage");
 
-      if (auditComplete) {
-        showAuditComplete(confirms, flips);
+      if (auditComplete && findingId && reviewer) {
+        // Hand off to QueueModals, which shows the "type YES" confirm
+        // modal and posts /api/review/finalize when the user accepts.
+        document.dispatchEvent(new CustomEvent("queue:audit-complete", {
+          detail: { findingId, reviewer, confirms, flips },
+        }));
+        // Reset per-audit counts for the next audit.
+        confirms = 0; flips = 0;
       }
 
       // One-shot marker — remove so a future swap without a decide body

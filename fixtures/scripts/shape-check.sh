@@ -9,7 +9,10 @@ GITIGNORE=".gitignore"
 
 cleanup() {
   mv "$GITIGNORE.sc-bak" "$GITIGNORE" 2>/dev/null
-  git add -f frontend/ main.ts tests/e2e/ 2>/dev/null
+  # Restore tracking WITHOUT -f so the restored .gitignore (which ignores
+  # _fresh/ and frontend/_fresh/) is respected. Using -f would force-re-add
+  # build artifacts that were deliberately untracked in commit fd8c1df.
+  git add frontend/ main.ts tests/e2e/ 2>/dev/null
 }
 trap cleanup EXIT
 

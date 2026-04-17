@@ -1,4 +1,4 @@
-/** HTMX handler — undo last review decision, return previous item. */
+/** HTMX handler — undo last review decision, return queue fragment. */
 import { define } from "../../../lib/define.ts";
 import { apiPost } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
@@ -13,16 +13,26 @@ export const handler = define.handlers({
       const result = await apiPost<{ buffer: ReviewItem[]; remaining: number }>(
         "/review/api/back", ctx.req, body,
       );
-      const item = result.buffer?.[0] ?? null;
+      const buffer = result.buffer ?? [];
+      const currentIndex = 0;
+      const item = buffer[currentIndex] ?? null;
       const html = renderToString(
         <>
           <div class="queue-left">
-            <VerdictPanel item={item} mode="review" remaining={result.remaining} email={body.reviewer} combo={0} />
+            <VerdictPanel
+              item={item}
+              buffer={buffer}
+              currentIndex={currentIndex}
+              mode="review"
+              remaining={result.remaining}
+              email={body.reviewer}
+              combo={0}
+            />
           </div>
           <div class="queue-right">
-            <TranscriptPanel snippet={item?.snippet ?? ""} />
+            <TranscriptPanel transcript={item?.transcript} snippet={item?.snippet} />
           </div>
-        </>
+        </>,
       );
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch (e) {

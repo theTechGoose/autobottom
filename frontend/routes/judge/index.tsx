@@ -16,7 +16,9 @@ export default define.page(async function JudgeQueue(ctx) {
   try {
     data = await apiFetch<BufferResponse>(`/judge/api/next?judge=${encodeURIComponent(user.email)}`, ctx.req);
   } catch (e) { console.error("Failed to load judge queue:", e); }
-  const item = data.buffer?.[0] ?? null;
+  const buffer = data.buffer ?? [];
+  const currentIndex = 0;
+  const item = buffer[currentIndex] ?? null;
 
   return (
     <Layout title="Judge Queue" section="judge" user={user}>
@@ -24,10 +26,18 @@ export default define.page(async function JudgeQueue(ctx) {
       <SoundEngine />
       <div class="queue-layout" id="queue-content">
         <div class="queue-left">
-          <VerdictPanel item={item} mode="judge" remaining={data.remaining} email={user.email} combo={0} />
+          <VerdictPanel
+            item={item}
+            buffer={buffer}
+            currentIndex={currentIndex}
+            mode="judge"
+            remaining={data.remaining}
+            email={user.email}
+            combo={0}
+          />
         </div>
         <div class="queue-right">
-          <TranscriptPanel snippet={item?.snippet ?? ""} />
+          <TranscriptPanel transcript={item?.transcript} snippet={item?.snippet} />
         </div>
       </div>
     </Layout>

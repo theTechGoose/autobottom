@@ -1,4 +1,4 @@
-/** HTMX handler — record judge decision, return next item fragment. */
+/** HTMX handler — record judge decision, return next queue fragment. */
 import { define } from "../../../lib/define.ts";
 import { apiPost, apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
@@ -14,16 +14,26 @@ export const handler = define.handlers({
       const next = await apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
         `/judge/api/next?judge=${encodeURIComponent(body.judge)}`, ctx.req,
       );
-      const item = next.buffer?.[0] ?? null;
+      const buffer = next.buffer ?? [];
+      const currentIndex = 0;
+      const item = buffer[currentIndex] ?? null;
       const html = renderToString(
         <>
           <div class="queue-left">
-            <VerdictPanel item={item} mode="judge" remaining={next.remaining} email={body.judge} combo={0} />
+            <VerdictPanel
+              item={item}
+              buffer={buffer}
+              currentIndex={currentIndex}
+              mode="judge"
+              remaining={next.remaining}
+              email={body.judge}
+              combo={0}
+            />
           </div>
           <div class="queue-right">
-            <TranscriptPanel snippet={item?.snippet ?? ""} />
+            <TranscriptPanel transcript={item?.transcript} snippet={item?.snippet} />
           </div>
-        </>
+        </>,
       );
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch (e) {

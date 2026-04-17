@@ -123,8 +123,22 @@ const ROLE_SECTION_MAP: Record<Role, SbSection[]> = {
   user: USER_SECTIONS,
 };
 
+// Section prop → view role. Lets an admin visiting /review/dashboard see the
+// reviewer sidebar (matches prod behavior). Non-role sections (chat, unset,
+// etc.) fall through to the user's actual role.
+const SECTION_ROLE_MAP: Record<string, Role> = {
+  admin: "admin",
+  review: "reviewer",
+  judge: "judge",
+  manager: "manager",
+  agent: "user",
+};
+
 export function Sidebar({ user, section }: SidebarProps) {
-  const sections = ROLE_SECTION_MAP[user.role] ?? USER_SECTIONS;
+  let viewRole: Role = SECTION_ROLE_MAP[section] ?? user.role;
+  // Defense in depth: non-admin must never render admin nav even if section="admin"
+  if (viewRole === "admin" && user.role !== "admin") viewRole = user.role;
+  const sections = ROLE_SECTION_MAP[viewRole] ?? USER_SECTIONS;
   const isAdmin = user.role === "admin";
   const initials = user.email.slice(0, 2).toUpperCase();
 

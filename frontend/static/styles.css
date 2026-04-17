@@ -458,7 +458,7 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .rpt-score-bar { max-width: 600px; margin: 16px auto 0; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; position: relative; }
 .rpt-score-bar::after { content: ""; position: absolute; inset: 0; width: var(--pct, 0%); background: linear-gradient(90deg, var(--green), var(--cyan)); border-radius: 2px; }
 
-.rpt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 24px 28px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+.rpt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin: 24px 28px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
 .rpt-field-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-bottom: 4px; }
 .rpt-field-value { font-size: 14px; color: var(--text-bright); font-weight: 600; }
 

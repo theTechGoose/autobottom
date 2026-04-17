@@ -41,9 +41,7 @@ function isYes(a: string | undefined): boolean {
 }
 
 function scoreColor(pct: number): string {
-  if (pct === 100) return "var(--green)";
-  if (pct >= 80) return "var(--cyan)";
-  return "var(--red)";
+  return pct >= 80 ? "var(--green)" : "var(--red)";
 }
 
 function formatTranscript(text: string): string {
@@ -80,14 +78,25 @@ export function AuditReport({ finding, id }: { finding: Finding; id: string }) {
     date: record["10"] ?? record["8"] ?? "—",
   };
 
+  // Date-leg guest fields (ignored when isPackage)
   const guest = {
     guestName: record.GuestName ?? record["32"] ?? "—",
     spouseName: record["33"] ?? "—",
     maritalStatus: record["49"] ?? "—",
     arrival: record["8"] ?? "—",
     departure: record["10"] ?? "—",
-    wgs: record["553"] === "yes",
+    wgs: record["460"] === "yes",
     mcc: record["594"] === "yes",
+  };
+
+  // Package fields (ignored when !isPackage) — field IDs per prod main:controller.ts
+  const pkg = {
+    guestName: record.GuestName ?? "—",
+    maritalStatus: record["67"] ?? "—",
+    office: record.OfficeName ?? record["314"] ?? "—",
+    totalAmount: record["145"] ? `$${record["145"]}` : "—",
+    mcc: record["345"] === "yes" || record["345"] === true,
+    msp: record["306"] === "yes" || record["306"] === true,
   };
 
   // Score badge color + label
@@ -148,18 +157,31 @@ export function AuditReport({ finding, id }: { finding: Finding; id: string }) {
         <Field label="Date">{meta.date}</Field>
       </div>
 
-      {/* ===== Guest metadata grid ===== */}
-      <div class="rpt-grid">
-        <Field label="Guest Name">{guest.guestName}</Field>
-        <Field label="Spouse Name">{guest.spouseName}</Field>
-        <Field label="Marital Status">{guest.maritalStatus}</Field>
-        <Field label="Arrival">{guest.arrival}</Field>
-        <Field label="Departure">{guest.departure}</Field>
-        <Field label="WGS / MCC">
-          <span style={`color:${guest.wgs ? "var(--green)" : "var(--text-dim)"};margin-right:14px;`}>{guest.wgs ? "☑" : "☐"} WGS</span>
-          <span style={`color:${guest.mcc ? "var(--green)" : "var(--text-dim)"};`}>{guest.mcc ? "☑" : "☐"} MCC</span>
-        </Field>
-      </div>
+      {/* ===== Guest metadata grid — prod switches layout by audit type ===== */}
+      {isPackage ? (
+        <div class="rpt-grid">
+          <Field label="Guest Name">{pkg.guestName}</Field>
+          <Field label="Marital Status">{pkg.maritalStatus}</Field>
+          <Field label="Office">{pkg.office}</Field>
+          <Field label="Total Amount">{pkg.totalAmount}</Field>
+          <Field label="MCC / MSP">
+            <span style={`color:${pkg.mcc ? "var(--green)" : "var(--text-dim)"};margin-right:14px;`}>{pkg.mcc ? "☑" : "☐"} MCC</span>
+            <span style={`color:${pkg.msp ? "var(--green)" : "var(--text-dim)"};`}>{pkg.msp ? "☑" : "☐"} MSP</span>
+          </Field>
+        </div>
+      ) : (
+        <div class="rpt-grid">
+          <Field label="Guest Name">{guest.guestName}</Field>
+          <Field label="Spouse Name">{guest.spouseName}</Field>
+          <Field label="Marital Status">{guest.maritalStatus}</Field>
+          <Field label="Arrival">{guest.arrival}</Field>
+          <Field label="Departure">{guest.departure}</Field>
+          <Field label="WGS / MCC">
+            <span style={`color:${guest.wgs ? "var(--green)" : "var(--text-dim)"};margin-right:14px;`}>{guest.wgs ? "☑" : "☐"} WGS</span>
+            <span style={`color:${guest.mcc ? "var(--green)" : "var(--text-dim)"};`}>{guest.mcc ? "☑" : "☐"} MCC</span>
+          </Field>
+        </div>
+      )}
 
       {/* ===== Transcript ===== */}
       <div class="rpt-section">

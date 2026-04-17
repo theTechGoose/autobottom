@@ -379,16 +379,21 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .verdict-badge.badge-no { background: rgba(248,81,73,0.12); color: var(--red); border: 1px solid rgba(248,81,73,0.2); }
 .verdict-badge.badge-no::before { background: var(--red); }
 
-.appeal-info { margin-bottom: 16px; }
-.appeal-badge { display: inline-flex; padding: 4px 10px; border-radius: 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: var(--yellow-bg); color: var(--yellow); border: 1px solid rgba(210,153,34,0.2); }
-.appeal-comment { margin-top: 8px; padding: 10px 14px; background: var(--bg-surface); border-left: 3px solid var(--yellow); border-radius: 0 8px 8px 0; font-size: 12px; color: var(--text); line-height: 1.5; }
+.appeal-info { margin-bottom: 14px; }
+.appeal-badge { display: inline-flex; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; background: rgba(251,191,36,0.1); color: #fbbf24; border: 1px solid rgba(251,191,36,0.2); }
+.appeal-comment { margin-top: 8px; padding: 8px 12px; background: rgba(251,191,36,0.06); border: 1px solid rgba(251,191,36,0.12); border-left: 1px solid rgba(251,191,36,0.12); border-radius: 6px; font-size: 12px; color: #d4c48a; line-height: 1.5; }
 
 .verdict-question { margin-bottom: 16px; }
-.verdict-question-header { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin-bottom: 4px; }
+/* "Question" label above the big title (prod #q-label) */
+.verdict-question .verdict-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #6e7681; margin-bottom: 8px; }
+/* The actual question text — big, bright, readable (prod #q-header) */
+.verdict-question-header { font-size: 20px; font-weight: 700; text-transform: none; letter-spacing: normal; color: #e6edf3; line-height: 1.3; margin-bottom: 10px; }
 .verdict-question-text { font-size: 13px; color: var(--text-bright); line-height: 1.5; }
 
 .verdict-answer { margin-bottom: 16px; }
-.verdict-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 6px; }
+.verdict-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #6e7681; margin-bottom: 8px; }
+/* Defense label is BLUE in prod (prod .evidence-label color: #58a6ff) */
+.verdict-defense-block .verdict-section-label { color: #58a6ff; }
 .verdict-answer-text { font-size: 14px; font-weight: 700; color: var(--text-bright); padding: 10px 14px; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border); }
 
 .verdict-details { margin-bottom: 16px; }
@@ -421,35 +426,44 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .verdict-undo:hover { border-color: var(--border-hover); color: var(--text-muted); }
 .verdict-undo kbd { font-size: 9px; font-family: var(--mono); font-weight: 700; padding: 1px 5px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; }
 
-/* ===== Review/Judge queue — verdict panel expansion (Commit E, tightened in L) ===== */
-.verdict-audit-header { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
-.verdict-audit-row { display: flex; gap: 10px; align-items: center; font-size: 11px; padding: 1px 0; }
-.verdict-audit-label { color: var(--text-dim); text-transform: uppercase; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; min-width: 70px; }
-.verdict-audit-value { color: var(--text-bright); font-weight: 600; font-size: 12px; }
+/* ===== Audit header (review only) — prod #audit-header parity ===== */
+.verdict-audit-header { background: #0c1018; border: none; border-bottom: 1px solid #1a1f2b; border-radius: 0; padding: 10px 16px; margin: -24px -20px 16px; }
+.verdict-audit-row { display: flex; align-items: baseline; gap: 8px; font-size: 11px; margin-bottom: 2px; padding: 0; }
+.verdict-audit-label { color: #484f58; text-transform: uppercase; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; width: 70px; flex-shrink: 0; min-width: 70px; }
+.verdict-audit-value { color: #c9d1d9; font-weight: 500; font-size: 12px; }
 .verdict-audit-value.mono { font-family: var(--mono); font-size: 11px; }
-.verdict-audit-badges { display: flex; gap: 6px; margin-top: 8px; }
-.verdict-type-pill { font-size: 9px; font-weight: 700; padding: 3px 10px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.8px; }
-.verdict-type-pill.pkg { background: rgba(251,191,36,0.12); color: var(--yellow); border: 1px solid rgba(251,191,36,0.25); }
-.verdict-type-pill.intl { background: rgba(139,92,246,0.12); color: var(--accent); border: 1px solid rgba(139,92,246,0.25); }
-.verdict-failed-count { font-size: 9px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: rgba(248,81,73,0.12); color: var(--red); border: 1px solid rgba(248,81,73,0.25); text-transform: uppercase; letter-spacing: 0.8px; }
+.verdict-audit-badges { display: flex; gap: 8px; margin-top: 6px; }
+/* Flat badges (no border), 2px 6px padding, 3px radius — prod .ah-badge */
+.verdict-type-pill { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.8px; border: none; }
+.verdict-type-pill.pkg { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.verdict-type-pill.intl { background: rgba(139,92,246,0.15); color: #8b5cf6; }
+.verdict-failed-count { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; background: rgba(248,81,73,0.15); color: #f85149; border: none; text-transform: uppercase; letter-spacing: 0.8px; }
 
 .verdict-defense-block { background: transparent; border: none; padding: 0; margin-bottom: 12px; }
 .verdict-defense-block .verdict-section-label { margin-bottom: 8px; }
 .verdict-defense-quote { font-size: 13px; color: #b0b8c4; line-height: 1.65; white-space: pre-wrap; padding: 12px 14px; background: #141820; border-radius: 10px; border: 1px solid #1a1f2b; }
 
-.verdict-accordion { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
-.verdict-accordion > summary { cursor: pointer; padding: 10px 14px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); display: flex; align-items: center; justify-content: space-between; gap: 8px; list-style: none; }
+/* Plain toggle button look — prod #thinking-toggle / #prompt-toggle / #record-details-toggle */
+.verdict-accordion { background: none; border: none; border-radius: 0; margin-bottom: 0; overflow: visible; }
+.verdict-accordion > summary { cursor: pointer; padding: 8px 0; font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: normal; color: #6e7681; display: flex; align-items: center; gap: 6px; list-style: none; user-select: none; transition: color 0.15s; }
+.verdict-accordion > summary:hover { color: #8b949e; }
 .verdict-accordion > summary::-webkit-details-marker { display: none; }
-.verdict-accordion > summary::before { content: "▸"; font-size: 10px; color: var(--text-dim); transition: transform 0.15s; }
+.verdict-accordion > summary::before { content: "▸"; font-size: 9px; color: #484f58; transition: transform 0.2s; flex-shrink: 0; }
 .verdict-accordion[open] > summary::before { transform: rotate(90deg); }
-.verdict-accordion-body { padding: 12px 14px 14px; font-size: 12px; color: var(--text); line-height: 1.5; white-space: pre-wrap; max-height: 400px; overflow-y: auto; }
-.verdict-accordion-body.mono { font-family: var(--mono); font-size: 11px; }
-.verdict-failed-counter { color: var(--text-muted); font-family: var(--mono); font-size: 10px; margin-left: auto; }
+/* Content body — boxed like prod #thinking-text / #prompt-text */
+.verdict-accordion-body { padding: 10px 14px; font-size: 13px; color: #8b949e; line-height: 1.6; white-space: pre-wrap; max-height: 400px; overflow-y: auto; background: #141820; border-radius: 10px; border: 1px solid #1a1f2b; margin-bottom: 12px; }
+.verdict-accordion-body.mono { font-family: var(--mono); font-size: 12px; }
+/* Thinking is italic in prod */
+.verdict-accordion:first-of-type .verdict-accordion-body { font-style: italic; }
+.verdict-failed-counter { color: #484f58; font-family: var(--mono); font-size: 10px; margin-left: auto; }
 
-.verdict-record-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; padding: 12px 14px; }
-.verdict-record-cell { display: flex; flex-direction: column; gap: 2px; }
-.verdict-record-label { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); }
-.verdict-record-value { font-size: 12px; color: var(--text-bright); font-weight: 600; }
+/* Record Details body — prod #record-details-body: inline Label: Value pairs, 2-col grid */
+.verdict-record-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; padding: 12px 14px; background: #141820; border-radius: 10px; border: 1px solid #1a1f2b; }
+.verdict-record-cell { font-size: 12px; color: #8b949e; line-height: 1.5; display: block; }
+.verdict-record-cell.full { grid-column: 1 / -1; }
+.verdict-record-label { display: inline; font-size: inherit; font-weight: normal; text-transform: none; letter-spacing: normal; color: #8b949e; }
+.verdict-record-label::after { content: ": "; }
+.verdict-record-value { display: inline; font-size: inherit; color: #c9d1d9; font-weight: normal; }
 
 .failed-q-list { list-style: none; padding: 6px 10px; margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .failed-q-pill { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; font-size: 11px; color: var(--text); background: transparent; border: 1px solid transparent; transition: background 0.1s, border-color 0.1s; }
@@ -459,15 +473,17 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .failed-q-pill.current .failed-q-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent-bg); }
 .failed-q-name { color: var(--text); flex: 1; }
 
-.verdict-meta-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0; }
-.verdict-meta-chip { font-size: 9px; padding: 3px 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); text-decoration: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 3px; line-height: 1.4; }
-.verdict-meta-chip:hover { border-color: var(--border-hover); color: var(--text-bright); }
-.verdict-meta-chip.pulse { background: rgba(250,176,5,0.12); color: #fab005; border-color: rgba(250,176,5,0.3); animation: pulse-final 2s ease infinite; }
+/* Meta row — prod #meta-row with top divider above it */
+.verdict-meta-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding-top: 16px; border-top: 1px solid #1a1f2b; }
+.verdict-meta-chip { font-size: 13px; padding: 4px 12px; border-radius: 6px; background: #141820; border: 1px solid #1a1f2b; color: #6e7681; text-decoration: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 4px; line-height: 1.4; white-space: nowrap; }
+.verdict-meta-chip:hover { border-color: #2a3346; color: #c9d1d9; }
+.verdict-meta-chip strong { color: #c9d1d9; font-weight: 600; font-size: 13px; }
+.verdict-meta-chip.pulse { background: rgba(250,176,5,0.12); color: #fab005; border-color: rgba(250,176,5,0.25); animation: pulse-final 2s ease infinite; }
 .verdict-meta-chip.pulse strong { color: #fab005; }
 @keyframes pulse-final { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-.verdict-meta-chip .mono { font-family: var(--mono); font-size: 10px; }
-.verdict-chip-finding { color: #a371f7; font-weight: 600; }
-.verdict-chip-record  { color: #58a6ff; font-weight: 600; }
+.verdict-meta-chip .mono { font-family: var(--mono); font-size: 13px; }
+.verdict-chip-finding { color: #a371f7 !important; font-weight: 600; }
+.verdict-chip-record  { color: #58a6ff !important; font-weight: 600; }
 .verdict-hotkey { margin-left: auto; background: #141820; border: 1px solid #1e2736; border-radius: 3px; padding: 0 5px; font-family: var(--mono); font-size: 10px; color: #6e7681; }
 
 /* ===== Queue audio player bar (Commit F) ===== */

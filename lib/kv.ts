@@ -858,7 +858,8 @@ export type ReportColumnKey =
   | "score"
   | "appealStatus"
   | "finalizedAt"
-  | "markedForReview";
+  | "markedForReview"
+  | "mostRecentActiveMccId";
 
 export interface CriteriaRule {
   field: CriteriaField;

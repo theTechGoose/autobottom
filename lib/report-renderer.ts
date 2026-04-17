@@ -25,17 +25,20 @@ const C = {
   red:        "#f85149",
 };
 
-const COLUMN_LABELS: Record<ReportColumnKey, string> = {
-  recordId:        "Record ID",
-  findingId:       "Audit Report",
-  guestName:       "Guest Name",
-  voName:          "VO Name",
-  department:      "Department",
-  score:           "Score",
-  appealStatus:    "Appeal",
-  finalizedAt:     "Timestamp",
-  markedForReview: "Status",
+export const COLUMN_LABELS: Record<ReportColumnKey, string> = {
+  recordId:              "Record ID",
+  findingId:             "Audit Report",
+  guestName:             "Guest Name",
+  voName:                "VO Name",
+  department:            "Department",
+  score:                 "Score",
+  appealStatus:          "Appeal",
+  finalizedAt:           "Timestamp",
+  markedForReview:       "Status",
+  mostRecentActiveMccId: "Most Recent Active MCC ID",
 };
+
+const MCC_URL_BASE = "https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/brx22z3qd/action/er?rid=";
 
 const APPEAL_LABELS: Record<AppealStatus, string> = {
   none:     "None",
@@ -61,7 +64,7 @@ const estFmt = new Intl.DateTimeFormat("en-US", {
   hour12: true,
 });
 
-function formatEst(ts: number): string {
+export function formatEst(ts: number): string {
   return estFmt.format(new Date(ts));
 }
 
@@ -97,11 +100,38 @@ function renderCell(col: ReportColumnKey, row: ReportRow): string {
       return row.markedForReview
         ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(210,153,34,0.15);color:${C.yellow};border:1px solid rgba(210,153,34,0.3);">In Review</span>`
         : `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(63,185,80,0.12);color:${C.green};border:1px solid rgba(63,185,80,0.25);">Complete</span>`;
+    case "mostRecentActiveMccId": {
+      if (!row.mostRecentActiveMccId) return `<span style="color:${C.textDim};">&mdash;</span>`;
+      const id = row.mostRecentActiveMccId;
+      const url = MCC_URL_BASE + encodeURIComponent(id);
+      return `<a href="${url}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:12px;">${esc(id)}</a>`;
+    }
     default: {
       const val = row[col as keyof ReportRow];
       return val != null
         ? `<span style="color:${C.text};">${esc(String(val))}</span>`
         : `<span style="color:${C.textDim};">&mdash;</span>`;
+    }
+  }
+}
+
+// ── Plain-text value extractor (for CSV export) ──────────────────────────────
+
+export function cellPlainValue(col: ReportColumnKey, row: ReportRow): string {
+  switch (col) {
+    case "recordId":              return row.recordId ?? "";
+    case "findingId":             return row.findingId ?? "";
+    case "guestName":             return row.guestName ?? "";
+    case "voName":                return row.voName ?? "";
+    case "department":            return row.department ?? "";
+    case "score":                 return row.score != null ? String(row.score) : "";
+    case "appealStatus":          return row.appealStatus ? APPEAL_LABELS[row.appealStatus] : "";
+    case "finalizedAt":           return row.finalizedAt ? formatEst(row.finalizedAt) : "";
+    case "markedForReview":       return row.markedForReview ? "In Review" : "Complete";
+    case "mostRecentActiveMccId": return row.mostRecentActiveMccId ?? "";
+    default: {
+      const val = row[col as keyof ReportRow];
+      return val != null ? String(val) : "";
     }
   }
 }

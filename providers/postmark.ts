@@ -1,5 +1,11 @@
 /** Postmark email sender. */
 
+export interface EmailAttachment {
+  name: string;
+  content: string; // base64-encoded
+  contentType: string;
+}
+
 export async function sendEmail(opts: {
   to: string | string[];
   subject: string;
@@ -7,6 +13,7 @@ export async function sendEmail(opts: {
   from?: string;
   cc?: string | string[];
   bcc?: string | string[];
+  attachments?: EmailAttachment[];
 }) {
   const token = Deno.env.get("POSTMARK_SERVER");
   if (!token) throw new Error("POSTMARK_SERVER required");
@@ -15,7 +22,7 @@ export async function sendEmail(opts: {
   const cc = opts.cc ? (Array.isArray(opts.cc) ? opts.cc.join(",") : opts.cc) : undefined;
   const bcc = opts.bcc ? (Array.isArray(opts.bcc) ? opts.bcc.join(",") : opts.bcc) : undefined;
 
-  const payload: Record<string, string> = {
+  const payload: Record<string, unknown> = {
     From: opts.from ?? (Deno.env.get("FROM_EMAIL") || "noreply@example.com"),
     To: to,
     Subject: opts.subject,
@@ -23,6 +30,13 @@ export async function sendEmail(opts: {
   };
   if (cc) payload.Cc = cc;
   if (bcc) payload.Bcc = bcc;
+  if (opts.attachments?.length) {
+    payload.Attachments = opts.attachments.map((a) => ({
+      Name: a.name,
+      Content: a.content,
+      ContentType: a.contentType,
+    }));
+  }
 
   const res = await fetch("https://api.postmarkapp.com/email", {
     method: "POST",

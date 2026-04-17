@@ -11,9 +11,14 @@ import type {
   ReportColumnKey,
 } from "./kv.ts";
 import { getAppeal } from "../judge/kv.ts";
-import { renderSections, renderFullEmail, renderWeeklySummary } from "./report-renderer.ts";
+import { renderSections, renderFullEmail, renderWeeklySummary, cellPlainValue, COLUMN_LABELS } from "./report-renderer.ts";
 import type { WeeklySummaryData } from "./report-renderer.ts";
 import { sendEmail } from "../providers/postmark.ts";
+import {
+  getReservationRidsForDateLegs,
+  getReservationRidsForPackages,
+  getMccIdsForReservations,
+} from "../providers/quickbase.ts";
 
 export type AppealStatus = "none" | "pending" | "complete";
 
@@ -29,6 +34,7 @@ export interface ReportRow {
   appealStatus?: AppealStatus;
   finalizedAt?: number;
   markedForReview?: boolean;
+  mostRecentActiveMccId?: string;
 }
 
 export interface SectionResult {
@@ -100,6 +106,9 @@ export async function queryReportData(
     rows: [],
   }));
 
+  const needsMcc = sections.some((s) => s.columns.includes("mostRecentActiveMccId"));
+  const mccRowMeta: { sectionIdx: number; rowIdx: number; recordId: string; isPackage: boolean }[] = [];
+
   // Hydrate candidates in batches to avoid hammering KV concurrency limits
   const HYDRATE_BATCH = 20;
   const hydrated: { entry: AuditDoneIndexEntry; finding: Awaited<ReturnType<typeof getFinding>>; appealRecord: Awaited<ReturnType<typeof getAppeal>> }[] = [];
@@ -159,8 +168,35 @@ export async function queryReportData(
 
     for (let i = 0; i < sections.length; i++) {
       if (evaluateRules(finding, stat, appealStatus, reviewed, sections[i].criteria)) {
+        const rowIdx = results[i].rows.length;
         results[i].rows.push(extractRow(finding, stat, appealStatus, sections[i].columns, markedForReview));
+        if (needsMcc && sections[i].columns.includes("mostRecentActiveMccId") && stat.recordId) {
+          mccRowMeta.push({ sectionIdx: i, rowIdx, recordId: stat.recordId, isPackage });
+        }
       }
+    }
+  }
+
+  if (needsMcc && mccRowMeta.length > 0) {
+    const dateLegRids = new Set<string>();
+    const packageRids = new Set<string>();
+    for (const m of mccRowMeta) {
+      (m.isPackage ? packageRids : dateLegRids).add(m.recordId);
+    }
+    const [dlMap, pkgMap] = await Promise.all([
+      getReservationRidsForDateLegs([...dateLegRids]),
+      getReservationRidsForPackages([...packageRids]),
+    ]);
+    const childToParent = new Map<string, string>();
+    for (const [c, p] of dlMap) childToParent.set(c, p);
+    for (const [c, p] of pkgMap) childToParent.set(c, p);
+    const reservationRids = [...new Set(childToParent.values())];
+    const mccMap = await getMccIdsForReservations(reservationRids);
+    for (const m of mccRowMeta) {
+      const parent = childToParent.get(m.recordId);
+      if (!parent) continue;
+      const mcc = mccMap.get(parent);
+      if (mcc) results[m.sectionIdx].rows[m.rowIdx].mostRecentActiveMccId = mcc;
     }
   }
 
@@ -306,6 +342,38 @@ function extractRow(
   return row;
 }
 
+// ── CSV export ────────────────────────────────────────────────────────────────
+
+function csvEscape(v: string): string {
+  return /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+function buildCsv(sections: SectionResult[]): string {
+  const allCols: ReportColumnKey[] = [];
+  for (const s of sections) {
+    for (const c of s.columns) {
+      if (!allCols.includes(c)) allCols.push(c);
+    }
+  }
+  const header = ["Section", ...allCols.map((c) => COLUMN_LABELS[c])].map(csvEscape).join(",");
+  const lines = [header];
+  for (const s of sections) {
+    for (const row of s.rows) {
+      const cells = [s.header, ...allCols.map((c) => cellPlainValue(c, row))];
+      lines.push(cells.map(csvEscape).join(","));
+    }
+  }
+  return lines.join("\r\n") + "\r\n";
+}
+
+function safeFilename(s: string): string {
+  return s.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "report";
+}
+
+function toBase64Utf8(s: string): string {
+  return btoa(unescape(encodeURIComponent(s)));
+}
+
 // ── Run report ────────────────────────────────────────────────────────────────
 
 export async function runReport(orgId: OrgId, config: EmailReportConfig): Promise<void> {
@@ -353,12 +421,22 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
     };
     subject = config.name + " \u2014 Week of " + fmt(from) + "\u2013" + fmt(to);
   }
+
+  const attachments = totalRows > 0
+    ? [{
+      name: `${safeFilename(config.name)}.csv`,
+      content: toBase64Utf8(buildCsv(sections)),
+      contentType: "text/csv",
+    }]
+    : undefined;
+
   await sendEmail({
     to: allRecipients,
     ...(config.cc?.length ? { cc: config.cc } : {}),
     ...(config.bcc?.length ? { bcc: config.bcc } : {}),
     subject,
     htmlBody,
+    ...(attachments ? { attachments } : {}),
   });
 
   console.log(`${label} — ✅ sent successfully`);

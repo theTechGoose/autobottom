@@ -215,6 +215,68 @@ export async function getPackageByRid(rid: string): Promise<Record<string, any> 
   };
 }
 
+// RESERVATIONS table (parent of date legs and packages; holds field 991 Most Recent Active MCC ID)
+const RESERVATIONS_TABLE = "bmhvhc72c";
+const RES_FIELD_RECORD_ID = 3;
+const RES_FIELD_MOST_RECENT_ACTIVE_MCC = 991;
+const FIELD_DATELEG_RELATED_RESERVATION = 31;
+const FIELD_PACKAGE_RELATED_RESERVATION = 56;
+
+function buildRidOrWhere(fieldId: number, rids: string[]): string {
+  return rids.map((r) => `{${fieldId}.EX.'${r}'}`).join("OR");
+}
+
+/** Given a set of DATE_LEG record ids, return a Map<dateLegRid, parentReservationRid>. */
+export async function getReservationRidsForDateLegs(rids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (rids.length === 0) return out;
+  const records = await queryRecords({
+    tableId: DATE_LEGS_TABLE,
+    where: buildRidOrWhere(FIELD_RECORD_ID, rids),
+    select: [FIELD_RECORD_ID, FIELD_DATELEG_RELATED_RESERVATION],
+  });
+  for (const r of records) {
+    const childRid = String(r[FIELD_RECORD_ID]?.value ?? "");
+    const parentRid = String(r[FIELD_DATELEG_RELATED_RESERVATION]?.value ?? "");
+    if (childRid && parentRid) out.set(childRid, parentRid);
+  }
+  return out;
+}
+
+/** Given a set of PACKAGE record ids, return a Map<packageRid, parentReservationRid>. */
+export async function getReservationRidsForPackages(rids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (rids.length === 0) return out;
+  const records = await queryRecords({
+    tableId: PACKAGES_TABLE,
+    where: buildRidOrWhere(PKG_FIELD_RECORD_ID, rids),
+    select: [PKG_FIELD_RECORD_ID, FIELD_PACKAGE_RELATED_RESERVATION],
+  });
+  for (const r of records) {
+    const childRid = String(r[PKG_FIELD_RECORD_ID]?.value ?? "");
+    const parentRid = String(r[FIELD_PACKAGE_RELATED_RESERVATION]?.value ?? "");
+    if (childRid && parentRid) out.set(childRid, parentRid);
+  }
+  return out;
+}
+
+/** Given a set of reservation record ids, return a Map<reservationRid, MostRecentActiveMccId>. */
+export async function getMccIdsForReservations(rids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (rids.length === 0) return out;
+  const records = await queryRecords({
+    tableId: RESERVATIONS_TABLE,
+    where: buildRidOrWhere(RES_FIELD_RECORD_ID, rids),
+    select: [RES_FIELD_RECORD_ID, RES_FIELD_MOST_RECENT_ACTIVE_MCC],
+  });
+  for (const r of records) {
+    const resRid = String(r[RES_FIELD_RECORD_ID]?.value ?? "");
+    const mcc = String(r[RES_FIELD_MOST_RECENT_ACTIVE_MCC]?.value ?? "");
+    if (resRid && mcc) out.set(resRid, mcc);
+  }
+  return out;
+}
+
 // VO Audit Questions table
 const QUESTIONS_TABLE = "bu3e8x98x";
 const FIELD_RELATED_DEST = Number(Deno.env.get("QB_AUDIT_QUESTIONS_DEST_FIELD") || "11");

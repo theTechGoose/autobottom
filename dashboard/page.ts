@@ -3226,15 +3226,16 @@ table { width: 100%; border-collapse: collapse; }
   var ER_OPS_NUMERIC = [{value:'equals',label:'equals'},{value:'less_than',label:'less than'},{value:'greater_than',label:'greater than'}];
   var ER_OPS_ENUM    = [{value:'equals',label:'is'},{value:'not_equals',label:'is not'}];
   var ER_COLS = [
-    {value:'recordId',       label:'Record ID'},
-    {value:'findingId',      label:'Audit Report'},
-    {value:'guestName',      label:'Guest Name'},
-    {value:'voName',         label:'VO Name'},
-    {value:'department',     label:'Department'},
-    {value:'score',          label:'Score'},
-    {value:'appealStatus',   label:'Appeal Status'},
-    {value:'finalizedAt',    label:'Timestamp'},
-    {value:'markedForReview',label:'Status'},
+    {value:'recordId',              label:'Record ID'},
+    {value:'findingId',             label:'Audit Report'},
+    {value:'guestName',             label:'Guest Name'},
+    {value:'voName',                label:'VO Name'},
+    {value:'department',            label:'Department'},
+    {value:'score',                 label:'Score'},
+    {value:'appealStatus',          label:'Appeal Status'},
+    {value:'finalizedAt',           label:'Timestamp'},
+    {value:'markedForReview',       label:'Status'},
+    {value:'mostRecentActiveMccId', label:'Most Recent Active MCC ID'},
   ];
 
   function erOpsForField(field) {

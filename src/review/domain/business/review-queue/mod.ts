@@ -21,6 +21,7 @@ import {
   deleteChargebackEntry,
   deleteWireDeductionEntry,
 } from "@audit/domain/data/stats-repository/mod.ts";
+import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000; // 30 minutes
 
@@ -267,7 +268,7 @@ export async function recordDecision(
   questionIndex: number,
   decision: "confirm" | "flip",
   reviewer: string,
-): Promise<{ remaining: number }> {
+): Promise<{ remaining: number; auditComplete: boolean }> {
   const db = await getKv();
   const now = Date.now();
 
@@ -313,7 +314,122 @@ export async function recordDecision(
   await db.set(counterKey, newCount);
 
   console.log(`✅ [REVIEW] ${findingId}/${questionIndex}: ${decision} by ${reviewer} (${newCount} remaining)`);
-  return { remaining: newCount };
+
+  // Last decision for this audit triggers review-completion: apply flips back
+  // to the finding, recompute score, update indices, fire the terminate webhook
+  // (which sends the audit-complete email).
+  let auditComplete = false;
+  if (newCount <= 0) {
+    try {
+      await finalizeReviewedAudit(orgId, findingId, reviewer);
+      auditComplete = true;
+    } catch (err) {
+      console.error(`❌ [REVIEW] ${findingId}: finalization failed:`, err);
+    }
+  }
+
+  return { remaining: newCount, auditComplete };
+}
+
+// ── Finalize reviewed audit — port of main:review/kv.ts:postCorrectedAudit ───
+/** Runs when the last review decision for a finding is recorded.
+ *  Applies flipped answers (No → Yes), recomputes the score, updates the
+ *  audit-done index + completed-stat score, and fires the terminate webhook
+ *  (which sends the audit-complete email). Idempotent via `review-done`
+ *  sentinel — a double-call is a no-op. */
+export async function finalizeReviewedAudit(
+  orgId: OrgId,
+  findingId: string,
+  reviewer: string,
+): Promise<void> {
+  const db = await getKv();
+
+  // Idempotency guard — don't reprocess a finding that's already finalized.
+  const doneKey = orgKey(orgId, "review-done", findingId);
+  const existingDone = await db.get(doneKey);
+  if (existingDone.value) {
+    console.log(`⏭️  [REVIEW] ${findingId}: already finalized, skipping`);
+    return;
+  }
+
+  // Collect all decisions for this finding.
+  const decisions = new Map<number, ReviewDecision>();
+  for await (const entry of db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided", findingId) })) {
+    if (entry.value?.questionIndex != null) {
+      decisions.set(entry.value.questionIndex, entry.value);
+    }
+  }
+  if (decisions.size === 0) {
+    console.warn(`⚠️  [REVIEW] ${findingId}: no decisions found at finalize — skipping`);
+    return;
+  }
+
+  const finding = await getFinding(orgId, findingId);
+  if (!finding) {
+    console.error(`❌ [REVIEW] ${findingId}: finding not found at finalize`);
+    return;
+  }
+
+  // Apply flips + confirm metadata to the finding's answeredQuestions.
+  const answered: Array<Record<string, unknown>> = Array.isArray(finding.answeredQuestions)
+    ? [...finding.answeredQuestions]
+    : [];
+  for (const [qIndex, d] of decisions) {
+    if (qIndex < 0 || qIndex >= answered.length) continue;
+    const prev = answered[qIndex] ?? {};
+    const nextAnswer = d.decision === "flip" ? "Yes" : (prev as { answer?: string }).answer;
+    answered[qIndex] = {
+      ...prev,
+      answer: nextAnswer,
+      reviewAction: d.decision,
+      reviewedBy: d.reviewer,
+      reviewedAt: d.decidedAt,
+    };
+  }
+
+  const total = answered.length || 1;
+  const yeses = answered.filter((q) => String((q as { answer?: string }).answer ?? "").toLowerCase().startsWith("y")).length;
+  const reviewScore = Math.round((yeses / total) * 100);
+  const reviewedAt = Date.now();
+
+  const correctedFinding = {
+    ...finding,
+    answeredQuestions: answered,
+    reviewedAt,
+    reviewScore,
+  };
+  await saveFinding(orgId, correctedFinding);
+
+  // review-done sentinel — marks this audit as reviewed for dashboards/queue filters.
+  await db.set(doneKey, { reviewedAt: new Date(reviewedAt).toISOString(), reviewScore, reviewedBy: reviewer });
+
+  // Audit-done index — update completed flag + score.
+  await writeAuditDoneIndex(orgId, {
+    findingId,
+    completedAt: reviewedAt,
+    doneAt: reviewedAt,
+    completed: true,
+    reason: "reviewed",
+    score: reviewScore,
+    recordId: (finding.recordId ?? finding.record?.RelatedDestinationId ?? finding.record?.GenieNumber ?? "") as string,
+    isPackage: finding.recordingIdField === "GenieNumber",
+    reviewedBy: reviewer,
+  });
+
+  await updateCompletedStatScore(orgId, findingId, reviewScore);
+
+  console.log(`✅ [REVIEW] ${findingId}: finalized score=${reviewScore}% (${yeses}/${total} yes) reviewer=${reviewer}`);
+
+  // Fire the terminate webhook — the registered "terminate" handler sends the
+  // audit-complete email to the configured recipients.
+  await fireWebhook(orgId, "terminate", {
+    findingId,
+    finding: correctedFinding,
+    correctedAnswers: answered,
+    reviewedAt,
+    reviewedBy: reviewer,
+    reviewScore,
+  });
 }
 
 // ── Undo decision — port of main:review/kv.ts:452-550 ────────────────────────

@@ -1,40 +1,60 @@
 /** Golden "ADMIN VIEW · Viewing as: [dropdown] · Exit Impersonation" banner.
- *  Self-detects from URL (`?as=<email>`) so it works on any page without
- *  threading props through every route. The middleware does the actual
- *  user-swap; this island is pure UI. */
+ *  Shows whenever the REAL logged-in user is admin AND they're viewing a
+ *  non-admin page — regardless of whether ?as=<email> is set. Lets admins
+ *  switch between reviewers via the dropdown or exit back to admin.
+ *
+ *  Middleware handles the actual user-swap when ?as= is present; this
+ *  island is pure UI. Fetches /admin/api/me on mount to read the REAL
+ *  user from the session cookie (not the middleware-swapped state). */
 import { useEffect, useState } from "preact/hooks";
 
 interface UserRow { email: string; role: string }
 
+const EXCLUDED_PREFIXES = ["/admin", "/login", "/register"];
+
 export default function ImpersonationBanner() {
-  const [asEmail, setAsEmail] = useState<string | null>(null);
+  const [show, setShow] = useState(false);
+  const [asEmail, setAsEmail] = useState<string>("");
   const [users, setUsers] = useState<UserRow[]>([]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
-    const target = url.searchParams.get("as");
-    if (!target) return;
+    const path = url.pathname;
+    const target = url.searchParams.get("as") ?? "";
     setAsEmail(target);
 
-    // Fetch reviewer/judge list for the dropdown. Endpoint exists: /admin/users
-    // returns { users: [...] } via the admin UserController.
-    fetch("/admin/users", { credentials: "include" })
-      .then((r) => r.ok ? r.json() : { users: [] })
-      .then((d: { users?: UserRow[] }) => setUsers(d.users ?? []))
-      .catch(() => setUsers([]));
+    // Don't bother probing on admin pages, login, register, or the root.
+    if (path === "/" || EXCLUDED_PREFIXES.some((p) => path.startsWith(p))) {
+      if (!target) return;
+    }
+
+    // Fetch the REAL user from the session cookie. /admin/api/me calls
+    // authenticate(req) directly — unaffected by the middleware's ?as=
+    // state swap — so this always returns the admin's actual identity.
+    fetch("/admin/api/me", { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((me: { role?: string } | null) => {
+        if (!me || me.role !== "admin") return;
+        setShow(true);
+        return fetch("/admin/users", { credentials: "include" })
+          .then((r) => r.ok ? r.json() : { users: [] })
+          .then((d: { users?: UserRow[] }) => setUsers(d.users ?? []))
+          .catch(() => setUsers([]));
+      })
+      .catch(() => { /* silent — banner just doesn't render */ });
   }, []);
 
-  if (!asEmail) return null;
+  if (!show) return null;
 
   const onChange = (e: Event) => {
     const email = (e.target as HTMLSelectElement).value;
-    if (!email) return;
-    const url = new URL(window.location.href);
-    url.searchParams.set("as", email);
-    window.location.href = url.toString();
+    const next = new URL(window.location.href);
+    if (email) next.searchParams.set("as", email);
+    else next.searchParams.delete("as");
+    window.location.href = next.toString();
   };
 
-  // Filter out admins from the dropdown — can't impersonate yourself usefully.
+  // Filter out admins — can't impersonate yourself usefully.
   const reviewers = users.filter((u) => u.role !== "admin");
 
   return (

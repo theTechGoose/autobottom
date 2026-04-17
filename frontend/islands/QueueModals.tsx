@@ -78,7 +78,14 @@ export default function QueueModals() {
       return !!document.querySelector(".verdict-meta-chip.pulse");
     }
 
+    // One-shot bypass. Submit re-dispatches the original click via
+    // `btn.dispatchEvent(...)` — without this flag the capture-phase
+    // interceptor below would re-catch that synthetic click (isLastForAudit
+    // is still true since DOM hasn't swapped) and reopen the modal forever.
+    let bypassNextVerdictClick = false;
+
     function onVerdictClick(e: Event) {
+      if (bypassNextVerdictClick) { bypassNextVerdictClick = false; return; }
       const target = e.target as HTMLElement | null;
       if (!target) return;
       const btn = target.closest<HTMLButtonElement>(".verdict-btn.confirm, .verdict-btn.flip, .verdict-btn.uphold, .verdict-btn.overturn");
@@ -108,10 +115,15 @@ export default function QueueModals() {
       const btn = pendingDecisionRef.current.button;
       cancelConfirm();
       if (btn) {
-        // Re-dispatch a click without the interceptor blocking
+        // Flip bypass BEFORE dispatching so our own interceptor lets this
+        // click pass through to HTMX's handler.
+        bypassNextVerdictClick = true;
         btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true, detail: 1, relatedTarget: null }));
       }
     }
+
+    // Expose bypass flag to the inline Submit onClick below.
+    (confirmOverlayRef as unknown as { _setBypass?: () => void })._setBypass = () => { bypassNextVerdictClick = true; };
 
     // Use capture phase so we intercept BEFORE HTMX's click handler fires.
     document.addEventListener("click", onVerdictClick, true);
@@ -209,7 +221,12 @@ export default function QueueModals() {
                 const btn = pendingDecisionRef.current.button;
                 if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
                 pendingDecisionRef.current.button = null;
-                if (btn) btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+                // Signal the capture-phase interceptor to let this synthetic
+                // click through; otherwise it re-opens the modal and nothing
+                // ever posts to the decide endpoint.
+                const setBypass = (confirmOverlayRef as unknown as { _setBypass?: () => void })._setBypass;
+                setBypass?.();
+                if (btn) btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true, detail: 1, relatedTarget: null }));
               }}
             >
               Submit

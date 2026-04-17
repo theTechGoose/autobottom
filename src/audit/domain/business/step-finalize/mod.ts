@@ -486,9 +486,13 @@ export async function stepFinalize(req: Request): Promise<Response> {
 }
 
 async function postToDeno(finding: Record<string, any>) {
-  const DENO_URL = Deno.env.get("KV_SERVICE_URL") ?? "";
+  // KV_REPORT_URL matches prod's env var for the external report mirror —
+  // a Deno service that exposes /store + /store-chunk. Prod's KV_SERVICE_URL
+  // is a separate (Google Sheets) service with no /store route; using it
+  // here produced 404 spam. Name aligns with main:env.ts denoKvUrl.
+  const DENO_URL = Deno.env.get("KV_REPORT_URL") ?? "";
   if (!DENO_URL) {
-    console.log(`[DENO] ${finding.id}: KV_SERVICE_URL unset — skipping upload`);
+    console.log(`[DENO] ${finding.id}: KV_REPORT_URL unset — skipping upload`);
     return;
   }
   const CHUNK_SIZE = 25_000; // Deno KV 64KB limit; UTF-16 strings cost 2 bytes/char

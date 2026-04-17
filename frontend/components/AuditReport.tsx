@@ -1,13 +1,15 @@
 /** Audit report UI — ported from production handleGetReport (main:controller.ts).
- *  Single component file for simplicity. Renders:
- *    - Hero: audit ID, status badge (PASSED/FAILED/pending), audio player
+ *  Renders:
+ *    - Hero: audit ID, status badge (PASSED/FAILED/pending), inline waveform audio player
  *    - Score block: big percentage, pass/fail counts
  *    - Record + Guest metadata grids
  *    - Transcript with speaker attribution
  *    - Questions list with verdict, thinking, defense (native <details> for expand)
  *
- *  Design principle: no client JS. Native HTML controls (<audio controls>, <details>)
- *  handle all interactivity. Server does all rendering. */
+ *  The audio player uses a Fresh island (AudioPlayer) for the waveform rendering
+ *  and seek interactions that are inherently browser-side. Everything else is
+ *  server-rendered. */
+import AudioPlayer from "../islands/AudioPlayer.tsx";
 
 interface AnsweredQuestion {
   header?: string;
@@ -109,20 +111,11 @@ export function AuditReport({ finding, id }: { finding: Finding; id: string }) {
             {statusBadge}
             <span style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">{finding.findingStatus ?? ""}</span>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;gap:12px;align-items:center;">
+            {finished && <AudioPlayer findingId={id} />}
             <a href="/admin/dashboard" class="sf-btn ghost" style="text-decoration:none;font-size:11px;">&larr; Dashboard</a>
           </div>
         </div>
-
-        {/* Audio */}
-        {finished && (
-          <div style="padding:16px 28px;">
-            <audio controls preload="none" style="width:100%;max-width:600px;">
-              <source src={`/audit/recording?id=${encodeURIComponent(id)}`} type="audio/mpeg" />
-              Your browser does not support the audio element.
-            </audio>
-          </div>
-        )}
       </div>
 
       {/* ===== Score block ===== */}

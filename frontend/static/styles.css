@@ -491,6 +491,21 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .rpt-q-snippet { font-family: var(--mono); font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-word; margin: 0; }
 .rpt-q-text { font-size: 13px; color: var(--text); line-height: 1.6; white-space: pre-wrap; }
 
+/* ===== Inline audio player (mirrors prod main:controller.ts) ===== */
+.audio-native { display: none; }
+.audio-error { display: none; font-size: 10px; color: var(--red); }
+.ap { display: flex; align-items: center; gap: 8px; }
+.ap-play {
+  width: 26px; height: 26px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--teal); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; flex-shrink: 0; padding: 0;
+}
+.ap-play:hover { background: var(--teal); box-shadow: 0 0 12px rgba(20,184,166,0.35); }
+.ap-play svg { width: 10px; height: 10px; fill: #fff; }
+#ap-waveform { display: block; }
+.ap-time { font-family: var(--mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+
 /* ===== Responsive ===== */
 @media (max-width: 900px) {
   .sidebar { display: none; }

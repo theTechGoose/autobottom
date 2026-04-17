@@ -3,6 +3,7 @@ import type { ComponentChildren } from "preact";
 import type { User } from "../lib/auth.ts";
 import { getTheme } from "../lib/theme.ts";
 import { Sidebar } from "./Sidebar.tsx";
+import ImpersonationBanner from "../islands/ImpersonationBanner.tsx";
 
 interface LayoutProps {
   title?: string;
@@ -31,6 +32,7 @@ export function Layout({ title, section, user, children, hideSidebar, pathname }
         <style dangerouslySetInnerHTML={{ __html: `:root { --accent: ${theme.accent}; --accent-bg: ${theme.accentBg}; }` }} />
       </head>
       <body hx-on--after-request="if(event.detail.xhr && event.detail.xhr.status===401) window.location='/login'">
+        <ImpersonationBanner />
         {!hideSidebar && user && <Sidebar user={user} section={section ?? ""} pathname={pathname} />}
         <main class={hideSidebar ? "main-full" : "main"}>
           {children}

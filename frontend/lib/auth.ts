@@ -10,6 +10,9 @@ export interface User {
 
 export interface State {
   user?: User;
+  /** When set, the real logged-in admin's email. ctx.state.user has been
+   *  swapped to the impersonated user for rendering. */
+  impersonatedBy?: string;
 }
 
 export const ROLE_REDIRECTS: Record<Role, string> = {

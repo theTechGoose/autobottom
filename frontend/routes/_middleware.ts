@@ -3,6 +3,7 @@
 import { define } from "../lib/define.ts";
 import { isPublicPath } from "../lib/auth.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
+import { listUsers } from "@core/business/auth/mod.ts";
 
 export default define.middleware(async (ctx) => {
   const url = new URL(ctx.req.url);
@@ -36,6 +37,28 @@ export default define.middleware(async (ctx) => {
       orgId: auth.orgId,
       role: auth.role as "admin" | "judge" | "manager" | "reviewer" | "user",
     };
+
+    // Admin impersonation via ?as=<email> — swap ctx.state.user for the target
+    // so the downstream page renders as that user, and stash the real admin
+    // email for the golden banner.
+    const asEmail = url.searchParams.get("as");
+    if (asEmail && auth.role === "admin" && asEmail !== auth.email) {
+      try {
+        const users = await listUsers(auth.orgId);
+        const target = users.find((u) => u.email === asEmail);
+        if (target) {
+          ctx.state.impersonatedBy = auth.email;
+          ctx.state.user = {
+            email: target.email,
+            orgId: auth.orgId,
+            role: target.role as "admin" | "judge" | "manager" | "reviewer" | "user",
+          };
+        }
+      } catch (e) {
+        console.error(`[MIDDLEWARE] impersonation lookup failed:`, e);
+      }
+    }
+
     return ctx.next();
   }
 

@@ -231,16 +231,27 @@ export class AdminConfigController {
   async purgeOldAudits(@Body() body: GenericBodyRequest) {
     const { since, before } = body as any;
     if (!before) return { error: "before required" };
-    return { ok: true, message: "purgeOldEntries pending full port" };
+    const { purgeOldEntries } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    return { ok: true, ...(await purgeOldEntries(ORG(), since ?? 0, before)) };
   }
-  @Post("purge-bypassed-wire-deductions") @ReturnedType(OkMessageResponse)
-  async purgeBypassedWireDeductions() {
-    return { ok: true, message: "purgeBypassedWireDeductions pending full port" };
+  @Post("purge-bypassed-wire-deductions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async purgeBypassedWireDeductions(@Body() body: GenericBodyRequest) {
+    const { purgeBypassedWireDeductions } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    const bypassCfg = await cfg.getOfficeBypassConfig(ORG());
+    const patterns = ((body as any)?.patterns as string[]) ?? bypassCfg.patterns ?? [];
+    return { ok: true, ...(await purgeBypassedWireDeductions(ORG(), patterns)) };
   }
 
   // -- State management --
-  @Post("wipe-kv") @ReturnedType(OkMessageResponse)
-  async wipeKv() { return { ok: true, message: "wipe-kv — destructive, pending safe implementation" }; }
+  // DESTRUCTIVE — requires body { confirm: "YES" } to proceed.
+  @Post("wipe-kv") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async wipeKv(@Body() body: GenericBodyRequest) {
+    const confirm = (body as any)?.confirm as string | undefined;
+    const { wipeKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    const result = await wipeKv(ORG(), confirm ?? "");
+    if (!result.ok) return { ok: false, message: result.error ?? "refused" };
+    return { ok: true, message: `wiped ${result.deleted} keys` };
+  }
   @Post("seed") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async seed(@Body() body: GenericBodyRequest) {
     const { createOrg, createUser } = await import("@core/business/auth/mod.ts");

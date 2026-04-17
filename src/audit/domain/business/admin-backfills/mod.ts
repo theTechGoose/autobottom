@@ -3,7 +3,7 @@
 
 import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
-import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
+import type { AuditDoneIndexEntry, WireDeductionEntry, ChargebackEntry } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { getPartnerDimensions } from "@admin/domain/data/admin-repository/mod.ts";
@@ -226,4 +226,97 @@ export async function backfillPartnerDimensions(
   // Single write of the merged dimensions for this page
   await db.set(orgKey(orgId, "partner-dimensions"), dims);
   return { scanned, saved, cursor: nextCursor, done };
+}
+
+// ── Purge old entries by date range ──────────────────────────────────────────
+
+/** Delete completed-audit-stat, chargeback, and wire entries with ts in
+ *  [since, before]. Port of main:lib/kv.ts:365-398. */
+export async function purgeOldEntries(
+  orgId: OrgId,
+  since: number,
+  before: number,
+): Promise<{ completed: number; chargebacks: number; wire: number }> {
+  const db = await getKv();
+  let completedDeleted = 0, cbDeleted = 0, wireDeleted = 0;
+
+  for await (const entry of db.list<{ ts?: number }>({
+    prefix: orgKey(orgId, "completed-audit-stat"),
+  })) {
+    const ts = entry.value?.ts ?? 0;
+    if (ts >= since && ts <= before) {
+      await db.delete(entry.key);
+      completedDeleted++;
+    }
+  }
+  for await (const entry of db.list<ChargebackEntry>({
+    prefix: orgKey(orgId, "chargeback-entry"),
+  })) {
+    if (entry.value.ts >= since && entry.value.ts <= before) {
+      await db.delete(entry.key);
+      cbDeleted++;
+    }
+  }
+  for await (const entry of db.list<WireDeductionEntry>({
+    prefix: orgKey(orgId, "wire-deduction-entry"),
+  })) {
+    if (entry.value.ts >= since && entry.value.ts <= before) {
+      await db.delete(entry.key);
+      wireDeleted++;
+    }
+  }
+
+  return { completed: completedDeleted, chargebacks: cbDeleted, wire: wireDeleted };
+}
+
+// ── Purge bypassed offices' wire deductions ──────────────────────────────────
+
+/** Iterate wire-deduction-entry and delete ones whose office matches any
+ *  bypass pattern (case-insensitive contains). Port of main:lib/kv.ts:323-342. */
+export async function purgeBypassedWireDeductions(
+  orgId: OrgId,
+  patterns: string[],
+): Promise<{ deleted: number; kept: number }> {
+  const db = await getKv();
+  let deleted = 0, kept = 0;
+  for await (const entry of db.list<WireDeductionEntry>({
+    prefix: orgKey(orgId, "wire-deduction-entry"),
+  })) {
+    const office = (entry.value.office ?? "").toLowerCase();
+    const isBypassed =
+      patterns.length > 0 && patterns.some((p) => office.includes(p.toLowerCase()));
+    if (isBypassed) {
+      await db.delete(entry.key);
+      deleted++;
+    } else {
+      kept++;
+    }
+  }
+  return { deleted, kept };
+}
+
+// ── Wipe KV — DESTRUCTIVE, requires explicit confirmation ────────────────────
+
+/** Delete every key under this org's namespace. Requires `confirm === "YES"`
+ *  from the caller — any other value refuses the request. Returns count of
+ *  keys deleted across all prefixes. */
+export async function wipeKv(
+  orgId: OrgId,
+  confirm: string,
+): Promise<{ ok: boolean; deleted?: number; error?: string }> {
+  if (confirm !== "YES") {
+    return {
+      ok: false,
+      error: "wipe-kv requires { confirm: \"YES\" } — refused",
+    };
+  }
+  const db = await getKv();
+  let deleted = 0;
+  // Iterate everything under [orgId, ...] and delete
+  for await (const entry of db.list({ prefix: [orgId] })) {
+    await db.delete(entry.key);
+    deleted++;
+  }
+  console.log(`[WIPE-KV] 💣 org=${orgId} deleted=${deleted} keys`);
+  return { ok: true, deleted };
 }

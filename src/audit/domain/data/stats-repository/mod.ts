@@ -98,6 +98,16 @@ export async function updateCompletedStatScore(orgId: OrgId, findingId: string, 
   }
 }
 
+/** Delete every completed-audit-stat entry matching the given findingId. */
+export async function deleteCompletedStat(orgId: OrgId, findingId: string): Promise<void> {
+  const db = await getKv();
+  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "completed-audit-stat") })) {
+    if (entry.value.findingId === findingId) {
+      await db.delete(entry.key);
+    }
+  }
+}
+
 // ── Audit Done Index ─────────────────────────────────────────────────────────
 
 export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEntry): Promise<void> {

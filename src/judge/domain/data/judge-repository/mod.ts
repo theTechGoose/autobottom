@@ -10,6 +10,12 @@ import {
   deleteChargebackEntry,
   deleteWireDeductionEntry,
   deleteAuditDoneIndexEntry,
+  deleteCompletedStat,
+  getChargebackEntries,
+  getWireDeductionEntries,
+  saveChargebackEntry,
+  saveWireDeductionEntry,
+  queryAuditDoneIndex,
 } from "@audit/domain/data/stats-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;
@@ -438,8 +444,9 @@ export async function adminDeleteFinding(orgId: OrgId, findingId: string): Promi
   await deleteChargebackEntry(orgId, findingId).catch(() => {});
   await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
   await deleteAuditDoneIndexEntry(orgId, findingId, completedAt).catch(() => {});
+  await deleteCompletedStat(orgId, findingId).catch(() => {});
 
-  console.log(`[ADMIN-DELETE] 🗑️ ${findingId}: cleaned ${keys.length} KV entries + cb/wire/audit-done-idx`);
+  console.log(`[ADMIN-DELETE] 🗑️ ${findingId}: cleaned ${keys.length} KV entries + cb/wire/audit-done-idx/completed-stat`);
 }
 
 // ── Legacy-compatible aliases ────────────────────────────────────────────────
@@ -448,16 +455,193 @@ export const claimNextItemLegacy = claimNextItem;
 export const undoDecisionLegacy = undoDecision;
 export const adminDeleteFindingLegacy = adminDeleteFinding;
 
-// ── Deferred to Commit B (still stubs in Commit A) ───────────────────────────
+// ── Backfill chargeback/wire entries from current finding state ──────────────
 
-export async function backfillChargebackEntriesLegacy(_orgId: OrgId, _since: number, _until: number) {
-  return { scanned: 0, cbUpdated: 0, cbDeleted: 0, wireUpdated: 0, message: "backfill pending full port" };
+function _isYes(a: string | undefined): boolean {
+  const s = String(a ?? "").trim().toLowerCase();
+  return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
 }
 
-export async function findDuplicatesLegacy(_orgId: OrgId, _since: number, _until: number) {
-  return [];
+/** Re-derive chargeback + wire entries from each finding's current answers.
+ *  Handles review/judge flips that changed the score after initial write.
+ *  Port of main:judge/kv.ts:935-998. */
+export async function backfillChargebackEntries(
+  orgId: OrgId,
+  since: number,
+  until: number,
+): Promise<{ scanned: number; cbUpdated: number; cbDeleted: number; wireUpdated: number }> {
+  let scanned = 0, cbUpdated = 0, cbDeleted = 0, wireUpdated = 0;
+
+  const wireEntries = await getWireDeductionEntries(orgId, since, until);
+  const cbEntries = await getChargebackEntries(orgId, since, until);
+
+  for (const wireEntry of wireEntries) {
+    scanned++;
+    const finding = await getFinding(orgId, wireEntry.findingId);
+    if (!finding) continue;
+    const answers = finding.answeredQuestions ?? [];
+    if (answers.length === 0) continue;
+    const finalYes = answers.filter((a: any) => _isYes(a.answer)).length;
+    const finalScore = answers.length > 0 ? Math.round((finalYes / answers.length) * 100) : 0;
+    await saveWireDeductionEntry(orgId, {
+      ...wireEntry,
+      score: finalScore,
+      totalSuccess: finalYes,
+      questionsAudited: answers.length,
+    });
+    wireUpdated++;
+  }
+
+  for (const cbEntry of cbEntries) {
+    scanned++;
+    const finding = await getFinding(orgId, cbEntry.findingId);
+    if (!finding) continue;
+    const answers = finding.answeredQuestions ?? [];
+    if (answers.length === 0) continue;
+    const finalYes = answers.filter((a: any) => _isYes(a.answer)).length;
+    const finalScore = answers.length > 0 ? Math.round((finalYes / answers.length) * 100) : 0;
+    const failedQHeaders = answers
+      .filter((a: any) => !_isYes(a.answer))
+      .map((a: any) => a.header)
+      .filter(Boolean);
+    if (failedQHeaders.length === 0) {
+      await deleteChargebackEntry(orgId, cbEntry.findingId);
+      cbDeleted++;
+    } else {
+      await saveChargebackEntry(orgId, { ...cbEntry, score: finalScore, failedQHeaders });
+      cbUpdated++;
+    }
+  }
+
+  return { scanned, cbUpdated, cbDeleted, wireUpdated };
 }
 
-export async function deleteDuplicatesLegacy(_orgId: OrgId, _plan: any, _onProgress: () => void) {
-  return { deleted: 0 };
+// ── Find duplicate findings by RecordId ──────────────────────────────────────
+
+export interface DedupCandidate {
+  id: string;
+  recordKey: string;
+  ts: number;
+  reviewed: boolean;
+  keep: boolean;
 }
+
+export interface DedupPlan {
+  scanned: number;
+  groups: number;
+  orphaned: number;
+  toDelete: DedupCandidate[];
+}
+
+function _extractRecordId(raw: string): string {
+  return (
+    raw.match(/"RecordId"\s*:\s*(\d+)/)?.[1] ||
+    raw.match(/"recordingId"\s*:\s*"([^"]+)"/)?.[1] ||
+    ""
+  );
+}
+
+/** Scan audit-done-idx in [since, until], group by QB RecordId, mark losers.
+ *  Port of main:judge/kv.ts:1090-1171. */
+export async function findDuplicates(
+  orgId: OrgId,
+  since: number,
+  until: number,
+): Promise<DedupPlan> {
+  const db = await getKv();
+  const indexEntries = await queryAuditDoneIndex(orgId, since, until);
+
+  type Entry = { id: string; recordKey: string; ts: number; reviewed: boolean };
+  const inRange: Entry[] = [];
+  const needChunk: typeof indexEntries = [];
+
+  for (const e of indexEntries) {
+    if (e.recordId) {
+      inRange.push({
+        id: e.findingId,
+        recordKey: e.recordId,
+        ts: e.completedAt,
+        reviewed: e.reason === "reviewed",
+      });
+    } else {
+      needChunk.push(e);
+    }
+  }
+
+  // Fallback: chunk-0 lookup for legacy entries missing recordId in the index
+  const orphaned: typeof needChunk = [];
+  const BATCH = 50;
+  for (let i = 0; i < needChunk.length; i += BATCH) {
+    const batch = needChunk.slice(i, i + BATCH);
+    const chunk0s = await Promise.all(
+      batch.map((e) => db.get<string>(orgKey(orgId, "audit-finding", e.findingId, 0))),
+    );
+    for (let j = 0; j < batch.length; j++) {
+      const raw = chunk0s[j].value;
+      const idx = batch[j];
+      if (!raw) { orphaned.push(idx); continue; }
+      const recordKey = _extractRecordId(raw);
+      if (!recordKey) continue;
+      inRange.push({
+        id: idx.findingId,
+        recordKey,
+        ts: idx.completedAt,
+        reviewed: idx.reason === "reviewed",
+      });
+    }
+  }
+
+  // Group by RecordId, winner = reviewed > unreviewed, then newest
+  const groups = new Map<string, Entry[]>();
+  for (const e of inRange) {
+    const g = groups.get(e.recordKey) ?? [];
+    g.push(e);
+    groups.set(e.recordKey, g);
+  }
+
+  const toDelete: DedupCandidate[] = [];
+  let dupGroups = 0;
+  for (const [, group] of groups) {
+    if (group.length <= 1) continue;
+    dupGroups++;
+    group.sort((a, b) => {
+      if (a.reviewed !== b.reviewed) return a.reviewed ? -1 : 1;
+      return b.ts - a.ts;
+    });
+    toDelete.push({ ...group[0], keep: true });
+    for (const dup of group.slice(1)) toDelete.push({ ...dup, keep: false });
+  }
+
+  for (const e of orphaned) {
+    toDelete.push({ id: e.findingId, recordKey: e.findingId, ts: e.completedAt, reviewed: false, keep: false });
+  }
+
+  console.log(`[DEDUP] dry-run org=${orgId} scanned=${inRange.length} dupGroups=${dupGroups} toDelete=${toDelete.filter((d) => !d.keep).length} orphaned=${orphaned.length}`);
+  return { scanned: inRange.length, groups: dupGroups, orphaned: orphaned.length, toDelete };
+}
+
+/** Delete the losers identified by findDuplicates. Port of
+ *  main:judge/kv.ts:1172-1252 (adminDeleteFinding shares the same cleanup). */
+export async function deleteDuplicates(
+  orgId: OrgId,
+  plan: DedupPlan,
+  onProgress?: (deleted: number, total: number, findingId: string) => void,
+): Promise<{ deleted: number }> {
+  const losers = plan.toDelete.filter((d) => !d.keep);
+  let deleted = 0;
+  for (const dup of losers) {
+    await adminDeleteFinding(orgId, dup.id).catch((err) =>
+      console.error(`[DEDUP] ❌ failed to delete ${dup.id}:`, err),
+    );
+    deleted++;
+    onProgress?.(deleted, losers.length, dup.id);
+  }
+  console.log(`[DEDUP] ✅ done org=${orgId} deleted=${deleted}/${losers.length}`);
+  return { deleted };
+}
+
+// ── Legacy aliases for data-maintenance functions ────────────────────────────
+
+export const backfillChargebackEntriesLegacy = backfillChargebackEntries;
+export const findDuplicatesLegacy = findDuplicates;
+export const deleteDuplicatesLegacy = deleteDuplicates;

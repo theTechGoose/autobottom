@@ -172,12 +172,107 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   }
 }
 
+// ── Appeal Filed ──────────────────────────────────────────────────────────────
+
+interface AppealFiledPayload {
+  findingId?: string;
+  finding?: Record<string, any>;
+  auditor?: string;
+  questionCount?: number;
+  comment?: string;
+  appealedAt?: number;
+}
+
+/** Prod's default appeal-filed HTML. Used when no template is configured via
+ *  the admin email-templates modal. Mustache-substituted at send time. */
+const DEFAULT_APPEAL_TEMPLATE: EmailTemplate = {
+  id: "__default_appeal__",
+  name: "Appeal Filed (default)",
+  subject: "Appeal Filed: {{guestName}} - Record: {{recordId}}",
+  createdAt: 0,
+  updatedAt: 0,
+  html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Appeal Filed</title></head><body style="margin:0;padding:0;background:#0d1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;min-height:100vh;"><tr><td align="center" style="padding:32px 16px;"><table width="560" cellpadding="0" cellspacing="0" style="max-width:100%;width:560px;border:1px solid #3d2b00;border-radius:12px;overflow:hidden;"><tr><td style="background:#1c1600;padding:24px 28px 20px;border-bottom:1px solid #3d2b00;"><p style="margin:0 0 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#d29922;">Action Required</p><h1 style="margin:0;font-size:20px;font-weight:700;color:#f0c842;">Appeal Filed</h1><p style="margin:6px 0 0;font-size:12px;color:#9e8300;">A team member has submitted an appeal for review.</p></td></tr><tr><td style="padding:22px 28px 0;"><table width="100%" cellpadding="0" cellspacing="0"><tr><td style="width:50%;padding-right:8px;vertical-align:top;"><div style="background:#161b22;border:1px solid #3d2b00;border-radius:8px;padding:14px 16px;"><p style="margin:0 0 2px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#d29922;">Team Member</p><p style="margin:0;font-size:14px;font-weight:600;color:#f0f6fc;">{{agentName}}</p><p style="margin:2px 0 0;font-size:11px;color:#8b949e;">{{agentEmail}}</p></div></td><td style="width:50%;padding-left:8px;vertical-align:top;"><div style="background:#161b22;border:1px solid #3d2b00;border-radius:8px;padding:14px 16px;"><p style="margin:0 0 2px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#d29922;">Guest / Record</p><p style="margin:0;font-size:14px;font-weight:600;color:#f0f6fc;">{{guestName}}</p><p style="margin:2px 0 0;font-size:11px;color:#8b949e;">Record #{{recordId}}</p></div></td></tr></table></td></tr><tr><td style="padding:14px 28px 0;"><div style="border-left:3px solid #d29922;padding:12px 16px;background:#161b22;border-radius:0 8px 8px 0;"><p style="margin:0 0 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#d29922;">Agent Comment</p><p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.6;">{{comment}}</p></div></td></tr><tr><td style="padding:22px 28px 24px;text-align:center;"><table cellpadding="0" cellspacing="0" style="margin:0 auto;"><tr><td style="padding-right:10px;"><a href="{{judgeUrl}}" style="display:inline-block;background:#9e6a03;color:#ffffff;font-size:13px;font-weight:700;text-decoration:none;padding:10px 22px;border-radius:6px;border:1px solid #d29922;">Open Judge Panel</a></td><td><a href="{{reportUrl}}" style="display:inline-block;background:#161b22;color:#c9d1d9;font-size:13px;font-weight:600;text-decoration:none;padding:10px 22px;border-radius:6px;border:1px solid #30363d;">View Report</a></td></tr></table></td></tr><tr><td style="background:#0d1117;border-top:1px solid #3d2b00;padding:14px 28px;text-align:center;"><p style="margin:0;font-size:11px;color:#6e7681;">Filed {{appealedAt}} &nbsp;·&nbsp; Audit ID: {{findingId}}</p></td></tr></table></td></tr></table></body></html>`,
+};
+
+async function sendAppealFiledEmail(orgId: OrgId, payload: AppealFiledPayload): Promise<void> {
+  const cfg = await getWebhookConfig(orgId, "appeal").catch((err) => {
+    console.error(`❌ [WEBHOOK:appeal] getWebhookConfig failed:`, err);
+    return null;
+  });
+  const finding = payload.finding;
+  const findingId = String(payload.findingId ?? finding?.id ?? "");
+  if (!finding || !findingId) {
+    console.warn(`⚠️ [WEBHOOK:appeal] payload missing finding fid=${findingId} — skipping email`);
+    return;
+  }
+
+  // Template lookup: configured id → fall back to prod's default HTML.
+  const template = (await resolveTemplate(orgId, cfg)) ?? DEFAULT_APPEAL_TEMPLATE;
+
+  const agentEmail = String(finding.owner ?? "");
+  const voEmail = String(finding.record?.VoEmail ?? "");
+  const gmEmail = String(finding.record?.GmEmail ?? "");
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const recipientEmail = isPackage ? gmEmail : (voEmail || agentEmail);
+  const { full: agentName } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
+
+  const appealedAtStr = payload.appealedAt
+    ? new Date(payload.appealedAt).toLocaleString("en-US", { timeZone: "America/New_York" }) + " EST"
+    : "";
+
+  const vars: Record<string, string> = {
+    findingId,
+    agentName,
+    agentEmail: recipientEmail,
+    teamMemberName: agentName,
+    teamMemberEmail: recipientEmail,
+    gmEmail,
+    recordId: String(finding.record?.RecordId ?? ""),
+    guestName: String(finding.record?.GuestName ?? ""),
+    reportUrl: `${SELF_URL()}/audit/report?id=${findingId}`,
+    judgeUrl: `${SELF_URL()}/judge`,
+    comment: payload.comment ?? "",
+    questionCount: String(payload.questionCount ?? 0),
+    auditor: payload.auditor ?? "",
+    appealedAt: appealedAtStr,
+    logoUrl: `${SELF_URL()}/logo.png`,
+    selfUrl: SELF_URL(),
+  };
+
+  // Appeal email is a staff notification — BCC list drives recipients.
+  const resolvedTest = cfg?.testEmail || "";
+  const bccList = cfg?.bcc || "";
+  const bccParts = bccList.split(",").map((s) => s.trim()).filter(Boolean);
+  const to = resolvedTest || bccParts[0] || "";
+  if (!to) {
+    console.warn(`⚠️ [WEBHOOK:appeal] no recipient configured (testEmail/bcc both empty) fid=${findingId} — skipping`);
+    return;
+  }
+  const bcc = resolvedTest ? undefined : (bccParts.slice(1).join(",") || undefined);
+
+  console.log(`📧 [WEBHOOK:appeal] sending fid=${findingId} to=${to} bcc=${bcc ?? "none"} template=${template.id}`);
+  try {
+    await sendEmail({
+      to,
+      subject: renderTemplate(template.subject, vars),
+      htmlBody: renderTemplate(template.html, vars),
+      bcc,
+    });
+    console.log(`✅ [WEBHOOK:appeal] email sent fid=${findingId} → ${to}`);
+  } catch (err) {
+    console.error(`❌ [WEBHOOK:appeal] sendEmail failed fid=${findingId}:`, err);
+  }
+}
+
 /** Register all webhook email handlers. Call once at process startup. Idempotent. */
 export function registerAllWebhookEmailHandlers(): void {
   registerWebhookEmailHandler("terminate", (orgId, payload) =>
     sendAuditCompleteEmail(orgId, payload as AuditCompletePayload),
   );
-  // Other kinds (appeal, manager, judge, judge-finish, re-audit-receipt) are
+  registerWebhookEmailHandler("appeal", (orgId, payload) =>
+    sendAppealFiledEmail(orgId, payload as AppealFiledPayload),
+  );
+  // Other kinds (manager, judge, judge-finish, re-audit-receipt) are
   // intentionally not registered yet — port them when those flows need email.
-  console.log(`📧 [WEBHOOK] email handlers registered: terminate`);
+  console.log(`📧 [WEBHOOK] email handlers registered: terminate, appeal`);
 }

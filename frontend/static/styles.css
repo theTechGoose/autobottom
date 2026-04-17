@@ -1285,6 +1285,84 @@ textarea.sf-input { height: 48px; resize: vertical; }
 #ap-waveform { display: block; }
 .ap-time { font-family: var(--mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
 
+/* ===== File Appeal modal (Commit T) ===== */
+.appeal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(6px);
+  z-index: 600;
+  display: flex; align-items: center; justify-content: center;
+  animation: queue-overlay-fade 0.15s ease;
+}
+.appeal-box {
+  background: #141820;
+  border: 1px solid #2a3143;
+  border-radius: 14px;
+  padding: 24px 28px 20px;
+  max-width: 560px;
+  width: 92vw;
+  max-height: 86vh;
+  display: flex; flex-direction: column;
+  color: var(--text-muted);
+}
+.appeal-title { font-size: 18px; font-weight: 700; color: var(--text-bright); margin-bottom: 6px; }
+.appeal-body { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px; }
+.appeal-choices { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.appeal-choice-btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  padding: 14px 16px;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-bright);
+  cursor: pointer; text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+}
+.appeal-choice-btn:hover { border-color: var(--accent); background: #11161f; }
+.appeal-choice-label { font-size: 13px; font-weight: 700; color: var(--text-bright); }
+.appeal-choice-desc  { font-size: 11px; color: var(--text-muted); }
+.appeal-qlist-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 6px; font-size: 11px; color: var(--text-dim);
+}
+.appeal-link-btn {
+  background: transparent; border: 0; padding: 0;
+  color: var(--accent); font-size: 11px; cursor: pointer; font-family: inherit;
+}
+.appeal-link-btn:hover { text-decoration: underline; }
+.appeal-qlist {
+  max-height: 240px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: #0d1117; margin-bottom: 10px;
+}
+.appeal-check-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-bottom: 1px solid #1c2333;
+  font-size: 12px; color: var(--text-bright); cursor: pointer;
+}
+.appeal-check-row:last-child { border-bottom: 0; }
+.appeal-check-row:hover { background: #11161f; }
+.appeal-check-row input[type="checkbox"] { accent-color: var(--accent); flex-shrink: 0; }
+.appeal-check-num {
+  font-family: var(--mono); font-size: 10px; color: var(--text-dim);
+  width: 22px; text-align: right; flex-shrink: 0;
+}
+.appeal-check-text { flex: 1; line-height: 1.35; }
+.appeal-note {
+  width: 100%;
+  background: #0d1117; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-bright); font-family: inherit; font-size: 12px;
+  padding: 10px 12px; resize: vertical; outline: none;
+  margin-bottom: 10px;
+}
+.appeal-note:focus { border-color: var(--accent); }
+.appeal-error {
+  font-size: 11px; color: var(--red);
+  background: var(--red-bg); border: 1px solid rgba(248,81,73,0.2);
+  border-radius: 6px; padding: 7px 10px; margin-bottom: 10px;
+}
+.appeal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
 /* ===== Responsive ===== */
 @media (max-width: 900px) {
   .sidebar { display: none; }

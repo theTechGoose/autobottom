@@ -10,6 +10,7 @@
  *  and seek interactions that are inherently browser-side. Everything else is
  *  server-rendered. */
 import AudioPlayer from "../islands/AudioPlayer.tsx";
+import AppealModal from "../islands/AppealModal.tsx";
 
 interface AnsweredQuestion {
   header?: string;
@@ -50,7 +51,7 @@ function formatTranscript(text: string): string {
     .replace(/\[CUSTOMER\]/g, '[GUEST]');
 }
 
-export function AuditReport({ finding, id }: { finding: Finding; id: string }) {
+export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Finding; id: string; auditorEmail?: string }) {
   const questions = finding.answeredQuestions ?? [];
   const total = questions.length;
   const yesCount = questions.filter(q => isYes(q.answer)).length;
@@ -126,6 +127,17 @@ export function AuditReport({ finding, id }: { finding: Finding; id: string }) {
           </div>
         </div>
       </div>
+
+      {/* File Appeal — only on finished, non-perfect audits */}
+      {finished && !passed && total > 0 && (
+        <AppealModal
+          findingId={id}
+          auditorEmail={auditorEmail}
+          failedQuestions={questions
+            .map((q, i) => ({ index: i, header: q.header ?? "Untitled question", answer: q.answer ?? "" }))
+            .filter((q) => !isYes(q.answer))}
+        />
+      )}
 
       {/* ===== Score block ===== */}
       {total > 0 ? (

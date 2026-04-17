@@ -62,7 +62,7 @@ export default define.page(async function AuditReportPage(ctx) {
 
   return (
     <Layout title={`Report ${id}`} section="admin" user={user} hideSidebar>
-      <AuditReport finding={finding} id={id} />
+      <AuditReport finding={finding} id={id} auditorEmail={user?.email ?? ""} />
     </Layout>
   );
 });

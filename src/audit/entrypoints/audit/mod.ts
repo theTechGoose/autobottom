@@ -14,6 +14,7 @@ import { KvRepository } from "@core/business/repository-base/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
 import { enqueueStep, getSelfUrl } from "@core/data/qstash/mod.ts";
 import { S3Ref } from "@core/data/s3/mod.ts";
+import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
 
 const findingRepo = new KvRepository("audit-finding");
 const jobRepo = new KvRepository("audit-job");
@@ -171,6 +172,22 @@ export class AuditController {
         "cache-control": "private, max-age=300",
       },
     });
+  }
+
+  @Post("api/appeal") @ReturnedType(MessageResponse) @Description("File a judge appeal for a completed audit") @BodyType(GenericBodyRequest)
+  async fileAppeal(@Body() body: GenericBodyRequest) {
+    const b = body as unknown as { findingId?: string; auditor?: string; comment?: string; appealedQuestions?: unknown };
+    if (!b.findingId || !b.auditor) return { error: "findingId and auditor required" };
+    const raw = Array.isArray(b.appealedQuestions) ? b.appealedQuestions : [];
+    const indexes = raw.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 0);
+    if (!indexes.length) return { error: "appealedQuestions required" };
+    try {
+      const orgId = defaultOrgId() as OrgId;
+      return await fileJudgeAppeal(orgId, b.findingId, { auditor: b.auditor, comment: b.comment, appealedQuestions: indexes });
+    } catch (e) {
+      console.error(`❌ [AUDIT] fileAppeal failed:`, e);
+      return { ok: false, error: (e as Error).message };
+    }
   }
 
   @Get("stats") @ReturnedType(PipelineStatsResponse) @Description("Get pipeline stats")

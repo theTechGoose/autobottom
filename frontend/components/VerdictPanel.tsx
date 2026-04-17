@@ -128,6 +128,9 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
       <input type="hidden" id="hx-email" value={email} />
       <input type="hidden" id="hx-mode" value={mode} />
 
+      {/* Scrollable content above the pinned footer */}
+      <div class="verdict-scroll">
+
       {/* Audit header — review mode shows guest/TM/record/type/failed-count */}
       {isReview && (
         <div class="verdict-audit-header">
@@ -251,6 +254,11 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
         )}
       </div>
 
+      </div>
+      {/* End .verdict-scroll */}
+
+      {/* Pinned footer — decision buttons + undo/dismiss */}
+      <div class="verdict-footer">
       {/* Decision buttons */}
       <div class="verdict-actions">
         {isReview ? (
@@ -325,6 +333,8 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
           </button>
         )}
       </div>
+      </div>
+      {/* End .verdict-footer */}
     </div>
   );
 }

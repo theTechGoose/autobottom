@@ -1,6 +1,6 @@
 /** HTMX handler — queue management actions (pause, resume, clear, terminate). */
 import { define } from "../../../lib/define.ts";
-import { apiPost } from "../../../lib/api.ts";
+import { apiPost, parseHtmxBody } from "../../../lib/api.ts";
 
 const ACTIONS: Record<string, string> = {
   pause: "/admin/pause-queues",
@@ -13,8 +13,8 @@ const ACTIONS: Record<string, string> = {
 export const handler = define.handlers({
   async POST(ctx) {
     try {
-      const body = await ctx.req.json();
-      const action = body.action;
+      const body = await parseHtmxBody(ctx.req);
+      const action = String(body.action ?? "");
       const endpoint = ACTIONS[action];
       if (!endpoint) {
         return new Response(`<span class="qa-status err">Unknown action: ${action}</span>`, {

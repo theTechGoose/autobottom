@@ -1,11 +1,11 @@
 /** API route — send a chat message. */
 import { define } from "../../../lib/define.ts";
-import { apiPost } from "../../../lib/api.ts";
+import { apiPost, parseHtmxBody } from "../../../lib/api.ts";
 
 export const handler = define.handlers({
   async POST(ctx) {
     try {
-      const body = await ctx.req.json();
+      const body = await parseHtmxBody(ctx.req);
       const result = await apiPost("/api/messages", ctx.req, body);
       return Response.json(result);
     } catch (e) {

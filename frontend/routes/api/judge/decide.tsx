@@ -1,6 +1,6 @@
 /** HTMX handler — record judge decision, return next queue fragment. */
 import { define } from "../../../lib/define.ts";
-import { apiPost, apiFetch } from "../../../lib/api.ts";
+import { apiPost, apiFetch, parseHtmxBody } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { VerdictPanel } from "../../../components/VerdictPanel.tsx";
 import { TranscriptPanel } from "../../../components/TranscriptPanel.tsx";
@@ -9,10 +9,10 @@ import type { ReviewItem } from "../../../components/VerdictPanel.tsx";
 export const handler = define.handlers({
   async POST(ctx) {
     try {
-      const body = await ctx.req.json();
+      const body = await parseHtmxBody(ctx.req);
       await apiPost("/judge/api/decide", ctx.req, body);
       const next = await apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
-        `/judge/api/next?judge=${encodeURIComponent(body.judge)}`, ctx.req,
+        `/judge/api/next?judge=${encodeURIComponent(String(body.judge ?? ""))}`, ctx.req,
       );
       const buffer = next.buffer ?? [];
       const currentIndex = 0;
@@ -26,7 +26,7 @@ export const handler = define.handlers({
               currentIndex={currentIndex}
               mode="judge"
               remaining={next.remaining}
-              email={body.judge}
+              email={String(body.judge ?? "")}
               combo={0}
             />
           </div>

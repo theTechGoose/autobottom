@@ -1,6 +1,6 @@
 /** HTMX handler — undo last review decision, return queue fragment. */
 import { define } from "../../../lib/define.ts";
-import { apiPost } from "../../../lib/api.ts";
+import { apiPost, parseHtmxBody } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { VerdictPanel } from "../../../components/VerdictPanel.tsx";
 import { TranscriptPanel } from "../../../components/TranscriptPanel.tsx";
@@ -9,7 +9,7 @@ import type { ReviewItem } from "../../../components/VerdictPanel.tsx";
 export const handler = define.handlers({
   async POST(ctx) {
     try {
-      const body = await ctx.req.json();
+      const body = await parseHtmxBody(ctx.req);
       const result = await apiPost<{ buffer: ReviewItem[]; remaining: number }>(
         "/review/api/back", ctx.req, body,
       );
@@ -25,7 +25,7 @@ export const handler = define.handlers({
               currentIndex={currentIndex}
               mode="review"
               remaining={result.remaining}
-              email={body.reviewer}
+              email={String(body.reviewer ?? "")}
               combo={0}
             />
           </div>

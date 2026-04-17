@@ -45,3 +45,25 @@ export class ApiError extends Error {
     this.path = path;
   }
 }
+
+/** Parse an HTMX-or-fetch-submitted body into a plain object.
+ *  HTMX `hx-vals` posts as application/x-www-form-urlencoded; islands
+ *  using `fetch()` post JSON. Handles both, and auto-coerces integer
+ *  strings (e.g. questionIndex="0" → 0) so backend DTO validation holds. */
+export async function parseHtmxBody(req: Request): Promise<Record<string, unknown>> {
+  const ct = req.headers.get("content-type") ?? "";
+  if (ct.includes("application/json")) {
+    return await req.json() as Record<string, unknown>;
+  }
+  const fd = await req.formData();
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of fd.entries()) {
+    const s = typeof v === "string" ? v : String(v);
+    if (/^-?\d+$/.test(s)) {
+      const n = Number(s);
+      if (Number.isSafeInteger(n) && String(n) === s) { out[k] = n; continue; }
+    }
+    out[k] = s;
+  }
+  return out;
+}

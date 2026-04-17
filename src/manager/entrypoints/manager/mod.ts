@@ -8,7 +8,6 @@ import { GenericBodyRequest, RemediateRequest, CreateAgentRequest, DeleteEmailRe
 import { getManagerQueue, submitRemediation, getManagerStats } from "@manager/domain/data/manager-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { createUser, deleteUser, listUsers } from "@core/business/auth/mod.ts";
-import { getGameState } from "@gamification/domain/data/gamification-repository/mod.ts";
 import { getPrefabSubscriptions, savePrefabSubscriptions } from "@events/domain/data/events-repository/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
@@ -37,11 +36,9 @@ export class ManagerController {
   @Get("stats") @ReturnedType(ManagerStatsResponse) @Description("Manager queue statistics")
   async stats() { return getManagerStats(ORG()); }
 
-  @Get("me") @ReturnedType(MessageResponse) @Description("Get current manager info")
-  async me() { return { message: "Requires auth context — not yet implemented" }; }
-
-  @Get("game-state") @ReturnedType(MessageResponse) @Description("Get manager game state")
-  async gameState() { return { message: "Requires auth context — not yet implemented" }; }
+  // /manager/api/me and /manager/api/game-state are dispatched directly from
+  // main.ts (AUTH_CONTEXT_HANDLERS) — they need the session cookie and danet's
+  // @Req doesn't work via router.fetch. Same pattern as /admin/api/me.
 
   @Get("agents") @ReturnedType(AgentListResponse) @Description("List team agents")
   async listAgents() { return { agents: await listUsers(ORG(), "user") }; }

@@ -57,8 +57,8 @@ export class ReviewController {
     return { ok: true };
   }
 
-  @Get("me") @ReturnedType(MessageResponse) @Description("Get current reviewer info")
-  async me() { return { message: "Requires auth context — use session cookie" }; }
+  // /review/api/me is dispatched directly from main.ts (AUTH_CONTEXT_HANDLERS)
+  // — needs the session cookie, danet's @Req doesn't work via router.fetch.
 
   @Get("preview") @ReturnedType(ReviewBufferResponse) @Description("Preview a finding for review")
   async preview(@Query("findingId") findingId: string) {

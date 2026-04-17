@@ -66,6 +66,13 @@ async function handleGameState(req: Request): Promise<Response> {
   return Response.json({ ...gs, badges: badges.map((b) => b.badgeId) });
 }
 
+async function handleGetBadges(req: Request): Promise<Response> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const badges = await getEarnedBadges(auth.orgId, auth.email);
+  return Response.json({ badges });
+}
+
 async function handleAgentDashboard(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -116,6 +123,7 @@ const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>>
   "/manager/api/game-state": handleGameState,
   "/agent/api/game-state": handleGameState,
   "/agent/api/dashboard": handleAgentDashboard,
+  "/api/badges": handleGetBadges,
 };
 
 const danetApp = new DanetApplication();

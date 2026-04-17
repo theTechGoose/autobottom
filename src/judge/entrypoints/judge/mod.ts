@@ -43,8 +43,8 @@ export class JudgeController {
   @Get("stats") @ReturnedType(JudgeStatsResponse) @Description("Judge queue statistics")
   async stats() { return getJudgeStats(ORG()); }
 
-  @Get("me") @ReturnedType(MessageResponse) @Description("Get current judge info")
-  async me() { return { message: "Requires auth context — not yet implemented" }; }
+  // /judge/api/me is dispatched directly from main.ts (AUTH_CONTEXT_HANDLERS)
+  // — needs the session cookie, danet's @Req doesn't work via router.fetch.
 
   @Get("reviewers") @ReturnedType(ReviewerListResponse) @Description("List all reviewers")
   async listReviewers() {

@@ -539,6 +539,21 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .gb-link { color: var(--text-muted); font-size: 11px; text-decoration: none; padding: 4px 8px; border-radius: 4px; }
 .gb-link:hover { color: var(--text-bright); background: var(--bg); }
 
+/* ===== Judge-specific extras (Commit J) ===== */
+.verdict-footer-actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+.verdict-dismiss {
+  background: rgba(248,113,113,0.08);
+  border: 1px solid rgba(248,113,113,0.3);
+  color: var(--red);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.verdict-dismiss:hover { background: rgba(248,113,113,0.18); border-color: rgba(248,113,113,0.5); }
+
 /* Transcript Panel */
 .transcript-panel { padding: 16px 20px; display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .transcript-empty { text-align: center; color: var(--text-dim); padding: 80px 20px; font-size: 13px; }

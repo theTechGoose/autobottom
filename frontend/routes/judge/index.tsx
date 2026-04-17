@@ -11,6 +11,7 @@ import QueueAudioPlayer from "../../islands/QueueAudioPlayer.tsx";
 import TranscriptInteractive from "../../islands/TranscriptInteractive.tsx";
 import QueueModals from "../../islands/QueueModals.tsx";
 import GamificationBar from "../../islands/GamificationBar.tsx";
+import JudgeModals from "../../islands/JudgeModals.tsx";
 
 interface BufferResponse { buffer: ReviewItem[]; remaining: number; }
 
@@ -51,6 +52,7 @@ export default define.page(async function JudgeQueue(ctx) {
       <GamificationBar mode="judge" email={user.email} />
       <QueueAudioPlayer initialFindingId={item?.findingId ?? null} />
       <QueueModals />
+      <JudgeModals />
     </Layout>
   );
 });

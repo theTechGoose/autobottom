@@ -241,6 +241,11 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
         <button class="verdict-meta-chip" type="button" data-action="jump-to-audio">
           Jump to Audio
         </button>
+        {!isReview && item.reviewedBy && (
+          <span class="verdict-meta-chip" title="Reviewed by">
+            Reviewer <span class="mono">{item.reviewedBy}</span>
+          </span>
+        )}
         {isLastForAudit && (
           <span class="verdict-meta-chip pulse">{isReview ? "Final for audit" : "Final for appeal"}</span>
         )}
@@ -299,16 +304,27 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
         )}
       </div>
 
-      {/* Undo */}
-      <button
-        class="verdict-undo"
-        hx-post={`/api/${mode}/back`}
-        hx-vals={JSON.stringify({ findingId: item.findingId, questionIndex: item.questionIndex, reviewer: email, judge: email })}
-        hx-target="#queue-content"
-        hx-swap="innerHTML"
-      >
-        <kbd>B</kbd> Undo
-      </button>
+      {/* Undo + (judge only) Dismiss Appeal */}
+      <div class="verdict-footer-actions">
+        <button
+          class="verdict-undo"
+          hx-post={`/api/${mode}/back`}
+          hx-vals={JSON.stringify({ findingId: item.findingId, questionIndex: item.questionIndex, reviewer: email, judge: email })}
+          hx-target="#queue-content"
+          hx-swap="innerHTML"
+        >
+          <kbd>B</kbd> Undo
+        </button>
+        {!isReview && (
+          <button
+            class="verdict-dismiss"
+            type="button"
+            onClick={() => document.dispatchEvent(new CustomEvent("queue:dismiss-appeal-open", { detail: { findingId: item.findingId } }))}
+          >
+            Dismiss Appeal
+          </button>
+        )}
+      </div>
     </div>
   );
 }

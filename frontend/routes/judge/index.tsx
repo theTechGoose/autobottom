@@ -7,6 +7,7 @@ import { apiFetch } from "../../lib/api.ts";
 import type { ReviewItem } from "../../components/VerdictPanel.tsx";
 import HotkeyHandler from "../../islands/HotkeyHandler.tsx";
 import SoundEngine from "../../islands/SoundEngine.tsx";
+import QueueAudioPlayer from "../../islands/QueueAudioPlayer.tsx";
 
 interface BufferResponse { buffer: ReviewItem[]; remaining: number; }
 
@@ -40,6 +41,7 @@ export default define.page(async function JudgeQueue(ctx) {
           <TranscriptPanel transcript={item?.transcript} snippet={item?.snippet} />
         </div>
       </div>
+      <QueueAudioPlayer initialFindingId={item?.findingId ?? null} />
     </Layout>
   );
 });

@@ -415,6 +415,85 @@ textarea.sf-input { height: 48px; resize: vertical; }
 @keyframes pulse-final { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .verdict-meta-chip .mono { font-family: var(--mono); font-size: 10px; }
 
+/* ===== Queue audio player bar (Commit F) ===== */
+.queue-audio-bar {
+  position: fixed;
+  bottom: 0;
+  left: 280px; /* sidebar width */
+  right: 0;
+  height: 64px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+  z-index: 100;
+}
+@media (max-width: 900px) {
+  .queue-audio-bar { left: 0; }
+}
+.queue-audio-bar button { font-family: inherit; }
+.qap-back, .qap-fwd {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.qap-back:hover, .qap-fwd:hover { border-color: var(--accent); color: var(--text-bright); }
+.qap-play {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  transition: all 0.15s;
+}
+.qap-play:hover { box-shadow: 0 0 14px rgba(139,92,246,0.4); }
+.qap-play svg { width: 12px; height: 12px; fill: #fff; }
+.qap-waveform {
+  flex: 1;
+  min-width: 0;
+  height: 48px;
+  cursor: pointer;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.qap-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.qap-speed {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* Push queue content up so it doesn't sit under the audio bar */
+.queue-layout { padding-bottom: 80px; }
+
 /* Transcript Panel */
 .transcript-panel { padding: 16px 20px; display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .transcript-empty { text-align: center; color: var(--text-dim); padding: 80px 20px; font-size: 13px; }

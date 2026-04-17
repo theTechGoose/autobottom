@@ -53,6 +53,10 @@ export default function HotkeyHandler({ mode }: HotkeyHandlerProps) {
       }
     }
 
+    function dispatch(name: string, detail?: unknown) {
+      document.dispatchEvent(new CustomEvent(name, { detail }));
+    }
+
     function handleKeydown(e: KeyboardEvent) {
       // Ignore if typing in an input/textarea
       const tag = (e.target as HTMLElement)?.tagName;
@@ -60,12 +64,62 @@ export default function HotkeyHandler({ mode }: HotkeyHandlerProps) {
 
       const key = e.key.toLowerCase();
 
+      // Audio shortcuts work in both modes — dispatched as custom events that
+      // QueueAudioPlayer listens for. Do these BEFORE decide shortcuts so the
+      // space key (which would otherwise scroll) gets absorbed.
+      switch (e.key) {
+        case " ":
+        case "p":
+        case "P":
+          e.preventDefault();
+          dispatch("queue:play-toggle");
+          return;
+        case "ArrowLeft":
+          e.preventDefault();
+          dispatch("queue:seek", { delta: -5 });
+          return;
+        case "ArrowRight":
+          e.preventDefault();
+          dispatch("queue:seek", { delta: 5 });
+          return;
+        case "ArrowUp":
+          e.preventDefault();
+          dispatch("queue:speed", { delta: 0.5 });
+          return;
+        case "ArrowDown":
+          e.preventDefault();
+          dispatch("queue:speed", { delta: -0.5 });
+          return;
+        case "/":
+          e.preventDefault();
+          dispatch("queue:search-open");
+          return;
+        case ";":
+          e.preventDefault();
+          dispatch("queue:search-next");
+          return;
+        case "?":
+          e.preventDefault();
+          dispatch("queue:cheat-sheet-toggle");
+          return;
+      }
+
       if (mode === "review") {
         switch (key) {
           case "y": triggerDecide("confirm"); break;
           case "n": triggerDecide("flip"); break;
           case "b": triggerUndo(); break;
           case "d": toggleDetails(); break;
+          case "j":
+          case "h":
+            e.preventDefault();
+            dispatch("queue:transcript-scroll", { dir: -1 });
+            break;
+          case "k":
+          case "l":
+            e.preventDefault();
+            dispatch("queue:transcript-scroll", { dir: 1 });
+            break;
         }
       } else {
         switch (key) {
@@ -76,13 +130,25 @@ export default function HotkeyHandler({ mode }: HotkeyHandlerProps) {
           case "f": triggerDecide("overturn", "transcript"); break;
           case "b": triggerUndo(); break;
           case "g": toggleDetails(); break;
+          case "j":
+          case "h":
+            e.preventDefault();
+            dispatch("queue:transcript-scroll", { dir: -1 });
+            break;
+          case "k":
+          case "l":
+            e.preventDefault();
+            dispatch("queue:transcript-scroll", { dir: 1 });
+            break;
         }
       }
     }
 
     function toggleDetails() {
-      const details = document.querySelector(".verdict-details") as HTMLDetailsElement | null;
-      if (details) details.open = !details.open;
+      // "Bot reasoning" accordion is now a standalone <details class="verdict-accordion">;
+      // find the first one (Bot reasoning comes first in VerdictPanel).
+      const first = document.querySelector(".verdict-accordion") as HTMLDetailsElement | null;
+      if (first) first.open = !first.open;
     }
 
     document.addEventListener("keydown", handleKeydown);

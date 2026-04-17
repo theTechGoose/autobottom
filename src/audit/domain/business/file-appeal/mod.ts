@@ -5,7 +5,7 @@
  *  handler registry). */
 
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
-import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { populateJudgeQueue, saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 
@@ -68,9 +68,13 @@ export async function fileJudgeAppeal(
 
   // Persist comment onto the finding so the judge queue can surface it alongside
   // the questions (matches prod behavior — judge sees agent's appeal note).
+  // Best-effort — the judge queue + appeal record are the critical writes.
   if (input.comment) {
-    const { saveFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
-    await saveFinding(orgId, { ...finding, appealComment: input.comment });
+    try {
+      await saveFinding(orgId, { ...finding, appealComment: input.comment });
+    } catch (err) {
+      console.error(`⚠️ [APPEAL] saveFinding comment failed fid=${findingId} (non-fatal):`, err);
+    }
   }
 
   fireWebhook(orgId, "appeal", {

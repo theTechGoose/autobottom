@@ -569,25 +569,42 @@ export async function getReviewStats(orgId: OrgId): Promise<{
   pending: number;
   decided: number;
   pendingAuditCount: number;
+  dateLegPending: number;
+  dateLegDecided: number;
+  packagePending: number;
+  packageDecided: number;
 }> {
   const db = await getKv();
-  let pending = 0, decided = 0;
+  let dateLegPending = 0, packagePending = 0;
+  let dateLegDecided = 0, packageDecided = 0;
   const pendingFindings = new Set<string>();
 
+  const bumpPending = (item: ReviewItem) => {
+    if (item.recordingIdField === "GenieNumber") packagePending++;
+    else dateLegPending++;
+    pendingFindings.add(item.findingId);
+  };
+
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") })) {
-    pending++;
-    pendingFindings.add(entry.value.findingId);
+    bumpPending(entry.value);
   }
   // Items claimed by a reviewer are moved to `review-active`; they're still
   // outstanding work from a dashboard POV, so roll them into `pending`.
   for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-active") })) {
-    pending++;
-    pendingFindings.add(entry.value.findingId);
+    bumpPending(entry.value);
   }
-  for await (const _entry of db.list({ prefix: orgKey(orgId, "review-decided") })) {
-    decided++;
+  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-decided") })) {
+    if (entry.value.recordingIdField === "GenieNumber") packageDecided++;
+    else dateLegDecided++;
   }
-  return { pending, decided, pendingAuditCount: pendingFindings.size };
+
+  return {
+    pending: dateLegPending + packagePending,
+    decided: dateLegDecided + packageDecided,
+    pendingAuditCount: pendingFindings.size,
+    dateLegPending, dateLegDecided,
+    packagePending, packageDecided,
+  };
 }
 
 // ── Reviewed finding IDs ─────────────────────────────────────────────────────

@@ -397,17 +397,20 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .verdict-thinking, .verdict-defense { font-size: 12px; color: var(--text-muted); line-height: 1.6; padding: 10px 14px; background: var(--bg); border-radius: 8px; margin-top: 8px; border: 1px solid var(--border); white-space: pre-wrap; }
 
 .verdict-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 0; }
-.verdict-btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.15s; }
-.verdict-btn kbd { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 4px; font-size: 10px; font-weight: 800; font-family: var(--mono); }
-.verdict-btn.confirm { background: var(--accent); color: #fff; flex: 1; justify-content: center; }
-.verdict-btn.confirm:hover { opacity: 0.9; }
-.verdict-btn.confirm kbd { background: rgba(255,255,255,0.2); color: #fff; }
-.verdict-btn.flip { background: var(--bg-surface); color: var(--text-muted); border: 1px solid var(--border); flex: 1; justify-content: center; }
-.verdict-btn.flip:hover { color: var(--text-bright); border-color: var(--border-hover); }
-.verdict-btn.flip kbd { background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); }
-.verdict-btn.uphold { background: var(--accent); color: #fff; width: 100%; justify-content: center; }
-.verdict-btn.uphold:hover { opacity: 0.9; }
-.verdict-btn.uphold kbd { background: rgba(255,255,255,0.2); color: #fff; }
+.verdict-btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 0; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.15s; background: none; }
+.verdict-btn kbd { display: inline-flex; align-items: center; justify-content: center; padding: 1px 5px; border-radius: 3px; font-size: 11px; font-weight: 800; font-family: var(--mono); }
+/* Confirm — purple outlined pill (matches prod #btn-confirm) */
+.verdict-btn.confirm { flex: 1; justify-content: center; border: 1px solid rgba(139,92,246,0.35); background: rgba(139,92,246,0.10); color: #bc8cff; }
+.verdict-btn.confirm:hover { background: rgba(139,92,246,0.16); border-color: rgba(139,92,246,0.55); }
+.verdict-btn.confirm kbd { background: #1a1427; border: 1px solid rgba(139,92,246,0.4); color: #8b5cf6; }
+/* Flip — green outlined pill (matches prod #btn-flip) */
+.verdict-btn.flip { flex: 1; justify-content: center; border: 1px solid rgba(34,197,94,0.35); background: rgba(34,197,94,0.08); color: #4ade80; }
+.verdict-btn.flip:hover { background: rgba(34,197,94,0.14); border-color: rgba(34,197,94,0.55); }
+.verdict-btn.flip kbd { background: #0f1a14; border: 1px solid rgba(34,197,94,0.4); color: #22c55e; }
+/* Uphold (judge) — teal outlined, sibling of Confirm */
+.verdict-btn.uphold { width: 100%; justify-content: center; border: 1px solid rgba(20,184,166,0.35); background: rgba(20,184,166,0.10); color: #5eead4; }
+.verdict-btn.uphold:hover { background: rgba(20,184,166,0.16); border-color: rgba(20,184,166,0.55); }
+.verdict-btn.uphold kbd { background: #0f1a19; border: 1px solid rgba(20,184,166,0.4); color: #14b8a6; }
 .verdict-overturn-group { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; align-items: center; }
 .verdict-overturn-label { font-size: 10px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
 .verdict-btn.overturn { background: var(--bg-surface); color: var(--red); border: 1px solid rgba(248,81,73,0.2); font-size: 11px; padding: 6px 12px; }

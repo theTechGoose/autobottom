@@ -136,18 +136,44 @@ export async function transcribeWithUtterances(audioBytes: Uint8Array, maxAttemp
   }, {}, "client");
 }
 
-export async function submitTranscription(uploadUrl: string, findingId?: string): Promise<string> {
+export interface SubmitTranscriptionOpts {
+  /** Millisecond offset into the audio file. Forwarded as AssemblyAI's
+   *  `audio_start_from`. Use to skip a lead-in. */
+  audioStartFrom?: number;
+  /** Millisecond offset at which AssemblyAI should stop transcribing.
+   *  Forwarded as `audio_end_at`. */
+  audioEndAt?: number;
+}
+
+export async function submitTranscription(
+  uploadUrl: string,
+  findingId?: string,
+  opts?: SubmitTranscriptionOpts,
+): Promise<string> {
   return withSpan("assemblyai.submitTranscription", async () => {
     const tag = findingId ? `${findingId}: ` : "";
+    const payload: Record<string, unknown> = {
+      audio_url: uploadUrl,
+      language_code: "en_us",
+      punctuate: true,
+      format_text: true,
+      speaker_labels: true,
+    };
+    if (typeof opts?.audioStartFrom === "number" && opts.audioStartFrom >= 0) {
+      payload.audio_start_from = Math.floor(opts.audioStartFrom);
+    }
+    if (typeof opts?.audioEndAt === "number" && opts.audioEndAt > 0) {
+      payload.audio_end_at = Math.floor(opts.audioEndAt);
+    }
     const res = await fetch(`${BASE}/transcript`, {
       method: "POST",
       headers: { ...authHeaders(), "Content-Type": "application/json" },
-      body: JSON.stringify({ audio_url: uploadUrl, language_code: "en_us", punctuate: true, format_text: true, speaker_labels: true }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(`AssemblyAI submit failed: ${res.status} ${await res.text()}`);
     const data = await res.json();
     if (data.status === "error") throw new Error(data.error || "AssemblyAI submit error");
-    console.log(`[ASSEMBLYAI] ${tag}submitted transcript ${data.id}`);
+    console.log(`[ASSEMBLYAI] ${tag}submitted transcript ${data.id}${payload.audio_start_from ? ` snipStart=${payload.audio_start_from}` : ""}${payload.audio_end_at ? ` snipEnd=${payload.audio_end_at}` : ""}`);
     metric("autobottom.assemblyai.submit", 1);
     return data.id;
   }, {}, "client");

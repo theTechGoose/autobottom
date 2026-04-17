@@ -19,6 +19,9 @@ import { registerAllWebhookEmailHandlers } from "@reporting/domain/business/webh
 import { getGameState, getEarnedBadges } from "@gamification/domain/data/gamification-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import { defaultOrgId } from "@core/business/auth/mod.ts";
+import { startUploadReaudit } from "@audit/domain/business/upload-reaudit/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 // --- Pipeline step functions: dispatched DIRECTLY by this handler (bypassing
 // danet) because danet's @Req decorator returns undefined when reached via
@@ -113,6 +116,57 @@ async function handleAgentDashboard(req: Request): Promise<Response> {
     recentAudits: audits.slice(0, 20),
     weeklyTrend: [],
   });
+}
+
+// Direct-dispatch: POST /audit/api/appeal/upload-recording accepts a multipart
+// form with a file, so we bypass danet (whose @Req decorator returns undefined
+// via router.fetch). Same workaround pattern as step callbacks above.
+async function handleUploadReauditAppeal(req: Request): Promise<Response> {
+  if (req.method !== "POST") {
+    return Response.json({ error: "POST required" }, { status: 405 });
+  }
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return Response.json({ error: "multipart/form-data required" }, { status: 400 });
+  }
+  const findingId = String(form.get("findingId") ?? "").trim();
+  const file = form.get("file");
+  if (!findingId) return Response.json({ error: "findingId required" }, { status: 400 });
+  if (!(file instanceof File)) return Response.json({ error: "file required" }, { status: 400 });
+
+  const snipStartRaw = form.get("snipStart");
+  const snipEndRaw = form.get("snipEnd");
+  const snipStart = snipStartRaw != null && String(snipStartRaw).length ? Number(snipStartRaw) : undefined;
+  const snipEnd = snipEndRaw != null && String(snipEndRaw).length ? Number(snipEndRaw) : undefined;
+  if (snipStart !== undefined && (!Number.isFinite(snipStart) || snipStart < 0)) {
+    return Response.json({ error: "invalid snipStart" }, { status: 400 });
+  }
+  if (snipEnd !== undefined && (!Number.isFinite(snipEnd) || snipEnd < 0)) {
+    return Response.json({ error: "invalid snipEnd" }, { status: 400 });
+  }
+  const comment = String(form.get("comment") ?? "") || undefined;
+  const agentEmail = String(form.get("agentEmail") ?? "");
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.byteLength === 0) return Response.json({ error: "empty file" }, { status: 400 });
+
+  try {
+    const orgId = defaultOrgId() as OrgId;
+    const result = await startUploadReaudit(orgId, findingId, {
+      file: bytes,
+      contentType: file.type || "audio/mpeg",
+      snipStart,
+      snipEnd,
+      comment,
+      agentEmail,
+    });
+    return Response.json(result);
+  } catch (err) {
+    console.error(`❌ [UPLOAD-REAUDIT] failed fid=${findingId}:`, err);
+    return Response.json({ ok: false, error: (err as Error).message }, { status: 500 });
+  }
 }
 
 const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
@@ -215,6 +269,12 @@ Deno.serve({ port }, (req, info) => {
       const auth = await authenticate(req);
       if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
       return Response.json({ email: auth.email, orgId: auth.orgId, role: auth.role });
+    }
+
+    // /audit/api/appeal/upload-recording — direct (multipart; @Req broken)
+    if (path === "/audit/api/appeal/upload-recording") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct upload-reaudit handler`);
+      return handleUploadReauditAppeal(req);
     }
 
     // Role-scoped "me"/game-state/dashboard — same @Req-broken-via-router.fetch

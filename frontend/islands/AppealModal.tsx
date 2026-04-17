@@ -4,7 +4,7 @@
  *
  *  Supports Judge Appeal (T) and Re-audit with genies (U). Upload Recording +
  *  snip (V) replaces the reaudit-form's placeholder tab. */
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 export interface FailedQuestion {
   index: number;
@@ -24,9 +24,17 @@ type View =
   | "choice"
   | "judge-form"
   | "reaudit-form"
+  | "upload-form"
   | "submitting"
   | "judge-done"
   | "reaudit-done";
+
+function fmtTime(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 export default function AppealModal(props: Props) {
   const { findingId, auditorEmail, failedQuestions, originalGenieId = "" } = props;
@@ -43,6 +51,22 @@ export default function AppealModal(props: Props) {
   const [genies, setGenies] = useState<string[]>(initialGenies);
   const [reauditComment, setReauditComment] = useState("");
   const [reauditResult, setReauditResult] = useState<{ newFindingId: string; reportUrl: string; appealType: string } | null>(null);
+
+  // Upload form state
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadUrl, setUploadUrl] = useState<string | null>(null);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioCurrent, setAudioCurrent] = useState(0);
+  const [snipStartSec, setSnipStartSec] = useState<number | null>(null);
+  const [snipEndSec, setSnipEndSec] = useState<number | null>(null);
+  const [uploadComment, setUploadComment] = useState("");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (uploadUrl) URL.revokeObjectURL(uploadUrl);
+    };
+  }, [uploadUrl]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -61,6 +85,14 @@ export default function AppealModal(props: Props) {
     setGenies(originalGenieId ? [originalGenieId] : [""]);
     setReauditComment("");
     setReauditResult(null);
+    if (uploadUrl) URL.revokeObjectURL(uploadUrl);
+    setUploadFile(null);
+    setUploadUrl(null);
+    setAudioDuration(0);
+    setAudioCurrent(0);
+    setSnipStartSec(null);
+    setSnipEndSec(null);
+    setUploadComment("");
   }
 
   function openChoice() {
@@ -123,6 +155,71 @@ export default function AppealModal(props: Props) {
   function removeGenie(i: number) {
     if (genies.length <= 1) return;
     setGenies(genies.filter((_, idx) => idx !== i));
+  }
+
+  const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
+
+  function pickFile(f: File | null) {
+    setErr(null);
+    if (uploadUrl) URL.revokeObjectURL(uploadUrl);
+    if (!f) { setUploadFile(null); setUploadUrl(null); setAudioDuration(0); setSnipStartSec(null); setSnipEndSec(null); return; }
+    if (f.size > MAX_UPLOAD_BYTES) { setErr(`File too large (max ${(MAX_UPLOAD_BYTES / 1024 / 1024).toFixed(0)}MB).`); return; }
+    setUploadFile(f);
+    setUploadUrl(URL.createObjectURL(f));
+    setAudioDuration(0);
+    setAudioCurrent(0);
+    setSnipStartSec(null);
+    setSnipEndSec(null);
+  }
+
+  function markStart() {
+    const t = audioRef.current?.currentTime ?? 0;
+    setSnipStartSec(t);
+    if (snipEndSec !== null && t >= snipEndSec) setSnipEndSec(null);
+  }
+
+  function markEnd() {
+    const t = audioRef.current?.currentTime ?? 0;
+    if (snipStartSec !== null && t <= snipStartSec) { setErr("End must be after start."); return; }
+    setSnipEndSec(t);
+  }
+
+  async function submitUpload() {
+    if (!uploadFile) { setErr("Choose a file."); return; }
+    if (snipStartSec !== null && snipEndSec !== null && snipEndSec <= snipStartSec) {
+      setErr("End must be after start."); return;
+    }
+    setErr(null);
+    setView("submitting");
+    try {
+      const fd = new FormData();
+      fd.append("findingId", findingId);
+      fd.append("file", uploadFile, uploadFile.name || "upload.mp3");
+      if (snipStartSec !== null) fd.append("snipStart", String(Math.floor(snipStartSec * 1000)));
+      if (snipEndSec !== null) fd.append("snipEnd", String(Math.floor(snipEndSec * 1000)));
+      if (uploadComment.trim()) fd.append("comment", uploadComment.trim());
+      fd.append("agentEmail", auditorEmail);
+      const res = await fetch("/api/audit/appeal/upload-recording", {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error || !data.newFindingId) {
+        setErr(String(data.error ?? `HTTP ${res.status}`));
+        setView("upload-form");
+        return;
+      }
+      setReauditResult({
+        newFindingId: String(data.newFindingId),
+        reportUrl: String(data.reportUrl ?? `/audit/report?id=${data.newFindingId}`),
+        appealType: String(data.appealType ?? "upload-recording"),
+      });
+      setView("reaudit-done");
+    } catch (e) {
+      setErr((e as Error).message);
+      setView("upload-form");
+    }
   }
 
   async function submitReaudit() {
@@ -195,8 +292,12 @@ export default function AppealModal(props: Props) {
                     <span class="appeal-choice-desc">Flag specific failed questions for judge review.</span>
                   </button>
                   <button type="button" class="appeal-choice-btn" onClick={() => setView("reaudit-form")}>
-                    <span class="appeal-choice-label">Re-Audit with New Recording</span>
+                    <span class="appeal-choice-label">Re-Audit with Different Genies</span>
                     <span class="appeal-choice-desc">Add or replace genie IDs and re-run the audit.</span>
+                  </button>
+                  <button type="button" class="appeal-choice-btn" onClick={() => setView("upload-form")}>
+                    <span class="appeal-choice-label">Upload a Recording</span>
+                    <span class="appeal-choice-desc">Upload an mp3 and optionally trim start/end.</span>
                   </button>
                 </div>
                 <div class="appeal-actions">
@@ -292,6 +393,79 @@ export default function AppealModal(props: Props) {
                 <div class="appeal-actions">
                   <button type="button" class="sf-btn ghost" onClick={() => setView("choice")}>Back</button>
                   <button type="button" class="sf-btn primary" onClick={submitReaudit}>Start Re-Audit</button>
+                </div>
+              </>
+            )}
+
+            {view === "upload-form" && (
+              <>
+                <div class="appeal-title">Upload a Recording</div>
+                <div class="appeal-body">
+                  Upload an audio file (mp3/mp4/wav). Play it below and mark start/end points
+                  to trim before audit. Leave both unset to transcribe the full file.
+                </div>
+                {!uploadFile && (
+                  <label class="appeal-upload-drop">
+                    <input
+                      type="file"
+                      accept="audio/*,video/mp4"
+                      style="display:none"
+                      onChange={(e) => pickFile((e.target as HTMLInputElement).files?.[0] ?? null)}
+                    />
+                    <div class="appeal-upload-icon">⤒</div>
+                    <div class="appeal-upload-text">Click to choose audio file</div>
+                    <div class="appeal-upload-hint">max 60MB, mp3/wav/mp4</div>
+                  </label>
+                )}
+                {uploadFile && uploadUrl && (
+                  <>
+                    <div class="appeal-upload-info">
+                      <span class="appeal-upload-name">{uploadFile.name}</span>
+                      <span class="appeal-upload-size">{(uploadFile.size / 1024 / 1024).toFixed(1)}MB</span>
+                      <button type="button" class="appeal-link-btn" onClick={() => pickFile(null)}>Change</button>
+                    </div>
+                    <audio
+                      ref={audioRef}
+                      src={uploadUrl}
+                      controls
+                      style="width:100%;margin-bottom:10px;"
+                      onLoadedMetadata={(e) => setAudioDuration((e.target as HTMLAudioElement).duration || 0)}
+                      onTimeUpdate={(e) => setAudioCurrent((e.target as HTMLAudioElement).currentTime || 0)}
+                    />
+                    <div class="appeal-snip-row">
+                      <button type="button" class="sf-btn ghost" onClick={markStart}>
+                        Set Start @ {fmtTime(audioCurrent)}
+                      </button>
+                      <button type="button" class="sf-btn ghost" onClick={markEnd}>
+                        Set End @ {fmtTime(audioCurrent)}
+                      </button>
+                      {(snipStartSec !== null || snipEndSec !== null) && (
+                        <button type="button" class="appeal-link-btn" onClick={() => { setSnipStartSec(null); setSnipEndSec(null); }}>Clear snip</button>
+                      )}
+                    </div>
+                    <div class="appeal-snip-summary">
+                      {snipStartSec === null && snipEndSec === null
+                        ? <span style="color:var(--text-dim);">No trim — full file will be transcribed ({fmtTime(audioDuration)})</span>
+                        : <span>
+                            Trim: <strong>{fmtTime(snipStartSec ?? 0)}</strong> →
+                            <strong> {fmtTime(snipEndSec ?? audioDuration)}</strong>
+                            {" "}(<em>{fmtTime((snipEndSec ?? audioDuration) - (snipStartSec ?? 0))}</em>)
+                          </span>
+                      }
+                    </div>
+                  </>
+                )}
+                <textarea
+                  class="appeal-note"
+                  placeholder="Optional: reason for the re-audit"
+                  value={uploadComment}
+                  onInput={(e) => setUploadComment((e.target as HTMLTextAreaElement).value)}
+                  rows={3}
+                />
+                {err && <div class="appeal-error">{err}</div>}
+                <div class="appeal-actions">
+                  <button type="button" class="sf-btn ghost" onClick={() => setView("choice")}>Back</button>
+                  <button type="button" class="sf-btn primary" onClick={submitUpload} disabled={!uploadFile}>Start Re-Audit</button>
                 </div>
               </>
             )}

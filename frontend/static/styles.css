@@ -1386,6 +1386,40 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .appeal-genie-add:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .appeal-genie-add:disabled { opacity: 0.35; cursor: not-allowed; }
 
+.appeal-upload-drop {
+  display: block; text-align: center;
+  padding: 28px 16px;
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  background: #0d1117;
+  cursor: pointer;
+  margin-bottom: 12px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.appeal-upload-drop:hover { border-color: var(--accent); background: #11161f; }
+.appeal-upload-icon { font-size: 28px; color: var(--text-dim); margin-bottom: 6px; }
+.appeal-upload-text { font-size: 13px; font-weight: 600; color: var(--text-bright); }
+.appeal-upload-hint { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+.appeal-upload-info {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.appeal-upload-name { flex: 1; font-weight: 600; color: var(--text-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.appeal-upload-size { color: var(--text-dim); font-family: var(--mono); font-size: 11px; }
+.appeal-snip-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.appeal-snip-summary {
+  font-size: 11px; color: var(--text-muted);
+  padding: 8px 10px; background: #0d1117; border: 1px solid var(--border);
+  border-radius: 6px; margin-bottom: 10px; text-align: center;
+}
+.appeal-snip-summary strong { color: var(--text-bright); font-family: var(--mono); }
+.appeal-snip-summary em { color: var(--accent); font-family: var(--mono); font-style: normal; }
+
 /* ===== Responsive ===== */
 @media (max-width: 900px) {
   .sidebar { display: none; }

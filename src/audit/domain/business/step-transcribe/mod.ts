@@ -92,13 +92,24 @@ export async function stepTranscribe(req: Request): Promise<Response> {
   }
 
   try {
-    const transcriptId = await submitTranscription(uploadUrl, findingId);
+    // Upload-reaudit (Option V): pass snipStart/snipEnd so AssemblyAI only
+    // transcribes the trimmed portion. No-op for regular audits.
+    const isUploadReaudit = (finding as Record<string, unknown>).appealType === "upload-recording";
+    const snipStart = isUploadReaudit ? Number((finding as Record<string, unknown>).snipStart ?? NaN) : NaN;
+    const snipEnd = isUploadReaudit ? Number((finding as Record<string, unknown>).snipEnd ?? NaN) : NaN;
+    const submitOpts = isUploadReaudit && (Number.isFinite(snipStart) || Number.isFinite(snipEnd))
+      ? {
+          ...(Number.isFinite(snipStart) ? { audioStartFrom: snipStart } : {}),
+          ...(Number.isFinite(snipEnd) ? { audioEndAt: snipEnd } : {}),
+        }
+      : undefined;
+    const transcriptId = await submitTranscription(uploadUrl, findingId, submitOpts);
     finding.assemblyAiTranscriptId = transcriptId;
     (finding as Record<string, any>).assemblyAiSubmittedAt = Date.now();
     await saveFinding(orgId, finding);
     // Return immediately — poll-transcript handles waiting and result processing
     await enqueueStep("poll-transcript", { findingId, orgId }, POLL_DELAY_SECONDS);
-    console.log(`[STEP-TRANSCRIBE] ${findingId}: 🚀 Submitted ${transcriptId}, polling in ${POLL_DELAY_SECONDS}s`);
+    console.log(`[STEP-TRANSCRIBE] ${findingId}: 🚀 Submitted ${transcriptId}, polling in ${POLL_DELAY_SECONDS}s${submitOpts ? ` (snip ${submitOpts.audioStartFrom ?? "-"}→${submitOpts.audioEndAt ?? "-"}ms)` : ""}`);
     return json({ ok: true, transcriptId });
   } catch (err) {
     console.error(`[STEP-TRANSCRIBE] ${findingId}: Submit failed:`, err);

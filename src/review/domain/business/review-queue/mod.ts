@@ -578,6 +578,12 @@ export async function getReviewStats(orgId: OrgId): Promise<{
     pending++;
     pendingFindings.add(entry.value.findingId);
   }
+  // Items claimed by a reviewer are moved to `review-active`; they're still
+  // outstanding work from a dashboard POV, so roll them into `pending`.
+  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-active") })) {
+    pending++;
+    pendingFindings.add(entry.value.findingId);
+  }
   for await (const _entry of db.list({ prefix: orgKey(orgId, "review-decided") })) {
     decided++;
   }

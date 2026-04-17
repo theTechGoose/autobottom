@@ -93,7 +93,7 @@ export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
                   {tsLabel}
                 </span>
               )}
-              {label && <span class={`t-speaker t-speaker-${speaker}`}>[{label}]</span>}
+              {label && <span class={`t-speaker t-speaker-${speaker}`}>{label}</span>}
               <span class="t-text">{content}</span>
             </div>
           );

@@ -421,7 +421,7 @@ textarea.sf-input { height: 48px; resize: vertical; }
 /* ===== Review/Judge queue — verdict panel expansion (Commit E, tightened in L) ===== */
 .verdict-audit-header { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
 .verdict-audit-row { display: flex; gap: 10px; align-items: center; font-size: 11px; padding: 1px 0; }
-.verdict-audit-label { color: var(--text-dim); text-transform: uppercase; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; min-width: 52px; }
+.verdict-audit-label { color: var(--text-dim); text-transform: uppercase; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; min-width: 70px; }
 .verdict-audit-value { color: var(--text-bright); font-weight: 600; font-size: 12px; }
 .verdict-audit-value.mono { font-family: var(--mono); font-size: 11px; }
 .verdict-audit-badges { display: flex; gap: 6px; margin-top: 8px; }
@@ -430,8 +430,9 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .verdict-type-pill.intl { background: rgba(139,92,246,0.12); color: var(--accent); border: 1px solid rgba(139,92,246,0.25); }
 .verdict-failed-count { font-size: 9px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: rgba(248,81,73,0.12); color: var(--red); border: 1px solid rgba(248,81,73,0.25); text-transform: uppercase; letter-spacing: 0.8px; }
 
-.verdict-defense-block { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
-.verdict-defense-quote { font-size: 12px; color: var(--text); line-height: 1.45; white-space: pre-wrap; font-style: italic; }
+.verdict-defense-block { background: transparent; border: none; padding: 0; margin-bottom: 12px; }
+.verdict-defense-block .verdict-section-label { margin-bottom: 8px; }
+.verdict-defense-quote { font-size: 13px; color: #b0b8c4; line-height: 1.65; white-space: pre-wrap; padding: 12px 14px; background: #141820; border-radius: 10px; border: 1px solid #1a1f2b; }
 
 .verdict-accordion { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
 .verdict-accordion > summary { cursor: pointer; padding: 10px 14px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); display: flex; align-items: center; justify-content: space-between; gap: 8px; list-style: none; }
@@ -458,9 +459,13 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .verdict-meta-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0; }
 .verdict-meta-chip { font-size: 9px; padding: 3px 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); text-decoration: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 3px; line-height: 1.4; }
 .verdict-meta-chip:hover { border-color: var(--border-hover); color: var(--text-bright); }
-.verdict-meta-chip.pulse { background: rgba(45,212,191,0.10); color: var(--teal); border-color: rgba(45,212,191,0.3); animation: pulse-final 1.8s ease-in-out infinite; }
-@keyframes pulse-final { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.verdict-meta-chip.pulse { background: rgba(250,176,5,0.12); color: #fab005; border-color: rgba(250,176,5,0.3); animation: pulse-final 2s ease infinite; }
+.verdict-meta-chip.pulse strong { color: #fab005; }
+@keyframes pulse-final { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
 .verdict-meta-chip .mono { font-family: var(--mono); font-size: 10px; }
+.verdict-chip-finding { color: #a371f7; font-weight: 600; }
+.verdict-chip-record  { color: #58a6ff; font-weight: 600; }
+.verdict-hotkey { margin-left: auto; background: #141820; border: 1px solid #1e2736; border-radius: 3px; padding: 0 5px; font-family: var(--mono); font-size: 10px; color: #6e7681; }
 
 /* ===== Queue audio player bar (Commit F) ===== */
 .queue-audio-bar {
@@ -841,10 +846,10 @@ textarea.sf-input { height: 48px; resize: vertical; }
   cursor: pointer;
   transition: background 0.1s, outline 0.1s;
 }
-.t-line-team { border-left-color: #58a6ff; }
-.t-line-guest { border-left-color: #8b5cf6; }
-.queue-layout[data-mode="judge"] .t-line-team { border-left-color: #14b8a6; }
-.queue-layout[data-mode="judge"] .t-line-guest { border-left-color: #5eead4; }
+.t-line-team  { border-left-color: #58a6ff; color: #79b8ff; }
+.t-line-guest { border-left-color: #8b5cf6; color: #d2b3ff; }
+.queue-layout[data-mode="judge"] .t-line-team  { border-left-color: #14b8a6; color: #5eead4; }
+.queue-layout[data-mode="judge"] .t-line-guest { border-left-color: #5eead4; color: #99f6e4; }
 .t-line:hover { background: rgba(255,255,255,0.03); }
 .t-timestamp { display: inline-block; font-family: var(--mono); font-size: 9px; color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); padding: 1px 6px; border-radius: 3px; margin-right: 6px; cursor: pointer; vertical-align: baseline; }
 .t-timestamp:hover { color: var(--text-bright); border-color: var(--border-hover); }
@@ -858,7 +863,8 @@ textarea.sf-input { height: 48px; resize: vertical; }
 /* ===== Transcript interactivity (Commit G) — states override line colors ===== */
 .t-line.t-evidence { background: rgba(250,176,5,0.1); border-left-color: #fab005 !important; }
 .t-line.t-evidence .t-speaker { color: #fab005 !important; }
-.t-line.t-highlight { background: rgba(139,92,246,0.06); }
+.queue-layout[data-mode="review"] .t-line.t-highlight { background: rgba(139,92,246,0.06); }
+.queue-layout[data-mode="judge"]  .t-line.t-highlight { background: rgba(20,184,166,0.08); }
 .t-line.t-search-match { background: rgba(248,113,113,0.10); }
 .t-line.t-search-active { background: rgba(248,113,113,0.28); outline: 1px solid rgba(248,113,113,0.5); }
 

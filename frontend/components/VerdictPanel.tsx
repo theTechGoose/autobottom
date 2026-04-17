@@ -191,7 +191,10 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
       {/* Bot reasoning accordion */}
       {item.thinking && (
         <details class="verdict-accordion">
-          <summary>Bot reasoning</summary>
+          <summary>
+            <span>Bot reasoning</span>
+            <kbd class="verdict-hotkey">D</kbd>
+          </summary>
           <div class="verdict-accordion-body">{item.thinking}</div>
         </details>
       )}
@@ -234,11 +237,11 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
       {/* Meta chips */}
       <div class="verdict-meta-row">
         <a class="verdict-meta-chip" href={reportHref} target="_blank" rel="noopener">
-          Audit <span class="mono">#{item.findingId.slice(0, 6)}</span>
+          Audit <strong class="mono verdict-chip-finding">{item.findingId}</strong>
         </a>
         {qbHref && (
           <a class="verdict-meta-chip" href={qbHref} target="_blank" rel="noopener">
-            Record <span class="mono">#{item.recordId}</span>
+            Record <strong class="mono verdict-chip-record">{item.recordId}</strong>
           </a>
         )}
         <button class="verdict-meta-chip" type="button" data-action="jump-to-audio">

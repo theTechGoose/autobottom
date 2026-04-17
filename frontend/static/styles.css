@@ -512,6 +512,55 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .t-speaker-guest { color: var(--accent); }
 .t-text { color: var(--text); }
 
+/* ===== Transcript interactivity (Commit G) ===== */
+.t-line { cursor: pointer; transition: background 0.1s, outline 0.1s; border-radius: 4px; padding-left: 4px; padding-right: 4px; }
+.t-line:hover { background: rgba(255,255,255,0.03); }
+.t-line.t-evidence { background: rgba(251,191,36,0.08); outline: 1px solid rgba(251,191,36,0.25); }
+.t-line.t-highlight { background: rgba(139,92,246,0.06); }
+.t-line.t-search-match { background: rgba(248,113,113,0.10); }
+.t-line.t-search-active { background: rgba(248,113,113,0.28); outline: 1px solid rgba(248,113,113,0.5); }
+
+.transcript-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+}
+.transcript-search-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-bright);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.transcript-search-input:focus { border-color: var(--accent); }
+.transcript-search-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  min-width: 32px;
+  text-align: right;
+}
+.transcript-search-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 3px 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.transcript-search-btn:hover { color: var(--text-bright); border-color: var(--border-hover); }
+
 /* ===== Chat ===== */
 .chat-layout { display: flex; min-height: calc(100vh - 64px); margin: -32px -40px; }
 .chat-sidebar { width: 280px; min-width: 280px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--bg-raised); }

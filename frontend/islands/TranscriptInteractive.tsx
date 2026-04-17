@@ -39,12 +39,20 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
       return false;
     }
 
-    function extractQuotes(source: string): string[] {
+    // Normalize smart quotes → ASCII so the regex match is position-consistent.
+    function normalize(s: string): string {
+      return s
+        .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+        .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+    }
+
+    function extractQuotes(sourceRaw: string): string[] {
+      const source = normalize(sourceRaw);
       const out: string[] = [];
-      const re = /"([^"]{10,})"|"([^"]{10,})"|'([^']{10,})'/g;
+      const re = /"([^"]{10,})"|'([^']{10,})'/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(source))) {
-        out.push((m[1] ?? m[2] ?? m[3] ?? "").toLowerCase());
+        out.push((m[1] ?? m[2] ?? "").toLowerCase());
       }
       return out;
     }

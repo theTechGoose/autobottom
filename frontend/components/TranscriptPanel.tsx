@@ -34,7 +34,15 @@ function parseLine(line: string): { speaker: "team" | "guest" | null; content: s
 }
 
 export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
-  const text = transcript?.diarized || transcript?.raw || snippet || "";
+  // Prefer raw when utteranceTimes are present — prod does this because
+  // the times array is indexed to the raw transcript lines, not the
+  // diarized one. Fall back to diarized for older audits without times.
+  const utteranceTimes = transcript?.utteranceTimes ?? [];
+  const hasTimes = utteranceTimes.length > 0;
+  const text = hasTimes
+    ? (transcript?.raw || transcript?.diarized || "")
+    : (transcript?.diarized || transcript?.raw || snippet || "");
+
   if (!text) {
     return (
       <div class="transcript-panel">
@@ -43,32 +51,46 @@ export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
     );
   }
 
-  const utteranceTimes = transcript?.utteranceTimes ?? [];
   const rawLines = text.split(/\r?\n/);
-  const nonEmpty = rawLines.map((l, i) => ({ line: l, srcIdx: i })).filter((x) => x.line.trim().length > 0);
+  // Non-empty lines WITH consecutive-duplicate suppression. Prod skips any
+  // line that exactly matches the previously-emitted line to cut repeats
+  // like "Perfect." / "Perfect." in rapid succession.
+  const emitted: Array<{ line: string; ts: number | null }> = [];
+  let lastTrim = "";
+  let timeIdx = 0;
+  for (const l of rawLines) {
+    const trimmed = l.trim();
+    if (!trimmed) continue;
+    // Advance the time index even for duplicates so timestamps stay aligned
+    // to the raw transcript position.
+    const ts = utteranceTimes[timeIdx] ?? null;
+    timeIdx++;
+    if (trimmed === lastTrim) continue;
+    lastTrim = trimmed;
+    emitted.push({ line: l, ts });
+  }
 
   return (
     <div class="transcript-panel">
       <div class="transcript-header">
         <span class="transcript-title">Transcript</span>
-        <span class="transcript-count">{nonEmpty.length} lines</span>
+        <span class="transcript-count">{emitted.length} lines</span>
       </div>
       <div class="transcript-body transcript-multicol" id="transcript-body" data-utterance-times={JSON.stringify(utteranceTimes)}>
-        {nonEmpty.map(({ line }, idx) => {
+        {emitted.map(({ line, ts }, idx) => {
           const { speaker, content } = parseLine(line);
-          const ts = formatTime(utteranceTimes[idx]);
-          const rawTs = utteranceTimes[idx] ?? null;
+          const tsLabel = formatTime(ts ?? undefined);
           const label = speaker === "team" ? "TEAM MEMBER" : speaker === "guest" ? "GUEST" : null;
           return (
             <div
               key={idx}
               class={`t-line ${speaker ? `t-line-${speaker}` : ""}`}
               data-line-idx={idx}
-              data-ts-ms={rawTs != null ? String(rawTs) : undefined}
+              data-ts-ms={ts != null ? String(ts) : undefined}
             >
-              {ts != null && (
-                <span class="t-timestamp" data-seek-ms={rawTs != null ? String(rawTs) : undefined}>
-                  {ts}
+              {tsLabel != null && (
+                <span class="t-timestamp" data-seek-ms={ts != null ? String(ts) : undefined}>
+                  {tsLabel}
                 </span>
               )}
               {label && <span class={`t-speaker t-speaker-${speaker}`}>[{label}]</span>}

@@ -313,7 +313,7 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .rq-div { width: 1px; height: 32px; background: var(--border); }
 
 /* ===== Queue Layout (Review/Judge) ===== */
-.queue-layout { display: flex; gap: 0; min-height: calc(100vh - 64px); margin: -32px -40px; }
+.queue-layout { display: flex; gap: 0; min-height: calc(100vh - 72px); padding-bottom: 72px; }
 .queue-left { width: 380px; min-width: 380px; border-right: 1px solid var(--border); overflow-y: auto; max-height: 100vh; }
 .queue-right { flex: 1; overflow-y: auto; max-height: 100vh; }
 .queue-content { display: flex; width: 100%; min-height: calc(100vh - 64px); }
@@ -490,9 +490,6 @@ textarea.sf-input { height: 48px; resize: vertical; }
   border-radius: 4px;
   flex-shrink: 0;
 }
-
-/* Push queue content up so it doesn't sit under the unified bottom bar */
-.queue-layout { padding-bottom: 72px; }
 
 /* ===== Unified bottom bar (Commit K) — replaces gamification + audio bars ===== */
 .bottom-bar {

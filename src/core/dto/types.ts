@@ -131,9 +131,7 @@ export interface ReviewItem {
   recordMeta?: Record<string, string | undefined>;
 }
 
-export interface ReviewDecision {
-  findingId: string;
-  questionIndex: number;
+export interface ReviewDecision extends ReviewItem {
   decision: "confirm" | "flip";
   reviewer: string;
   decidedAt: number;
@@ -144,6 +142,14 @@ export interface ReviewDecision {
 export interface JudgeDecision {
   findingId: string;
   questionIndex: number;
+  header?: string;
+  populated?: string;
+  thinking?: string;
+  defense?: string;
+  answer?: string;
+  appealType?: string;
+  recordingIdField?: string;
+  recordingId?: string;
   decision: "overturn" | "uphold";
   judge: string;
   reason?: "error" | "logic" | "fragment" | "transcript";

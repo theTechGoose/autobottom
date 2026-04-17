@@ -185,7 +185,8 @@ export class AdminConfigController {
   async backfillReviewScores(@Body() body: GenericBodyRequest) {
     const { since, until } = body as any;
     if (!since || !until) return { error: "since and until required" };
-    return { ok: true, message: "backfillReviewScores pending full port" };
+    const { backfillReviewScores } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    return { ok: true, ...(await backfillReviewScores(ORG(), since, until)) };
   }
   @Post("backfill-chargeback-entries") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillChargebackEntries(@Body() body: GenericBodyRequest) {
@@ -197,17 +198,20 @@ export class AdminConfigController {
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillPartnerDimensions(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;
-    return { ok: true, message: "backfillPartnerDimensions pending full port" };
+    const { backfillPartnerDimensions } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    return { ok: true, ...(await backfillPartnerDimensions(ORG(), cursor)) };
   }
   @Post("backfill-audit-index") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillAuditIndex(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;
-    return { ok: true, message: "backfillAuditDoneIndex pending full port" };
+    const { backfillAuditDoneIndex } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    return { ok: true, ...(await backfillAuditDoneIndex(ORG(), cursor)) };
   }
   @Post("backfill-stale-scores") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillStaleScores(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;
-    return { ok: true, message: "backfillStaleScores pending full port" };
+    const { backfillStaleScores } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    return { ok: true, ...(await backfillStaleScores(ORG(), cursor)) };
   }
   @Post("deduplicate-findings") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async deduplicateFindings(@Body() body: GenericBodyRequest) {

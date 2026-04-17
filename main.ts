@@ -16,6 +16,9 @@ import { DanetApplication } from "@danet/core";
 import { AppModule } from "./bootstrap/mod.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
 import { registerAllWebhookEmailHandlers } from "@reporting/domain/business/webhook-handlers/mod.ts";
+import { getGameState, getEarnedBadges } from "@gamification/domain/data/gamification-repository/mod.ts";
+import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
 
 // --- Pipeline step functions: dispatched DIRECTLY by this handler (bypassing
 // danet) because danet's @Req decorator returns undefined when reached via
@@ -40,6 +43,79 @@ const STEP_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
   "finalize": stepFinalize,
   "cleanup": stepCleanup,
   "bad-word-check": stepBadWordCheck,
+};
+
+// ── Auth-context direct-dispatch handlers ──
+// Danet's @Req decorator returns undefined via router.fetch(), so any endpoint
+// that needs the session cookie to answer "who is the current user?" has to be
+// dispatched directly from here. Each handler resolves `authenticate(req)` and
+// returns 401 if no session. Pattern mirrors /admin/api/me below.
+async function handleMe(req: Request): Promise<Response> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  return Response.json({ username: auth.email, email: auth.email, role: auth.role, orgId: auth.orgId });
+}
+
+async function handleGameState(req: Request): Promise<Response> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const [gs, badges] = await Promise.all([
+    getGameState(auth.orgId, auth.email),
+    getEarnedBadges(auth.orgId, auth.email),
+  ]);
+  return Response.json({ ...gs, badges: badges.map((b) => b.badgeId) });
+}
+
+async function handleAgentDashboard(req: Request): Promise<Response> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const db = await getKv();
+  const findingIds = new Set<string>();
+  for await (const entry of db.list({ prefix: orgKey(auth.orgId, "audit-finding") })) {
+    const key = entry.key as Deno.KvKey;
+    if (key.length >= 3 && typeof key[2] === "string") findingIds.add(key[2] as string);
+  }
+  let totalYes = 0, totalQuestions = 0;
+  const audits: Array<Record<string, unknown>> = [];
+  for (const findingId of findingIds) {
+    const finding = await getFinding(auth.orgId, findingId);
+    if (!finding || finding.findingStatus !== "finished") continue;
+    if (finding.owner !== auth.email) continue;
+    const qs: Array<{ answer: string }> = finding.answeredQuestions ?? [];
+    const passed = qs.filter((q) => q.answer === "Yes").length;
+    const failed = qs.filter((q) => q.answer === "No").length;
+    totalYes += passed;
+    totalQuestions += qs.length;
+    audits.push({
+      findingId,
+      recordId: (finding.record as Record<string, unknown> | undefined)?.RecordId ?? "",
+      recordingId: finding.recordingId ?? "",
+      totalQuestions: qs.length,
+      passedCount: passed,
+      failedCount: failed,
+      completedAt: finding.completedAt ?? Date.now(),
+      score: qs.length > 0 ? Math.round((passed / qs.length) * 100) : 0,
+    });
+  }
+  audits.sort((a, b) => Number(b.completedAt) - Number(a.completedAt));
+  const avgScore = totalQuestions > 0 ? Math.round((totalYes / totalQuestions) * 100) : 0;
+  return Response.json({
+    email: auth.email,
+    totalAudits: audits.length,
+    avgScore,
+    recentAudits: audits.slice(0, 20),
+    weeklyTrend: [],
+  });
+}
+
+const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
+  "/review/api/me": handleMe,
+  "/judge/api/me": handleMe,
+  "/manager/api/me": handleMe,
+  "/agent/api/me": handleMe,
+  "/manager/api/game-state": handleGameState,
+  "/agent/api/game-state": handleGameState,
+  "/agent/api/dashboard": handleAgentDashboard,
 };
 
 const danetApp = new DanetApplication();
@@ -131,6 +207,19 @@ Deno.serve({ port }, (req, info) => {
       const auth = await authenticate(req);
       if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
       return Response.json({ email: auth.email, orgId: auth.orgId, role: auth.role });
+    }
+
+    // Role-scoped "me"/game-state/dashboard — same @Req-broken-via-router.fetch
+    // workaround as /admin/api/me. See AUTH_CONTEXT_HANDLERS map above.
+    const authCtxHandler = AUTH_CONTEXT_HANDLERS[path];
+    if (authCtxHandler) {
+      console.log(`[ROUTER] ${req.method} ${path} → direct auth-context handler`);
+      try {
+        return await authCtxHandler(req);
+      } catch (err) {
+        console.error(`❌ [AUTH-CTX] ${path} threw:`, err);
+        return Response.json({ error: (err as Error).message }, { status: 500 });
+      }
     }
 
     // /audit/step/* — pipeline step callbacks from QStash. Handled directly

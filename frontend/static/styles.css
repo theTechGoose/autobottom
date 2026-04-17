@@ -491,8 +491,53 @@ textarea.sf-input { height: 48px; resize: vertical; }
   flex-shrink: 0;
 }
 
-/* Push queue content up so it doesn't sit under the audio bar */
-.queue-layout { padding-bottom: 80px; }
+/* Push queue content up so it doesn't sit under the audio bar + gamification bar */
+.queue-layout { padding-bottom: 120px; }
+
+/* ===== Gamification bar (Commit I) ===== */
+.gamification-bar {
+  position: fixed;
+  bottom: 64px; /* sits just above the audio bar */
+  left: 280px;
+  right: 0;
+  height: 40px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 20px;
+  z-index: 99;
+  font-size: 11px;
+}
+@media (max-width: 900px) { .gamification-bar { left: 0; } }
+.gb-spacer { flex: 1; }
+
+.gb-combo { display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.gb-combo-num { font-family: var(--mono); font-size: 18px; font-weight: 800; }
+.gb-combo-label { font-size: 8px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-top: 1px; }
+.gb-combo-dim .gb-combo-num { color: var(--text-dim); }
+.gb-combo-hot .gb-combo-num { color: var(--blue); }
+.gb-combo-fire .gb-combo-num { color: var(--accent); text-shadow: 0 0 8px rgba(139,92,246,0.4); }
+.gb-combo-inferno .gb-combo-num { color: var(--red); text-shadow: 0 0 10px rgba(248,113,113,0.5); }
+.gb-combo-godlike .gb-combo-num { color: var(--yellow); text-shadow: 0 0 14px rgba(251,191,36,0.6); }
+
+.gb-session { display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.gb-session-num { font-family: var(--mono); font-size: 15px; font-weight: 700; color: var(--text-bright); }
+.gb-session-label { font-size: 8px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-top: 1px; }
+
+.gb-level { display: flex; align-items: center; gap: 8px; }
+.gb-level-badge { font-family: var(--mono); font-size: 10px; font-weight: 700; background: var(--accent-bg); color: var(--accent); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(139,92,246,0.25); }
+.gb-xp-track { width: 120px; height: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+.gb-xp-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--blue)); transition: width 0.3s; }
+.gb-xp-num { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+
+.gb-streak { font-size: 12px; font-weight: 700; color: var(--yellow); }
+
+.gb-filter { background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); border-radius: 4px; padding: 3px 8px; font-size: 11px; font-family: inherit; cursor: pointer; }
+.gb-filter:focus { border-color: var(--accent); outline: none; }
+.gb-link { color: var(--text-muted); font-size: 11px; text-decoration: none; padding: 4px 8px; border-radius: 4px; }
+.gb-link:hover { color: var(--text-bright); background: var(--bg); }
 
 /* Transcript Panel */
 .transcript-panel { padding: 16px 20px; display: flex; flex-direction: column; height: 100%; min-height: 0; }

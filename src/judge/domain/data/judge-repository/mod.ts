@@ -449,6 +449,52 @@ export async function adminDeleteFinding(orgId: OrgId, findingId: string): Promi
   console.log(`[ADMIN-DELETE] 🗑️ ${findingId}: cleaned ${keys.length} KV entries + cb/wire/audit-done-idx/completed-stat`);
 }
 
+// ── Appeal re-audit cleanup — like adminDeleteFinding minus finding chunks ───
+
+/** Remove the old finding from every queue / index when an agent files a
+ *  recording-swap appeal (Option B/C). The finding itself is kept (soft-delete
+ *  via reAuditedAt) so the report still renders, but reviewers/judges stop
+ *  seeing it and chargeback/wire entries are cleared. Port of
+ *  main:judge/kv.ts:1253 cleanupFindingFromIndices. */
+export async function cleanupFindingFromIndices(orgId: OrgId, findingId: string): Promise<void> {
+  const db = await getKv();
+  let completedAt = Date.now();
+  for await (const entry of db.list<{ findingId: string; completedAt: number }>({ prefix: orgKey(orgId, "audit-done-idx") })) {
+    if (entry.value?.findingId === findingId) { completedAt = entry.value.completedAt; break; }
+  }
+  const keys: Deno.KvKey[] = [];
+  for await (const entry of db.list({ prefix: orgKey(orgId, "review-pending", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list({ prefix: orgKey(orgId, "review-decided", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "review-active") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+  keys.push(orgKey(orgId, "review-audit-pending", findingId));
+  keys.push(orgKey(orgId, "review-done", findingId));
+  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-pending", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-decided", findingId) })) keys.push(entry.key);
+  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "judge-active") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+  keys.push(orgKey(orgId, "judge-audit-pending", findingId));
+  keys.push(orgKey(orgId, "manager-queue", findingId));
+  keys.push(orgKey(orgId, "appeal", findingId));
+  keys.push(orgKey(orgId, "appeal-history", findingId));
+  for await (const entry of db.list<{ findingId: string }>({ prefix: orgKey(orgId, "review-undo-idx") })) {
+    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  }
+  const BATCH = 10;
+  for (let i = 0; i < keys.length; i += BATCH) {
+    const atomic = db.atomic();
+    for (const key of keys.slice(i, i + BATCH)) atomic.delete(key);
+    await atomic.commit();
+  }
+  await deleteChargebackEntry(orgId, findingId).catch(() => {});
+  await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
+  await deleteCompletedStat(orgId, findingId).catch(() => {});
+  await deleteAuditDoneIndexEntry(orgId, findingId, completedAt).catch(() => {});
+  console.log(`[CLEANUP] 🗑️ ${findingId}: indices cleared (${keys.length} KV entries + cb/wire/stat/done-idx)`);
+}
+
 // ── Legacy-compatible aliases ────────────────────────────────────────────────
 
 export const claimNextItemLegacy = claimNextItem;

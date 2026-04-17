@@ -1362,6 +1362,29 @@ textarea.sf-input { height: 48px; resize: vertical; }
   border-radius: 6px; padding: 7px 10px; margin-bottom: 10px;
 }
 .appeal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.appeal-genie-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+.appeal-genie-row { display: flex; gap: 6px; align-items: center; }
+.appeal-genie-input {
+  flex: 1; background: #0d1117; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-bright); padding: 8px 12px; font-size: 13px; font-family: var(--mono);
+  outline: none; transition: border-color 0.15s;
+}
+.appeal-genie-input:focus { border-color: var(--accent); }
+.appeal-genie-rm {
+  background: none; border: 1px solid var(--border); color: var(--text-muted);
+  width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 14px;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.appeal-genie-rm:hover:not(:disabled) { color: var(--red); border-color: rgba(248,81,73,0.4); background: var(--red-bg); }
+.appeal-genie-rm:disabled { opacity: 0.35; cursor: not-allowed; }
+.appeal-genie-add {
+  background: transparent; border: 1px dashed var(--border); color: var(--text-muted);
+  padding: 7px 12px; border-radius: 6px; font-size: 11px; font-weight: 600;
+  cursor: pointer; margin-bottom: 10px; width: 100%; transition: all 0.15s;
+  font-family: inherit;
+}
+.appeal-genie-add:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.appeal-genie-add:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* ===== Responsive ===== */
 @media (max-width: 900px) {

@@ -264,6 +264,103 @@ async function sendAppealFiledEmail(orgId: OrgId, payload: AppealFiledPayload): 
   }
 }
 
+// ── Re-Audit Receipt ──────────────────────────────────────────────────────────
+
+interface ReAuditReceiptPayload {
+  findingId?: string;
+  originalFindingId?: string;
+  finding?: Record<string, any>;
+  appealType?: string;
+  genieIds?: string[];
+  originalGenieId?: string;
+  agentEmail?: string;
+  comment?: string;
+  reAuditedAt?: number;
+  reportUrl?: string;
+  originalReportUrl?: string;
+}
+
+const DEFAULT_REAUDIT_RECEIPT_TEMPLATE: EmailTemplate = {
+  id: "__default_reaudit_receipt__",
+  name: "Re-Audit Receipt (default)",
+  subject: "Re-Audit Submitted — Record {{recordId}}",
+  createdAt: 0,
+  updatedAt: 0,
+  html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Recording Submitted</title></head><body style="margin:0;padding:0;background:#070d18;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#070d18;min-height:100vh;"><tr><td align="center" style="padding:40px 16px;"><table width="580" cellpadding="0" cellspacing="0" style="max-width:100%;width:580px;background:#0d1520;border:1px solid #1e2d45;border-radius:16px;overflow:hidden;"><tr><td style="padding:28px 32px 24px;text-align:center;border-bottom:1px solid #1a2840;"><div style="margin-bottom:12px;"><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#3b82f6;">{{appealTypeLabel}}</span></div><h1 style="margin:0 0 10px;font-size:24px;font-weight:700;color:#e6edf3;line-height:1.2;">Re-Audit Submitted</h1><p style="margin:0;font-size:14px;color:#8b949e;">Hey <strong style="color:#c9d1d9;">{{teamMemberFirst}}</strong>, your results will be available shortly.</p></td></tr><tr><td style="padding:24px 32px;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#111d2e;border:1px solid #1e2d45;border-radius:10px;overflow:hidden;"><tr><td style="padding:16px 20px;text-align:center;border-bottom:1px solid #1a2840;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:6px;">Record</div><div style="font-size:20px;font-weight:700;color:#e6edf3;">{{recordId}}</div></td></tr><tr><td style="padding:16px 20px;text-align:center;border-bottom:1px solid #1a2840;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:6px;">Original Genie</div><div style="font-size:16px;font-weight:600;color:#3b82f6;">{{originalGenieId}}</div></td></tr><tr><td style="padding:16px 20px;text-align:center;border-bottom:1px solid #1a2840;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:6px;">New Genie(s)</div><div style="font-size:16px;font-weight:600;color:#e6edf3;">{{newGenieIds}}</div></td></tr><tr><td style="padding:16px 20px;text-align:center;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:6px;">Submitted</div><div style="font-size:14px;font-weight:500;color:#c9d1d9;">{{submittedAt}}</div></td></tr></table></td></tr><tr><td style="padding:0 32px 32px;text-align:center;"><a href="{{reportUrl}}" style="display:inline-block;padding:12px 32px;background:#3b82f6;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;border:1px solid #2563eb;">View Audit Report</a></td></tr><tr><td style="background:#080f1a;border-top:1px solid #1a2840;padding:14px 28px;text-align:center;"><p style="margin:0;font-size:10px;color:#3a5070;font-family:monospace;">Audit ID: {{findingId}}</p></td></tr></table></td></tr></table></body></html>`,
+};
+
+async function sendReAuditReceiptEmail(orgId: OrgId, payload: ReAuditReceiptPayload): Promise<void> {
+  const cfg = await getWebhookConfig(orgId, "re-audit-receipt").catch(() => null);
+  const finding = payload.finding;
+  const findingId = String(payload.findingId ?? finding?.id ?? "");
+  if (!findingId || !finding) {
+    console.warn(`⚠️ [WEBHOOK:re-audit-receipt] payload missing finding fid=${findingId} — skipping`);
+    return;
+  }
+
+  const template = (await resolveTemplate(orgId, cfg)) ?? DEFAULT_REAUDIT_RECEIPT_TEMPLATE;
+
+  const agentEmail = String(finding.owner ?? "");
+  const voEmail = String(finding.record?.VoEmail ?? "");
+  const gmEmail = String(finding.record?.GmEmail ?? "");
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const recipientEmail = isPackage ? gmEmail : (voEmail || (agentEmail !== "api" ? agentEmail : ""));
+  const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
+  const recordId = String(finding.record?.RecordId ?? "");
+
+  const appealType = String(payload.appealType ?? finding.appealType ?? "");
+  const appealTypeLabel = appealType === "additional-recording" ? "Additional Recording"
+    : appealType === "different-recording" ? "Replacement Recording"
+    : appealType === "upload-recording" ? "Uploaded Recording"
+    : "Re-Audit";
+  const newGenieIds = (payload.genieIds && payload.genieIds.length)
+    ? payload.genieIds.join(", ")
+    : (Array.isArray(finding.genieIds) ? finding.genieIds.join(", ") : String(finding.recordingId ?? ""));
+
+  const vars: Record<string, string> = {
+    agentName: teamMemberFull,
+    agentEmail: recipientEmail,
+    gmEmail,
+    teamMember: teamMemberFull,
+    teamMemberFirst,
+    findingId,
+    originalFindingId: payload.originalFindingId ?? "",
+    recordId,
+    guestName: String(finding.record?.GuestName ?? ""),
+    reportUrl: payload.reportUrl ?? `${SELF_URL()}/audit/report?id=${findingId}`,
+    originalReportUrl: payload.originalReportUrl ?? (payload.originalFindingId ? `${SELF_URL()}/audit/report?id=${payload.originalFindingId}` : ""),
+    appealType,
+    appealTypeLabel,
+    newGenieIds,
+    originalGenieId: payload.originalGenieId ?? "",
+    comment: payload.comment ?? "",
+    submittedAt: new Date(payload.reAuditedAt ?? Date.now()).toLocaleString("en-US", { timeZone: "America/New_York" }) + " EST",
+    logoUrl: `${SELF_URL()}/logo.png`,
+    selfUrl: SELF_URL(),
+  };
+
+  const resolvedTest = cfg?.testEmail || "";
+  const to = resolvedTest || recipientEmail;
+  if (!to) {
+    console.warn(`⚠️ [WEBHOOK:re-audit-receipt] no recipient for fid=${findingId} — skipping`);
+    return;
+  }
+  const bcc = resolvedTest ? undefined : (cfg?.bcc || undefined);
+
+  console.log(`📧 [WEBHOOK:re-audit-receipt] sending fid=${findingId} to=${to} bcc=${bcc ?? "none"}`);
+  try {
+    await sendEmail({
+      to,
+      subject: renderTemplate(template.subject, vars),
+      htmlBody: renderTemplate(template.html, vars),
+      bcc,
+    });
+    console.log(`✅ [WEBHOOK:re-audit-receipt] email sent fid=${findingId} → ${to}`);
+  } catch (err) {
+    console.error(`❌ [WEBHOOK:re-audit-receipt] sendEmail failed fid=${findingId}:`, err);
+  }
+}
+
 /** Register all webhook email handlers. Call once at process startup. Idempotent. */
 export function registerAllWebhookEmailHandlers(): void {
   registerWebhookEmailHandler("terminate", (orgId, payload) =>
@@ -272,7 +369,9 @@ export function registerAllWebhookEmailHandlers(): void {
   registerWebhookEmailHandler("appeal", (orgId, payload) =>
     sendAppealFiledEmail(orgId, payload as AppealFiledPayload),
   );
-  // Other kinds (manager, judge, judge-finish, re-audit-receipt) are
-  // intentionally not registered yet — port them when those flows need email.
-  console.log(`📧 [WEBHOOK] email handlers registered: terminate, appeal`);
+  registerWebhookEmailHandler("re-audit-receipt", (orgId, payload) =>
+    sendReAuditReceiptEmail(orgId, payload as ReAuditReceiptPayload),
+  );
+  // manager, judge, judge-finish still deferred — port when those flows need email.
+  console.log(`📧 [WEBHOOK] email handlers registered: terminate, appeal, re-audit-receipt`);
 }

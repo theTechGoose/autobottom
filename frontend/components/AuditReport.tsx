@@ -133,6 +133,7 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
         <AppealModal
           findingId={id}
           auditorEmail={auditorEmail}
+          originalGenieId={String(meta.recordingId ?? "")}
           failedQuestions={questions
             .map((q, i) => ({ index: i, header: q.header ?? "Untitled question", answer: q.answer ?? "" }))
             .filter((q) => !isYes(q.answer))}

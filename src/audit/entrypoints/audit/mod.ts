@@ -15,6 +15,7 @@ import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/m
 import { enqueueStep, getSelfUrl } from "@core/data/qstash/mod.ts";
 import { S3Ref } from "@core/data/s3/mod.ts";
 import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
+import { startReauditWithGenies } from "@audit/domain/business/reaudit/mod.ts";
 
 const findingRepo = new KvRepository("audit-finding");
 const jobRepo = new KvRepository("audit-job");
@@ -186,6 +187,22 @@ export class AuditController {
       return await fileJudgeAppeal(orgId, b.findingId, { auditor: b.auditor, comment: b.comment, appealedQuestions: indexes });
     } catch (e) {
       console.error(`❌ [AUDIT] fileAppeal failed:`, e);
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  @Post("api/appeal/different-recording") @ReturnedType(MessageResponse) @Description("Re-audit a finding with a different/additional genie recording") @BodyType(GenericBodyRequest)
+  async reauditWithGenies(@Body() body: GenericBodyRequest) {
+    const b = body as unknown as { findingId?: string; recordingIds?: unknown; comment?: string; agentEmail?: string };
+    if (!b.findingId) return { error: "findingId required" };
+    const rawIds = Array.isArray(b.recordingIds) ? b.recordingIds : [];
+    const ids = rawIds.map((v) => String(v).trim()).filter(Boolean);
+    if (!ids.length) return { error: "recordingIds required" };
+    try {
+      const orgId = defaultOrgId() as OrgId;
+      return await startReauditWithGenies(orgId, b.findingId, { recordingIds: ids, comment: b.comment, agentEmail: b.agentEmail ?? "" });
+    } catch (e) {
+      console.error(`❌ [AUDIT] reauditWithGenies failed:`, e);
       return { ok: false, error: (e as Error).message };
     }
   }

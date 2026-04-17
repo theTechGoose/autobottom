@@ -10,7 +10,9 @@ export const handler = define.handlers({
   async POST(ctx) {
     try {
       const body = await parseHtmxBody(ctx.req);
-      await apiPost("/review/api/decide", ctx.req, body);
+      const decideResult = await apiPost<{ ok: boolean; remaining: number; auditComplete: boolean; xpGained: number; newBadges: string[] }>(
+        "/review/api/decide", ctx.req, body,
+      );
       const next = await apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
         `/review/api/next?reviewer=${encodeURIComponent(String(body.reviewer ?? ""))}&types=`, ctx.req,
       );
@@ -19,6 +21,14 @@ export const handler = define.handlers({
       const item = buffer[currentIndex] ?? null;
       const html = renderToString(
         <>
+          <div
+            id="decide-effect-marker"
+            data-audit-complete={String(decideResult.auditComplete ?? false)}
+            data-xp-gained={String(decideResult.xpGained ?? 0)}
+            data-decision={String(body.decision ?? "")}
+            data-mode="review"
+            style="display:none"
+          />
           <div class="queue-left">
             <VerdictPanel
               item={item}

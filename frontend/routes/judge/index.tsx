@@ -12,6 +12,7 @@ import TranscriptInteractive from "../../islands/TranscriptInteractive.tsx";
 import QueueModals from "../../islands/QueueModals.tsx";
 import JudgeModals from "../../islands/JudgeModals.tsx";
 import BottomBar from "../../islands/BottomBar.tsx";
+import DecideEffects from "../../islands/DecideEffects.tsx";
 
 interface BufferResponse { buffer: ReviewItem[]; remaining: number; }
 
@@ -29,6 +30,7 @@ export default define.page(async function JudgeQueue(ctx) {
     <Layout title="Judge Queue" section="judge" user={user} hideSidebar>
       <HotkeyHandler mode="judge" />
       <SoundEngine />
+      <DecideEffects />
       <div class="queue-layout" id="queue-content" data-mode="judge">
         <div class="queue-left">
           <VerdictPanel

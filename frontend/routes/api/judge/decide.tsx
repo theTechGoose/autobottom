@@ -10,15 +10,26 @@ export const handler = define.handlers({
   async POST(ctx) {
     try {
       const body = await parseHtmxBody(ctx.req);
-      await apiPost("/judge/api/decide", ctx.req, body);
+      const decideResult = await apiPost<{ ok: boolean; remaining?: number; auditComplete?: boolean }>(
+        "/judge/api/decide", ctx.req, body,
+      );
       const next = await apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
         `/judge/api/next?judge=${encodeURIComponent(String(body.judge ?? ""))}`, ctx.req,
       );
       const buffer = next.buffer ?? [];
       const currentIndex = 0;
       const item = buffer[currentIndex] ?? null;
+      const xpGained = body.decision === "overturn" ? 15 : 10;
       const html = renderToString(
         <>
+          <div
+            id="decide-effect-marker"
+            data-audit-complete={String(decideResult.auditComplete ?? false)}
+            data-xp-gained={String(xpGained)}
+            data-decision={String(body.decision ?? "")}
+            data-mode="judge"
+            style="display:none"
+          />
           <div class="queue-left">
             <VerdictPanel
               item={item}

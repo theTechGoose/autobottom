@@ -29,7 +29,7 @@ export class ReviewController {
       return { error: "findingId, questionIndex, decision, reviewer required" };
     }
     const result = await recordDecision(ORG(), body.findingId, body.questionIndex, body.decision, body.reviewer);
-    return { ok: true, ...result };
+    return { ok: true, ...result, xpGained: body.decision === "flip" ? 15 : 10, newBadges: [] as string[] };
   }
 
   @Post("back") @ReturnedType(ReviewBufferResponse) @Description("Undo last decision") @BodyType(ReviewBackRequest)

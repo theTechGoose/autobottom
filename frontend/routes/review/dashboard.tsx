@@ -15,7 +15,7 @@ export default define.page(async function ReviewDashboard(ctx) {
   const confirmRate = total > 0 ? Math.round((stats.decided / total) * 100) : 0;
 
   return (
-    <Layout title="Review Dashboard" section="review" user={user}>
+    <Layout title="Review Dashboard" section="review" user={user} pathname={new URL(ctx.req.url).pathname}>
       <div class="page-header"><h1>Review Dashboard</h1><p class="page-sub">Your review performance and queue status</p></div>
 
       <div class="stat-grid">

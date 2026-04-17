@@ -12,7 +12,7 @@ export default define.page(async function JudgeDashboard(ctx) {
   catch (e) { console.error("Judge dashboard error:", e); }
 
   return (
-    <Layout title="Judge Dashboard" section="judge" user={user}>
+    <Layout title="Judge Dashboard" section="judge" user={user} pathname={new URL(ctx.req.url).pathname}>
       <div class="page-header"><h1>Judge Dashboard</h1><p class="page-sub">Appeal stats and judge performance</p></div>
 
       <div class="stat-grid">

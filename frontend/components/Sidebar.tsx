@@ -6,6 +6,8 @@ import type { ComponentChildren } from "preact";
 interface SidebarProps {
   user: User;
   section: string;
+  /** Current pathname — used for precise active-state. Falls back to includes(section). */
+  pathname?: string;
 }
 
 // Sidebar item: either a link (href) or a modal trigger (data-modal)
@@ -23,8 +25,13 @@ interface SbSection {
   items: SbItem[];
 }
 
-function SbLink({ item, section }: { item: SbItem; section: string }) {
-  const isActive = item.href && section && item.href.includes(section);
+function SbLink({ item, section, pathname }: { item: SbItem; section: string; pathname?: string }) {
+  // Prefer exact pathname match when provided — a simple includes(section)
+  // falsely matched /review on /review/dashboard and vice versa. Exact match
+  // ensures each sidebar item highlights only when its href is the current URL.
+  const isActive = item.href && (
+    pathname ? item.href === pathname : (section && item.href.includes(section))
+  );
   const iconStyle = `width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:${item.color};color:${item.iconColor ?? "var(--blue)"};flex-shrink:0;`;
 
   if (item.href) {
@@ -134,7 +141,7 @@ const SECTION_ROLE_MAP: Record<string, Role> = {
   agent: "user",
 };
 
-export function Sidebar({ user, section }: SidebarProps) {
+export function Sidebar({ user, section, pathname }: SidebarProps) {
   let viewRole: Role = SECTION_ROLE_MAP[section] ?? user.role;
   // Defense in depth: non-admin must never render admin nav even if section="admin"
   if (viewRole === "admin" && user.role !== "admin") viewRole = user.role;
@@ -156,7 +163,7 @@ export function Sidebar({ user, section }: SidebarProps) {
         {sections.map((sec) => (
           <div key={sec.label} class="sb-section">
             <div class="sb-label">{sec.label}</div>
-            {sec.items.map((item) => <SbLink key={item.label} item={item} section={section} />)}
+            {sec.items.map((item) => <SbLink key={item.label} item={item} section={section} pathname={pathname} />)}
           </div>
         ))}
 

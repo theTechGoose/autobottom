@@ -9,6 +9,7 @@ import HotkeyHandler from "../../islands/HotkeyHandler.tsx";
 import SoundEngine from "../../islands/SoundEngine.tsx";
 import QueueAudioPlayer from "../../islands/QueueAudioPlayer.tsx";
 import TranscriptInteractive from "../../islands/TranscriptInteractive.tsx";
+import QueueModals from "../../islands/QueueModals.tsx";
 
 interface BufferResponse { buffer: ReviewItem[]; remaining: number; }
 
@@ -47,6 +48,7 @@ export default define.page(async function ReviewQueue(ctx) {
         </div>
       </div>
       <QueueAudioPlayer initialFindingId={item?.findingId ?? null} />
+      <QueueModals />
     </Layout>
   );
 });

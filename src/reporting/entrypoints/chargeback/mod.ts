@@ -9,6 +9,7 @@ import { queryChargebackReport, queryWireReport } from "@reporting/domain/busine
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { getChargebackEntries, getWireDeductionEntries } from "@audit/domain/data/stats-repository/mod.ts";
+import { readSheetsCredentials, appendSheetRows } from "@core/data/google-sheets/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
@@ -44,7 +45,66 @@ export class ChargebackController {
   @Post("post-to-sheet") @ReturnedType(OkMessageResponse) @BodyType(PostToSheetRequest)
   async postToSheet(@Body() body: { since: number; until: number; tabs: string }) {
     if (!body.since || !body.until || !body.tabs) return { error: "since, until, tabs required" };
-    return { ok: true, message: "Sheets export requires SA credentials from S3 — use admin dashboard" };
+    const creds = readSheetsCredentials();
+    if (!creds) {
+      return {
+        error: "Sheets not configured — set GOOGLE_SA_JSON + GOOGLE_SHEET_ID env vars on this deployment.",
+      };
+    }
+    const orgId = ORG();
+    const [reviewedIds, bypassCfg] = await Promise.all([
+      getReviewedFindingIds(orgId),
+      getOfficeBypassConfig(orgId),
+    ]);
+    let appended = 0;
+    const tabList = body.tabs.split(",").map((s) => s.trim()).filter(Boolean);
+    try {
+      for (const tab of tabList) {
+        if (tab === "cb" || tab === "om") {
+          const report = await queryChargebackReport(orgId, body.since, body.until, reviewedIds, bypassCfg.patterns);
+          const source = tab === "cb" ? (report.chargebacks ?? []) : (report.omissions ?? []);
+          if (!source.length) continue;
+          const rows = source.map((c) => {
+            const r = c as unknown as Record<string, unknown>;
+            return [
+              String(r.date ?? ""),
+              String(r.teamMember ?? ""),
+              String(r.revenue ?? ""),
+              String(r.crmLink ?? ""),
+              String(r.findingId ?? ""),
+              String(r.type ?? ""),
+              Array.isArray(r.failedQuestions) ? (r.failedQuestions as string[]).join("; ") : "",
+            ] as (string | number)[];
+          });
+          const res = await appendSheetRows(creds, tab === "cb" ? "Chargebacks" : "Omissions", rows);
+          appended += res.appended;
+        } else if (tab === "wire") {
+          const items = await queryWireReport(orgId, body.since, body.until, reviewedIds, bypassCfg.patterns);
+          if (!items.length) continue;
+          const rows = items.map((w) => {
+            const r = w as unknown as Record<string, unknown>;
+            return [
+              String(r.date ?? ""),
+              typeof r.score === "number" ? r.score : "",
+              typeof r.questions === "number" ? r.questions : "",
+              typeof r.passed === "number" ? r.passed : "",
+              String(r.crmLink ?? ""),
+              String(r.findingId ?? ""),
+              String(r.office ?? ""),
+              String(r.auditor ?? ""),
+              String(r.guestName ?? ""),
+            ] as (string | number)[];
+          });
+          const res = await appendSheetRows(creds, "Wire Deductions", rows);
+          appended += res.appended;
+        }
+      }
+    } catch (err) {
+      console.error(`❌ [POST-TO-SHEET] failed:`, err);
+      return { error: (err as Error).message };
+    }
+    console.log(`📊 [POST-TO-SHEET] appended ${appended} rows across tabs [${tabList.join(",")}]`);
+    return { ok: true, appended };
   }
 
   @Get("trigger-weekly-sheets") @ReturnedType(OkResponse)

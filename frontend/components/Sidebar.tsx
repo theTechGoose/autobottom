@@ -88,6 +88,18 @@ const ADMIN_SECTIONS: SbSection[] = [
   },
 ];
 
+// Super-admin-only sidebar additions (Dev Tools + Super Admin link).
+// Appended to ADMIN_SECTIONS in the Sidebar render when user.email matches.
+const SUPER_ADMIN_EXTRAS: SbSection = {
+  label: "Super Admin",
+  items: [
+    { label: "Dev Tools", icon: Icon.settings, color: "var(--red-bg)", iconColor: "var(--red)", modalId: "devtools-modal" },
+    { label: "Super Admin", icon: Icon.userCog, color: "var(--red-bg)", iconColor: "var(--red)", href: "/super-admin" },
+  ],
+};
+
+const SUPER_ADMIN_EMAIL = "ai@monsterrg.com";
+
 // Role view links for the flyout
 const ROLE_VIEWS = [
   { label: "Judge Dashboard", href: "/judge/dashboard", icon: Icon.scale, color: "rgba(210,153,34,0.10)", iconColor: "var(--yellow)" },
@@ -146,8 +158,10 @@ export function Sidebar({ user, section, pathname }: SidebarProps) {
   let viewRole: Role = SECTION_ROLE_MAP[section] ?? user.role;
   // Defense in depth: non-admin must never render admin nav even if section="admin"
   if (viewRole === "admin" && user.role !== "admin") viewRole = user.role;
-  const sections = ROLE_SECTION_MAP[viewRole] ?? USER_SECTIONS;
+  const baseSections = ROLE_SECTION_MAP[viewRole] ?? USER_SECTIONS;
   const isAdmin = user.role === "admin";
+  const isSuperAdmin = isAdmin && user.email === SUPER_ADMIN_EMAIL;
+  const sections = isSuperAdmin ? [...baseSections, SUPER_ADMIN_EXTRAS] : baseSections;
   const initials = user.email.slice(0, 2).toUpperCase();
 
   return (

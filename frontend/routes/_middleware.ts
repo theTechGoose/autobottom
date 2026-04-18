@@ -38,6 +38,15 @@ export default define.middleware(async (ctx) => {
       role: auth.role as "admin" | "judge" | "manager" | "reviewer" | "user",
     };
 
+    // /super-admin/* is gated to a single email. Super Admin bypasses the org
+    // impersonation swap below because we want the REAL user's view.
+    if (path.startsWith("/super-admin")) {
+      if (auth.email !== "ai@monsterrg.com") {
+        return new Response(null, { status: 302, headers: { location: "/admin/dashboard" } });
+      }
+      return ctx.next();
+    }
+
     // Admin impersonation via ?as=<email> — swap ctx.state.user for the target
     // so the downstream page renders as that user, and stash the real admin
     // email for the golden banner.

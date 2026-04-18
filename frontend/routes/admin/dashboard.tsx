@@ -135,6 +135,7 @@ export default define.page(async function AdminDashboard(ctx) {
         { id: "offices-modal", title: "Offices", sub: "Manage known offices and bypass patterns", endpoint: "/api/admin/modal/offices", noHeader: true },
         { id: "pipeline-modal", title: "Pipeline Settings", sub: "Control concurrency and failure recovery", endpoint: "/api/admin/modal/pipeline", className: "pipeline-modal", noHeader: true },
         { id: "bulk-audit-modal", title: "Bulk Audit", sub: "Queue a batch of audits with stagger", endpoint: "/api/admin/modal/bulk-audit", noHeader: true },
+        { id: "devtools-modal", title: "Dev Tools", sub: "Seed test users, wipe KV", endpoint: "/api/admin/modal/devtools", noHeader: true },
         { id: "bonus-points-modal", title: "Bonus Points", sub: "Configure bonus point awards", endpoint: "/api/admin/modal/bonus-points" },
         { id: "impersonate-modal", title: "Impersonate User", sub: "View the app as another user", endpoint: "/api/admin/modal/impersonate" },
       ].map((m) => (

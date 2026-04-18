@@ -215,6 +215,7 @@ const FRONTEND_EXACT_PAGES = new Set([
   "/judge", "/judge/dashboard",
   "/manager", "/agent", "/chat", "/store", "/question-lab",
   "/audit/report",
+  "/super-admin",
 ]);
 
 // Frontend PREFIX paths — anything starting with these goes to Fresh
@@ -222,6 +223,7 @@ const FRONTEND_PREFIX_PATHS = [
   "/api/login", "/api/register", "/api/logout",
   "/api/admin/", "/api/review/", "/api/judge/",
   "/api/manager/", "/api/agent/", "/api/chat/",
+  "/api/super-admin/",
   "/api/store/buy",
   "/styles.css", "/favicon.svg", "/_fresh/",
 ];

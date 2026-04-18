@@ -262,13 +262,13 @@ export class AdminConfigController {
   }
   @Post("seed") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async seed(@Body() body: GenericBodyRequest) {
-    const { createOrg, createUser } = await import("@core/business/auth/mod.ts");
-    const orgId = await createOrg("Auto-Bot Dev", "admin@autobot.dev");
-    try { await createUser(orgId, "admin@autobot.dev", "admin123", "admin"); } catch { /* exists */ }
-    return { ok: true, orgId };
+    const { seedOrgData } = await import("@core/business/seed/mod.ts");
+    const orgId = ORG();
+    const result = await seedOrgData(orgId);
+    return { ok: true, orgId, ...result };
   }
   @Get("seed") @ReturnedType(MessageResponse)
-  async seedDryRun() { return { message: "Seed would create default org + admin user" }; }
+  async seedDryRun() { return { message: "POST /admin/seed creates 6 test users in the current org with password 0000." }; }
   @Post("init-org") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async initOrg(@Body() body: GenericBodyRequest) {
     const b = body as any;
@@ -300,6 +300,73 @@ export class AdminConfigController {
   async importState(@Body() body: GenericBodyRequest) { return { ok: true, message: "State import — use KV import tools directly" }; }
   @Post("pull-state") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async pullState(@Body() body: GenericBodyRequest) { return { ok: true, message: "State pull — use KV sync tools directly" }; }
+
+  // -- Super Admin — org management. Gated at the Fresh layer by email check;
+  // these backend endpoints trust proxies to have authenticated.
+  @Get("super-admin/orgs") @ReturnedType(MessageResponse)
+  async listOrgsWithCounts() {
+    const { listOrgs, listUsers } = await import("@core/business/auth/mod.ts");
+    const { getKv, orgKey } = await import("@core/data/deno-kv/mod.ts");
+    const orgs = await listOrgs();
+    const db = await getKv();
+    const results = [] as Array<{ id: string; name: string; slug: string; createdAt: number; users: number; findings: number }>;
+    for (const o of orgs) {
+      const users = await listUsers(o.id).catch(() => []);
+      const findingIds = new Set<string>();
+      for await (const e of db.list({ prefix: orgKey(o.id, "audit-finding") })) {
+        const fid = e.key[2];
+        if (typeof fid === "string") findingIds.add(fid);
+      }
+      results.push({ id: String(o.id), name: o.name, slug: o.slug, createdAt: o.createdAt, users: users.length, findings: findingIds.size });
+    }
+    return { orgs: results };
+  }
+
+  @Post("super-admin/org-create") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async createOrgSuper(@Body() body: GenericBodyRequest) {
+    const b = body as { name?: string; adminEmail?: string; adminPassword?: string };
+    if (!b.name) return { error: "name required" };
+    const { createOrg, createUser } = await import("@core/business/auth/mod.ts");
+    const orgId = await createOrg(b.name, b.adminEmail ?? "admin@autobot.dev");
+    if (b.adminEmail && b.adminPassword) {
+      try { await createUser(orgId as any, b.adminEmail, b.adminPassword, "admin"); } catch { /* exists */ }
+    }
+    return { ok: true, orgId: String(orgId), message: `Created org ${b.name}` };
+  }
+
+  @Post("super-admin/org-seed") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async seedOrg(@Body() body: GenericBodyRequest) {
+    const b = body as { orgId?: string };
+    if (!b.orgId) return { error: "orgId required" };
+    const { seedOrgData } = await import("@core/business/seed/mod.ts");
+    const result = await seedOrgData(b.orgId as any);
+    return { ok: true, orgId: b.orgId, message: `Seeded ${result.created.length} users` };
+  }
+
+  @Post("super-admin/org-wipe") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async wipeOrg(@Body() body: GenericBodyRequest) {
+    const b = body as { orgId?: string; confirm?: string };
+    if (!b.orgId) return { error: "orgId required" };
+    if (b.confirm !== "YES") return { error: "confirm:YES required" };
+    const { wipeKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    const result = await wipeKv(b.orgId as any, "YES");
+    if (!result.ok) return { error: result.error ?? "refused" };
+    return { ok: true, message: `Wiped ${result.deleted} keys for org ${b.orgId}` };
+  }
+
+  @Post("super-admin/org-delete") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async deleteOrgSuper(@Body() body: GenericBodyRequest) {
+    const b = body as { orgId?: string; confirm?: string };
+    if (!b.orgId) return { error: "orgId required" };
+    if (b.confirm !== "DELETE") return { error: "confirm:DELETE required" };
+    const { wipeKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    const { deleteOrg, listUsers, deleteUser } = await import("@core/business/auth/mod.ts");
+    const users = await listUsers(b.orgId as any).catch(() => []);
+    for (const u of users) await deleteUser(b.orgId as any, u.email).catch(() => {});
+    const wipe = await wipeKv(b.orgId as any, "YES");
+    await deleteOrg(b.orgId as any);
+    return { ok: true, message: `Deleted org ${b.orgId} — removed ${users.length} users + ${wipe.deleted ?? 0} KV keys` };
+  }
 
   // -- Token usage --
   @Get("token-usage") @ReturnedType(TokenUsageResponse)

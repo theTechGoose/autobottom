@@ -7,7 +7,7 @@ import { renderToString } from "preact-render-to-string";
 import { DashboardTables, computeLogsBase, type ActiveItem, type ErrorItem, type CompletedItem } from "../../../../components/DashboardTables.tsx";
 
 interface DashboardData {
-  pipeline: { active?: ActiveItem[]; errors?: ErrorItem[] };
+  pipeline: { active?: ActiveItem[]; errors?: ErrorItem[]; paused?: boolean };
   recentCompleted: CompletedItem[];
 }
 
@@ -22,6 +22,7 @@ export const handler = define.handlers({
           active={data.pipeline?.active ?? []}
           errors={data.pipeline?.errors ?? []}
           logsBase={logsBase}
+          paused={data.pipeline?.paused}
         />
       );
       return new Response(html, { headers: { "content-type": "text/html" } });

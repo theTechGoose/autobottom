@@ -12,6 +12,21 @@ const DEFAULT_BYPASS: OfficeBypassConfig = { patterns: [] };
 const DEFAULT_BONUS: BonusPointsConfig = { internalBonusPoints: 0, partnerBonusPoints: 0 };
 const DEFAULT_BAD_WORD: BadWordConfig = { enabled: false, emails: [], words: [], allOffices: false, officePatterns: [] };
 
+// ── Queue Pause State ────────────────────────────────────────────────────────
+
+/** Returns true if an admin has toggled Pause Queues. Used by the dashboard
+ *  to render the right button label. Canonical pause state lives at QStash
+ *  (paused queues stop callback dispatch); this is a UI-mirror flag. */
+export async function isPipelinePaused(orgId: OrgId): Promise<boolean> {
+  const db = await getKv();
+  return (await db.get<boolean>(orgKey(orgId, "pipeline-paused"))).value === true;
+}
+
+export async function setPipelinePaused(orgId: OrgId, paused: boolean): Promise<void> {
+  const db = await getKv();
+  await db.set(orgKey(orgId, "pipeline-paused"), paused);
+}
+
 // ── Pipeline Config ──────────────────────────────────────────────────────────
 
 export async function getPipelineConfig(orgId: OrgId): Promise<PipelineConfig> {

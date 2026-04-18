@@ -8,8 +8,9 @@ import { DashboardTables, computeLogsBase, type ActiveItem, type ErrorItem, type
 import { TokenUsagePanel, type TokenData } from "../../components/TokenUsagePanel.tsx";
 import { ReviewQueuePanel, type ReviewStatsShape } from "../../components/ReviewQueuePanel.tsx";
 import ModalController from "../../islands/ModalController.tsx";
+import PipelineActivityChart from "../../islands/PipelineActivityChart.tsx";
 
-interface PipelineStats { inPipe?: number; active?: ActiveItem[]; completed24h?: number; completedCount?: number; errors24h?: number; errors?: ErrorItem[]; retries24h?: number; retries?: unknown[]; }
+interface PipelineStats { inPipe?: number; active?: ActiveItem[]; completed24h?: number; completedCount?: number; errors24h?: number; errors?: ErrorItem[]; retries24h?: number; retries?: unknown[]; completedTs?: number[]; errorsTs?: number[]; retriesTs?: number[]; paused?: boolean; }
 interface DashboardData { pipeline: PipelineStats; review: ReviewStatsShape; recentCompleted: CompletedItem[]; }
 
 export default define.page(async function AdminDashboard(ctx) {
@@ -41,9 +42,11 @@ export default define.page(async function AdminDashboard(ctx) {
       <div class="charts">
         <div class="chart-panel">
           <div class="chart-title">Pipeline Activity (24h)</div>
-          <div style="text-align:center;color:var(--text-dim);padding:20px 0;font-size:12px;">
-            {completed > 0 ? `${completed} completed` : "No activity"}{errorList.length > 0 ? ` · ${errorList.length} errors` : ""}
-          </div>
+          <PipelineActivityChart
+            completedTs={p.completedTs ?? []}
+            errorsTs={p.errorsTs ?? []}
+            retriesTs={p.retriesTs ?? []}
+          />
         </div>
         <DonutChart
           title="Review Progress"
@@ -118,7 +121,7 @@ export default define.page(async function AdminDashboard(ctx) {
              — auto-refresh every 10s. Action buttons (Resume/Terminate/Clear/etc.) are
              inline with each table's title, NOT in a separate Queue Management panel. */}
       <div id="dashboard-tables" hx-get="/api/admin/dashboard/refresh" hx-trigger="every 10s, refresh" hx-swap="innerHTML">
-        <DashboardTables recent={recentList} active={activeList} errors={errorList} logsBase={logsBase} />
+        <DashboardTables recent={recentList} active={activeList} errors={errorList} logsBase={logsBase} paused={p.paused} />
       </div>
       {/* ===== CONFIG MODALS — opened from sidebar, content loaded via HTMX ===== */}
       {[
@@ -131,6 +134,7 @@ export default define.page(async function AdminDashboard(ctx) {
         { id: "bad-words-modal", title: "Bad Words", sub: "Configure profanity scanning for transcripts", endpoint: "/api/admin/modal/bad-words", className: "bw-modal", noHeader: true },
         { id: "offices-modal", title: "Offices", sub: "Manage known offices and bypass patterns", endpoint: "/api/admin/modal/offices", noHeader: true },
         { id: "pipeline-modal", title: "Pipeline Settings", sub: "Control concurrency and failure recovery", endpoint: "/api/admin/modal/pipeline", className: "pipeline-modal", noHeader: true },
+        { id: "bulk-audit-modal", title: "Bulk Audit", sub: "Queue a batch of audits with stagger", endpoint: "/api/admin/modal/bulk-audit", noHeader: true },
         { id: "bonus-points-modal", title: "Bonus Points", sub: "Configure bonus point awards", endpoint: "/api/admin/modal/bonus-points" },
         { id: "impersonate-modal", title: "Impersonate User", sub: "View the app as another user", endpoint: "/api/admin/modal/impersonate" },
       ].map((m) => (

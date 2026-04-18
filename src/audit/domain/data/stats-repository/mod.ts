@@ -214,8 +214,13 @@ export async function getStats(orgId: OrgId): Promise<{
   completedCount: number;
   errors: Record<string, unknown>[];
   retries: Record<string, unknown>[];
+  completedTs: number[];
+  errorsTs: number[];
+  retriesTs: number[];
 }> {
   const db = await getKv();
+  const now = Date.now();
+  const cutoff = now - DAY_MS;
 
   const activePrefix = orgKey(orgId, "active-tracking");
   const active: Record<string, unknown>[] = [];
@@ -226,20 +231,33 @@ export async function getStats(orgId: OrgId): Promise<{
   }
   console.log(`📊 [STATS] getStats orgId=${orgId} prefix=${JSON.stringify(activePrefix)} activeCount=${active.length}`);
 
+  // Completed audits — count all-time, but only gather timestamps within 24h
+  // for the pipeline activity chart.
   let completedCount = 0;
-  for await (const _entry of db.list({ prefix: orgKey(orgId, "completed-audit-stat") })) {
+  const completedTs: number[] = [];
+  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "completed-audit-stat") })) {
     completedCount++;
+    const ts = Number(entry.value?.ts ?? 0);
+    if (ts >= cutoff) completedTs.push(ts);
   }
 
+  // Errors + retries already have 24h TTL at write time, but filter anyway
+  // so the chart never shows a bucket older than 24h if something slips.
   const errors: Record<string, unknown>[] = [];
+  const errorsTs: number[] = [];
   for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "error-tracking") })) {
     errors.push(entry.value);
+    const ts = Number(entry.value?.ts ?? 0);
+    if (ts >= cutoff) errorsTs.push(ts);
   }
 
   const retries: Record<string, unknown>[] = [];
+  const retriesTs: number[] = [];
   for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "retry-tracking") })) {
     retries.push(entry.value);
+    const ts = Number(entry.value?.ts ?? 0);
+    if (ts >= cutoff) retriesTs.push(ts);
   }
 
-  return { active, completedCount, errors, retries };
+  return { active, completedCount, errors, retries, completedTs, errorsTs, retriesTs };
 }

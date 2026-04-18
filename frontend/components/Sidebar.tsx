@@ -65,6 +65,7 @@ const ADMIN_SECTIONS: SbSection[] = [
     label: "Configuration",
     items: [
       { label: "Question Lab", icon: Icon.flask, color: "var(--green-bg)", iconColor: "var(--green)", href: "/question-lab" },
+      { label: "Bulk Audit", icon: Icon.layoutDashboard, color: "var(--teal-bg)", iconColor: "var(--teal)", modalId: "bulk-audit-modal" },
       { label: "Webhook", icon: Icon.webhook, color: "var(--blue-bg)", iconColor: "var(--blue)", modalId: "webhook-modal" },
       { label: "Email Reports", icon: Icon.mail, color: "var(--blue-bg)", iconColor: "var(--blue)", modalId: "email-reports-modal" },
       { label: "Email Templates", icon: Icon.mail, color: "var(--cyan-bg)", iconColor: "var(--cyan)", modalId: "email-templates-modal" },

@@ -219,6 +219,9 @@ export class AuditController {
       errors: stats.errors,
       retries24h: stats.retries.length,
       retries: stats.retries,
+      completedTs: stats.completedTs,
+      errorsTs: stats.errorsTs,
+      retriesTs: stats.retriesTs,
     };
   }
 }

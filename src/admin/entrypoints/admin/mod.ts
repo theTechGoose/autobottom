@@ -113,9 +113,17 @@ export class AdminConfigController {
   async setQueue(@Body() body: GenericBodyRequest) { return { ok: true }; }
 
   @Post("pause-queues") @ReturnedType(OkResponse)
-  async pauseQueues() { await pauseAllQueues(); return { ok: true }; }
+  async pauseQueues() {
+    await pauseAllQueues();
+    await cfg.setPipelinePaused(ORG(), true);
+    return { ok: true, paused: true };
+  }
   @Post("resume-queues") @ReturnedType(OkResponse)
-  async resumeQueues() { await resumeAllQueues(); return { ok: true }; }
+  async resumeQueues() {
+    await resumeAllQueues();
+    await cfg.setPipelinePaused(ORG(), false);
+    return { ok: true, paused: false };
+  }
 
   @Post("clear-review-queue") @ReturnedType(ClearedResponse)
   async doClearReviewQueue() { return clearReviewQueue(ORG()); }

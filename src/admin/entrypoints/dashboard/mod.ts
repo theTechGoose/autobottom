@@ -12,6 +12,7 @@ import { ReturnedType, Description } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
 import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId } from "@audit/domain/data/stats-repository/mod.ts";
 import { getReviewStats } from "@review/domain/business/review-queue/mod.ts";
+import { isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
@@ -24,12 +25,13 @@ export class DashboardController {
   async dashboardData() {
     const orgId = ORG();
     console.log(`📊 [DASH] dashboard/data orgId=${orgId}`);
-    const [pipelineStats, reviewStats, recent] = await Promise.all([
+    const [pipelineStats, reviewStats, recent, paused] = await Promise.all([
       getStats(orgId),
       getReviewStats(orgId),
       getRecentCompleted(orgId, 25),
+      isPipelinePaused(orgId),
     ]);
-    return { pipeline: pipelineStats, review: reviewStats, recentCompleted: recent };
+    return { pipeline: { ...pipelineStats, paused }, review: reviewStats, recentCompleted: recent };
   }
 
   @Get("dashboard/section") @ReturnedType(OkResponse)

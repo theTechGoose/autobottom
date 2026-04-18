@@ -17,6 +17,8 @@ interface Props {
   /** Base URL for Deno Deploy observability logs (if host is `{project}.{org}.deno.net`).
    *  Computed server-side from the request's Host header so we don't need client JS. */
   logsBase?: string;
+  /** Current queue pause state — drives the Pause/Resume button label. */
+  paused?: boolean;
 }
 
 const QB_DATE_URL = "https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=";
@@ -41,7 +43,7 @@ function logsUrl(findingId: string, logsBase?: string): string | null {
   return `${logsBase}${encodeURIComponent(findingId)}${LOGS_SUFFIX}`;
 }
 
-export function DashboardTables({ recent, active, errors, logsBase }: Props) {
+export function DashboardTables({ recent, active, errors, logsBase, paused }: Props) {
   return (
     <>
       {/* Active Audits — ALWAYS visible */}
@@ -53,11 +55,13 @@ export function DashboardTables({ recent, active, errors, logsBase }: Props) {
             <span id="queue-action-status" style="font-size:10px;min-width:80px;text-align:right;"></span>
             <button class="sf-btn"
                     hx-post="/api/admin/queue-action"
-                    hx-vals='{"action":"resume"}'
+                    hx-vals={paused ? '{"action":"resume"}' : '{"action":"pause"}'}
                     hx-target="#queue-action-status"
                     hx-swap="innerHTML"
                     hx-on--after-request="setTimeout(() => { const el = document.getElementById('queue-action-status'); if (el) el.innerHTML = ''; }, 2500); if (event.detail.successful) htmx.trigger('#dashboard-tables', 'refresh');"
-                    style="font-size:9px;padding:3px 10px;">Resume Queues</button>
+                    style={`font-size:9px;padding:3px 10px;${paused ? "background:var(--green-bg);color:var(--green);border-color:rgba(63,185,80,0.3);" : ""}`}>
+              {paused ? "Resume Queues" : "Pause Queues"}
+            </button>
             <button class="sf-btn danger"
                     hx-post="/api/admin/queue-action"
                     hx-vals='{"action":"terminate-all"}'

@@ -26,18 +26,15 @@ Deno.test({ name: "finding — returns null for missing", ...kvOpts, fn: async (
   assertEquals(await getFinding(ORG, "nonexistent"), null);
 }});
 
-// Key-schema invariant: the audit entrypoint controller writes via
-// `new KvRepository("audit-finding").setChunked(orgId, [findingId], finding)`
-// which produces key [orgId, "audit-finding", findingId]. getFinding MUST read
-// from that same key — otherwise stepInit can never find a freshly-created
-// finding and the pipeline dies with "finding not found" 404.
-Deno.test({ name: "finding — round-trips via KvRepository writer (no key-schema drift)", ...kvOpts, fn: async () => {
-  const { KvRepository } = await import("@core/business/repository-base/mod.ts");
-  const writer = new KvRepository("audit-finding");
+// Key-schema invariant: every writer in the codebase MUST go through saveFinding
+// from this repository so the doc shape matches what getFinding reads. The
+// audit entrypoint, judge appeal flow, and review correction flow all import
+// saveFinding directly — this test verifies the round-trip.
+Deno.test({ name: "finding — round-trips via the saveFinding writer (no key-schema drift)", ...kvOpts, fn: async () => {
   const finding = { id: "cross-path", findingStatus: "pending", record: { RecordId: "777" } };
-  await writer.setChunked(ORG as any, ["cross-path"], finding);
-  const result = await getFinding(ORG as any, "cross-path");
-  assert(result !== null, "getFinding must read findings written by the audit controller's KvRepository writer");
+  await saveFinding(ORG, finding);
+  const result = await getFinding(ORG, "cross-path");
+  assert(result !== null, "getFinding must read findings written by saveFinding");
   assertEquals(result!.id, "cross-path");
 }});
 

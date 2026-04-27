@@ -1,7 +1,9 @@
 /** Admin config repository — pipeline, webhooks, bypass, bonus, dimensions, scopes.
- *  Ported from lib/kv.ts config sections. */
+ *  Firestore-backed; falls back to in-memory store when Firebase env unset (tests). */
 
-import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import {
+  getStored, setStored, deleteStored, listStoredWithKeys,
+} from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { PipelineConfig, WebhookConfig, BadWordConfig, OfficeBypassConfig, BonusPointsConfig } from "@core/dto/types.ts";
 
@@ -14,45 +16,35 @@ const DEFAULT_BAD_WORD: BadWordConfig = { enabled: false, emails: [], words: [],
 
 // ── Queue Pause State ────────────────────────────────────────────────────────
 
-/** Returns true if an admin has toggled Pause Queues. Used by the dashboard
- *  to render the right button label. Canonical pause state lives at QStash
- *  (paused queues stop callback dispatch); this is a UI-mirror flag. */
 export async function isPipelinePaused(orgId: OrgId): Promise<boolean> {
-  const db = await getKv();
-  return (await db.get<boolean>(orgKey(orgId, "pipeline-paused"))).value === true;
+  return (await getStored<boolean>("pipeline-paused", orgId)) === true;
 }
 
 export async function setPipelinePaused(orgId: OrgId, paused: boolean): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "pipeline-paused"), paused);
+  await setStored("pipeline-paused", orgId, [], paused);
 }
 
 // ── Pipeline Config ──────────────────────────────────────────────────────────
 
 export async function getPipelineConfig(orgId: OrgId): Promise<PipelineConfig> {
-  const db = await getKv();
-  const v = (await db.get<PipelineConfig>(orgKey(orgId, "pipeline-config"))).value;
-  return v ?? DEFAULT_PIPELINE_CONFIG;
+  return (await getStored<PipelineConfig>("pipeline-config", orgId)) ?? DEFAULT_PIPELINE_CONFIG;
 }
 
 export async function setPipelineConfig(orgId: OrgId, config: Partial<PipelineConfig>): Promise<PipelineConfig> {
   const current = await getPipelineConfig(orgId);
   const merged = { ...current, ...config };
-  const db = await getKv();
-  await db.set(orgKey(orgId, "pipeline-config"), merged);
+  await setStored("pipeline-config", orgId, [], merged);
   return merged;
 }
 
 // ── Webhook Config ───────────────────────────────────────────────────────────
 
 export async function getWebhookConfig(orgId: OrgId, kind: WebhookKind): Promise<WebhookConfig | null> {
-  const db = await getKv();
-  return (await db.get<WebhookConfig>(orgKey(orgId, "webhook-config", kind))).value;
+  return await getStored<WebhookConfig>("webhook-config", orgId, kind);
 }
 
 export async function saveWebhookConfig(orgId: OrgId, kind: WebhookKind, config: WebhookConfig): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "webhook-config", kind), config);
+  await setStored("webhook-config", orgId, [kind], config);
 }
 
 type WebhookEmailHandler = (orgId: OrgId, payload: unknown) => Promise<void>;
@@ -94,37 +86,31 @@ export async function fireWebhook(orgId: OrgId, kind: WebhookKind, payload: unkn
 // ── Bad Word Config ──────────────────────────────────────────────────────────
 
 export async function getBadWordConfig(orgId: OrgId): Promise<BadWordConfig> {
-  const db = await getKv();
-  return (await db.get<BadWordConfig>(orgKey(orgId, "bad-word-config"))).value ?? DEFAULT_BAD_WORD;
+  return (await getStored<BadWordConfig>("bad-word-config", orgId)) ?? DEFAULT_BAD_WORD;
 }
 
 export async function saveBadWordConfig(orgId: OrgId, config: BadWordConfig): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "bad-word-config"), config);
+  await setStored("bad-word-config", orgId, [], config);
 }
 
 // ── Office Bypass Config ─────────────────────────────────────────────────────
 
 export async function getOfficeBypassConfig(orgId: OrgId): Promise<OfficeBypassConfig> {
-  const db = await getKv();
-  return (await db.get<OfficeBypassConfig>(orgKey(orgId, "office-bypass-config"))).value ?? DEFAULT_BYPASS;
+  return (await getStored<OfficeBypassConfig>("office-bypass-config", orgId)) ?? DEFAULT_BYPASS;
 }
 
 export async function saveOfficeBypassConfig(orgId: OrgId, config: OfficeBypassConfig): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "office-bypass-config"), config);
+  await setStored("office-bypass-config", orgId, [], config);
 }
 
 // ── Bonus Points Config ──────────────────────────────────────────────────────
 
 export async function getBonusPointsConfig(orgId: OrgId): Promise<BonusPointsConfig> {
-  const db = await getKv();
-  return (await db.get<BonusPointsConfig>(orgKey(orgId, "bonus-points-config"))).value ?? DEFAULT_BONUS;
+  return (await getStored<BonusPointsConfig>("bonus-points-config", orgId)) ?? DEFAULT_BONUS;
 }
 
 export async function saveBonusPointsConfig(orgId: OrgId, config: BonusPointsConfig): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "bonus-points-config"), config);
+  await setStored("bonus-points-config", orgId, [], config);
 }
 
 // ── Manager Scopes ───────────────────────────────────────────────────────────
@@ -132,21 +118,19 @@ export async function saveBonusPointsConfig(orgId: OrgId, config: BonusPointsCon
 export interface ManagerScope { departments: string[]; shifts: string[]; }
 
 export async function getManagerScope(orgId: OrgId, managerEmail: string): Promise<ManagerScope> {
-  const db = await getKv();
-  return (await db.get<ManagerScope>(orgKey(orgId, "manager-scope", managerEmail))).value ?? { departments: [], shifts: [] };
+  return (await getStored<ManagerScope>("manager-scope", orgId, managerEmail)) ?? { departments: [], shifts: [] };
 }
 
 export async function saveManagerScope(orgId: OrgId, managerEmail: string, scope: ManagerScope): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "manager-scope", managerEmail), scope);
+  await setStored("manager-scope", orgId, [managerEmail], scope);
 }
 
 export async function listManagerScopes(orgId: OrgId): Promise<Record<string, ManagerScope>> {
-  const db = await getKv();
+  const rows = await listStoredWithKeys<ManagerScope>("manager-scope", orgId);
   const result: Record<string, ManagerScope> = {};
-  for await (const entry of db.list<ManagerScope>({ prefix: orgKey(orgId, "manager-scope") })) {
-    const email = String(entry.key[entry.key.length - 1]);
-    result[email] = entry.value;
+  for (const { key, value } of rows) {
+    const email = String(key[key.length - 1]);
+    result[email] = value;
   }
   return result;
 }
@@ -156,13 +140,11 @@ export async function listManagerScopes(orgId: OrgId): Promise<Record<string, Ma
 export interface AuditDimensions { departments: string[]; shifts: string[]; }
 
 export async function getAuditDimensions(orgId: OrgId): Promise<AuditDimensions> {
-  const db = await getKv();
-  return (await db.get<AuditDimensions>(orgKey(orgId, "audit-dimensions"))).value ?? { departments: [], shifts: [] };
+  return (await getStored<AuditDimensions>("audit-dimensions", orgId)) ?? { departments: [], shifts: [] };
 }
 
 export async function saveAuditDimensions(orgId: OrgId, dims: AuditDimensions): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "audit-dimensions"), dims);
+  await setStored("audit-dimensions", orgId, [], dims);
 }
 
 export async function updateAuditDimensions(orgId: OrgId, department?: string, shift?: string): Promise<void> {
@@ -178,16 +160,14 @@ export async function updateAuditDimensions(orgId: OrgId, department?: string, s
 export interface PartnerDimensions { offices: Record<string, string[]>; }
 
 export async function getPartnerDimensions(orgId: OrgId): Promise<PartnerDimensions> {
-  const db = await getKv();
-  return (await db.get<PartnerDimensions>(orgKey(orgId, "partner-dimensions"))).value ?? { offices: {} };
+  return (await getStored<PartnerDimensions>("partner-dimensions", orgId)) ?? { offices: {} };
 }
 
 export async function updatePartnerDimensions(orgId: OrgId, officeName: string, gmEmail: string): Promise<void> {
   const current = await getPartnerDimensions(orgId);
   if (!current.offices[officeName]) current.offices[officeName] = [];
   if (!current.offices[officeName].includes(gmEmail)) current.offices[officeName].push(gmEmail);
-  const db = await getKv();
-  await db.set(orgKey(orgId, "partner-dimensions"), current);
+  await setStored("partner-dimensions", orgId, [], current);
 }
 
 // ── Reviewer Config ──────────────────────────────────────────────────────────
@@ -195,11 +175,14 @@ export async function updatePartnerDimensions(orgId: OrgId, officeName: string, 
 export interface ReviewerConfig { allowedTypes: ("date-leg" | "package")[]; }
 
 export async function getReviewerConfig(orgId: OrgId, email: string): Promise<ReviewerConfig | null> {
-  const db = await getKv();
-  return (await db.get<ReviewerConfig>(orgKey(orgId, "reviewer-config", email))).value;
+  return await getStored<ReviewerConfig>("reviewer-config", orgId, email);
 }
 
 export async function saveReviewerConfig(orgId: OrgId, email: string, config: ReviewerConfig): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "reviewer-config", email), config);
+  await setStored("reviewer-config", orgId, [email], config);
+}
+
+/** Delete a reviewer config (used when removing a reviewer). */
+export async function deleteReviewerConfig(orgId: OrgId, email: string): Promise<void> {
+  await deleteStored("reviewer-config", orgId, email);
 }

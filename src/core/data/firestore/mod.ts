@@ -1,25 +1,30 @@
-/** Firestore REST client — JWT → access token → documents API.
+/** Firestore REST client with transparent in-memory fallback.
  *
  *  Single Keystone Firebase project, single collection per project.
  *  Autobottom data lives in `${COLLECTION}` (defaults to "autobottom").
  *
- *  Service-account JSON lives in S3 (Deno Deploy refuses to store JSON as a raw
- *  env var). Required env:
+ *  ── Credentials ────────────────────────────────────────────────────────────
+ *  Service-account JSON lives in S3 (Deno Deploy refuses to store JSON as a
+ *  raw env var). When all required env vars are set, ops hit the real
+ *  Firestore REST API. When any are missing, ops fall back to an in-process
+ *  Map — keeps tests + local dev working without Firebase configured.
  *
- *    S3_BUCKET (or AWS_S3_BUCKET)
- *    FIREBASE_SA_S3_KEY      — S3 object key of the SA JSON
- *    FIREBASE_PROJECT_ID     — Firebase / GCP project ID
+ *  Required (REST mode):  S3_BUCKET, FIREBASE_SA_S3_KEY, FIREBASE_PROJECT_ID
+ *  Optional:              FIREBASE_COLLECTION (default "autobottom"),
+ *                         FIREBASE_DATABASE_ID (default "(default)")
  *
- *  Optional:
- *    FIREBASE_COLLECTION     — collection name (default "autobottom")
- *    FIREBASE_DATABASE_ID    — database ID (default "(default)")
+ *  ── Doc layout ─────────────────────────────────────────────────────────────
+ *  Doc ID:    `{type}__{org}__{...keyParts joined by __}` (encodeDocId)
+ *  Doc body:  { _type, _org, _key[], _updatedAt, _expiresAt?, ...payload }
  *
- *  Doc-ID scheme: `{type}__{org}__{...keyParts joined by __}`. See encodeDocId.
- *  Doc body: `{ _type, _org, _key[], _updatedAt, _expiresAt?, ...payload }`. */
+ *  Object payloads are spread into the body. Primitives are wrapped under
+ *  `_value`. The high-level setStored/getStored API hides this detail. */
 
 import { S3Ref } from "@core/data/s3/mod.ts";
 
 const SEP = "__";
+
+// ── Credentials ─────────────────────────────────────────────────────────────
 
 export interface FirestoreCreds {
   clientEmail: string;
@@ -51,11 +56,12 @@ export async function loadFirestoreCredentials(): Promise<FirestoreCreds | null>
   }
 }
 
-/** Reset cached credentials (test only). */
+/** Reset cached credentials + in-mem store (test only). */
 export function resetFirestoreCredentials(): void {
   _cached = undefined;
   _token = null;
   _tokenExpiry = 0;
+  _inMem.clear();
 }
 
 // ── JWT signing + token exchange ────────────────────────────────────────────
@@ -139,14 +145,10 @@ export function toFsValue(v: unknown): FsValue {
     return { doubleValue: v };
   }
   if (typeof v === "string") return { stringValue: v };
-  if (Array.isArray(v)) {
-    return { arrayValue: { values: v.map(toFsValue) } };
-  }
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(toFsValue) } };
   if (typeof v === "object") {
     const fields: Record<string, FsValue> = {};
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-      fields[k] = toFsValue(val);
-    }
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) fields[k] = toFsValue(val);
     return { mapValue: { fields } };
   }
   return { stringValue: String(v) };
@@ -183,24 +185,108 @@ function objectFromFields(fields: Record<string, FsValue> | undefined): Record<s
 
 // ── Doc-ID encoding ─────────────────────────────────────────────────────────
 
-/** Sanitize a single key part for inclusion in a doc ID. */
 function safePart(p: string | number): string {
   return String(p)
     .replace(/__/g, "_") // collapse separator collisions
     .replace(/\//g, "_") // forbidden in doc IDs
-    .replace(/\./g, "_"); // dots are reserved in some contexts
+    .replace(/\./g, "_"); // dots are reserved in field paths
 }
 
 /** Encode a (type, org, ...keyParts) tuple into a Firestore doc ID. */
 export function encodeDocId(type: string, org: string, ...keyParts: (string | number)[]): string {
   const parts = [safePart(type), safePart(org), ...keyParts.map(safePart)];
   const id = parts.join(SEP);
-  // Firestore doc IDs are limited to 1500 bytes; in practice none of our keys approach this.
   if (id.length > 1500) throw new Error(`Doc ID too long (${id.length} bytes): ${id.slice(0, 80)}...`);
   return id;
 }
 
-// ── REST operations ─────────────────────────────────────────────────────────
+// ── Doc body shape ──────────────────────────────────────────────────────────
+
+export interface DocMeta {
+  type: string;
+  org: string;
+  key: (string | number)[];
+  expireInMs?: number;
+}
+
+export interface DocBody {
+  _type: string;
+  _org: string;
+  _key: string[];
+  _updatedAt: number;
+  _expiresAt?: number;
+  [k: string]: unknown;
+}
+
+function makeBody(meta: DocMeta, value: unknown): DocBody {
+  const wrapped: Record<string, unknown> = (value !== null && typeof value === "object" && !Array.isArray(value))
+    ? (value as Record<string, unknown>)
+    : { _value: value };
+  return {
+    _type: meta.type,
+    _org: meta.org,
+    _key: meta.key.map(String),
+    _updatedAt: Date.now(),
+    ...(meta.expireInMs ? { _expiresAt: Date.now() + meta.expireInMs } : {}),
+    ...wrapped,
+  };
+}
+
+function unwrapPayload<T>(body: DocBody): T {
+  if ("_value" in body) return body._value as T;
+  const { _type: _t, _org: _o, _key: _k, _updatedAt: _u, _expiresAt: _e, ...rest } = body;
+  return rest as T;
+}
+
+function isExpired(body: DocBody): boolean {
+  return typeof body._expiresAt === "number" && body._expiresAt > 0 && body._expiresAt < Date.now();
+}
+
+// ── In-memory store (used when creds unconfigured) ──────────────────────────
+
+const _inMem = new Map<string, DocBody>();
+
+function inMemGet(docId: string): DocBody | null {
+  const body = _inMem.get(docId);
+  if (!body) return null;
+  if (isExpired(body)) {
+    _inMem.delete(docId);
+    return null;
+  }
+  return body;
+}
+
+function inMemSet(docId: string, body: DocBody): void {
+  _inMem.set(docId, body);
+}
+
+function inMemDelete(docId: string): void {
+  _inMem.delete(docId);
+}
+
+function inMemListByType(type: string, org: string, limit: number): DocBody[] {
+  const out: DocBody[] = [];
+  for (const body of _inMem.values()) {
+    if (out.length >= limit) break;
+    if (body._type !== type || body._org !== org) continue;
+    if (isExpired(body)) continue;
+    out.push(body);
+  }
+  return out;
+}
+
+function inMemListByIdPrefix(prefix: string, limit: number): Array<{ id: string; body: DocBody }> {
+  const out: Array<{ id: string; body: DocBody }> = [];
+  for (const [id, body] of _inMem.entries()) {
+    if (out.length >= limit) break;
+    if (!id.startsWith(prefix)) continue;
+    if (isExpired(body)) continue;
+    out.push({ id, body });
+  }
+  return out;
+}
+
+// ── REST operations (cred-explicit, used internally + by migration script) ──
 
 function docPath(creds: FirestoreCreds, docId: string): string {
   return `projects/${encodeURIComponent(creds.projectId)}/databases/${encodeURIComponent(creds.databaseId)}/documents/${encodeURIComponent(creds.collection)}/${encodeURIComponent(docId)}`;
@@ -214,64 +300,41 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
   });
 }
 
-export interface DocBody {
-  _type: string;
-  _org: string;
-  _key: string[];
-  _updatedAt: number;
-  _expiresAt?: number;
-  [k: string]: unknown;
-}
-
-/** Read a doc. Returns null if missing OR expired (per `_expiresAt`). */
-export async function getDoc<T = Record<string, unknown>>(creds: FirestoreCreds, docId: string): Promise<T | null> {
+async function restGet(creds: FirestoreCreds, docId: string): Promise<DocBody | null> {
   const res = await fsFetch(creds, docPath(creds, docId), { method: "GET" });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Firestore get failed: ${res.status} ${await res.text()}`);
   const json = await res.json() as { fields?: Record<string, FsValue> };
   const obj = objectFromFields(json.fields) as DocBody;
-  if (typeof obj._expiresAt === "number" && obj._expiresAt > 0 && obj._expiresAt < Date.now()) return null;
-  return obj as unknown as T;
+  if (isExpired(obj)) return null;
+  return obj;
 }
 
-/** Upsert a doc. `value` is the payload (will be merged with metadata). */
-export async function setDoc(
-  creds: FirestoreCreds,
-  docId: string,
-  meta: { type: string; org: string; key: string[]; expireInMs?: number },
-  value: Record<string, unknown>,
-): Promise<void> {
-  const body: DocBody = {
-    _type: meta.type,
-    _org: meta.org,
-    _key: meta.key.map(String),
-    _updatedAt: Date.now(),
-    ...(meta.expireInMs ? { _expiresAt: Date.now() + meta.expireInMs } : {}),
-    ...value,
-  };
-  const url = `${docPath(creds, docId)}`;
-  const res = await fsFetch(creds, url, {
+async function restSet(creds: FirestoreCreds, docId: string, body: DocBody): Promise<void> {
+  const res = await fsFetch(creds, docPath(creds, docId), {
     method: "PATCH",
     body: JSON.stringify({ fields: fieldsFromObject(body) }),
   });
   if (!res.ok) throw new Error(`Firestore set failed: ${res.status} ${await res.text()}`);
 }
 
-/** Delete a doc. Idempotent — missing docs are not an error. */
-export async function deleteDoc(creds: FirestoreCreds, docId: string): Promise<void> {
+async function restDelete(creds: FirestoreCreds, docId: string): Promise<void> {
   const res = await fsFetch(creds, docPath(creds, docId), { method: "DELETE" });
   if (!res.ok && res.status !== 404) throw new Error(`Firestore delete failed: ${res.status} ${await res.text()}`);
 }
 
-/** List docs whose `_type` and `_org` match. Returns parsed bodies, expired docs filtered.
- *  For range-scoped lists, callers can post-filter on returned bodies. */
-export async function listDocsByType<T = Record<string, unknown>>(
-  creds: FirestoreCreds,
-  type: string,
-  org: string,
-  opts: { limit?: number } = {},
-): Promise<T[]> {
-  const limit = opts.limit ?? 1000;
+async function restSetIfAbsent(creds: FirestoreCreds, docId: string, body: DocBody): Promise<boolean> {
+  const url = `${docPath(creds, docId)}?currentDocument.exists=false`;
+  const res = await fsFetch(creds, url, {
+    method: "PATCH",
+    body: JSON.stringify({ fields: fieldsFromObject(body) }),
+  });
+  if (res.status === 409 || res.status === 412) return false;
+  if (!res.ok) throw new Error(`Firestore setIfAbsent failed: ${res.status} ${await res.text()}`);
+  return true;
+}
+
+async function restListByType(creds: FirestoreCreds, type: string, org: string, limit: number): Promise<DocBody[]> {
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
   const body = {
     structuredQuery: {
@@ -291,28 +354,18 @@ export async function listDocsByType<T = Record<string, unknown>>(
   const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Firestore query failed: ${res.status} ${await res.text()}`);
   const rows = await res.json() as Array<{ document?: { fields?: Record<string, FsValue> } }>;
-  const now = Date.now();
-  const out: T[] = [];
+  const out: DocBody[] = [];
   for (const row of rows) {
     if (!row.document?.fields) continue;
     const obj = objectFromFields(row.document.fields) as DocBody;
-    if (typeof obj._expiresAt === "number" && obj._expiresAt > 0 && obj._expiresAt < now) continue;
-    out.push(obj as unknown as T);
+    if (isExpired(obj)) continue;
+    out.push(obj);
   }
   return out;
 }
 
-/** List docs with prefix match on doc ID. Useful for "by-type-and-org-and-key-prefix"
- *  walks. Returns the parsed payload + the doc ID. Expired docs filtered.
- *  Implementation: server-side range query on __name__ (doc reference). */
-export async function listDocsByIdPrefix<T = Record<string, unknown>>(
-  creds: FirestoreCreds,
-  prefix: string,
-  opts: { limit?: number } = {},
-): Promise<Array<{ id: string; value: T }>> {
-  const limit = opts.limit ?? 1000;
+async function restListByIdPrefix(creds: FirestoreCreds, prefix: string, limit: number): Promise<Array<{ id: string; body: DocBody }>> {
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
-  // Use __name__ filter with a range: prefix <= __name__ < prefix + "\uffff"
   const startName = `${parent}/${creds.collection}/${prefix}`;
   const endName = `${parent}/${creds.collection}/${prefix}\uf8ff`;
   const body = {
@@ -333,68 +386,147 @@ export async function listDocsByIdPrefix<T = Record<string, unknown>>(
   const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Firestore prefix query failed: ${res.status} ${await res.text()}`);
   const rows = await res.json() as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
-  const now = Date.now();
-  const out: Array<{ id: string; value: T }> = [];
+  const out: Array<{ id: string; body: DocBody }> = [];
   const idPrefix = `${parent}/${creds.collection}/`;
   for (const row of rows) {
     if (!row.document?.fields || !row.document?.name) continue;
     const obj = objectFromFields(row.document.fields) as DocBody;
-    if (typeof obj._expiresAt === "number" && obj._expiresAt > 0 && obj._expiresAt < now) continue;
+    if (isExpired(obj)) continue;
     const id = row.document.name.startsWith(idPrefix) ? row.document.name.slice(idPrefix.length) : row.document.name;
-    out.push({ id, value: obj as unknown as T });
+    out.push({ id, body: obj });
   }
   return out;
 }
 
-/** Conditional set — only writes if the doc does NOT currently exist.
- *  Returns true if we won the race, false if a doc was already there.
- *  Used for atomic "claim" patterns (e.g. audit-dedup). */
-export async function setDocIfAbsent(
-  creds: FirestoreCreds,
-  docId: string,
-  meta: { type: string; org: string; key: string[]; expireInMs?: number },
-  value: Record<string, unknown>,
-): Promise<boolean> {
-  const body: DocBody = {
-    _type: meta.type,
-    _org: meta.org,
-    _key: meta.key.map(String),
-    _updatedAt: Date.now(),
-    ...(meta.expireInMs ? { _expiresAt: Date.now() + meta.expireInMs } : {}),
-    ...value,
-  };
-  const url = `${docPath(creds, docId)}?currentDocument.exists=false`;
-  const res = await fsFetch(creds, url, {
-    method: "PATCH",
-    body: JSON.stringify({ fields: fieldsFromObject(body) }),
-  });
-  if (res.status === 409 || res.status === 412) return false;
-  if (!res.ok) throw new Error(`Firestore setIfAbsent failed: ${res.status} ${await res.text()}`);
-  return true;
+// ── Public low-level API (creds resolved; in-mem fallback) ──────────────────
+
+/** Read a doc by ID. Returns the raw body (with `_*` metadata) or null. */
+export async function getDoc(docId: string): Promise<DocBody | null> {
+  const creds = await loadFirestoreCredentials();
+  if (!creds) return inMemGet(docId);
+  return restGet(creds, docId);
 }
 
-// ── Chunked storage (for big payloads > 1MB) ────────────────────────────────
+/** Upsert a doc. */
+export async function setDoc(docId: string, meta: DocMeta, value: unknown): Promise<void> {
+  const body = makeBody(meta, value);
+  const creds = await loadFirestoreCredentials();
+  if (!creds) return inMemSet(docId, body);
+  return restSet(creds, docId, body);
+}
 
-const CHUNK_BYTES = 700_000; // headroom under Firestore's 1MB doc limit
+/** Delete a doc. Idempotent. */
+export async function deleteDoc(docId: string): Promise<void> {
+  const creds = await loadFirestoreCredentials();
+  if (!creds) return inMemDelete(docId);
+  return restDelete(creds, docId);
+}
 
-/** Read a chunked value. Returns null if header missing.
- *  Header doc holds `{ totalChunks, totalBytes }`; chunks at suffix `__chunk_N`. */
-export async function getChunked<T = unknown>(creds: FirestoreCreds, baseId: string): Promise<T | null> {
-  const header = await getDoc<{ totalChunks?: number }>(creds, baseId);
-  if (!header) return null;
-  if (typeof header.totalChunks !== "number") {
-    // Single-doc value stored under the base ID (no chunking needed at write time).
-    const { _type, _org, _key, _updatedAt, _expiresAt, totalChunks: _tc, totalBytes: _tb, ...payload } = header as Record<string, unknown>;
-    return payload as T;
+/** Atomic claim: writes only if doc doesn't exist. Returns true on win. */
+export async function setDocIfAbsent(docId: string, meta: DocMeta, value: unknown): Promise<boolean> {
+  const body = makeBody(meta, value);
+  const creds = await loadFirestoreCredentials();
+  if (!creds) {
+    const existing = inMemGet(docId);
+    if (existing) return false;
+    inMemSet(docId, body);
+    return true;
   }
+  return restSetIfAbsent(creds, docId, body);
+}
+
+// ── High-level storage API (used by repositories) ───────────────────────────
+
+/** Read a typed value. Type+org+key uniquely identify the doc. */
+export async function getStored<T>(type: string, org: string, ...key: (string | number)[]): Promise<T | null> {
+  const docId = encodeDocId(type, org, ...key);
+  const body = await getDoc(docId);
+  if (!body) return null;
+  return unwrapPayload<T>(body);
+}
+
+/** Write a typed value. Same identity rules as getStored. */
+export async function setStored(
+  type: string,
+  org: string,
+  key: (string | number)[],
+  value: unknown,
+  opts?: { expireInMs?: number },
+): Promise<void> {
+  const docId = encodeDocId(type, org, ...key);
+  await setDoc(docId, { type, org, key, expireInMs: opts?.expireInMs }, value);
+}
+
+/** Atomic-claim variant of setStored. Returns true if we wrote, false if a doc already existed. */
+export async function setStoredIfAbsent(
+  type: string,
+  org: string,
+  key: (string | number)[],
+  value: unknown,
+  opts?: { expireInMs?: number },
+): Promise<boolean> {
+  const docId = encodeDocId(type, org, ...key);
+  return setDocIfAbsent(docId, { type, org, key, expireInMs: opts?.expireInMs }, value);
+}
+
+/** Delete a typed value. Idempotent. */
+export async function deleteStored(type: string, org: string, ...key: (string | number)[]): Promise<void> {
+  const docId = encodeDocId(type, org, ...key);
+  await deleteDoc(docId);
+}
+
+/** List all values matching this type+org. */
+export async function listStored<T>(type: string, org: string, opts: { limit?: number } = {}): Promise<T[]> {
+  const limit = opts.limit ?? 1000;
+  const creds = await loadFirestoreCredentials();
+  const bodies = creds ? await restListByType(creds, type, org, limit) : inMemListByType(type, org, limit);
+  return bodies.map((b) => unwrapPayload<T>(b));
+}
+
+/** List all values matching this type+org, with their key parts. */
+export async function listStoredWithKeys<T>(
+  type: string,
+  org: string,
+  opts: { limit?: number } = {},
+): Promise<Array<{ key: string[]; value: T }>> {
+  const limit = opts.limit ?? 1000;
+  const creds = await loadFirestoreCredentials();
+  const bodies = creds ? await restListByType(creds, type, org, limit) : inMemListByType(type, org, limit);
+  return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
+}
+
+/** List values whose doc ID begins with the given prefix.
+ *  Useful for ordered-key walks (e.g. `audit-done-idx__org__<padTs>`). */
+export async function listStoredByIdPrefix<T>(
+  prefix: string,
+  opts: { limit?: number } = {},
+): Promise<Array<{ id: string; key: string[]; value: T }>> {
+  const limit = opts.limit ?? 1000;
+  const creds = await loadFirestoreCredentials();
+  const rows = creds ? await restListByIdPrefix(creds, prefix, limit) : inMemListByIdPrefix(prefix, limit);
+  return rows.map(({ id, body }) => ({ id, key: body._key, value: unwrapPayload<T>(body) }));
+}
+
+// ── Chunked storage (for payloads that may exceed 1MB Firestore doc limit) ──
+
+const CHUNK_BYTES = 700_000;
+
+/** Read a chunked value. Returns null if header missing or chunks corrupt. */
+export async function getStoredChunked<T>(type: string, org: string, ...key: (string | number)[]): Promise<T | null> {
+  const baseId = encodeDocId(type, org, ...key);
+  const header = await getDoc(baseId);
+  if (!header) return null;
+  // If we never had to chunk the payload, the body IS the value (object payload).
+  if (!("totalChunks" in header)) return unwrapPayload<T>(header);
+  const totalChunks = header.totalChunks as number;
   const parts: string[] = [];
-  for (let i = 0; i < header.totalChunks; i++) {
-    const chunk = await getDoc<{ data?: string }>(creds, `${baseId}${SEP}chunk_${i}`);
-    if (!chunk || typeof chunk.data !== "string") {
-      console.error(`❌ [FIRESTORE] missing chunk ${i}/${header.totalChunks} for ${baseId}`);
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = await getDoc(`${baseId}${SEP}chunk_${i}`);
+    if (!chunk) {
+      console.error(`❌ [FIRESTORE] missing chunk ${i}/${totalChunks} for ${baseId}`);
       return null;
     }
-    parts.push(chunk.data);
+    parts.push(unwrapPayload<{ data: string }>(chunk).data);
   }
   try {
     return JSON.parse(parts.join("")) as T;
@@ -404,36 +536,36 @@ export async function getChunked<T = unknown>(creds: FirestoreCreds, baseId: str
   }
 }
 
-/** Write a chunked value. Splits oversized payloads across multiple chunk docs. */
-export async function setChunked(
-  creds: FirestoreCreds,
-  baseId: string,
-  meta: { type: string; org: string; key: string[]; expireInMs?: number },
+/** Write a chunked value. Splits oversized payloads. */
+export async function setStoredChunked(
+  type: string,
+  org: string,
+  key: (string | number)[],
   value: unknown,
+  opts?: { expireInMs?: number },
 ): Promise<void> {
+  const baseId = encodeDocId(type, org, ...key);
   const json = JSON.stringify(value);
   if (json.length <= CHUNK_BYTES) {
-    // Fits in one doc — store as-is, no chunking.
-    await setDoc(creds, baseId, meta, value as Record<string, unknown>);
+    await setDoc(baseId, { type, org, key, expireInMs: opts?.expireInMs }, value);
     return;
   }
   const totalChunks = Math.ceil(json.length / CHUNK_BYTES);
-  // Header
-  await setDoc(creds, baseId, meta, { totalChunks, totalBytes: json.length });
-  // Chunks
+  await setDoc(baseId, { type, org, key, expireInMs: opts?.expireInMs }, { totalChunks, totalBytes: json.length });
   for (let i = 0; i < totalChunks; i++) {
     const data = json.slice(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES);
-    await setDoc(creds, `${baseId}${SEP}chunk_${i}`, { ...meta, key: [...meta.key, `chunk_${i}`] }, { data });
+    await setDoc(`${baseId}${SEP}chunk_${i}`, { type, org, key: [...key, `chunk_${i}`], expireInMs: opts?.expireInMs }, { data });
   }
 }
 
 /** Delete a chunked value (header + all chunks). */
-export async function deleteChunked(creds: FirestoreCreds, baseId: string): Promise<void> {
-  const header = await getDoc<{ totalChunks?: number }>(creds, baseId);
+export async function deleteStoredChunked(type: string, org: string, ...key: (string | number)[]): Promise<void> {
+  const baseId = encodeDocId(type, org, ...key);
+  const header = await getDoc(baseId);
   if (header && typeof header.totalChunks === "number") {
-    for (let i = 0; i < header.totalChunks; i++) {
-      await deleteDoc(creds, `${baseId}${SEP}chunk_${i}`);
+    for (let i = 0; i < (header.totalChunks as number); i++) {
+      await deleteDoc(`${baseId}${SEP}chunk_${i}`);
     }
   }
-  await deleteDoc(creds, baseId);
+  await deleteDoc(baseId);
 }

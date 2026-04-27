@@ -13,8 +13,10 @@ export interface QLConfig {
 
 export interface QLQuestion {
   id: string; configId: string; name: string; text: string;
-  autoYes?: string; egregious?: boolean; weight?: number;
+  autoYesExp?: string;
+  egregious?: boolean; weight?: number;
   temperature?: number; numDocs?: number;
+  order?: number;
   createdAt: number; updatedAt: number;
   versions?: Array<{ text: string; updatedAt: number }>;
 }
@@ -22,6 +24,19 @@ export interface QLQuestion {
 export interface QLTest {
   id: string; questionId: string; input: string; expectedAnswer: string;
   lastResult?: string; lastRunAt?: number; createdAt: number;
+}
+
+export interface QLTestRun {
+  id: string;
+  testId?: string;
+  configId: string;
+  questionId: string;
+  result: "pass" | "fail";
+  expectedAnswer: string;
+  actualAnswer: string;
+  thinking?: string;
+  defense?: string;
+  runAt: number;
 }
 
 // ── Config CRUD ──────────────────────────────────────────────────────────────
@@ -163,6 +178,43 @@ export async function deleteTest(orgId: OrgId, id: string): Promise<void> {
   await (await getKv()).delete(orgKey(orgId, "qlab-test", id));
 }
 
+// ── Test Runs (per-question result history) ──────────────────────────────────
+
+export async function addTestRun(
+  orgId: OrgId,
+  run: Omit<QLTestRun, "id" | "runAt"> & { id?: string; runAt?: number },
+): Promise<QLTestRun> {
+  const db = await getKv();
+  const id = run.id ?? crypto.randomUUID();
+  const runAt = run.runAt ?? Date.now();
+  const record: QLTestRun = { ...run, id, runAt };
+  const padTs = String(runAt).padStart(16, "0");
+  await db.set(orgKey(orgId, "qlab-test-run", padTs, id), record);
+  return record;
+}
+
+export async function getTestRuns(
+  orgId: OrgId,
+  filter?: { configId?: string; questionId?: string; limit?: number },
+): Promise<QLTestRun[]> {
+  const db = await getKv();
+  const out: QLTestRun[] = [];
+  const limit = filter?.limit ?? 200;
+  for await (
+    const e of db.list<QLTestRun>(
+      { prefix: orgKey(orgId, "qlab-test-run") },
+      { reverse: true, limit: 1000 },
+    )
+  ) {
+    const r = e.value;
+    if (filter?.configId && r.configId !== filter.configId) continue;
+    if (filter?.questionId && r.questionId !== filter.questionId) continue;
+    out.push(r);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 // ── Assignments ──────────────────────────────────────────────────────────────
 
 export async function getInternalAssignments(orgId: OrgId): Promise<Record<string, string>> {
@@ -201,11 +253,14 @@ export async function serveConfig(orgId: OrgId, configNameOrId: string) {
   }
   if (!config) return [];
   const questions = await getQuestionsForConfig(orgId, config.id);
-  return questions.map((q) => ({
+  const ordered = [...questions].sort((a, b) =>
+    (a.order ?? 0) - (b.order ?? 0) || a.createdAt - b.createdAt,
+  );
+  return ordered.map((q) => ({
     header: q.name,
     unpopulated: q.text,
     populated: q.text,
-    autoYesExp: "",
+    autoYesExp: q.autoYesExp ?? "",
     temperature: q.temperature ?? QLQUESTION_DEFAULTS.temperature,
     numDocs: q.numDocs ?? QLQUESTION_DEFAULTS.numDocs,
     egregious: q.egregious ?? QLQUESTION_DEFAULTS.egregious,

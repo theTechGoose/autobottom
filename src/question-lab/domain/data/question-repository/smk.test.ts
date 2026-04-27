@@ -4,6 +4,7 @@ import {
   listConfigs, createConfig, getConfig, updateConfig, deleteConfig,
   createQuestion, getQuestion, updateQuestion, deleteQuestion, getQuestionsForConfig, restoreVersion,
   createTest, getTestsForQuestion, deleteTest,
+  addTestRun, getTestRuns,
   getInternalAssignments, setInternalAssignment, getPartnerAssignments, setPartnerAssignment,
   getAllQuestionNames, bulkSetEgregious,
 } from "./mod.ts";
@@ -66,6 +67,26 @@ Deno.test({ name: "assignments — internal and partner", ...kvOpts, fn: async (
   // Remove assignment
   await setInternalAssignment(ORG, "dest-1", null);
   assertEquals((await getInternalAssignments(ORG))["dest-1"], undefined);
+}});
+
+Deno.test({ name: "test runs — add and list reverse-chronological", ...kvOpts, fn: async () => {
+  const cfg = await createConfig(ORG, "Run Cfg");
+  const q = await createQuestion(ORG, cfg.id, "RunQ", "Question?");
+  const t1 = Date.now();
+  await addTestRun(ORG, {
+    configId: cfg.id, questionId: q.id, result: "pass",
+    expectedAnswer: "Yes", actualAnswer: "Yes", runAt: t1,
+  });
+  await addTestRun(ORG, {
+    configId: cfg.id, questionId: q.id, result: "fail",
+    expectedAnswer: "Yes", actualAnswer: "No", runAt: t1 + 1000,
+  });
+  const all = await getTestRuns(ORG, { configId: cfg.id });
+  assertEquals(all.length, 2);
+  assertEquals(all[0].result, "fail");
+  assertEquals(all[1].result, "pass");
+  const filtered = await getTestRuns(ORG, { questionId: q.id, limit: 1 });
+  assertEquals(filtered.length, 1);
 }});
 
 Deno.test({ name: "bulk egregious — updates matching questions", ...kvOpts, fn: async () => {

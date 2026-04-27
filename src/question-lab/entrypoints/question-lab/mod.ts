@@ -96,16 +96,58 @@ export class QuestionLabController {
   }
 
   @Post("qlab/tests/update") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
-  async updateTest(@Body() body: any) { return { ok: true, message: "Test update requires test result data — deferred to QA integration" }; }
+  async updateTest(@Body() body: any) {
+    const { id, result, answer, thinking, defense, configId, questionId } = body ?? {};
+    if (!result || (result !== "pass" && result !== "fail")) {
+      return { error: "result must be 'pass' or 'fail'" };
+    }
+    let resolvedConfigId = configId as string | undefined;
+    let resolvedQuestionId = questionId as string | undefined;
+    let expectedAnswer = "";
+    if (id) {
+      const tests = await repo.getTestsForQuestion(ORG(), resolvedQuestionId ?? "");
+      const t = tests.find((x) => x.id === id);
+      if (t) {
+        resolvedQuestionId = t.questionId;
+        expectedAnswer = t.expectedAnswer;
+      }
+    }
+    if (!resolvedQuestionId) return { error: "questionId required" };
+    if (!resolvedConfigId) {
+      const q = await repo.getQuestion(ORG(), resolvedQuestionId);
+      if (!q) return { error: "question not found" };
+      resolvedConfigId = q.configId;
+    }
+    const run = await repo.addTestRun(ORG(), {
+      testId: id,
+      configId: resolvedConfigId!,
+      questionId: resolvedQuestionId,
+      result,
+      expectedAnswer,
+      actualAnswer: String(answer ?? ""),
+      thinking: thinking ? String(thinking) : undefined,
+      defense: defense ? String(defense) : undefined,
+    });
+    return { ok: true, runId: run.id };
+  }
 
   @Post("qlab/tests/delete") @ReturnedType(OkResponse) @BodyType(IdRequest)
   async deleteTest(@Body() body: { id: string }) { await repo.deleteTest(ORG(), body.id); return { ok: true }; }
 
   @Post("qlab/simulate") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async simulate(@Body() body: any) {
-    if (!body.question || !body.transcript) return { error: "question and transcript required" };
+    let questionText = body.question as string | undefined;
+    let temperature = body.temperature as number | undefined;
+    let questionId = body.questionId as string | undefined;
+    if (questionId) {
+      const q = await repo.getQuestion(ORG(), questionId);
+      if (!q) return { error: "question not found" };
+      questionText = q.text;
+      temperature = temperature ?? q.temperature ?? 0.8;
+    }
+    if (!questionText || !body.transcript) return { error: "question (or questionId) and transcript required" };
     const { askQuestion } = await import("@audit/domain/data/groq/mod.ts");
-    const result = await askQuestion(body.question, body.transcript, 0, body.temperature ?? 0.8);
+    const result = await askQuestion(questionText, body.transcript, 0, temperature ?? 0.8);
     return { result };
   }
 
@@ -138,7 +180,19 @@ export class QuestionLabController {
   }
 
   @Get("qlab/test-runs") @ReturnedType(OkResponse)
-  async getTestRuns(@Query("configId") configId: string) { return { runs: [] }; }
+  async getTestRuns(
+    @Query("configId") configId: string,
+    @Query("questionId") questionId: string,
+    @Query("limit") limit: string,
+  ) {
+    const lim = limit ? Math.max(1, Math.min(500, parseInt(limit, 10) || 200)) : 200;
+    const runs = await repo.getTestRuns(ORG(), {
+      configId: configId || undefined,
+      questionId: questionId || undefined,
+      limit: lim,
+    });
+    return { runs };
+  }
 
   @Post("qlab/test-emails") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async updateTestEmails(@Body() body: any) {

@@ -97,3 +97,44 @@ Deno.test({ name: "bulk egregious — updates matching questions", ...kvOpts, fn
   const count = await bulkSetEgregious(ORG, "Income", true);
   assertEquals(count, 2);
 }});
+
+Deno.test({ name: "test runs — questionId filter excludes other questions' runs", ...kvOpts, fn: async () => {
+  const ORG2 = "test-runs-q-" + crypto.randomUUID().slice(0, 8);
+  const cfg = await createConfig(ORG2, "Filter Cfg");
+  const q1 = await createQuestion(ORG2, cfg.id, "Q1", "?");
+  const q2 = await createQuestion(ORG2, cfg.id, "Q2", "?");
+  const base = Date.now();
+  await addTestRun(ORG2, { configId: cfg.id, questionId: q1.id, result: "pass", expectedAnswer: "Yes", actualAnswer: "Yes", runAt: base });
+  await addTestRun(ORG2, { configId: cfg.id, questionId: q2.id, result: "fail", expectedAnswer: "Yes", actualAnswer: "No",  runAt: base + 100 });
+  await addTestRun(ORG2, { configId: cfg.id, questionId: q2.id, result: "pass", expectedAnswer: "No",  actualAnswer: "No",  runAt: base + 200 });
+
+  const onlyQ2 = await getTestRuns(ORG2, { questionId: q2.id });
+  assertEquals(onlyQ2.length, 2);
+  assert(onlyQ2.every((r) => r.questionId === q2.id));
+
+  const onlyQ1 = await getTestRuns(ORG2, { questionId: q1.id });
+  assertEquals(onlyQ1.length, 1);
+  assertEquals(onlyQ1[0].result, "pass");
+}});
+
+Deno.test({ name: "test runs — empty result for unknown configId", ...kvOpts, fn: async () => {
+  const ORG3 = "test-runs-empty-" + crypto.randomUUID().slice(0, 8);
+  assertEquals((await getTestRuns(ORG3, { configId: "no-such-config" })).length, 0);
+}});
+
+Deno.test({ name: "test runs — preserves thinking + defense fields", ...kvOpts, fn: async () => {
+  const ORG4 = "test-runs-detail-" + crypto.randomUUID().slice(0, 8);
+  const cfg = await createConfig(ORG4, "Detail Cfg");
+  const q = await createQuestion(ORG4, cfg.id, "DetailQ", "?");
+  await addTestRun(ORG4, {
+    configId: cfg.id, questionId: q.id, result: "fail",
+    expectedAnswer: "Yes", actualAnswer: "No",
+    thinking: "model thought no",
+    defense: "explicit denial in transcript",
+    runAt: Date.now(),
+  });
+  const runs = await getTestRuns(ORG4, { configId: cfg.id });
+  assertEquals(runs.length, 1);
+  assertEquals(runs[0].thinking, "model thought no");
+  assertEquals(runs[0].defense, "explicit denial in transcript");
+}});

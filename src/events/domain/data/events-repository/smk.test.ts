@@ -1,6 +1,6 @@
 /** Smoke tests for events repository. */
 import { assertEquals, assert } from "#assert";
-import { emitEvent, getEvents, deleteEvents, savePrefabSubscriptions, getPrefabSubscriptions, emitBroadcastEvent, getBroadcastEvents } from "./mod.ts";
+import { emitEvent, getEvents, deleteEvents, savePrefabSubscriptions, getPrefabSubscriptions, emitBroadcastEvent, getBroadcastEvents, checkAndEmitPrefab } from "./mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
 const ORG = "test-org-" + crypto.randomUUID().slice(0, 8);
@@ -29,4 +29,24 @@ Deno.test({ name: "broadcast — emit and retrieve", ...kvOpts, fn: async () => 
   await emitBroadcastEvent(ORG, "sale_completed", "a@b.com", "Test!", null);
   const events = await getBroadcastEvents(ORG);
   assert(events.some((e) => e.type === "sale_completed"));
+}});
+
+Deno.test({ name: "checkAndEmitPrefab — only emits when subscription is enabled", ...kvOpts, fn: async () => {
+  const ORG2 = "test-prefab-" + crypto.randomUUID().slice(0, 8);
+  await savePrefabSubscriptions(ORG2, { sale_completed: true, perfect_score: false });
+
+  // Subscribed: should emit
+  await checkAndEmitPrefab(ORG2, "sale_completed", "agent@x.com", "Sale!");
+  let broadcasts = await getBroadcastEvents(ORG2);
+  assert(broadcasts.some((b) => b.type === "sale_completed"));
+
+  // Unsubscribed: should NOT emit
+  await checkAndEmitPrefab(ORG2, "perfect_score", "agent@x.com", "100%");
+  broadcasts = await getBroadcastEvents(ORG2);
+  assert(!broadcasts.some((b) => b.type === "perfect_score"));
+
+  // Unknown prefab type: defaults to disabled, no emit
+  await checkAndEmitPrefab(ORG2, "completely_unknown", "agent@x.com", "?");
+  broadcasts = await getBroadcastEvents(ORG2);
+  assert(!broadcasts.some((b) => b.type === "completely_unknown"));
 }});

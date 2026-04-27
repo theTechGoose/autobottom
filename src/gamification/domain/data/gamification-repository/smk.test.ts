@@ -6,7 +6,7 @@ import {
   saveGamificationSettings, getGamificationSettings,
   listCustomStoreItems, saveCustomStoreItem, deleteCustomStoreItem,
   awardBadge, getEarnedBadges, getBadgeStats, updateBadgeStats,
-  getGameState, saveGameState, purchaseStoreItem,
+  getGameState, saveGameState, purchaseStoreItem, listGameStates,
 } from "./mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
@@ -71,4 +71,17 @@ Deno.test({ name: "purchase — duplicate rejected", ...kvOpts, fn: async () => 
   await saveGameState(ORG, "dup@test.com", { xp: 0, level: 1, dayStreak: 0, cosmetics: {}, totalXp: 0, tokenBalance: 1000, purchases: ["item-y"], lastActiveDate: "" });
   const result = await purchaseStoreItem(ORG, "dup@test.com", "item-y", 50);
   assertEquals(result.ok, false);
+}});
+
+Deno.test({ name: "listGameStates — returns email-keyed records, empty for unknown org", ...kvOpts, fn: async () => {
+  const ORG2 = "test-lgs-" + crypto.randomUUID().slice(0, 8);
+  assertEquals((await listGameStates(ORG2)).length, 0);
+  await saveGameState(ORG2, "alice@x.com", { totalXp: 50, level: 2 });
+  await saveGameState(ORG2, "bob@x.com",   { totalXp: 100, level: 3 });
+  const out = await listGameStates(ORG2);
+  assertEquals(out.length, 2);
+  const emails = out.map((e) => e.email).sort();
+  assertEquals(emails, ["alice@x.com", "bob@x.com"]);
+  const alice = out.find((e) => e.email === "alice@x.com");
+  assertEquals((alice?.state as { totalXp?: number })?.totalXp, 50);
 }});

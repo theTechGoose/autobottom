@@ -1,10 +1,24 @@
 /** Default sound pack metadata — ports prod's 5 packs (synth / smite /
  *  opengameart / mixkit-punchy / mixkit-epic). Sound files themselves still
  *  need to be uploaded to S3 separately; this module just seeds the metadata
- *  records so the gamification UI shows them and an admin can wire slots. */
+ *  records so the gamification UI shows them and an admin can wire slots.
+ *
+ *  Also exports `buildSoundPackS3Key` — the canonical path used by the
+ *  upload handler in main.ts so an audit trail of one path-format exists. */
 
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { saveSoundPack, getSoundPack, type SoundPackMeta } from "@gamification/domain/data/gamification-repository/mod.ts";
+
+/** Canonical S3 path for a sound pack slot. Uploads write here; the gamification
+ *  UI reads `pack.slots[slot]` which holds the same key string. Single source
+ *  of truth so the upload handler and any future migration agree. */
+export function buildSoundPackS3Key(orgId: string, packId: string, slot: string): string {
+  if (!orgId || !packId || !slot) throw new Error("orgId, packId, slot all required");
+  if (orgId.includes("/") || packId.includes("/") || slot.includes("/")) {
+    throw new Error("path components may not contain slashes");
+  }
+  return `sounds/${orgId}/${packId}/${slot}.mp3`;
+}
 
 export const SOUND_SLOTS = [
   "decision",       // any review/judge decision

@@ -21,6 +21,7 @@ import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 import { startUploadReaudit } from "@audit/domain/business/upload-reaudit/mod.ts";
+import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 // --- Pipeline step functions: dispatched DIRECTLY by this handler (bypassing
@@ -88,12 +89,7 @@ async function handleAgentDashboard(req: Request): Promise<Response> {
   let totalYes = 0, totalQuestions = 0;
   let perfectCount = 0;
   const audits: Array<Record<string, unknown>> = [];
-
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const now = Date.now();
-  const today = new Date(now); today.setHours(0, 0, 0, 0);
-  const trendStart = today.getTime() - 6 * DAY_MS;
-  const trendBuckets: { sum: number; count: number }[] = Array.from({ length: 7 }, () => ({ sum: 0, count: 0 }));
+  const scorePoints: Array<{ completedAt: number; score: number }> = [];
 
   for (const findingId of findingIds) {
     const finding = await getFinding(auth.orgId, findingId);
@@ -118,28 +114,11 @@ async function handleAgentDashboard(req: Request): Promise<Response> {
       score,
       type: finding.recordingIdField === "GenieNumber" ? "partner" : "internal",
     });
-
-    if (completedAt >= trendStart && completedAt < now + DAY_MS) {
-      const bucketIdx = Math.floor((completedAt - trendStart) / DAY_MS);
-      if (bucketIdx >= 0 && bucketIdx < 7) {
-        trendBuckets[bucketIdx].sum += score;
-        trendBuckets[bucketIdx].count += 1;
-      }
-    }
+    scorePoints.push({ completedAt, score });
   }
   audits.sort((a, b) => Number(b.completedAt) - Number(a.completedAt));
   const avgScore = totalQuestions > 0 ? Math.round((totalYes / totalQuestions) * 100) : 0;
-
-  const weeklyTrend = trendBuckets.map((b, i) => {
-    const dayMs = trendStart + i * DAY_MS;
-    const d = new Date(dayMs);
-    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    return {
-      date,
-      avgScore: b.count > 0 ? Math.round(b.sum / b.count) : 0,
-      count: b.count,
-    };
-  });
+  const weeklyTrend = bucketWeeklyTrend(scorePoints, Date.now());
 
   return Response.json({
     email: auth.email,
@@ -228,7 +207,8 @@ async function handleUploadSound(req: Request): Promise<Response> {
     const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
     if (!bucket) return Response.json({ error: "S3_BUCKET not configured" }, { status: 500 });
     const { S3Ref } = await import("@core/data/s3/mod.ts");
-    const key = `sounds/${orgId}/${packId}/${slot}.mp3`;
+    const { buildSoundPackS3Key } = await import("@gamification/domain/business/sound-pack-seed/mod.ts");
+    const key = buildSoundPackS3Key(orgId, packId, slot);
     await new S3Ref(bucket, key).save(bytes);
 
     // Update the pack metadata so the slot points at this URL pattern.

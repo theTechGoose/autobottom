@@ -1,14 +1,20 @@
 /** Google Sheets API v4 client — JWT → access token → spreadsheets.values.append.
- *  Minimal implementation for chargeback/wire deduction reporting. Requires a
- *  service-account JSON in env:
+ *  Minimal implementation for chargeback/wire deduction reporting.
  *
- *    GOOGLE_SA_JSON   — full service-account key as JSON string
- *    GOOGLE_SHEET_ID  — target spreadsheet
+ *  Service-account JSON lives in S3 (Deno Deploy refuses to store JSON as a raw
+ *  env var). Requires:
  *
- *  Throws a clear config error if either is missing so the caller can surface
- *  it in the UI. No external deps; signing uses crypto.subtle.
+ *    S3_BUCKET (or AWS_S3_BUCKET)  — bucket already used elsewhere
+ *    SHEETS_SA_S3_KEY              — S3 object key of the SA JSON
+ *                                     (e.g. "credentials/sheets-sa.json")
+ *    CHARGEBACKS_SHEET_ID          — target spreadsheet
  *
- *  Port of main's appendSheetRows helper. */
+ *  Returns null if anything is missing so the caller can surface a clear
+ *  configuration error in the UI. No external deps; signing uses crypto.subtle.
+ *
+ *  Port of main:providers/sheets.ts + main:main.ts post-to-sheet SA loader. */
+
+import { S3Ref } from "@core/data/s3/mod.ts";
 
 export interface SheetsCredentials {
   clientEmail: string;
@@ -16,15 +22,21 @@ export interface SheetsCredentials {
   sheetId: string;
 }
 
-export function readSheetsCredentials(): SheetsCredentials | null {
-  const raw = Deno.env.get("GOOGLE_SA_JSON") ?? "";
-  const sheetId = Deno.env.get("GOOGLE_SHEET_ID") ?? "";
-  if (!raw || !sheetId) return null;
+/** Async — reads the SA JSON from S3 and returns the parsed credentials.
+ *  Returns null on any missing config or failed lookup. */
+export async function loadSheetsCredentials(): Promise<SheetsCredentials | null> {
+  const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
+  const saKey = Deno.env.get("SHEETS_SA_S3_KEY") ?? "";
+  const sheetId = Deno.env.get("CHARGEBACKS_SHEET_ID") ?? "";
+  if (!bucket || !saKey || !sheetId) return null;
   try {
-    const parsed = JSON.parse(raw) as { client_email?: string; private_key?: string };
+    const bytes = await new S3Ref(bucket, saKey).get();
+    if (!bytes) return null;
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { client_email?: string; private_key?: string };
     if (!parsed.client_email || !parsed.private_key) return null;
     return { clientEmail: parsed.client_email, privateKey: parsed.private_key, sheetId };
-  } catch {
+  } catch (err) {
+    console.error(`❌ [SHEETS] loadSheetsCredentials failed:`, err);
     return null;
   }
 }

@@ -9,7 +9,7 @@ import { queryChargebackReport, queryWireReport } from "@reporting/domain/busine
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { getChargebackEntries, getWireDeductionEntries } from "@audit/domain/data/stats-repository/mod.ts";
-import { readSheetsCredentials, appendSheetRows } from "@core/data/google-sheets/mod.ts";
+import { loadSheetsCredentials, appendSheetRows } from "@core/data/google-sheets/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
@@ -45,10 +45,10 @@ export class ChargebackController {
   @Post("post-to-sheet") @ReturnedType(OkMessageResponse) @BodyType(PostToSheetRequest)
   async postToSheet(@Body() body: { since: number; until: number; tabs: string }) {
     if (!body.since || !body.until || !body.tabs) return { error: "since, until, tabs required" };
-    const creds = readSheetsCredentials();
+    const creds = await loadSheetsCredentials();
     if (!creds) {
       return {
-        error: "Sheets not configured — set GOOGLE_SA_JSON + GOOGLE_SHEET_ID env vars on this deployment.",
+        error: "Sheets not configured — set SHEETS_SA_S3_KEY + CHARGEBACKS_SHEET_ID env vars (S3 bucket already wired via S3_BUCKET).",
       };
     }
     const orgId = ORG();

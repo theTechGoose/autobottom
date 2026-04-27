@@ -1,6 +1,6 @@
 import { assert } from "#assert";
-Deno.test("google-sheets — readSheetsCredentials exported", async () => {
+Deno.test("google-sheets — loadSheetsCredentials + appendSheetRows exported", async () => {
   const mod = await import("./mod.ts");
-  assert(typeof mod.readSheetsCredentials === "function");
+  assert(typeof mod.loadSheetsCredentials === "function");
   assert(typeof mod.appendSheetRows === "function");
 });

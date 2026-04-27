@@ -109,6 +109,10 @@ export class ChargebackController {
 
   @Get("trigger-weekly-sheets") @ReturnedType(OkResponse)
   async triggerWeeklySheets() {
-    return { ok: true, message: "Weekly sheets cron triggered — check server logs" };
+    const { prevWeekWindow } = await import("@cron/mod-root.ts");
+    const { since, until } = prevWeekWindow(new Date());
+    // Reuse postToSheet which already validates Sheets creds + appends rows.
+    const result = await this.postToSheet({ since, until, tabs: "cb,om,wire" } as any);
+    return result;
   }
 }

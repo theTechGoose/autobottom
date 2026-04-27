@@ -320,3 +320,42 @@ export async function wipeKv(
   console.log(`[WIPE-KV] 💣 org=${orgId} deleted=${deleted} keys`);
   return { ok: true, deleted };
 }
+
+// ── KV dump / import ─────────────────────────────────────────────────────────
+
+export interface KvDumpEntry { key: Deno.KvKeyPart[]; value: unknown }
+
+/** Dumps every KV entry under the org's prefix. Caller is responsible for
+ *  size — large orgs can produce huge payloads. */
+export async function dumpKv(orgId: OrgId): Promise<{ entries: KvDumpEntry[]; count: number }> {
+  const db = await getKv();
+  const entries: KvDumpEntry[] = [];
+  for await (const entry of db.list({ prefix: [orgId] })) {
+    entries.push({ key: entry.key as Deno.KvKeyPart[], value: entry.value });
+  }
+  return { entries, count: entries.length };
+}
+
+/** Restores entries from a dumpKv() output. Requires confirm==="YES". Will NOT
+ *  wipe first — append-only restore (so test data can layer on top). Caller
+ *  should call wipeKv first if they want a clean slate. */
+export async function importKv(
+  orgId: OrgId,
+  confirm: string,
+  entries: KvDumpEntry[],
+): Promise<{ ok: boolean; written?: number; skipped?: number; error?: string }> {
+  if (confirm !== "YES") {
+    return { ok: false, error: "import-kv requires { confirm: \"YES\" } — refused" };
+  }
+  if (!Array.isArray(entries)) return { ok: false, error: "entries must be an array" };
+  const db = await getKv();
+  let written = 0, skipped = 0;
+  for (const e of entries) {
+    if (!Array.isArray(e?.key) || e.key.length === 0) { skipped++; continue; }
+    if (e.key[0] !== orgId) { skipped++; continue; }  // safety: stay in target org
+    await db.set(e.key as Deno.KvKey, e.value);
+    written++;
+  }
+  console.log(`[IMPORT-KV] org=${orgId} written=${written} skipped=${skipped}`);
+  return { ok: true, written, skipped };
+}

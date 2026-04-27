@@ -84,11 +84,21 @@ export class ReviewController {
   @Get("dashboard") @ReturnedType(ReviewStatsResponse) @Description("Review dashboard data")
   async dashboardData() { return getReviewStats(ORG()); }
 
-  @Get("gamification") @ReturnedType(GamificationSettingsResponse) @Description("Get gamification settings")
-  async getGamification() { return {}; }
+  @Get("gamification") @ReturnedType(GamificationSettingsResponse) @Description("Get reviewer gamification override (or empty if none set)")
+  async getGamification(@Query("email") email: string) {
+    if (!email) return {};
+    const { getReviewerGamificationOverride } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+    return (await getReviewerGamificationOverride(ORG(), email)) ?? {};
+  }
 
-  @Post("gamification") @ReturnedType(OkResponse) @Description("Save gamification settings") @BodyType(GenericBodyRequest)
-  async saveGamification(@Body() body: GenericBodyRequest) { return { ok: true }; }
+  @Post("gamification") @ReturnedType(OkResponse) @Description("Save reviewer gamification override") @BodyType(GenericBodyRequest)
+  async saveGamification(@Body() body: GenericBodyRequest) {
+    const b = body as { email?: string; settings?: Record<string, unknown> };
+    if (!b.email) return { error: "email required" };
+    const { saveReviewerGamificationOverride } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+    await saveReviewerGamificationOverride(ORG(), b.email, (b.settings ?? {}) as any);
+    return { ok: true };
+  }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill review queue")
   async backfill() { const { backfillFromFinishedLegacy: backfillFromFinished } = await import("@review/domain/business/review-queue/mod.ts"); await backfillFromFinished(ORG()); return { ok: true }; }

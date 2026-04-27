@@ -106,9 +106,19 @@ export class JudgeController {
   @Get("dashboard") @ReturnedType(JudgeStatsResponse) @Description("Judge dashboard data")
   async dashboardData() { return getJudgeStats(ORG()); }
 
-  @Get("gamification") @ReturnedType(OkResponse) @Description("Get gamification settings")
-  async getGamification() { return {}; }
+  @Get("gamification") @ReturnedType(OkResponse) @Description("Get judge gamification override (or empty if none set)")
+  async getGamification(@Query("email") email: string) {
+    if (!email) return {};
+    const { getJudgeGamificationOverride } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+    return (await getJudgeGamificationOverride(ORG(), email)) ?? {};
+  }
 
-  @Post("gamification") @ReturnedType(OkResponse) @Description("Save gamification settings") @BodyType(GenericBodyRequest)
-  async saveGamification(@Body() body: GenericBodyRequest) { return { ok: true }; }
+  @Post("gamification") @ReturnedType(OkResponse) @Description("Save judge gamification override") @BodyType(GenericBodyRequest)
+  async saveGamification(@Body() body: GenericBodyRequest) {
+    const b = body as { email?: string; settings?: Record<string, unknown> };
+    if (!b.email) return { error: "email required" };
+    const { saveJudgeGamificationOverride } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+    await saveJudgeGamificationOverride(ORG(), b.email, (b.settings ?? {}) as any);
+    return { ok: true };
+  }
 }

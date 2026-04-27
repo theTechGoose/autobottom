@@ -67,10 +67,20 @@ export class AdminConfigController {
   @Post("settings/re-audit-receipt") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveReAuditReceiptSettings(@Body() body: GenericBodyRequest) { await cfg.saveWebhookConfig(ORG(), "re-audit-receipt", body as any); return { ok: true }; }
 
+  // Org-default gamification settings — delegates to the gamification repo
+  // so this admin endpoint and /gamification/api/settings agree on the same
+  // KV record (legacy frontend code may still hit either path).
   @Get("settings/gamification") @ReturnedType(OkResponse)
-  async getGamificationSettings() { return {}; } // gamification settings in own module
+  async getGamificationSettings() {
+    const { getGamificationSettings } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+    return (await getGamificationSettings(ORG())) ?? {};
+  }
   @Post("settings/gamification") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
-  async saveGamificationSettings(@Body() body: GenericBodyRequest) { return { ok: true }; }
+  async saveGamificationSettings(@Body() body: GenericBodyRequest) {
+    const { saveGamificationSettings } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+    await saveGamificationSettings(ORG(), body as any);
+    return { ok: true };
+  }
 
   // -- Bad words / bonus / bypass --
   @Get("bad-word-config") @ReturnedType(BadWordConfigResponse)
@@ -110,7 +120,16 @@ export class AdminConfigController {
   @Get("queues") @ReturnedType(QueueCountsResponse)
   async getQueues() { return getQueueCounts(); }
   @Post("queues") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
-  async setQueue(@Body() body: GenericBodyRequest) { return { ok: true }; }
+  async setQueue(@Body() body: GenericBodyRequest) {
+    const b = body as { queueName?: string; parallelism?: number };
+    if (!b.queueName) return { error: "queueName required" };
+    const { getKv, orgKey } = await import("@core/data/deno-kv/mod.ts");
+    const db = await getKv();
+    const key = orgKey(ORG(), "queue-config", b.queueName);
+    const existing = (await db.get<Record<string, unknown>>(key)).value ?? {};
+    await db.set(key, { ...existing, ...(b.parallelism != null ? { parallelism: b.parallelism } : {}) });
+    return { ok: true, queueName: b.queueName };
+  }
 
   @Post("pause-queues") @ReturnedType(OkResponse)
   async pauseQueues() {
@@ -295,11 +314,39 @@ export class AdminConfigController {
     return { ok: true, flipped };
   }
   @Post("dump-state") @ReturnedType(OkMessageResponse)
-  async dumpState() { return { ok: true, message: "State dump — use KV export tools directly" }; }
+  async dumpState() {
+    const { dumpKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    const result = await dumpKv(ORG());
+    return { ok: true, message: `Dumped ${result.count} keys`, entries: result.entries };
+  }
   @Post("import-state") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
-  async importState(@Body() body: GenericBodyRequest) { return { ok: true, message: "State import — use KV import tools directly" }; }
+  async importState(@Body() body: GenericBodyRequest) {
+    const b = body as { confirm?: string; entries?: unknown[] };
+    if (b.confirm !== "YES") return { ok: false, message: "import-state requires { confirm: \"YES\" }" };
+    const { importKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    const result = await importKv(ORG(), "YES", (b.entries ?? []) as Array<{ key: Deno.KvKeyPart[]; value: unknown }>);
+    if (!result.ok) return { ok: false, message: result.error ?? "import failed" };
+    return { ok: true, message: `Wrote ${result.written ?? 0} keys, skipped ${result.skipped ?? 0}` };
+  }
   @Post("pull-state") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
-  async pullState(@Body() body: GenericBodyRequest) { return { ok: true, message: "State pull — use KV sync tools directly" }; }
+  async pullState(@Body() body: GenericBodyRequest) {
+    const b = body as { confirm?: string };
+    if (b.confirm !== "YES") return { ok: false, message: "pull-state requires { confirm: \"YES\" }" };
+    const url = Deno.env.get("KV_REPORT_URL") ?? "";
+    if (!url) return { ok: false, message: "pull-state requires KV_REPORT_URL env — sister read endpoint not configured" };
+    // Best-effort: try fetching <url>/dump?org=<orgId>. If the sister service
+    // doesn't expose a /dump route, surface the error verbatim.
+    try {
+      const res = await fetch(`${url}/dump?org=${encodeURIComponent(String(ORG()))}`);
+      if (!res.ok) return { ok: false, message: `pull-state: HTTP ${res.status}` };
+      const data = await res.json().catch(() => ({})) as { entries?: Array<{ key: Deno.KvKeyPart[]; value: unknown }> };
+      const { importKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
+      const result = await importKv(ORG(), "YES", data.entries ?? []);
+      return { ok: true, message: `Pulled + wrote ${result.written ?? 0} keys` };
+    } catch (e) {
+      return { ok: false, message: `pull-state failed: ${(e as Error).message}` };
+    }
+  }
 
   // -- Super Admin — org management. Gated at the Fresh layer by email check;
   // these backend endpoints trust proxies to have authenticated.

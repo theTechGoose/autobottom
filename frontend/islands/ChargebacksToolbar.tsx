@@ -88,9 +88,10 @@ async function loadXlsxLib(): Promise<void> {
   });
 }
 
-interface Props { tab: Tab; }
+interface Props { initialTab?: Tab; }
 
-export default function ChargebacksToolbar({ tab }: Props) {
+export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [cbs, setCbs] = useState<CbItem[]>([]);
   const [omissions, setOmissions] = useState<CbItem[]>([]);
   const [wires, setWires] = useState<WireItem[]>([]);
@@ -98,6 +99,14 @@ export default function ChargebacksToolbar({ tab }: Props) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const formatRef = useRef<HTMLSelectElement | null>(null);
+
+  function switchTab(next: Tab) {
+    if (next === tab) return;
+    setTab(next);
+    setLoaded(false);
+    setCbs([]); setOmissions([]); setWires([]);
+    setMsg(null);
+  }
 
   function readDateInputs(): { since: number; until: number } | null {
     const from = (document.getElementById("cb-date-from") as HTMLInputElement | null)?.value;
@@ -221,6 +230,11 @@ export default function ChargebacksToolbar({ tab }: Props) {
 
   return (
     <>
+      {/* Tab bar — owned by the island so switching is instant.
+          Lives outside the controls flex via portal-effect (writes into
+          #cb-tabs which the modal route renders as an empty container). */}
+      <TabBarPortal tab={tab} onSwitch={switchTab} />
+
       <button
         type="button"
         class="sf-btn primary"
@@ -260,6 +274,29 @@ export default function ChargebacksToolbar({ tab }: Props) {
       <BodyRenderer tab={tab} cbs={cbs} omissions={omissions} wires={wires} loaded={loaded} />
     </>
   );
+}
+
+/** Renders the tab bar buttons into #cb-tabs (the modal route's empty
+ *  container). Same portal pattern as BodyRenderer below — keeps the
+ *  buttons visually outside the island while still owned by it. */
+function TabBarPortal({ tab, onSwitch }: { tab: Tab; onSwitch: (next: Tab) => void }) {
+  useEffect(() => {
+    const host = document.getElementById("cb-tabs");
+    if (!host) return;
+    host.innerHTML = "";
+    const make = (id: Tab, label: string) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      const active = tab === id;
+      b.style.cssText = `font-size:11px;font-weight:600;padding:12px 16px;border:none;background:none;cursor:pointer;color:${active ? "var(--blue)" : "var(--text-dim)"};border-bottom:2px solid ${active ? "var(--blue)" : "transparent"};margin-bottom:-1px;font-family:inherit;`;
+      b.addEventListener("click", () => onSwitch(id));
+      host.appendChild(b);
+    };
+    make("cb", "Chargebacks & Omissions");
+    make("wire", "Wire Deductions");
+  }, [tab, onSwitch]);
+  return null;
 }
 
 function BodyRenderer({ tab, cbs, omissions, wires, loaded }: { tab: Tab; cbs: CbItem[]; omissions: CbItem[]; wires: WireItem[]; loaded: boolean }) {

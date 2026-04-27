@@ -170,7 +170,7 @@ export function Sidebar({ user, section, pathname }: SidebarProps) {
         <h1>Auto-Bot</h1>
         <div class="sb-status">
           <span class="dot"></span>
-          <span id="refresh-countdown">Operational</span>
+          <span id="refresh-countdown">Refresh in 10s</span>
         </div>
       </div>
 

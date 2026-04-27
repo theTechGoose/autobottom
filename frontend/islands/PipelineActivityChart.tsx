@@ -1,7 +1,11 @@
 /** Pipeline Activity (24h) canvas chart.
  *  Renders 24 one-hour buckets — green (completed), yellow (retries), red (errors).
- *  Semantics match prod's drawActivityChart in main:dashboard/page.ts:1710-1829. */
-import { useEffect, useRef } from "preact/hooks";
+ *  Semantics match prod's drawActivityChart in main:dashboard/page.ts:1710-1829.
+ *
+ *  Listens for `htmx:afterSwap` on the parent #stats-section so the chart
+ *  redraws on the same 10s cadence the stat cards refresh on. Falls back to
+ *  initial SSR data if no swap fires. */
+import { useEffect, useRef, useState } from "preact/hooks";
 
 interface Props {
   completedTs: number[];
@@ -24,8 +28,36 @@ function bucketByHour(ts: number[]): number[] {
   return buckets;
 }
 
-export default function PipelineActivityChart({ completedTs, errorsTs, retriesTs }: Props) {
+export default function PipelineActivityChart(props: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Local state so we can update from htmx:afterSwap without re-mounting.
+  const [data, setData] = useState<Props>({
+    completedTs: props.completedTs,
+    errorsTs: props.errorsTs,
+    retriesTs: props.retriesTs,
+  });
+  const { completedTs, errorsTs, retriesTs } = data;
+
+  // Refresh on stat-section HTMX swap. Cheap fetch — same endpoint the page
+  // already SSRs against — and reuses the keep-alive connection.
+  useEffect(() => {
+    const onSwap = async (e: Event) => {
+      const target = (e as CustomEvent).detail?.elt as HTMLElement | undefined;
+      if (target?.id !== "stats-section") return;
+      try {
+        const res = await fetch("/api/admin/dashboard/data", { credentials: "include" });
+        if (!res.ok) return;
+        const fresh = await res.json() as { pipeline?: { completedTs?: number[]; errorsTs?: number[]; retriesTs?: number[] } };
+        setData({
+          completedTs: fresh.pipeline?.completedTs ?? [],
+          errorsTs: fresh.pipeline?.errorsTs ?? [],
+          retriesTs: fresh.pipeline?.retriesTs ?? [],
+        });
+      } catch { /* network blip — keep last data */ }
+    };
+    document.addEventListener("htmx:afterSwap", onSwap);
+    return () => document.removeEventListener("htmx:afterSwap", onSwap);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;

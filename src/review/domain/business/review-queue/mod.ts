@@ -355,9 +355,17 @@ export async function finalizeReviewedAudit(
     return;
   }
 
-  const finding = await getFinding(orgId, findingId);
+  // Findings are chunk-stored; under a duplicate-call window the first read
+  // can land between chunk writes and return null while the chunked write is
+  // still in-flight. Retry a few times before giving up — the `review-done`
+  // sentinel above already gates true duplicates.
+  let finding = await getFinding(orgId, findingId);
+  for (let attempt = 1; attempt <= 3 && !finding; attempt++) {
+    await new Promise((r) => setTimeout(r, 200 * attempt));
+    finding = await getFinding(orgId, findingId);
+  }
   if (!finding) {
-    console.error(`❌ [REVIEW] ${findingId}: finding not found at finalize`);
+    console.error(`❌ [REVIEW] ${findingId}: finding not found at finalize (after retries)`);
     return;
   }
 

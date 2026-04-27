@@ -7,7 +7,6 @@ import { DonutChart } from "../../components/DonutChart.tsx";
 import { DashboardTables, computeLogsBase, type ActiveItem, type ErrorItem, type CompletedItem } from "../../components/DashboardTables.tsx";
 import { TokenUsagePanel, type TokenData } from "../../components/TokenUsagePanel.tsx";
 import { ReviewQueuePanel, type ReviewStatsShape } from "../../components/ReviewQueuePanel.tsx";
-import ModalController from "../../islands/ModalController.tsx";
 import PipelineActivityChart from "../../islands/PipelineActivityChart.tsx";
 
 interface PipelineStats { inPipe?: number; active?: ActiveItem[]; completed24h?: number; completedCount?: number; errors24h?: number; errors?: ErrorItem[]; retries24h?: number; retries?: unknown[]; completedTs?: number[]; errorsTs?: number[]; retriesTs?: number[]; paused?: boolean; }
@@ -31,8 +30,6 @@ export default define.page(async function AdminDashboard(ctx) {
 
   return (
     <Layout title="Dashboard" section="admin" user={user}>
-      <ModalController />
-
       {/* ===== STAT CARDS — auto-refresh every 10s ===== */}
       <div id="stats-section" hx-get="/api/admin/stats" hx-trigger="every 10s" hx-swap="innerHTML">
         <StatGrid p={p} />

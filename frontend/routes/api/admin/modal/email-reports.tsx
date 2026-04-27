@@ -106,7 +106,7 @@ export async function renderReportsModal(
                 <td>{c.schedule ?? "\u2014"}</td>
                 <td><span class={`pill pill-${c.enabled !== false ? "green" : "red"}`}>{c.enabled !== false ? "Active" : "Off"}</span></td>
                 <td>
-                  <button class="sf-btn ghost" style="font-size:9px;padding:2px 6px;" hx-post={`/api/admin/modal/email-reports/send-now?id=${c.id}`} hx-target="#er-list-msg" hx-swap="innerHTML" onClick={(e: Event) => e.stopPropagation()}>Send</button>
+                  <button class="sf-btn ghost" style="font-size:9px;padding:2px 6px;" hx-post={`/api/admin/modal/email-reports/send-now?id=${c.id}`} hx-target="#er-list-msg" hx-swap="innerHTML" {...{ "hx-on:click": "event.stopPropagation()" }}>Send</button>
                 </td>
               </tr>
             ))}

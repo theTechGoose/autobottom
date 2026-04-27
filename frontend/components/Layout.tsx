@@ -4,6 +4,7 @@ import type { User } from "../lib/auth.ts";
 import { getTheme } from "../lib/theme.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import ImpersonationBanner from "../islands/ImpersonationBanner.tsx";
+import ModalController from "../islands/ModalController.tsx";
 
 interface LayoutProps {
   title?: string;
@@ -33,6 +34,7 @@ export function Layout({ title, section, user, children, hideSidebar, pathname }
       </head>
       <body hx-on--after-request="if(event.detail.xhr && event.detail.xhr.status===401) window.location='/login'">
         <ImpersonationBanner />
+        <ModalController />
         {!hideSidebar && user && <Sidebar user={user} section={section ?? ""} pathname={pathname} />}
         <main class={hideSidebar ? "main-full" : "main"}>
           {children}

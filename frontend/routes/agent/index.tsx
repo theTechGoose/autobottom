@@ -5,12 +5,13 @@ import { StatCard } from "../../components/StatCard.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import { timeAgo } from "../../lib/format.ts";
 
+interface WeeklyTrendDay { date: string; avgScore: number; count: number; }
 interface AgentDashboard {
   totalAudits?: number;
   avgScore?: number;
   perfectCount?: number;
   recentAudits?: { findingId: string; recordId: string; score: number; completedAt: number; type: string }[];
-  weeklyScores?: number[];
+  weeklyTrend?: WeeklyTrendDay[];
 }
 
 export default define.page(async function AgentDashboard(ctx) {
@@ -23,30 +24,33 @@ export default define.page(async function AgentDashboard(ctx) {
   } catch (e) { console.error("Agent dashboard error:", e); }
 
   const audits = data.recentAudits ?? [];
-  const weeklyScores = data.weeklyScores ?? [];
+  const weeklyTrend = data.weeklyTrend ?? [];
+  const trendHasData = weeklyTrend.some((d) => d.count > 0);
 
   return (
     <Layout title="My Dashboard" section="agent" user={user}>
       <div class="page-header"><h1>My Dashboard</h1><p class="page-sub">Your personal audit performance</p></div>
 
-      <div class="stat-grid">
-        <StatCard label="Total Audits" value={data.totalAudits ?? 0} color="blue" />
-        <StatCard label="Avg Score" value={data.avgScore != null ? `${data.avgScore}%` : "\u2014"} color={data.avgScore && data.avgScore >= 90 ? "green" : data.avgScore && data.avgScore >= 70 ? "yellow" : "blue"} />
-        <StatCard label="Perfect Scores" value={data.perfectCount ?? 0} color="green" />
+      <div id="agent-stats" hx-get="/api/agent/stats" hx-trigger="every 10s" hx-swap="innerHTML">
+        <div class="stat-grid">
+          <StatCard label="Total Audits" value={data.totalAudits ?? 0} color="blue" />
+          <StatCard label="Avg Score" value={data.avgScore != null ? `${data.avgScore}%` : "\u2014"} color={data.avgScore && data.avgScore >= 90 ? "green" : data.avgScore && data.avgScore >= 70 ? "yellow" : "blue"} />
+          <StatCard label="Perfect Scores" value={data.perfectCount ?? 0} color="green" />
+        </div>
       </div>
 
-      {/* Weekly trend */}
-      {weeklyScores.length > 0 && (
+      {trendHasData && (
         <div class="card" style="margin-bottom:16px;">
           <div class="tbl-title">Weekly Trend</div>
           <div class="trend-bars">
-            {weeklyScores.map((score, i) => (
-              <div key={i} class="trend-bar-wrap">
+            {weeklyTrend.map((day) => (
+              <div key={day.date} class="trend-bar-wrap">
                 <div
                   class="trend-bar"
-                  style={`height:${Math.max(score, 5)}%;background:${score >= 90 ? "var(--green)" : score >= 70 ? "var(--yellow)" : "var(--red)"}`}
+                  style={`height:${Math.max(day.avgScore, 5)}%;background:${day.count === 0 ? "var(--border)" : day.avgScore >= 90 ? "var(--green)" : day.avgScore >= 70 ? "var(--yellow)" : "var(--red)"}`}
                 ></div>
-                <div class="trend-label">{score}%</div>
+                <div class="trend-label">{day.count === 0 ? "\u2014" : `${day.avgScore}%`}</div>
+                <div class="trend-label" style="color:var(--text-dim);font-size:10px;">{day.date.slice(5)}</div>
               </div>
             ))}
           </div>

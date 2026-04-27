@@ -26,37 +26,64 @@ export default define.page(async function ManagerPage(ctx) {
     <Layout title="Manager" section="manager" user={user}>
       <div class="page-header"><h1>Manager Portal</h1><p class="page-sub">Remediation queue and team management</p></div>
 
-      <div class="stat-grid">
-        <StatCard label="Total" value={stats.total} color="blue" />
-        <StatCard label="Pending" value={stats.pending} color="yellow" />
-        <StatCard label="Remediated" value={stats.remediated} color="green" />
-        <StatCard label="Agents" value={agents.length} color="purple" />
+      <div id="manager-stats" hx-get="/api/manager/stats" hx-trigger="every 10s" hx-swap="innerHTML">
+        <div class="stat-grid">
+          <StatCard label="Total" value={stats.total} color="blue" />
+          <StatCard label="Pending" value={stats.pending} color="yellow" />
+          <StatCard label="Remediated" value={stats.remediated} color="green" />
+          <StatCard label="Agents" value={agents.length} color="purple" />
+        </div>
       </div>
 
-      {/* Queue table */}
       <div class="tbl">
-        <div class="tbl-title">Remediation Queue</div>
-        <table class="data-table">
-          <thead><tr><th>Finding</th><th>Agent</th><th>Score</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody>
-            {queue.length === 0 ? (
-              <tr class="empty-row"><td colSpan={5}>No items in queue</td></tr>
-            ) : queue.map((item) => (
-              <tr key={item.findingId}>
-                <td class="mono">{item.findingId?.slice(0, 8)}</td>
-                <td>{item.agentEmail ?? "\u2014"}</td>
-                <td>{item.score != null ? <span class={`pill pill-${item.score >= 90 ? "green" : item.score >= 70 ? "yellow" : "red"}`}>{item.score}%</span> : "\u2014"}</td>
-                <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>
-                <td>
-                  <button
-                    class="btn btn-ghost btn-sm"
-                    onClick={() => { document.getElementById('remediate-modal')?.classList.add('open'); (document.getElementById('rem-findingId') as HTMLInputElement).value = item.findingId; }}
-                  >Remediate</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Remediation Queue</span>
+          <span style="display:flex;gap:8px;align-items:center;">
+            <span id="backfill-status" style="font-size:11px;color:var(--text-muted);"></span>
+            <button
+              class="btn btn-ghost btn-sm"
+              hx-post="/api/manager/backfill"
+              hx-target="#manager-queue"
+              hx-swap="innerHTML"
+              hx-indicator="#backfill-status"
+            >Backfill Queue</button>
+            <button
+              class="btn btn-ghost btn-sm"
+              {...{ "hx-on:click": "document.getElementById('notif-settings-modal').classList.add('open')" }}
+            >Notification Settings</button>
+          </span>
+        </div>
+        <div id="manager-queue" hx-get="/api/manager/queue" hx-trigger="every 10s" hx-swap="innerHTML">
+          <table class="data-table">
+            <thead><tr><th>Finding</th><th>Agent</th><th>Score</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>
+              {queue.length === 0 ? (
+                <tr class="empty-row"><td colSpan={5}>No items in queue</td></tr>
+              ) : queue.map((item) => (
+                <tr
+                  key={item.findingId}
+                  style="cursor:pointer;"
+                  hx-get={`/api/manager/finding?findingId=${item.findingId}`}
+                  hx-target="#finding-detail-content"
+                  hx-swap="innerHTML"
+                  hx-trigger="click"
+                  {...{ "hx-on:click": "document.getElementById('finding-detail-modal').classList.add('open')" }}
+                >
+                  <td class="mono">{item.findingId?.slice(0, 8)}</td>
+                  <td>{item.agentEmail ?? "\u2014"}</td>
+                  <td>{item.score != null ? <span class={`pill pill-${item.score >= 90 ? "green" : item.score >= 70 ? "yellow" : "red"}`}>{item.score}%</span> : "\u2014"}</td>
+                  <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>
+                  <td>
+                    <button
+                      class="btn btn-ghost btn-sm"
+                      {...{ "hx-on:click": `event.stopPropagation();document.getElementById('remediate-modal').classList.add('open');document.getElementById('rem-findingId').value='${item.findingId}'` }}
+                    >Remediate</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Agent list */}
@@ -125,6 +152,50 @@ export default define.page(async function ManagerPage(ctx) {
               <button type="submit" class="btn btn-primary">Create Agent</button>
             </div>
           </form>
+        </div>
+      </div>
+
+      {/* Finding detail modal */}
+      <div
+        id="finding-detail-modal"
+        class="modal-overlay"
+        {...{ "hx-on:click": "if(event.target===event.currentTarget)event.currentTarget.classList.remove('open')" }}
+      >
+        <div class="modal" style="max-width:900px;max-height:85vh;overflow-y:auto;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div class="modal-title">Finding Detail</div>
+              <div class="modal-sub">Full audit context</div>
+            </div>
+            <button
+              {...{ "hx-on:click": "document.getElementById('finding-detail-modal').classList.remove('open')" }}
+              style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;"
+            >&times;</button>
+          </div>
+          <div id="finding-detail-content"><div style="color:var(--text-dim);font-size:12px;padding:20px;text-align:center;">Click a row to load detail</div></div>
+        </div>
+      </div>
+
+      {/* Notification settings modal — prefab subscriptions */}
+      <div
+        id="notif-settings-modal"
+        class="modal-overlay"
+        {...{ "hx-on:click": "if(event.target===event.currentTarget)event.currentTarget.classList.remove('open')" }}
+      >
+        <div class="modal" style="max-width:560px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div class="modal-title">Notification Settings</div>
+              <div class="modal-sub">Subscribe to events for this team</div>
+            </div>
+            <button
+              {...{ "hx-on:click": "document.getElementById('notif-settings-modal').classList.remove('open')" }}
+              style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;"
+            >&times;</button>
+          </div>
+          <div id="notif-settings-content" hx-get="/api/manager/notif-settings" hx-trigger="load delay:50ms" hx-swap="innerHTML">
+            <div style="color:var(--text-dim);font-size:12px;padding:20px;text-align:center;">Loading...</div>
+          </div>
         </div>
       </div>
     </Layout>

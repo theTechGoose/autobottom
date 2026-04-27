@@ -86,7 +86,15 @@ async function handleAgentDashboard(req: Request): Promise<Response> {
     if (key.length >= 3 && typeof key[2] === "string") findingIds.add(key[2] as string);
   }
   let totalYes = 0, totalQuestions = 0;
+  let perfectCount = 0;
   const audits: Array<Record<string, unknown>> = [];
+
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const today = new Date(now); today.setHours(0, 0, 0, 0);
+  const trendStart = today.getTime() - 6 * DAY_MS;
+  const trendBuckets: { sum: number; count: number }[] = Array.from({ length: 7 }, () => ({ sum: 0, count: 0 }));
+
   for (const findingId of findingIds) {
     const finding = await getFinding(auth.orgId, findingId);
     if (!finding || finding.findingStatus !== "finished") continue;
@@ -96,6 +104,9 @@ async function handleAgentDashboard(req: Request): Promise<Response> {
     const failed = qs.filter((q) => q.answer === "No").length;
     totalYes += passed;
     totalQuestions += qs.length;
+    const score = qs.length > 0 ? Math.round((passed / qs.length) * 100) : 0;
+    if (score === 100) perfectCount += 1;
+    const completedAt = Number(finding.completedAt ?? Date.now());
     audits.push({
       findingId,
       recordId: (finding.record as Record<string, unknown> | undefined)?.RecordId ?? "",
@@ -103,18 +114,40 @@ async function handleAgentDashboard(req: Request): Promise<Response> {
       totalQuestions: qs.length,
       passedCount: passed,
       failedCount: failed,
-      completedAt: finding.completedAt ?? Date.now(),
-      score: qs.length > 0 ? Math.round((passed / qs.length) * 100) : 0,
+      completedAt,
+      score,
+      type: finding.recordingIdField === "GenieNumber" ? "partner" : "internal",
     });
+
+    if (completedAt >= trendStart && completedAt < now + DAY_MS) {
+      const bucketIdx = Math.floor((completedAt - trendStart) / DAY_MS);
+      if (bucketIdx >= 0 && bucketIdx < 7) {
+        trendBuckets[bucketIdx].sum += score;
+        trendBuckets[bucketIdx].count += 1;
+      }
+    }
   }
   audits.sort((a, b) => Number(b.completedAt) - Number(a.completedAt));
   const avgScore = totalQuestions > 0 ? Math.round((totalYes / totalQuestions) * 100) : 0;
+
+  const weeklyTrend = trendBuckets.map((b, i) => {
+    const dayMs = trendStart + i * DAY_MS;
+    const d = new Date(dayMs);
+    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return {
+      date,
+      avgScore: b.count > 0 ? Math.round(b.sum / b.count) : 0,
+      count: b.count,
+    };
+  });
+
   return Response.json({
     email: auth.email,
     totalAudits: audits.length,
     avgScore,
+    perfectCount,
     recentAudits: audits.slice(0, 20),
-    weeklyTrend: [],
+    weeklyTrend,
   });
 }
 

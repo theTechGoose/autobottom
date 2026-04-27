@@ -15,10 +15,12 @@ export default define.page(async function JudgeDashboard(ctx) {
     <Layout title="Judge Dashboard" section="judge" user={user} pathname={new URL(ctx.req.url).pathname}>
       <div class="page-header"><h1>Judge Dashboard</h1><p class="page-sub">Appeal stats and judge performance</p></div>
 
-      <div class="stat-grid">
-        <StatCard label="Appeals Pending" value={stats.pending} color="purple" />
-        <StatCard label="Decided" value={stats.decided} color="green" />
-        <StatCard label="Total" value={stats.pending + stats.decided} color="blue" />
+      <div id="judge-stats" hx-get="/api/judge/stats" hx-trigger="every 10s" hx-swap="innerHTML">
+        <div class="stat-grid">
+          <StatCard label="Appeals Pending" value={stats.pending} color="purple" />
+          <StatCard label="Decided" value={stats.decided} color="green" />
+          <StatCard label="Total" value={stats.pending + stats.decided} color="blue" />
+        </div>
       </div>
 
       <div class="charts">

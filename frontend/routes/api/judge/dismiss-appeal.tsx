@@ -14,7 +14,11 @@ export const handler = define.handlers({
       if (!body.findingId) {
         return new Response(`<div class="placeholder-card">findingId required</div>`, { headers: { "content-type": "text/html" } });
       }
-      await apiPost("/judge/api/dismiss-appeal", ctx.req, { findingId: body.findingId });
+      await apiPost("/judge/api/dismiss-appeal", ctx.req, {
+        findingId: body.findingId,
+        judge: body.judge ?? "",
+        ...(body.dismissalReason ? { dismissalReason: String(body.dismissalReason) } : {}),
+      });
       const next = await apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
         `/judge/api/next?judge=${encodeURIComponent(String(body.judge ?? ""))}`, ctx.req,
       );

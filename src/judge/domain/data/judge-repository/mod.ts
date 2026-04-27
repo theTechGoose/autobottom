@@ -5,7 +5,8 @@
 import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
-import { getFinding, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
+import { getFinding, getTranscript, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import {
   deleteChargebackEntry,
   deleteWireDeductionEntry,
@@ -127,6 +128,14 @@ export async function recordJudgeDecision(
   const counter = (await db.get<number>(counterKey)).value ?? 1;
   const newCount = Math.max(0, counter - 1);
   await db.set(counterKey, newCount);
+
+  // Audit complete — aggregate decisions, save corrected score, fire webhook.
+  // Fire-and-forget: a webhook failure doesn't unwind the saved decision.
+  if (newCount === 0) {
+    postJudgedAudit(orgId, findingId, judge).catch((err) =>
+      console.error(`[JUDGE] ${findingId}: postJudgedAudit failed:`, err));
+  }
+
   return { remaining: newCount };
 }
 
@@ -160,13 +169,74 @@ async function sweepExpiredActiveClaims(orgId: OrgId, excludeJudge?: string): Pr
   return reclaimed;
 }
 
-// Post-completion hook. Main does substantial work here (update finding status,
-// emit events, chargeback updates). On branch, keeping this as a log-only
-// helper matches existing recordJudgeDecision behavior, which doesn't yet do
-// those side-effects. If/when gamification + event emission are ported, wire
-// them in here. Safe no-op today.
-async function postJudgedAudit(_orgId: OrgId, findingId: string, judge: string): Promise<void> {
-  console.log(`[JUDGE] ${findingId}: audit completed by ${judge}`);
+// Post-completion hook. Aggregates the decided records, applies overturns to
+// produce a corrected answer set + new score, persists the corrected finding,
+// and fires the `judge` webhook so the agent gets the appeal-result email.
+// Skips silently when no decisions exist (e.g. system-skip path for recording
+// re-audits that should never reach the judge queue).
+async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): Promise<void> {
+  try {
+    const finding = await getFinding(orgId, findingId);
+    if (!finding) {
+      console.log(`[JUDGE] ${findingId}: no finding — skip post-judge`);
+      return;
+    }
+
+    const db = await getKv();
+    const decisions: JudgeDecision[] = [];
+    for await (const e of db.list<JudgeDecision>({ prefix: orgKey(orgId, "judge-decided", findingId) })) {
+      decisions.push(e.value);
+    }
+    if (decisions.length === 0) {
+      console.log(`[JUDGE] ${findingId}: 0 decisions (system-skip) — no webhook`);
+      return;
+    }
+
+    const overturns = decisions.filter((d) => d.decision === "overturn").length;
+    const totalQuestions = decisions.length;
+
+    // Apply overturns to a copy of answeredQuestions to recompute the score.
+    const all = (finding.answeredQuestions ?? []) as Array<Record<string, unknown>>;
+    const corrected = all.map((q, i) => {
+      const flip = decisions.find((d) => d.questionIndex === i && d.decision === "overturn");
+      return flip ? { ...q, answer: "Yes" } : q;
+    });
+    const total = corrected.length;
+    const yesIs = (a: unknown) => String(a ?? "").toLowerCase().startsWith("yes");
+    const finalYes = corrected.filter((q) => yesIs(q.answer)).length;
+    const finalScore = total > 0 ? Math.round((finalYes / total) * 100) : 0;
+    const origYes = all.filter((q) => yesIs(q.answer)).length;
+    const originalScore = total > 0 ? Math.round((origYes / total) * 100) : 0;
+
+    // Persist the corrected answers so the report page reflects the judge's
+    // verdict immediately. Only when there's at least one overturn — saves a
+    // chunked write otherwise.
+    if (overturns > 0) {
+      await saveFinding(orgId, { ...finding, answeredQuestions: corrected });
+    }
+
+    // Fire-and-forget — saved state is the source of truth even if the email fails.
+    fireWebhook(orgId, "judge", {
+      findingId,
+      finding,
+      judgedBy: judge,
+      auditor: String(finding.owner ?? ""),
+      originalScore,
+      finalScore,
+      overturns,
+      totalQuestions,
+      decisions: decisions.map((d) => ({
+        questionIndex: d.questionIndex,
+        decision: d.decision,
+        reason: d.reason,
+        header: d.header,
+      })),
+    }).catch((err) => console.error(`[JUDGE] ${findingId} fireWebhook failed:`, err));
+
+    console.log(`[JUDGE] ${findingId}: completed by ${judge}, ${overturns}/${totalQuestions} overturned, ${originalScore}% → ${finalScore}%`);
+  } catch (err) {
+    console.error(`[JUDGE] ${findingId} postJudgedAudit failed:`, err);
+  }
 }
 
 export async function claimNextItem(

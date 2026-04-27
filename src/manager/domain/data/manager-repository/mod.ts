@@ -37,7 +37,27 @@ export async function submitRemediation(orgId: OrgId, findingId: string, notes: 
   const key = orgKey(orgId, "manager-queue", findingId);
   const existing = (await db.get<ManagerQueueItem>(key)).value;
   if (!existing) return { ok: false };
-  await db.set(key, { ...existing, status: "remediated", remediatedBy: username, remediatedAt: Date.now(), notes });
+  const remediatedAt = Date.now();
+  await db.set(key, { ...existing, status: "remediated", remediatedBy: username, remediatedAt, notes });
+
+  // Fire the `manager` webhook so the agent gets the remediation notes by
+  // email. Best-effort — saved state above is the source of truth.
+  try {
+    const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+    const { fireWebhook } = await import("@admin/domain/data/admin-repository/mod.ts");
+    const finding = await getFinding(orgId, findingId);
+    if (finding) {
+      fireWebhook(orgId, "manager", {
+        findingId,
+        finding,
+        remediation: { notes, addressedBy: username, addressedAt: remediatedAt },
+        remediatedAt: new Date(remediatedAt).toISOString(),
+      }).catch((err) => console.error(`[MANAGER] ${findingId}: fireWebhook failed:`, err));
+    }
+  } catch (err) {
+    console.error(`[MANAGER] ${findingId}: webhook prep failed:`, err);
+  }
+
   return { ok: true };
 }
 

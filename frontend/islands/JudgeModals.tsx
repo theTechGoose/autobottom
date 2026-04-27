@@ -39,8 +39,11 @@ export default function JudgeModals() {
   const judgeEmail = (document.getElementById("hx-email") as HTMLInputElement | null)?.value ?? "";
 
   function submit() {
-    const reason = textareaRef.current?.value ?? "";
-    const payload = { findingId, judge: judgeEmail, reason };
+    const reason = (textareaRef.current?.value ?? "").trim();
+    // Backend expects `dismissalReason` (matches prod) — empty string means
+    // dismiss without firing the email webhook.
+    const payload: Record<string, string> = { findingId, judge: judgeEmail };
+    if (reason) payload.dismissalReason = reason;
     // @ts-ignore - htmx global
     if (typeof htmx !== "undefined") {
       // @ts-ignore

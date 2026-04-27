@@ -140,6 +140,19 @@ export async function saveGameState(orgId: OrgId, email: string, state: Record<s
   await (await getKv()).set(orgKey(orgId, "game-state", email), state);
 }
 
+/** Walk every game-state in the org. Used by leaderboards. */
+export async function listGameStates(orgId: OrgId): Promise<Array<{ email: string; state: GameState & { totalXp?: number; tokenBalance?: number; lastActiveDate?: string } }>> {
+  const db = await getKv();
+  const out: Array<{ email: string; state: GameState & { totalXp?: number; tokenBalance?: number; lastActiveDate?: string } }> = [];
+  for await (const entry of db.list({ prefix: orgKey(orgId, "game-state") })) {
+    const key = entry.key as Deno.KvKey;
+    const email = String(key[key.length - 1]);
+    if (!email) continue;
+    out.push({ email, state: entry.value as GameState & { totalXp?: number; tokenBalance?: number; lastActiveDate?: string } });
+  }
+  return out;
+}
+
 export async function purchaseStoreItem(orgId: OrgId, email: string, itemId: string, price: number): Promise<{ ok: true; newBalance: number } | { ok: false; error: string }> {
   const db = await getKv();
   const key = orgKey(orgId, "game-state", email);

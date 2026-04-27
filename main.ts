@@ -202,6 +202,49 @@ async function handleUploadReauditAppeal(req: Request): Promise<Response> {
   }
 }
 
+// Direct-dispatch: POST /gamification/api/upload-sound writes the file into S3
+// at sounds/<orgId>/<packId>/<slot>.mp3 and updates the pack's slot map.
+// Multipart so it must bypass danet (same reason as upload-reaudit).
+async function handleUploadSound(req: Request): Promise<Response> {
+  if (req.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return Response.json({ error: "multipart/form-data required" }, { status: 400 });
+  }
+  const packId = String(form.get("packId") ?? "").trim();
+  const slot = String(form.get("slot") ?? "").trim();
+  const file = form.get("file");
+  if (!packId || !slot) return Response.json({ error: "packId + slot required" }, { status: 400 });
+  if (!(file instanceof File)) return Response.json({ error: "file required" }, { status: 400 });
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.byteLength === 0) return Response.json({ error: "empty file" }, { status: 400 });
+  if (bytes.byteLength > 5 * 1024 * 1024) return Response.json({ error: "file too large (5MB max per slot)" }, { status: 400 });
+
+  try {
+    const orgId = defaultOrgId() as OrgId;
+    const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
+    if (!bucket) return Response.json({ error: "S3_BUCKET not configured" }, { status: 500 });
+    const { S3Ref } = await import("@core/data/s3/mod.ts");
+    const key = `sounds/${orgId}/${packId}/${slot}.mp3`;
+    await new S3Ref(bucket, key).save(bytes);
+
+    // Update the pack metadata so the slot points at this URL pattern.
+    const { getSoundPack, saveSoundPack } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+    const existing = await getSoundPack(orgId, packId);
+    const pack = existing ?? { id: packId, name: packId, slots: {}, createdAt: Date.now(), createdBy: "upload" };
+    pack.slots[slot] = key;
+    await saveSoundPack(orgId, pack);
+    console.log(`🔊 [UPLOAD-SOUND] org=${orgId} pack=${packId} slot=${slot} bytes=${bytes.byteLength}`);
+    return Response.json({ ok: true, key, bytes: bytes.byteLength });
+  } catch (err) {
+    console.error(`❌ [UPLOAD-SOUND] failed:`, err);
+    return Response.json({ ok: false, error: (err as Error).message }, { status: 500 });
+  }
+}
+
 const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
   "/review/api/me": handleMe,
   "/judge/api/me": handleMe,
@@ -249,6 +292,7 @@ const FRONTEND_EXACT_PAGES = new Set([
   "/manager", "/agent", "/chat", "/store", "/question-lab",
   "/audit/report",
   "/super-admin",
+  "/gamification",
 ]);
 
 // Frontend PREFIX paths — anything starting with these goes to Fresh
@@ -257,6 +301,7 @@ const FRONTEND_PREFIX_PATHS = [
   "/api/admin/", "/api/review/", "/api/judge/",
   "/api/manager/", "/api/agent/", "/api/chat/",
   "/api/super-admin/",
+  "/api/gamification/",
   "/api/store/buy",
   "/styles.css", "/favicon.svg", "/_fresh/",
 ];
@@ -310,6 +355,12 @@ Deno.serve({ port }, (req, info) => {
     if (path === "/audit/api/appeal/upload-recording") {
       console.log(`[ROUTER] ${req.method} ${path} → direct upload-reaudit handler`);
       return handleUploadReauditAppeal(req);
+    }
+
+    // /gamification/api/upload-sound — direct (multipart; @Req broken)
+    if (path === "/gamification/api/upload-sound") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct upload-sound handler`);
+      return handleUploadSound(req);
     }
 
     // Role-scoped "me"/game-state/dashboard — same @Req-broken-via-router.fetch

@@ -3,13 +3,17 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { StatCard } from "../../components/StatCard.tsx";
 import { DonutChart } from "../../components/DonutChart.tsx";
+import { LeaderboardCard, type LeaderboardEntry } from "../../components/LeaderboardCard.tsx";
 import { apiFetch } from "../../lib/api.ts";
 
 export default define.page(async function JudgeDashboard(ctx) {
   const user = ctx.state.user!;
   let stats = { pending: 0, decided: 0 };
+  let leaderboard: LeaderboardEntry[] = [];
   try { stats = await apiFetch<typeof stats>("/judge/api/dashboard", ctx.req); }
   catch (e) { console.error("Judge dashboard error:", e); }
+  try { leaderboard = (await apiFetch<{ entries?: LeaderboardEntry[] }>("/gamification/api/leaderboard", ctx.req)).entries ?? []; }
+  catch (e) { console.error("Leaderboard error:", e); }
 
   return (
     <Layout title="Judge Dashboard" section="judge" user={user} pathname={new URL(ctx.req.url).pathname}>
@@ -24,17 +28,7 @@ export default define.page(async function JudgeDashboard(ctx) {
       </div>
 
       <div class="charts">
-        <div class="panel">
-          <div class="panel-title">Judge Leaderboard</div>
-          <div class="tbl">
-            <table class="data-table">
-              <thead><tr><th>Judge</th><th>Decisions</th><th>Uphold Rate</th><th>Avg Speed</th></tr></thead>
-              <tbody>
-                <tr class="empty-row"><td colSpan={4}>Leaderboard data loads from judge activity tracking</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <LeaderboardCard entries={leaderboard} accent="#14b8a6" />
         <DonutChart
           title="Appeal Progress"
           segments={[

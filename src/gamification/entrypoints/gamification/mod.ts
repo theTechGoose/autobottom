@@ -23,11 +23,25 @@ export class GamificationPageController {
   @Post("pack/delete") @ReturnedType(OkResponse) @BodyType(PackIdRequest)
   async deletePack(@Body() body: { packId: string }) { await gam.deleteSoundPack(ORG(), body.packId); return { ok: true }; }
 
-  @Post("upload-sound") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
-  async uploadSound(@Body() body: GenericBodyRequest) { return { ok: true, message: "upload requires S3 wiring" }; }
+  // upload-sound is multipart so it's direct-dispatched in main.ts (same
+  // pattern as the upload-reaudit appeal). Stub kept for danet routing parity.
+  @Post("upload-sound") @ReturnedType(OkMessageResponse)
+  uploadSound() {
+    return { ok: false, message: "internal — multipart upload is dispatched directly in main.ts" };
+  }
 
   @Post("seed") @ReturnedType(OkMessageResponse)
-  async seedSoundPacks() { return { ok: true, message: "Sound pack seeding requires predefined pack data" }; }
+  async seedSoundPacks() {
+    const { seedDefaultSoundPacks } = await import("@gamification/domain/business/sound-pack-seed/mod.ts");
+    const result = await seedDefaultSoundPacks(ORG(), "system");
+    return { ok: true, message: `seeded ${result.seeded.length}, skipped ${result.skipped.length}` };
+  }
+
+  @Get("leaderboard") @ReturnedType(MessageResponse)
+  async leaderboard() {
+    const { getLeaderboard } = await import("@gamification/domain/business/leaderboard/mod.ts");
+    return { entries: await getLeaderboard(ORG(), 10) };
+  }
 
   @Get("settings") @ReturnedType(GamificationSettingsResponse)
   async getSettings() { return (await gam.getGamificationSettings(ORG())) ?? {}; }

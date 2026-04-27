@@ -2,6 +2,7 @@
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { StatCard } from "../../components/StatCard.tsx";
+import { LeaderboardCard, type LeaderboardEntry } from "../../components/LeaderboardCard.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import { timeAgo } from "../../lib/format.ts";
 
@@ -18,10 +19,13 @@ export default define.page(async function AgentDashboard(ctx) {
   const user = ctx.state.user!;
 
   let data: AgentDashboard = {};
+  let leaderboard: LeaderboardEntry[] = [];
   try {
     const raw = await apiFetch<{ message: string } & AgentDashboard>("/agent/api/dashboard", ctx.req);
     data = raw;
   } catch (e) { console.error("Agent dashboard error:", e); }
+  try { leaderboard = (await apiFetch<{ entries?: LeaderboardEntry[] }>("/gamification/api/leaderboard", ctx.req)).entries ?? []; }
+  catch (e) { console.error("Leaderboard error:", e); }
 
   const audits = data.recentAudits ?? [];
   const weeklyTrend = data.weeklyTrend ?? [];
@@ -56,6 +60,10 @@ export default define.page(async function AgentDashboard(ctx) {
           </div>
         </div>
       )}
+
+      <div style="margin-bottom:16px;">
+        <LeaderboardCard entries={leaderboard} accent="#f97316" />
+      </div>
 
       {/* Recent audits */}
       <div class="tbl">

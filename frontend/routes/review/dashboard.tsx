@@ -3,6 +3,7 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { StatCard } from "../../components/StatCard.tsx";
 import { DonutChart } from "../../components/DonutChart.tsx";
+import { LeaderboardCard, type LeaderboardEntry } from "../../components/LeaderboardCard.tsx";
 import { apiFetch } from "../../lib/api.ts";
 
 interface ReviewerSettings { allowedTypes: ("date-leg" | "package")[] }
@@ -11,12 +12,15 @@ export default define.page(async function ReviewDashboard(ctx) {
   const user = ctx.state.user!;
   let stats = { pending: 0, decided: 0, pendingAuditCount: 0 };
   let settings: ReviewerSettings = { allowedTypes: ["date-leg", "package"] };
+  let leaderboard: LeaderboardEntry[] = [];
   try { stats = await apiFetch<typeof stats>("/review/api/dashboard", ctx.req); }
   catch (e) { console.error("Review dashboard error:", e); }
   try {
     const resp = await apiFetch<ReviewerSettings | { error: string }>(`/review/api/settings?email=${encodeURIComponent(user.email)}`, ctx.req);
     if (!("error" in resp)) settings = resp as ReviewerSettings;
   } catch (e) { console.error("Reviewer settings error:", e); }
+  try { leaderboard = (await apiFetch<{ entries?: LeaderboardEntry[] }>("/gamification/api/leaderboard", ctx.req)).entries ?? []; }
+  catch (e) { console.error("Leaderboard error:", e); }
 
   const total = stats.pending + stats.decided;
   const confirmRate = total > 0 ? Math.round((stats.decided / total) * 100) : 0;
@@ -37,17 +41,7 @@ export default define.page(async function ReviewDashboard(ctx) {
       </div>
 
       <div class="charts">
-        <div class="panel">
-          <div class="panel-title">Leaderboard</div>
-          <div class="tbl">
-            <table class="data-table">
-              <thead><tr><th>Reviewer</th><th>Decisions</th><th>Confirm Rate</th><th>Avg Speed</th></tr></thead>
-              <tbody>
-                <tr class="empty-row"><td colSpan={4}>Leaderboard data loads from reviewer activity tracking</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <LeaderboardCard entries={leaderboard} accent="#8b5cf6" />
         <DonutChart
           title="Queue Progress"
           segments={[

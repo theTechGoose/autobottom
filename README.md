@@ -29,12 +29,16 @@ Production lives on the `main` branch as a monolithic Deno app (~5000-line `main
                   │ └── Fresh handler ─→ frontend/_fresh/server.js │
                   └──────────────────────────────────────┘
                                 │
-            ┌───────────────────┼───────────────────┐
-            ▼                   ▼                   ▼
-       Deno KV            S3 (recordings)      External APIs
-   (chunked findings,     (audio bytes)       AssemblyAI / Groq
-    queues, indexes)                          Pinecone / Postmark
-                                              QStash / Google Sheets
+       ┌────────────────────────┼────────────────────────┐
+       ▼                        ▼                        ▼
+   Firestore               S3 (recordings)         External APIs
+  (Keystone proj,          (audio bytes,           AssemblyAI / Groq
+   collection=autobottom)   SA JSON blobs)         Pinecone / Postmark
+                                                    QStash / Google Sheets
+
+  Deno KV is unused at runtime (post-cutover). Old KV state from main is
+  preserved untouched as a backup; the seeding script copies it to Firestore.
+  Future use: KV-as-cache for hot reads. Not wired today.
 ```
 
 - **`main.ts`** is the single entrypoint. It owns request routing, direct-dispatches anything where danet's `@Req` decorator falls down (broken via `router.fetch`), and then hands the rest off to either danet (backend) or Fresh (frontend).
@@ -121,37 +125,51 @@ test-by-rid / package-by-rid / appeal/different-recording / appeal/upload-record
 
 ---
 
-## KV key schema
+## Data layer (Firestore)
 
-All keys are scoped by `orgId` via `orgKey(orgId, ...)` from `@core/data/deno-kv/mod.ts`.
+All durable state lives in a single Firestore collection (default `autobottom`) inside Keystone's Firebase project. Doc IDs encode `(type, org, ...keyParts)` — see [src/core/data/firestore/mod.ts](src/core/data/firestore/mod.ts).
 
-| Key prefix | Purpose | Notes |
+**Doc-ID scheme:** `{type}__{orgId}__{...keyParts joined by __}`. `safePart()` collapses `/`, `.`, and `__` collisions to `_`.
+
+**Doc body:** `{ _type, _org, _key[], _updatedAt, _expiresAt?, ...payload }`. Object payloads spread into the body; primitives wrap under `_value`. `_expiresAt` provides KV-style TTL semantics — reads filter expired docs.
+
+**Public API** (used by every repository file):
+- `getStored(type, org, ...keyParts)` / `setStored(type, org, key[], value, opts?)`
+- `setStoredIfAbsent(...)` for atomic claim (audit-dedup, badge award)
+- `deleteStored(type, org, ...keyParts)`
+- `listStored(type, org)` / `listStoredWithKeys(type, org)`
+- `listStoredByIdPrefix(prefix)` for cross-org scans (watchdog)
+- `getStoredChunked` / `setStoredChunked` for findings, transcripts (>1MB payloads split across chunk docs)
+
+**Type catalogue:**
+| Type | Purpose | Notes |
 |---|---|---|
-| `audit-finding/<id>` | Finding document | Chunked (`_n` + numbered chunks) |
-| `audit-job/<id>` | Audit job (groups findings) | Plain |
-| `audit-done-idx/<padTs>/<id>` | Time-ordered completion index | Used for date-range queries |
-| `active-tracking/<id>` | In-flight pipeline state | TTL'd via watchdog |
-| `completed-audit-stat/<ts>-<id>` | Completion record for dashboard | All-time |
-| `error-tracking/<ts>-<id>` | Error log | 24h TTL |
-| `retry-tracking/<ts>-<id>` | Retry log | 24h TTL |
-| `review-pending/<fid>/<qIdx>` | Review queue items | Per failed question |
-| `review-active/<reviewer>/<fid>/<qIdx>` | Claimed by reviewer | TTL refreshed |
-| `review-decided/<fid>/<qIdx>` | Saved decision | |
-| `review-audit-pending/<fid>` | Counter (remaining items) | |
-| `review-done/<fid>` | Sentinel (idempotency) | |
-| `judge-pending/<fid>/<qIdx>` | Judge queue items | After agent files appeal |
-| `judge-active/<judge>/<fid>/<qIdx>` | Claimed | |
-| `judge-decided/<fid>/<qIdx>` | Final decision (uphold/overturn) | |
-| `judge-audit-pending/<fid>` | Counter | |
-| `appeal/<fid>` | AppealRecord | One per finding |
-| `manager-queue/<fid>` | Manager remediation item | |
-| `chargeback-entry/<fid>` | Failed-audit money tracking | |
-| `wire-deduction-entry/<fid>` | Partner-audit deductions | |
-| `webhook-config/<kind>` | Per-webhook admin settings | |
-| `email-template/<id>` | Admin-defined email templates | |
-| `pipeline-paused` | Boolean | Drives Pause/Resume button |
-| `org/<orgId>` | Org record (top-level, not org-scoped) | |
-| `email-index/<email>` | `{orgId}` lookup for login | Top-level |
+| `audit-finding` | Finding document | Chunked when >700KB |
+| `audit-job` | Audit job (groups findings) | Plain |
+| `audit-done-idx` | Time-ordered completion index | Key: `[padTs, id]` |
+| `active-tracking` | In-flight pipeline state | |
+| `completed-audit-stat` | Completion record for dashboard | All-time |
+| `error-tracking` / `retry-tracking` | Error / retry logs | 24h TTL |
+| `review-pending` / `review-active` / `review-decided` | Review queue items | |
+| `review-audit-pending` / `review-done` / `review-undo-idx` | Review counters / sentinels / undo | |
+| `judge-pending` / `judge-active` / `judge-decided` / `judge-audit-pending` | Judge queue | |
+| `appeal` | Appeal records | |
+| `manager-queue` | Manager remediation items | |
+| `chargeback-entry` / `wire-deduction-entry` | Money tracking | |
+| `webhook-config` | Per-webhook admin settings | Key = kind |
+| `email-report-config` / `email-template` / `email-report-preview` | Email reports | |
+| `pipeline-config` / `pipeline-paused` / `bad-word-config` / `office-bypass-config` / `bonus-points-config` | Admin singletons | |
+| `audit-dimensions` / `partner-dimensions` / `manager-scope` / `reviewer-config` | Org config | |
+| `gamification-settings` / `sound-pack` / `store-item` / `earned-badge` / `badge-stats` / `game-state` | Gamification | |
+| `qlab-config` / `qlab-question` / `qlab-test` / `qlab-test-run` / `qlab-internal-assignments` / `qlab-partner-assignments` | Question Lab | |
+| `app-event` / `broadcast-event` / `prefab-subscriptions` | Events / SSE | 24h TTL on events |
+| `message` / `unread-count` | Chat | |
+| `org` / `org-by-slug` / `email-index` / `session` | Auth (org="" GLOBAL) | Sessions 24h TTL |
+| `watchdog-active` | Cross-org pipeline watchdog | org="" GLOBAL |
+
+**In-memory fallback:** when `FIREBASE_*` env is unset (tests, local dev without Firebase), every op transparently routes to an in-process Map. Lets `deno task test` and `deno task dev` work without provisioning Firebase.
+
+**One-shot prod-KV → Firestore migration:** [tools/migrate-to-firestore.ts](tools/migrate-to-firestore.ts) runs locally, reads main's prod Deno KV via remote connect URL + access token, decodes both legacy key shapes, and upserts into Firestore. Idempotent — re-run anytime to capture deltas. Read-only against prod KV.
 
 ---
 
@@ -248,9 +266,13 @@ KV-backed `pipeline-paused` flag mirrors the QStash queue pause state. Toggle bu
 | `QSTASH_TOKEN` / `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` | Pipeline queue |
 | `POSTMARK_TOKEN` | Email sending |
 | `QB_REALM` / `QB_USER_TOKEN` | QuickBase API auth |
-| `KV_REPORT_URL` | External report mirror (write-only fire-and-forget) |
+| `KV_REPORT_URL` | External report mirror (deprecated — superseded by Firestore) |
 | `SHEETS_SA_S3_KEY` | S3 object key of Google service-account JSON |
 | `CHARGEBACKS_SHEET_ID` | Target Google Sheets spreadsheet |
+| `FIREBASE_PROJECT_ID` | Keystone Firebase project ID |
+| `FIREBASE_SA_S3_KEY` | S3 object key of Firebase SA JSON |
+| `FIREBASE_COLLECTION` | Firestore collection name (default `autobottom`) |
+| `FIREBASE_DATABASE_ID` | Firestore database ID (default `(default)`) |
 
 ---
 
@@ -291,14 +313,14 @@ Persistent AI memory lives at `~/.claude/projects/-Users-adam-Programming-autobo
 
 ---
 
-## Where things still need work (as of last commit)
+## Where things still need work
 
 | Area | What's left |
 |---|---|
-| Role dashboards | Agent `type` field crash, missing `perfectCount`, real `weeklyTrend`, manager prefab subs UI + backfill button + finding detail, review queue preferences load, auto-refresh everywhere |
-| Question Lab | `updateTest` real impl, `getTestRuns` real lookup, frontend editor (currently shell), question operator types in DTO |
-| Gamification | No `/gamification` frontend, sound pack upload (S3), sound pack seed data, leaderboard endpoints, badge editor UI |
-| Weekly Builder | Page is "coming in Phase 2" placeholder |
-| Misc backend stubs | `/admin/dump-state`, `import-state`, `pull-state`, `setQueue`, `saveGamificationSettings`, `judge`/`review` `saveGamification` |
+| Cutover | Run `tools/migrate-to-firestore.ts` against prod KV, verify dashboards render off Firestore, then merge `refactor/danet-backend` → `main`. Old KV stays untouched as backup. |
+| Scheduled email reports | CRUD wired, but cron firing isn't (only `watchdog` cron registered). |
+| Weekly Builder | Page is "coming in Phase 2" placeholder. |
+| Per-QStash-queue parallelism | `/admin/queues` POST persists intent to Firestore but doesn't update QStash queue config live. |
+| Atomic counter race | `decrementBatchCounter` and `purchaseStoreItem` use simple read-modify-write under Firestore. Acceptable for our concurrency; swap to Firestore field-transform `increment` if we see drift. |
 
 When working on any of these, read the relevant `main:` prod file first and prefer minimal-but-functional Fresh ports over 1:1 inline-HTML ports.

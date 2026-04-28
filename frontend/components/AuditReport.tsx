@@ -128,8 +128,9 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
         </div>
       </div>
 
-      {/* File Appeal — only on finished, non-perfect audits */}
-      {finished && !passed && total > 0 && (
+      {/* File Appeal — show on any finished, non-perfect audit (including Invalid Genie
+          with total=0). Prod shows it whenever passRate < 100; we match. */}
+      {finished && passRate < 100 && (
         <AppealModal
           findingId={id}
           auditorEmail={auditorEmail}
@@ -141,7 +142,7 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
       )}
 
       {/* ===== Score block ===== */}
-      {total > 0 ? (
+      {finished ? (
         <div class="rpt-score">
           <div style={`font-size:72px;font-weight:800;color:${scoreColor(passRate)};font-variant-numeric:tabular-nums;line-height:1;`}>
             {passRate}%
@@ -213,11 +214,11 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
         </div>
       </div>
 
-      {/* ===== Questions ===== */}
-      {total > 0 && (
-        <div class="rpt-section">
-          <div class="rpt-section-title">Questions ({total})</div>
-          {questions.map((q, i) => {
+      {/* ===== Questions — render section even with total=0 (Invalid Genie) ===== */}
+      <div class="rpt-section">
+        <div class="rpt-section-title">Questions ({total})</div>
+        {total > 0 ? (
+          questions.map((q, i) => {
             const yes = isYes(q.answer);
             return (
               <details key={i} class={`rpt-q ${yes ? "pass" : "fail"}`}>
@@ -248,9 +249,11 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
                 </div>
               </details>
             );
-          })}
-        </div>
-      )}
+          })
+        ) : (
+          <div style="text-align:center;padding:32px 20px;color:var(--text-dim);">No questions answered yet</div>
+        )}
+      </div>
     </div>
   );
 }

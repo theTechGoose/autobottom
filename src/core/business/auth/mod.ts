@@ -1,9 +1,13 @@
-/** Auth service: orgs, users, sessions, RBAC. Ported from auth/kv.ts. */
+/** Auth service: orgs, users, sessions, RBAC. Firestore-backed. */
 
-import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import { getStored, setStored, deleteStored, listStoredWithKeys } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 export type { OrgId };
+
+// Globals (org/slug/email indices/sessions) use empty-string org ("") since
+// they're not per-tenant.
+const GLOBAL = "" as OrgId;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,40 +46,27 @@ export async function hashPassword(password: string): Promise<string> {
 // ── Org CRUD ─────────────────────────────────────────────────────────────────
 
 export async function createOrg(name: string, createdBy: string): Promise<OrgId> {
-  const db = await getKv();
   const orgId = crypto.randomUUID();
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const org: OrgRecord = { name, slug, createdAt: Date.now(), createdBy };
-  await db.atomic()
-    .set(["org", orgId], org)
-    .set(["org-by-slug", slug], orgId)
-    .commit();
+  await setStored("org", GLOBAL, [orgId], org);
+  await setStored("org-by-slug", GLOBAL, [slug], { orgId });
   return orgId;
 }
 
 export async function getOrg(orgId: OrgId): Promise<OrgRecord | null> {
-  const db = await getKv();
-  const entry = await db.get<OrgRecord>(["org", orgId]);
-  return entry.value ?? null;
+  return await getStored<OrgRecord>("org", GLOBAL, orgId);
 }
 
 export async function listOrgs(): Promise<Array<OrgRecord & { id: OrgId }>> {
-  const db = await getKv();
-  const orgs: Array<OrgRecord & { id: OrgId }> = [];
-  for await (const entry of db.list<OrgRecord>({ prefix: ["org"] })) {
-    if (entry.key[0] === "org" && entry.key.length === 2) {
-      orgs.push({ ...entry.value, id: entry.key[1] as OrgId });
-    }
-  }
-  return orgs;
+  const rows = await listStoredWithKeys<OrgRecord>("org", GLOBAL);
+  return rows.map(({ key, value }) => ({ ...value, id: String(key[0] ?? "") as OrgId }));
 }
 
 export async function deleteOrg(orgId: OrgId): Promise<void> {
-  const db = await getKv();
   const org = await getOrg(orgId);
-  const ops = db.atomic().delete(["org", orgId]);
-  if (org) ops.delete(["org-by-slug", org.slug]);
-  await ops.commit();
+  await deleteStored("org", GLOBAL, orgId);
+  if (org) await deleteStored("org-by-slug", GLOBAL, org.slug);
 }
 
 // ── User CRUD ────────────────────────────────────────────────────────────────
@@ -83,50 +74,40 @@ export async function deleteOrg(orgId: OrgId): Promise<void> {
 export async function createUser(
   orgId: OrgId, email: string, password: string, role: Role, supervisor?: string,
 ): Promise<void> {
-  const db = await getKv();
   const passwordHash = await hashPassword(password);
   const user: UserRecord = { passwordHash, role, supervisor: supervisor || null, createdAt: Date.now() };
-  await db.atomic()
-    .set([orgId, "user", email], user)
-    .set(["email-index", email], { orgId })
-    .commit();
+  await setStored("user", orgId, [email], user);
+  await setStored("email-index", GLOBAL, [email], { orgId });
 }
 
 export async function getUser(orgId: OrgId, email: string): Promise<UserRecord | null> {
-  const db = await getKv();
-  const entry = await db.get<UserRecord>([orgId, "user", email]);
-  return entry.value ?? null;
+  return await getStored<UserRecord>("user", orgId, email);
 }
 
 export async function deleteUser(orgId: OrgId, email: string): Promise<void> {
-  const db = await getKv();
-  await db.atomic()
-    .delete([orgId, "user", email])
-    .delete(["email-index", email])
-    .commit();
+  await deleteStored("user", orgId, email);
+  await deleteStored("email-index", GLOBAL, email);
 }
 
 export async function verifyUser(email: string, password: string): Promise<AuthContext | null> {
-  const db = await getKv();
-  const indexEntry = await db.get<{ orgId: OrgId }>(["email-index", email]);
-  if (!indexEntry.value) return null;
-  const { orgId } = indexEntry.value;
-  const userEntry = await db.get<UserRecord>([orgId, "user", email]);
-  if (!userEntry.value) return null;
+  const indexEntry = await getStored<{ orgId: OrgId }>("email-index", GLOBAL, email);
+  if (!indexEntry) return null;
+  const { orgId } = indexEntry;
+  const user = await getUser(orgId, email);
+  if (!user) return null;
   const hash = await hashPassword(password);
-  if (hash !== userEntry.value.passwordHash) return null;
-  return { email, orgId, role: userEntry.value.role };
+  if (hash !== user.passwordHash) return null;
+  return { email, orgId, role: user.role };
 }
 
 export async function listUsers(
   orgId: OrgId, filterRole?: Role,
 ): Promise<Array<{ email: string; role: Role; supervisor: string | null; createdAt: number }>> {
-  const db = await getKv();
+  const rows = await listStoredWithKeys<UserRecord>("user", orgId);
   const users: Array<{ email: string; role: Role; supervisor: string | null; createdAt: number }> = [];
-  for await (const entry of db.list<UserRecord>({ prefix: [orgId, "user"] })) {
-    const user = entry.value;
+  for (const { key, value: user } of rows) {
     if (filterRole && user.role !== filterRole) continue;
-    users.push({ email: entry.key[2] as string, role: user.role, supervisor: user.supervisor ?? null, createdAt: user.createdAt });
+    users.push({ email: String(key[0] ?? ""), role: user.role, supervisor: user.supervisor ?? null, createdAt: user.createdAt });
   }
   return users;
 }
@@ -134,11 +115,11 @@ export async function listUsers(
 export async function listUsersBySupervisor(
   orgId: OrgId, supervisor: string,
 ): Promise<Array<{ email: string; role: Role; createdAt: number }>> {
-  const db = await getKv();
+  const rows = await listStoredWithKeys<UserRecord>("user", orgId);
   const users: Array<{ email: string; role: Role; createdAt: number }> = [];
-  for await (const entry of db.list<UserRecord>({ prefix: [orgId, "user"] })) {
-    if (entry.value.supervisor === supervisor) {
-      users.push({ email: entry.key[2] as string, role: entry.value.role, createdAt: entry.value.createdAt });
+  for (const { key, value } of rows) {
+    if (value.supervisor === supervisor) {
+      users.push({ email: String(key[0] ?? ""), role: value.role, createdAt: value.createdAt });
     }
   }
   return users;
@@ -149,24 +130,21 @@ export async function listUsersBySupervisor(
 const SESSION_TTL = 24 * 60 * 60 * 1000;
 
 export async function createSession(auth: AuthContext): Promise<string> {
-  const db = await getKv();
   const token = crypto.randomUUID();
-  await db.set(["session", token], {
+  await setStored("session", GLOBAL, [token], {
     email: auth.email, orgId: auth.orgId, role: auth.role, createdAt: Date.now(),
-  }, { expireIn: SESSION_TTL });
+  }, { expireInMs: SESSION_TTL });
   return token;
 }
 
 export async function getSession(token: string): Promise<AuthContext | null> {
-  const db = await getKv();
-  const entry = await db.get<{ email: string; orgId: OrgId; role: Role }>(["session", token]);
-  if (!entry.value) return null;
-  return { email: entry.value.email, orgId: entry.value.orgId, role: entry.value.role };
+  const v = await getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token);
+  if (!v) return null;
+  return { email: v.email, orgId: v.orgId, role: v.role };
 }
 
 export async function deleteSession(token: string): Promise<void> {
-  const db = await getKv();
-  await db.delete(["session", token]);
+  await deleteStored("session", GLOBAL, token);
 }
 
 // ── Request Auth Helpers ─────────────────────────────────────────────────────

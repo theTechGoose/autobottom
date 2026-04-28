@@ -123,23 +123,9 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
           </div>
           <div style="display:flex;gap:12px;align-items:center;">
             {finished && <AudioPlayer findingId={id} />}
-            <a href="/admin/dashboard" class="sf-btn ghost" style="text-decoration:none;font-size:11px;">&larr; Dashboard</a>
           </div>
         </div>
       </div>
-
-      {/* File Appeal — show on any finished, non-perfect audit (including Invalid Genie
-          with total=0). Prod shows it whenever passRate < 100; we match. */}
-      {finished && passRate < 100 && (
-        <AppealModal
-          findingId={id}
-          auditorEmail={auditorEmail}
-          originalGenieId={String(meta.recordingId ?? "")}
-          failedQuestions={questions
-            .map((q, i) => ({ index: i, header: q.header ?? "Untitled question", answer: q.answer ?? "" }))
-            .filter((q) => !isYes(q.answer))}
-        />
-      )}
 
       {/* ===== Score block ===== */}
       {finished ? (
@@ -157,6 +143,21 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
       ) : (
         <div class="rpt-score">
           <div style="font-size:16px;color:var(--text-dim);padding:40px 0;">Audit not yet complete — score pending</div>
+        </div>
+      )}
+
+      {/* File Appeal — show on any finished, non-perfect audit. Sits below the
+          score block to match prod's layout. */}
+      {finished && passRate < 100 && (
+        <div style="display:flex;justify-content:center;margin:8px 0 24px;">
+          <AppealModal
+            findingId={id}
+            auditorEmail={auditorEmail}
+            originalGenieId={String(meta.recordingId ?? "")}
+            failedQuestions={questions
+              .map((q, i) => ({ index: i, header: q.header ?? "Untitled question", answer: q.answer ?? "" }))
+              .filter((q) => !isYes(q.answer))}
+          />
         </div>
       )}
 

@@ -174,33 +174,35 @@ export class AuditController {
 
   @Post("api/appeal") @ReturnedType(MessageResponse) @Description("File a judge appeal for a completed audit") @BodyType(GenericBodyRequest)
   async fileAppeal(@Body() body: GenericBodyRequest) {
-    const b = body as unknown as { findingId?: string; auditor?: string; comment?: string; appealedQuestions?: unknown };
-    if (!b.findingId || !b.auditor) return { error: "findingId and auditor required" };
-    const raw = Array.isArray(b.appealedQuestions) ? b.appealedQuestions : [];
-    const indexes = raw.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 0);
-    if (!indexes.length) return { error: "appealedQuestions required" };
     try {
+      const b = (body ?? {}) as unknown as { findingId?: string; auditor?: string; comment?: string; appealedQuestions?: unknown };
+      console.log(`📥 [AUDIT] fileAppeal received fid=${b.findingId ?? "<missing>"} auditor=${b.auditor ?? "<missing>"} qs=${Array.isArray(b.appealedQuestions) ? b.appealedQuestions.length : 0}`);
+      if (!b.findingId || !b.auditor) return { ok: false, error: "findingId and auditor required" };
+      const raw = Array.isArray(b.appealedQuestions) ? b.appealedQuestions : [];
+      const indexes = raw.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 0);
+      if (!indexes.length) return { ok: false, error: "appealedQuestions required" };
       const orgId = defaultOrgId() as OrgId;
       return await fileJudgeAppeal(orgId, b.findingId, { auditor: b.auditor, comment: b.comment, appealedQuestions: indexes });
     } catch (e) {
       console.error(`❌ [AUDIT] fileAppeal failed:`, e);
-      return { ok: false, error: (e as Error).message };
+      return { ok: false, error: (e as Error).message ?? String(e) };
     }
   }
 
   @Post("api/appeal/different-recording") @ReturnedType(MessageResponse) @Description("Re-audit a finding with a different/additional genie recording") @BodyType(GenericBodyRequest)
   async reauditWithGenies(@Body() body: GenericBodyRequest) {
-    const b = body as unknown as { findingId?: string; recordingIds?: unknown; comment?: string; agentEmail?: string };
-    if (!b.findingId) return { error: "findingId required" };
-    const rawIds = Array.isArray(b.recordingIds) ? b.recordingIds : [];
-    const ids = rawIds.map((v) => String(v).trim()).filter(Boolean);
-    if (!ids.length) return { error: "recordingIds required" };
     try {
+      const b = (body ?? {}) as unknown as { findingId?: string; recordingIds?: unknown; comment?: string; agentEmail?: string };
+      console.log(`📥 [AUDIT] reauditWithGenies received fid=${b.findingId ?? "<missing>"} ids=${Array.isArray(b.recordingIds) ? (b.recordingIds as unknown[]).length : 0} agent=${b.agentEmail ?? "(none)"}`);
+      if (!b.findingId) return { ok: false, error: "findingId required" };
+      const rawIds = Array.isArray(b.recordingIds) ? b.recordingIds : [];
+      const ids = rawIds.map((v) => String(v).trim()).filter(Boolean);
+      if (!ids.length) return { ok: false, error: "recordingIds required" };
       const orgId = defaultOrgId() as OrgId;
       return await startReauditWithGenies(orgId, b.findingId, { recordingIds: ids, comment: b.comment, agentEmail: b.agentEmail ?? "" });
     } catch (e) {
       console.error(`❌ [AUDIT] reauditWithGenies failed:`, e);
-      return { ok: false, error: (e as Error).message };
+      return { ok: false, error: (e as Error).message ?? String(e) };
     }
   }
 

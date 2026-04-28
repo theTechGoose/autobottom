@@ -275,16 +275,16 @@ export default function AppealModal(props: Props) {
                 <div class="appeal-choice-label is-reaudit">Add 2nd Genie / Different Recording</div>
                 <div class="appeal-choice-desc">Run the audit again using a different or additional recording</div>
               </button>
-              <button
-                type="button"
-                class="appeal-choice-card is-appeal"
-                onClick={() => setView("appeal")}
-                disabled={!failedQuestions.length}
-                title={!failedQuestions.length ? "No failed questions to appeal" : ""}
-              >
-                <div class="appeal-choice-label is-appeal">Appeal Decision</div>
-                <div class="appeal-choice-desc">Submit for a human to review the flagged questions</div>
-              </button>
+              {failedQuestions.length > 0 && (
+                <button
+                  type="button"
+                  class="appeal-choice-card is-appeal"
+                  onClick={() => setView("appeal")}
+                >
+                  <div class="appeal-choice-label is-appeal">Appeal Decision</div>
+                  <div class="appeal-choice-desc">Submit for a human to review the flagged questions</div>
+                </button>
+              )}
             </div>
             <div class="appeal-cancel-row">
               <button type="button" class="appeal-cancel-btn" onClick={() => setView("closed")}>Cancel</button>

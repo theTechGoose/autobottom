@@ -36,12 +36,25 @@ function selfUrl(): string {
   return Deno.env.get("SELF_URL") ?? "http://localhost:3000";
 }
 
+/** Log a step + rethrow with context — narrows down which await failed when
+ *  the controller's outer try/catch is the only thing that catches. */
+async function step<T>(label: string, fid: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`❌ [REAUDIT:${label}] fid=${fid}:`, err);
+    throw new Error(`reaudit ${label} failed: ${(err as Error).message}`);
+  }
+}
+
 export async function startReauditWithGenies(
   orgId: OrgId,
   findingId: string,
   input: ReauditInput,
 ): Promise<ReauditResult> {
-  const old = await getFinding(orgId, findingId);
+  console.log(`🚀 [REAUDIT] start fid=${findingId} ids=${input.recordingIds.join(",")} agent=${input.agentEmail || "(none)"}`);
+
+  const old = await step("getFinding", findingId, () => getFinding(orgId, findingId));
   if (!old) throw new Error(`finding not found: ${findingId}`);
 
   const normalized = input.recordingIds.map((r) => String(r).trim()).filter(Boolean);
@@ -58,7 +71,7 @@ export async function startReauditWithGenies(
   // index so the UI stops showing it. Chunks stay so the report page still
   // renders for anyone following a stale link.
   (old as Record<string, unknown>).reAuditedAt = Date.now();
-  await saveFinding(orgId, old);
+  await step("saveFinding(old, reAuditedAt)", findingId, () => saveFinding(orgId, old));
   cleanupFindingFromIndices(orgId, findingId).catch((err) =>
     console.error(`[REAUDIT] ❌ cleanup old fid=${findingId} failed:`, err));
 
@@ -74,13 +87,14 @@ export async function startReauditWithGenies(
     updateEndpoint: old.updateEndpoint ?? "none",
     recordsToAudit: old.record?.RecordId ? [String(old.record.RecordId)] : [],
   };
-  await saveJob(orgId, newJob);
+  await step("saveJob(new)", findingId, () => saveJob(orgId, newJob));
   if (oldJobId) {
     const existing = await getJob(orgId, oldJobId).catch(() => null);
     if (existing) {
       // Not strictly required — just helps admin see the lineage.
       (existing as Record<string, unknown>).appealedTo = newJobId;
-      await saveJob(orgId, existing).catch(() => {});
+      await saveJob(orgId, existing).catch((err) =>
+        console.error(`[REAUDIT] ⚠️  saveJob(old, appealedTo) non-fatal: ${(err as Error).message}`));
     }
   }
 
@@ -103,14 +117,9 @@ export async function startReauditWithGenies(
     ...(input.comment ? { appealComment: input.comment } : {}),
     startedAt: Date.now(),
   };
-  await saveFinding(orgId, newFinding);
+  await step("saveFinding(new)", newFindingId, () => saveFinding(orgId, newFinding));
 
-  try {
-    await enqueueStep("init", { findingId: newFindingId, orgId });
-  } catch (err) {
-    console.error(`[REAUDIT] ❌ enqueueStep failed new=${newFindingId}:`, err);
-    throw err;
-  }
+  await step("enqueueStep(init)", newFindingId, () => enqueueStep("init", { findingId: newFindingId, orgId }));
 
   const reportUrl = `${selfUrl()}/audit/report?id=${newFindingId}`;
 

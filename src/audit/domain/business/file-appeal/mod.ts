@@ -21,16 +21,27 @@ export interface FileAppealResult {
   queued: number;
 }
 
+async function step<T>(label: string, fid: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`❌ [APPEAL:${label}] fid=${fid}:`, err);
+    throw new Error(`appeal ${label} failed: ${(err as Error).message}`);
+  }
+}
+
 export async function fileJudgeAppeal(
   orgId: OrgId,
   findingId: string,
   input: FileAppealInput,
 ): Promise<FileAppealResult> {
-  const finding = await getFinding(orgId, findingId);
+  console.log(`🚀 [APPEAL] start fid=${findingId} auditor=${input.auditor} qs=${input.appealedQuestions.join(",")}`);
+
+  const finding = await step("getFinding", findingId, () => getFinding(orgId, findingId));
   if (!finding) throw new Error(`finding not found: ${findingId}`);
 
   const all = (finding.answeredQuestions ?? []) as Array<Record<string, unknown>>;
-  if (!all.length) throw new Error(`no answered questions on finding ${findingId}`);
+  if (!all.length) throw new Error(`no answered questions on finding ${findingId} — Invalid Genie audits can only be re-audited, not appealed`);
 
   const wanted = new Set(input.appealedQuestions);
   const questionsToQueue = all
@@ -47,24 +58,24 @@ export async function fileJudgeAppeal(
 
   if (!questionsToQueue.length) throw new Error("no matching failed questions to appeal");
 
-  await populateJudgeQueue(
+  await step("populateJudgeQueue", findingId, () => populateJudgeQueue(
     orgId,
     findingId,
     questionsToQueue,
     "redo",
     finding.recordingIdField as string | undefined,
     finding.recordingId as string | undefined,
-  );
+  ));
 
   const appealedAt = Date.now();
-  await saveAppeal(orgId, {
+  await step("saveAppeal", findingId, () => saveAppeal(orgId, {
     findingId,
     appealedAt,
     status: "pending",
     auditor: input.auditor,
     ...(input.comment ? { comment: input.comment } : {}),
     appealedQuestions: questionsToQueue.map((q) => String(q._origIdx)),
-  });
+  }));
 
   // Persist comment onto the finding so the judge queue can surface it alongside
   // the questions (matches prod behavior — judge sees agent's appeal note).

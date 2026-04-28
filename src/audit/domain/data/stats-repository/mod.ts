@@ -1,7 +1,9 @@
 /** Stats repository — pipeline tracking, audit-done-idx, chargeback/wire entries.
- *  Ported from lib/kv.ts tracking/stats/index/chargeback/wire sections. */
+ *  Firestore-backed via setStored* helpers. */
 
-import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import {
+  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredByIdPrefix,
+} from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -10,26 +12,25 @@ const DAY_MS = 86_400_000;
 
 function padTs(ts: number): string { return String(ts).padStart(15, "0"); }
 
+// Watchdog-active is org-agnostic (one global namespace). Use empty-string org.
+const GLOBAL = "" as OrgId;
+
 // ── Active Tracking ──────────────────────────────────────────────────────────
 
 export async function trackActive(orgId: OrgId, findingId: string, step: string, meta?: Record<string, unknown>): Promise<void> {
-  const db = await getKv();
-  const existing = (await db.get(orgKey(orgId, "active-tracking", findingId))).value as Record<string, unknown> | null;
-  await db.set(orgKey(orgId, "active-tracking", findingId), { ...(existing ?? {}), findingId, step, ts: Date.now(), ...(meta ?? {}) });
-  await db.set(["watchdog-active", findingId], { orgId, findingId, step, ts: Date.now() }, { expireIn: 2 * 60 * 60 * 1000 });
+  const existing = (await getStored<Record<string, unknown>>("active-tracking", orgId, findingId)) ?? {};
+  await setStored("active-tracking", orgId, [findingId], { ...existing, findingId, step, ts: Date.now(), ...(meta ?? {}) });
+  await setStored("watchdog-active", GLOBAL, [findingId], { orgId, findingId, step, ts: Date.now() }, { expireInMs: 2 * 60 * 60 * 1000 });
 }
 
 export async function trackCompleted(orgId: OrgId, findingId: string, meta?: Record<string, unknown>): Promise<void> {
-  const db = await getKv();
-  await db.delete(orgKey(orgId, "active-tracking", findingId));
-  await db.delete(["watchdog-active", findingId]);
-  await db.set(orgKey(orgId, "completed-audit-stat", `${Date.now()}-${findingId}`), { findingId, ts: Date.now(), ...(meta ?? {}) });
+  await deleteStored("active-tracking", orgId, findingId);
+  await deleteStored("watchdog-active", GLOBAL, findingId);
+  await setStored("completed-audit-stat", orgId, [`${Date.now()}-${findingId}`], { findingId, ts: Date.now(), ...(meta ?? {}) });
 }
 
 export async function terminateFinding(orgId: OrgId, findingId: string): Promise<void> {
-  const db = await getKv();
-  const key = orgKey(orgId, "active-tracking", findingId);
-  console.log(`🛑 [TERMINATE] terminateFinding orgId=${orgId} fid=${findingId} key=${JSON.stringify(key)}`);
+  console.log(`🛑 [TERMINATE] terminateFinding orgId=${orgId} fid=${findingId}`);
   try {
     const finding = await getFinding(orgId, findingId);
     if (finding && finding.findingStatus !== "finished") {
@@ -37,17 +38,16 @@ export async function terminateFinding(orgId: OrgId, findingId: string): Promise
       await saveFinding(orgId, finding);
     }
   } catch { /* best-effort */ }
-  await db.delete(key);
-  await db.delete(["watchdog-active", findingId]);
+  await deleteStored("active-tracking", orgId, findingId);
+  await deleteStored("watchdog-active", GLOBAL, findingId);
 }
 
 export async function terminateAllActive(orgId: OrgId): Promise<number> {
-  const db = await getKv();
-  const prefix = orgKey(orgId, "active-tracking");
-  console.log(`🛑 [TERMINATE] terminateAllActive orgId=${orgId} prefix=${JSON.stringify(prefix)}`);
+  console.log(`🛑 [TERMINATE] terminateAllActive orgId=${orgId}`);
+  const rows = await listStoredWithKeys<Record<string, unknown>>("active-tracking", orgId);
   let count = 0;
-  for await (const entry of db.list<Record<string, unknown>>({ prefix })) {
-    const fid = (entry.value.findingId as string) || String(entry.key[entry.key.length - 1]);
+  for (const { key, value } of rows) {
+    const fid = (value.findingId as string) || String(key[key.length - 1]);
     await terminateFinding(orgId, fid);
     count++;
   }
@@ -56,43 +56,31 @@ export async function terminateAllActive(orgId: OrgId): Promise<number> {
 }
 
 export async function trackError(orgId: OrgId, findingId: string, step: string, error: string): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "error-tracking", `${Date.now()}-${findingId}`), { findingId, step, error, ts: Date.now() }, { expireIn: DAY_MS });
+  await setStored("error-tracking", orgId, [`${Date.now()}-${findingId}`], { findingId, step, error, ts: Date.now() }, { expireInMs: DAY_MS });
 }
 
 export async function clearErrors(orgId: OrgId): Promise<number> {
-  const db = await getKv();
-  let count = 0;
-  for await (const entry of db.list({ prefix: orgKey(orgId, "error-tracking") })) {
-    await db.delete(entry.key);
-    count++;
-  }
-  return count;
+  const rows = await listStoredWithKeys<Record<string, unknown>>("error-tracking", orgId);
+  for (const { key } of rows) await deleteStored("error-tracking", orgId, ...key);
+  return rows.length;
 }
 
 export async function trackRetry(orgId: OrgId, findingId: string, step: string, attempt: number): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "retry-tracking", `${Date.now()}-${findingId}`), { findingId, step, attempt, ts: Date.now() }, { expireIn: DAY_MS });
+  await setStored("retry-tracking", orgId, [`${Date.now()}-${findingId}`], { findingId, step, attempt, ts: Date.now() }, { expireInMs: DAY_MS });
 }
 
 // ── Completed Stats ──────────────────────────────────────────────────────────
 
 export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<Record<string, unknown>[]> {
-  const db = await getKv();
-  const results: Record<string, unknown>[] = [];
-  let count = 0;
-  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "completed-audit-stat") })) {
-    results.push(entry.value);
-    if (++count >= limit) break;
-  }
-  return results;
+  const all = await listStored<Record<string, unknown>>("completed-audit-stat", orgId);
+  return all.slice(0, limit);
 }
 
 export async function updateCompletedStatScore(orgId: OrgId, findingId: string, score: number): Promise<void> {
-  const db = await getKv();
-  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "completed-audit-stat") })) {
-    if (entry.value.findingId === findingId) {
-      await db.set(entry.key, { ...entry.value, score });
+  const rows = await listStoredWithKeys<Record<string, unknown>>("completed-audit-stat", orgId);
+  for (const { key, value } of rows) {
+    if (value.findingId === findingId) {
+      await setStored("completed-audit-stat", orgId, key, { ...value, score });
       return;
     }
   }
@@ -100,109 +88,84 @@ export async function updateCompletedStatScore(orgId: OrgId, findingId: string, 
 
 /** Delete every completed-audit-stat entry matching the given findingId. */
 export async function deleteCompletedStat(orgId: OrgId, findingId: string): Promise<void> {
-  const db = await getKv();
-  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "completed-audit-stat") })) {
-    if (entry.value.findingId === findingId) {
-      await db.delete(entry.key);
-    }
+  const rows = await listStoredWithKeys<Record<string, unknown>>("completed-audit-stat", orgId);
+  for (const { key, value } of rows) {
+    if (value.findingId === findingId) await deleteStored("completed-audit-stat", orgId, ...key);
   }
 }
 
 // ── Audit Done Index ─────────────────────────────────────────────────────────
 
 export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEntry): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "audit-done-idx", padTs(entry.completedAt), entry.findingId), entry);
+  await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], entry);
 }
 
 export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number): Promise<AuditDoneIndexEntry[]> {
-  const db = await getKv();
-  const start = orgKey(orgId, "audit-done-idx", padTs(from));
-  const end = orgKey(orgId, "audit-done-idx", padTs(to + 1));
-  const entries: AuditDoneIndexEntry[] = [];
-  for await (const entry of db.list<AuditDoneIndexEntry>({ start, end })) {
-    if (entry.value) entries.push(entry.value);
-  }
-  return entries;
+  // Range query via doc-ID prefix — encodeDocId produces sortable IDs because
+  // padTs zero-pads to 15 digits. We list everything with the type+org prefix
+  // and filter by completedAt range. Acceptable for our typical org sizes.
+  const all = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId);
+  return all.filter((e) => e.completedAt >= from && e.completedAt <= to);
 }
 
 export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
-  const db = await getKv();
-  const matches: AuditDoneIndexEntry[] = [];
-  for await (const entry of db.list<AuditDoneIndexEntry>({ prefix: orgKey(orgId, "audit-done-idx") })) {
-    if (entry.value?.recordId === recordId) matches.push(entry.value);
-  }
-  return matches.sort((a, b) => b.completedAt - a.completedAt);
+  const all = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId);
+  return all.filter((e) => e.recordId === recordId).sort((a, b) => b.completedAt - a.completedAt);
 }
 
 export async function deleteAuditDoneIndexEntry(orgId: OrgId, findingId: string, completedAt: number): Promise<void> {
-  const db = await getKv();
-  await db.delete(orgKey(orgId, "audit-done-idx", padTs(completedAt), findingId));
+  await deleteStored("audit-done-idx", orgId, padTs(completedAt), findingId);
 }
 
 // ── Chargeback Entries ───────────────────────────────────────────────────────
 
 export async function saveChargebackEntry(orgId: OrgId, entry: ChargebackEntry): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "chargeback-entry", entry.findingId), entry);
+  await setStored("chargeback-entry", orgId, [entry.findingId], entry);
 }
 
 export async function deleteChargebackEntry(orgId: OrgId, findingId: string): Promise<void> {
-  const db = await getKv();
-  await db.delete(orgKey(orgId, "chargeback-entry", findingId));
+  await deleteStored("chargeback-entry", orgId, findingId);
 }
 
 export async function getChargebackEntry(orgId: OrgId, findingId: string): Promise<ChargebackEntry | null> {
-  const db = await getKv();
-  return (await db.get<ChargebackEntry>(orgKey(orgId, "chargeback-entry", findingId))).value;
+  return await getStored<ChargebackEntry>("chargeback-entry", orgId, findingId);
 }
 
 export async function getChargebackEntries(orgId: OrgId, since: number, until: number): Promise<ChargebackEntry[]> {
-  const db = await getKv();
-  const items: ChargebackEntry[] = [];
-  for await (const r of db.list<ChargebackEntry>({ prefix: orgKey(orgId, "chargeback-entry") })) {
-    if (r.value.ts >= since && r.value.ts <= until) items.push(r.value);
-  }
-  return items;
+  const all = await listStored<ChargebackEntry>("chargeback-entry", orgId);
+  return all.filter((e) => e.ts >= since && e.ts <= until);
 }
 
 // ── Wire Deduction Entries ───────────────────────────────────────────────────
 
 export async function saveWireDeductionEntry(orgId: OrgId, entry: WireDeductionEntry): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "wire-deduction-entry", entry.findingId), entry);
+  await setStored("wire-deduction-entry", orgId, [entry.findingId], entry);
 }
 
 export async function deleteWireDeductionEntry(orgId: OrgId, findingId: string): Promise<void> {
-  const db = await getKv();
-  await db.delete(orgKey(orgId, "wire-deduction-entry", findingId));
+  await deleteStored("wire-deduction-entry", orgId, findingId);
 }
 
 export async function getWireDeductionEntry(orgId: OrgId, findingId: string): Promise<WireDeductionEntry | null> {
-  const db = await getKv();
-  return (await db.get<WireDeductionEntry>(orgKey(orgId, "wire-deduction-entry", findingId))).value;
+  return await getStored<WireDeductionEntry>("wire-deduction-entry", orgId, findingId);
 }
 
 export async function getWireDeductionEntries(orgId: OrgId, since: number, until: number): Promise<WireDeductionEntry[]> {
-  const db = await getKv();
-  const items: WireDeductionEntry[] = [];
-  for await (const r of db.list<WireDeductionEntry>({ prefix: orgKey(orgId, "wire-deduction-entry") })) {
-    if (r.value.ts >= since && r.value.ts <= until) items.push(r.value);
-  }
-  return items;
+  const all = await listStored<WireDeductionEntry>("wire-deduction-entry", orgId);
+  return all.filter((e) => e.ts >= since && e.ts <= until);
 }
 
 // ── Stuck Findings (watchdog) ────────────────────────────────────────────────
 
 export async function getStuckFindings(thresholdMs = 15 * 60 * 1000): Promise<Array<{ orgId: string; findingId: string; step: string; ts: number; ageMs: number }>> {
-  const db = await getKv();
   const now = Date.now();
   const stuck: Array<{ orgId: string; findingId: string; step: string; ts: number; ageMs: number }> = [];
-  for await (const entry of db.list<{ orgId: string; findingId: string; step: string; ts: number }>({ prefix: ["watchdog-active"] })) {
-    const v = entry.value;
-    if (!v?.ts) continue;
-    const ageMs = now - v.ts;
-    if (ageMs > thresholdMs) stuck.push({ ...v, ageMs });
+  // Watchdog-active uses GLOBAL ("") as org. List all docs of that type.
+  const rows = await listStoredByIdPrefix<{ orgId: string; findingId: string; step: string; ts: number }>("watchdog-active__");
+  for (const { value } of rows) {
+    if (!value?.ts) continue;
+    const ageMs = now - value.ts;
+    if (ageMs > thresholdMs) stuck.push({ ...value, ageMs });
   }
   return stuck;
 }
@@ -218,44 +181,34 @@ export async function getStats(orgId: OrgId): Promise<{
   errorsTs: number[];
   retriesTs: number[];
 }> {
-  const db = await getKv();
   const now = Date.now();
   const cutoff = now - DAY_MS;
 
-  const activePrefix = orgKey(orgId, "active-tracking");
-  const active: Record<string, unknown>[] = [];
-  for await (const entry of db.list<Record<string, unknown>>({ prefix: activePrefix })) {
-    const v = entry.value;
-    const findingId = (v.findingId as string) || String(entry.key[entry.key.length - 1]);
-    active.push({ ...v, findingId });
-  }
-  console.log(`📊 [STATS] getStats orgId=${orgId} prefix=${JSON.stringify(activePrefix)} activeCount=${active.length}`);
+  const activeRows = await listStoredWithKeys<Record<string, unknown>>("active-tracking", orgId);
+  const active: Record<string, unknown>[] = activeRows.map(({ key, value }) => ({
+    ...value,
+    findingId: (value.findingId as string) || String(key[key.length - 1]),
+  }));
 
-  // Completed audits — count all-time, but only gather timestamps within 24h
-  // for the pipeline activity chart.
-  let completedCount = 0;
+  const completed = await listStored<Record<string, unknown>>("completed-audit-stat", orgId);
+  const completedCount = completed.length;
   const completedTs: number[] = [];
-  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "completed-audit-stat") })) {
-    completedCount++;
-    const ts = Number(entry.value?.ts ?? 0);
+  for (const v of completed) {
+    const ts = Number(v?.ts ?? 0);
     if (ts >= cutoff) completedTs.push(ts);
   }
 
-  // Errors + retries already have 24h TTL at write time, but filter anyway
-  // so the chart never shows a bucket older than 24h if something slips.
-  const errors: Record<string, unknown>[] = [];
+  const errors = await listStored<Record<string, unknown>>("error-tracking", orgId);
   const errorsTs: number[] = [];
-  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "error-tracking") })) {
-    errors.push(entry.value);
-    const ts = Number(entry.value?.ts ?? 0);
+  for (const v of errors) {
+    const ts = Number(v?.ts ?? 0);
     if (ts >= cutoff) errorsTs.push(ts);
   }
 
-  const retries: Record<string, unknown>[] = [];
+  const retries = await listStored<Record<string, unknown>>("retry-tracking", orgId);
   const retriesTs: number[] = [];
-  for await (const entry of db.list<Record<string, unknown>>({ prefix: orgKey(orgId, "retry-tracking") })) {
-    retries.push(entry.value);
-    const ts = Number(entry.value?.ts ?? 0);
+  for (const v of retries) {
+    const ts = Number(v?.ts ?? 0);
     if (ts >= cutoff) retriesTs.push(ts);
   }
 

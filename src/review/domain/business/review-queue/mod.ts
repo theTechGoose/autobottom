@@ -1,11 +1,12 @@
 /** Review queue service — FIFO ordering, claim/decide/back logic.
- *  Pure business logic for queue operations. KV interactions via getKv().
+ *  Pure business logic for queue operations. Firestore-backed via setStored*.
  *
- *  Ported from production main:review/kv.ts — claimNextItem, undoDecision,
- *  adminFlipFinding, previewFinding, backfillFromFinished. The `*Legacy`
- *  aliases at the bottom preserve the controllers' dynamic-import call sites. */
+ *  Atomic ops in main are downgraded to read-modify-write — race windows are
+ *  acceptable given typical reviewer concurrency and idempotent finalize. */
 
-import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import {
+  getStored, setStored, deleteStored, listStoredWithKeys,
+} from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewItem, ReviewDecision } from "@core/dto/types.ts";
 import {
@@ -23,7 +24,7 @@ import {
 } from "@audit/domain/data/stats-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 
-const ACTIVE_TTL = 30 * 60 * 1000; // 30 minutes
+const ACTIVE_TTL = 30 * 60 * 1000;
 
 /** Review buffer item — ReviewItem enriched with audit-context fields. */
 export interface BufferItem extends ReviewItem {
@@ -42,14 +43,12 @@ export async function populateReviewQueue(
   recordMeta?: ReviewItem["recordMeta"],
   completedAt?: number,
 ): Promise<void> {
-  const db = await getKv();
   const noAnswers = answeredQuestions
     .map((q, i) => ({ ...q, index: i }))
     .filter((q) => q.answer === "No");
 
   if (noAnswers.length === 0) return;
 
-  const atomic = db.atomic();
   for (const [reviewIdx, q] of noAnswers.entries()) {
     const item: ReviewItem = {
       findingId,
@@ -66,24 +65,19 @@ export async function populateReviewQueue(
       ...(recordId ? { recordId } : {}),
       ...(recordMeta ? { recordMeta } : {}),
     };
-    atomic.set(orgKey(orgId, "review-pending", findingId, q.index), item);
+    await setStored("review-pending", orgId, [findingId, q.index], item);
   }
-  atomic.set(orgKey(orgId, "review-audit-pending", findingId), noAnswers.length);
-  await atomic.commit();
+  await setStored("review-audit-pending", orgId, [findingId], noAnswers.length);
   console.log(`✅ [REVIEW] ${findingId}: Queued ${noAnswers.length} items for review`);
 }
 
-// ── FIFO selection (pure logic) ──────────────────────────────────────────────
+// ── FIFO selection (pure) ───────────────────────────────────────────────────
 
 export interface PendingItem<T = ReviewItem> {
-  key: Deno.KvKey;
+  key: string[];
   value: T;
 }
 
-/**
- * Select the oldest finding from pending items. Pure function.
- * Items without completedAt get ts=0 (highest priority — drain first).
- */
 export function selectOldestFinding(
   items: Array<{ value: ReviewItem }>,
   allowedTypes?: string[],
@@ -117,19 +111,18 @@ export function selectOldestFinding(
   return { targetFindingId, indices };
 }
 
-// ── Claim next item — port of main:review/kv.ts:183-326 ──────────────────────
+// ── Claim Next Item ─────────────────────────────────────────────────────────
 
 async function enrichItem(
   orgId: OrgId,
   item: ReviewItem,
   sharedTranscript?: BufferItem["transcript"],
 ): Promise<BufferItem> {
-  const db = await getKv();
   const transcript = sharedTranscript !== undefined
     ? sharedTranscript
     : await getTranscript(orgId, item.findingId);
-  const counterEntry = await db.get<number>(orgKey(orgId, "review-audit-pending", item.findingId));
-  return { ...item, auditRemaining: counterEntry.value ?? 0, transcript };
+  const counterVal = (await getStored<number>("review-audit-pending", orgId, item.findingId)) ?? 0;
+  return { ...item, auditRemaining: counterVal, transcript };
 }
 
 export async function claimNextItem(
@@ -137,88 +130,71 @@ export async function claimNextItem(
   reviewer: string,
   allowedTypes?: string[],
 ): Promise<{ buffer: BufferItem[]; remaining: number }> {
-  const db = await getKv();
   const now = Date.now();
 
   // 1. Sweep expired active claims from OTHER reviewers back to pending
-  const allActiveIter = db.list<ReviewItem & { claimedAt: number }>({
-    prefix: orgKey(orgId, "review-active"),
-  });
-  for await (const entry of allActiveIter) {
-    const val = entry.value;
-    const keyParts = entry.key as Deno.KvKeyPart[];
-    if (keyParts[2] === reviewer) continue;
-    if (val.claimedAt && (now - val.claimedAt) > ACTIVE_TTL) {
-      const pendingKey = orgKey(orgId, "review-pending", val.findingId, val.questionIndex);
-      const { claimedAt: _, ...baseItem } = val;
-      const res = await db.atomic()
-        .check(entry)
-        .delete(entry.key)
-        .set(pendingKey, baseItem as ReviewItem)
-        .commit();
-      if (res.ok) {
-        console.log(`[REVIEW] Reclaimed expired active item ${val.findingId}/${val.questionIndex}`);
-      }
+  const allActive = await listStoredWithKeys<ReviewItem & { claimedAt: number }>("review-active", orgId);
+  for (const { key, value } of allActive) {
+    if (key[0] === reviewer) continue;
+    if (value.claimedAt && (now - value.claimedAt) > ACTIVE_TTL) {
+      const { claimedAt: _, ...baseItem } = value;
+      await setStored("review-pending", orgId, [value.findingId, value.questionIndex], baseItem as ReviewItem);
+      await deleteStored("review-active", orgId, ...key);
+      console.log(`[REVIEW] Reclaimed expired active item ${value.findingId}/${value.questionIndex}`);
     }
   }
 
   // 2. Collect existing active items for this reviewer
-  const activeItems: ReviewItem[] = [];
-  const activeIter = db.list<ReviewItem & { claimedAt: number }>({
-    prefix: orgKey(orgId, "review-active", reviewer),
-  });
-  for await (const entry of activeIter) {
-    activeItems.push(entry.value);
-  }
+  const myActive: ReviewItem[] = allActive
+    .filter(({ key }) => key[0] === reviewer)
+    .map(({ value }) => {
+      const { claimedAt: _, ...rest } = value;
+      return rest as ReviewItem;
+    });
 
-  // 3. Legacy migration: if active items span multiple findings, keep the one with most items
-  if (activeItems.length > 0) {
+  // 3. Legacy migration: if active items span multiple findings, keep the largest cluster
+  if (myActive.length > 0) {
     const findingCounts = new Map<string, number>();
-    for (const item of activeItems) findingCounts.set(item.findingId, (findingCounts.get(item.findingId) ?? 0) + 1);
+    for (const item of myActive) findingCounts.set(item.findingId, (findingCounts.get(item.findingId) ?? 0) + 1);
     if (findingCounts.size > 1) {
       let bestFid = ""; let bestCount = 0;
       for (const [fid, count] of findingCounts) { if (count > bestCount) { bestFid = fid; bestCount = count; } }
-      for (const item of activeItems) {
+      for (const item of myActive) {
         if (item.findingId !== bestFid) {
-          const activeKey = orgKey(orgId, "review-active", reviewer, item.findingId, item.questionIndex);
-          const pendingKey = orgKey(orgId, "review-pending", item.findingId, item.questionIndex);
-          const entry = await db.get<ReviewItem & { claimedAt: number }>(activeKey);
-          if (entry.value) {
-            const { claimedAt: _, ...baseItem } = entry.value;
-            await db.atomic().check(entry).delete(activeKey).set(pendingKey, baseItem as ReviewItem).commit();
-          }
+          await setStored("review-pending", orgId, [item.findingId, item.questionIndex], item);
+          await deleteStored("review-active", orgId, reviewer, item.findingId, item.questionIndex);
         }
       }
-      const kept = activeItems.filter((i) => i.findingId === bestFid);
-      activeItems.length = 0;
-      activeItems.push(...kept);
+      const kept = myActive.filter((i) => i.findingId === bestFid);
+      myActive.length = 0;
+      myActive.push(...kept);
       console.log(`[REVIEW] Legacy migration: kept ${kept.length} items for ${bestFid}, released rest`);
     }
   }
 
   // 4. If reviewer already has active items, return them (locked into this audit)
-  if (activeItems.length > 0) {
-    activeItems.sort((a, b) => a.reviewIndex - b.reviewIndex);
-    const transcript = await getTranscript(orgId, activeItems[0].findingId);
+  if (myActive.length > 0) {
+    myActive.sort((a, b) => a.reviewIndex - b.reviewIndex);
+    const transcript = await getTranscript(orgId, myActive[0].findingId);
     const buffer: BufferItem[] = [];
-    for (const item of activeItems) buffer.push(await enrichItem(orgId, item, transcript));
+    for (const item of myActive) buffer.push(await enrichItem(orgId, item, transcript));
     return { buffer, remaining: 0 };
   }
 
   // 5. No active items — claim ALL pending items for the OLDEST audit (FIFO by completedAt)
+  const allPending = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
   const findingTimestamps = new Map<string, number>();
-  const pendingByFinding = new Map<string, Deno.KvEntry<ReviewItem>[]>();
-  const pendingIter = db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") });
-  for await (const entry of pendingIter) {
+  const pendingByFinding = new Map<string, Array<{ key: string[]; value: ReviewItem }>>();
+  for (const row of allPending) {
     if (allowedTypes) {
-      const isPackage = entry.value.recordingIdField === "GenieNumber";
+      const isPackage = row.value.recordingIdField === "GenieNumber";
       const itemType = isPackage ? "package" : "date-leg";
       if (!allowedTypes.includes(itemType)) continue;
     }
-    const fid = entry.value.findingId;
+    const fid = row.value.findingId;
     if (!pendingByFinding.has(fid)) pendingByFinding.set(fid, []);
-    pendingByFinding.get(fid)!.push(entry);
-    const ts = entry.value.completedAt ?? 0;
+    pendingByFinding.get(fid)!.push(row);
+    const ts = row.value.completedAt ?? 0;
     if (!findingTimestamps.has(fid) || ts < findingTimestamps.get(fid)!) {
       findingTimestamps.set(fid, ts);
     }
@@ -232,22 +208,12 @@ export async function claimNextItem(
   const pendingEntries = targetFindingId ? (pendingByFinding.get(targetFindingId) ?? []) : [];
   if (pendingEntries.length === 0) return { buffer: [], remaining: 0 };
 
-  // Claim in batches of 3 (each claim = check + delete + set = 3 mutations, KV atomic max 10)
+  // Non-atomic claim. Race: another reviewer could grab the same item. Acceptable.
   const claimed: ReviewItem[] = [];
-  for (let i = 0; i < pendingEntries.length; i += 3) {
-    const batch = pendingEntries.slice(i, i + 3);
-    let atomic = db.atomic();
-    for (const entry of batch) {
-      atomic = atomic
-        .check(entry)
-        .delete(entry.key)
-        .set(
-          orgKey(orgId, "review-active", reviewer, entry.value.findingId, entry.value.questionIndex),
-          { ...entry.value, claimedAt: now },
-        );
-    }
-    const res = await atomic.commit();
-    if (res.ok) for (const entry of batch) claimed.push(entry.value);
+  for (const { key, value } of pendingEntries) {
+    await setStored("review-active", orgId, [reviewer, value.findingId, value.questionIndex], { ...value, claimedAt: now });
+    await deleteStored("review-pending", orgId, ...key);
+    claimed.push(value);
   }
 
   if (claimed.length === 0) return { buffer: [], remaining: 0 };
@@ -260,7 +226,7 @@ export async function claimNextItem(
   return { buffer, remaining: 0 };
 }
 
-// ── Decision recording — stores full ReviewItem so undoDecision can restore ──
+// ── Decision Recording ──────────────────────────────────────────────────────
 
 export async function recordDecision(
   orgId: OrgId,
@@ -269,24 +235,18 @@ export async function recordDecision(
   decision: "confirm" | "flip",
   reviewer: string,
 ): Promise<{ remaining: number; auditComplete: boolean }> {
-  const db = await getKv();
   const now = Date.now();
 
   // Load full item from active so the decided record includes header/populated/etc.
-  // Fallback to pending if the undo path restored it there.
-  const activeKey = orgKey(orgId, "review-active", reviewer, findingId, questionIndex);
-  const pendingKey = orgKey(orgId, "review-pending", findingId, questionIndex);
   let baseItem: ReviewItem | null = null;
-  const activeEntry = await db.get<ReviewItem & { claimedAt?: number }>(activeKey);
-  if (activeEntry.value) {
-    const { claimedAt: _, ...rest } = activeEntry.value;
+  const activeVal = await getStored<ReviewItem & { claimedAt?: number }>("review-active", orgId, reviewer, findingId, questionIndex);
+  if (activeVal) {
+    const { claimedAt: _, ...rest } = activeVal;
     baseItem = rest as ReviewItem;
   } else {
-    const pendingEntry = await db.get<ReviewItem>(pendingKey);
-    if (pendingEntry.value) baseItem = pendingEntry.value;
+    baseItem = await getStored<ReviewItem>("review-pending", orgId, findingId, questionIndex);
   }
   if (!baseItem) {
-    // Last-resort minimal record — preserves backwards compatibility
     baseItem = {
       findingId, questionIndex,
       reviewIndex: 0, totalForFinding: 0,
@@ -295,60 +255,43 @@ export async function recordDecision(
   }
 
   const decisionRecord: ReviewDecision = { ...baseItem, decision, reviewer, decidedAt: now };
-  await db.set(orgKey(orgId, "review-decided", findingId, questionIndex), decisionRecord);
+  await setStored("review-decided", orgId, [findingId, questionIndex], decisionRecord);
 
-  // Undo index — keyed by (reverse-chronological) so listing gives newest first
-  const undoIdxKey = orgKey(
-    orgId, "review-undo-idx", reviewer,
-    String(9_000_000_000_000_000 - now).padStart(16, "0"),
-  );
-  await db.set(undoIdxKey, { findingId, questionIndex });
+  // Undo index — keyed by reverse-chronological so listing gives newest first
+  const undoIdxKey = String(9_000_000_000_000_000 - now).padStart(16, "0");
+  await setStored("review-undo-idx", orgId, [reviewer, undoIdxKey], { findingId, questionIndex });
 
-  // Remove from active
-  await db.delete(activeKey);
+  await deleteStored("review-active", orgId, reviewer, findingId, questionIndex);
 
-  // Decrement pending counter
-  const counterKey = orgKey(orgId, "review-audit-pending", findingId);
-  const counter = await db.get<number>(counterKey);
-  const newCount = Math.max(0, (counter.value ?? 1) - 1);
-  await db.set(counterKey, newCount);
+  const counter = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 1;
+  const newCount = Math.max(0, counter - 1);
+  await setStored("review-audit-pending", orgId, [findingId], newCount);
 
   console.log(`✅ [REVIEW] ${findingId}/${questionIndex}: ${decision} by ${reviewer} (${newCount} remaining)`);
 
-  // Client sees `auditComplete: true` when all items for this finding have
-  // been decided — but we DON'T finalize here. Finalization (score recalc +
-  // email webhook) requires an explicit /review/api/finalize call after the
-  // user confirms via the "type YES" modal.
   return { remaining: newCount, auditComplete: newCount <= 0 };
 }
 
-// ── Finalize reviewed audit — port of main:review/kv.ts:postCorrectedAudit ───
-/** Runs when the last review decision for a finding is recorded.
- *  Applies flipped answers (No → Yes), recomputes the score, updates the
- *  audit-done index + completed-stat score, and fires the terminate webhook
- *  (which sends the audit-complete email). Idempotent via `review-done`
- *  sentinel — a double-call is a no-op. */
+// ── Finalize Reviewed Audit ─────────────────────────────────────────────────
+
 export async function finalizeReviewedAudit(
   orgId: OrgId,
   findingId: string,
   reviewer: string,
 ): Promise<void> {
-  const db = await getKv();
-
-  // Idempotency guard — don't reprocess a finding that's already finalized.
-  const doneKey = orgKey(orgId, "review-done", findingId);
-  const existingDone = await db.get(doneKey);
-  if (existingDone.value) {
+  // Idempotency guard
+  const existingDone = await getStored("review-done", orgId, findingId);
+  if (existingDone) {
     console.log(`⏭️  [REVIEW] ${findingId}: already finalized, skipping`);
     return;
   }
 
-  // Collect all decisions for this finding.
+  // Collect all decisions for this finding
+  const allDecided = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
   const decisions = new Map<number, ReviewDecision>();
-  for await (const entry of db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided", findingId) })) {
-    if (entry.value?.questionIndex != null) {
-      decisions.set(entry.value.questionIndex, entry.value);
-    }
+  for (const { key, value } of allDecided) {
+    if (key[0] !== findingId) continue;
+    if (value?.questionIndex != null) decisions.set(value.questionIndex, value);
   }
   if (decisions.size === 0) {
     console.warn(`⚠️  [REVIEW] ${findingId}: no decisions found at finalize — skipping`);
@@ -356,9 +299,7 @@ export async function finalizeReviewedAudit(
   }
 
   // Findings are chunk-stored; under a duplicate-call window the first read
-  // can land between chunk writes and return null while the chunked write is
-  // still in-flight. Retry a few times before giving up — the `review-done`
-  // sentinel above already gates true duplicates.
+  // can land between chunk writes. Retry a few times.
   let finding = await getFinding(orgId, findingId);
   for (let attempt = 1; attempt <= 3 && !finding; attempt++) {
     await new Promise((r) => setTimeout(r, 200 * attempt));
@@ -369,7 +310,6 @@ export async function finalizeReviewedAudit(
     return;
   }
 
-  // Apply flips + confirm metadata to the finding's answeredQuestions.
   const answered: Array<Record<string, unknown>> = Array.isArray(finding.answeredQuestions)
     ? [...finding.answeredQuestions]
     : [];
@@ -399,10 +339,8 @@ export async function finalizeReviewedAudit(
   };
   await saveFinding(orgId, correctedFinding);
 
-  // review-done sentinel — marks this audit as reviewed for dashboards/queue filters.
-  await db.set(doneKey, { reviewedAt: new Date(reviewedAt).toISOString(), reviewScore, reviewedBy: reviewer });
+  await setStored("review-done", orgId, [findingId], { reviewedAt: new Date(reviewedAt).toISOString(), reviewScore, reviewedBy: reviewer });
 
-  // Audit-done index — update completed flag + score.
   await writeAuditDoneIndex(orgId, {
     findingId,
     completedAt: reviewedAt,
@@ -419,8 +357,6 @@ export async function finalizeReviewedAudit(
 
   console.log(`✅ [REVIEW] ${findingId}: finalized score=${reviewScore}% (${yeses}/${total} yes) reviewer=${reviewer}`);
 
-  // Fire the terminate webhook — the registered "terminate" handler sends the
-  // audit-complete email to the configured recipients.
   await fireWebhook(orgId, "terminate", {
     findingId,
     finding: correctedFinding,
@@ -431,63 +367,59 @@ export async function finalizeReviewedAudit(
   });
 }
 
-// ── Undo decision — port of main:review/kv.ts:452-550 ────────────────────────
+// ── Undo Decision ───────────────────────────────────────────────────────────
 
 export async function undoDecision(
   orgId: OrgId,
   reviewer: string,
   allowedTypes?: string[],
 ): Promise<{ buffer: BufferItem[]; remaining: number }> {
-  const db = await getKv();
-
   // Determine current audit findingId from active items
+  const myActive = await listStoredWithKeys<ReviewItem & { claimedAt: number }>("review-active", orgId);
   let currentFindingId: string | null = null;
-  const activeIter = db.list<ReviewItem & { claimedAt: number }>({
-    prefix: orgKey(orgId, "review-active", reviewer),
-  });
-  for await (const entry of activeIter) {
-    currentFindingId = entry.value.findingId;
-    break;
+  for (const { key, value } of myActive) {
+    if (key[0] === reviewer) { currentFindingId = value.findingId; break; }
   }
 
-  // Walk undo index newest-first looking for a decided entry that's still eligible
-  let decidedEntry: Deno.KvEntry<ReviewDecision> | null = null;
-  let undoIdxEntryKey: Deno.KvKey | null = null;
-  const idxIter = db.list<{ findingId: string; questionIndex: number }>(
-    { prefix: orgKey(orgId, "review-undo-idx", reviewer) },
-    { limit: 20 },
-  );
-  for await (const idxEntry of idxIter) {
-    const { findingId: fid, questionIndex: qIdx } = idxEntry.value;
+  // Walk undo index newest-first looking for an eligible decided entry
+  const undoRows = await listStoredWithKeys<{ findingId: string; questionIndex: number }>("review-undo-idx", orgId);
+  const myUndo = undoRows.filter(({ key }) => key[0] === reviewer)
+    // Keys in this index are reverse-chronological strings; sort ascending → newest first
+    .sort((a, b) => String(a.key[1]).localeCompare(String(b.key[1])));
+
+  let chosenDecided: { key: string[]; value: ReviewDecision } | null = null;
+  let chosenUndoIdx: string[] | null = null;
+  for (const { key, value } of myUndo.slice(0, 20)) {
+    const { findingId: fid, questionIndex: qIdx } = value;
     if (currentFindingId && fid !== currentFindingId) continue;
-    const counterCheck = await db.get<number>(orgKey(orgId, "review-audit-pending", fid));
-    if (counterCheck.value === null) continue;
-    const candidate = await db.get<ReviewDecision>(orgKey(orgId, "review-decided", fid, qIdx));
-    if (!candidate.value || candidate.value.reviewer !== reviewer) continue;
-    decidedEntry = candidate;
-    undoIdxEntryKey = idxEntry.key;
+    const counterCheck = await getStored<number>("review-audit-pending", orgId, fid);
+    if (counterCheck === null) continue;
+    const candidate = await getStored<ReviewDecision>("review-decided", orgId, fid, qIdx);
+    if (!candidate || candidate.reviewer !== reviewer) continue;
+    chosenDecided = { key: [fid, String(qIdx)], value: candidate };
+    chosenUndoIdx = key;
     break;
   }
 
   // Fallback: full scan scoped to current finding
-  if (!decidedEntry) {
-    const myDecisions: { entry: Deno.KvEntry<ReviewDecision>; decidedAt: number }[] = [];
-    const decidedIter = db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") });
-    for await (const entry of decidedIter) {
-      if (entry.value.reviewer !== reviewer) continue;
-      if (currentFindingId && entry.value.findingId !== currentFindingId) continue;
-      myDecisions.push({ entry, decidedAt: entry.value.decidedAt });
-    }
-    myDecisions.sort((a, b) => b.decidedAt - a.decidedAt);
+  if (!chosenDecided) {
+    const decidedRows = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
+    const myDecisions = decidedRows.filter(({ value }) =>
+      value.reviewer === reviewer && (!currentFindingId || value.findingId === currentFindingId)
+    );
+    myDecisions.sort((a, b) => b.value.decidedAt - a.value.decidedAt);
     for (const candidate of myDecisions) {
-      const counterCheck = await db.get<number>(orgKey(orgId, "review-audit-pending", candidate.entry.value.findingId));
-      if (counterCheck.value !== null) { decidedEntry = candidate.entry; break; }
+      const counterCheck = await getStored<number>("review-audit-pending", orgId, candidate.value.findingId);
+      if (counterCheck !== null) {
+        chosenDecided = { key: candidate.key, value: candidate.value };
+        break;
+      }
     }
   }
 
-  if (!decidedEntry) return { buffer: [], remaining: 0 };
+  if (!chosenDecided) return { buffer: [], remaining: 0 };
 
-  const decided = decidedEntry.value;
+  const decided = chosenDecided.value;
   const { findingId, questionIndex } = decided;
   const item: ReviewItem = {
     findingId: decided.findingId,
@@ -505,32 +437,21 @@ export async function undoDecision(
     ...(decided.completedAt != null ? { completedAt: decided.completedAt } : {}),
   };
 
-  const counterKey = orgKey(orgId, "review-audit-pending", findingId);
-  const counterEntry = await db.get<number>(counterKey);
-  const newCount = (counterEntry.value ?? 0) + 1;
-  const activeKey = orgKey(orgId, "review-active", reviewer, findingId, questionIndex);
-
-  const atomic = db.atomic()
-    .check(decidedEntry)
-    .check(counterEntry)
-    .delete(decidedEntry.key)
-    .set(activeKey, { ...item, claimedAt: Date.now() })
-    .set(counterKey, newCount);
-  if (undoIdxEntryKey) atomic.delete(undoIdxEntryKey);
-
-  const res = await atomic.commit();
-  if (!res.ok) return { buffer: [], remaining: 0 };
+  const counterVal = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 0;
+  await deleteStored("review-decided", orgId, ...chosenDecided.key);
+  await setStored("review-active", orgId, [reviewer, findingId, questionIndex], { ...item, claimedAt: Date.now() });
+  await setStored("review-audit-pending", orgId, [findingId], counterVal + 1);
+  if (chosenUndoIdx) await deleteStored("review-undo-idx", orgId, ...chosenUndoIdx);
 
   return claimNextItem(orgId, reviewer, allowedTypes);
 }
 
-// ── Admin-flip finding — set all "No" answers to "Yes" ───────────────────────
+// ── Admin-flip finding — set all "No" answers to "Yes" ──────────────────────
 
 export async function adminFlipFinding(
   orgId: OrgId,
   findingId: string,
 ): Promise<{ success: boolean; score: number }> {
-  const db = await getKv();
   const finding = await getFinding(orgId, findingId);
   if (!finding) return { success: false, score: 0 };
 
@@ -547,23 +468,23 @@ export async function adminFlipFinding(
   await saveFinding(orgId, finding);
   await saveBatchAnswers(orgId, findingId, 0, corrected);
 
-  // Clean up review queue entries
-  const keys: Deno.KvKey[] = [];
-  for await (const entry of db.list({ prefix: orgKey(orgId, "review-pending", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list({ prefix: orgKey(orgId, "review-decided", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "review-active") })) {
-    if (entry.value?.findingId === findingId) keys.push(entry.key);
+  // Clean up review queue entries for this finding
+  let cleared = 0;
+  const pending = await listStoredWithKeys("review-pending", orgId);
+  for (const { key } of pending) {
+    if (key[0] === findingId) { await deleteStored("review-pending", orgId, ...key); cleared++; }
   }
-  keys.push(orgKey(orgId, "review-audit-pending", findingId));
-  for (let i = 0; i < keys.length; i += 10) {
-    const batch = keys.slice(i, i + 10);
-    const atomic = db.atomic();
-    for (const key of batch) atomic.delete(key);
-    await atomic.commit();
+  const decided = await listStoredWithKeys("review-decided", orgId);
+  for (const { key } of decided) {
+    if (key[0] === findingId) { await deleteStored("review-decided", orgId, ...key); cleared++; }
   }
+  const active = await listStoredWithKeys<{ findingId?: string }>("review-active", orgId);
+  for (const { key, value } of active) {
+    if (value?.findingId === findingId) { await deleteStored("review-active", orgId, ...key); cleared++; }
+  }
+  await deleteStored("review-audit-pending", orgId, findingId); cleared++;
 
-  // Mark reviewed + update indices
-  await db.set(orgKey(orgId, "review-done", findingId), { reviewedAt: new Date().toISOString() });
+  await setStored("review-done", orgId, [findingId], { reviewedAt: new Date().toISOString() });
 
   const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
   const rec = (finding as any).record as Record<string, any> ?? {};
@@ -591,11 +512,11 @@ export async function adminFlipFinding(
   await deleteChargebackEntry(orgId, findingId).catch(() => {});
   await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
 
-  console.log(`[ADMIN-FLIP] ✅ ${findingId} → 100% (${keys.length} queue entries removed)`);
+  console.log(`[ADMIN-FLIP] ✅ ${findingId} → 100% (${cleared} queue entries removed)`);
   return { success: true, score };
 }
 
-// ── Preview finding — admin troubleshoot, no claim/lock ──────────────────────
+// ── Preview finding ─────────────────────────────────────────────────────────
 
 export async function previewFinding(orgId: OrgId, findingId: string): Promise<BufferItem[] | null> {
   const finding = await getFinding(orgId, findingId);
@@ -619,17 +540,17 @@ export async function previewFinding(orgId: OrgId, findingId: string): Promise<B
   return items;
 }
 
-// ── Backfill review queue from finished findings ─────────────────────────────
+// ── Backfill review queue from finished findings ────────────────────────────
 
 export async function backfillFromFinished(orgId: OrgId): Promise<{ queued: number }> {
-  const db = await getKv();
   let queued = 0;
 
+  // List all audit-finding header docs (key length === 1, not chunks)
+  const findingDocs = await listStoredWithKeys<unknown>("audit-finding", orgId);
   const findingIds = new Set<string>();
-  const iter = db.list({ prefix: orgKey(orgId, "audit-finding") });
-  for await (const entry of iter) {
-    const key = entry.key as Deno.KvKey;
-    if (key.length >= 3 && typeof key[2] === "string") findingIds.add(key[2] as string);
+  for (const { key } of findingDocs) {
+    // Skip chunk docs (their key has more parts than just findingId)
+    if (key.length === 1) findingIds.add(String(key[0]));
   }
 
   for (const findingId of findingIds) {
@@ -639,15 +560,12 @@ export async function backfillFromFinished(orgId: OrgId): Promise<{ queued: numb
     if (!finding.answeredQuestions?.length) continue;
 
     // Skip if review queue already has a counter for this finding
-    const existingCheck = await db.get(orgKey(orgId, "review-audit-pending", findingId));
-    if (existingCheck.value !== null) continue;
+    const existingCounter = await getStored("review-audit-pending", orgId, findingId);
+    if (existingCounter !== null) continue;
 
     // Skip if any decided items exist for this finding
-    let hasDecided = false;
-    for await (const _ of db.list({ prefix: orgKey(orgId, "review-decided", findingId) })) {
-      hasDecided = true;
-      break;
-    }
+    const allDecided = await listStoredWithKeys("review-decided", orgId);
+    const hasDecided = allDecided.some(({ key }) => key[0] === findingId);
     if (hasDecided) continue;
 
     const noAnswers = (finding.answeredQuestions as any[])
@@ -655,7 +573,6 @@ export async function backfillFromFinished(orgId: OrgId): Promise<{ queued: numb
       .filter((q: any) => q.answer === "No");
     if (noAnswers.length === 0) continue;
 
-    const atomic = db.atomic();
     for (const [reviewIdx, q] of noAnswers.entries()) {
       const item: ReviewItem = {
         findingId,
@@ -668,10 +585,9 @@ export async function backfillFromFinished(orgId: OrgId): Promise<{ queued: numb
         defense: q.defense ?? "",
         answer: q.answer,
       };
-      atomic.set(orgKey(orgId, "review-pending", findingId, q.index), item);
+      await setStored("review-pending", orgId, [findingId, q.index], item);
     }
-    atomic.set(orgKey(orgId, "review-audit-pending", findingId), noAnswers.length);
-    await atomic.commit();
+    await setStored("review-audit-pending", orgId, [findingId], noAnswers.length);
     queued += noAnswers.length;
   }
 
@@ -689,7 +605,6 @@ export async function getReviewStats(orgId: OrgId): Promise<{
   packagePending: number;
   packageDecided: number;
 }> {
-  const db = await getKv();
   let dateLegPending = 0, packagePending = 0;
   let dateLegDecided = 0, packageDecided = 0;
   const pendingFindings = new Set<string>();
@@ -700,16 +615,13 @@ export async function getReviewStats(orgId: OrgId): Promise<{
     pendingFindings.add(item.findingId);
   };
 
-  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-pending") })) {
-    bumpPending(entry.value);
-  }
-  // Items claimed by a reviewer are moved to `review-active`; they're still
-  // outstanding work from a dashboard POV, so roll them into `pending`.
-  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-active") })) {
-    bumpPending(entry.value);
-  }
-  for await (const entry of db.list<ReviewItem>({ prefix: orgKey(orgId, "review-decided") })) {
-    if (entry.value.recordingIdField === "GenieNumber") packageDecided++;
+  const pending = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
+  for (const { value } of pending) bumpPending(value);
+  const active = await listStoredWithKeys<ReviewItem>("review-active", orgId);
+  for (const { value } of active) bumpPending(value);
+  const decided = await listStoredWithKeys<ReviewItem>("review-decided", orgId);
+  for (const { value } of decided) {
+    if (value.recordingIdField === "GenieNumber") packageDecided++;
     else dateLegDecided++;
   }
 
@@ -725,33 +637,26 @@ export async function getReviewStats(orgId: OrgId): Promise<{
 // ── Reviewed finding IDs ─────────────────────────────────────────────────────
 
 export async function getReviewedFindingIds(orgId: OrgId): Promise<Set<string>> {
-  const db = await getKv();
   const ids = new Set<string>();
-  const iter = db.list<{ reviewedAt: string }>({ prefix: orgKey(orgId, "review-done") });
-  for await (const entry of iter) {
-    const key = entry.key as Deno.KvKeyPart[];
-    ids.add(String(key[key.length - 1]));
-  }
+  const rows = await listStoredWithKeys<{ reviewedAt: string }>("review-done", orgId);
+  for (const { key } of rows) ids.add(String(key[0]));
   return ids;
 }
 
 // ── Clear queue ──────────────────────────────────────────────────────────────
 
 export async function clearReviewQueue(orgId: OrgId): Promise<{ cleared: number }> {
-  const db = await getKv();
   let cleared = 0;
-  for await (const entry of db.list({ prefix: orgKey(orgId, "review-pending") })) {
-    await db.delete(entry.key);
-    cleared++;
+  for (const { key } of await listStoredWithKeys("review-pending", orgId)) {
+    await deleteStored("review-pending", orgId, ...key); cleared++;
   }
-  for await (const entry of db.list({ prefix: orgKey(orgId, "review-active") })) {
-    await db.delete(entry.key);
-    cleared++;
+  for (const { key } of await listStoredWithKeys("review-active", orgId)) {
+    await deleteStored("review-active", orgId, ...key); cleared++;
   }
   return { cleared };
 }
 
-// ── Legacy-compatible aliases (preserve controller dynamic-import call sites) ─
+// ── Legacy aliases ──────────────────────────────────────────────────────────
 
 export const claimNextItemLegacy = claimNextItem;
 export const undoDecisionLegacy = undoDecision;

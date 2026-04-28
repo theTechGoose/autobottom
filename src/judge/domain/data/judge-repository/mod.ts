@@ -1,8 +1,10 @@
-/** Judge queue repository — appeals, decisions, queue ops.
- *  Ported from main:judge/kv.ts — claimNextItem, undoDecision, adminDeleteFinding
- *  full-cleanup. Legacy aliases preserve controller dynamic-import call sites. */
+/** Judge queue repository — appeals, decisions, queue ops. Firestore-backed.
+ *  Atomic ops in main are downgraded to read-modify-write — race windows are
+ *  acceptable given the per-judge concurrency profile and idempotent finalize. */
 
-import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import {
+  getStored, setStored, deleteStored, listStoredWithKeys,
+} from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
 import { getFinding, getTranscript, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -21,9 +23,6 @@ import {
 
 const ACTIVE_TTL = 30 * 60 * 1000;
 const BUFFER_SIZE = 5;
-
-// Recording re-audit types should never reach the judge queue — if they slip in
-// we auto-dismiss them during claim.
 const SKIP_APPEAL_TYPES = new Set(["different-recording", "additional-recording", "upload-recording"]);
 
 export interface JudgeItem {
@@ -68,8 +67,6 @@ export async function populateJudgeQueue(
   orgId: OrgId, findingId: string, questions: any[], appealType?: string,
   recordingIdField?: string, recordingId?: string,
 ): Promise<void> {
-  const db = await getKv();
-  const atomic = db.atomic();
   let count = 0;
   for (const [i, q] of questions.entries()) {
     const idx = q._origIdx ?? i;
@@ -80,39 +77,30 @@ export async function populateJudgeQueue(
       ...(recordingIdField ? { recordingIdField } : {}),
       ...(recordingId ? { recordingId } : {}),
     };
-    atomic.set(orgKey(orgId, "judge-pending", findingId, idx), item);
+    await setStored("judge-pending", orgId, [findingId, idx], item);
     count++;
   }
-  atomic.set(orgKey(orgId, "judge-audit-pending", findingId), count);
-  await atomic.commit();
+  await setStored("judge-audit-pending", orgId, [findingId], count);
   console.log(`✅ [JUDGE] ${findingId}: Queued ${count} items for judge review`);
 }
 
-// ── Decision Recording — saves full JudgeItem so undo can restore ────────────
+// ── Decision Recording ───────────────────────────────────────────────────────
 
 export async function recordJudgeDecision(
   orgId: OrgId, findingId: string, questionIndex: number,
   decision: "uphold" | "overturn", judge: string, reason?: string,
 ): Promise<{ remaining: number }> {
-  const db = await getKv();
-
   // Load full item from active (or pending) so decided record preserves context
-  const activeKey = orgKey(orgId, "judge-active", judge, findingId, questionIndex);
-  const pendingKey = orgKey(orgId, "judge-pending", findingId, questionIndex);
+  const activeVal = await getStored<JudgeItem & { claimedAt?: number }>("judge-active", orgId, judge, findingId, questionIndex);
   let baseItem: JudgeItem | null = null;
-  const activeEntry = await db.get<JudgeItem & { claimedAt?: number }>(activeKey);
-  if (activeEntry.value) {
-    const { claimedAt: _, ...rest } = activeEntry.value;
+  if (activeVal) {
+    const { claimedAt: _, ...rest } = activeVal;
     baseItem = rest as JudgeItem;
   } else {
-    const pendingEntry = await db.get<JudgeItem>(pendingKey);
-    if (pendingEntry.value) baseItem = pendingEntry.value;
+    baseItem = await getStored<JudgeItem>("judge-pending", orgId, findingId, questionIndex);
   }
   if (!baseItem) {
-    baseItem = {
-      findingId, questionIndex,
-      header: "", populated: "", thinking: "", defense: "", answer: "No",
-    };
+    baseItem = { findingId, questionIndex, header: "", populated: "", thinking: "", defense: "", answer: "No" };
   }
 
   const decidedRecord: JudgeDecision = {
@@ -122,58 +110,41 @@ export async function recordJudgeDecision(
     ...(reason ? { reason: reason as JudgeDecision["reason"] } : {}),
     decidedAt: Date.now(),
   };
-  await db.set(orgKey(orgId, "judge-decided", findingId, questionIndex), decidedRecord);
-  await db.delete(activeKey);
-  const counterKey = orgKey(orgId, "judge-audit-pending", findingId);
-  const counter = (await db.get<number>(counterKey)).value ?? 1;
-  const newCount = Math.max(0, counter - 1);
-  await db.set(counterKey, newCount);
+  await setStored("judge-decided", orgId, [findingId, questionIndex], decidedRecord);
+  await deleteStored("judge-active", orgId, judge, findingId, questionIndex);
 
-  // Audit complete — aggregate decisions, save corrected score, fire webhook.
-  // Fire-and-forget: a webhook failure doesn't unwind the saved decision.
+  const counter = (await getStored<number>("judge-audit-pending", orgId, findingId)) ?? 1;
+  const newCount = Math.max(0, counter - 1);
+  await setStored("judge-audit-pending", orgId, [findingId], newCount);
+
   if (newCount === 0) {
     postJudgedAudit(orgId, findingId, judge).catch((err) =>
       console.error(`[JUDGE] ${findingId}: postJudgedAudit failed:`, err));
   }
-
   return { remaining: newCount };
 }
 
-// ── Claim Next Item — port of main:judge/kv.ts:166-285 ───────────────────────
+// ── Sweep expired claims ────────────────────────────────────────────────────
 
 async function sweepExpiredActiveClaims(orgId: OrgId, excludeJudge?: string): Promise<number> {
-  const db = await getKv();
   const now = Date.now();
   let reclaimed = 0;
-  const iter = db.list<JudgeItem & { claimedAt: number }>({ prefix: orgKey(orgId, "judge-active") });
-  for await (const entry of iter) {
-    const val = entry.value;
-    if (excludeJudge) {
-      const keyParts = entry.key as Deno.KvKeyPart[];
-      if (keyParts[2] === excludeJudge) continue;
-    }
-    if (val.claimedAt && (now - val.claimedAt) > ACTIVE_TTL) {
-      const pendingKey = orgKey(orgId, "judge-pending", val.findingId, val.questionIndex);
-      const { claimedAt: _, ...baseItem } = val;
-      const res = await db.atomic()
-        .check(entry)
-        .delete(entry.key)
-        .set(pendingKey, baseItem as JudgeItem)
-        .commit();
-      if (res.ok) {
-        reclaimed++;
-        console.log(`[JUDGE] Reclaimed expired active item ${val.findingId}/${val.questionIndex}`);
-      }
+  const rows = await listStoredWithKeys<JudgeItem & { claimedAt: number }>("judge-active", orgId);
+  for (const { key, value } of rows) {
+    if (excludeJudge && key[0] === excludeJudge) continue;
+    if (value.claimedAt && (now - value.claimedAt) > ACTIVE_TTL) {
+      const { claimedAt: _, ...baseItem } = value;
+      await setStored("judge-pending", orgId, [value.findingId, value.questionIndex], baseItem as JudgeItem);
+      await deleteStored("judge-active", orgId, ...key);
+      reclaimed++;
+      console.log(`[JUDGE] Reclaimed expired active item ${value.findingId}/${value.questionIndex}`);
     }
   }
   return reclaimed;
 }
 
-// Post-completion hook. Aggregates the decided records, applies overturns to
-// produce a corrected answer set + new score, persists the corrected finding,
-// and fires the `judge` webhook so the agent gets the appeal-result email.
-// Skips silently when no decisions exist (e.g. system-skip path for recording
-// re-audits that should never reach the judge queue).
+// ── Post-completion: aggregate decisions, save corrected score, fire webhook
+
 async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): Promise<void> {
   try {
     const finding = await getFinding(orgId, findingId);
@@ -182,11 +153,9 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): 
       return;
     }
 
-    const db = await getKv();
-    const decisions: JudgeDecision[] = [];
-    for await (const e of db.list<JudgeDecision>({ prefix: orgKey(orgId, "judge-decided", findingId) })) {
-      decisions.push(e.value);
-    }
+    // Pull all decisions for this finding
+    const allDecisions = await listStoredWithKeys<JudgeDecision>("judge-decided", orgId);
+    const decisions = allDecisions.filter(({ key }) => key[0] === findingId).map(({ value }) => value);
     if (decisions.length === 0) {
       console.log(`[JUDGE] ${findingId}: 0 decisions (system-skip) — no webhook`);
       return;
@@ -195,7 +164,6 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): 
     const overturns = decisions.filter((d) => d.decision === "overturn").length;
     const totalQuestions = decisions.length;
 
-    // Apply overturns to a copy of answeredQuestions to recompute the score.
     const all = (finding.answeredQuestions ?? []) as Array<Record<string, unknown>>;
     const corrected = all.map((q, i) => {
       const flip = decisions.find((d) => d.questionIndex === i && d.decision === "overturn");
@@ -208,14 +176,10 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): 
     const origYes = all.filter((q) => yesIs(q.answer)).length;
     const originalScore = total > 0 ? Math.round((origYes / total) * 100) : 0;
 
-    // Persist the corrected answers so the report page reflects the judge's
-    // verdict immediately. Only when there's at least one overturn — saves a
-    // chunked write otherwise.
     if (overturns > 0) {
       await saveFinding(orgId, { ...finding, answeredQuestions: corrected });
     }
 
-    // Fire-and-forget — saved state is the source of truth even if the email fails.
     fireWebhook(orgId, "judge", {
       findingId,
       finding,
@@ -239,49 +203,45 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): 
   }
 }
 
+// ── Claim Next Item ─────────────────────────────────────────────────────────
+
 export async function claimNextItem(
   orgId: OrgId,
   judge: string,
 ): Promise<{ buffer: JudgeBufferItem[]; remaining: number }> {
-  const db = await getKv();
   const now = Date.now();
 
   async function claimFromPending(count: number): Promise<JudgeItem[]> {
     const claimed: JudgeItem[] = [];
-    const iter = db.list<JudgeItem>({ prefix: orgKey(orgId, "judge-pending") });
-    for await (const entry of iter) {
-      if (entry.value.appealType && SKIP_APPEAL_TYPES.has(entry.value.appealType)) {
-        const skipFid = entry.value.findingId;
-        const counterKey = orgKey(orgId, "judge-audit-pending", skipFid);
-        const counterEntry = await db.get<number>(counterKey);
-        const newCount = (counterEntry.value ?? 1) - 1;
-        const skipAtomic = db.atomic().delete(entry.key);
-        if (newCount <= 0) skipAtomic.delete(counterKey);
-        else skipAtomic.set(counterKey, newCount);
-        await skipAtomic.commit();
+    const rows = await listStoredWithKeys<JudgeItem>("judge-pending", orgId);
+    for (const { key, value } of rows) {
+      if (value.appealType && SKIP_APPEAL_TYPES.has(value.appealType)) {
+        const skipFid = value.findingId;
+        const counterVal = (await getStored<number>("judge-audit-pending", orgId, skipFid)) ?? 1;
+        const newCount = counterVal - 1;
+        await deleteStored("judge-pending", orgId, ...key);
+        if (newCount <= 0) await deleteStored("judge-audit-pending", orgId, skipFid);
+        else await setStored("judge-audit-pending", orgId, [skipFid], newCount);
         if (newCount <= 0) {
           postJudgedAudit(orgId, skipFid, "system").catch((err) =>
             console.error(`[JUDGE] ${skipFid}: ❌ SKIP completion failed:`, err));
         }
         continue;
       }
-      const activeKey = orgKey(orgId, "judge-active", judge, entry.value.findingId, entry.value.questionIndex);
-      const res = await db.atomic()
-        .check(entry)
-        .delete(entry.key)
-        .set(activeKey, { ...entry.value, claimedAt: now })
-        .commit();
-      if (res.ok) {
-        claimed.push(entry.value);
-        if (claimed.length >= count) break;
-      }
+      // Non-atomic move pending → active. Race window: a parallel claim could
+      // pick the same item; second writer just clobbers the first. Acceptable
+      // for our judge concurrency (1-2 active at a time).
+      await setStored("judge-active", orgId, [judge, value.findingId, value.questionIndex], { ...value, claimedAt: now });
+      await deleteStored("judge-pending", orgId, ...key);
+      claimed.push(value);
+      if (claimed.length >= count) break;
     }
     return claimed;
   }
 
   async function enrich(item: JudgeItem): Promise<JudgeBufferItem> {
     const transcript = await getTranscript(orgId, item.findingId);
-    const counterEntry = await db.get<number>(orgKey(orgId, "judge-audit-pending", item.findingId));
+    const counterVal = (await getStored<number>("judge-audit-pending", orgId, item.findingId)) ?? 0;
     let appealComment: string | undefined;
     let enrichedAppealType = item.appealType;
     const finding = await getFinding(orgId, item.findingId);
@@ -321,7 +281,7 @@ export async function claimNextItem(
     return {
       ...item,
       ...(enrichedAppealType ? { appealType: enrichedAppealType } : {}),
-      auditRemaining: counterEntry.value ?? 0,
+      auditRemaining: counterVal,
       transcript,
       ...(appealComment ? { appealComment } : {}),
       ...(reviewedBy ? { reviewedBy } : {}),
@@ -330,63 +290,47 @@ export async function claimNextItem(
     };
   }
 
-  // 1. Sweep expired active claims from OTHER judges back to pending
   await sweepExpiredActiveClaims(orgId, judge);
 
-  // 2. Collect existing active items for this judge
-  const activeItems: JudgeItem[] = [];
-  const activeIter = db.list<JudgeItem & { claimedAt: number }>({
-    prefix: orgKey(orgId, "judge-active", judge),
-  });
-  for await (const entry of activeIter) activeItems.push(entry.value);
+  const activeRows = await listStoredWithKeys<JudgeItem & { claimedAt: number }>("judge-active", orgId);
+  const myActive: JudgeItem[] = activeRows.filter(({ key }) => key[0] === judge).map(({ value }) => value);
 
-  // 3. Top up from pending if needed
-  if (activeItems.length < BUFFER_SIZE) {
-    const more = await claimFromPending(BUFFER_SIZE - activeItems.length);
-    activeItems.push(...more);
+  if (myActive.length < BUFFER_SIZE) {
+    const more = await claimFromPending(BUFFER_SIZE - myActive.length);
+    myActive.push(...more);
   }
 
-  // 4. Enrich all items
   const buffer: JudgeBufferItem[] = [];
-  for (const item of activeItems) buffer.push(await enrich(item));
+  for (const item of myActive) buffer.push(await enrich(item));
 
   return { buffer, remaining: 0 };
 }
 
-// ── Undo Decision — port of main:judge/kv.ts:409-475 ─────────────────────────
+// ── Undo Decision ───────────────────────────────────────────────────────────
 
 export async function undoDecision(
   orgId: OrgId,
   judge: string,
 ): Promise<{ buffer: JudgeBufferItem[]; remaining: number }> {
-  const db = await getKv();
-
-  // Release all current active items held by this judge
-  const activeIter = db.list<JudgeItem & { claimedAt: number }>({
-    prefix: orgKey(orgId, "judge-active", judge),
-  });
-  for await (const entry of activeIter) {
-    const { claimedAt: _, ...baseItem } = entry.value;
-    await db.atomic()
-      .check(entry)
-      .delete(entry.key)
-      .set(orgKey(orgId, "judge-pending", entry.value.findingId, entry.value.questionIndex), baseItem as JudgeItem)
-      .commit();
+  // Release this judge's active items back to pending
+  const activeRows = await listStoredWithKeys<JudgeItem & { claimedAt: number }>("judge-active", orgId);
+  for (const { key, value } of activeRows) {
+    if (key[0] !== judge) continue;
+    const { claimedAt: _, ...baseItem } = value;
+    await setStored("judge-pending", orgId, [value.findingId, value.questionIndex], baseItem as JudgeItem);
+    await deleteStored("judge-active", orgId, ...key);
   }
 
-  // Find the most recent decision by this judge
-  let latestDecided: { entry: Deno.KvEntry<JudgeDecision>; decidedAt: number } | null = null;
-  const decidedIter = db.list<JudgeDecision>({ prefix: orgKey(orgId, "judge-decided") });
-  for await (const entry of decidedIter) {
-    if (entry.value.judge === judge) {
-      if (!latestDecided || entry.value.decidedAt > latestDecided.decidedAt) {
-        latestDecided = { entry, decidedAt: entry.value.decidedAt };
-      }
-    }
+  // Find this judge's most recent decision
+  const decidedRows = await listStoredWithKeys<JudgeDecision>("judge-decided", orgId);
+  let latest: { key: string[]; value: JudgeDecision } | null = null;
+  for (const row of decidedRows) {
+    if (row.value.judge !== judge) continue;
+    if (!latest || row.value.decidedAt > latest.value.decidedAt) latest = row;
   }
-  if (!latestDecided) return { buffer: [], remaining: 0 };
+  if (!latest) return { buffer: [], remaining: 0 };
 
-  const decided = latestDecided.entry.value;
+  const decided = latest.value;
   const { findingId, questionIndex } = decided;
   const item: JudgeItem = {
     findingId: decided.findingId,
@@ -401,19 +345,10 @@ export async function undoDecision(
     ...(decided.recordingId ? { recordingId: decided.recordingId } : {}),
   };
 
-  const counterKey = orgKey(orgId, "judge-audit-pending", findingId);
-  const counterEntry = await db.get<number>(counterKey);
-  const newCount = (counterEntry.value ?? 0) + 1;
-  const activeKey = orgKey(orgId, "judge-active", judge, findingId, questionIndex);
-
-  const res = await db.atomic()
-    .check(latestDecided.entry)
-    .check(counterEntry)
-    .delete(latestDecided.entry.key)
-    .set(activeKey, { ...item, claimedAt: Date.now() })
-    .set(counterKey, newCount)
-    .commit();
-  if (!res.ok) return { buffer: [], remaining: 0 };
+  const counterVal = (await getStored<number>("judge-audit-pending", orgId, findingId)) ?? 0;
+  await deleteStored("judge-decided", orgId, ...latest.key);
+  await setStored("judge-active", orgId, [judge, findingId, questionIndex], { ...item, claimedAt: Date.now() });
+  await setStored("judge-audit-pending", orgId, [findingId], counterVal + 1);
 
   return claimNextItem(orgId, judge);
 }
@@ -421,166 +356,137 @@ export async function undoDecision(
 // ── Appeal CRUD ──────────────────────────────────────────────────────────────
 
 export async function getAppeal(orgId: OrgId, findingId: string): Promise<AppealRecord | null> {
-  return (await (await getKv()).get<AppealRecord>(orgKey(orgId, "appeal", findingId))).value;
+  return await getStored<AppealRecord>("appeal", orgId, findingId);
 }
 
 export async function saveAppeal(orgId: OrgId, record: AppealRecord): Promise<void> {
-  await (await getKv()).set(orgKey(orgId, "appeal", record.findingId), record);
+  await setStored("appeal", orgId, [record.findingId], record);
 }
 
 export async function deleteAppeal(orgId: OrgId, fid: string): Promise<void> {
-  await (await getKv()).delete(orgKey(orgId, "appeal", fid));
+  await deleteStored("appeal", orgId, fid);
 }
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; decided: number }> {
-  const db = await getKv();
-  let pending = 0, decided = 0;
-  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-pending") })) pending++;
-  for await (const _ of db.list({ prefix: orgKey(orgId, "judge-decided") })) decided++;
-  return { pending, decided };
+  const pending = await listStoredWithKeys("judge-pending", orgId);
+  const decided = await listStoredWithKeys("judge-decided", orgId);
+  return { pending: pending.length, decided: decided.length };
 }
 
 // ── Dismiss / Clear ──────────────────────────────────────────────────────────
 
 export async function dismissFindingFromJudgeQueue(orgId: OrgId, fid: string): Promise<{ dismissed: number }> {
-  const db = await getKv();
   let dismissed = 0;
-  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-pending", fid) })) {
-    await db.delete(entry.key);
-    dismissed++;
+  const pendingRows = await listStoredWithKeys("judge-pending", orgId);
+  for (const { key } of pendingRows) {
+    if (key[0] === fid) { await deleteStored("judge-pending", orgId, ...key); dismissed++; }
   }
-  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-active") })) {
-    const v = entry.value as any;
-    if (v?.findingId === fid) { await db.delete(entry.key); dismissed++; }
+  const activeRows = await listStoredWithKeys<{ findingId?: string }>("judge-active", orgId);
+  for (const { key, value } of activeRows) {
+    if (value?.findingId === fid) { await deleteStored("judge-active", orgId, ...key); dismissed++; }
   }
   return { dismissed };
 }
 
 export async function clearJudgeQueue(orgId: OrgId): Promise<{ cleared: number }> {
-  const db = await getKv();
   let cleared = 0;
-  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-pending") })) { await db.delete(entry.key); cleared++; }
-  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-active") })) { await db.delete(entry.key); cleared++; }
+  for (const { key } of await listStoredWithKeys("judge-pending", orgId)) { await deleteStored("judge-pending", orgId, ...key); cleared++; }
+  for (const { key } of await listStoredWithKeys("judge-active", orgId)) { await deleteStored("judge-active", orgId, ...key); cleared++; }
   return { cleared };
 }
 
-// ── Admin delete finding — full-cleanup port of main:judge/kv.ts:1294+ ───────
+// ── Admin delete finding — full cross-table cleanup ─────────────────────────
+
+async function collectKeysForFinding(orgId: OrgId, findingId: string): Promise<Array<{ type: string; key: string[] }>> {
+  const out: Array<{ type: string; key: string[] }> = [];
+
+  // Per-finding queues + counters across review + judge + manager + appeals
+  const types = ["review-pending", "review-decided", "review-active", "judge-pending", "judge-decided", "judge-active"];
+  for (const t of types) {
+    const rows = await listStoredWithKeys<{ findingId?: string }>(t, orgId);
+    for (const { key, value } of rows) {
+      const matches = key[0] === findingId || value?.findingId === findingId;
+      if (matches) out.push({ type: t, key });
+    }
+  }
+
+  // Singleton-per-finding entries
+  for (const t of ["review-audit-pending", "review-done", "judge-audit-pending", "manager-queue", "appeal", "appeal-history"]) {
+    const v = await getStored(t, orgId, findingId);
+    if (v !== null) out.push({ type: t, key: [findingId] });
+  }
+
+  // Review-undo-idx entries that reference this finding
+  const undoRows = await listStoredWithKeys<{ findingId: string }>("review-undo-idx", orgId);
+  for (const { key, value } of undoRows) {
+    if (value?.findingId === findingId) out.push({ type: "review-undo-idx", key });
+  }
+
+  // Active tracking
+  const at = await getStored("active-tracking", orgId, findingId);
+  if (at !== null) out.push({ type: "active-tracking", key: [findingId] });
+
+  return out;
+}
 
 export async function adminDeleteFinding(orgId: OrgId, findingId: string): Promise<void> {
-  const db = await getKv();
-
-  // Look up completedAt from audit-done-idx (best effort) for index cleanup
+  // Find completedAt for audit-done-idx cleanup (best effort)
   let completedAt = Date.now();
-  for await (const entry of db.list<{ findingId: string; completedAt: number }>({ prefix: orgKey(orgId, "audit-done-idx") })) {
-    if (entry.value?.findingId === findingId) { completedAt = entry.value.completedAt; break; }
+  const idx = await listStoredWithKeys<{ findingId: string; completedAt: number }>("audit-done-idx", orgId);
+  for (const { value } of idx) {
+    if (value?.findingId === findingId) { completedAt = value.completedAt; break; }
   }
 
-  // Collect all secondary-index keys to delete
-  const keys: Deno.KvKey[] = [];
-  for await (const entry of db.list({ prefix: orgKey(orgId, "review-pending", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list({ prefix: orgKey(orgId, "review-decided", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "review-active") })) {
-    if (entry.value?.findingId === findingId) keys.push(entry.key);
-  }
-  keys.push(orgKey(orgId, "review-audit-pending", findingId));
-  keys.push(orgKey(orgId, "review-done", findingId));
-  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-pending", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-decided", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "judge-active") })) {
-    if (entry.value?.findingId === findingId) keys.push(entry.key);
-  }
-  keys.push(orgKey(orgId, "judge-audit-pending", findingId));
-  keys.push(orgKey(orgId, "manager-queue", findingId));
-  keys.push(orgKey(orgId, "appeal", findingId));
-  keys.push(orgKey(orgId, "appeal-history", findingId));
-  for await (const entry of db.list<{ findingId: string }>({ prefix: orgKey(orgId, "review-undo-idx") })) {
-    if (entry.value?.findingId === findingId) keys.push(entry.key);
-  }
-  // Also delete the chunked audit-finding entries
-  for await (const entry of db.list({ prefix: orgKey(orgId, "audit-finding", findingId) })) keys.push(entry.key);
-  // And active-tracking
-  keys.push(orgKey(orgId, "active-tracking", findingId));
+  const keys = await collectKeysForFinding(orgId, findingId);
 
-  // Batch delete in groups of 10 (KV atomic limit)
-  const BATCH = 10;
-  for (let i = 0; i < keys.length; i += BATCH) {
-    const atomic = db.atomic();
-    for (const key of keys.slice(i, i + BATCH)) atomic.delete(key);
-    await atomic.commit();
-  }
+  // Also delete the finding chunks themselves via the chunked helper
+  const { deleteStoredChunked } = await import("@core/data/firestore/mod.ts");
+  await deleteStoredChunked("audit-finding", orgId, findingId);
+
+  for (const { type, key } of keys) await deleteStored(type, orgId, ...key);
 
   await deleteChargebackEntry(orgId, findingId).catch(() => {});
   await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
   await deleteAuditDoneIndexEntry(orgId, findingId, completedAt).catch(() => {});
   await deleteCompletedStat(orgId, findingId).catch(() => {});
 
-  console.log(`[ADMIN-DELETE] 🗑️ ${findingId}: cleaned ${keys.length} KV entries + cb/wire/audit-done-idx/completed-stat`);
+  console.log(`[ADMIN-DELETE] 🗑️ ${findingId}: cleaned ${keys.length} entries + finding chunks + cb/wire/done-idx/stat`);
 }
 
-// ── Appeal re-audit cleanup — like adminDeleteFinding minus finding chunks ───
-
-/** Remove the old finding from every queue / index when an agent files a
- *  recording-swap appeal (Option B/C). The finding itself is kept (soft-delete
- *  via reAuditedAt) so the report still renders, but reviewers/judges stop
- *  seeing it and chargeback/wire entries are cleared. Port of
- *  main:judge/kv.ts:1253 cleanupFindingFromIndices. */
+/** Like adminDeleteFinding minus the finding-chunk delete — keeps the
+ *  finding alive for the report page after a recording-swap appeal. */
 export async function cleanupFindingFromIndices(orgId: OrgId, findingId: string): Promise<void> {
-  const db = await getKv();
   let completedAt = Date.now();
-  for await (const entry of db.list<{ findingId: string; completedAt: number }>({ prefix: orgKey(orgId, "audit-done-idx") })) {
-    if (entry.value?.findingId === findingId) { completedAt = entry.value.completedAt; break; }
+  const idx = await listStoredWithKeys<{ findingId: string; completedAt: number }>("audit-done-idx", orgId);
+  for (const { value } of idx) {
+    if (value?.findingId === findingId) { completedAt = value.completedAt; break; }
   }
-  const keys: Deno.KvKey[] = [];
-  for await (const entry of db.list({ prefix: orgKey(orgId, "review-pending", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list({ prefix: orgKey(orgId, "review-decided", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "review-active") })) {
-    if (entry.value?.findingId === findingId) keys.push(entry.key);
-  }
-  keys.push(orgKey(orgId, "review-audit-pending", findingId));
-  keys.push(orgKey(orgId, "review-done", findingId));
-  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-pending", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list({ prefix: orgKey(orgId, "judge-decided", findingId) })) keys.push(entry.key);
-  for await (const entry of db.list<{ findingId?: string }>({ prefix: orgKey(orgId, "judge-active") })) {
-    if (entry.value?.findingId === findingId) keys.push(entry.key);
-  }
-  keys.push(orgKey(orgId, "judge-audit-pending", findingId));
-  keys.push(orgKey(orgId, "manager-queue", findingId));
-  keys.push(orgKey(orgId, "appeal", findingId));
-  keys.push(orgKey(orgId, "appeal-history", findingId));
-  for await (const entry of db.list<{ findingId: string }>({ prefix: orgKey(orgId, "review-undo-idx") })) {
-    if (entry.value?.findingId === findingId) keys.push(entry.key);
-  }
-  const BATCH = 10;
-  for (let i = 0; i < keys.length; i += BATCH) {
-    const atomic = db.atomic();
-    for (const key of keys.slice(i, i + BATCH)) atomic.delete(key);
-    await atomic.commit();
-  }
+
+  const keys = await collectKeysForFinding(orgId, findingId);
+  for (const { type, key } of keys) await deleteStored(type, orgId, ...key);
+
   await deleteChargebackEntry(orgId, findingId).catch(() => {});
   await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
   await deleteCompletedStat(orgId, findingId).catch(() => {});
   await deleteAuditDoneIndexEntry(orgId, findingId, completedAt).catch(() => {});
-  console.log(`[CLEANUP] 🗑️ ${findingId}: indices cleared (${keys.length} KV entries + cb/wire/stat/done-idx)`);
+  console.log(`[CLEANUP] 🗑️ ${findingId}: indices cleared (${keys.length} entries + cb/wire/stat/done-idx)`);
 }
 
-// ── Legacy-compatible aliases ────────────────────────────────────────────────
+// ── Legacy aliases ──────────────────────────────────────────────────────────
 
 export const claimNextItemLegacy = claimNextItem;
 export const undoDecisionLegacy = undoDecision;
 export const adminDeleteFindingLegacy = adminDeleteFinding;
 
-// ── Backfill chargeback/wire entries from current finding state ──────────────
+// ── Backfill chargeback/wire entries from current finding state ─────────────
 
 function _isYes(a: string | undefined): boolean {
   const s = String(a ?? "").trim().toLowerCase();
   return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
 }
 
-/** Re-derive chargeback + wire entries from each finding's current answers.
- *  Handles review/judge flips that changed the score after initial write.
- *  Port of main:judge/kv.ts:935-998. */
 export async function backfillChargebackEntries(
   orgId: OrgId,
   since: number,
@@ -649,27 +555,16 @@ export interface DedupPlan {
   toDelete: DedupCandidate[];
 }
 
-function _extractRecordId(raw: string): string {
-  return (
-    raw.match(/"RecordId"\s*:\s*(\d+)/)?.[1] ||
-    raw.match(/"recordingId"\s*:\s*"([^"]+)"/)?.[1] ||
-    ""
-  );
-}
-
-/** Scan audit-done-idx in [since, until], group by QB RecordId, mark losers.
- *  Port of main:judge/kv.ts:1090-1171. */
 export async function findDuplicates(
   orgId: OrgId,
   since: number,
   until: number,
 ): Promise<DedupPlan> {
-  const db = await getKv();
   const indexEntries = await queryAuditDoneIndex(orgId, since, until);
 
   type Entry = { id: string; recordKey: string; ts: number; reviewed: boolean };
   const inRange: Entry[] = [];
-  const needChunk: typeof indexEntries = [];
+  const needFinding: typeof indexEntries = [];
 
   for (const e of indexEntries) {
     if (e.recordId) {
@@ -680,34 +575,24 @@ export async function findDuplicates(
         reviewed: e.reason === "reviewed",
       });
     } else {
-      needChunk.push(e);
+      needFinding.push(e);
     }
   }
 
-  // Fallback: chunk-0 lookup for legacy entries missing recordId in the index
-  const orphaned: typeof needChunk = [];
-  const BATCH = 50;
-  for (let i = 0; i < needChunk.length; i += BATCH) {
-    const batch = needChunk.slice(i, i + BATCH);
-    const chunk0s = await Promise.all(
-      batch.map((e) => db.get<string>(orgKey(orgId, "audit-finding", e.findingId, 0))),
-    );
-    for (let j = 0; j < batch.length; j++) {
-      const raw = chunk0s[j].value;
-      const idx = batch[j];
-      if (!raw) { orphaned.push(idx); continue; }
-      const recordKey = _extractRecordId(raw);
-      if (!recordKey) continue;
-      inRange.push({
-        id: idx.findingId,
-        recordKey,
-        ts: idx.completedAt,
-        reviewed: idx.reason === "reviewed",
-      });
-    }
+  // Fallback for legacy index entries without recordId — fetch the finding
+  const orphaned: typeof needFinding = [];
+  for (const e of needFinding) {
+    const finding = await getFinding(orgId, e.findingId);
+    const recordKey = String((finding as any)?.record?.RecordId ?? (finding as any)?.recordingId ?? "");
+    if (!recordKey) { orphaned.push(e); continue; }
+    inRange.push({
+      id: e.findingId,
+      recordKey,
+      ts: e.completedAt,
+      reviewed: e.reason === "reviewed",
+    });
   }
 
-  // Group by RecordId, winner = reviewed > unreviewed, then newest
   const groups = new Map<string, Entry[]>();
   for (const e of inRange) {
     const g = groups.get(e.recordKey) ?? [];
@@ -736,8 +621,6 @@ export async function findDuplicates(
   return { scanned: inRange.length, groups: dupGroups, orphaned: orphaned.length, toDelete };
 }
 
-/** Delete the losers identified by findDuplicates. Port of
- *  main:judge/kv.ts:1172-1252 (adminDeleteFinding shares the same cleanup). */
 export async function deleteDuplicates(
   orgId: OrgId,
   plan: DedupPlan,
@@ -755,8 +638,6 @@ export async function deleteDuplicates(
   console.log(`[DEDUP] ✅ done org=${orgId} deleted=${deleted}/${losers.length}`);
   return { deleted };
 }
-
-// ── Legacy aliases for data-maintenance functions ────────────────────────────
 
 export const backfillChargebackEntriesLegacy = backfillChargebackEntries;
 export const findDuplicatesLegacy = findDuplicates;

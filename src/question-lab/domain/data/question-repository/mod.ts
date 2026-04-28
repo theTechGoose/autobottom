@@ -1,7 +1,9 @@
 /** Question Lab repository — config, question, test, assignment CRUD.
- *  Ported from question-lab/kv.ts. */
+ *  Firestore-backed. */
 
-import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import {
+  getStored, setStored, deleteStored, listStored, listStoredWithKeys,
+} from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -42,41 +44,35 @@ export interface QLTestRun {
 // ── Config CRUD ──────────────────────────────────────────────────────────────
 
 export async function listConfigs(orgId: OrgId): Promise<QLConfig[]> {
-  const db = await getKv();
-  const r: QLConfig[] = [];
-  for await (const e of db.list<QLConfig>({ prefix: orgKey(orgId, "qlab-config") })) r.push(e.value);
-  return r;
+  return await listStored<QLConfig>("qlab-config", orgId);
 }
 
 export async function getConfig(orgId: OrgId, id: string): Promise<QLConfig | null> {
-  return (await (await getKv()).get<QLConfig>(orgKey(orgId, "qlab-config", id))).value;
+  return await getStored<QLConfig>("qlab-config", orgId, id);
 }
 
 export async function createConfig(orgId: OrgId, name: string, type: "internal" | "partner" = "internal"): Promise<QLConfig> {
-  const db = await getKv();
   const id = crypto.randomUUID();
   const now = Date.now();
   const config: QLConfig = { id, name, type, createdAt: now, updatedAt: now };
-  await db.set(orgKey(orgId, "qlab-config", id), config);
+  await setStored("qlab-config", orgId, [id], config);
   return config;
 }
 
 export async function updateConfig(orgId: OrgId, id: string, patch: Partial<QLConfig>): Promise<QLConfig | null> {
-  const db = await getKv();
   const existing = await getConfig(orgId, id);
   if (!existing) return null;
   const updated = { ...existing, ...patch, updatedAt: Date.now() };
-  await db.set(orgKey(orgId, "qlab-config", id), updated);
+  await setStored("qlab-config", orgId, [id], updated);
   return updated;
 }
 
 export async function deleteConfig(orgId: OrgId, id: string): Promise<void> {
-  const db = await getKv();
-  await db.delete(orgKey(orgId, "qlab-config", id));
+  await deleteStored("qlab-config", orgId, id);
   // Also delete all questions for this config
-  for await (const e of db.list({ prefix: orgKey(orgId, "qlab-question") })) {
-    const q = e.value as any;
-    if (q?.configId === id) await db.delete(e.key);
+  const questions = await listStoredWithKeys<QLQuestion>("qlab-question", orgId);
+  for (const { key, value } of questions) {
+    if (value?.configId === id) await deleteStored("qlab-question", orgId, ...key);
   }
 }
 
@@ -88,41 +84,34 @@ export async function listConfigNames(orgId: OrgId): Promise<Array<{ id: string;
 // ── Question CRUD ────────────────────────────────────────────────────────────
 
 export async function getQuestionsForConfig(orgId: OrgId, configId: string): Promise<QLQuestion[]> {
-  const db = await getKv();
-  const r: QLQuestion[] = [];
-  for await (const e of db.list<QLQuestion>({ prefix: orgKey(orgId, "qlab-question") })) {
-    if (e.value.configId === configId) r.push(e.value);
-  }
-  return r;
+  const all = await listStored<QLQuestion>("qlab-question", orgId);
+  return all.filter((q) => q.configId === configId);
 }
 
 export async function getQuestion(orgId: OrgId, id: string): Promise<QLQuestion | null> {
-  return (await (await getKv()).get<QLQuestion>(orgKey(orgId, "qlab-question", id))).value;
+  return await getStored<QLQuestion>("qlab-question", orgId, id);
 }
 
 export async function createQuestion(orgId: OrgId, configId: string, name: string, text: string): Promise<QLQuestion> {
-  const db = await getKv();
   const id = crypto.randomUUID();
   const now = Date.now();
   const q: QLQuestion = { id, configId, name, text, createdAt: now, updatedAt: now, versions: [] };
-  await db.set(orgKey(orgId, "qlab-question", id), q);
+  await setStored("qlab-question", orgId, [id], q);
   return q;
 }
 
 export async function updateQuestion(orgId: OrgId, id: string, patch: Partial<QLQuestion>): Promise<QLQuestion | null> {
-  const db = await getKv();
   const existing = await getQuestion(orgId, id);
   if (!existing) return null;
-  // Save current version to history
   const versions = existing.versions ?? [];
   versions.push({ text: existing.text, updatedAt: existing.updatedAt });
   const updated = { ...existing, ...patch, updatedAt: Date.now(), versions };
-  await db.set(orgKey(orgId, "qlab-question", id), updated);
+  await setStored("qlab-question", orgId, [id], updated);
   return updated;
 }
 
 export async function deleteQuestion(orgId: OrgId, id: string): Promise<void> {
-  await (await getKv()).delete(orgKey(orgId, "qlab-question", id));
+  await deleteStored("qlab-question", orgId, id);
 }
 
 export async function restoreVersion(orgId: OrgId, id: string, versionIndex: number): Promise<QLQuestion | null> {
@@ -132,23 +121,22 @@ export async function restoreVersion(orgId: OrgId, id: string, versionIndex: num
 }
 
 export async function getAllQuestionNames(orgId: OrgId): Promise<Array<{ name: string; count: number; egregious: boolean }>> {
-  const db = await getKv();
+  const all = await listStored<QLQuestion>("qlab-question", orgId);
   const nameMap = new Map<string, { count: number; egregious: boolean }>();
-  for await (const e of db.list<QLQuestion>({ prefix: orgKey(orgId, "qlab-question") })) {
-    const q = e.value;
+  for (const q of all) {
     const existing = nameMap.get(q.name);
-    if (existing) { existing.count++; }
-    else { nameMap.set(q.name, { count: 1, egregious: !!q.egregious }); }
+    if (existing) existing.count++;
+    else nameMap.set(q.name, { count: 1, egregious: !!q.egregious });
   }
   return Array.from(nameMap.entries()).map(([name, data]) => ({ name, ...data }));
 }
 
 export async function bulkSetEgregious(orgId: OrgId, questionName: string, egregious: boolean): Promise<number> {
-  const db = await getKv();
+  const rows = await listStoredWithKeys<QLQuestion>("qlab-question", orgId);
   let updated = 0;
-  for await (const e of db.list<QLQuestion>({ prefix: orgKey(orgId, "qlab-question") })) {
-    if (e.value.name === questionName && e.value.egregious !== egregious) {
-      await db.set(e.key, { ...e.value, egregious, updatedAt: Date.now() });
+  for (const { key, value } of rows) {
+    if (value.name === questionName && value.egregious !== egregious) {
+      await setStored("qlab-question", orgId, key, { ...value, egregious, updatedAt: Date.now() });
       updated++;
     }
   }
@@ -158,24 +146,19 @@ export async function bulkSetEgregious(orgId: OrgId, questionName: string, egreg
 // ── Test CRUD ────────────────────────────────────────────────────────────────
 
 export async function getTestsForQuestion(orgId: OrgId, questionId: string): Promise<QLTest[]> {
-  const db = await getKv();
-  const r: QLTest[] = [];
-  for await (const e of db.list<QLTest>({ prefix: orgKey(orgId, "qlab-test") })) {
-    if (e.value.questionId === questionId) r.push(e.value);
-  }
-  return r;
+  const all = await listStored<QLTest>("qlab-test", orgId);
+  return all.filter((t) => t.questionId === questionId);
 }
 
 export async function createTest(orgId: OrgId, questionId: string, input: string, expectedAnswer: string): Promise<QLTest> {
-  const db = await getKv();
   const id = crypto.randomUUID();
   const t: QLTest = { id, questionId, input, expectedAnswer, createdAt: Date.now() };
-  await db.set(orgKey(orgId, "qlab-test", id), t);
+  await setStored("qlab-test", orgId, [id], t);
   return t;
 }
 
 export async function deleteTest(orgId: OrgId, id: string): Promise<void> {
-  await (await getKv()).delete(orgKey(orgId, "qlab-test", id));
+  await deleteStored("qlab-test", orgId, id);
 }
 
 // ── Test Runs (per-question result history) ──────────────────────────────────
@@ -184,12 +167,11 @@ export async function addTestRun(
   orgId: OrgId,
   run: Omit<QLTestRun, "id" | "runAt"> & { id?: string; runAt?: number },
 ): Promise<QLTestRun> {
-  const db = await getKv();
   const id = run.id ?? crypto.randomUUID();
   const runAt = run.runAt ?? Date.now();
   const record: QLTestRun = { ...run, id, runAt };
   const padTs = String(runAt).padStart(16, "0");
-  await db.set(orgKey(orgId, "qlab-test-run", padTs, id), record);
+  await setStored("qlab-test-run", orgId, [padTs, id], record);
   return record;
 }
 
@@ -197,16 +179,12 @@ export async function getTestRuns(
   orgId: OrgId,
   filter?: { configId?: string; questionId?: string; limit?: number },
 ): Promise<QLTestRun[]> {
-  const db = await getKv();
-  const out: QLTestRun[] = [];
   const limit = filter?.limit ?? 200;
-  for await (
-    const e of db.list<QLTestRun>(
-      { prefix: orgKey(orgId, "qlab-test-run") },
-      { reverse: true, limit: 1000 },
-    )
-  ) {
-    const r = e.value;
+  const rows = await listStoredWithKeys<QLTestRun>("qlab-test-run", orgId);
+  // Sort by padTs key part descending (newest first)
+  rows.sort((a, b) => String(b.key[0]).localeCompare(String(a.key[0])));
+  const out: QLTestRun[] = [];
+  for (const { value: r } of rows) {
     if (filter?.configId && r.configId !== filter.configId) continue;
     if (filter?.questionId && r.questionId !== filter.questionId) continue;
     out.push(r);
@@ -218,27 +196,25 @@ export async function getTestRuns(
 // ── Assignments ──────────────────────────────────────────────────────────────
 
 export async function getInternalAssignments(orgId: OrgId): Promise<Record<string, string>> {
-  return (await (await getKv()).get<Record<string, string>>(orgKey(orgId, "qlab-internal-assignments"))).value ?? {};
+  return (await getStored<Record<string, string>>("qlab-internal-assignments", orgId)) ?? {};
 }
 
 export async function setInternalAssignment(orgId: OrgId, destinationId: string, configName: string | null): Promise<void> {
-  const db = await getKv();
   const current = await getInternalAssignments(orgId);
   if (configName) current[destinationId] = configName;
   else delete current[destinationId];
-  await db.set(orgKey(orgId, "qlab-internal-assignments"), current);
+  await setStored("qlab-internal-assignments", orgId, [], current);
 }
 
 export async function getPartnerAssignments(orgId: OrgId): Promise<Record<string, string>> {
-  return (await (await getKv()).get<Record<string, string>>(orgKey(orgId, "qlab-partner-assignments"))).value ?? {};
+  return (await getStored<Record<string, string>>("qlab-partner-assignments", orgId)) ?? {};
 }
 
 export async function setPartnerAssignment(orgId: OrgId, officeName: string, configName: string | null): Promise<void> {
-  const db = await getKv();
   const current = await getPartnerAssignments(orgId);
   if (configName) current[officeName] = configName;
   else delete current[officeName];
-  await db.set(orgKey(orgId, "qlab-partner-assignments"), current);
+  await setStored("qlab-partner-assignments", orgId, [], current);
 }
 
 // ── Serve Config (for pipeline steps) ────────────────────────────────────────

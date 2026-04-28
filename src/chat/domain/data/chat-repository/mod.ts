@@ -1,64 +1,60 @@
-/** Chat/messaging repository. Ported from lib/kv.ts messaging section. */
+/** Chat/messaging repository. Firestore-backed. */
 
-import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import {
+  getStored, setStored, listStoredWithKeys,
+} from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 export interface Message { id: string; from: string; to: string; body: string; ts: number; read: boolean; }
 
 export async function sendMessage(orgId: OrgId, from: string, to: string, body: string): Promise<Message> {
-  const db = await getKv();
   const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const msg: Message = { id, from, to, body, ts: Date.now(), read: false };
   // Store in both participants' conversation keys
-  await db.atomic()
-    .set(orgKey(orgId, "message", from, to, id), msg)
-    .set(orgKey(orgId, "message", to, from, id), msg)
-    .commit();
-  // Increment unread count for recipient
-  const unreadKey = orgKey(orgId, "unread-count", to);
-  const current = (await db.get<number>(unreadKey)).value ?? 0;
-  await db.set(unreadKey, current + 1);
+  await setStored("message", orgId, [from, to, id], msg);
+  await setStored("message", orgId, [to, from, id], msg);
+  // Increment unread count for recipient (read-modify-write; race acceptable)
+  const current = (await getStored<number>("unread-count", orgId, to)) ?? 0;
+  await setStored("unread-count", orgId, [to], current + 1);
   return msg;
 }
 
 export async function getConversation(orgId: OrgId, ownerEmail: string, otherEmail: string, limit = 50): Promise<Message[]> {
-  const db = await getKv();
-  const results: Message[] = [];
-  let count = 0;
-  for await (const entry of db.list<Message>({ prefix: orgKey(orgId, "message", ownerEmail, otherEmail) })) {
-    results.push(entry.value);
-    if (++count >= limit) break;
+  // Filter all messages for this owner to only those between ownerEmail and otherEmail
+  const rows = await listStoredWithKeys<Message>("message", orgId);
+  const out: Message[] = [];
+  for (const { key, value } of rows) {
+    if (key[0] === ownerEmail && key[1] === otherEmail) out.push(value);
+    if (out.length >= limit) break;
   }
-  return results.reverse(); // newest last
+  return out.reverse(); // newest last
 }
 
 export async function getUnreadCount(orgId: OrgId, email: string): Promise<number> {
-  return (await (await getKv()).get<number>(orgKey(orgId, "unread-count", email))).value ?? 0;
+  return (await getStored<number>("unread-count", orgId, email)) ?? 0;
 }
 
 export async function markConversationRead(orgId: OrgId, ownerEmail: string, otherEmail: string): Promise<void> {
-  const db = await getKv();
+  const rows = await listStoredWithKeys<Message>("message", orgId);
   let readCount = 0;
-  for await (const entry of db.list<Message>({ prefix: orgKey(orgId, "message", ownerEmail, otherEmail) })) {
-    const msg = entry.value;
+  for (const { key, value: msg } of rows) {
+    if (key[0] !== ownerEmail || key[1] !== otherEmail) continue;
     if (msg && !msg.read && msg.from !== ownerEmail) {
-      await db.set(entry.key, { ...msg, read: true });
+      await setStored("message", orgId, key, { ...msg, read: true });
       readCount++;
     }
   }
   if (readCount > 0) {
-    const unreadKey = orgKey(orgId, "unread-count", ownerEmail);
-    const current = (await db.get<number>(unreadKey)).value ?? 0;
-    await db.set(unreadKey, Math.max(0, current - readCount));
+    const current = (await getStored<number>("unread-count", orgId, ownerEmail)) ?? 0;
+    await setStored("unread-count", orgId, [ownerEmail], Math.max(0, current - readCount));
   }
 }
 
 export async function getConversationList(orgId: OrgId, email: string): Promise<Array<{ email: string; lastMessage: Message; unread: number }>> {
-  const db = await getKv();
+  const rows = await listStoredWithKeys<Message>("message", orgId);
   const convMap = new Map<string, { lastMessage: Message; unread: number }>();
-  for await (const entry of db.list<Message>({ prefix: orgKey(orgId, "message", email) })) {
-    const msg = entry.value;
-    if (!msg) continue;
+  for (const { key, value: msg } of rows) {
+    if (key[0] !== email || !msg) continue;
     const otherEmail = msg.from === email ? msg.to : msg.from;
     const existing = convMap.get(otherEmail);
     if (!existing || msg.ts > existing.lastMessage.ts) {

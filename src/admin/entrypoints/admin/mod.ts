@@ -123,11 +123,9 @@ export class AdminConfigController {
   async setQueue(@Body() body: GenericBodyRequest) {
     const b = body as { queueName?: string; parallelism?: number };
     if (!b.queueName) return { error: "queueName required" };
-    const { getKv, orgKey } = await import("@core/data/deno-kv/mod.ts");
-    const db = await getKv();
-    const key = orgKey(ORG(), "queue-config", b.queueName);
-    const existing = (await db.get<Record<string, unknown>>(key)).value ?? {};
-    await db.set(key, { ...existing, ...(b.parallelism != null ? { parallelism: b.parallelism } : {}) });
+    const { getStored, setStored } = await import("@core/data/firestore/mod.ts");
+    const existing = (await getStored<Record<string, unknown>>("queue-config", ORG(), b.queueName)) ?? {};
+    await setStored("queue-config", ORG(), [b.queueName], { ...existing, ...(b.parallelism != null ? { parallelism: b.parallelism } : {}) });
     return { ok: true, queueName: b.queueName };
   }
 
@@ -324,7 +322,7 @@ export class AdminConfigController {
     const b = body as { confirm?: string; entries?: unknown[] };
     if (b.confirm !== "YES") return { ok: false, message: "import-state requires { confirm: \"YES\" }" };
     const { importKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
-    const result = await importKv(ORG(), "YES", (b.entries ?? []) as Array<{ key: Deno.KvKeyPart[]; value: unknown }>);
+    const result = await importKv(ORG(), "YES", (b.entries ?? []) as Array<{ type: string; org: string; key: string[]; value: unknown }>);
     if (!result.ok) return { ok: false, message: result.error ?? "import failed" };
     return { ok: true, message: `Wrote ${result.written ?? 0} keys, skipped ${result.skipped ?? 0}` };
   }
@@ -339,7 +337,7 @@ export class AdminConfigController {
     try {
       const res = await fetch(`${url}/dump?org=${encodeURIComponent(String(ORG()))}`);
       if (!res.ok) return { ok: false, message: `pull-state: HTTP ${res.status}` };
-      const data = await res.json().catch(() => ({})) as { entries?: Array<{ key: Deno.KvKeyPart[]; value: unknown }> };
+      const data = await res.json().catch(() => ({})) as { entries?: Array<{ type: string; org: string; key: string[]; value: unknown }> };
       const { importKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
       const result = await importKv(ORG(), "YES", data.entries ?? []);
       return { ok: true, message: `Pulled + wrote ${result.written ?? 0} keys` };
@@ -353,16 +351,16 @@ export class AdminConfigController {
   @Get("super-admin/orgs") @ReturnedType(MessageResponse)
   async listOrgsWithCounts() {
     const { listOrgs, listUsers } = await import("@core/business/auth/mod.ts");
-    const { getKv, orgKey } = await import("@core/data/deno-kv/mod.ts");
+    const { listStoredWithKeys } = await import("@core/data/firestore/mod.ts");
     const orgs = await listOrgs();
-    const db = await getKv();
     const results = [] as Array<{ id: string; name: string; slug: string; createdAt: number; users: number; findings: number }>;
     for (const o of orgs) {
       const users = await listUsers(o.id).catch(() => []);
+      // Count distinct finding header docs (key.length===1, no chunk suffix)
+      const findingDocs = await listStoredWithKeys("audit-finding", o.id);
       const findingIds = new Set<string>();
-      for await (const e of db.list({ prefix: orgKey(o.id, "audit-finding") })) {
-        const fid = e.key[2];
-        if (typeof fid === "string") findingIds.add(fid);
+      for (const { key } of findingDocs) {
+        if (key.length === 1) findingIds.add(String(key[0]));
       }
       results.push({ id: String(o.id), name: o.name, slug: o.slug, createdAt: o.createdAt, users: users.length, findings: findingIds.size });
     }

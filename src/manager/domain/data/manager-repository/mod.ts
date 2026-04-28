@@ -1,6 +1,8 @@
-/** Manager queue repository. Ported from manager/kv.ts. */
+/** Manager queue repository. Firestore-backed. */
 
-import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import {
+  getStored, setStored, listStored, listStoredWithKeys,
+} from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewDecision } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -19,31 +21,21 @@ export interface ManagerQueueItem {
 }
 
 export async function populateManagerQueue(orgId: OrgId, findingId: string): Promise<void> {
-  const db = await getKv();
-  await db.set(orgKey(orgId, "manager-queue", findingId), { findingId, addedAt: Date.now(), status: "pending" });
+  await setStored("manager-queue", orgId, [findingId], { findingId, addedAt: Date.now(), status: "pending" });
 }
 
 export async function getManagerQueue(orgId: OrgId): Promise<ManagerQueueItem[]> {
-  const db = await getKv();
-  const items: ManagerQueueItem[] = [];
-  for await (const entry of db.list<ManagerQueueItem>({ prefix: orgKey(orgId, "manager-queue") })) {
-    items.push(entry.value);
-  }
-  return items;
+  return await listStored<ManagerQueueItem>("manager-queue", orgId);
 }
 
 export async function submitRemediation(orgId: OrgId, findingId: string, notes: string, username: string): Promise<{ ok: boolean }> {
-  const db = await getKv();
-  const key = orgKey(orgId, "manager-queue", findingId);
-  const existing = (await db.get<ManagerQueueItem>(key)).value;
+  const existing = await getStored<ManagerQueueItem>("manager-queue", orgId, findingId);
   if (!existing) return { ok: false };
   const remediatedAt = Date.now();
-  await db.set(key, { ...existing, status: "remediated", remediatedBy: username, remediatedAt, notes });
+  await setStored("manager-queue", orgId, [findingId], { ...existing, status: "remediated", remediatedBy: username, remediatedAt, notes });
 
-  // Fire the `manager` webhook so the agent gets the remediation notes by
-  // email. Best-effort — saved state above is the source of truth.
+  // Fire the `manager` webhook — best-effort
   try {
-    const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
     const { fireWebhook } = await import("@admin/domain/data/admin-repository/mod.ts");
     const finding = await getFinding(orgId, findingId);
     if (finding) {
@@ -72,34 +64,26 @@ export async function getManagerStats(orgId: OrgId): Promise<{ total: number; pe
 
 // ── Backfill manager queue from review-decided failures ─────────────────────
 
-/** Scan review-decided entries for findings that have only confirm decisions
- *  and no pending items, then enqueue them into manager-queue for remediation.
- *  Port of main:manager/kv.ts:370+. */
 export async function backfillManagerQueue(orgId: OrgId): Promise<{ added: number }> {
-  const db = await getKv();
   let added = 0;
 
+  const decidedRows = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
   const decidedByFinding: Record<string, ReviewDecision[]> = {};
-  for await (const entry of db.list<ReviewDecision>({ prefix: orgKey(orgId, "review-decided") })) {
-    const fid = entry.value.findingId;
+  for (const { value } of decidedRows) {
+    const fid = value.findingId;
     if (!decidedByFinding[fid]) decidedByFinding[fid] = [];
-    decidedByFinding[fid].push(entry.value);
+    decidedByFinding[fid].push(value);
   }
 
+  const pendingRows = await listStoredWithKeys("review-pending", orgId);
+  const pendingFindingIds = new Set<string>();
+  for (const { key } of pendingRows) pendingFindingIds.add(String(key[0]));
+
   for (const [findingId, decisions] of Object.entries(decidedByFinding)) {
-    // Skip if still has pending review items
-    let hasPending = false;
-    for await (const _ of db.list({ prefix: orgKey(orgId, "review-pending", findingId) })) {
-      hasPending = true;
-      break;
-    }
-    if (hasPending) continue;
+    if (pendingFindingIds.has(findingId)) continue;
+    const existing = await getStored("manager-queue", orgId, findingId);
+    if (existing) continue;
 
-    // Skip if already in manager queue
-    const existing = await db.get(orgKey(orgId, "manager-queue", findingId));
-    if (existing.value) continue;
-
-    // Need at least one confirmed failure
     const confirmedFailures = decisions.filter((d) => d.decision === "confirm");
     if (confirmedFailures.length === 0) continue;
 
@@ -123,12 +107,11 @@ export async function backfillManagerQueue(orgId: OrgId): Promise<{ added: numbe
       jobTimestamp: (finding.job as { timestamp?: string } | undefined)?.timestamp ?? "",
     };
 
-    await db.set(orgKey(orgId, "manager-queue", findingId), queueItem);
+    await setStored("manager-queue", orgId, [findingId], queueItem);
     added++;
   }
 
   return { added };
 }
 
-// Legacy alias preserves the controller dynamic-import call site.
 export const backfillManagerQueueLegacy = backfillManagerQueue;

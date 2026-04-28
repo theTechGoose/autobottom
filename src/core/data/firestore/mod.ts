@@ -334,6 +334,30 @@ async function restSetIfAbsent(creds: FirestoreCreds, docId: string, body: DocBo
   return true;
 }
 
+async function restListByOrg(creds: FirestoreCreds, org: string, limit: number): Promise<Array<{ id: string; body: DocBody }>> {
+  const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
+  const body = {
+    structuredQuery: {
+      from: [{ collectionId: creds.collection }],
+      where: { fieldFilter: { field: { fieldPath: "_org" }, op: "EQUAL", value: { stringValue: org } } },
+      limit,
+    },
+  };
+  const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`Firestore org query failed: ${res.status} ${await res.text()}`);
+  const rows = await res.json() as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
+  const out: Array<{ id: string; body: DocBody }> = [];
+  const idPrefix = `${parent}/${creds.collection}/`;
+  for (const row of rows) {
+    if (!row.document?.fields || !row.document?.name) continue;
+    const obj = objectFromFields(row.document.fields) as DocBody;
+    if (isExpired(obj)) continue;
+    const id = row.document.name.startsWith(idPrefix) ? row.document.name.slice(idPrefix.length) : row.document.name;
+    out.push({ id, body: obj });
+  }
+  return out;
+}
+
 async function restListByType(creds: FirestoreCreds, type: string, org: string, limit: number): Promise<DocBody[]> {
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
   const body = {
@@ -493,6 +517,28 @@ export async function listStoredWithKeys<T>(
   const creds = await loadFirestoreCredentials();
   const bodies = creds ? await restListByType(creds, type, org, limit) : inMemListByType(type, org, limit);
   return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
+}
+
+/** Dump every doc belonging to this org — across all types. Returns the
+ *  full DocBody (with metadata) so callers can preserve type/key shape.
+ *  Used by /admin/dump-state for app-level backup. */
+export async function listAllStoredByOrg(
+  org: string,
+  opts: { limit?: number } = {},
+): Promise<Array<{ id: string; body: DocBody }>> {
+  const limit = opts.limit ?? 10_000;
+  const creds = await loadFirestoreCredentials();
+  if (!creds) {
+    const out: Array<{ id: string; body: DocBody }> = [];
+    for (const [id, body] of _inMem.entries()) {
+      if (out.length >= limit) break;
+      if (body._org !== org) continue;
+      if (isExpired(body)) continue;
+      out.push({ id, body });
+    }
+    return out;
+  }
+  return restListByOrg(creds, org, limit);
 }
 
 /** List values whose doc ID begins with the given prefix.

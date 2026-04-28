@@ -1,7 +1,6 @@
-/** Watchdog — detects and re-publishes stuck pipeline steps.
- *  Ported from the hourly cron in main.ts. */
+/** Watchdog — detects and re-publishes stuck pipeline steps. */
 
-import { getKv } from "@core/data/deno-kv/mod.ts";
+import { listStoredByIdPrefix } from "@core/data/firestore/mod.ts";
 import { publishStep } from "@core/data/qstash/mod.ts";
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 
@@ -16,17 +15,22 @@ interface StuckFinding {
 }
 
 export async function getStuckFindings(thresholdMs = STUCK_THRESHOLD_MS): Promise<StuckFinding[]> {
-  const db = await getKv();
   const now = Date.now();
   const stuck: StuckFinding[] = [];
 
-  for await (const entry of db.list<{ findingId: string; step: string; ts: number }>({ prefix: ["__active-tracking__"] })) {
-    const v = entry.value;
-    if (!v?.ts || !v?.findingId) continue;
-    const age = now - v.ts;
+  // Scan active-tracking docs across all orgs via doc-ID prefix.
+  // Doc IDs are encoded as `active-tracking__{org}__{findingId}` so the
+  // prefix "active-tracking__" matches every entry regardless of org.
+  // We parse the org out of the ID (sanitization keeps it round-trip-safe
+  // for our org IDs which are lowercase alphanumeric).
+  const rows = await listStoredByIdPrefix<{ findingId: string; step: string; ts: number }>("active-tracking__");
+  for (const { id, value } of rows) {
+    if (!value?.ts || !value?.findingId) continue;
+    const age = now - value.ts;
     if (age > thresholdMs) {
-      const orgId = String(entry.key[1] ?? "");
-      stuck.push({ orgId, findingId: v.findingId, step: v.step, ts: v.ts, ageMs: age });
+      const idParts = id.split("__");
+      const orgId = idParts[1] ?? "";
+      stuck.push({ orgId, findingId: value.findingId, step: value.step, ts: value.ts, ageMs: age });
     }
   }
   return stuck;

@@ -1,7 +1,10 @@
 /** Admin backfill business logic — reconcile stale indices/dimensions without
- *  re-running the audit pipeline. Ported from main:lib/kv.ts. */
+ *  re-running the audit pipeline. Firestore-backed. */
 
-import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
+import {
+  getStored, setStored, deleteStored,
+  listStored, listStoredWithKeys, listAllStoredByOrg,
+} from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, WireDeductionEntry, ChargebackEntry } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -15,20 +18,14 @@ function padTs(ts: number): string { return String(ts).padStart(15, "0"); }
 
 // ── Backfill review scores into completed-audit-stat ─────────────────────────
 
-/** Compare each completed-audit-stat entry in [since, until] to the finding's
- *  current reviewScore; rewrite the stat if drifted. Main:lib/kv.ts:444-462. */
 export async function backfillReviewScores(
   orgId: OrgId,
   since: number,
   until: number,
 ): Promise<{ scanned: number; updated: number }> {
-  const db = await getKv();
   let scanned = 0, updated = 0;
-
-  for await (const entry of db.list<Record<string, unknown>>({
-    prefix: orgKey(orgId, "completed-audit-stat"),
-  })) {
-    const v = entry.value;
+  const rows = await listStoredWithKeys<Record<string, unknown>>("completed-audit-stat", orgId);
+  for (const { key, value: v } of rows) {
     const ts = (v.ts as number) ?? 0;
     if (ts < since || ts > until) continue;
     scanned++;
@@ -37,39 +34,28 @@ export async function backfillReviewScores(
     const finding = await getFinding(orgId, findingId);
     const reviewScore = (finding as Record<string, unknown> | null)?.reviewScore as number | undefined;
     if (reviewScore !== undefined && reviewScore !== v.score) {
-      await db.set(entry.key, { ...v, score: reviewScore });
+      await setStored("completed-audit-stat", orgId, key, { ...v, score: reviewScore });
       updated++;
       console.log(`[BACKFILL-REVIEW-SCORES] ${findingId}: ${v.score}% → ${reviewScore}%`);
     }
   }
-
   return { scanned, updated };
 }
 
 // ── Backfill audit-done-idx with voName/owner/dept/shift ─────────────────────
 
-/** Walk audit-done-idx, enrich any entries missing voName/owner by looking up
- *  the backing finding. Paginated via Deno.KvListIterator cursor. */
+/** Walk audit-done-idx (one page at a time via offset cursor). */
 export async function backfillAuditDoneIndex(
   orgId: OrgId,
   cursor?: string,
 ): Promise<{ scanned: number; updated: number; cursor: string | null; done: boolean }> {
-  const db = await getKv();
-  const iter = db.list<AuditDoneIndexEntry>(
-    { prefix: orgKey(orgId, "audit-done-idx") },
-    cursor ? { cursor } : {},
-  );
+  const all = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId);
+  const offset = cursor ? Number(cursor) : 0;
+  const page = all.slice(offset, offset + AUDIT_INDEX_BACKFILL_PAGE);
+  const done = offset + page.length >= all.length;
+  const nextCursor = done ? null : String(offset + page.length);
 
-  const page: AuditDoneIndexEntry[] = [];
-  for await (const entry of iter) {
-    if (entry.value) page.push(entry.value);
-    if (page.length >= AUDIT_INDEX_BACKFILL_PAGE) break;
-  }
-
-  const done = page.length < AUDIT_INDEX_BACKFILL_PAGE;
-  const nextCursor = done ? null : iter.cursor;
   const toUpdate = page.filter((e) => e.voName === undefined && e.owner === undefined);
-
   let updated = 0;
   for (const entry of toUpdate) {
     const finding = await getFinding(orgId, entry.findingId);
@@ -101,33 +87,22 @@ export async function backfillAuditDoneIndex(
 
 // ── Backfill stale scores ────────────────────────────────────────────────────
 
-/** Iterate audit-done-idx, detect score drift vs finding.reviewScore, rewrite
- *  or delete orphaned index entries. Main:lib/kv.ts:1042-1130. */
 export async function backfillStaleScores(
   orgId: OrgId,
   cursor?: string,
 ): Promise<{ scanned: number; updated: number; cursor: string | null; done: boolean }> {
-  const db = await getKv();
-  const iter = db.list<AuditDoneIndexEntry>(
-    { prefix: orgKey(orgId, "audit-done-idx") },
-    cursor ? { cursor } : {},
-  );
-
-  const page: Array<{ entry: AuditDoneIndexEntry; key: Deno.KvKey }> = [];
-  for await (const entry of iter) {
-    if (entry.value) page.push({ entry: entry.value, key: entry.key });
-    if (page.length >= 50) break;
-  }
-
-  const done = page.length < 50;
-  const nextCursor = done ? null : iter.cursor;
+  const all = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId);
+  const offset = cursor ? Number(cursor) : 0;
+  const page = all.slice(offset, offset + 50);
+  const done = offset + page.length >= all.length;
+  const nextCursor = done ? null : String(offset + page.length);
 
   let scanned = 0, updated = 0;
-  for (const { entry } of page) {
+  for (const entry of page) {
     scanned++;
     const finding = await getFinding(orgId, entry.findingId);
     if (!finding || (finding as Record<string, unknown>).reAuditedAt) {
-      await db.delete(orgKey(orgId, "audit-done-idx", padTs(entry.completedAt), entry.findingId));
+      await deleteStored("audit-done-idx", orgId, padTs(entry.completedAt), entry.findingId);
       updated++;
       console.log(
         `[BACKFILL-SCORES] ${entry.findingId}: deleted index entry (${!finding ? "finding not found" : "re-audited"})`,
@@ -175,37 +150,28 @@ export async function backfillStaleScores(
 
 // ── Backfill partner dimensions from finished findings ───────────────────────
 
-/** Walk audit-finding storage, for package audits extract OfficeName/GmEmail
- *  and merge into partner-dimensions. Paginated. Main:lib/kv.ts:1350-1395. */
 export async function backfillPartnerDimensions(
   orgId: OrgId,
   cursor?: string,
 ): Promise<{ scanned: number; saved: number; cursor: string | null; done: boolean }> {
-  const db = await getKv();
-  const prefix = orgKey(orgId, "audit-finding");
-
-  // audit-finding entries are chunked: key = [orgId, "audit-finding", findingId, chunkIndexOrMeta]
-  // Collect unique findingIds (up to PARTNER_BACKFILL_BATCH) to process this page
-  const findingIds: string[] = [];
-  const seen = new Set<string>();
-  const iter = db.list({ prefix }, cursor ? { cursor } : {});
-  for await (const entry of iter) {
-    const key = entry.key as Deno.KvKey;
-    if (key.length < 3) continue;
-    const fid = key[2] as string;
-    if (seen.has(fid)) continue;
-    seen.add(fid);
-    findingIds.push(fid);
-    if (findingIds.length >= PARTNER_BACKFILL_BATCH) break;
+  // Walk audit-finding header docs (key.length === 1) — chunked storage
+  // doesn't matter for finding-id discovery; we re-fetch via getFinding.
+  const allDocs = await listStoredWithKeys<unknown>("audit-finding", orgId);
+  const findingIdsSet = new Set<string>();
+  for (const { key } of allDocs) {
+    if (key.length === 1) findingIdsSet.add(String(key[0]));
   }
+  const findingIds = Array.from(findingIdsSet);
 
-  const done = findingIds.length < PARTNER_BACKFILL_BATCH;
-  const nextCursor = done ? null : iter.cursor;
+  const offset = cursor ? Number(cursor) : 0;
+  const page = findingIds.slice(offset, offset + PARTNER_BACKFILL_BATCH);
+  const done = offset + page.length >= findingIds.length;
+  const nextCursor = done ? null : String(offset + page.length);
 
   const dims = await getPartnerDimensions(orgId);
   let scanned = 0, saved = 0;
 
-  for (const findingId of findingIds) {
+  for (const findingId of page) {
     const finding = await getFinding(orgId, findingId);
     scanned++;
     if (!finding || finding.recordingIdField !== "GenieNumber") continue;
@@ -223,45 +189,40 @@ export async function backfillPartnerDimensions(
     if (changed) { dims.offices[officeName] = merged.sort(); saved++; }
   }
 
-  // Single write of the merged dimensions for this page
-  await db.set(orgKey(orgId, "partner-dimensions"), dims);
+  await setStored("partner-dimensions", orgId, [], dims);
   return { scanned, saved, cursor: nextCursor, done };
 }
 
 // ── Purge old entries by date range ──────────────────────────────────────────
 
-/** Delete completed-audit-stat, chargeback, and wire entries with ts in
- *  [since, before]. Port of main:lib/kv.ts:365-398. */
 export async function purgeOldEntries(
   orgId: OrgId,
   since: number,
   before: number,
 ): Promise<{ completed: number; chargebacks: number; wire: number }> {
-  const db = await getKv();
   let completedDeleted = 0, cbDeleted = 0, wireDeleted = 0;
 
-  for await (const entry of db.list<{ ts?: number }>({
-    prefix: orgKey(orgId, "completed-audit-stat"),
-  })) {
-    const ts = entry.value?.ts ?? 0;
+  const completed = await listStoredWithKeys<{ ts?: number }>("completed-audit-stat", orgId);
+  for (const { key, value } of completed) {
+    const ts = value?.ts ?? 0;
     if (ts >= since && ts <= before) {
-      await db.delete(entry.key);
+      await deleteStored("completed-audit-stat", orgId, ...key);
       completedDeleted++;
     }
   }
-  for await (const entry of db.list<ChargebackEntry>({
-    prefix: orgKey(orgId, "chargeback-entry"),
-  })) {
-    if (entry.value.ts >= since && entry.value.ts <= before) {
-      await db.delete(entry.key);
+
+  const cbRows = await listStoredWithKeys<ChargebackEntry>("chargeback-entry", orgId);
+  for (const { key, value } of cbRows) {
+    if (value.ts >= since && value.ts <= before) {
+      await deleteStored("chargeback-entry", orgId, ...key);
       cbDeleted++;
     }
   }
-  for await (const entry of db.list<WireDeductionEntry>({
-    prefix: orgKey(orgId, "wire-deduction-entry"),
-  })) {
-    if (entry.value.ts >= since && entry.value.ts <= before) {
-      await db.delete(entry.key);
+
+  const wireRows = await listStoredWithKeys<WireDeductionEntry>("wire-deduction-entry", orgId);
+  for (const { key, value } of wireRows) {
+    if (value.ts >= since && value.ts <= before) {
+      await deleteStored("wire-deduction-entry", orgId, ...key);
       wireDeleted++;
     }
   }
@@ -271,22 +232,17 @@ export async function purgeOldEntries(
 
 // ── Purge bypassed offices' wire deductions ──────────────────────────────────
 
-/** Iterate wire-deduction-entry and delete ones whose office matches any
- *  bypass pattern (case-insensitive contains). Port of main:lib/kv.ts:323-342. */
 export async function purgeBypassedWireDeductions(
   orgId: OrgId,
   patterns: string[],
 ): Promise<{ deleted: number; kept: number }> {
-  const db = await getKv();
   let deleted = 0, kept = 0;
-  for await (const entry of db.list<WireDeductionEntry>({
-    prefix: orgKey(orgId, "wire-deduction-entry"),
-  })) {
-    const office = (entry.value.office ?? "").toLowerCase();
-    const isBypassed =
-      patterns.length > 0 && patterns.some((p) => office.includes(p.toLowerCase()));
+  const rows = await listStoredWithKeys<WireDeductionEntry>("wire-deduction-entry", orgId);
+  for (const { key, value } of rows) {
+    const office = (value.office ?? "").toLowerCase();
+    const isBypassed = patterns.length > 0 && patterns.some((p) => office.includes(p.toLowerCase()));
     if (isBypassed) {
-      await db.delete(entry.key);
+      await deleteStored("wire-deduction-entry", orgId, ...key);
       deleted++;
     } else {
       kept++;
@@ -295,67 +251,66 @@ export async function purgeBypassedWireDeductions(
   return { deleted, kept };
 }
 
-// ── Wipe KV — DESTRUCTIVE, requires explicit confirmation ────────────────────
+// ── Wipe org — DESTRUCTIVE, requires explicit confirmation ──────────────────
 
-/** Delete every key under this org's namespace. Requires `confirm === "YES"`
- *  from the caller — any other value refuses the request. Returns count of
- *  keys deleted across all prefixes. */
+/** Delete every Firestore doc belonging to this org. Requires
+ *  `confirm === "YES"` from the caller. Endpoint name kept as wipeKv for
+ *  backwards compatibility with existing /admin/wipe-state routes. */
 export async function wipeKv(
   orgId: OrgId,
   confirm: string,
 ): Promise<{ ok: boolean; deleted?: number; error?: string }> {
   if (confirm !== "YES") {
-    return {
-      ok: false,
-      error: "wipe-kv requires { confirm: \"YES\" } — refused",
-    };
+    return { ok: false, error: "wipe requires { confirm: \"YES\" } — refused" };
   }
-  const db = await getKv();
+  const rows = await listAllStoredByOrg(orgId);
   let deleted = 0;
-  // Iterate everything under [orgId, ...] and delete
-  for await (const entry of db.list({ prefix: [orgId] })) {
-    await db.delete(entry.key);
+  for (const { id } of rows) {
+    const { deleteDoc } = await import("@core/data/firestore/mod.ts");
+    await deleteDoc(id);
     deleted++;
   }
-  console.log(`[WIPE-KV] 💣 org=${orgId} deleted=${deleted} keys`);
+  console.log(`[WIPE] 💣 org=${orgId} deleted=${deleted} docs`);
   return { ok: true, deleted };
 }
 
-// ── KV dump / import ─────────────────────────────────────────────────────────
+// ── Dump / Import ───────────────────────────────────────────────────────────
 
-export interface KvDumpEntry { key: Deno.KvKeyPart[]; value: unknown }
+export interface KvDumpEntry {
+  type: string;
+  org: string;
+  key: string[];
+  value: unknown;
+}
 
-/** Dumps every KV entry under the org's prefix. Caller is responsible for
- *  size — large orgs can produce huge payloads. */
+/** Dump every Firestore doc under this org. Caller is responsible for size. */
 export async function dumpKv(orgId: OrgId): Promise<{ entries: KvDumpEntry[]; count: number }> {
-  const db = await getKv();
+  const rows = await listAllStoredByOrg(orgId);
   const entries: KvDumpEntry[] = [];
-  for await (const entry of db.list({ prefix: [orgId] })) {
-    entries.push({ key: entry.key as Deno.KvKeyPart[], value: entry.value });
+  for (const { body } of rows) {
+    const { _type, _org, _key, _updatedAt: _u, _expiresAt: _e, ...rest } = body;
+    const value = "_value" in rest ? (rest as { _value: unknown })._value : rest;
+    entries.push({ type: String(_type), org: String(_org), key: Array.isArray(_key) ? _key.map(String) : [], value });
   }
   return { entries, count: entries.length };
 }
 
-/** Restores entries from a dumpKv() output. Requires confirm==="YES". Will NOT
- *  wipe first — append-only restore (so test data can layer on top). Caller
- *  should call wipeKv first if they want a clean slate. */
+/** Restore entries produced by dumpKv. Requires confirm==="YES". */
 export async function importKv(
   orgId: OrgId,
   confirm: string,
   entries: KvDumpEntry[],
 ): Promise<{ ok: boolean; written?: number; skipped?: number; error?: string }> {
   if (confirm !== "YES") {
-    return { ok: false, error: "import-kv requires { confirm: \"YES\" } — refused" };
+    return { ok: false, error: "import requires { confirm: \"YES\" } — refused" };
   }
   if (!Array.isArray(entries)) return { ok: false, error: "entries must be an array" };
-  const db = await getKv();
   let written = 0, skipped = 0;
   for (const e of entries) {
-    if (!Array.isArray(e?.key) || e.key.length === 0) { skipped++; continue; }
-    if (e.key[0] !== orgId) { skipped++; continue; }  // safety: stay in target org
-    await db.set(e.key as Deno.KvKey, e.value);
+    if (!e?.type || e.org !== orgId || !Array.isArray(e.key)) { skipped++; continue; }
+    await setStored(e.type, orgId, e.key, e.value);
     written++;
   }
-  console.log(`[IMPORT-KV] org=${orgId} written=${written} skipped=${skipped}`);
+  console.log(`[IMPORT] org=${orgId} written=${written} skipped=${skipped}`);
   return { ok: true, written, skipped };
 }

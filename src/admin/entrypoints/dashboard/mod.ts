@@ -113,38 +113,25 @@ export class DashboardController {
    *  actually stored vs what the dashboard is rendering. */
   @Get("debug/kv-state") @ReturnedType(OkResponse)
   async debugKvState() {
-    const { getKv, orgKey } = await import("@core/data/deno-kv/mod.ts");
-    const db = await getKv();
+    const { listStoredWithKeys } = await import("@core/data/firestore/mod.ts");
     const orgId = ORG();
-    const active: unknown[] = [];
-    const completed: unknown[] = [];
-    const errors: unknown[] = [];
-    for await (const e of db.list({ prefix: orgKey(orgId, "active-tracking") })) {
-      active.push({ key: e.key, value: e.value });
-    }
-    let completedCount = 0;
-    for await (const e of db.list({ prefix: orgKey(orgId, "completed-audit-stat") })) {
-      completedCount++;
-      if (completed.length < 5) completed.push({ key: e.key, value: e.value });
-    }
-    for await (const e of db.list({ prefix: orgKey(orgId, "error-tracking") })) {
-      if (errors.length < 5) errors.push({ key: e.key, value: e.value });
-    }
-    // audit-finding keys use the chunked-storage meta marker [..., "_n"]; count
-    // unique finding IDs by collecting the third key part when we see an _n entry.
+    const active = await listStoredWithKeys("active-tracking", orgId);
+    const completed = await listStoredWithKeys("completed-audit-stat", orgId);
+    const errors = await listStoredWithKeys("error-tracking", orgId);
+    // For chunked findings: header docs have key.length===1; chunks have key.length>1.
+    // Count distinct finding IDs by collecting the first key part of the header.
+    const findingDocs = await listStoredWithKeys("audit-finding", orgId);
     const findingIds = new Set<string>();
-    for await (const e of db.list({ prefix: orgKey(orgId, "audit-finding") })) {
-      // key shape: [orgId, "audit-finding", findingId, (0|1|..|"_n")]
-      const findingId = e.key[2];
-      if (typeof findingId === "string") findingIds.add(findingId);
+    for (const { key } of findingDocs) {
+      if (key.length === 1) findingIds.add(String(key[0]));
     }
     return {
       orgId,
       active,
       activeCount: active.length,
-      completedCount,
-      recentCompletedSample: completed,
-      errors,
+      completedCount: completed.length,
+      recentCompletedSample: completed.slice(0, 5),
+      errors: errors.slice(0, 5),
       findingCount: findingIds.size,
       findingSample: Array.from(findingIds).slice(0, 10),
     };

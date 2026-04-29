@@ -7,20 +7,22 @@ Deno.test("TranscriptPanel — empty snippet renders empty state", () => {
 });
 
 Deno.test("TranscriptPanel — renders line count", () => {
-  const html = renderHTML(<TranscriptPanel snippet={"[AGENT]: Hello\\n[CUSTOMER]: Hi\\n[AGENT]: How can I help?"} />);
+  const html = renderHTML(<TranscriptPanel snippet={"[AGENT]: Hello\n[CUSTOMER]: Hi\n[AGENT]: How can I help?"} />);
   assertContains(html, "3 lines");
 });
 
-Deno.test("TranscriptPanel — detects AGENT speaker", () => {
+// The component normalizes [AGENT] → "team"/"TEAM MEMBER" and
+// [CUSTOMER] → "guest"/"GUEST" to match the rest of the audit UI.
+Deno.test("TranscriptPanel — detects AGENT speaker (rendered as TEAM MEMBER)", () => {
   const html = renderHTML(<TranscriptPanel snippet={"[AGENT]: Hello there"} />);
-  assertContains(html, "agent");
-  assertContains(html, "AGENT");
+  assertContains(html, "t-speaker-team");
+  assertContains(html, "TEAM MEMBER");
 });
 
-Deno.test("TranscriptPanel — detects CUSTOMER speaker", () => {
+Deno.test("TranscriptPanel — detects CUSTOMER speaker (rendered as GUEST)", () => {
   const html = renderHTML(<TranscriptPanel snippet={"[CUSTOMER]: Hi there"} />);
-  assertContains(html, "customer");
-  assertContains(html, "CUSTOMER");
+  assertContains(html, "t-speaker-guest");
+  assertContains(html, "GUEST");
 });
 
 Deno.test("TranscriptPanel — non-speaker lines render without label", () => {

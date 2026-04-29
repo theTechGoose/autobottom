@@ -35,6 +35,31 @@ interface Finding {
   appealedAt?: number;
   /** Set by reaudit flow — surface as "Re-Audited" disabled button. */
   reAuditedAt?: number;
+  /** Multi-recording audits: per-track S3 keys (length = recording count). */
+  s3RecordingKeys?: string[];
+  /** Multi-recording audits: per-track recording IDs (genie IDs). */
+  genieIds?: string[];
+  /** Owner email — used as fallback when VoName is empty. */
+  owner?: string;
+  /** Pipeline job metadata; job.timestamp is when the audit run started. */
+  job?: { timestamp?: string };
+}
+
+function stripVoNamePrefix(raw: string): string {
+  return raw.includes(" - ") ? raw.split(" - ").slice(1).join(" - ").trim() : raw.trim();
+}
+
+function formatAuditDate(ts: string | undefined): string {
+  if (!ts) return "—";
+  try {
+    return new Date(ts).toLocaleString("en-US", {
+      month: "numeric", day: "numeric", year: "2-digit",
+      hour: "numeric", minute: "2-digit",
+      timeZone: "America/New_York",
+    });
+  } catch {
+    return ts;
+  }
 }
 
 const QB_DATE_URL = "https://monsterrg.quickbase.com/db/bpb28qsnn?a=dr&rid=";
@@ -74,13 +99,30 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
   const hasSpeakerLabels = diarized.includes("[AGENT]") || diarized.includes("[CUSTOMER]");
   const transcriptText = hasSpeakerLabels ? diarized : (finding.rawTranscript ?? "");
 
+  // Team member: prod strips the "DEST - " prefix from VoName, falling back to
+  // the finding owner if VoName is missing (main:controller.ts:1253).
+  const teamMember = (() => {
+    const raw = record.VoName as string | undefined;
+    const parsed = raw ? stripVoNamePrefix(raw) : "";
+    if (parsed) return parsed;
+    if (finding.owner && finding.owner !== "api") return finding.owner;
+    return finding.owner || "—";
+  })();
+
+  // Multi-recording: when an audit covers >1 recording, surface each genie ID.
+  const recordingIdSingle = (finding as unknown as { recordingId?: string }).recordingId ?? record.VoGenie ?? "—";
+  const recordingIds = Array.isArray(finding.genieIds) && finding.genieIds.length > 1
+    ? finding.genieIds
+    : [String(recordingIdSingle)];
+  const recordingCount = finding.s3RecordingKeys?.length ?? 1;
+
   // Record metadata
   const meta = {
     recordId: record.RecordId ?? "—",
-    recordingId: (finding as unknown as { recordingId?: string }).recordingId ?? record.VoGenie ?? "—",
+    recordingId: recordingIdSingle,
     destination: record.DestinationDisplay ?? record["314"] ?? "—",
-    teamMember: record.VoName ?? record["33"] ?? record.GuestName ?? "—",
-    date: record["10"] ?? record["8"] ?? "—",
+    teamMember,
+    date: formatAuditDate(finding.job?.timestamp),
   };
 
   // Date-leg guest fields (ignored when isPackage)
@@ -126,7 +168,7 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
             <span style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">{finding.findingStatus ?? ""}</span>
           </div>
           <div style="display:flex;gap:12px;align-items:center;">
-            {finished && <AudioPlayer findingId={id} />}
+            {finished && <AudioPlayer findingId={id} recordingCount={recordingCount} />}
           </div>
         </div>
       </div>
@@ -172,7 +214,7 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
         <Field label="Record ID">{crmUrl
           ? <a href={crmUrl} target="_blank" rel="noopener" class="tbl-link">{meta.recordId}</a>
           : meta.recordId}</Field>
-        <Field label="Recording ID">{meta.recordingId}</Field>
+        <Field label={recordingIds.length > 1 ? "Recording IDs" : "Recording ID"}>{recordingIds.join(", ")}</Field>
         <Field label="Destination">{meta.destination}</Field>
         <Field label="Team Member">{meta.teamMember}</Field>
         <Field label="Date">{meta.date}</Field>

@@ -1286,6 +1286,15 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .ap-play svg { width: 10px; height: 10px; fill: #fff; }
 #ap-waveform { display: block; }
 .ap-time { font-family: var(--mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+.ap-rec-tabs { display: flex; gap: 4px; flex-shrink: 0; }
+.ap-rec-tab {
+  padding: 4px 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-dim); cursor: pointer; transition: all 0.15s;
+  font-family: var(--mono);
+}
+.ap-rec-tab:hover { color: var(--text-bright); border-color: var(--text-muted); }
+.ap-rec-tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
 
 /* ===== File Appeal — prod-matching modal (Commit W) ===== */
 @keyframes appealIn { from { opacity:0;transform:scale(0.95) translateY(6px); } to { opacity:1;transform:none; } }

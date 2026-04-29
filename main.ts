@@ -353,6 +353,21 @@ const FRONTEND_PREFIX_PATHS = [
   "/api/super-admin/",
   "/api/gamification/",
   "/api/store/buy",
+  // Frontend-only QLab HTMX wrappers — render HTML fragments. Backend has plain
+  // /api/qlab/configs (POST create) and /api/qlab/configs/update; everything
+  // matched here is a Fresh route file under frontend/routes/api/qlab/**.
+  "/api/qlab/configs/new",
+  "/api/qlab/configs/clone",
+  "/api/qlab/configs/delete",
+  "/api/qlab/configs/rename",
+  "/api/qlab/questions/new",
+  "/api/qlab/questions/edit",
+  "/api/qlab/questions/create",
+  "/api/qlab/questions/cancel",
+  "/api/qlab/questions/update",
+  "/api/qlab/questions/delete",
+  "/api/qlab/runner/",
+  "/api/qlab/assignments/",
   "/styles.css", "/favicon.svg", "/_fresh/",
 ];
 

@@ -1,19 +1,23 @@
 /** Island: waveform audio player for /audit/report.
- *  Mirrors prod implementation in main:controller.ts (lines 1793–1890):
+ *  Mirrors prod implementation in main:controller.ts:
  *    - Native <audio> tag, hidden
  *    - Custom play button (teal circle)
  *    - Canvas waveform rendered from decoded audio buffer (150 bars)
  *    - Time display (mm:ss / mm:ss)
  *    - Click-to-seek on canvas
+ *    - REC 1 / REC 2 / … tabs when the audit covers multiple recordings
  *  All client-side — required because waveform rendering and seek interaction
  *  are inherently browser-only. No business logic here; just audio UX. */
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 interface Props {
   findingId: string;
+  /** Number of individual recordings stitched into this audit. Default 1. */
+  recordingCount?: number;
 }
 
-export default function AudioPlayer({ findingId }: Props) {
+export default function AudioPlayer({ findingId, recordingCount = 1 }: Props) {
+  const [activeIdx, setActiveIdx] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const playBtnRef = useRef<HTMLButtonElement>(null);
@@ -37,6 +41,7 @@ export default function AudioPlayer({ findingId }: Props) {
     const ctx2d = canvas.getContext("2d");
     let wfData: number[] | null = null;
     let wfProgress = 0;
+    let cancelled = false;
 
     function drawWaveform() {
       if (!ctx2d || !canvas) return;
@@ -63,8 +68,9 @@ export default function AudioPlayer({ findingId }: Props) {
       ctx2d.fillRect(cx - 1, 0, 2, H);
     }
 
-    // Load waveform data (fetch, decode, downsample to 150 bars)
-    fetch(`/audit/recording?id=${encodeURIComponent(findingId)}`)
+    // Load waveform data (fetch, decode, downsample to 150 bars). Re-runs when
+    // activeIdx changes so each REC tab gets its own waveform.
+    fetch(`/audit/recording?id=${encodeURIComponent(findingId)}&idx=${activeIdx}`)
       .then((r) => r.arrayBuffer())
       .then((buf) => {
         const AC = (globalThis as unknown as { AudioContext: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
@@ -74,6 +80,7 @@ export default function AudioPlayer({ findingId }: Props) {
         return ac.decodeAudioData(buf);
       })
       .then((decoded) => {
+        if (cancelled) return;
         const ch = decoded.getChannelData(0);
         const BARS = 150;
         const block = Math.floor(ch.length / BARS);
@@ -134,6 +141,7 @@ export default function AudioPlayer({ findingId }: Props) {
     drawWaveform(); // initial placeholder
 
     return () => {
+      cancelled = true;
       playBtn.removeEventListener("click", onPlayClick);
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
@@ -143,17 +151,32 @@ export default function AudioPlayer({ findingId }: Props) {
       audio.removeEventListener("error", onError);
       canvas.removeEventListener("click", onCanvasClick);
     };
-  }, [findingId]);
+  }, [findingId, activeIdx]);
+
+  const showTabs = recordingCount > 1;
 
   return (
     <>
       <div class="ap" id="audio-player" ref={containerRef}>
+        {showTabs && (
+          <div class="ap-rec-tabs" role="tablist">
+            {Array.from({ length: recordingCount }, (_, i) => (
+              <button
+                key={i}
+                type="button"
+                class={`ap-rec-tab ${i === activeIdx ? "active" : ""}`}
+                onClick={() => setActiveIdx(i)}
+                aria-pressed={i === activeIdx}
+              >REC {i + 1}</button>
+            ))}
+          </div>
+        )}
         <audio
           ref={audioRef}
           id="recording-audio"
           class="audio-native"
           preload="metadata"
-          src={`/audit/recording?id=${encodeURIComponent(findingId)}&idx=0`}
+          src={`/audit/recording?id=${encodeURIComponent(findingId)}&idx=${activeIdx}`}
         />
         <button type="button" class="ap-play" ref={playBtnRef} title="Play recording">
           <span ref={iconPlayRef}>

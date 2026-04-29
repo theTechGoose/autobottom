@@ -33,6 +33,8 @@ Deno.test("stats — returns fallback on error", async () => {
 
 // === QUEUE ACTION ===
 
+// queue-action returns 200 with an HTML status span (consumed by HTMX into
+// #queue-action-status on the admin dashboard for visible feedback).
 Deno.test("queue-action — pause maps to /admin/pause-queues", async () => {
   const mock = mockFetch({ "/admin/pause-queues": { body: { ok: true } } });
   try {
@@ -41,7 +43,8 @@ Deno.test("queue-action — pause maps to /admin/pause-queues", async () => {
       body: JSON.stringify({ action: "pause" }),
     });
     const res = await (queueActionHandler as any).POST({ req, state: {} });
-    assertEquals(res.status, 204);
+    assertEquals(res.status, 200);
+    await res.text();
     assertEquals(mock.calls[0].url.includes("/admin/pause-queues"), true);
   } finally { mock.restore(); }
 });
@@ -54,7 +57,8 @@ Deno.test("queue-action — resume maps to /admin/resume-queues", async () => {
       body: JSON.stringify({ action: "resume" }),
     });
     const res = await (queueActionHandler as any).POST({ req, state: {} });
-    assertEquals(res.status, 204);
+    assertEquals(res.status, 200);
+    await res.text();
     assertEquals(mock.calls[0].url.includes("/admin/resume-queues"), true);
   } finally { mock.restore(); }
 });
@@ -100,6 +104,7 @@ Deno.test("queue-action — clear-review maps correctly", async () => {
       body: JSON.stringify({ action: "clear-review" }),
     });
     const res = await (queueActionHandler as any).POST({ req, state: {} });
-    assertEquals(res.status, 204);
+    assertEquals(res.status, 200);
+    await res.text();
   } finally { mock.restore(); }
 });

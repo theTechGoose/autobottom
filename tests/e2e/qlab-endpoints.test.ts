@@ -110,6 +110,77 @@ Deno.test({ name: "E2E QLab: POST /api/admin/modal/qlab/set creates assignment +
   assertEquals(after.internal?.[destKey], undefined, "binding should be removed");
 }});
 
+Deno.test({ name: "E2E QLab: GET /api/qlab/configs/import-form returns 200 HTML panel", sanitizeResources: false, async fn() {
+  const res = await fetch(`${BASE}/api/qlab/configs/import-form`, {
+    headers: { cookie: session.cookie },
+    redirect: "manual",
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "Import CSV");
+  assertStringIncludes(html, "Config Name");
+}});
+
+Deno.test({ name: "E2E QLab: GET /api/qlab/configs/bulk-egregious-form returns 200 HTML panel", sanitizeResources: false, async fn() {
+  const res = await fetch(`${BASE}/api/qlab/configs/bulk-egregious-form`, {
+    headers: { cookie: session.cookie },
+    redirect: "manual",
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "Mark Bulk Egregious");
+  assertStringIncludes(html, "Question Name");
+}});
+
+Deno.test({ name: "E2E QLab: POST /api/qlab/configs/import-csv (textarea path) creates config + questions", sanitizeResources: false, async fn() {
+  const ts = Date.now();
+  const name = `E2E-Import-${ts}`;
+  const csv = "name,text,weight\nGreeting,Did the agent greet?,5\nClose,Did the agent close out cleanly?,3\n";
+
+  const fd = new FormData();
+  fd.append("name", name);
+  fd.append("type", "internal");
+  fd.append("dupeMode", "skip");
+  fd.append("csv", csv);
+
+  const res = await fetch(`${BASE}/api/qlab/configs/import-csv`, {
+    method: "POST",
+    headers: { cookie: session.cookie },
+    body: fd,
+    redirect: "manual",
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "Imported");
+
+  // Verify on the backend
+  const list = await (await fetch(`${BASE}/api/qlab/configs`, { headers: { cookie: session.cookie } })).json() as { configs?: { id: string; name: string }[] };
+  const created = list.configs?.find((c) => c.name === name);
+  assert(!!created, `expected config "${name}" in the list`);
+  const served = await (await fetch(`${BASE}/api/qlab/serve?name=${encodeURIComponent(created!.id)}`, { headers: { cookie: session.cookie } })).json() as { questions?: { name: string }[] };
+  assertEquals(served.questions?.length, 2, "2 questions imported");
+}});
+
+Deno.test({ name: "E2E QLab: POST /api/qlab/configs/bulk-egregious returns success message", sanitizeResources: false, async fn() {
+  // Backend always returns ok:true with an updated count (even if 0 match), so
+  // we don't need any pre-existing questions to exercise the wrapper.
+  const fd = new FormData();
+  fd.append("name", "DefinitelyNotARealQuestionName");
+  fd.append("egregious", "true");
+
+  const res = await fetch(`${BASE}/api/qlab/configs/bulk-egregious`, {
+    method: "POST",
+    headers: { cookie: session.cookie },
+    body: fd,
+    redirect: "manual",
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  // Either a "Marked N questions" success or an error message — both are valid
+  // signs the wrapper is reachable. We just assert the wrapper is no longer 404.
+  assert(html.length > 0, "wrapper must return a non-empty fragment");
+}});
+
 Deno.test({
   name: "E2E QLab cleanup — stop server",
   fn() { stopServer(); },

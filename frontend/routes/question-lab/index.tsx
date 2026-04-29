@@ -90,7 +90,29 @@ export default define.page(async function QuestionLabPage(ctx) {
         <a href="/admin/dashboard" class="ql-topbar-back">← Dashboard</a>
       </div>
 
-      <div class="ql-page-body" style="display:flex;gap:16px;align-items:flex-start;">
+      <div class="ql-page-body">
+
+      <div class="ql-action-bar" style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
+        <button
+          class="sf-btn danger"
+          style="font-size:11px;"
+          hx-get="/api/qlab/configs/bulk-egregious-form"
+          hx-target="#qlab-action-panel"
+          hx-swap="innerHTML"
+        >Mark Bulk Egregious</button>
+        <button
+          class="sf-btn"
+          style="font-size:11px;"
+          hx-get="/api/qlab/configs/import-form"
+          hx-target="#qlab-action-panel"
+          hx-swap="innerHTML"
+        >Import CSV</button>
+        <span style="flex:1;"></span>
+        <span style="font-size:11px;color:var(--text-dim);">{configs.length} config{configs.length === 1 ? "" : "s"}</span>
+      </div>
+      <div id="qlab-action-panel"></div>
+
+      <div style="display:flex;gap:16px;align-items:flex-start;">
         {/* Config sidebar */}
         <div style="width:280px;flex-shrink:0;">
           <div class="card">
@@ -102,7 +124,7 @@ export default define.page(async function QuestionLabPage(ctx) {
                 hx-post="/api/qlab/configs/new"
                 hx-target="#qlab-config-list"
                 hx-swap="outerHTML"
-              >+ New</button>
+              >+ New Config</button>
             </div>
             <div id="qlab-config-list">
               {configs.length === 0 ? (
@@ -218,6 +240,7 @@ export default define.page(async function QuestionLabPage(ctx) {
             </>
           )}
         </div>
+      </div>
       </div>
     </Layout>
   );

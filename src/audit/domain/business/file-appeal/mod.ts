@@ -77,15 +77,19 @@ export async function fileJudgeAppeal(
     appealedQuestions: questionsToQueue.map((q) => String(q._origIdx)),
   }));
 
-  // Persist comment onto the finding so the judge queue can surface it alongside
-  // the questions (matches prod behavior — judge sees agent's appeal note).
-  // Best-effort — the judge queue + appeal record are the critical writes.
-  if (input.comment) {
-    try {
-      await saveFinding(orgId, { ...finding, appealComment: input.comment });
-    } catch (err) {
-      console.error(`⚠️ [APPEAL] saveFinding comment failed fid=${findingId} (non-fatal):`, err);
-    }
+  // Persist appealedAt + comment onto the finding so the report page knows
+  // an appeal exists (button shows "Appeal Filed" disabled, matching prod's
+  // lockAppealBtn behavior in main:controller.ts:1449). Always save appealedAt;
+  // comment is optional. Best-effort — the judge queue + appeal record are
+  // the critical writes.
+  try {
+    await saveFinding(orgId, {
+      ...finding,
+      appealedAt,
+      ...(input.comment ? { appealComment: input.comment } : {}),
+    });
+  } catch (err) {
+    console.error(`⚠️ [APPEAL] saveFinding appealedAt failed fid=${findingId} (non-fatal):`, err);
   }
 
   fireWebhook(orgId, "appeal", {

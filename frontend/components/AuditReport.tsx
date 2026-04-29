@@ -31,6 +31,10 @@ interface Finding {
   feedback?: { heading?: string; text?: string };
   startedAt?: number;
   completedAt?: number;
+  /** Set by fileJudgeAppeal — surface as "Appeal Filed" disabled button. */
+  appealedAt?: number;
+  /** Set by reaudit flow — surface as "Re-Audited" disabled button. */
+  reAuditedAt?: number;
 }
 
 const QB_DATE_URL = "https://monsterrg.quickbase.com/db/bpb28qsnn?a=dr&rid=";
@@ -154,6 +158,8 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
             findingId={id}
             auditorEmail={auditorEmail}
             originalGenieId={String(meta.recordingId ?? "")}
+            appealedAt={finding.appealedAt}
+            reAuditedAt={finding.reAuditedAt}
             failedQuestions={questions
               .map((q, i) => ({ index: i, header: q.header ?? "Untitled question", answer: q.answer ?? "" }))
               .filter((q) => !isYes(q.answer))}

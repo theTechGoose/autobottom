@@ -17,6 +17,12 @@ interface Props {
   auditorEmail: string;
   failedQuestions: FailedQuestion[];
   originalGenieId?: string;
+  /** Set when an appeal has already been filed for this finding —
+   *  disables the trigger button and changes its label to "Appeal Filed". */
+  appealedAt?: number;
+  /** Set when this finding has been re-audited (different / additional /
+   *  upload recording) — disables the trigger button with "Re-Audited" label. */
+  reAuditedAt?: number;
 }
 
 type View =
@@ -38,7 +44,16 @@ function fmtTime(sec: number): string {
 }
 
 export default function AppealModal(props: Props) {
-  const { findingId, auditorEmail, failedQuestions, originalGenieId = "" } = props;
+  const { findingId, auditorEmail, failedQuestions, originalGenieId = "", appealedAt, reAuditedAt } = props;
+  // Local lock — set after a successful submit so the button updates without
+  // needing a page refresh. Server-side appealedAt/reAuditedAt cover the
+  // post-refresh case.
+  const [localLock, setLocalLock] = useState<"appeal" | "reaudit" | null>(null);
+  const lockedLabel = reAuditedAt || localLock === "reaudit"
+    ? "Re-Audited"
+    : appealedAt || localLock === "appeal"
+      ? "Appeal Filed"
+      : null;
 
   const [view, setView] = useState<View>("closed");
   const [tab, setTab] = useState<ReauditTab>("recording");
@@ -141,6 +156,7 @@ export default function AppealModal(props: Props) {
         setView("appeal");
         return;
       }
+      setLocalLock("appeal");
       setView("appeal-done");
     } catch (e) {
       setErr((e as Error).message);
@@ -193,6 +209,7 @@ export default function AppealModal(props: Props) {
         reportUrl: String(d.reportUrl ?? `/audit/report?id=${d.newFindingId}`),
         appealType: String(d.appealType ?? ""),
       });
+      setLocalLock("reaudit");
       setView("reaudit-done");
     } catch (e) {
       setErr((e as Error).message);
@@ -258,6 +275,7 @@ export default function AppealModal(props: Props) {
         reportUrl: String(d.reportUrl ?? `/audit/report?id=${d.newFindingId}`),
         appealType: String(d.appealType ?? "upload-recording"),
       });
+      setLocalLock("reaudit");
       setView("reaudit-done");
     } catch (e) {
       setErr((e as Error).message);
@@ -268,7 +286,11 @@ export default function AppealModal(props: Props) {
   return (
     <>
       <div style="margin:14px 0 6px;text-align:center;">
-        <button type="button" class="appeal-btn" onClick={openChoice}>File Appeal</button>
+        {lockedLabel ? (
+          <button type="button" class="appeal-btn filed" disabled>{lockedLabel}</button>
+        ) : (
+          <button type="button" class="appeal-btn" onClick={openChoice}>File Appeal</button>
+        )}
       </div>
 
       {/* ── Choice overlay ── */}

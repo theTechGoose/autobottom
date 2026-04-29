@@ -43,7 +43,29 @@ export class EmailReportController {
   }
 
   @Post("preview-inline") @ReturnedType(EmailPreviewResponse) @BodyType(GenericBodyRequest)
-  async previewInline(@Body() body: GenericBodyRequest) { return { html: "" }; }
+  async previewInline(@Body() body: GenericBodyRequest) {
+    // Inline preview — render against the form's current state without
+    // saving the config or stashing the HTML in the preview KV cache.
+    const b = body as any;
+    const config = {
+      id: b.id ?? "preview-inline",
+      name: b.name ?? "Preview",
+      recipients: Array.isArray(b.recipients) ? b.recipients : [],
+      cc: Array.isArray(b.cc) ? b.cc : undefined,
+      bcc: Array.isArray(b.bcc) ? b.bcc : undefined,
+      reportSections: Array.isArray(b.reportSections) ? b.reportSections : [],
+      topLevelFilters: Array.isArray(b.topLevelFilters) ? b.topLevelFilters : undefined,
+      dateRange: b.dateRange ?? undefined,
+      onlyCompleted: b.onlyCompleted ?? true,
+      failedOnly: b.failedOnly ?? undefined,
+      weeklyType: b.weeklyType ?? undefined,
+      templateId: b.templateId ?? undefined,
+    };
+    const { queryReportData, renderSections, renderFullEmail } = await import("@reporting/domain/business/email-report-engine/mod.ts");
+    const sections = await queryReportData(ORG(), config as any);
+    const html = renderFullEmail(null, renderSections(sections), config.name);
+    return { html };
+  }
 
   @Get("preview-view") @ReturnedType(EmailPreviewResponse)
   async previewView(@Query("configId") configId: string) {

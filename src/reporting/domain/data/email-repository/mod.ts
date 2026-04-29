@@ -27,13 +27,18 @@ export async function saveEmailReportConfig(
     recipients: config.recipients,
     onlyCompleted: config.onlyCompleted ?? true,
     reportSections: config.reportSections ?? existing?.reportSections ?? [],
+    ...(config.topLevelFilters ? { topLevelFilters: config.topLevelFilters } : {}),
     ...(config.dateRange ? { dateRange: config.dateRange } : {}),
     ...(config.cc ? { cc: config.cc } : {}),
     ...(config.bcc ? { bcc: config.bcc } : {}),
     ...(config.failedOnly != null ? { failedOnly: config.failedOnly } : {}),
     ...(config.weeklyType ? { weeklyType: config.weeklyType } : {}),
+    ...(config.weeklyDepartment ? { weeklyDepartment: config.weeklyDepartment } : {}),
+    ...(config.weeklyShift ? { weeklyShift: config.weeklyShift } : {}),
+    ...(config.weeklyOffice ? { weeklyOffice: config.weeklyOffice } : {}),
     ...(config.templateId ? { templateId: config.templateId } : {}),
     ...(config.schedule ? { schedule: config.schedule } : {}),
+    ...(config.enabled !== undefined ? { enabled: config.enabled } : {}),
   };
   await setStored("email-report-config", orgId, [full.id], full);
   return full;

@@ -202,12 +202,21 @@ export interface EmailReportConfig {
   cc?: string[];
   bcc?: string[];
   reportSections: ReportSection[];
+  /** Filters applied across ALL sections before per-section criteria. */
+  topLevelFilters?: CriteriaRule[];
   dateRange?: DateRangeConfig;
   onlyCompleted?: boolean;
   failedOnly?: boolean;
   weeklyType?: string;
+  /** Set by Weekly Builder so dupe-detection + scope-aware recipient
+   *  recomputation can find the staged item later. */
+  weeklyDepartment?: string;
+  weeklyShift?: string;
+  weeklyOffice?: string;
   templateId?: string;
   schedule?: { cron: string };
+  /** Toggle exposed by the modal — when false the cron job skips this config. */
+  enabled?: boolean;
 }
 
 export interface ReportSection {

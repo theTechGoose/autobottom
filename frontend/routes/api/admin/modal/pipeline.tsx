@@ -1,4 +1,5 @@
-/** Modal content: Pipeline settings — stepper UI matching production. */
+/** Modal content: Pipeline settings. Native browser number-input spinners
+ *  drive increment/decrement (no client JS); Save posts the form via HTMX. */
 import { define } from "../../../../lib/define.ts";
 import { apiFetch } from "../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
@@ -27,14 +28,9 @@ export const handler = define.handlers({
           <div class="pm-field">
             <div class="pm-field-info">
               <div class="pm-field-name">Parallelism</div>
-              <div class="pm-field-desc">Max concurrent audit operations</div>
+              <div class="pm-field-desc">Max concurrent audit operations (1–100)</div>
             </div>
-            <div class="pm-stepper">
-              <button class="pm-step-btn" data-step data-target="a-parallelism" data-dir="-1" type="button">&minus;</button>
-              <input type="number" class="pm-step-value" id="a-parallelism" name="parallelism" min="1" max="100" value={String(para.parallelism)} />
-              <button class="pm-step-btn" data-step data-target="a-parallelism" data-dir="1" type="button">+</button>
-              <span class="pm-unit" style="visibility:hidden;">sec</span>
-            </div>
+            <input type="number" class="pm-num-input" id="a-parallelism" name="parallelism" min="1" max="100" step="1" value={String(para.parallelism)} />
           </div>
         </div>
 
@@ -46,7 +42,7 @@ export const handler = define.handlers({
             <span>Queue Status (Live from QStash)</span>
             <button class="sf-btn ghost" hx-get="/api/admin/modal/pipeline/queues" hx-target="#pm-queue-status" hx-swap="innerHTML" style="font-size:10px;padding:3px 10px;height:auto;">Check</button>
           </div>
-          <div id="pm-queue-status" style="font-size:11px;color:var(--text-dim);padding:4px 0;">Click "Check" to verify QStash queue parallelism</div>
+          <div id="pm-queue-status" style="font-size:11px;color:var(--text-dim);padding:4px 0;">Click "Check" to read the live queue counts from QStash.</div>
         </div>
 
         <div class="pm-divider"></div>
@@ -57,26 +53,16 @@ export const handler = define.handlers({
           <div class="pm-field">
             <div class="pm-field-info">
               <div class="pm-field-name">Max Retries</div>
-              <div class="pm-field-desc">Attempts before marking failed</div>
+              <div class="pm-field-desc">Attempts before marking failed (0–50)</div>
             </div>
-            <div class="pm-stepper">
-              <button class="pm-step-btn" data-step data-target="a-retries" data-dir="-1" type="button">&minus;</button>
-              <input type="number" class="pm-step-value" id="a-retries" name="maxRetries" min="0" max="50" value={String(config.maxRetries)} />
-              <button class="pm-step-btn" data-step data-target="a-retries" data-dir="1" type="button">+</button>
-              <span class="pm-unit" style="visibility:hidden;">sec</span>
-            </div>
+            <input type="number" class="pm-num-input" id="a-retries" name="maxRetries" min="0" max="50" step="1" value={String(config.maxRetries)} />
           </div>
           <div class="pm-field">
             <div class="pm-field-info">
-              <div class="pm-field-name">Delay</div>
-              <div class="pm-field-desc">Seconds between retry attempts</div>
+              <div class="pm-field-name">Delay (seconds)</div>
+              <div class="pm-field-desc">Wait between retry attempts (0–300)</div>
             </div>
-            <div class="pm-stepper">
-              <button class="pm-step-btn" data-step data-target="a-retry-delay" data-dir="-1" type="button">&minus;</button>
-              <input type="number" class="pm-step-value" id="a-retry-delay" name="retryDelaySeconds" min="0" max="300" value={String(config.retryDelaySeconds)} />
-              <button class="pm-step-btn" data-step data-target="a-retry-delay" data-dir="1" type="button">+</button>
-              <span class="pm-unit">sec</span>
-            </div>
+            <input type="number" class="pm-num-input" id="a-retry-delay" name="retryDelaySeconds" min="0" max="300" step="1" value={String(config.retryDelaySeconds)} />
           </div>
         </div>
 

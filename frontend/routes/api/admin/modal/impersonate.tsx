@@ -46,7 +46,13 @@ export const handler = define.handlers({
         <div class="modal-actions" style="margin-top:0;">
           <button class="sf-btn secondary" data-close-modal="impersonate-modal">Cancel</button>
           {selectedUser
-            ? <a href={`${ROLE_DESTINATIONS[selectedUser.role] ?? "/agent"}?as=${encodeURIComponent(selectedUser.email)}`} class="sf-btn primary" style="text-decoration:none;">Go →</a>
+            ? <a
+                href={`${ROLE_DESTINATIONS[selectedUser.role] ?? "/agent"}?as=${encodeURIComponent(selectedUser.email)}`}
+                class="sf-btn primary"
+                style="text-decoration:none;"
+                target="_blank"
+                rel="noopener"
+              >Go →</a>
             : <button class="sf-btn primary" disabled>Go →</button>
           }
         </div>

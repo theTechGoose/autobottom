@@ -67,7 +67,7 @@ const ADMIN_SECTIONS: SbSection[] = [
       { label: "Question Lab", icon: Icon.flask, color: "var(--green-bg)", iconColor: "var(--green)", modalId: "qlab-modal" },
       { label: "Bulk Audit", icon: Icon.layoutDashboard, color: "var(--teal-bg)", iconColor: "var(--teal)", modalId: "bulk-audit-modal" },
       { label: "Webhook", icon: Icon.webhook, color: "var(--blue-bg)", iconColor: "var(--blue)", modalId: "webhook-modal" },
-      { label: "Email Reports", icon: Icon.mail, color: "var(--blue-bg)", iconColor: "var(--blue)", modalId: "email-reports-modal" },
+      { label: "Email Reports", icon: Icon.mail, color: "var(--blue-bg)", iconColor: "var(--blue)", href: "/admin/email-reports" },
       { label: "Email Templates", icon: Icon.mail, color: "var(--cyan-bg)", iconColor: "var(--cyan)", modalId: "email-templates-modal" },
       { label: "Chargebacks & Omissions", icon: Icon.clipboardList, color: "var(--yellow-bg)", iconColor: "var(--yellow)", modalId: "chargebacks-modal" },
       { label: "Data Maintenance", icon: Icon.trash, color: "var(--red-bg)", iconColor: "var(--red)", modalId: "maintenance-modal" },

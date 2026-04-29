@@ -336,7 +336,7 @@ Deno.env.set("API_URL", `http://localhost:${port}`);
 // --- Route requests ---
 // Frontend EXACT page paths — must match exactly (no prefix matching)
 const FRONTEND_EXACT_PAGES = new Set([
-  "/admin/dashboard", "/admin/users", "/admin/audits", "/admin/weekly-builder",
+  "/admin/dashboard", "/admin/users", "/admin/audits", "/admin/weekly-builder", "/admin/email-reports",
   "/review", "/review/dashboard",
   "/judge", "/judge/dashboard",
   "/manager", "/agent", "/chat", "/store", "/question-lab",
@@ -359,6 +359,7 @@ const FRONTEND_PREFIX_PATHS = [
   "/api/qlab/configs/new",
   "/api/qlab/configs/clone",
   "/api/qlab/configs/delete",
+  "/api/qlab/configs/bulk-delete",
   "/api/qlab/configs/rename",
   "/api/qlab/configs/toggle-active",
   "/api/qlab/configs/create",

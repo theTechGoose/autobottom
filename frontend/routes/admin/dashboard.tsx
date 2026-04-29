@@ -90,12 +90,19 @@ export default define.page(async function AdminDashboard(ctx) {
       {/* ===== FIND BY QB RECORD ===== */}
       <div class="card" style="margin-top:12px;padding:14px 18px;">
         <div class="tbl-title">Find by QB Record</div>
-        <form style="display:flex;gap:10px;align-items:flex-end;" method="GET" action="/admin/audits">
+        <form
+          style="display:flex;gap:10px;align-items:flex-end;"
+          hx-get="/api/admin/find-by-record"
+          hx-target="#find-record-result"
+          hx-swap="innerHTML"
+          hx-trigger="submit"
+        >
           <div class="form-group" style="margin-bottom:0;flex:1;">
             <input type="text" name="recordId" placeholder="QB Record ID..." style="font-family:var(--mono);font-size:13px;" />
           </div>
           <button class="btn btn-primary" type="submit" style="height:40px;">Search</button>
         </form>
+        <div id="find-record-result" style="margin-top:8px;"></div>
       </div>
 
       {/* ===== TEST BY RID ===== */}
@@ -125,7 +132,6 @@ export default define.page(async function AdminDashboard(ctx) {
         { id: "qlab-modal", title: "Question Lab", sub: "Assign configs to destinations and offices", endpoint: "/api/admin/modal/qlab", className: "qlab-modal", noHeader: true },
         { id: "users-modal", title: "Users", sub: "Manage user accounts and roles", endpoint: "/api/admin/modal/users", className: "um-modal", noHeader: true },
         { id: "webhook-modal", title: "Webhook Configuration", sub: "Configure outbound webhooks for pipeline events", endpoint: "/api/admin/modal/webhook", noHeader: true },
-        { id: "email-reports-modal", title: "Email Reports", sub: "Scheduled email report configurations", endpoint: "/api/admin/modal/email-reports", className: "er-modal", noHeader: true },
         { id: "email-templates-modal", title: "Email Templates", sub: "Manage email notification templates", endpoint: "/api/admin/modal/email-templates", className: "et-modal", noHeader: true },
         { id: "chargebacks-modal", title: "Chargebacks & Omissions", sub: "Review chargeback data and wire deductions", endpoint: "/api/admin/modal/chargebacks", className: "cb-modal", noHeader: true },
         { id: "maintenance-modal", title: "Data Maintenance", sub: "Purge, backfill, deduplicate, and clean up data", endpoint: "/api/admin/modal/maintenance", noHeader: true },

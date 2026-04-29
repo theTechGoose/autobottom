@@ -3,20 +3,27 @@ import { define } from "../../../../lib/define.ts";
 import { apiFetch } from "../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 
+// IMPORTANT: each `kind` here MUST match the key used by the firing site
+// (fireWebhook(orgId, kind, ...)) and the registered webhook-email handler in
+// src/reporting/domain/business/webhook-handlers/mod.ts. Mismatches mean the
+// modal saves a config that the runtime never reads — silently dropping the
+// testEmail / bcc / template overrides. The "Judge Finish" tab used to use
+// kind="judge-finish" but the firing handler is registered as "judge", which
+// is why testEmail set on this tab had no effect at runtime.
 const KINDS = [
   { kind: "terminate", label: "Audit Complete", desc: "Called when an audit review is completed" },
   { kind: "appeal", label: "Appeal Filed", desc: "Called when a team member files an appeal" },
   { kind: "manager", label: "Manager Review", desc: "Called when a manager remediation is needed" },
-  { kind: "judge-finish", label: "Judge Finish", desc: "Called when a judge decides an appeal" },
+  { kind: "judge", label: "Judge Finish", desc: "Called when a judge decides an appeal" },
   { kind: "re-audit-receipt", label: "Re-Audit Receipt", desc: "Called when a re-audit is received" },
 ] as const;
 
-const EMAIL_KINDS = ["terminate", "appeal", "manager", "judge-finish", "re-audit-receipt"];
+const EMAIL_KINDS = ["terminate", "appeal", "manager", "judge", "re-audit-receipt"];
 const SELF_ENDPOINTS: Record<string, string> = {
   terminate: "/webhooks/audit-complete",
   appeal: "/webhooks/appeal-filed",
   manager: "/webhooks/manager-review",
-  "judge-finish": "/webhooks/appeal-decided",
+  judge: "/webhooks/appeal-decided",
 };
 
 export const handler = define.handlers({

@@ -4,14 +4,24 @@ import { define } from "../../../../lib/define.ts";
 import { apiFetch } from "../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 
-interface QuestionNamesResponse { names?: string[] }
+interface QuestionNameRow { name: string; count?: number; egregious?: boolean }
+interface QuestionNamesResponse { names?: Array<QuestionNameRow | string> }
 
 export const handler = define.handlers({
   async GET(ctx) {
     let names: string[] = [];
     try {
       const d = await apiFetch<QuestionNamesResponse>("/api/qlab/question-names", ctx.req);
-      names = (d.names ?? []).slice().sort((a, b) => a.localeCompare(b));
+      // Backend returns Array<{name, count, egregious}>; older callsites
+      // returned plain string[]. Accept both, project to a sorted name list
+      // so the <option>s render real strings (the prior code rendered
+      // [object Object] when objects came back, breaking the dropdown).
+      const raw = d.names ?? [];
+      names = raw
+        .map((n) => typeof n === "string" ? n : n?.name)
+        .filter((s): s is string => typeof s === "string" && s.length > 0)
+        .slice()
+        .sort((a, b) => a.localeCompare(b));
     } catch {}
 
     const html = renderToString(

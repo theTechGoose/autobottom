@@ -104,53 +104,84 @@ export default define.page(async function QuestionLabPage(ctx) {
           {configs.length === 0 ? (
             <div style="text-align:center;color:var(--text-dim);padding:30px;font-size:13px;">No configurations yet. Create one to get started.</div>
           ) : (
-            <table class="data-table" style="width:100%;font-size:12px;">
-              <thead>
-                <tr style="text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;">
-                  <th style="padding:8px 10px;">Name</th>
-                  <th style="padding:8px 10px;">Type</th>
-                  <th style="padding:8px 10px;">Status</th>
-                  <th style="padding:8px 10px;">Questions</th>
-                  <th style="padding:8px 10px;">Created</th>
-                  <th style="padding:8px 10px;text-align:right;">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {configs.map((c) => (
-                  <tr key={c.id} style="border-top:1px solid var(--border);">
-                    <td style="padding:8px 10px;">
-                      <a href={`/question-lab/config/${c.id}`} class="tbl-link" style="font-weight:600;color:var(--blue);">{c.name}</a>
-                    </td>
-                    <td style="padding:8px 10px;">
-                      <span class={`pill ${c.type === "partner" ? "pill-orange" : "pill-blue"}`}>{c.type}</span>
-                    </td>
-                    <td style="padding:8px 10px;">
-                      <StatusPill id={c.id} active={c.active ?? true} />
-                    </td>
-                    <td style="padding:8px 10px;color:var(--text-dim);">{c.questionCount ?? 0} question{(c.questionCount ?? 0) === 1 ? "" : "s"}</td>
-                    <td style="padding:8px 10px;color:var(--text-dim);">{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US", { timeZone: "America/New_York" }) : "—"}</td>
-                    <td style="padding:8px 10px;text-align:right;">
-                      <button
-                        class="sf-btn"
-                        style="font-size:10px;margin-right:4px;"
-                        hx-post={`/api/qlab/configs/clone?id=${c.id}`}
-                        hx-target="body"
-                        hx-push-url="/question-lab"
-                        title="Clone"
-                      >Clone</button>
-                      <button
-                        class="sf-btn danger"
-                        style="font-size:10px;"
-                        hx-post={`/api/qlab/configs/delete?id=${c.id}`}
-                        hx-confirm={`Delete "${c.name}" and all its questions?`}
-                        hx-target="body"
-                        hx-push-url="/question-lab"
-                      >Delete</button>
-                    </td>
+            <form
+              id="qlab-bulk"
+              hx-post="/api/qlab/configs/bulk-delete"
+              hx-confirm="Delete the selected configs and all their questions? This cannot be undone."
+              hx-target="body"
+              hx-push-url="/question-lab"
+            >
+              <table class="data-table" style="width:100%;font-size:12px;">
+                <thead>
+                  <tr style="text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;">
+                    <th style="padding:8px 10px;width:24px;"></th>
+                    <th style="padding:8px 10px;">Name</th>
+                    <th style="padding:8px 10px;">Type</th>
+                    <th style="padding:8px 10px;">Status</th>
+                    <th style="padding:8px 10px;">Questions</th>
+                    <th style="padding:8px 10px;">Created</th>
+                    <th style="padding:8px 10px;text-align:right;">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {configs.map((c) => (
+                    <tr key={c.id} style="border-top:1px solid var(--border);">
+                      <td style="padding:8px 10px;">
+                        <input type="checkbox" name="ids" value={c.id} aria-label={`Select ${c.name}`} style="width:16px;height:16px;cursor:pointer;" />
+                      </td>
+                      <td style="padding:8px 10px;">
+                        <a href={`/question-lab/config/${c.id}`} class="tbl-link" style="font-weight:600;color:var(--blue);">{c.name}</a>
+                      </td>
+                      <td style="padding:8px 10px;">
+                        <span class={`pill ${c.type === "partner" ? "pill-orange" : "pill-blue"}`}>{c.type}</span>
+                      </td>
+                      <td style="padding:8px 10px;">
+                        <StatusPill id={c.id} active={c.active ?? true} />
+                      </td>
+                      <td style="padding:8px 10px;color:var(--text-dim);">{c.questionCount ?? 0} question{(c.questionCount ?? 0) === 1 ? "" : "s"}</td>
+                      <td style="padding:8px 10px;color:var(--text-dim);">{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US", { timeZone: "America/New_York" }) : "—"}</td>
+                      <td style="padding:8px 10px;text-align:right;">
+                        <button
+                          class="sf-btn"
+                          type="button"
+                          style="font-size:10px;margin-right:4px;"
+                          hx-post={`/api/qlab/configs/clone?id=${c.id}`}
+                          hx-target="body"
+                          hx-push-url="/question-lab"
+                          title="Clone"
+                        >Clone</button>
+                        <button
+                          class="sf-btn danger"
+                          type="button"
+                          style="font-size:10px;"
+                          hx-post={`/api/qlab/configs/delete?id=${c.id}`}
+                          hx-confirm={`Delete "${c.name}" and all its questions?`}
+                          hx-target="body"
+                          hx-push-url="/question-lab"
+                        >Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;gap:8px;flex-wrap:wrap;">
+                <button
+                  type="submit"
+                  class="sf-btn danger"
+                  style="font-size:11px;"
+                >Delete selected</button>
+                <button
+                  type="button"
+                  class="sf-btn danger"
+                  style="font-size:11px;background:var(--red);color:#fff;border-color:var(--red);"
+                  hx-post="/api/qlab/configs/bulk-delete?all=1"
+                  hx-confirm={`PERMANENTLY delete ALL ${configs.length} configs and every question they contain? Type-confirm in the next dialog.`}
+                  hx-prompt="Type DELETE ALL to confirm"
+                  hx-target="body"
+                  hx-push-url="/question-lab"
+                >Delete ALL configs</button>
+              </div>
+            </form>
           )}
         </div>
       </div>

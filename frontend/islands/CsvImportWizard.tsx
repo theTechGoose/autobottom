@@ -122,8 +122,14 @@ export default function CsvImportWizard() {
       if (!group || !text || !name) continue;
       let bucket = groups.get(group);
       if (!bucket) { bucket = new Map(); groups.set(group, bucket); }
-      if (bucket.has(text)) { dupes++; continue; }
-      bucket.set(text, { name, text, autoYesExp: autoYes });
+      // Dedupe by composite name+text. Two rows with the same Question Text
+      // but different Report Labels are distinct questions (prod CSVs do this
+      // routinely — e.g. multiple "Did the agent..." prompts that surface
+      // under different report headings). Earlier dedupe-by-text-only was
+      // collapsing 25-row groups down to 6.
+      const key = `${name}\u0000${text}`;
+      if (bucket.has(key)) { dupes++; continue; }
+      bucket.set(key, { name, text, autoYesExp: autoYes });
     }
     const configs: GroupedConfig[] = Array.from(groups.entries()).map(([name, bucket]) => ({
       name, type: importType, questions: Array.from(bucket.values()),

@@ -21,7 +21,13 @@ export const handler = define.handlers({
       if (!rid) return new Response(`<span class="error-text">Enter a record ID</span>`, { headers: { "content-type": "text/html" } });
 
       const endpoint = type === "partner" ? "/audit/package-by-rid" : "/audit/test-by-rid";
-      const data = await apiPost<AuditResponse>(`${endpoint}?rid=${encodeURIComponent(rid)}`, ctx.req, { rid });
+      // Pass the admin's email as `owner` so the finding's owner is a real
+      // identity instead of the bare default "api". Downstream webhook
+      // handlers fall back to owner email for the team-member-name parser
+      // when VoName/VoEmail are missing — without this, "api" parsed to
+      // "Hi Api" greetings on emails for test audits.
+      const owner = ctx.state.user?.email ?? undefined;
+      const data = await apiPost<AuditResponse>(`${endpoint}?rid=${encodeURIComponent(rid)}`, ctx.req, owner ? { rid, owner } : { rid });
 
       if (data.error) {
         return new Response(`<span class="error-text">${data.error}</span>`, { headers: { "content-type": "text/html" } });

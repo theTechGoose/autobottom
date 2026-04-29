@@ -20,12 +20,31 @@ const SELF_URL = (): string => Deno.env.get("SELF_URL") ?? "http://localhost:300
 const QB_REALM = (): string => Deno.env.get("QB_REALM") ?? "";
 
 /** Parse QB VoName field "VO MB - Harmony Eason" → { full: "Harmony Eason", first: "Harmony" } */
+/** Resolve a team-member display name from a QB record's VoName field, falling
+ *  back to the email's local part. Strips a leading "DEST - " prefix if present.
+ *
+ *  Defensive against the "Hi Api" bug: only fall through to email parsing
+ *  when the fallback actually contains "@". Bare tokens like "api" (which
+ *  finding.owner defaults to for unauthenticated audits) get rejected and we
+ *  return empty strings — the caller should pre-build a `greeting` var that
+ *  resolves to "Hi there" when first is empty. */
 export function parseVoName(voNameRaw: string, fallback: string): { full: string; first: string } {
-  const full = voNameRaw.includes(" - ")
+  const stripped = voNameRaw.includes(" - ")
     ? voNameRaw.split(" - ").slice(1).join(" - ").trim()
     : voNameRaw.trim();
-  const display = full || (fallback.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) || fallback);
-  return { full: display, first: display.split(" ")[0] || display };
+  if (stripped) return { full: stripped, first: stripped.split(" ")[0] || stripped };
+  if (fallback.includes("@")) {
+    const parsed = fallback.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    return { full: parsed, first: parsed.split(" ")[0] || parsed };
+  }
+  return { full: "", first: "" };
+}
+
+/** Pre-built greeting that gracefully degrades when the team member's first
+ *  name is unknown. Templates can now use `Hi {{teamMemberFirst}}` (legacy)
+ *  or `{{greeting}}` (preferred — handles the empty-name case). */
+export function buildGreeting(teamMemberFirst: string): string {
+  return teamMemberFirst ? `Hi ${teamMemberFirst}` : "Hi there";
 }
 
 /** Mustache-style {{var}} substitution. */
@@ -72,7 +91,8 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   const voEmail = String(finding.record?.VoEmail ?? "");
   const supervisorEmail = String(finding.record?.SupervisorEmail ?? "");
   const gmEmail = String(finding.record?.GmEmail ?? "");
-  const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String(finding.record?.VoName ?? ""), agentEmail);
+  const { full: teamMemberFull, first: teamMemberFirstRaw } = parseVoName(String(finding.record?.VoName ?? ""), agentEmail);
+  const teamMemberFirst = teamMemberFirstRaw || "there";
   const recordId = String(finding.record?.RecordId ?? "");
   const isPackage = finding.recordingIdField === "GenieNumber";
   const qbTableId = isPackage ? "bttffb64u" : "bpb28qsnn";
@@ -118,6 +138,10 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
     agentEmail: voEmail || agentEmail,
     teamMember: teamMemberFull,
     teamMemberFirst,
+    // Local `greeting` const at the top of this fn is the audit-complete-
+    // specific salutation ("Hi <name>,"); it's spread into the vars dict
+    // a few lines below. We don't add buildGreeting() here so the two
+    // don't collide.
     supervisorEmail,
     score: scoreVal + "%",
     scoreVerbiage,
@@ -305,7 +329,11 @@ async function sendReAuditReceiptEmail(orgId: OrgId, payload: ReAuditReceiptPayl
   const gmEmail = String(finding.record?.GmEmail ?? "");
   const isPackage = finding.recordingIdField === "GenieNumber";
   const recipientEmail = isPackage ? gmEmail : (voEmail || (agentEmail !== "api" ? agentEmail : ""));
-  const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
+  const { full: teamMemberFull, first: teamMemberFirstRaw } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
+  // Fall back to "there" in the rendered greeting when no name is available
+  // (covers test audits where finding.owner defaulted to "api" and the QB
+  // record carried no VoName/VoEmail). Avoids the "Hi Api" surprise.
+  const teamMemberFirst = teamMemberFirstRaw || "there";
   const recordId = String(finding.record?.RecordId ?? "");
 
   const appealType = String(payload.appealType ?? finding.appealType ?? "");
@@ -323,6 +351,7 @@ async function sendReAuditReceiptEmail(orgId: OrgId, payload: ReAuditReceiptPayl
     gmEmail,
     teamMember: teamMemberFull,
     teamMemberFirst,
+    greeting: buildGreeting(teamMemberFirst),
     findingId,
     originalFindingId: payload.originalFindingId ?? "",
     recordId,
@@ -423,8 +452,16 @@ async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayloa
   const supervisorEmail = String(finding.record?.SupervisorEmail ?? "");
   const isPackage = finding.recordingIdField === "GenieNumber";
   const recipientEmail = isPackage ? gmEmail : (voEmail || agentEmail);
-  const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
+  const { full: teamMemberFull, first: teamMemberFirstRaw } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
+  // Fall back to "there" in the rendered greeting when no name is available
+  // (covers test audits where finding.owner defaulted to "api" and the QB
+  // record carried no VoName/VoEmail). Avoids the "Hi Api" surprise.
+  const teamMemberFirst = teamMemberFirstRaw || "there";
   const recordId = String(finding.record?.RecordId ?? "");
+
+  // Diagnostic: name resolution chain. Future "Hi <wrong-name>" reports go
+  // straight to logs without needing to dig through finding records.
+  console.log(`📧 [WEBHOOK:judge] vars fid=${findingId} VoName="${finding.record?.VoName ?? ""}" VoEmail="${voEmail}" owner="${agentEmail}" → first="${teamMemberFirst}"`);
 
   const vars: Record<string, string> = {
     findingId,
@@ -432,6 +469,7 @@ async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayloa
     agentEmail: recipientEmail,
     teamMember: teamMemberFull,
     teamMemberFirst,
+    greeting: buildGreeting(teamMemberFirst),
     supervisorEmail,
     gmEmail,
     recordId,
@@ -509,7 +547,11 @@ async function sendManagerReviewEmail(orgId: OrgId, payload: ManagerReviewPayloa
   const supervisorEmail = String(finding.record?.SupervisorEmail ?? "");
   const isPackage = finding.recordingIdField === "GenieNumber";
   const recipientEmail = isPackage ? gmEmail : (voEmail || agentEmail);
-  const { full: teamMemberFull, first: teamMemberFirst } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
+  const { full: teamMemberFull, first: teamMemberFirstRaw } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
+  // Fall back to "there" in the rendered greeting when no name is available
+  // (covers test audits where finding.owner defaulted to "api" and the QB
+  // record carried no VoName/VoEmail). Avoids the "Hi Api" surprise.
+  const teamMemberFirst = teamMemberFirstRaw || "there";
   const recordId = String(finding.record?.RecordId ?? "");
 
   const vars: Record<string, string> = {
@@ -518,6 +560,7 @@ async function sendManagerReviewEmail(orgId: OrgId, payload: ManagerReviewPayloa
     agentEmail: recipientEmail,
     teamMember: teamMemberFull,
     teamMemberFirst,
+    greeting: buildGreeting(teamMemberFirst),
     supervisorEmail,
     gmEmail,
     recordId,

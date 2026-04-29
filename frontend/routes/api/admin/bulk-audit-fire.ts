@@ -18,7 +18,11 @@ export const handler = define.handlers({
       if (!rid) return Response.json({ error: "rid required" }, { status: 400 });
 
       const endpoint = type === "partner" ? "/audit/package-by-rid" : "/audit/test-by-rid";
-      const data = await apiPost<AuditResponse>(`${endpoint}?rid=${encodeURIComponent(rid)}`, ctx.req, { rid });
+      // Same owner-attribution as the single-rid test-audit handler — keeps
+      // finding.owner pointing at the requesting admin so downstream
+      // greeting parsers don't fall back to "Hi Api".
+      const owner = ctx.state.user?.email ?? undefined;
+      const data = await apiPost<AuditResponse>(`${endpoint}?rid=${encodeURIComponent(rid)}`, ctx.req, owner ? { rid, owner } : { rid });
       return Response.json(data);
     } catch (e) {
       return Response.json({ error: String(e) }, { status: 500 });

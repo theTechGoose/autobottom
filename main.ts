@@ -385,6 +385,9 @@ function isBackendRequest(req: Request): boolean {
   return BACKEND_PREFIXES.some(p => path.startsWith(p));
 }
 
+// Build banner — proves the deployment is running this commit.
+console.log(`🚀 [BOOT] autobottom deployed at ${new Date().toISOString()} — direct-dispatch v3 (appeal+reaudit)`);
+
 Deno.serve({ port }, (req, info) => {
   // Wrap the entire request lifecycle in AsyncLocalStorage so QStash callbacks
   // use this deployment's origin (not the inherited SELF_URL from .env).
@@ -392,6 +395,11 @@ Deno.serve({ port }, (req, info) => {
   const origin = new URL(req.url).origin;
   return runWithOrigin(origin, async () => {
     const path = new URL(req.url).pathname;
+
+    // Top-level try/catch — guarantees we NEVER bubble an uncaught exception
+    // up to Fresh's _500.tsx renderer for backend-style requests. Any throw
+    // here gets logged + returned as JSON.
+    try {
 
     // /admin/api/me — handled directly (danet's @Req doesn't work via router.fetch)
     if (path === "/admin/api/me") {
@@ -407,17 +415,17 @@ Deno.serve({ port }, (req, info) => {
       return handleUploadReauditAppeal(req);
     }
 
-    // /audit/api/appeal/different-recording — direct (JSON body via @Body
-    // decorator returns mangled values via router.fetch; same root cause as
-    // upload-recording's @Req issue). Was returning 500 with Fresh's HTML
-    // _500.tsx because the danet handler crashed before its try/catch ran.
-    if (path === "/audit/api/appeal/different-recording") {
+    // Direct-dispatch BOTH the backend URL AND the Fresh-proxy URL — eliminates
+    // the proxy entirely so we never round-trip through Fresh + lose JSON.
+    // Was returning Fresh's _500.tsx HTML because something in the loopback +
+    // Fresh middleware stack was throwing. Skipping it solves the symptom
+    // regardless of root cause.
+    if (path === "/audit/api/appeal/different-recording" || path === "/api/audit/appeal/different-recording") {
       console.log(`[ROUTER] ${req.method} ${path} → direct reaudit-different-recording handler`);
       return handleReauditDifferentRecording(req);
     }
 
-    // /audit/api/appeal — direct (same body-parsing workaround as above)
-    if (path === "/audit/api/appeal") {
+    if (path === "/audit/api/appeal" || path === "/api/audit/appeal") {
       console.log(`[ROUTER] ${req.method} ${path} → direct file-appeal handler`);
       return handleFileAppeal(req);
     }
@@ -476,6 +484,17 @@ Deno.serve({ port }, (req, info) => {
     }
     console.log(`[ROUTER] ${req.method} ${path} → frontend (Fresh)`);
     return frontendHandler(req, info);
+
+    } catch (err) {
+      // Backend-style requests (`/audit/*`, `/admin/*`, etc.) should never
+      // return HTML — keep responses JSON so the modal can show the real
+      // error instead of Fresh's _500.tsx page.
+      console.error(`❌ [DISPATCH-CATCH] ${req.method} ${path} threw:`, err);
+      return Response.json(
+        { ok: false, error: (err as Error).message ?? String(err), path, method: req.method },
+        { status: 500 },
+      );
+    }
   });
 });
 

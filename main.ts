@@ -21,6 +21,8 @@ import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 import { startUploadReaudit } from "@audit/domain/business/upload-reaudit/mod.ts";
+import { startReauditWithGenies } from "@audit/domain/business/reaudit/mod.ts";
+import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
@@ -181,6 +183,74 @@ async function handleUploadReauditAppeal(req: Request): Promise<Response> {
   }
 }
 
+// Direct-dispatch: POST /audit/api/appeal/different-recording — same workaround
+// as upload-recording. JSON body parsing via danet's @Body decorator returns
+// undefined-ish values via router.fetch in unified mode (the same issue that
+// breaks @Req for QStash callbacks), so we parse the body directly here.
+async function handleReauditDifferentRecording(req: Request): Promise<Response> {
+  if (req.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
+  let body: { findingId?: string; recordingIds?: unknown; comment?: string; agentEmail?: string };
+  try {
+    body = await req.json();
+  } catch (err) {
+    console.error(`❌ [REAUDIT-DIFFERENT] body parse failed:`, err);
+    return Response.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
+  }
+  const findingId = String(body.findingId ?? "").trim();
+  if (!findingId) return Response.json({ ok: false, error: "findingId required" }, { status: 400 });
+  const rawIds = Array.isArray(body.recordingIds) ? body.recordingIds : [];
+  const ids = rawIds.map((v) => String(v).trim()).filter(Boolean);
+  if (!ids.length) return Response.json({ ok: false, error: "recordingIds required" }, { status: 400 });
+  const comment = body.comment ? String(body.comment) : undefined;
+  const agentEmail = body.agentEmail ? String(body.agentEmail) : "";
+
+  console.log(`📥 [REAUDIT-DIFFERENT] direct dispatch fid=${findingId} ids=${ids.length} agent=${agentEmail || "(none)"}`);
+  try {
+    const orgId = defaultOrgId() as OrgId;
+    const result = await startReauditWithGenies(orgId, findingId, { recordingIds: ids, comment, agentEmail });
+    return Response.json({
+      ok: true,
+      newFindingId: result.newFindingId,
+      reportUrl: result.reportUrl,
+      appealType: result.appealType,
+      agentEmail: result.agentEmail,
+    });
+  } catch (err) {
+    console.error(`❌ [REAUDIT-DIFFERENT] failed fid=${findingId}:`, err);
+    return Response.json({ ok: false, error: (err as Error).message ?? String(err) }, { status: 500 });
+  }
+}
+
+// Direct-dispatch: POST /audit/api/appeal — file a judge appeal. Same body-
+// parsing workaround as different-recording above.
+async function handleFileAppeal(req: Request): Promise<Response> {
+  if (req.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
+  let body: { findingId?: string; auditor?: string; comment?: string; appealedQuestions?: unknown };
+  try {
+    body = await req.json();
+  } catch (err) {
+    console.error(`❌ [FILE-APPEAL] body parse failed:`, err);
+    return Response.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
+  }
+  const findingId = String(body.findingId ?? "").trim();
+  const auditor = String(body.auditor ?? "").trim();
+  if (!findingId || !auditor) return Response.json({ ok: false, error: "findingId and auditor required" }, { status: 400 });
+  const raw = Array.isArray(body.appealedQuestions) ? body.appealedQuestions : [];
+  const indexes = raw.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 0);
+  if (!indexes.length) return Response.json({ ok: false, error: "appealedQuestions required" }, { status: 400 });
+  const comment = body.comment ? String(body.comment) : undefined;
+
+  console.log(`📥 [FILE-APPEAL] direct dispatch fid=${findingId} auditor=${auditor} qs=${indexes.length}`);
+  try {
+    const orgId = defaultOrgId() as OrgId;
+    const result = await fileJudgeAppeal(orgId, findingId, { auditor, comment, appealedQuestions: indexes });
+    return Response.json({ ok: true, judgeUrl: result.judgeUrl, queued: result.queued });
+  } catch (err) {
+    console.error(`❌ [FILE-APPEAL] failed fid=${findingId}:`, err);
+    return Response.json({ ok: false, error: (err as Error).message ?? String(err) }, { status: 500 });
+  }
+}
+
 // Direct-dispatch: POST /gamification/api/upload-sound writes the file into S3
 // at sounds/<orgId>/<packId>/<slot>.mp3 and updates the pack's slot map.
 // Multipart so it must bypass danet (same reason as upload-reaudit).
@@ -335,6 +405,21 @@ Deno.serve({ port }, (req, info) => {
     if (path === "/audit/api/appeal/upload-recording") {
       console.log(`[ROUTER] ${req.method} ${path} → direct upload-reaudit handler`);
       return handleUploadReauditAppeal(req);
+    }
+
+    // /audit/api/appeal/different-recording — direct (JSON body via @Body
+    // decorator returns mangled values via router.fetch; same root cause as
+    // upload-recording's @Req issue). Was returning 500 with Fresh's HTML
+    // _500.tsx because the danet handler crashed before its try/catch ran.
+    if (path === "/audit/api/appeal/different-recording") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct reaudit-different-recording handler`);
+      return handleReauditDifferentRecording(req);
+    }
+
+    // /audit/api/appeal — direct (same body-parsing workaround as above)
+    if (path === "/audit/api/appeal") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct file-appeal handler`);
+      return handleFileAppeal(req);
     }
 
     // /gamification/api/upload-sound — direct (multipart; @Req broken)

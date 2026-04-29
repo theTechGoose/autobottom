@@ -10,7 +10,19 @@ import { useEffect, useState } from "preact/hooks";
 
 interface UserRow { email: string; role: string }
 
-const EXCLUDED_PREFIXES = ["/admin", "/login", "/register"];
+export const EXCLUDED_PREFIXES = ["/admin", "/audit", "/login", "/register"];
+
+/** Pure helper — true if the impersonation banner should probe for admin
+ *  identity on this page. False on admin pages, audit-detail pages (no
+ *  reviewer scope), login, register, and the root. Exception: when
+ *  `?as=<email>` is explicitly set, always probe so admins can see who
+ *  they're impersonating regardless of which page. */
+export function shouldProbeForBanner(path: string, asEmail: string): boolean {
+  if (asEmail) return true;
+  if (path === "/") return false;
+  if (EXCLUDED_PREFIXES.some((p) => path.startsWith(p))) return false;
+  return true;
+}
 
 export default function ImpersonationBanner() {
   const [show, setShow] = useState(false);
@@ -23,10 +35,7 @@ export default function ImpersonationBanner() {
     const target = url.searchParams.get("as") ?? "";
     setAsEmail(target);
 
-    // Don't bother probing on admin pages, login, register, or the root.
-    if (path === "/" || EXCLUDED_PREFIXES.some((p) => path.startsWith(p))) {
-      if (!target) return;
-    }
+    if (!shouldProbeForBanner(path, target)) return;
 
     // Fetch the REAL user from the session cookie. /admin/api/me calls
     // authenticate(req) directly — unaffected by the middleware's ?as=

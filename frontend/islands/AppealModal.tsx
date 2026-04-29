@@ -127,14 +127,17 @@ export default function AppealModal(props: Props) {
           appealedQuestions: Array.from(checked),
         }),
       });
-      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      const rawText = await res.text();
+      let data: Record<string, unknown> = {};
+      try { data = rawText ? JSON.parse(rawText) : {}; } catch { /* non-JSON body */ }
       if (data && (data as { error?: string }).error) {
         setErr(String((data as { error: string }).error));
         setView("appeal");
         return;
       }
       if (!res.ok) {
-        setErr(`HTTP ${res.status}`);
+        console.error("[APPEAL-SUBMIT] non-ok response", { status: res.status, body: rawText });
+        setErr(`HTTP ${res.status} — body: ${rawText.slice(0, 200) || "<empty>"}`);
         setView("appeal");
         return;
       }
@@ -174,10 +177,14 @@ export default function AppealModal(props: Props) {
           agentEmail: auditorEmail,
         }),
       });
-      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      const rawText = await res.text();
+      let data: Record<string, unknown> = {};
+      try { data = rawText ? JSON.parse(rawText) : {}; } catch { /* non-JSON body */ }
       const d = data as { error?: string; newFindingId?: string; reportUrl?: string; appealType?: string };
       if (d.error || !d.newFindingId) {
-        setErr(String(d.error ?? `HTTP ${res.status}`));
+        console.error("[REAUDIT-SUBMIT] unexpected response", { status: res.status, body: rawText });
+        const bodyHint = d.error ?? `HTTP ${res.status} — body: ${rawText.slice(0, 200) || "<empty>"}`;
+        setErr(String(bodyHint));
         setView("reaudit");
         return;
       }
@@ -275,16 +282,10 @@ export default function AppealModal(props: Props) {
                 <div class="appeal-choice-label is-reaudit">Add 2nd Genie / Different Recording</div>
                 <div class="appeal-choice-desc">Run the audit again using a different or additional recording</div>
               </button>
-              {failedQuestions.length > 0 && (
-                <button
-                  type="button"
-                  class="appeal-choice-card is-appeal"
-                  onClick={() => setView("appeal")}
-                >
-                  <div class="appeal-choice-label is-appeal">Appeal Decision</div>
-                  <div class="appeal-choice-desc">Submit for a human to review the flagged questions</div>
-                </button>
-              )}
+              <button type="button" class="appeal-choice-card is-appeal" onClick={() => setView("appeal")}>
+                <div class="appeal-choice-label is-appeal">Appeal Decision</div>
+                <div class="appeal-choice-desc">Submit for a human to review the flagged questions</div>
+              </button>
             </div>
             <div class="appeal-cancel-row">
               <button type="button" class="appeal-cancel-btn" onClick={() => setView("closed")}>Cancel</button>

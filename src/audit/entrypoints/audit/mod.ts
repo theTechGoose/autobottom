@@ -182,7 +182,8 @@ export class AuditController {
       const indexes = raw.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 0);
       if (!indexes.length) return { ok: false, error: "appealedQuestions required" };
       const orgId = defaultOrgId() as OrgId;
-      return await fileJudgeAppeal(orgId, b.findingId, { auditor: b.auditor, comment: b.comment, appealedQuestions: indexes });
+      const result = await fileJudgeAppeal(orgId, b.findingId, { auditor: b.auditor, comment: b.comment, appealedQuestions: indexes });
+      return { ok: true, judgeUrl: result.judgeUrl, queued: result.queued };
     } catch (e) {
       console.error(`❌ [AUDIT] fileAppeal failed:`, e);
       return { ok: false, error: (e as Error).message ?? String(e) };
@@ -199,7 +200,14 @@ export class AuditController {
       const ids = rawIds.map((v) => String(v).trim()).filter(Boolean);
       if (!ids.length) return { ok: false, error: "recordingIds required" };
       const orgId = defaultOrgId() as OrgId;
-      return await startReauditWithGenies(orgId, b.findingId, { recordingIds: ids, comment: b.comment, agentEmail: b.agentEmail ?? "" });
+      const result = await startReauditWithGenies(orgId, b.findingId, { recordingIds: ids, comment: b.comment, agentEmail: b.agentEmail ?? "" });
+      return {
+        ok: true,
+        newFindingId: result.newFindingId,
+        reportUrl: result.reportUrl,
+        appealType: result.appealType,
+        agentEmail: result.agentEmail,
+      };
     } catch (e) {
       console.error(`❌ [AUDIT] reauditWithGenies failed:`, e);
       return { ok: false, error: (e as Error).message ?? String(e) };

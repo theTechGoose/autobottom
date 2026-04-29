@@ -81,13 +81,16 @@ export default define.page(async function QuestionLabPage(ctx) {
   const egregiousCount = questions.filter((q) => q.egregious).length;
 
   return (
-    <Layout title="Question Lab" section="admin" user={user} pathname={url.pathname}>
-      <div class="page-header">
-        <h1>Question Lab</h1>
-        <p class="page-sub">Configure audit questions, run simulations, save test results.</p>
+    <Layout title="Question Lab" section="admin" user={user} pathname={url.pathname} hideSidebar>
+      <div class="ql-topbar">
+        <div class="ql-topbar-title">
+          <span class="ql-topbar-icon" aria-hidden="true">✏️</span>
+          <h1>Question Lab</h1>
+        </div>
+        <a href="/admin/dashboard" class="ql-topbar-back">← Dashboard</a>
       </div>
 
-      <div style="display:flex;gap:16px;align-items:flex-start;">
+      <div class="ql-page-body" style="display:flex;gap:16px;align-items:flex-start;">
         {/* Config sidebar */}
         <div style="width:280px;flex-shrink:0;">
           <div class="card">

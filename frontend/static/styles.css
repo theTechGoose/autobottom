@@ -272,6 +272,24 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .er-modal { width: 780px; max-height: 88vh; overflow-y: auto; }
 .et-modal { width: 90vw; max-width: 90vw; height: 85vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; border-radius: 14px; }
 .cb-modal { width: 92vw; max-width: 92vw; height: 88vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; border-radius: 14px; }
+.qlab-modal { width: 750px; max-width: 92vw; }
+
+/* Question Lab page top bar — full-width admin tool, no sidebar (matches prod). */
+.ql-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 24px; border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.ql-topbar-title { display: flex; align-items: center; gap: 10px; }
+.ql-topbar-title h1 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text-bright); letter-spacing: 0.2px; }
+.ql-topbar-icon { font-size: 18px; line-height: 1; }
+.ql-topbar-back {
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); text-decoration: none; transition: all 0.15s;
+}
+.ql-topbar-back:hover { color: var(--text-bright); border-color: var(--text-muted); background: var(--bg-surface); }
+.ql-page-body { padding: 22px 24px; }
 .pipeline-modal { padding: 0; }
 
 /* ===== sf-btn (production modal button style) ===== */

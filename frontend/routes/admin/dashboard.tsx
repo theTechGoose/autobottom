@@ -122,7 +122,7 @@ export default define.page(async function AdminDashboard(ctx) {
       </div>
       {/* ===== CONFIG MODALS — opened from sidebar, content loaded via HTMX ===== */}
       {[
-        { id: "qlab-modal", title: "Question Lab", sub: "Assign configs to destinations and offices", endpoint: "/api/admin/modal/qlab", noHeader: true },
+        { id: "qlab-modal", title: "Question Lab", sub: "Assign configs to destinations and offices", endpoint: "/api/admin/modal/qlab", className: "qlab-modal", noHeader: true },
         { id: "users-modal", title: "Users", sub: "Manage user accounts and roles", endpoint: "/api/admin/modal/users", className: "um-modal", noHeader: true },
         { id: "webhook-modal", title: "Webhook Configuration", sub: "Configure outbound webhooks for pipeline events", endpoint: "/api/admin/modal/webhook", noHeader: true },
         { id: "email-reports-modal", title: "Email Reports", sub: "Scheduled email report configurations", endpoint: "/api/admin/modal/email-reports", className: "er-modal", noHeader: true },

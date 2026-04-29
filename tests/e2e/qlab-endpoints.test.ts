@@ -110,17 +110,6 @@ Deno.test({ name: "E2E QLab: POST /api/admin/modal/qlab/set creates assignment +
   assertEquals(after.internal?.[destKey], undefined, "binding should be removed");
 }});
 
-Deno.test({ name: "E2E QLab: GET /api/qlab/configs/import-form returns 200 HTML panel", sanitizeResources: false, async fn() {
-  const res = await fetch(`${BASE}/api/qlab/configs/import-form`, {
-    headers: { cookie: session.cookie },
-    redirect: "manual",
-  });
-  assertEquals(res.status, 200);
-  const html = await res.text();
-  assertStringIncludes(html, "Import CSV");
-  assertStringIncludes(html, "Config Name");
-}});
-
 Deno.test({ name: "E2E QLab: GET /api/qlab/configs/bulk-egregious-form returns 200 HTML panel", sanitizeResources: false, async fn() {
   const res = await fetch(`${BASE}/api/qlab/configs/bulk-egregious-form`, {
     headers: { cookie: session.cookie },
@@ -132,33 +121,104 @@ Deno.test({ name: "E2E QLab: GET /api/qlab/configs/bulk-egregious-form returns 2
   assertStringIncludes(html, "Question Name");
 }});
 
-Deno.test({ name: "E2E QLab: POST /api/qlab/configs/import-csv (textarea path) creates config + questions", sanitizeResources: false, async fn() {
+// Helper: count the questions on a config (by name).
+async function countQuestionsForConfig(configName: string): Promise<number> {
+  const list = await (await fetch(`${BASE}/api/qlab/configs`, { headers: { cookie: session.cookie } })).json() as { configs?: { id: string; name: string }[] };
+  const cfg = list.configs?.find((c) => c.name === configName);
+  if (!cfg) return -1;
+  const served = await (await fetch(`${BASE}/api/qlab/serve?name=${encodeURIComponent(cfg.id)}`, { headers: { cookie: session.cookie } })).json() as { questions?: unknown[] };
+  return served.questions?.length ?? 0;
+}
+
+Deno.test({ name: "E2E QLab: backend POST /api/qlab/configs/import — fresh config returns ok+configName+questions", sanitizeResources: false, async fn() {
   const ts = Date.now();
   const name = `E2E-Import-${ts}`;
-  const csv = "name,text,weight\nGreeting,Did the agent greet?,5\nClose,Did the agent close out cleanly?,3\n";
-
-  const fd = new FormData();
-  fd.append("name", name);
-  fd.append("type", "internal");
-  fd.append("dupeMode", "skip");
-  fd.append("csv", csv);
-
-  const res = await fetch(`${BASE}/api/qlab/configs/import-csv`, {
+  const res = await fetch(`${BASE}/api/qlab/configs/import`, {
     method: "POST",
-    headers: { cookie: session.cookie },
-    body: fd,
-    redirect: "manual",
+    headers: { cookie: session.cookie, "content-type": "application/json" },
+    body: JSON.stringify({
+      name, type: "internal",
+      questions: [
+        { name: "Greeting", text: "Did the agent greet?", autoYesExp: "+:foo" },
+        { name: "Close", text: "Did the agent close cleanly?" },
+      ],
+    }),
   });
   assertEquals(res.status, 200);
-  const html = await res.text();
-  assertStringIncludes(html, "Imported");
+  const data = await res.json();
+  assertEquals(data.ok, true);
+  assertEquals(data.skipped, false);
+  assertEquals(data.overwritten, false);
+  assertEquals(data.configName, name);
+  assertEquals(data.questions, 2, "should report exact question count");
 
-  // Verify on the backend
+  // Verify autoYesExp persisted on the first question.
   const list = await (await fetch(`${BASE}/api/qlab/configs`, { headers: { cookie: session.cookie } })).json() as { configs?: { id: string; name: string }[] };
-  const created = list.configs?.find((c) => c.name === name);
-  assert(!!created, `expected config "${name}" in the list`);
-  const served = await (await fetch(`${BASE}/api/qlab/serve?name=${encodeURIComponent(created!.id)}`, { headers: { cookie: session.cookie } })).json() as { questions?: { name: string }[] };
-  assertEquals(served.questions?.length, 2, "2 questions imported");
+  const cfg = list.configs?.find((c) => c.name === name);
+  const served = await (await fetch(`${BASE}/api/qlab/serve?name=${encodeURIComponent(cfg!.id)}`, { headers: { cookie: session.cookie } })).json() as { questions?: { name: string; autoYesExp?: string }[] };
+  const greeting = served.questions?.find((q) => q.name === "Greeting");
+  assertEquals(greeting?.autoYesExp, "+:foo", "autoYesExp must be persisted by importConfig");
+}});
+
+Deno.test({ name: "E2E QLab: import dupeMode=skip — second import on same name leaves count unchanged", sanitizeResources: false, async fn() {
+  const ts = Date.now();
+  const name = `E2E-Skip-${ts}`;
+  const body = (questions: unknown[]) => ({ name, type: "internal", questions, dupeMode: "skip" });
+
+  await (await fetch(`${BASE}/api/qlab/configs/import`, {
+    method: "POST", headers: { cookie: session.cookie, "content-type": "application/json" },
+    body: JSON.stringify(body([{ name: "A", text: "1" }, { name: "B", text: "2" }])),
+  })).json();
+  assertEquals(await countQuestionsForConfig(name), 2);
+
+  const res2 = await fetch(`${BASE}/api/qlab/configs/import`, {
+    method: "POST", headers: { cookie: session.cookie, "content-type": "application/json" },
+    body: JSON.stringify(body([{ name: "C", text: "3" }, { name: "D", text: "4" }, { name: "E", text: "5" }])),
+  });
+  const r2 = await res2.json();
+  assertEquals(r2.skipped, true, "second import on the same name must be skipped");
+  assertEquals(await countQuestionsForConfig(name), 2, "count must stay at 2");
+}});
+
+Deno.test({ name: "E2E QLab: import dupeMode=overwrite — second import replaces (not stacks) the questions", sanitizeResources: false, async fn() {
+  const ts = Date.now();
+  const name = `E2E-Overwrite-${ts}`;
+
+  await (await fetch(`${BASE}/api/qlab/configs/import`, {
+    method: "POST", headers: { cookie: session.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ name, type: "internal", questions: [{ name: "A", text: "1" }, { name: "B", text: "2" }, { name: "C", text: "3" }], dupeMode: "skip" }),
+  })).json();
+  assertEquals(await countQuestionsForConfig(name), 3);
+
+  const res = await fetch(`${BASE}/api/qlab/configs/import`, {
+    method: "POST", headers: { cookie: session.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ name, type: "internal", questions: [{ name: "X", text: "9" }], dupeMode: "overwrite" }),
+  });
+  const r = await res.json();
+  assertEquals(r.overwritten, true);
+  assertEquals(r.questions, 1, "overwrite reports new count, not stacked total");
+  assertEquals(await countQuestionsForConfig(name), 1, "old questions must be deleted");
+}});
+
+Deno.test({ name: "E2E QLab: import dupeMode=duplicate — creates a numbered copy", sanitizeResources: false, async fn() {
+  const ts = Date.now();
+  const name = `E2E-Dup-${ts}`;
+
+  await (await fetch(`${BASE}/api/qlab/configs/import`, {
+    method: "POST", headers: { cookie: session.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ name, type: "internal", questions: [{ name: "A", text: "1" }], dupeMode: "skip" }),
+  })).json();
+
+  const res = await fetch(`${BASE}/api/qlab/configs/import`, {
+    method: "POST", headers: { cookie: session.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ name, type: "internal", questions: [{ name: "B", text: "2" }, { name: "C", text: "3" }], dupeMode: "duplicate" }),
+  });
+  const r = await res.json();
+  assertEquals(r.ok, true);
+  assertEquals(r.configName, `${name} (2)`, "duplicate suffix should be (2)");
+  assertEquals(r.questions, 2);
+  assertEquals(await countQuestionsForConfig(name), 1, "original config untouched");
+  assertEquals(await countQuestionsForConfig(`${name} (2)`), 2, "duplicate config has its own questions");
 }});
 
 Deno.test({ name: "E2E QLab: POST /api/qlab/configs/bulk-egregious returns success message", sanitizeResources: false, async fn() {

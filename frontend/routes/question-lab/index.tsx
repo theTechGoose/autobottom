@@ -2,6 +2,7 @@
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
+import CsvImportWizard from "../../islands/CsvImportWizard.tsx";
 
 interface QLConfig {
   id: string; name: string; type: "internal" | "partner";
@@ -100,13 +101,7 @@ export default define.page(async function QuestionLabPage(ctx) {
           hx-target="#qlab-action-panel"
           hx-swap="innerHTML"
         >Mark Bulk Egregious</button>
-        <button
-          class="sf-btn"
-          style="font-size:11px;"
-          hx-get="/api/qlab/configs/import-form"
-          hx-target="#qlab-action-panel"
-          hx-swap="innerHTML"
-        >Import CSV</button>
+        <CsvImportWizard />
         <span style="flex:1;"></span>
         <span style="font-size:11px;color:var(--text-dim);">{configs.length} config{configs.length === 1 ? "" : "s"}</span>
       </div>

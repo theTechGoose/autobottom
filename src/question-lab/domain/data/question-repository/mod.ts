@@ -92,12 +92,50 @@ export async function getQuestion(orgId: OrgId, id: string): Promise<QLQuestion 
   return await getStored<QLQuestion>("qlab-question", orgId, id);
 }
 
-export async function createQuestion(orgId: OrgId, configId: string, name: string, text: string): Promise<QLQuestion> {
+export interface CreateQuestionExtras {
+  autoYesExp?: string;
+  weight?: number;
+  temperature?: number;
+  numDocs?: number;
+  egregious?: boolean;
+  order?: number;
+}
+
+export async function createQuestion(
+  orgId: OrgId,
+  configId: string,
+  name: string,
+  text: string,
+  extras: CreateQuestionExtras = {},
+): Promise<QLQuestion> {
   const id = crypto.randomUUID();
   const now = Date.now();
-  const q: QLQuestion = { id, configId, name, text, createdAt: now, updatedAt: now, versions: [] };
+  const q: QLQuestion = {
+    id, configId, name, text,
+    createdAt: now, updatedAt: now, versions: [],
+    ...(extras.autoYesExp ? { autoYesExp: extras.autoYesExp } : {}),
+    ...(extras.weight !== undefined ? { weight: extras.weight } : {}),
+    ...(extras.temperature !== undefined ? { temperature: extras.temperature } : {}),
+    ...(extras.numDocs !== undefined ? { numDocs: extras.numDocs } : {}),
+    ...(extras.egregious !== undefined ? { egregious: extras.egregious } : {}),
+    ...(extras.order !== undefined ? { order: extras.order } : {}),
+  };
   await setStored("qlab-question", orgId, [id], q);
   return q;
+}
+
+/** Delete every question belonging to a given config. Used by importConfig's
+ *  overwrite path so a re-import doesn't stack on top of the old questions. */
+export async function bulkDeleteQuestions(orgId: OrgId, configId: string): Promise<number> {
+  const rows = await listStoredWithKeys<QLQuestion>("qlab-question", orgId);
+  let deleted = 0;
+  for (const { key, value } of rows) {
+    if (value.configId === configId) {
+      await deleteStored("qlab-question", orgId, ...key);
+      deleted++;
+    }
+  }
+  return deleted;
 }
 
 export async function updateQuestion(orgId: OrgId, id: string, patch: Partial<QLQuestion>): Promise<QLQuestion | null> {

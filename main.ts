@@ -362,8 +362,6 @@ const FRONTEND_PREFIX_PATHS = [
   "/api/qlab/configs/rename",
   "/api/qlab/configs/bulk-egregious-form",
   "/api/qlab/configs/bulk-egregious",
-  "/api/qlab/configs/import-form",
-  "/api/qlab/configs/import-csv",
   "/api/qlab/configs/cancel",
   "/api/qlab/questions/new",
   "/api/qlab/questions/edit",

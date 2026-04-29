@@ -45,18 +45,52 @@ export class QuestionLabController {
   async importConfig(@Body() body: any) {
     const { name, type, questions, dupeMode = "skip" } = body;
     if (!name || !Array.isArray(questions)) return { error: "name and questions required" };
+    const configType: "internal" | "partner" = type === "partner" ? "partner" : "internal";
     const configs = await repo.listConfigs(ORG());
-    const existing = configs.find((c) => c.name === name);
-    if (existing && dupeMode === "skip") return { ok: true, skipped: true, configName: name };
-    const config = existing && dupeMode === "overwrite"
-      ? existing
-      : await repo.createConfig(ORG(), name, type ?? "internal");
-    let imported = 0;
-    for (const q of questions) {
-      await repo.createQuestion(ORG(), config.id, q.name, q.text);
-      imported++;
+    const match = configs.find((c) => c.name === name);
+
+    // Helper that bulk-creates questions (with all optional fields) on a given
+    // config and returns how many landed.
+    const seedQuestions = async (configId: string): Promise<number> => {
+      let count = 0;
+      for (const q of questions) {
+        if (!q?.name || !q?.text) continue;
+        await repo.createQuestion(ORG(), configId, String(q.name), String(q.text), {
+          autoYesExp: q.autoYesExp ? String(q.autoYesExp) : undefined,
+          weight: typeof q.weight === "number" ? q.weight : undefined,
+          temperature: typeof q.temperature === "number" ? q.temperature : undefined,
+          numDocs: typeof q.numDocs === "number" ? q.numDocs : undefined,
+          egregious: typeof q.egregious === "boolean" ? q.egregious : undefined,
+        });
+        count++;
+      }
+      return count;
+    };
+
+    // Match prod's three-mode contract (main:question-lab/handlers.ts:381-423).
+    if (match) {
+      if (dupeMode === "skip") {
+        return { ok: true, skipped: true, configName: name, questions: 0 };
+      }
+      if (dupeMode === "overwrite") {
+        await repo.bulkDeleteQuestions(ORG(), match.id);
+        const count = await seedQuestions(match.id);
+        return { ok: true, skipped: false, overwritten: true, configName: name, configId: match.id, questions: count };
+      }
+      if (dupeMode === "duplicate") {
+        const names = new Set(configs.map((c) => c.name));
+        let n = 2;
+        while (names.has(`${name} (${n})`)) n++;
+        const newName = `${name} (${n})`;
+        const created = await repo.createConfig(ORG(), newName, configType);
+        const count = await seedQuestions(created.id);
+        return { ok: true, skipped: false, overwritten: false, configName: newName, configId: created.id, questions: count };
+      }
     }
-    return { ok: true, configId: config.id, imported };
+
+    const created = await repo.createConfig(ORG(), name, configType);
+    const count = await seedQuestions(created.id);
+    return { ok: true, skipped: false, overwritten: false, configName: name, configId: created.id, questions: count };
   }
 
   @Get("qlab/question") @ReturnedType(QLQuestionResponse)

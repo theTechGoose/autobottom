@@ -9,17 +9,23 @@ export async function apiFetch<T = unknown>(
 ): Promise<T> {
   const cookie = req.headers.get("cookie") ?? "";
   const url = `${API_URL()}${path}`;
-  console.log(`[API_FETCH] ${init?.method ?? "GET"} ${url} cookie=${cookie ? "yes" : "no"}`);
   const res = await fetch(url, {
     ...init,
     headers: {
       ...(init?.headers as Record<string, string> | undefined),
       cookie,
+      // Tell the unified server's dispatcher this is a JSON request — needed
+      // for paths in FRONTEND_EXACT_PAGES (e.g. /admin/users) where the page
+      // and the backend JSON endpoint share a URL. Without this the dispatcher
+      // routes to Fresh, the page handler calls apiFetch on its own URL, and
+      // we infinite-recurse.
+      "accept": "application/json",
       "content-type": "application/json",
     },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    console.error(`❌ [API_FETCH] ${init?.method ?? "GET"} ${url} → ${res.status}: ${text.slice(0, 200)}`);
     throw new ApiError(res.status, path, text);
   }
   return res.json() as Promise<T>;

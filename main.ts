@@ -386,9 +386,16 @@ const AUTH_PATHS = ["/login", "/register", "/logout"];
 
 function isBackendRequest(req: Request): boolean {
   const path = new URL(req.url).pathname;
+  const accept = req.headers.get("accept") ?? "";
+  const wantsJson = accept.includes("application/json");
 
-  // Exact frontend page matches
-  if (FRONTEND_EXACT_PAGES.has(path)) return false;
+  // Exact frontend page matches — but a server-side apiFetch loopback to the
+  // SAME url would otherwise infinite-recurse (page handler renders, calls
+  // apiFetch on its own URL, dispatcher routes to the page again, ...).
+  // apiFetch always sets Accept: application/json, so when the request wants
+  // JSON we route to the backend's same-URL JSON handler instead of looping
+  // back through Fresh.
+  if (FRONTEND_EXACT_PAGES.has(path)) return wantsJson;
 
   // Frontend prefix matches (HTMX fragments, static assets)
   if (FRONTEND_PREFIX_PATHS.some(p => path.startsWith(p))) return false;
@@ -397,7 +404,7 @@ function isBackendRequest(req: Request): boolean {
   if (AUTH_PATHS.some(p => path === p)) return req.method === "POST";
 
   // Root: GET from browser → Fresh (redirect to dashboard), JSON accept → backend health check
-  if (path === "/") return req.headers.get("accept")?.includes("application/json") === true;
+  if (path === "/") return wantsJson;
 
   // Everything else with a known backend prefix → danet
   return BACKEND_PREFIXES.some(p => path.startsWith(p));
@@ -496,11 +503,10 @@ Deno.serve({ port }, (req, info) => {
       }
     }
 
-    if (isBackendRequest(req)) {
-      console.log(`[ROUTER] ${req.method} ${path} → backend (danet)`);
-      return backendFetch(req);
-    }
-    console.log(`[ROUTER] ${req.method} ${path} → frontend (Fresh)`);
+    // Fall-through dispatch — no log here; only the direct-dispatch branches
+    // above log. Logging every request flooded the deploy logs (especially
+    // when /admin/users self-recursed before the Accept-based dispatch landed).
+    if (isBackendRequest(req)) return backendFetch(req);
     return frontendHandler(req, info);
 
     } catch (err) {

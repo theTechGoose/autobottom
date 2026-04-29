@@ -79,6 +79,41 @@ async function handleGetBadges(req: Request): Promise<Response> {
   return Response.json({ badges });
 }
 
+async function handleManagerAuditHistory(req: Request): Promise<Response> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (auth.role !== "manager" && auth.role !== "admin") {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const q = url.searchParams;
+  const intOr = (k: string, dflt: number | undefined): number | undefined => {
+    const v = q.get(k);
+    if (v == null || v === "") return dflt;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const { getAuditHistory } = await import("@manager/domain/business/audit-history/mod.ts");
+  try {
+    const result = await getAuditHistory(auth.orgId, auth.email, auth.role as "manager" | "admin", {
+      owner: q.get("owner") || undefined,
+      shift: q.get("shift") || undefined,
+      department: q.get("department") || undefined,
+      reviewed: q.get("reviewed") || undefined,
+      scoreMin: intOr("scoreMin", undefined),
+      scoreMax: intOr("scoreMax", undefined),
+      page: intOr("page", undefined),
+      limit: intOr("limit", undefined),
+      since: intOr("since", undefined),
+      until: intOr("until", undefined),
+    });
+    return Response.json(result);
+  } catch (err) {
+    console.error(`❌ [MANAGER-AUDITS] failed:`, err);
+    return Response.json({ error: (err as Error).message }, { status: 500 });
+  }
+}
+
 async function handleAgentDashboard(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -301,6 +336,7 @@ const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>>
   "/manager/api/me": handleMe,
   "/agent/api/me": handleMe,
   "/manager/api/game-state": handleGameState,
+  "/manager/api/audit-history": handleManagerAuditHistory,
   "/agent/api/game-state": handleGameState,
   "/agent/api/dashboard": handleAgentDashboard,
   "/api/badges": handleGetBadges,

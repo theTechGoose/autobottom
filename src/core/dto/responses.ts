@@ -41,6 +41,15 @@ export class ReviewerListResponse { reviewers: unknown[] = []; }
 export class ManagerStatsResponse { total = 0; pending = 0; remediated = 0; }
 export class ManagerQueueResponse { items: unknown[] = []; }
 export class AgentListResponse { agents: unknown[] = []; }
+export class ManagerAuditHistoryResponse {
+  items: unknown[] = [];
+  total = 0;
+  pages = 0;
+  page = 0;
+  owners: string[] = [];
+  shifts: string[] = [];
+  departments: string[] = [];
+}
 
 // ── Admin Config ─────────────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@
  *  We read the incoming FormData and rebuild it for the backend call rather
  *  than streaming the raw body, so the request lands as a well-formed
  *  multipart body on the backend (where main.ts does `req.formData()`). */
-import { define } from "../../../../../lib/define.ts";
+import { define } from "../../../../lib/define.ts";
 
 const API_URL = () => Deno.env.get("API_URL") ?? "http://localhost:3000";
 

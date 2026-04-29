@@ -2,8 +2,8 @@
  *  Called by the AppealModal island; returns JSON so the island can react.
  *  Forwards the backend's error body verbatim so the modal can show the real
  *  reason instead of a generic "HTTP 500". */
-import { define } from "../../../../lib/define.ts";
-import { parseHtmxBody } from "../../../../lib/api.ts";
+import { define } from "../../../lib/define.ts";
+import { parseHtmxBody } from "../../../lib/api.ts";
 
 const API_URL = () => Deno.env.get("API_URL") ?? "http://localhost:3000";
 

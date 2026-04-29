@@ -40,6 +40,7 @@ export default define.page(async function ManagerPage(ctx) {
           <span>Remediation Queue</span>
           <span style="display:flex;gap:8px;align-items:center;">
             <span id="backfill-status" style="font-size:11px;color:var(--text-muted);"></span>
+            <a href="/manager/audits" class="btn btn-ghost btn-sm">Audit History</a>
             <button
               class="btn btn-ghost btn-sm"
               hx-post="/api/manager/backfill"

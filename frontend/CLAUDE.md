@@ -210,6 +210,7 @@ When you add a new admin tool with rich interactivity, default to a full page (r
 | Admin Dashboard | `/admin/dashboard` | Done — stats, pipeline, errors, queue mgmt, ~12 admin modals |
 | Admin Users | `/admin/users` | Done — list, add, delete, manager-scope editor (datalist autocomplete from /admin/audit-dimensions) |
 | Admin Audits | `/admin/audits` | Done — table, record ID search, retry |
+| Admin Badge Editor | `/admin/badge-editor` | Done — admin-gated catalog editor (two-pane list + detail; built-in items render read-only) |
 | Weekly Builder | `/admin/weekly-builder` | Done — full prod parity (two-pane stage + publish) |
 | Email Reports | `/admin/email-reports` | Done — full prod parity (rule builder, sections, preview iframe). Real page route so the EmailReportEditor island hydrates. |
 | Review Queue | `/review` | Done — split panel, hotkeys, sounds |
@@ -217,6 +218,7 @@ When you add a new admin tool with rich interactivity, default to a full page (r
 | Judge Queue | `/judge` | Done — split panel, overturn reasons |
 | Judge Dashboard | `/judge/dashboard` | Done — stats |
 | Manager | `/manager` | Done — queue, agents, remediate |
+| Manager Audit History | `/manager/audits` | Done — date/agent/dept/shift/score/reviewed filters, paginated table, scoped to the manager's team (admins see all) |
 | Agent Dashboard | `/agent` | Done — stats, trend, audit history |
 | Chat | `/chat` | Done — conversations, thread, send |
 | Question Lab list | `/question-lab` | Done — full-width table, status pill toggle, bulk-delete (with typed-confirm wipe-all), prod parity |

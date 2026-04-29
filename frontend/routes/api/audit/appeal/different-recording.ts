@@ -2,8 +2,8 @@
  *  with one or more genie IDs. Returns JSON with the new findingId + report URL.
  *  Forwards the backend's status code and body verbatim so the island can show
  *  any real error message instead of a generic HTTP 500. */
-import { define } from "../../../../../lib/define.ts";
-import { parseHtmxBody } from "../../../../../lib/api.ts";
+import { define } from "../../../../lib/define.ts";
+import { parseHtmxBody } from "../../../../lib/api.ts";
 
 const API_URL = () => Deno.env.get("API_URL") ?? "http://localhost:3000";
 

@@ -3,12 +3,13 @@ import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
-import { ManagerQueueResponse, ManagerStatsResponse, OkResponse, OkMessageResponse, AgentListResponse, MessageResponse, FindingResponse } from "@core/dto/responses.ts";
+import { ManagerQueueResponse, ManagerStatsResponse, OkResponse, OkMessageResponse, AgentListResponse, MessageResponse, FindingResponse, ManagerAuditHistoryResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, RemediateRequest, CreateAgentRequest, DeleteEmailRequest, PrefabSubscriptionsRequest } from "@core/dto/requests.ts";
 import { getManagerQueue, submitRemediation, getManagerStats } from "@manager/domain/data/manager-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { createUser, deleteUser, listUsers } from "@core/business/auth/mod.ts";
 import { getPrefabSubscriptions, savePrefabSubscriptions } from "@events/domain/data/events-repository/mod.ts";
+import { getAuditHistory } from "@manager/domain/business/audit-history/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
@@ -67,5 +68,44 @@ export class ManagerController {
   async savePrefabs(@Body() body: Record<string, boolean>) {
     await savePrefabSubscriptions(ORG(), body);
     return { ok: true };
+  }
+
+  /** Audit history (scoped to manager's team or unrestricted for admin).
+   *  See `src/manager/domain/business/audit-history/mod.ts` for the filter
+   *  + scope + paginate flow. The actual auth-aware path is dispatched from
+   *  `main.ts` (AUTH_CONTEXT_HANDLERS) — that handler resolves the session
+   *  cookie via `authenticate(req)` and calls `getAuditHistory(...)` directly,
+   *  passing email + role. This controller method is kept so the route is
+   *  discoverable via swagger/spec and so a fall-through admin-mode call
+   *  (no manager scoping) still works for tooling. */
+  @Get("audit-history") @ReturnedType(ManagerAuditHistoryResponse) @Description("Manager audit history")
+  async auditHistory(
+    @Query("owner") owner: string,
+    @Query("shift") shift: string,
+    @Query("department") department: string,
+    @Query("reviewed") reviewed: string,
+    @Query("scoreMin") scoreMin: string,
+    @Query("scoreMax") scoreMax: string,
+    @Query("page") page: string,
+    @Query("limit") limit: string,
+    @Query("since") since: string,
+    @Query("until") until: string,
+    @Query("email") email: string,
+    @Query("role") role: string,
+  ) {
+    const orgId = ORG();
+    const effectiveRole = (role === "manager" ? "manager" : "admin") as "manager" | "admin";
+    return getAuditHistory(orgId, email ?? "", effectiveRole, {
+      owner: owner || undefined,
+      shift: shift || undefined,
+      department: department || undefined,
+      reviewed: reviewed || undefined,
+      scoreMin: scoreMin ? parseInt(scoreMin, 10) : undefined,
+      scoreMax: scoreMax ? parseInt(scoreMax, 10) : undefined,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      since: since ? parseInt(since, 10) : undefined,
+      until: until ? parseInt(until, 10) : undefined,
+    });
   }
 }

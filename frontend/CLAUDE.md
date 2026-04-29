@@ -16,7 +16,7 @@ A Deno Fresh 2 SSR frontend for the autobottom QA auditing platform. Almost no c
 - **Auth Middleware** (`routes/_middleware.ts`): calls `authenticate(req)` **directly in-process** (no HTTP self-request), injects user into `ctx.state.user`, redirects to `/login` if unauthenticated. Public paths (`/login`, `/register`, `/api/login`, `/api/register`) skip auth.
 - **Shared Define** (`lib/define.ts`): `createDefine<State>()` gives typed `define.page`, `define.handlers`, `define.middleware`, `define.layout`.
 - **HTMX Fragment Routes** (`routes/api/*`): return HTML fragments (not JSON) for HTMX swaps — fetch JSON from backend via `apiFetch`, render Preact component, return `text/html`.
-- **Layout + Sidebar** (`components/Layout.tsx`, `components/Sidebar.tsx`): shared page shell with 280px sidebar, dark theme, role-aware nav. Pass `hideSidebar` to render full-width admin tools (Question Lab, Weekly Builder).
+- **Layout + Sidebar** (`components/Layout.tsx`, `components/Sidebar.tsx`): shared page shell with 280px sidebar, dark theme, role-aware nav. Pass `hideSidebar` to render full-width admin tools (Question Lab, Weekly Builder, Email Reports).
 - **Top bar pattern** (`.ql-topbar`): full-width admin tools use a sticky top bar with icon + breadcrumbs (left) + `← Dashboard` link (right) instead of the sidebar. See `routes/question-lab/index.tsx` for the canonical implementation.
 
 ### Per-Role Accent Colors
@@ -83,7 +83,7 @@ Admin impersonation: `?as=<email>` swaps `ctx.state.user` to the target user; th
 
 ## Frontend ↔ backend URL collisions
 
-Several admin URLs serve **both** an HTML page (Fresh) and a JSON endpoint (danet) — `/admin/users`, `/admin/dashboard`, `/admin/audits`, `/admin/weekly-builder`. The unified-server dispatcher in the root `main.ts` resolves the collision by **`Accept` header**:
+Several admin URLs serve **both** an HTML page (Fresh) and a JSON endpoint (danet) — `/admin/users`, `/admin/dashboard`, `/admin/audits`, `/admin/weekly-builder`, `/admin/email-reports`. The unified-server dispatcher in the root `main.ts` resolves the collision by **`Accept` header**:
 
 - Browser navigation → `Accept: text/html…` → routes to Fresh (HTML page).
 - `apiFetch` from a Fresh page handler → `Accept: application/json` → routes to danet (JSON).
@@ -122,7 +122,7 @@ return Response.redirect(new URL("/api/admin/modal/..."), 303);
 
 **Pattern:** export the modal's GET renderer as a pure function (e.g. `renderTemplatesModal(req, opts)`), then call it from both the GET handler and any POST sub-routes.
 
-`HX-Redirect` **is appropriate** when you legitimately want the browser to navigate to a different page after an action (e.g. "create config" → load the new detail page). The CsvImportWizard finishes with a `location.reload()` for similar reasons. Don't use it inside modals just to refresh the modal — use a re-render instead.
+`HX-Redirect` **is appropriate** when you legitimately want the browser to navigate to a different page after an action (e.g. "create config" → load the new detail page, "bulk-delete" → reload list). The CsvImportWizard finishes with a `location.reload()` for similar reasons.
 
 **Exceptions:** `routes/api/login.ts`, `register.ts`, `logout.ts` intentionally use 303 because they're hit by native form POST (no HTMX).
 
@@ -133,6 +133,18 @@ Run-test-audit and similar long jobs use `hx-trigger="load delay:2s"` self-repla
 <div id="x-status" hx-get="/api/.../status?id=…" hx-trigger="load delay:2s" hx-swap="outerHTML">…</div>
 ```
 The status route either re-emits the same polling fragment (still running) or swaps in a final state (done / error). See `routes/api/qlab/configs/test-status.tsx`.
+
+### Inline drawer pattern (search-result panels)
+
+Lookup forms (e.g. "Find by QB Record" on the dashboard) use `hx-get` against a thin wrapper that returns a fragment, swapped into a `<div>` directly below the form. Avoids redirecting to a separate page just to show search results. See `routes/api/admin/find-by-record.tsx` + the form at `routes/admin/dashboard.tsx`.
+
+### Typed-confirmation destructive actions
+
+For wipe-everything UX (e.g. "Delete ALL configs"), use `hx-prompt="Type DELETE ALL to confirm"`. HTMX sends the user's response in the `HX-Prompt` request header — the wrapper rejects unless it matches exactly. See `routes/api/qlab/configs/bulk-delete.ts`.
+
+### Datalist autocomplete (HTMX-friendly)
+
+When you want suggested-but-not-restricted values (e.g. department / shift names from `/admin/audit-dimensions` in the manager-scope editor), render a `<datalist>` next to the input and use `list="…"`. Pure HTML5, no JS, plays nicely with HTMX form submission. See `routes/api/admin/modal/users/scopes.tsx`.
 
 ## When to use a Preact island
 
@@ -145,16 +157,61 @@ Default to HTMX. Use an island only when the UI **physically can't** work withou
 
 If your "needs JS" UX is a spinner + a status update after a POST → use HTMX polling, not an island.
 
+## Gotchas (load-bearing lessons learned the hard way)
+
+These are bugs that cost real time and aren't obvious from reading the code. Future contributors: read these before debugging similar symptoms.
+
+### 1. **HTMX-injected islands don't hydrate**
+
+Fresh's `boot()` script runs on initial page load and registers the islands present in the SSR'd HTML. When HTMX swaps in new HTML containing island markup, Fresh doesn't re-run hydration — the markup is static, `useState` doesn't work, `onClick` handlers do nothing.
+
+**Symptom:** click an island button inside a modal that opened via `hx-get` → nothing happens, no errors in console.
+
+**Rule:** islands must be mounted on a **real page route** (file under `routes/`), not in a fragment served by `routes/api/admin/modal/**`. Email Reports learned this the hard way: the EmailReportEditor lived in `/api/admin/modal/email-reports.tsx`; the "+ New Report" button never fired. Fix was moving it to a real page at `/admin/email-reports`.
+
+If you want a "modal-feel" island UX, build the page with `hideSidebar` + the `.ql-topbar` pattern — the user gets a focused experience without losing hydration. Question Lab, Weekly Builder, and Email Reports all do this.
+
+### 2. **Webhook kind names must match everywhere**
+
+A webhook config has a `kind` (e.g. `terminate`, `appeal`, `manager`, `judge`, `re-audit-receipt`). The same string must appear in:
+- The modal's tab definition (`frontend/routes/api/admin/modal/webhook.tsx`)
+- The save URL the form posts to
+- The firing site's `fireWebhook(orgId, KIND, …)` call
+- The handler registration `registerWebhookEmailHandler(KIND, …)` in `src/reporting/domain/business/webhook-handlers/mod.ts`
+- The backend's `/admin/settings/<KIND>` GET/POST routes
+
+Mismatches mean the modal saves a config that the runtime never reads — silently drops `testEmail`, `bcc`, `templateId` overrides. The "Judge Finish" tab originally used kind=`judge-finish` while the firing site used `judge`; admin's testEmail config went into a key the webhook never read, so live emails went to live recipients despite the "OVERRIDES ALL RECIPIENTS WHEN SET" UI promise. Search the codebase for the kind string before adding/renaming a tab.
+
+### 3. **Greeting parser falls back to "Hi there" when no name is known**
+
+`parseVoName(voNameRaw, fallback)` in `src/reporting/domain/business/webhook-handlers/mod.ts`:
+- VoName populated → returns the trimmed name (after stripping a `"VO XX - "` prefix).
+- VoName empty AND fallback contains `@` → returns the email's local-part title-cased (`jane.doe@…` → "Jane Doe").
+- VoName empty AND fallback is a bare token (e.g. `"api"`, `"test"`) → returns `{full: "", first: ""}`. The caller then renders a `Hi there` greeting via `buildGreeting()`.
+
+If you see "Hi there" on a real (live) audit's email, the problem is in the QB record (no VoName field), not the code. The diagnostic log line `[WEBHOOK:judge] vars fid=… VoName="…" VoEmail="…" owner="…" → first="…"` shows the resolution chain.
+
+### 4. **Test audits should attribute the requesting admin as `owner`**
+
+The audit controller defaults `finding.owner = body?.owner ?? "api"`. For interactive test audits started from the dashboard, the wrappers (`routes/api/admin/test-audit.ts`, `routes/api/admin/bulk-audit-fire.ts`) thread `ctx.state.user.email` as `owner` so finding.owner is a real email. Without this, the parseVoName fallback chain produces nonsense names like "Hi Api" on appeal-result emails.
+
+### 5. **Sidebar entries: `href` for full-page tools, `modalId` for in-dashboard panels**
+
+Full-page admin tools (Question Lab, Weekly Builder, Email Reports) use `href: "/admin/…"` so the user navigates to the page (and islands hydrate). Modal-style admin tools (Bad Words, Pipeline, Webhook, etc.) use `modalId: "…-modal"` so `ModalController.tsx` opens the overlay and HTMX loads the content into the modal slot.
+
+When you add a new admin tool with rich interactivity, default to a full page (rule 1).
+
 ## Pages / Implementation Status
 | Page | Route | Status |
 |------|-------|--------|
 | Login | `/login` | Done |
 | Register | `/register` | Done |
 | Root | `/` | Done (redirects by role) |
-| Admin Dashboard | `/admin/dashboard` | Done — stats, pipeline, errors, queue mgmt, 13 admin modals |
-| Admin Users | `/admin/users` | Done — list, add modal, delete |
+| Admin Dashboard | `/admin/dashboard` | Done — stats, pipeline, errors, queue mgmt, ~12 admin modals |
+| Admin Users | `/admin/users` | Done — list, add, delete, manager-scope editor (datalist autocomplete from /admin/audit-dimensions) |
 | Admin Audits | `/admin/audits` | Done — table, record ID search, retry |
 | Weekly Builder | `/admin/weekly-builder` | Done — full prod parity (two-pane stage + publish) |
+| Email Reports | `/admin/email-reports` | Done — full prod parity (rule builder, sections, preview iframe). Real page route so the EmailReportEditor island hydrates. |
 | Review Queue | `/review` | Done — split panel, hotkeys, sounds |
 | Review Dashboard | `/review/dashboard` | Done — stats |
 | Judge Queue | `/judge` | Done — split panel, overturn reasons |
@@ -162,7 +219,7 @@ If your "needs JS" UX is a spinner + a status update after a POST → use HTMX p
 | Manager | `/manager` | Done — queue, agents, remediate |
 | Agent Dashboard | `/agent` | Done — stats, trend, audit history |
 | Chat | `/chat` | Done — conversations, thread, send |
-| Question Lab list | `/question-lab` | Done — full-width table, prod parity |
+| Question Lab list | `/question-lab` | Done — full-width table, status pill toggle, bulk-delete (with typed-confirm wipe-all), prod parity |
 | Question Lab config | `/question-lab/config/[id]` | Done — Settings + Run Test Audit (HTMX polling) + Questions inline-edit |
 | Question Lab editor | `/question-lab/question/[id]` | Done — full editor + version history + simulator |
 | Store | `/store` | Done — item grid, buy flow |
@@ -175,9 +232,11 @@ If your "needs JS" UX is a spinner + a status update after a POST → use HTMX p
 ## Islands (Client JS — keep this list short)
 - `AppealModal.tsx` — multi-step appeal/different-recording flow on the audit-report page
 - `AudioPlayer.tsx` — waveform `<audio>` player with REC 1 / REC 2 tabs for multi-recording audits
+- `BulkAuditRunner.tsx` — bulk-audit panel with sequential POST + per-row progress
+- `ChargebacksToolbar.tsx` — chargebacks/wire-deductions toolbar (date range, CSV/XLSX download, post-to-sheet)
 - `ChatInput.tsx` — message input with submit
 - `CsvImportWizard.tsx` — 5-step QLab CSV import (upload → map → preview → run → done)
-- `EmailReportEditor.tsx` — full Email Reports editor (rule builder + sections + preview iframe)
+- `EmailReportEditor.tsx` — full Email Reports editor (rule builder + sections + preview iframe). **Mounted on a page route, never a modal swap** (see Gotcha #1).
 - `HotkeyHandler.tsx` — keyboard shortcuts for review/judge queue pages
 - `ImpersonationBanner.tsx` — golden "ADMIN VIEW" bar; auto-shows for admin on non-admin pages
 - `ModalController.tsx` — opens/closes admin modals on `data-modal` clicks; emits `modal-open` event for HTMX `hx-trigger="modal-open"`
@@ -210,5 +269,7 @@ Key reference files:
 - `question-lab/page.ts` — list / detail / editor (1087 lines, three exported renderers)
 - `question-lab/handlers.ts` — backend route table
 - `weekly-builder/page.ts` + `weekly-builder/handlers.ts` — staging UI + publish handlers
+- `lib/webhook-handlers.ts` — pre-refactor webhook send paths (cross-reference when debugging email content)
+- `lib/report-engine.ts` — the rule-evaluation + section-rendering reference for Email Reports
 
 Dark theme CSS variables, layouts, and interactive patterns should match production exactly.

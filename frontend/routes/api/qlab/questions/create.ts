@@ -25,7 +25,7 @@ export const handler = define.handlers({
     }
     return new Response(null, {
       status: 200,
-      headers: { "HX-Redirect": `/question-lab?configId=${configId}` },
+      headers: { "HX-Redirect": `/question-lab/config/${configId}` },
     });
   },
 });

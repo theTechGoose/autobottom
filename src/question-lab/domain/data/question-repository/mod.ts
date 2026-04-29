@@ -11,6 +11,10 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 export interface QLConfig {
   id: string; name: string; type: "internal" | "partner";
   createdAt: number; updatedAt: number; testEmailRecipients?: string[];
+  /** Available for assignment? Defaults to true on create.
+   *  Toggleable from the config list and detail pages — matches prod's
+   *  cfg-active-btn behavior. */
+  active?: boolean;
 }
 
 export interface QLQuestion {
@@ -54,7 +58,7 @@ export async function getConfig(orgId: OrgId, id: string): Promise<QLConfig | nu
 export async function createConfig(orgId: OrgId, name: string, type: "internal" | "partner" = "internal"): Promise<QLConfig> {
   const id = crypto.randomUUID();
   const now = Date.now();
-  const config: QLConfig = { id, name, type, createdAt: now, updatedAt: now };
+  const config: QLConfig = { id, name, type, createdAt: now, updatedAt: now, active: true };
   await setStored("qlab-config", orgId, [id], config);
   return config;
 }

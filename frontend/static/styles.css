@@ -254,6 +254,17 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .pill-yellow { background: var(--yellow-bg); color: var(--yellow); }
 .pill-blue { background: var(--blue-bg); color: var(--blue); }
 .pill-purple { background: var(--purple-bg); color: var(--purple); }
+.pill-orange { background: rgba(249,115,22,0.10); color: #f97316; }
+
+/* + New Config inline form on /question-lab */
+.qlab-new-details { display: inline-block; }
+.qlab-new-details > summary { display: inline-flex; align-items: center; }
+.qlab-new-details > summary::-webkit-details-marker { display: none; }
+.qlab-new-details[open] > summary { background: var(--bg-surface); }
+.qlab-new-form { position: absolute; right: 0; margin-top: 8px; padding: 12px 14px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); width: 480px; max-width: 92vw; z-index: 5; }
+
+@keyframes qlab-spin { to { transform: rotate(360deg); } }
+.qlab-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: qlab-spin 0.7s linear infinite; }
 
 /* ===== Modal ===== */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(8px); z-index: 100; display: none; align-items: center; justify-content: center; }

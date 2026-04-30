@@ -8,6 +8,8 @@ import { DashboardTables, computeLogsBase, type ActiveItem, type ErrorItem, type
 import { TokenUsagePanel, type TokenData } from "../../components/TokenUsagePanel.tsx";
 import { ReviewQueuePanel, type ReviewStatsShape } from "../../components/ReviewQueuePanel.tsx";
 import PipelineActivityChart from "../../islands/PipelineActivityChart.tsx";
+import ChargebacksToolbar from "../../islands/ChargebacksToolbar.tsx";
+import BulkAuditRunner from "../../islands/BulkAuditRunner.tsx";
 
 interface PipelineStats { inPipe?: number; active?: ActiveItem[]; completed24h?: number; completedCount?: number; errors24h?: number; errors?: ErrorItem[]; retries24h?: number; retries?: unknown[]; completedTs?: number[]; errorsTs?: number[]; retriesTs?: number[]; paused?: boolean; }
 interface DashboardData { pipeline: PipelineStats; review: ReviewStatsShape; recentCompleted: CompletedItem[]; }
@@ -133,13 +135,14 @@ export default define.page(async function AdminDashboard(ctx) {
         { id: "users-modal", title: "Users", sub: "Manage user accounts and roles", endpoint: "/api/admin/modal/users", className: "um-modal", noHeader: true },
         { id: "webhook-modal", title: "Webhook Configuration", sub: "Configure outbound webhooks for pipeline events", endpoint: "/api/admin/modal/webhook", noHeader: true },
         { id: "email-templates-modal", title: "Email Templates", sub: "Manage email notification templates", endpoint: "/api/admin/modal/email-templates", className: "et-modal", noHeader: true },
-        // Chargebacks moved to /admin/chargebacks page route — its ChargebacksToolbar
-        // island can't hydrate inside a modal HTMX swap (Gotcha #1).
+        // Chargebacks intentionally NOT in this lazy-loaded array — its content
+        // (with the ChargebacksToolbar island) is rendered inline below so Fresh
+        // hydrates the island. HTMX-injected islands don't hydrate (Gotcha #1).
         { id: "maintenance-modal", title: "Data Maintenance", sub: "Purge, backfill, deduplicate, and clean up data", endpoint: "/api/admin/modal/maintenance", noHeader: true },
         { id: "bad-words-modal", title: "Bad Words", sub: "Configure profanity scanning for transcripts", endpoint: "/api/admin/modal/bad-words", className: "bw-modal", noHeader: true },
         { id: "offices-modal", title: "Offices", sub: "Manage known offices and bypass patterns", endpoint: "/api/admin/modal/offices", noHeader: true },
         { id: "pipeline-modal", title: "Pipeline Settings", sub: "Control concurrency and failure recovery", endpoint: "/api/admin/modal/pipeline", className: "pipeline-modal", noHeader: true },
-        // Bulk Audit moved to /admin/bulk-audit page route — same hydration reason.
+        // Bulk Audit also rendered inline below — same hydration reason.
         { id: "devtools-modal", title: "Dev Tools", sub: "Seed test users, wipe KV", endpoint: "/api/admin/modal/devtools", noHeader: true },
         { id: "bonus-points-modal", title: "Bonus Points", sub: "Configure bonus point awards", endpoint: "/api/admin/modal/bonus-points" },
         { id: "impersonate-modal", title: "Impersonate User", sub: "View the app as another user", endpoint: "/api/admin/modal/impersonate" },
@@ -158,6 +161,59 @@ export default define.page(async function AdminDashboard(ctx) {
           </div>
         </div>
       ))}
+
+      {/* ===== ISLAND-BEARING MODALS — content rendered INLINE so Fresh hydrates
+          the island. HTMX-injected islands stay static — see Gotcha #1. ===== */}
+      <div id="chargebacks-modal" class="modal-overlay">
+        <div class="modal cb-modal">
+          <div id="chargebacks-modal-content">
+            {(() => {
+              const today = new Date().toISOString().slice(0, 10);
+              const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+              return (
+                <div style="display:flex;flex-direction:column;height:100%;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 0;">
+                    <div>
+                      <div class="modal-title">Chargebacks & Omissions</div>
+                      <div class="modal-sub" style="margin-bottom:0;">Review chargeback / omission and wire-deduction reports.</div>
+                    </div>
+                    <button data-close-modal="chargebacks-modal" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+                  </div>
+                  {/* Tab bar — ChargebacksToolbar's TabBarPortal effect renders into here */}
+                  <div id="cb-tabs" style="display:flex;align-items:center;gap:0;padding:0 24px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-surface);" />
+                  {/* Controls */}
+                  <div style="display:flex;align-items:center;gap:10px;padding:12px 24px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;">
+                    <label style="font-size:11px;color:var(--text-dim);font-weight:600;">From</label>
+                    <input type="date" id="cb-date-from" class="sf-input" style="font-size:11px;padding:5px 8px;width:auto;cursor:pointer;" value={weekAgo} />
+                    <label style="font-size:11px;color:var(--text-dim);font-weight:600;">To</label>
+                    <input type="date" id="cb-date-to" class="sf-input" style="font-size:11px;padding:5px 8px;width:auto;cursor:pointer;" value={today} />
+                    <ChargebacksToolbar initialTab="cb" />
+                  </div>
+                  {/* Body */}
+                  <div id="cb-body" style="flex:1;overflow-y:auto;padding:20px 24px;">
+                    <div style="color:var(--text-dim);font-size:12px;text-align:center;padding:60px 0;">Select a date range and pull the report.</div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      </div>
+
+      <div id="bulk-audit-modal" class="modal-overlay">
+        <div class="modal">
+          <div id="bulk-audit-modal-content">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:14px 20px 0;">
+              <div>
+                <div class="modal-title">Bulk Audit</div>
+                <div class="modal-sub" style="margin-bottom:0;">Paste QuickBase record IDs — each is queued as a real audit with the configured stagger.</div>
+              </div>
+              <button data-close-modal="bulk-audit-modal" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+            </div>
+            <BulkAuditRunner />
+          </div>
+        </div>
+      </div>
     </Layout>
   );
 });

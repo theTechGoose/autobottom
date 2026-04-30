@@ -167,9 +167,12 @@ Fresh's `boot()` script runs on initial page load and registers the islands pres
 
 **Symptom:** click an island button inside a modal that opened via `hx-get` → nothing happens, no errors in console.
 
-**Rule:** islands must be mounted on a **real page route** (file under `routes/`), not in a fragment served by `routes/api/admin/modal/**`. Email Reports learned this the hard way: the EmailReportEditor lived in `/api/admin/modal/email-reports.tsx`; the "+ New Report" button never fired. Fix was moving it to a real page at `/admin/email-reports`.
+**Rule:** islands must be present in the **initial SSR'd HTML** of a page that the browser actually navigates to. Two patterns work:
 
-If you want a "modal-feel" island UX, build the page with `hideSidebar` + the `.ql-topbar` pattern — the user gets a focused experience without losing hydration. Question Lab, Weekly Builder, and Email Reports all do this.
+1. **Full page route** (preferred for big tools): file under `routes/admin/<tool>.tsx`. Sidebar entry uses `href: "/admin/<tool>"`. See Question Lab, Weekly Builder, Email Reports.
+2. **Pre-rendered modal**: render the modal's full content (including the island) **inline** in the parent page (e.g. `routes/admin/dashboard.tsx`) instead of via `hx-trigger="modal-open"` lazy-load. The modal stays a CSS overlay that `ModalController.tsx` toggles visible — but the HTML (and the island) is part of the dashboard's initial SSR, so Fresh hydrates it. Sidebar entry stays `modalId: "…-modal"`. See `chargebacks-modal` and `bulk-audit-modal` in `routes/admin/dashboard.tsx`.
+
+Either works; pick (2) when the user really wants modal UX. **Don't** put an island inside `routes/api/admin/modal/**` — fragments served by HTMX swap can never hydrate.
 
 ### 2. **Webhook kind names must match everywhere**
 
@@ -211,8 +214,6 @@ When you add a new admin tool with rich interactivity, default to a full page (r
 | Admin Users | `/admin/users` | Done — list, add, delete, manager-scope editor (datalist autocomplete from /admin/audit-dimensions) |
 | Admin Audits | `/admin/audits` | Done — table, record ID search, retry |
 | Admin Badge Editor | `/admin/badge-editor` | Done — admin-gated catalog editor (two-pane list + detail; built-in items render read-only) |
-| Bulk Audit | `/admin/bulk-audit` | Done — paste RIDs + stagger, sequential POST with per-row progress. Real page route so the BulkAuditRunner island hydrates. |
-| Chargebacks & Omissions | `/admin/chargebacks` | Done — Chargebacks/Omissions + Wire Deductions tabs, date range, Pull Report, CSV/XLSX download, Post-to-Sheet. Real page route so the ChargebacksToolbar island hydrates. |
 | Weekly Builder | `/admin/weekly-builder` | Done — full prod parity (two-pane stage + publish) |
 | Email Reports | `/admin/email-reports` | Done — full prod parity (rule builder, sections, preview iframe). Real page route so the EmailReportEditor island hydrates. |
 | Review Queue | `/review` | Done — split panel, hotkeys, sounds |

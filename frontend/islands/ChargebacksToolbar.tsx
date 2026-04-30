@@ -1,55 +1,108 @@
-/** Chargebacks modal toolbar — handles Pull Report, Download (CSV/XLSX),
- *  and Post to Sheet. Replaces the disabled stub buttons.
+/** Chargebacks modal toolbar — owns tab state, Pull Report, Download
+ *  (CSV/XLSX), Post-to-Sheet, and renders the data tables.
  *
- *  The data fetch goes through a new JSON proxy (`/api/admin/chargebacks-json`)
- *  so the island can transform to CSV/XLSX/Sheets without scraping the DOM. */
+ *  Data flow: pull JSON from `/api/admin/chargebacks-json` (raw backend shape:
+ *  ChargebackEntry / WireDeductionEntry). Format dates / revenue / CRM links
+ *  at render time — matches prod's behaviour and keeps the island the single
+ *  source of truth for the display shape (CSV / XLSX / Sheets all project
+ *  from the same raw entries). */
 import { useEffect, useRef, useState } from "preact/hooks";
 
 type Tab = "cb" | "wire";
 
-interface CbItem { date?: string; teamMember?: string; revenue?: string; crmLink?: string; findingId?: string; type?: string; failedQuestions?: string[]; }
-interface WireItem { date?: string; score?: number; questions?: number; passed?: number; crmLink?: string; findingId?: string; office?: string; auditor?: string; guestName?: string; }
+// Backend shapes — must match src/core/dto/types.ts ChargebackEntry / WireDeductionEntry.
+interface CbEntry {
+  findingId: string;
+  ts: number;
+  voName: string;
+  destination: string;
+  revenue: string;
+  recordId: string;
+  score: number;
+  failedQHeaders: string[];
+  egregiousHeaders?: string[];
+  omissionHeaders?: string[];
+}
+interface WireEntry {
+  findingId: string;
+  ts: number;
+  score: number;
+  questionsAudited: number;
+  totalSuccess: number;
+  recordId: string;
+  office: string;
+  excellenceAuditor: string;
+  guestName: string;
+}
 
 declare global {
   // deno-lint-ignore no-explicit-any
   interface Window { XLSX?: any; }
 }
 
-function toISODate(input: string): string {
-  // cb-date-from / cb-date-to come back as YYYY-MM-DD
-  return input.trim();
-}
+// QuickBase deep-link templates — match prod's dashboard/page.ts.
+const QB_DATE_URL = "https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=";
+const QB_PKG_URL = "https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=";
+
 function toMs(date: string, endOfDay = false): number {
   const [y, m, d] = date.split("-").map((n) => Number(n));
   const t = new Date(y, (m ?? 1) - 1, d ?? 1, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0);
   return t.getTime();
 }
 
-function cbToRows(cbs: CbItem[]): (string | number)[][] {
+function fmtDate(ts: number): string {
+  const d = new Date(ts);
+  const date = `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`;
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  return `${date} ${time}`;
+}
+
+function fmtRevenue(r: string): string {
+  if (!r) return "";
+  const n = parseFloat(r);
+  return isNaN(n) ? r : `$${n.toFixed(2)}`;
+}
+
+function teamMember(e: CbEntry): string {
+  return e.voName || e.destination || "";
+}
+
+function cbCrm(e: CbEntry): string {
+  return e.recordId ? `${QB_DATE_URL}${encodeURIComponent(e.recordId)}` : "";
+}
+function wireCrm(e: WireEntry): string {
+  return e.recordId ? `${QB_PKG_URL}${encodeURIComponent(e.recordId)}` : "";
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function cbToRows(entries: CbEntry[], type: "Chargeback" | "Omission"): (string | number)[][] {
   const header = ["Date", "Team Member", "Revenue", "CRM", "Audit", "Type", "Failed Questions"];
-  const body = cbs.map((c) => [
-    c.date ?? "",
-    c.teamMember ?? "",
-    c.revenue ?? "",
-    c.crmLink ?? "",
-    c.findingId ?? "",
-    c.type ?? "",
-    (c.failedQuestions ?? []).join("; "),
+  const body = entries.map((e) => [
+    fmtDate(e.ts),
+    teamMember(e),
+    fmtRevenue(e.revenue),
+    cbCrm(e),
+    e.findingId ? `${globalThis.location?.origin ?? ""}/audit/report?id=${e.findingId}` : "",
+    type,
+    (e.failedQHeaders ?? []).join("; "),
   ]);
   return [header, ...body];
 }
-function wireToRows(ws: WireItem[]): (string | number)[][] {
+function wireToRows(entries: WireEntry[]): (string | number)[][] {
   const header = ["Date", "Score %", "Questions", "Passed", "CRM", "Audit", "Office", "Auditor", "Guest"];
-  const body = ws.map((w) => [
-    w.date ?? "",
-    w.score ?? "",
-    w.questions ?? "",
-    w.passed ?? "",
-    w.crmLink ?? "",
-    w.findingId ?? "",
-    w.office ?? "",
-    w.auditor ?? "",
-    w.guestName ?? "",
+  const body = entries.map((e) => [
+    fmtDate(e.ts),
+    typeof e.score === "number" ? e.score : "",
+    typeof e.questionsAudited === "number" ? e.questionsAudited : "",
+    typeof e.totalSuccess === "number" ? e.totalSuccess : "",
+    wireCrm(e),
+    e.findingId ? `${globalThis.location?.origin ?? ""}/audit/report?id=${e.findingId}` : "",
+    e.office ?? "",
+    e.excellenceAuditor ?? "",
+    e.guestName ?? "",
   ]);
   return [header, ...body];
 }
@@ -92,9 +145,9 @@ interface Props { initialTab?: Tab; }
 
 export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [cbs, setCbs] = useState<CbItem[]>([]);
-  const [omissions, setOmissions] = useState<CbItem[]>([]);
-  const [wires, setWires] = useState<WireItem[]>([]);
+  const [cbs, setCbs] = useState<CbEntry[]>([]);
+  const [omissions, setOmissions] = useState<CbEntry[]>([]);
+  const [wires, setWires] = useState<WireEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -112,7 +165,7 @@ export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
     const from = (document.getElementById("cb-date-from") as HTMLInputElement | null)?.value;
     const to = (document.getElementById("cb-date-to") as HTMLInputElement | null)?.value;
     if (!from || !to) { setMsg({ kind: "err", text: "Pick a date range first." }); return null; }
-    return { since: toMs(toISODate(from)), until: toMs(toISODate(to), true) };
+    return { since: toMs(from), until: toMs(to, true) };
   }
 
   async function pull() {
@@ -129,10 +182,10 @@ export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
         throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
       }
       if (tab === "wire") {
-        setWires(((data as { items?: WireItem[] }).items) ?? []);
+        setWires(((data as { items?: WireEntry[] }).items) ?? []);
         setCbs([]); setOmissions([]);
       } else {
-        const d = data as { chargebacks?: CbItem[]; omissions?: CbItem[] };
+        const d = data as { chargebacks?: CbEntry[]; omissions?: CbEntry[] };
         setCbs(d.chargebacks ?? []);
         setOmissions(d.omissions ?? []);
         setWires([]);
@@ -152,7 +205,10 @@ export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
     if (tab === "wire") {
       downloadBlob(new Blob([rowsToCsv(wireToRows(wires))], { type: "text/csv;charset=utf-8" }), `wire-deductions-${now}.csv`);
     } else {
-      const combined = [...cbToRows(cbs), [], ["Omissions"], ...cbToRows(omissions).slice(1)];
+      const cbRows = cbToRows(cbs, "Chargeback");
+      const omRows = cbToRows(omissions, "Omission");
+      // Combine — header from cb, body of cb + body of om (omitting om's header)
+      const combined = [...cbRows, [], ["Omissions"], ...omRows.slice(1)];
       downloadBlob(new Blob([rowsToCsv(combined)], { type: "text/csv;charset=utf-8" }), `chargebacks-${now}.csv`);
     }
     setMsg({ kind: "ok", text: "CSV downloaded." });
@@ -175,10 +231,10 @@ export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
         XLSX.writeFile(wb, `wire-deductions-${now}.xlsx`);
       } else {
         if (cbs.length) {
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cbToRows(cbs)), "Chargebacks");
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cbToRows(cbs, "Chargeback")), "Chargebacks");
         }
         if (omissions.length) {
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cbToRows(omissions)), "Omissions");
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cbToRows(omissions, "Omission")), "Omissions");
         }
         if (!cbs.length && !omissions.length) {
           XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["No data"]]), "Empty");
@@ -221,7 +277,7 @@ export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
     }
   }
 
-  // Message auto-clear
+  // Auto-clear toast after 4s
   useEffect(() => {
     if (!msg) return;
     const t = setTimeout(() => setMsg(null), 4000);
@@ -230,9 +286,7 @@ export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
 
   return (
     <>
-      {/* Tab bar — owned by the island so switching is instant.
-          Lives outside the controls flex via portal-effect (writes into
-          #cb-tabs which the modal route renders as an empty container). */}
+      {/* Tabs portal — TabBarPortal effect renders buttons into #cb-tabs */}
       <TabBarPortal tab={tab} onSwitch={switchTab} />
 
       <button
@@ -268,17 +322,12 @@ export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
           style={`font-size:10px;margin-left:8px;color:${msg.kind === "ok" ? "var(--green)" : "var(--red)"};`}
         >{msg.text}</span>
       )}
-      {/* Rendered tables — island owns the render so we can feed the same
-          dataset to CSV/XLSX/Sheets without a separate fetch. */}
-      <div id="cb-island-body" style="display:none">{/* mounted by effect */}</div>
       <BodyRenderer tab={tab} cbs={cbs} omissions={omissions} wires={wires} loaded={loaded} />
     </>
   );
 }
 
-/** Renders the tab bar buttons into #cb-tabs (the modal route's empty
- *  container). Same portal pattern as BodyRenderer below — keeps the
- *  buttons visually outside the island while still owned by it. */
+/** Renders the tab buttons into #cb-tabs (the dashboard's empty container). */
 function TabBarPortal({ tab, onSwitch }: { tab: Tab; onSwitch: (next: Tab) => void }) {
   useEffect(() => {
     const host = document.getElementById("cb-tabs");
@@ -299,52 +348,56 @@ function TabBarPortal({ tab, onSwitch }: { tab: Tab; onSwitch: (next: Tab) => vo
   return null;
 }
 
-function BodyRenderer({ tab, cbs, omissions, wires, loaded }: { tab: Tab; cbs: CbItem[]; omissions: CbItem[]; wires: WireItem[]; loaded: boolean }) {
-  // Render into #cb-body (the element sits outside this island so we teleport
-  // via a portal-effect using a small client-side rerender hook).
+function BodyRenderer({ tab, cbs, omissions, wires, loaded }: { tab: Tab; cbs: CbEntry[]; omissions: CbEntry[]; wires: WireEntry[]; loaded: boolean }) {
+  // Renders into #cb-body (the dashboard's empty container outside this island).
   useEffect(() => {
     const body = document.getElementById("cb-body");
     if (!body) return;
-    if (!loaded) return; // leave existing placeholder
-    // Wipe + render
+
+    // When unloaded (initial state OR tab just switched), reset to placeholder.
+    // The previous version bailed early — leaving the prior tab's table visible.
+    if (!loaded) {
+      body.innerHTML = `<div style="color:var(--text-dim);font-size:12px;text-align:center;padding:60px 0;">Select a date range and pull the report.</div>`;
+      return;
+    }
+
     body.innerHTML = "";
     const frag = document.createElement("div");
     if (tab === "wire") {
       if (!wires.length) {
         frag.innerHTML = `<div style="color:var(--text-dim);font-size:12px;text-align:center;padding:40px 0;">No wire deductions for this period.</div>`;
       } else {
-        const rows = wires.map((w) => `<tr>
-          <td>${w.date ?? "—"}</td>
-          <td style="font-weight:700;">${w.score != null ? w.score + "%" : "—"}</td>
-          <td>${w.questions ?? "—"}</td><td>${w.passed ?? "—"}</td>
-          <td>${w.crmLink ? `<a href="${w.crmLink}" target="_blank" class="tbl-link">CRM</a>` : "—"}</td>
-          <td>${w.findingId ? `<a href="/audit/report?id=${w.findingId}" class="tbl-link">${w.findingId.slice(0, 8)}</a>` : "—"}</td>
-          <td>${w.office ?? "—"}</td><td>${w.auditor ?? "—"}</td><td>${w.guestName ?? "—"}</td>
+        const rows = wires.map((w) => `<tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:6px 10px;color:var(--text);">${escapeHtml(fmtDate(w.ts))}</td>
+          <td style="padding:6px 10px;font-weight:700;">${typeof w.score === "number" ? w.score + "%" : "—"}</td>
+          <td style="padding:6px 10px;color:var(--text);">${w.questionsAudited ?? "—"}</td>
+          <td style="padding:6px 10px;color:var(--text);">${w.totalSuccess ?? "—"}</td>
+          <td style="padding:6px 10px;">${w.recordId ? `<a href="${escapeHtml(wireCrm(w))}" target="_blank" class="tbl-link" style="color:var(--blue);text-decoration:none;">CRM</a>` : "—"}</td>
+          <td style="padding:6px 10px;">${w.findingId ? `<a href="/audit/report?id=${encodeURIComponent(w.findingId)}" target="_blank" class="tbl-link" style="color:var(--blue);text-decoration:none;">Audit</a>` : "—"}</td>
+          <td style="padding:6px 10px;color:var(--text-dim);">${escapeHtml(w.office ?? "")}</td>
+          <td style="padding:6px 10px;color:var(--text-dim);">${escapeHtml(w.excellenceAuditor ?? "")}</td>
+          <td style="padding:6px 10px;color:var(--text-dim);">${escapeHtml(w.guestName ?? "")}</td>
         </tr>`).join("");
-        frag.innerHTML = `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--cyan);margin-bottom:10px;">Wire Deductions (${wires.length})</div><table class="data-table"><thead><tr><th>Date</th><th>Score</th><th>Qs</th><th>Passed</th><th>CRM</th><th>Audit</th><th>Office</th><th>Auditor</th><th>Guest</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+        frag.innerHTML = `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--cyan);margin-bottom:10px;">Wire Deductions (${wires.length})</div><table class="data-table" style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Date</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Score</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Questions</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Passed</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">CRM</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Audit</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Office</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Auditor</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Guest</th></tr></thead><tbody>${rows}</tbody></table></div>`;
       }
     } else {
-      const cbRows = cbs.map((c) => `<tr>
-        <td>${c.date ?? "—"}</td><td style="font-weight:600;">${c.teamMember ?? "—"}</td>
-        <td>${c.revenue ?? "—"}</td>
-        <td>${c.crmLink ? `<a href="${c.crmLink}" target="_blank" class="tbl-link">CRM</a>` : "—"}</td>
-        <td>${c.findingId ? `<a href="/audit/report?id=${c.findingId}" class="tbl-link">${c.findingId.slice(0, 8)}</a>` : "—"}</td>
-        <td><span class="pill pill-red">${c.type ?? "CB"}</span></td>
-        <td style="font-size:10px;max-width:200px;">${(c.failedQuestions ?? []).join(", ") || "—"}</td>
-      </tr>`).join("");
-      const omRows = omissions.map((o) => `<tr>
-        <td>${o.date ?? "—"}</td><td style="font-weight:600;">${o.teamMember ?? "—"}</td>
-        <td>${o.revenue ?? "—"}</td>
-        <td>${o.crmLink ? `<a href="${o.crmLink}" target="_blank" class="tbl-link">CRM</a>` : "—"}</td>
-        <td>${o.findingId ? `<a href="/audit/report?id=${o.findingId}" class="tbl-link">${o.findingId.slice(0, 8)}</a>` : "—"}</td>
-        <td><span class="pill pill-yellow">${o.type ?? "OM"}</span></td>
-        <td style="font-size:10px;max-width:200px;">${(o.failedQuestions ?? []).join(", ") || "—"}</td>
-      </tr>`).join("");
+      const renderRow = (e: CbEntry, type: "Chargeback" | "Omission") => `<tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:6px 10px;color:var(--text);">${escapeHtml(fmtDate(e.ts))}</td>
+        <td style="padding:6px 10px;color:var(--text-bright);font-weight:500;">${escapeHtml(teamMember(e))}</td>
+        <td style="padding:6px 10px;color:var(--green);">${escapeHtml(fmtRevenue(e.revenue))}</td>
+        <td style="padding:6px 10px;">${e.recordId ? `<a href="${escapeHtml(cbCrm(e))}" target="_blank" class="tbl-link" style="color:var(--blue);text-decoration:none;">CRM</a>` : "—"}</td>
+        <td style="padding:6px 10px;">${e.findingId ? `<a href="/audit/report?id=${encodeURIComponent(e.findingId)}" target="_blank" class="tbl-link" style="color:var(--blue);text-decoration:none;">Audit</a>` : "—"}</td>
+        <td style="padding:6px 10px;font-weight:600;color:${type === "Chargeback" ? "var(--red)" : "var(--yellow)"};">${type}</td>
+        <td style="padding:6px 10px;color:var(--text-dim);">${escapeHtml((e.failedQHeaders ?? []).join(", "))}</td>
+      </tr>`;
+      const cbRows = cbs.map((e) => renderRow(e, "Chargeback")).join("");
+      const omRows = omissions.map((e) => renderRow(e, "Omission")).join("");
       if (!cbs.length && !omissions.length) {
         frag.innerHTML = `<div style="color:var(--text-dim);font-size:12px;text-align:center;padding:40px 0;">No chargebacks or omissions for this period.</div>`;
       } else {
-        const cbBlock = cbs.length ? `<div style="margin-bottom:32px;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--red);margin-bottom:10px;">Chargebacks (${cbs.length})</div><table class="data-table"><thead><tr><th>Date</th><th>Team Member</th><th>Revenue</th><th>CRM</th><th>Audit</th><th>Type</th><th>Failed Qs</th></tr></thead><tbody>${cbRows}</tbody></table></div>` : "";
-        const omBlock = omissions.length ? `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--yellow);margin-bottom:10px;">Omissions (${omissions.length})</div><table class="data-table"><thead><tr><th>Date</th><th>Team Member</th><th>Revenue</th><th>CRM</th><th>Audit</th><th>Type</th><th>Failed Qs</th></tr></thead><tbody>${omRows}</tbody></table></div>` : "";
+        const tableHead = `<thead><tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Date</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Team Member</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Revenue</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">CRM</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Audit</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Type</th><th style="text-align:left;padding:6px 10px;color:var(--text-dim);">Failed Qs</th></tr></thead>`;
+        const cbBlock = cbs.length ? `<div style="margin-bottom:32px;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--red);margin-bottom:10px;">Chargebacks (${cbs.length})</div><table class="data-table" style="width:100%;border-collapse:collapse;font-size:11px;">${tableHead}<tbody>${cbRows}</tbody></table></div>` : "";
+        const omBlock = omissions.length ? `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--yellow);margin-bottom:10px;">Omissions (${omissions.length})</div><table class="data-table" style="width:100%;border-collapse:collapse;font-size:11px;">${tableHead}<tbody>${omRows}</tbody></table></div>` : "";
         frag.innerHTML = `<div>${cbBlock}${omBlock}</div>`;
       }
     }

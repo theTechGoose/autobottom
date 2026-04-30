@@ -120,8 +120,13 @@ async function openProdKv(): Promise<Deno.Kv> {
   // Deploy blocks users from setting DENO_* env vars in the dashboard. Bridge
   // our user-named KV_ACCESS_TOKEN over at runtime.
   const tok = Deno.env.get("KV_ACCESS_TOKEN");
-  if (tok && !Deno.env.get("DENO_KV_ACCESS_TOKEN")) {
-    Deno.env.set("DENO_KV_ACCESS_TOKEN", tok);
+  const before = Deno.env.get("DENO_KV_ACCESS_TOKEN");
+  console.log(`[MIGRATE-AUTH] url=${url.replace(/databases\/([0-9a-f-]+)/i, (_, id) => `databases/${id.slice(0,8)}…`)} KV_ACCESS_TOKEN=${tok ? `present(len=${tok.length})` : "MISSING"} DENO_KV_ACCESS_TOKEN=${before ? `present(len=${before.length})` : "missing"}`);
+  if (tok && !before) {
+    try { Deno.env.set("DENO_KV_ACCESS_TOKEN", tok); }
+    catch (e) { console.log(`[MIGRATE-AUTH] ❌ Deno.env.set threw: ${e}`); }
+    const after = Deno.env.get("DENO_KV_ACCESS_TOKEN");
+    console.log(`[MIGRATE-AUTH] after bridge: DENO_KV_ACCESS_TOKEN=${after ? `present(len=${after.length})` : "STILL MISSING — env.set was no-op"}`);
   }
   return await Deno.openKv(url);
 }

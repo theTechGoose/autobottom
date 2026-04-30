@@ -372,7 +372,7 @@ Deno.env.set("API_URL", `http://localhost:${port}`);
 // --- Route requests ---
 // Frontend EXACT page paths — must match exactly (no prefix matching)
 const FRONTEND_EXACT_PAGES = new Set([
-  "/admin/dashboard", "/admin/users", "/admin/audits", "/admin/weekly-builder", "/admin/email-reports",
+  "/admin/dashboard", "/admin/users", "/admin/audits", "/admin/weekly-builder",
   "/admin/badge-editor",
   "/manager/audits",
   "/review", "/review/dashboard",

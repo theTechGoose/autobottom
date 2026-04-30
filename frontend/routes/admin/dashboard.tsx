@@ -10,6 +10,7 @@ import { ReviewQueuePanel, type ReviewStatsShape } from "../../components/Review
 import PipelineActivityChart from "../../islands/PipelineActivityChart.tsx";
 import ChargebacksToolbar from "../../islands/ChargebacksToolbar.tsx";
 import BulkAuditRunner from "../../islands/BulkAuditRunner.tsx";
+import EmailReportEditor from "../../islands/EmailReportEditor.tsx";
 
 interface PipelineStats { inPipe?: number; active?: ActiveItem[]; completed24h?: number; completedCount?: number; errors24h?: number; errors?: ErrorItem[]; retries24h?: number; retries?: unknown[]; completedTs?: number[]; errorsTs?: number[]; retriesTs?: number[]; paused?: boolean; }
 interface DashboardData { pipeline: PipelineStats; review: ReviewStatsShape; recentCompleted: CompletedItem[]; }
@@ -211,6 +212,23 @@ export default define.page(async function AdminDashboard(ctx) {
               <button data-close-modal="bulk-audit-modal" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
             </div>
             <BulkAuditRunner />
+          </div>
+        </div>
+      </div>
+
+      <div id="email-reports-modal" class="modal-overlay">
+        <div class="modal er-modal" style="width:96vw;max-width:1400px;height:92vh;display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:14px;">
+          <div id="email-reports-modal-content" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);flex-shrink:0;">
+              <div>
+                <div class="modal-title">Email Reports</div>
+                <div class="modal-sub" style="margin-bottom:0;">Schedule recurring email reports with rules, sections, and recipients.</div>
+              </div>
+              <button data-close-modal="email-reports-modal" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+            </div>
+            <div style="flex:1;overflow:auto;padding:0;">
+              <EmailReportEditor />
+            </div>
           </div>
         </div>
       </div>

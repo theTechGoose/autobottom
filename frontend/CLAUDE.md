@@ -215,7 +215,7 @@ When you add a new admin tool with rich interactivity, default to a full page (r
 | Admin Audits | `/admin/audits` | Done — table, record ID search, retry |
 | Admin Badge Editor | `/admin/badge-editor` | Done — admin-gated catalog editor (two-pane list + detail; built-in items render read-only) |
 | Weekly Builder | `/admin/weekly-builder` | Done — full prod parity (two-pane stage + publish) |
-| Email Reports | `/admin/email-reports` | Done — full prod parity (rule builder, sections, preview iframe). Real page route so the EmailReportEditor island hydrates. |
+| Email Reports | (modal `email-reports-modal`) | Done — full prod parity (rule builder, sections, preview iframe). Pre-rendered inline in dashboard.tsx so the EmailReportEditor island hydrates. |
 | Review Queue | `/review` | Done — split panel, hotkeys, sounds |
 | Review Dashboard | `/review/dashboard` | Done — stats |
 | Judge Queue | `/judge` | Done — split panel, overturn reasons |

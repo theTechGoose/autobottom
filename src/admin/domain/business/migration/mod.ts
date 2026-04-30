@@ -116,6 +116,13 @@ export function ensureProdKvConfigured(): { ok: true } | { ok: false; error: str
 async function openProdKv(): Promise<Deno.Kv> {
   const url = prodKvUrl();
   if (!url) throw new Error("PROD_KV_URL not configured");
+  // Deno.openKv() reads its bearer token from DENO_KV_ACCESS_TOKEN, but Deno
+  // Deploy blocks users from setting DENO_* env vars in the dashboard. Bridge
+  // our user-named KV_ACCESS_TOKEN over at runtime.
+  const tok = Deno.env.get("KV_ACCESS_TOKEN");
+  if (tok && !Deno.env.get("DENO_KV_ACCESS_TOKEN")) {
+    Deno.env.set("DENO_KV_ACCESS_TOKEN", tok);
+  }
   return await Deno.openKv(url);
 }
 

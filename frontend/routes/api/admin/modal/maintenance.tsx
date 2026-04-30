@@ -8,13 +8,14 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "migration";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "migration";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
   { key: "wire", label: "Wire Cleanup" },
   { key: "dedupe", label: "Deduplicate" },
   { key: "purge", label: "Purge Old Audits", danger: true },
+  { key: "flip", label: "Bulk Flip" },
   { key: "migration", label: "Migration" },
 ];
 
@@ -40,6 +41,7 @@ export const handler = define.handlers({
           {active === "wire" && <WirePanel />}
           {active === "dedupe" && <DedupePanel />}
           {active === "purge" && <PurgePanel />}
+          {active === "flip" && <BulkFlipPanel />}
           {active === "migration" && <MigrationPanel />}
         </div>
 
@@ -128,8 +130,8 @@ function DedupePanel() {
   return (
     <PanelCard title="Deduplicate Findings" subtitle="Scan a date range for duplicate findings. Dry-run by default — check Execute to actually delete.">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-        <div class="sf"><label class="sf-label">Since (ms)</label><input type="number" name="since" class="sf-input" id="dedupe-since" placeholder="0" /></div>
-        <div class="sf"><label class="sf-label">Until (ms)</label><input type="number" name="until" class="sf-input" id="dedupe-until" placeholder="9999999999999" /></div>
+        <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" id="dedupe-since" /></div>
+        <div class="sf"><label class="sf-label">To</label><input type="date" name="until" class="sf-input" id="dedupe-until" /></div>
       </div>
       <div style="display:flex;align-items:center;gap:14px;">
         <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);"><input type="checkbox" name="execute" value="true" /> Execute (default: dry-run)</label>
@@ -152,8 +154,8 @@ function PurgePanel() {
   return (
     <PanelCard danger title="Purge Old Audits" subtitle="Permanently delete all audit data within a date range. This cannot be undone.">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-        <div class="sf"><label class="sf-label">Since (ms)</label><input type="number" name="since" class="sf-input" id="maint-since" placeholder="0" /></div>
-        <div class="sf"><label class="sf-label">Before (ms)</label><input type="number" name="before" class="sf-input" id="maint-before" placeholder="required" /></div>
+        <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" id="maint-since" /></div>
+        <div class="sf"><label class="sf-label">Before</label><input type="date" name="before" class="sf-input" id="maint-before" /></div>
       </div>
       <button
         class="sf-btn danger"
@@ -165,6 +167,43 @@ function PurgePanel() {
         hx-swap="innerHTML"
         hx-confirm="PERMANENTLY delete all audit data in this range? This cannot be undone."
       >Purge</button>
+    </PanelCard>
+  );
+}
+
+function BulkFlipPanel() {
+  const today = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  return (
+    <PanelCard title="Bulk Flip" subtitle="Pull unreviewed audits matching your filters and flip all answers to Yes (100% score). This removes them from the review queue.">
+      <form
+        hx-get="/api/admin/modal/maintenance/flip-pull"
+        hx-target="#flip-results"
+        hx-swap="innerHTML"
+      >
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:8px;">
+          <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" value={weekAgo} /></div>
+          <div class="sf"><label class="sf-label">To</label><input type="date" name="until" class="sf-input" value={today} /></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px;">
+          <div class="sf">
+            <label class="sf-label">Type</label>
+            <select name="type" class="sf-input">
+              <option value="all">All Types</option>
+              <option value="date-leg">Internal</option>
+              <option value="package">Partner</option>
+            </select>
+          </div>
+          <div class="sf"><label class="sf-label">Department</label><input type="text" name="department" class="sf-input" placeholder="any" /></div>
+          <div class="sf"><label class="sf-label">Shift</label><input type="text" name="shift" class="sf-input" placeholder="any" /></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+          <div class="sf"><label class="sf-label">Min %</label><input type="number" name="scoreMin" class="sf-input" value="0" min="0" max="100" style="width:80px;" /></div>
+          <div class="sf"><label class="sf-label">Max %</label><input type="number" name="scoreMax" class="sf-input" value="99" min="0" max="100" style="width:80px;" /></div>
+          <button type="submit" class="sf-btn primary" style="padding:8px 16px;">Pull Unreviewed</button>
+        </div>
+      </form>
+      <div id="flip-results" style="margin-top:12px;"></div>
     </PanelCard>
   );
 }
@@ -187,8 +226,8 @@ function MigrationPanel() {
       <PanelCard title="2. Run Migration" subtitle="Date-range filter is applied only to types with a known timestamp field (audit-finding, completed-audit-stat, etc.). Other types are migrated whole.">
         <form hx-post="/api/admin/migration/run" hx-target="#mig-runs" hx-swap="afterbegin" hx-encoding="multipart/form-data">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-            <div class="sf"><label class="sf-label">Since (ms)</label><input type="number" name="since" class="sf-input" placeholder="e.g. 1735689600000" /></div>
-            <div class="sf"><label class="sf-label">Until (ms)</label><input type="number" name="until" class="sf-input" placeholder="optional upper bound" /></div>
+            <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" /></div>
+            <div class="sf"><label class="sf-label">To</label><input type="date" name="until" class="sf-input" /></div>
           </div>
           <div class="sf" style="margin-bottom:8px;"><label class="sf-label">Types (comma-separated, blank = all)</label><input type="text" name="types" class="sf-input" placeholder="audit-finding,audit-transcript,user,org" /></div>
           <div style="display:flex;align-items:center;gap:14px;">

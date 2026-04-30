@@ -82,9 +82,7 @@ export default function PipelineActivityChart(props: Props) {
       const padL = 28, padR = 8, padT = 10, padB = 22;
       const plotW = cssW - padL - padR;
       const plotH = cssH - padT - padB;
-      const slot = plotW / 24;
-      const barW = Math.max(2, Math.floor(slot * 0.22));
-      const gap = Math.floor(slot * 0.04);
+      const slot = plotW / 23; // 24 points → 23 spans
 
       // Y-axis gridlines (4 lines)
       ctx.strokeStyle = "rgba(255,255,255,0.06)";
@@ -109,28 +107,38 @@ export default function PipelineActivityChart(props: Props) {
       ctx.fillStyle = "#484f58";
       for (let i = 0; i <= 4; i++) {
         const bucketIdx = Math.round((i / 4) * 23);
-        const x = padL + slot * bucketIdx + slot / 2;
-        const h = 23 - bucketIdx; // hours ago
+        const x = padL + slot * bucketIdx;
+        const h = 23 - bucketIdx;
         ctx.fillText(h === 0 ? "now" : `-${h}h`, x, padT + plotH + 4);
       }
 
-      // Draw grouped bars: retries (yellow, back), completed (green), errors (red, front)
-      for (let i = 0; i < 24; i++) {
-        const xBase = padL + slot * i + slot / 2;
-        const series: Array<{ v: number; color: string }> = [
-          { v: rB[i], color: "#d29922" },
-          { v: cB[i], color: "#3fb950" },
-          { v: eB[i], color: "#f85149" },
-        ];
-        const totalW = series.length * barW + (series.length - 1) * gap;
-        let x = xBase - totalW / 2;
-        for (const s of series) {
-          const h = (s.v / maxVal) * plotH;
-          if (h > 0) {
-            ctx.fillStyle = s.color;
-            ctx.fillRect(x, padT + plotH - h, barW, h);
-          }
-          x += barW + gap;
+      // Series lines — completed (green), retries (yellow), errors (red).
+      const series: Array<{ data: number[]; color: string }> = [
+        { data: cB, color: "#3fb950" },
+        { data: rB, color: "#d29922" },
+        { data: eB, color: "#f85149" },
+      ];
+      for (const s of series) {
+        ctx.strokeStyle = s.color;
+        ctx.fillStyle = s.color;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        for (let i = 0; i < 24; i++) {
+          const x = padL + slot * i;
+          const y = padT + plotH - (s.data[i] / maxVal) * plotH;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        // Dots at each data point
+        for (let i = 0; i < 24; i++) {
+          if (s.data[i] === 0) continue;
+          const x = padL + slot * i;
+          const y = padT + plotH - (s.data[i] / maxVal) * plotH;
+          ctx.beginPath();
+          ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
 

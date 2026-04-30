@@ -240,11 +240,13 @@ export class AdminConfigController {
   }
   @Post("deduplicate-findings") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async deduplicateFindings(@Body() body: GenericBodyRequest) {
-    const { since, until } = body as any;
-    if (!since || !until) return { error: "since and until required" };
+    const b = body as any;
+    const since = parseDateOrMs(b.since, false);
+    const until = parseDateOrMs(b.until, true);
+    if (since == null || until == null) return { error: "since and until required (date YYYY-MM-DD or ms)" };
     const { findDuplicatesLegacy, deleteDuplicatesLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
     const plan = await findDuplicatesLegacy(ORG(), since, until);
-    if ((body as any).execute) {
+    if (b.execute) {
       const result = await deleteDuplicatesLegacy(ORG(), plan as any, () => {});
       return { ok: true, ...result };
     }
@@ -254,10 +256,12 @@ export class AdminConfigController {
   // -- Purge --
   @Post("purge-old-audits") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async purgeOldAudits(@Body() body: GenericBodyRequest) {
-    const { since, before } = body as any;
-    if (!before) return { error: "before required" };
+    const b = body as any;
+    const since = parseDateOrMs(b.since, false) ?? 0;
+    const before = parseDateOrMs(b.before, true);
+    if (before == null) return { error: "before required (date YYYY-MM-DD or ms)" };
     const { purgeOldEntries } = await import("@audit/domain/business/admin-backfills/mod.ts");
-    return { ok: true, ...(await purgeOldEntries(ORG(), since ?? 0, before)) };
+    return { ok: true, ...(await purgeOldEntries(ORG(), since, before)) };
   }
   @Post("purge-bypassed-wire-deductions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async purgeBypassedWireDeductions(@Body() body: GenericBodyRequest) {
@@ -419,11 +423,91 @@ export class AdminConfigController {
 
   // -- Unreviewed --
   @Get("unreviewed-audits") @ReturnedType(MessageResponse)
-  async getUnreviewedAudits() {
+  async getUnreviewedAudits(
+    @Query("since") sinceQ: string,
+    @Query("until") untilQ: string,
+    @Query("type") typeQ: string,
+    @Query("owner") ownerQ: string,
+    @Query("department") departmentQ: string,
+    @Query("shift") shiftQ: string,
+    @Query("scoreMin") scoreMinQ: string,
+    @Query("scoreMax") scoreMaxQ: string,
+  ) {
     const now = Date.now();
-    const since = now - 7 * 24 * 3600 * 1000; // last 7 days
-    const entries = await stats.queryAuditDoneIndex(ORG(), since, now);
-    const unreviewed = entries.filter((e: any) => !e.completed && e.score != null && e.score < 100);
-    return { audits: unreviewed };
+    const since = parseDateOrMs(sinceQ, false) ?? (now - 7 * 24 * 3600 * 1000);
+    const until = parseDateOrMs(untilQ, true) ?? now;
+    const type = typeQ || "all";
+    const owner = ownerQ || "";
+    const department = departmentQ || "";
+    const shift = shiftQ || "";
+    const scoreMin = scoreMinQ ? parseInt(scoreMinQ, 10) : 0;
+    const scoreMax = scoreMaxQ ? parseInt(scoreMaxQ, 10) : 100;
+
+    const { queryAuditDoneIndex } = stats;
+    const { getReviewedFindingIds } = await import("@review/domain/business/review-queue/mod.ts");
+    const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+
+    const [indexEntries, reviewedIds, bypassCfg] = await Promise.all([
+      queryAuditDoneIndex(ORG(), since, until),
+      getReviewedFindingIds(ORG()),
+      cfg.getOfficeBypassConfig(ORG()),
+    ]);
+    const bypassPatterns = (bypassCfg.patterns ?? []).map((p: string) => p.toLowerCase());
+    const isBypassed = (dept: string) =>
+      bypassPatterns.length > 0 && bypassPatterns.some((p: string) => dept.toLowerCase().includes(p));
+
+    const unreviewed = indexEntries.filter((e: any) => {
+      if (reviewedIds.has(e.findingId)) return false;
+      if (e.reason === "perfect_score" || e.reason === "invalid_genie") return false;
+      if (isBypassed(e.department ?? "")) return false;
+      if (type === "date-leg" && e.isPackage) return false;
+      if (type === "package" && !e.isPackage) return false;
+      if (owner && (e.voName || e.owner) !== owner) return false;
+      if (department && e.department !== department) return false;
+      if (shift && e.shift !== shift) return false;
+      if (e.score != null && (e.score < scoreMin || e.score > scoreMax)) return false;
+      return true;
+    });
+
+    const items = await Promise.all(unreviewed.slice(0, 500).map(async (e: any) => {
+      if (e.voName !== undefined || e.owner !== undefined) {
+        return { findingId: e.findingId, recordId: e.recordId, voName: e.voName, owner: e.owner, department: e.department, shift: e.shift, score: e.score, isPackage: e.isPackage, ts: e.completedAt };
+      }
+      const finding = await getFinding(ORG(), e.findingId);
+      if (!finding) return { findingId: e.findingId, recordId: e.recordId, score: e.score, ts: e.completedAt };
+      const rec = (finding as Record<string, unknown>).record as Record<string, unknown> | undefined;
+      const isPkg = (finding as any).recordingIdField === "GenieNumber";
+      const rawVo = String(rec?.VoName ?? "");
+      const vo = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+      return {
+        findingId: e.findingId,
+        recordId: e.recordId ?? String(rec?.RecordId ?? ""),
+        voName: vo || undefined,
+        owner: (finding as any).owner as string | undefined,
+        department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined,
+        shift: isPkg ? undefined : String(rec?.Shift ?? "") || undefined,
+        score: e.score,
+        isPackage: isPkg,
+        ts: e.completedAt,
+      };
+    }));
+
+    const owners = [...new Set(items.map((i: any) => i.voName || i.owner).filter(Boolean))].sort();
+    const departments = [...new Set(items.map((i: any) => i.department).filter(Boolean))].sort();
+    const shifts = [...new Set(items.map((i: any) => i.shift).filter(Boolean))].sort();
+    return { items, total: unreviewed.length, owners, departments, shifts };
   }
+}
+
+/** Accept either a YYYY-MM-DD date string or a ms-since-epoch number; return ms.
+ *  endOfDay=true rounds the date string up to the last ms of that day. */
+function parseDateOrMs(v: unknown, endOfDay: boolean): number | null {
+  if (v == null || v === "") return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) return Number(s);
+  const ms = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s);
+  if (Number.isNaN(ms)) return null;
+  return endOfDay ? ms + 24 * 60 * 60 * 1000 - 1 : ms;
 }

@@ -113,15 +113,27 @@ export class MigrationController {
 function parseRunOpts(body: unknown): RunOpts {
   const b = (body ?? {}) as Record<string, unknown>;
   const types = Array.isArray(b.types) ? (b.types as unknown[]).map(String).filter(Boolean) : undefined;
-  const sinceN = Number(b.since);
-  const untilN = Number(b.until);
+  const since = parseDateOrMs(b.since, false);
+  const until = parseDateOrMs(b.until, true);
   return {
     types: types && types.length > 0 ? types : undefined,
-    since: Number.isFinite(sinceN) && sinceN > 0 ? sinceN : undefined,
-    until: Number.isFinite(untilN) && untilN > 0 ? untilN : undefined,
+    since: since ?? undefined,
+    until: until ?? undefined,
     dryRun: b.dryRun === true || b.dryRun === "true",
     sinceVersionstamp: typeof b.sinceVersionstamp === "string" && b.sinceVersionstamp ? b.sinceVersionstamp : undefined,
   };
+}
+
+/** YYYY-MM-DD or ms-since-epoch → ms. endOfDay=true → last ms of that day. */
+function parseDateOrMs(v: unknown, endOfDay: boolean): number | null {
+  if (v == null || v === "") return null;
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) return Number(s);
+  const ms = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s);
+  if (Number.isNaN(ms)) return null;
+  return endOfDay ? ms + 24 * 60 * 60 * 1000 - 1 : ms;
 }
 
 function shallowJob(j: JobState) {

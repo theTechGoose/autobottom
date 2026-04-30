@@ -211,6 +211,8 @@ When you add a new admin tool with rich interactivity, default to a full page (r
 | Admin Users | `/admin/users` | Done — list, add, delete, manager-scope editor (datalist autocomplete from /admin/audit-dimensions) |
 | Admin Audits | `/admin/audits` | Done — table, record ID search, retry |
 | Admin Badge Editor | `/admin/badge-editor` | Done — admin-gated catalog editor (two-pane list + detail; built-in items render read-only) |
+| Bulk Audit | `/admin/bulk-audit` | Done — paste RIDs + stagger, sequential POST with per-row progress. Real page route so the BulkAuditRunner island hydrates. |
+| Chargebacks & Omissions | `/admin/chargebacks` | Done — Chargebacks/Omissions + Wire Deductions tabs, date range, Pull Report, CSV/XLSX download, Post-to-Sheet. Real page route so the ChargebacksToolbar island hydrates. |
 | Weekly Builder | `/admin/weekly-builder` | Done — full prod parity (two-pane stage + publish) |
 | Email Reports | `/admin/email-reports` | Done — full prod parity (rule builder, sections, preview iframe). Real page route so the EmailReportEditor island hydrates. |
 | Review Queue | `/review` | Done — split panel, hotkeys, sounds |

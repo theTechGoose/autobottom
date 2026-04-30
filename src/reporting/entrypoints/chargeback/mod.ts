@@ -10,6 +10,7 @@ import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { getChargebackEntries, getWireDeductionEntries } from "@audit/domain/data/stats-repository/mod.ts";
 import { loadSheetsCredentials, appendSheetRows } from "@core/data/google-sheets/mod.ts";
+import { getSelfUrl } from "@core/data/qstash/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
@@ -56,19 +57,24 @@ export class ChargebackController {
       getReviewedFindingIds(orgId),
       getOfficeBypassConfig(orgId),
     ]);
-    // Sheet columns must match the existing prod sheet schema:
-    //   Chargebacks/Omissions: Date, Team Member, Revenue, CRM Link, Destination, Failed Questions
-    //   Wire Deductions:       Date, Score, Questions, Passed, CRM Link, Audit Link, Office, Auditor, Guest Name
-    // Source entries use the raw repository shape (ts, voName, destination,
-    // recordId, failedQHeaders…) — translate at write-time so we don't write
-    // empty cells when the queryChargebackReport returns the canonical shape.
-    const QB_DATE_URL = "https://monsterrg.quickbase.com/db/bpb28qsnn?a=dr&rid=";
-    const QB_PKG_URL = "https://monsterrg.quickbase.com/db/bttffb64u?a=dr&rid=";
-    const fmtDate = (ts: number): string => {
-      if (!ts) return "";
-      const d = new Date(ts);
-      return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
-    };
+    // Sheet column schemas — must match prod's existing tabs exactly. Prod
+    // populates these tabs both via the dashboard's Post-to-Sheet button AND
+    // a weekly cron, so the column order is load-bearing.
+    //
+    // Chargebacks / Omissions (7 cols):
+    //   Date, Team Member, Revenue, CRM Link, Destination, Failed Questions, Score
+    // Wire Deductions (10 cols):
+    //   Date, Score, Questions Audited, Total Success, CRM Link, Audit Link,
+    //   Office, Excellence Auditor, (empty), Guest Name
+    //
+    // queryChargebackReport / queryWireReport return the raw repository shape
+    // (ts, voName, destination, recordId, failedQHeaders…) — format at write
+    // time so we don't write empty cells from missing display-shape fields.
+    const QB_REALM = Deno.env.get("QB_REALM") ?? "monsterrg";
+    const cbCrm = (recordId: string) => recordId ? `https://${QB_REALM}.quickbase.com/db/bpb28qsnn?a=dr&rid=${recordId}` : "";
+    const wireCrm = (recordId: string) => recordId ? `https://${QB_REALM}.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=${recordId}` : "";
+    const auditUrl = (findingId: string) => findingId ? `${getSelfUrl()}/audit/report?id=${findingId}` : "";
+    const fmtDate = (ts: number): string => ts ? new Date(ts).toLocaleDateString("en-US") : "";
     let appended = 0;
     const tabList = body.tabs.split(",").map((s) => s.trim()).filter(Boolean);
     try {
@@ -81,9 +87,10 @@ export class ChargebackController {
             fmtDate(e.ts),
             e.voName ?? "",
             e.revenue ?? "",
-            e.recordId ? `${QB_DATE_URL}${e.recordId}` : "",
+            cbCrm(e.recordId ?? ""),
             e.destination ?? "",
-            (e.failedQHeaders ?? []).join("; "),
+            (e.failedQHeaders ?? []).join(", "),
+            typeof e.score === "number" ? `${e.score}%` : "",
           ] as (string | number)[]);
           const res = await appendSheetRows(creds, tab === "cb" ? "Chargebacks" : "Omissions", rows);
           appended += res.appended;
@@ -92,13 +99,14 @@ export class ChargebackController {
           if (!items.length) continue;
           const rows = items.map((e) => [
             fmtDate(e.ts),
-            typeof e.score === "number" ? e.score : "",
-            typeof e.questionsAudited === "number" ? e.questionsAudited : "",
-            typeof e.totalSuccess === "number" ? e.totalSuccess : "",
-            e.recordId ? `${QB_PKG_URL}${e.recordId}` : "",
-            e.findingId ? `/audit/report?id=${e.findingId}` : "",
+            typeof e.score === "number" ? `${e.score}%` : "",
+            String(e.questionsAudited ?? ""),
+            String(e.totalSuccess ?? ""),
+            wireCrm(e.recordId ?? ""),
+            auditUrl(e.findingId ?? ""),
             e.office ?? "",
             e.excellenceAuditor ?? "",
+            "", // intentional empty — matches prod schema (Date of Booking placeholder)
             e.guestName ?? "",
           ] as (string | number)[]);
           const res = await appendSheetRows(creds, "Wire Deductions", rows);

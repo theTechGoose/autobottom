@@ -34,6 +34,7 @@
     "jsr:@std/semver@^1.0.6": "1.0.8",
     "jsr:@std/uuid@^1.0.9": "1.1.0",
     "npm:@anatine/zod-openapi@2.2.6": "2.2.6_openapi3-ts@4.5.0_zod@3.23.8",
+    "npm:@deno/kv@~0.8.4": "0.8.4",
     "npm:@opentelemetry/api@^1.9.0": "1.9.1",
     "npm:@preact/signals@^2.5.1": "2.9.0_preact@10.29.1",
     "npm:@resvg/resvg-wasm@*": "2.6.2",
@@ -217,6 +218,35 @@
         "openapi3-ts",
         "ts-deepmerge",
         "zod@3.23.8"
+      ]
+    },
+    "@deno/kv-darwin-arm64@0.8.4": {
+      "integrity": "sha512-j86nnE1QdLw20OrUs/6Iw6ZYzC8pmfU1+K4hNSVHO9K0bfy3VBd4JSHkHLmYCiHDkgIm+wTxct33thl6HxXz0Q==",
+      "os": ["darwin"],
+      "cpu": ["arm64"]
+    },
+    "@deno/kv-darwin-x64@0.8.4": {
+      "integrity": "sha512-qdczxcqkN2fbDX/nIzUetI6i8usNu8kpN3sDV0rXcSWlg9E5huWWjGp6PbOS4w1xarUWbqFAZvy4VSmGTVN1Zw==",
+      "os": ["darwin"],
+      "cpu": ["x64"]
+    },
+    "@deno/kv-linux-x64-gnu@0.8.4": {
+      "integrity": "sha512-xv2rM6wrVHVOM4Nswl8iyfdZZiEp5r85jwLajj0NGTiLMAQLBtDsBE/kpH4Ap3K6yiqJX3nTb44Z8AJ+IyzO4Q==",
+      "os": ["linux"],
+      "cpu": ["x64"]
+    },
+    "@deno/kv-win32-x64-msvc@0.8.4": {
+      "integrity": "sha512-xTEByTpC1DWw4A1F9isD8B16v1+CQFHFvi/Mm2bqlO9iD5HfIGgalWJbL3EvgYeybQ9yA27KGqaGnKxXdaX5Rg==",
+      "os": ["win32"],
+      "cpu": ["x64"]
+    },
+    "@deno/kv@0.8.4": {
+      "integrity": "sha512-5q2izU1tp6wv8rDIwMb6GXe/B+aO/sjAjRAOIigEtX+qOiTLsPE++ibJbfafVb0LmjEdlA18Kpfo23fln73OtQ==",
+      "optionalDependencies": [
+        "@deno/kv-darwin-arm64",
+        "@deno/kv-darwin-x64",
+        "@deno/kv-linux-x64-gnu",
+        "@deno/kv-win32-x64-msvc"
       ]
     },
     "@esbuild/aix-ppc64@0.25.7": {

@@ -113,24 +113,62 @@ export function ensureProdKvConfigured(): { ok: true } | { ok: false; error: str
   return { ok: true };
 }
 
+/** Direct HTTP probe to the KV Connect URL. Bypasses Deno.openKv entirely
+ *  so we can see the raw server response — proves whether the token even
+ *  reaches the server, what status code comes back, and what the body says.
+ *  Per KV Connect protocol: POST to the base URL with a version-negotiation
+ *  body. 200 = token valid for this DB. 401/403 = token wrong scope.
+ *  404 = URL wrong. */
+async function probeProdKv(url: string, token: string): Promise<void> {
+  const masked = url.replace(/databases\/([0-9a-f-]+)/i, (_, id) => `databases/${id.slice(0, 8)}…`);
+  console.log(`[MIGRATE-PROBE] POST ${masked} with Authorization: Bearer <${token.length}-char token>`);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ supportedVersions: [1, 2, 3] }),
+    });
+    const bodyText = await res.text();
+    const bodyPreview = bodyText.length > 300 ? bodyText.slice(0, 300) + "…" : bodyText;
+    console.log(`[MIGRATE-PROBE] status=${res.status} ${res.statusText} body=${JSON.stringify(bodyPreview)}`);
+    if (res.status >= 400) {
+      console.log(`[MIGRATE-PROBE] ❌ Token+URL combo rejected by KV server. ${res.status === 401 || res.status === 403 ? "Token lacks scope for this database." : res.status === 404 ? "URL is wrong (database not found)." : "Unexpected error."}`);
+    } else {
+      console.log(`[MIGRATE-PROBE] ✅ Token+URL combo works at HTTP layer. If Deno.openKv still fails, it's a runtime plumbing issue.`);
+    }
+  } catch (e) {
+    console.log(`[MIGRATE-PROBE] ❌ fetch() threw: ${e}`);
+  }
+}
+
 async function openProdKv(): Promise<Deno.Kv> {
   const url = prodKvUrl();
   if (!url) throw new Error("PROD_KV_URL not configured");
-  // Deno.openKv() reads its bearer token from DENO_KV_ACCESS_TOKEN. Deno
-  // Deploy auto-injects an internal token for THIS project's own KV, which
-  // does NOT grant access to remote prod KV. Unconditionally overwrite with
-  // the user-supplied KV_ACCESS_TOKEN (org-scoped token for prod KV) before
-  // opening the connection. Safe because all other Deno.openKv() call sites
-  // in this codebase use local KV (no URL), which doesn't consume this var.
   const tok = Deno.env.get("KV_ACCESS_TOKEN");
-  const before = Deno.env.get("DENO_KV_ACCESS_TOKEN");
-  console.log(`[MIGRATE-AUTH] url=${url.replace(/databases\/([0-9a-f-]+)/i, (_, id) => `databases/${id.slice(0,8)}…`)} KV_ACCESS_TOKEN=${tok ? `present(len=${tok.length})` : "MISSING"} DENO_KV_ACCESS_TOKEN(before)=${before ? `present(len=${before.length})` : "missing"}`);
   if (!tok) throw new Error("KV_ACCESS_TOKEN env var is not set");
-  try { Deno.env.set("DENO_KV_ACCESS_TOKEN", tok); }
-  catch (e) { console.log(`[MIGRATE-AUTH] ❌ Deno.env.set threw: ${e}`); }
-  const after = Deno.env.get("DENO_KV_ACCESS_TOKEN");
-  console.log(`[MIGRATE-AUTH] DENO_KV_ACCESS_TOKEN(after)=${after ? `present(len=${after.length})` : "STILL MISSING"}`);
-  return await Deno.openKv(url);
+
+  // Probe first — definitive HTTP-layer diagnostic. Tells us whether the
+  // token+URL combo even works against the KV server, independent of any
+  // client-library plumbing.
+  await probeProdKv(url, tok);
+
+  // Try npm:@deno/kv first — accepts an explicit accessToken, bypassing
+  // the DENO_KV_ACCESS_TOKEN env var that Deno Deploy auto-injects with
+  // its own internal token (wrong scope for prod KV).
+  try {
+    const mod = await import("npm:@deno/kv@^0.8.4");
+    // deno-lint-ignore no-explicit-any
+    const openKvExplicit = (mod as any).openKv as (url: string, opts: { accessToken: string }) => Promise<Deno.Kv>;
+    console.log(`[MIGRATE-AUTH] opening prod KV via npm:@deno/kv with explicit accessToken (len=${tok.length})`);
+    return await openKvExplicit(url, { accessToken: tok });
+  } catch (e) {
+    console.log(`[MIGRATE-AUTH] ⚠️ npm:@deno/kv path failed (${(e as Error).message}); falling back to Deno.openKv + env-var bridge`);
+    Deno.env.set("DENO_KV_ACCESS_TOKEN", tok);
+    return await Deno.openKv(url);
+  }
 }
 
 // ── Inventory ────────────────────────────────────────────────────────────────

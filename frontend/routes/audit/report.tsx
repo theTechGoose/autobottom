@@ -60,9 +60,39 @@ export default define.page(async function AuditReportPage(ctx) {
     );
   }
 
+  const isAdmin = user?.role === "admin";
+
   return (
     <Layout title={`Report ${id}`} section="admin" user={user} hideSidebar>
-      <AuditReport finding={finding} id={id} auditorEmail={user?.email ?? ""} />
+      <AuditReport finding={finding} id={id} auditorEmail={user?.email ?? ""} isAdmin={isAdmin} />
+      <script
+        // deno-lint-ignore react-no-danger
+        dangerouslySetInnerHTML={{
+          __html: `
+window.copySnippet = function(idx) {
+  var el = document.getElementById('rpt-q-snippet-' + idx);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent || '').then(function() {
+    var btn = document.querySelector('.rpt-q-copy[data-idx="' + idx + '"]');
+    if (btn) { var orig = btn.textContent; btn.textContent = 'Copied'; setTimeout(function() { btn.textContent = orig; }, 1200); }
+  });
+};
+window.flipQuestion = function(idx) {
+  var btn = document.querySelector('.rpt-q-edit[data-idx="' + idx + '"]');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  fetch('/admin/flip-answer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ findingId: ${JSON.stringify(id)}, questionIndex: idx }),
+    credentials: 'include',
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) { window.location.reload(); }
+    else { alert(d.error || 'Failed to flip'); if (btn) { btn.disabled = false; btn.textContent = '✏'; } }
+  }).catch(function() { if (btn) { btn.disabled = false; btn.textContent = '✏'; } });
+};
+        `,
+        }}
+      />
     </Layout>
   );
 });

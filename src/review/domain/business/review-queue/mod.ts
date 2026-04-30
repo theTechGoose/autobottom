@@ -516,6 +516,42 @@ export async function adminFlipFinding(
   return { success: true, score };
 }
 
+// ── Admin-flip single question — toggle one Yes↔No on a finding ─────────────
+
+export async function adminFlipQuestion(
+  orgId: OrgId,
+  findingId: string,
+  questionIndex: number,
+): Promise<{ success: boolean; score: number; answer?: string }> {
+  const finding = await getFinding(orgId, findingId);
+  if (!finding) return { success: false, score: 0 };
+  const allAnswers = await getAllAnswersForFinding(orgId, findingId);
+  const answers = allAnswers.length > 0 ? allAnswers : (finding.answeredQuestions ?? []);
+  if (questionIndex < 0 || questionIndex >= answers.length) return { success: false, score: 0 };
+
+  const current = String((answers[questionIndex] as any).answer ?? "").trim().toLowerCase();
+  const wasYes = current.startsWith("yes") || current === "true" || current === "y" || current === "1";
+  const flipped = answers.map((a: any, i: number) =>
+    i === questionIndex
+      ? { ...a, answer: wasYes ? "No" : "Yes", reviewAction: "admin-flip" }
+      : a,
+  );
+  const yesCount = flipped.filter((a: any) =>
+    String(a.answer ?? "").trim().toLowerCase().startsWith("yes"),
+  ).length;
+  const score = flipped.length > 0 ? Math.round((yesCount / flipped.length) * 100) : 0;
+
+  finding.answeredQuestions = flipped;
+  (finding as Record<string, unknown>).reviewedAt = new Date().toISOString();
+  (finding as Record<string, unknown>).reviewScore = score;
+  await saveFinding(orgId, finding);
+  await saveBatchAnswers(orgId, findingId, 0, flipped);
+  await updateCompletedStatScore(orgId, findingId, score);
+
+  console.log(`[ADMIN-FLIP-Q] ${findingId} q[${questionIndex}] ${wasYes ? "Yes→No" : "No→Yes"} → score=${score}%`);
+  return { success: true, score, answer: wasYes ? "No" : "Yes" };
+}
+
 // ── Preview finding ─────────────────────────────────────────────────────────
 
 export async function previewFinding(orgId: OrgId, findingId: string): Promise<BufferItem[] | null> {

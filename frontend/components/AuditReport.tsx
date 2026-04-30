@@ -80,7 +80,23 @@ function formatTranscript(text: string): string {
     .replace(/\[CUSTOMER\]/g, '[GUEST]');
 }
 
-export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Finding; id: string; auditorEmail?: string }) {
+/** Render a snippet as JSX with colored speaker labels. */
+function renderSnippet(text: string): preact.JSX.Element[] {
+  const normalized = formatTranscript(text);
+  // Split keeping the speaker tags as separate tokens
+  const re = /(\[TEAM MEMBER\]|\[GUEST\])/g;
+  const parts = normalized.split(re);
+  const out: preact.JSX.Element[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p === "[TEAM MEMBER]") out.push(<span key={i} class="rpt-speaker team-member">{p}</span>);
+    else if (p === "[GUEST]") out.push(<span key={i} class="rpt-speaker guest">{p}</span>);
+    else if (p) out.push(<span key={i}>{p}</span>);
+  }
+  return out;
+}
+
+export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }: { finding: Finding; id: string; auditorEmail?: string; isAdmin?: boolean }) {
   const questions = finding.answeredQuestions ?? [];
   const total = questions.length;
   const yesCount = questions.filter(q => isYes(q.answer)).length;
@@ -270,17 +286,33 @@ export function AuditReport({ finding, id, auditorEmail = "" }: { finding: Findi
           questions.map((q, i) => {
             const yes = isYes(q.answer);
             return (
-              <details key={i} class={`rpt-q ${yes ? "pass" : "fail"}`}>
+              <details key={i} class={`rpt-q ${yes ? "pass" : "fail"}`} id={`rpt-q-${i}`}>
                 <summary>
                   <span class="rpt-q-num">{i + 1}</span>
                   <span class="rpt-q-title">{q.header ?? "Untitled question"}</span>
-                  <span class={`rpt-q-verdict ${yes ? "yes" : "no"}`}>{yes ? "Yes" : "No"}</span>
+                  <span class={`rpt-q-verdict ${yes ? "yes" : "no"}`} id={`rpt-q-answer-${i}`}>{yes ? "Yes" : "No"}</span>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      class="rpt-q-edit"
+                      title="Flip answer (admin)"
+                      data-idx={i}
+                      {...{ onclick: `event.stopPropagation();event.preventDefault();flipQuestion(${i});` }}
+                    >✏</button>
+                  )}
                 </summary>
                 <div class="rpt-q-body">
+                  <div class={`rpt-q-pill ${yes ? "yes" : "no"}`}>
+                    <span style="font-size:14px;">{yes ? "✓" : "✗"}</span>
+                    <span>Verdict: <strong>{yes ? "Compliant" : "Non-Compliant"}</strong></span>
+                  </div>
                   {q.snippet && (
                     <div class="rpt-q-block">
-                      <div class="rpt-q-label">Transcript Context</div>
-                      <pre class="rpt-q-snippet">{formatTranscript(q.snippet)}</pre>
+                      <div class="rpt-q-label-row">
+                        <div class="rpt-q-label">Transcript Context</div>
+                        <button type="button" class="rpt-q-copy" data-idx={i} {...{ onclick: `event.preventDefault();copySnippet(${i});` }}>Copy</button>
+                      </div>
+                      <pre class="rpt-q-snippet" id={`rpt-q-snippet-${i}`}>{renderSnippet(q.snippet)}</pre>
                     </div>
                   )}
                   {q.thinking && (

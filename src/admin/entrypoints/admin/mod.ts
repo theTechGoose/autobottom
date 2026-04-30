@@ -187,6 +187,12 @@ export class AdminConfigController {
   async flipAnswer(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.findingId) return { error: "findingId required" };
+    // If questionIndex provided, flip that single question; otherwise flip all No→Yes (legacy).
+    if (typeof b.questionIndex === "number" && Number.isInteger(b.questionIndex)) {
+      const { adminFlipQuestion } = await import("@review/domain/business/review-queue/mod.ts");
+      const result = await adminFlipQuestion(ORG(), b.findingId, b.questionIndex);
+      return { ok: result.success, score: result.score, answer: result.answer };
+    }
     const { adminFlipFindingLegacy } = await import("@review/domain/business/review-queue/mod.ts");
     const result = await adminFlipFindingLegacy(ORG(), b.findingId);
     return { ok: result.success, score: result.score };

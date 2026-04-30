@@ -1303,6 +1303,19 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .rpt-q-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-bottom: 6px; }
 .rpt-q-snippet { font-family: var(--mono); font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-word; margin: 0; }
 .rpt-q-text { font-size: 13px; color: var(--text); line-height: 1.6; white-space: pre-wrap; }
+.rpt-speaker { font-weight: 700; }
+.rpt-speaker.team-member { color: var(--blue); }
+.rpt-speaker.guest { color: #a78bfa; }
+.rpt-q-pill { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.rpt-q-pill.yes { background: var(--green-bg); color: var(--green); }
+.rpt-q-pill.no { background: var(--red-bg); color: var(--red); }
+.rpt-q-label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.rpt-q-label-row .rpt-q-label { margin-bottom: 0; }
+.rpt-q-copy { background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-dim); font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 4px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; }
+.rpt-q-copy:hover { color: var(--text-bright); border-color: var(--border-hover); }
+.rpt-q-edit { background: transparent; border: none; color: var(--text-dim); font-size: 14px; cursor: pointer; padding: 4px 6px; border-radius: 4px; }
+.rpt-q-edit:hover { color: var(--blue); background: var(--bg-surface); }
+.rpt-q-edit:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ===== Inline audio player (mirrors prod main:controller.ts) ===== */
 .audio-native { display: none; }

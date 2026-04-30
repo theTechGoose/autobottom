@@ -7,6 +7,7 @@ interface StoreItem { id: string; name: string; description?: string; price: num
 
 export default define.page(async function StorePage(ctx) {
   const user = ctx.state.user!;
+  const url = new URL(ctx.req.url);
 
   let items: StoreItem[] = [];
   try {
@@ -19,7 +20,7 @@ export default define.page(async function StorePage(ctx) {
   };
 
   return (
-    <Layout title="Store" section="admin" user={user}>
+    <Layout title="Store" section="admin" user={user} pathname={url.pathname}>
       <div class="page-header">
         <h1>Store</h1>
         <p class="page-sub">Spend your earned tokens on cosmetics and badges</p>

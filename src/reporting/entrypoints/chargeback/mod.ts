@@ -56,6 +56,19 @@ export class ChargebackController {
       getReviewedFindingIds(orgId),
       getOfficeBypassConfig(orgId),
     ]);
+    // Sheet columns must match the existing prod sheet schema:
+    //   Chargebacks/Omissions: Date, Team Member, Revenue, CRM Link, Destination, Failed Questions
+    //   Wire Deductions:       Date, Score, Questions, Passed, CRM Link, Audit Link, Office, Auditor, Guest Name
+    // Source entries use the raw repository shape (ts, voName, destination,
+    // recordId, failedQHeaders…) — translate at write-time so we don't write
+    // empty cells when the queryChargebackReport returns the canonical shape.
+    const QB_DATE_URL = "https://monsterrg.quickbase.com/db/bpb28qsnn?a=dr&rid=";
+    const QB_PKG_URL = "https://monsterrg.quickbase.com/db/bttffb64u?a=dr&rid=";
+    const fmtDate = (ts: number): string => {
+      if (!ts) return "";
+      const d = new Date(ts);
+      return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+    };
     let appended = 0;
     const tabList = body.tabs.split(",").map((s) => s.trim()).filter(Boolean);
     try {
@@ -64,37 +77,30 @@ export class ChargebackController {
           const report = await queryChargebackReport(orgId, body.since, body.until, reviewedIds, bypassCfg.patterns);
           const source = tab === "cb" ? (report.chargebacks ?? []) : (report.omissions ?? []);
           if (!source.length) continue;
-          const rows = source.map((c) => {
-            const r = c as unknown as Record<string, unknown>;
-            return [
-              String(r.date ?? ""),
-              String(r.teamMember ?? ""),
-              String(r.revenue ?? ""),
-              String(r.crmLink ?? ""),
-              String(r.findingId ?? ""),
-              String(r.type ?? ""),
-              Array.isArray(r.failedQuestions) ? (r.failedQuestions as string[]).join("; ") : "",
-            ] as (string | number)[];
-          });
+          const rows = source.map((e) => [
+            fmtDate(e.ts),
+            e.voName ?? "",
+            e.revenue ?? "",
+            e.recordId ? `${QB_DATE_URL}${e.recordId}` : "",
+            e.destination ?? "",
+            (e.failedQHeaders ?? []).join("; "),
+          ] as (string | number)[]);
           const res = await appendSheetRows(creds, tab === "cb" ? "Chargebacks" : "Omissions", rows);
           appended += res.appended;
         } else if (tab === "wire") {
           const items = await queryWireReport(orgId, body.since, body.until, reviewedIds, bypassCfg.patterns);
           if (!items.length) continue;
-          const rows = items.map((w) => {
-            const r = w as unknown as Record<string, unknown>;
-            return [
-              String(r.date ?? ""),
-              typeof r.score === "number" ? r.score : "",
-              typeof r.questions === "number" ? r.questions : "",
-              typeof r.passed === "number" ? r.passed : "",
-              String(r.crmLink ?? ""),
-              String(r.findingId ?? ""),
-              String(r.office ?? ""),
-              String(r.auditor ?? ""),
-              String(r.guestName ?? ""),
-            ] as (string | number)[];
-          });
+          const rows = items.map((e) => [
+            fmtDate(e.ts),
+            typeof e.score === "number" ? e.score : "",
+            typeof e.questionsAudited === "number" ? e.questionsAudited : "",
+            typeof e.totalSuccess === "number" ? e.totalSuccess : "",
+            e.recordId ? `${QB_PKG_URL}${e.recordId}` : "",
+            e.findingId ? `/audit/report?id=${e.findingId}` : "",
+            e.office ?? "",
+            e.excellenceAuditor ?? "",
+            e.guestName ?? "",
+          ] as (string | number)[]);
           const res = await appendSheetRows(creds, "Wire Deductions", rows);
           appended += res.appended;
         }

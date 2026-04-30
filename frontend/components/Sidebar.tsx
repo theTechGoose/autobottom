@@ -25,13 +25,12 @@ interface SbSection {
   items: SbItem[];
 }
 
-function SbLink({ item, section, pathname }: { item: SbItem; section: string; pathname?: string }) {
-  // Prefer exact pathname match when provided — a simple includes(section)
-  // falsely matched /review on /review/dashboard and vice versa. Exact match
-  // ensures each sidebar item highlights only when its href is the current URL.
-  const isActive = item.href && (
-    pathname ? item.href === pathname : (section && item.href.includes(section))
-  );
+function SbLink({ item, pathname }: { item: SbItem; section: string; pathname?: string }) {
+  // Active state requires an exact pathname match. The previous fallback
+  // (`item.href.includes(section)`) marked every /admin/* item as active on
+  // any /admin/* page — Email Reports looked permanently highlighted on the
+  // dashboard. If a route forgets to pass `pathname`, no item highlights.
+  const isActive = !!(pathname && item.href && item.href === pathname);
   const iconStyle = `width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:${item.color};color:${item.iconColor ?? "var(--blue)"};flex-shrink:0;`;
 
   if (item.href) {

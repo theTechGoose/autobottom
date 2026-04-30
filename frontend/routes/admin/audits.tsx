@@ -34,7 +34,7 @@ export default define.page(async function AdminAudits(ctx) {
   }
 
   return (
-    <Layout title="Audits" section="admin" user={user}>
+    <Layout title="Audits" section="admin" user={user} pathname={url.pathname}>
       <div class="page-header">
         <h1>Audit History</h1>
         <p class="page-sub">{audits.length} audits found</p>

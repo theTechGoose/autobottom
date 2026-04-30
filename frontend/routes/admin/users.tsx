@@ -7,6 +7,7 @@ interface UserRecord { email: string; role: string; supervisor?: string; created
 
 export default define.page(async function AdminUsers(ctx) {
   const user = ctx.state.user!;
+  const url = new URL(ctx.req.url);
 
   let users: UserRecord[] = [];
   try {
@@ -19,7 +20,7 @@ export default define.page(async function AdminUsers(ctx) {
   const roleColors: Record<string, string> = { admin: "blue", judge: "purple", manager: "yellow", reviewer: "green", user: "cyan" };
 
   return (
-    <Layout title="Users" section="admin" user={user}>
+    <Layout title="Users" section="admin" user={user} pathname={url.pathname}>
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
         <div>
           <h1>User Management</h1>

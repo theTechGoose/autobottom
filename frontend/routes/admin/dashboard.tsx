@@ -31,7 +31,7 @@ export default define.page(async function AdminDashboard(ctx) {
   const logsBase = computeLogsBase(ctx.req.url);
 
   return (
-    <Layout title="Dashboard" section="admin" user={user}>
+    <Layout title="Dashboard" section="admin" user={user} pathname={new URL(ctx.req.url).pathname}>
       {/* ===== STAT CARDS — auto-refresh every 10s ===== */}
       <div id="stats-section" hx-get="/api/admin/stats" hx-trigger="every 10s" hx-swap="innerHTML">
         <StatGrid p={p} />

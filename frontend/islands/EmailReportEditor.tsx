@@ -210,9 +210,13 @@ export default function EmailReportEditor() {
 
 function ListView({ configs, onNew, onEdit }: { configs: ReportConfig[]; onNew: () => void; onEdit: (c: ReportConfig) => void }) {
   return (
-    <div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div class="modal-title" style="margin-bottom:0;">Email Reports</div>
+    <div style="padding:20px 24px;">
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:16px;">
+        <a
+          href="/admin/weekly-builder"
+          class="sf-btn"
+          style="font-size:11px;background:var(--green);color:#fff;border:none;padding:6px 12px;border-radius:6px;text-decoration:none;font-weight:600;"
+        >+ Weekly Report</a>
         <button class="sf-btn primary" style="font-size:11px;" type="button" onClick={onNew}>+ New Report</button>
       </div>
       <table class="data-table">

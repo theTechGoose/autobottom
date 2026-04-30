@@ -1,4 +1,5 @@
-/** Unified entrypoint — serves both backend API (danet) and frontend (Fresh) from one process. */
+/** Unified entrypoint — serves both backend API (danet) and frontend (Fresh)
+ *  from one process. */
 import "npm:reflect-metadata@0.1.13";
 
 // Initialize Datadog OTel before anything loads

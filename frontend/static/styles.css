@@ -281,6 +281,7 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .bw-modal { width: 680px; max-width: 95vw; }
 .um-modal { width: min(900px, 96vw); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; }
 .er-modal { width: 780px; max-height: 88vh; overflow-y: auto; }
+.maint-modal { width: 780px; max-width: 92vw; max-height: 88vh; overflow-y: auto; }
 .et-modal { width: 90vw; max-width: 90vw; height: 85vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; border-radius: 14px; }
 .cb-modal { width: 92vw; max-width: 92vw; height: 88vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; border-radius: 14px; }
 .qlab-modal { width: 750px; max-width: 92vw; }

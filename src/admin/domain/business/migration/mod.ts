@@ -116,18 +116,20 @@ export function ensureProdKvConfigured(): { ok: true } | { ok: false; error: str
 async function openProdKv(): Promise<Deno.Kv> {
   const url = prodKvUrl();
   if (!url) throw new Error("PROD_KV_URL not configured");
-  // Deno.openKv() reads its bearer token from DENO_KV_ACCESS_TOKEN, but Deno
-  // Deploy blocks users from setting DENO_* env vars in the dashboard. Bridge
-  // our user-named KV_ACCESS_TOKEN over at runtime.
+  // Deno.openKv() reads its bearer token from DENO_KV_ACCESS_TOKEN. Deno
+  // Deploy auto-injects an internal token for THIS project's own KV, which
+  // does NOT grant access to remote prod KV. Unconditionally overwrite with
+  // the user-supplied KV_ACCESS_TOKEN (org-scoped token for prod KV) before
+  // opening the connection. Safe because all other Deno.openKv() call sites
+  // in this codebase use local KV (no URL), which doesn't consume this var.
   const tok = Deno.env.get("KV_ACCESS_TOKEN");
   const before = Deno.env.get("DENO_KV_ACCESS_TOKEN");
-  console.log(`[MIGRATE-AUTH] url=${url.replace(/databases\/([0-9a-f-]+)/i, (_, id) => `databases/${id.slice(0,8)}…`)} KV_ACCESS_TOKEN=${tok ? `present(len=${tok.length})` : "MISSING"} DENO_KV_ACCESS_TOKEN=${before ? `present(len=${before.length})` : "missing"}`);
-  if (tok && !before) {
-    try { Deno.env.set("DENO_KV_ACCESS_TOKEN", tok); }
-    catch (e) { console.log(`[MIGRATE-AUTH] ❌ Deno.env.set threw: ${e}`); }
-    const after = Deno.env.get("DENO_KV_ACCESS_TOKEN");
-    console.log(`[MIGRATE-AUTH] after bridge: DENO_KV_ACCESS_TOKEN=${after ? `present(len=${after.length})` : "STILL MISSING — env.set was no-op"}`);
-  }
+  console.log(`[MIGRATE-AUTH] url=${url.replace(/databases\/([0-9a-f-]+)/i, (_, id) => `databases/${id.slice(0,8)}…`)} KV_ACCESS_TOKEN=${tok ? `present(len=${tok.length})` : "MISSING"} DENO_KV_ACCESS_TOKEN(before)=${before ? `present(len=${before.length})` : "missing"}`);
+  if (!tok) throw new Error("KV_ACCESS_TOKEN env var is not set");
+  try { Deno.env.set("DENO_KV_ACCESS_TOKEN", tok); }
+  catch (e) { console.log(`[MIGRATE-AUTH] ❌ Deno.env.set threw: ${e}`); }
+  const after = Deno.env.get("DENO_KV_ACCESS_TOKEN");
+  console.log(`[MIGRATE-AUTH] DENO_KV_ACCESS_TOKEN(after)=${after ? `present(len=${after.length})` : "STILL MISSING"}`);
   return await Deno.openKv(url);
 }
 

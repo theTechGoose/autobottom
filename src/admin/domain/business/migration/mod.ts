@@ -928,11 +928,15 @@ async function migrateChunkedGroup(
     const slices: string[] = [];
     let foundAny = false;
     let cursor: string | null = null;
+    /** Collected entries for the fallback path — preserved with full key
+     *  so we can write each as an individual record if no _n is found. */
+    const collected: Array<{ key: Deno.KvKey; value: unknown }> = [];
 
     while (true) {
       const page = await fetchExportPage(base, secret, groupPrefix, cursor, skipped);
       for (const e of page.entries) {
         foundAny = true;
+        collected.push({ key: e.key, value: e.value });
         const last = e.key[e.key.length - 1];
         if (last === "_n" && typeof e.value === "number") {
           metaTotal = e.value;
@@ -946,9 +950,30 @@ async function migrateChunkedGroup(
     }
 
     if (!foundAny) continue;
+
+    // FALLBACK: no _n meta found means our chunk-part heuristic
+    // false-positived on this group — these aren't chunked records, they're
+    // per-list-item indexed records (e.g. judge-decided per-question, review-
+    // active per-reviewer, etc.). Write each entry as its own Firestore
+    // record, preserving the full original key path. No reassembly.
     if (metaTotal === null || metaTotal <= 0) {
-      throw new Error(`no _n meta found for chunked group ${JSON.stringify(groupPrefix)}`);
+      if (!state.opts.dryRun) {
+        for (const e of collected) {
+          const decoded = decodeKey(e.key);
+          if (!decoded) continue;
+          const last = e.key[e.key.length - 1];
+          // Reconstruct the full keyParts INCLUDING the trailing index that
+          // the chunk-part heuristic stripped during scan. For the fallback
+          // these are real key components, not chunk indices.
+          const fullKey: (string | number)[] = [...decoded.keyParts];
+          if (typeof last === "number") fullKey.push(last);
+          else if (typeof last === "string" && last !== "_n") fullKey.push(last);
+          await setStored(baseType(decoded.type), decoded.org, fullKey, e.value);
+        }
+      }
+      return;
     }
+
     for (let i = 0; i < metaTotal; i++) {
       if (typeof slices[i] !== "string") {
         throw new Error(`chunk ${i}/${metaTotal} missing for ${JSON.stringify(groupPrefix)}`);

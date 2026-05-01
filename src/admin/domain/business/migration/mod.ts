@@ -240,16 +240,23 @@ interface ExportPage {
  *  passed-in array so the caller can record them on the job state.
  *  When `keysOnly: true`, response entries omit the `value` field —
  *  caller must handle `entry.value === undefined`. Useful for chunked-
- *  only TypedStore prefixes during scan (95%+ bandwidth savings). */
+ *  only TypedStore prefixes during scan (95%+ bandwidth savings).
+ *  When `since`/`until` are set, prod applies a server-side date filter
+ *  on date-filterable types (audit-finding/appeal/etc per
+ *  TIMESTAMPED_FIELDS) so out-of-range entries never cross the wire.
+ *  Chunk parts always pass through regardless of date — the consumer
+ *  reassembly handles the date check on the full reconstructed value. */
 async function fetchExportPage(
   base: string, secret: string, prefix: Deno.KvKey, cursor: string | null,
   skipped: Array<{ reason: string }>,
-  keysOnly = false,
+  opts: { keysOnly?: boolean; since?: number; until?: number } = {},
 ): Promise<{ entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>; nextCursor: string | null; done: boolean }> {
-  const limit = keysOnly ? EXPORT_BATCH_LIMIT_KEYS_ONLY : EXPORT_BATCH_LIMIT_FULL;
+  const limit = opts.keysOnly ? EXPORT_BATCH_LIMIT_KEYS_ONLY : EXPORT_BATCH_LIMIT_FULL;
   const body: Record<string, unknown> = { prefix, limit };
   if (cursor) body.cursor = cursor;
-  if (keysOnly) body.keysOnly = true;
+  if (opts.keysOnly) body.keysOnly = true;
+  if (opts.since !== undefined) body.since = opts.since;
+  if (opts.until !== undefined) body.until = opts.until;
   const res = await fetch(`${base}/admin/kv-export`, {
     method: "POST",
     headers: {
@@ -876,6 +883,9 @@ async function scanParallelBatch(
 
   // Fire all in parallel. Use keysOnly for chunked-only TypedStore
   // prefixes — values aren't needed at scan time and would blow memory.
+  // Pass since/until from the operator's run options so prod applies the
+  // server-side date filter (drops out-of-range entries pre-wire on
+  // date-filterable types — chunk parts always pass through).
   const results = await Promise.allSettled(todo.map(async (t) => {
     const prefix = scanPrefixes[t.idx];
     const useKeysOnly = prefix.length === 1
@@ -883,7 +893,11 @@ async function scanParallelBatch(
       && CHUNKED_ONLY_TYPED_STORE_PREFIXES.has(prefix[0] as string);
     return {
       idx: t.idx,
-      page: await fetchExportPage(base, secret, prefix, t.cursor, skipped, useKeysOnly),
+      page: await fetchExportPage(base, secret, prefix, t.cursor, skipped, {
+        keysOnly: useKeysOnly,
+        since: state.opts.since,
+        until: state.opts.until,
+      }),
     };
   }));
 

@@ -21,12 +21,17 @@ export const handler = define.handlers({
     const until = form.get("until")?.toString().trim();
     const dryRun = form.get("dryRun") === "on" || form.get("dryRun") === "true";
     const sinceVs = form.get("sinceVersionstamp")?.toString().trim();
+    const mode = form.get("mode")?.toString().trim();
 
     const body: Record<string, unknown> = { dryRun };
     if (types.length > 0) body.types = types;
-    if (since) body.since = Number(since);
-    if (until) body.until = Number(until);
+    // Pass date strings (YYYY-MM-DD) through verbatim — backend's
+    // parseDateOrMs handles both ms-numbers and ISO dates. Don't Number()
+    // a date string; that yields NaN and silently drops the filter.
+    if (since) body.since = since;
+    if (until) body.until = until;
     if (sinceVs) body.sinceVersionstamp = sinceVs;
+    if (mode === "index-driven" || mode === "scan") body.mode = mode;
 
     let r: RunResponse;
     try {

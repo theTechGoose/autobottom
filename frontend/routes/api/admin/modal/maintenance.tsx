@@ -223,6 +223,25 @@ function MigrationPanel() {
         <div id="mig-inventory" style="max-height:220px;overflow:auto;"></div>
       </PanelCard>
 
+      <PanelCard title="⚡ Fast Migration (index-driven)" subtitle="Walks audit-done-idx with server-side date filter, queues finding + transcript + audit-job per indexed findingId. Skips the full TypedStore walk. ~30 sec per day. Doesn't migrate batch-answers / populated-questions / configs — run a normal scan periodically for those.">
+        <form hx-post="/api/admin/migration/run" hx-target="#mig-runs" hx-swap="afterbegin" hx-encoding="multipart/form-data">
+          <input type="hidden" name="mode" value="index-driven" />
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+            <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" required /></div>
+            <div class="sf"><label class="sf-label">To</label><input type="date" name="until" class="sf-input" required /></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);"><input type="checkbox" name="dryRun" /> Dry run (no writes)</label>
+            <button type="submit" class="sf-btn primary" style="padding:6px 14px;font-size:11px;" hx-confirm="Start fast migration?">⚡ Run Fast</button>
+          </div>
+        </form>
+      </PanelCard>
+
+      <PanelCard title="🔍 Find Orphan Findings" subtitle="Lists findings present in __audit-finding__ but lacking an audit-done-idx entry. These would be skipped by Fast Migration — usually failed or in-progress audits.">
+        <button class="sf-btn ghost" style="padding:6px 12px;font-size:11px;margin-bottom:8px;" hx-post="/api/admin/migration/orphan-check" hx-target="#mig-orphans" hx-swap="innerHTML" hx-confirm="Walk audit-finding + audit-done-idx? Takes ~1-2 min on a large DB.">Find Orphans</button>
+        <div id="mig-orphans" style="max-height:220px;overflow:auto;font-size:11px;"></div>
+      </PanelCard>
+
       <PanelCard title="2. Run Migration" subtitle="Date-range filter is applied only to types with a known timestamp field (audit-finding, completed-audit-stat, etc.). Other types are migrated whole. Each /status poll advances the job ~30s — survives isolate restarts.">
         <form hx-post="/api/admin/migration/run" hx-target="#mig-runs" hx-swap="afterbegin" hx-encoding="multipart/form-data">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">

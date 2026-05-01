@@ -15,9 +15,10 @@ import { GenericBodyRequest } from "@core/dto/requests.ts";
 import {
   inventoryProdKv, ensureProdKvConfigured, createJob, getJob, listJobs,
   cancelJob, forceCancelJob, killAllRunningJobs, tickJob,
-  captureSnapshot, verifyMigration, computeScanPrefixes,
+  captureSnapshot, verifyMigration, computeScanPrefixes, orphanCheck,
   GLOBAL_TYPES, SKIP_TYPES,
   type RunOpts, type PersistedJob, type InventoryRow, type Snapshot, type VerifyReport,
+  type OrphanReport,
 } from "@admin/domain/business/migration/mod.ts";
 
 @SwaggerDescription("Migration — KV → Firestore data migration tooling")
@@ -129,6 +130,19 @@ export class MigrationController {
     }
   }
 
+  @Post("orphan-check") @ReturnedType(MessageResponse)
+  @Description("List findings in __audit-finding__ that lack an audit-done-idx entry — diagnostic for the index-driven path")
+  async orphanCheck() {
+    const ck = ensureProdKvConfigured();
+    if (!ck.ok) return { ok: false, error: ck.error };
+    try {
+      const report: OrphanReport = await orphanCheck();
+      return { ok: true, ...report };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  }
+
   @Post("verify") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
   @Description("Sample N random prod KV entries and compare against Firestore. Body: {sample?}")
   async verify(@Body() body: GenericBodyRequest) {
@@ -151,12 +165,16 @@ function parseRunOpts(body: unknown): RunOpts {
   const types = Array.isArray(b.types) ? (b.types as unknown[]).map(String).filter(Boolean) : undefined;
   const since = parseDateOrMs(b.since, false);
   const until = parseDateOrMs(b.until, true);
+  const mode = b.mode === "index-driven" ? "index-driven" as const
+    : b.mode === "scan" ? "scan" as const
+    : undefined;
   return {
     types: types && types.length > 0 ? types : undefined,
     since: since ?? undefined,
     until: until ?? undefined,
     dryRun: b.dryRun === true || b.dryRun === "true",
     sinceVersionstamp: typeof b.sinceVersionstamp === "string" && b.sinceVersionstamp ? b.sinceVersionstamp : undefined,
+    mode,
   };
 }
 

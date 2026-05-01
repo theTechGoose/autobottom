@@ -390,7 +390,7 @@ export async function inventoryProdKv(): Promise<{ rows: InventoryRow[]; partial
 // ── Job state (Firestore-persisted) ──────────────────────────────────────────
 
 export type JobStatus = "running" | "done" | "cancelled" | "error";
-export type JobPhase = "init" | "scanning" | "chunked" | "done";
+export type JobPhase = "init" | "scanning" | "index-walk" | "chunked" | "done";
 
 export interface RunOpts {
   types?: string[];
@@ -398,6 +398,12 @@ export interface RunOpts {
   until?: number;
   dryRun?: boolean;
   sinceVersionstamp?: string;
+  /** Migration strategy.
+   *  - "scan" (default): walks every prefix in the keyspace.
+   *  - "index-driven": walks audit-done-idx with date filter, queues
+   *    finding+transcript+audit-job per indexed findingId. Skips full
+   *    TypedStore walk. ~100x faster for date-bounded runs. */
+  mode?: "scan" | "index-driven";
 }
 
 export interface PersistedJob {
@@ -434,6 +440,10 @@ export interface PersistedJob {
   chunkedQueueSize: number;
   /** Number of chunked-groups processed (or marked seen) so far. */
   chunkedQueueProcessed: number;
+  /** index-driven mode: cursors for audit-done-idx walks, keyed by orgId.
+   *  FRESH_CURSOR sentinel means started but no real cursor yet.
+   *  Absent means walk for that org is done. */
+  indexCursors?: Record<string, string>;
 }
 
 interface ChunkedQueueDoc {
@@ -498,10 +508,11 @@ export async function createJob(opts: RunOpts): Promise<string> {
     knownOrgs: [],
     chunkedQueueSize: 0,
     chunkedQueueProcessed: 0,
+    indexCursors: {},
   };
   await saveJob(state);
   await saveQueue({ jobId, entries: [] });
-  console.log(`🚀 [MIGRATION:CREATE:${sid}] types=${opts.types?.join(",") ?? "(all)"} since=${opts.since ?? "-"} until=${opts.until ?? "-"} dryRun=${!!opts.dryRun} sinceVS=${opts.sinceVersionstamp ?? "-"}`);
+  console.log(`🚀 [MIGRATION:CREATE:${sid}] mode=${opts.mode ?? "scan"} types=${opts.types?.join(",") ?? "(all)"} since=${opts.since ?? "-"} until=${opts.until ?? "-"} dryRun=${!!opts.dryRun} sinceVS=${opts.sinceVersionstamp ?? "-"}`);
   return jobId;
 }
 
@@ -624,6 +635,17 @@ export async function tickJob(jobId: string): Promise<PersistedJob | null> {
           await saveQueue(queue);
           queueDirty = false;
         }
+      } else if (state.phase === "index-walk") {
+        if (queue === null) {
+          queue = await loadQueue(jobId);
+          dedupe = buildDedupeSet(queue);
+        }
+        const moved = await walkIndexBatch(state, queue, dedupe!, base, secret, skipped);
+        if (moved) {
+          progressed = true;
+          await saveQueue(queue);
+          queueDirty = false;
+        }
       } else if (state.phase === "chunked") {
         if (queue === null) queue = await loadQueue(jobId);
         const moved = await reassembleChunkedBatch(state, queue, base, secret);
@@ -715,9 +737,15 @@ async function initScanPrefixes(
   state.knownOrgs = [...ids];
   state.scanPrefixIdx = 0;
   state.cursors = {};
-  state.phase = "scanning";
-  const total = computeScanPrefixes(state.opts.types, state.knownOrgs).length;
-  console.log(`🔧 [MIGRATION:INIT:${sid}] knownOrgs=${state.knownOrgs.length} (${state.knownOrgs.slice(0, 6).join(",")}${state.knownOrgs.length > 6 ? "…" : ""}) prefixes=${total} types=${state.opts.types?.join(",") ?? "(all)"}`);
+  state.indexCursors = {};
+  if (state.opts.mode === "index-driven") {
+    state.phase = "index-walk";
+    console.log(`🔧 [MIGRATION:INIT:${sid}] mode=index-driven → walking audit-done-idx for ${state.knownOrgs.length} org(s) with date filter since=${state.opts.since ?? "-"} until=${state.opts.until ?? "-"}`);
+  } else {
+    state.phase = "scanning";
+    const total = computeScanPrefixes(state.opts.types, state.knownOrgs).length;
+    console.log(`🔧 [MIGRATION:INIT:${sid}] mode=scan knownOrgs=${state.knownOrgs.length} (${state.knownOrgs.slice(0, 6).join(",")}${state.knownOrgs.length > 6 ? "…" : ""}) prefixes=${total} types=${state.opts.types?.join(",") ?? "(all)"}`);
+  }
 }
 
 /** Computes the list of prefix walks to perform during the scanning phase.
@@ -937,6 +965,108 @@ async function scanParallelBatch(
   return totalReturned > 0 || todo.length > 0;
 }
 
+// ── Tick phase: index-walk ──────────────────────────────────────────────────
+
+/** Walks `[orgId, "audit-done-idx"]` per known org with server-side date
+ *  filter. For each entry, queues 3 chunked-group migrations keyed by the
+ *  same findingId: audit-finding, audit-transcript, audit-job. Skips the
+ *  full TypedStore prefix scan entirely — orders of magnitude faster for
+ *  date-bounded runs. */
+async function walkIndexBatch(
+  state: PersistedJob,
+  queue: ChunkedQueueDoc,
+  dedupe: Set<string>,
+  base: string,
+  secret: string,
+  skipped: Array<{ reason: string }>,
+): Promise<boolean> {
+  const sid = state.jobId.slice(-6);
+  const cursors = state.indexCursors ?? (state.indexCursors = {});
+
+  // Build todo: for each known org, walk if not yet done.
+  const todo: Array<{ org: string; cursor: string | null }> = [];
+  for (const org of state.knownOrgs) {
+    if (todo.length >= PARALLEL_PREFIX_WALKS) break;
+    const c = cursors[org];
+    if (c === undefined) {
+      // Not started yet — start now.
+      cursors[org] = FRESH_CURSOR;
+      todo.push({ org, cursor: null });
+    } else if (c !== "__DONE__") {
+      todo.push({ org, cursor: c === FRESH_CURSOR ? null : c });
+    }
+  }
+
+  if (todo.length === 0) {
+    // All orgs' index walks done → transition to chunked phase
+    state.phase = state.chunkedQueueSize === 0 ? "done" : "chunked";
+    console.log(`📦 [MIGRATION:INDEX:${sid}] all orgs done queueSize=${state.chunkedQueueSize} phase=${state.phase}`);
+    return false;
+  }
+
+  // Fire all in parallel. Server-side date filter drops out-of-range
+  // entries; audit-done-idx is in TIMESTAMPED_FIELDS so this works.
+  const results = await Promise.allSettled(todo.map(async (t) => ({
+    org: t.org,
+    page: await fetchExportPage(base, secret, [t.org, "audit-done-idx"], t.cursor, skipped, {
+      since: state.opts.since,
+      until: state.opts.until,
+    }),
+  })));
+
+  let totalReturned = 0;
+  let totalQueued = 0;
+  for (const r of results) {
+    if (r.status !== "fulfilled") {
+      state.errors.push(`index walk: ${String(r.reason).slice(0, 200)}`);
+      if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+      continue;
+    }
+    const { org, page } = r.value;
+    totalReturned += page.entries.length;
+
+    for (const entry of page.entries) {
+      // Key shape: [orgId, "audit-done-idx", findingId] — findingId at [2]
+      if (entry.key.length < 3 || typeof entry.key[2] !== "string") continue;
+      const findingId = entry.key[2];
+      state.scanned++;
+
+      // Queue the three per-finding TypedStore migrations. De-dupe via
+      // the existing groupHash mechanism so re-runs are idempotent.
+      for (const t of ["audit-finding", "audit-transcript", "audit-job"] as const) {
+        const h = groupHash(t, org, [findingId]);
+        if (!dedupe.has(h)) {
+          dedupe.add(h);
+          queue.entries.push({ type: t, org, keyParts: [findingId] });
+          state.chunkedQueueSize++;
+          const acc = state.byType[t] ?? { count: 0, chunkedCount: 0 };
+          acc.chunkedCount++;
+          state.byType[t] = acc;
+          totalQueued++;
+        }
+      }
+    }
+
+    if (page.done) {
+      cursors[org] = "__DONE__";
+    } else if (page.nextCursor) {
+      cursors[org] = page.nextCursor;
+    } else {
+      cursors[org] = "__DONE__";
+    }
+  }
+
+  const remainingOrgs = state.knownOrgs.filter((o) => cursors[o] !== "__DONE__").length;
+  console.log(`🔍 [MIGRATION:INDEX:${sid}] parallel=${todo.length} returned=${totalReturned} queued=${totalQueued} totalQueue=${state.chunkedQueueSize} remainingOrgs=${remainingOrgs}`);
+
+  if (remainingOrgs === 0) {
+    state.phase = state.chunkedQueueSize === 0 ? "done" : "chunked";
+    console.log(`📦 [MIGRATION:INDEX:${sid}] all orgs complete → phase=${state.phase} queueSize=${state.chunkedQueueSize}`);
+  }
+
+  return totalReturned > 0;
+}
+
 function valueTimestamp(type: string, value: unknown): number | null {
   const fields = TIMESTAMPED_FIELDS[type];
   if (!fields || typeof value !== "object" || value === null) return null;
@@ -1098,6 +1228,107 @@ async function migrateChunkedGroup(
   // based chunked detection, false positives shouldn't queue here anyway.
   // Log and skip rather than blocking the migration with an error.
   console.log(`⚠️ [MIGRATION:CHUNK] race-skip: ${type}/${org}/${keyParts.join(",")} — not found at any known shape (likely deleted in flight)`);
+}
+
+// ── Orphan check ─────────────────────────────────────────────────────────────
+
+export interface OrphanReport {
+  orphans: Array<{ org: string; findingId: string }>;
+  totalFindings: number;
+  totalIndexed: number;
+  cappedAt: number | null;
+}
+
+/** Lists findings present in __audit-finding__ that lack a corresponding
+ *  audit-done-idx entry. These are findings the index-driven migration
+ *  would skip — usually failed/in-progress audits. Capped at 500 to keep
+ *  the response bounded. */
+export async function orphanCheck(): Promise<OrphanReport> {
+  const ck = ensureProdKvConfigured();
+  if (!ck.ok) throw new Error(ck.error);
+  const base = prodExportBaseUrl();
+  const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
+  const skipped: Array<{ reason: string }> = [];
+  const CAP = 500;
+
+  console.log(`[MIGRATION:ORPHAN] starting`);
+
+  // Set of "<org>::<findingId>" pairs that have an audit-done-idx entry.
+  const indexed = new Set<string>();
+  let totalIndexed = 0;
+  {
+    let cursor: string | null = null;
+    while (true) {
+      const page = await fetchExportPage(base, secret, ["audit-done-idx"], cursor, skipped, { keysOnly: true });
+      // Note: audit-done-idx might be at [orgId, "audit-done-idx", findingId]
+      // not [], so we walk per-org instead. Per-org walks are below.
+      if (page.done) break;
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+      if (page.entries.length === 0) break;
+    }
+  }
+
+  // Better: walk per-org. We need orgs first — re-use init's discovery.
+  const orgs = new Set<string>();
+  for (const indexPrefix of [["org"], ["org-by-slug"]] as Deno.KvKey[]) {
+    let cursor: string | null = null;
+    while (true) {
+      const page = await fetchExportPage(base, secret, indexPrefix, cursor, skipped, { keysOnly: true });
+      for (const e of page.entries) {
+        if (e.key.length >= 2 && typeof e.key[1] === "string") orgs.add(e.key[1]);
+      }
+      if (page.done || !page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+  }
+  console.log(`[MIGRATION:ORPHAN] orgs=${orgs.size}`);
+
+  // Walk per-org audit-done-idx
+  for (const org of orgs) {
+    let cursor: string | null = null;
+    while (true) {
+      const page = await fetchExportPage(base, secret, [org, "audit-done-idx"], cursor, skipped, { keysOnly: true });
+      for (const e of page.entries) {
+        if (e.key.length >= 3 && typeof e.key[2] === "string") {
+          indexed.add(`${org}::${e.key[2]}`);
+          totalIndexed++;
+        }
+      }
+      if (page.done || !page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+  }
+  console.log(`[MIGRATION:ORPHAN] indexed findings=${totalIndexed}`);
+
+  // Walk __audit-finding__ keysOnly to enumerate ALL findings in prod
+  const orphans: Array<{ org: string; findingId: string }> = [];
+  let totalFindings = 0;
+  let cursor: string | null = null;
+  // Track chunked groups by (org, findingId) — multiple chunk parts per group.
+  const seenGroups = new Set<string>();
+  while (true) {
+    const page = await fetchExportPage(base, secret, ["__audit-finding__"], cursor, skipped, { keysOnly: true });
+    for (const e of page.entries) {
+      // [__audit-finding__, orgId, findingId, partIdx | "_n"]
+      if (e.key.length < 3) continue;
+      const org = String(e.key[1]);
+      const findingId = String(e.key[2]);
+      const k = `${org}::${findingId}`;
+      if (seenGroups.has(k)) continue;
+      seenGroups.add(k);
+      totalFindings++;
+      if (!indexed.has(k)) {
+        if (orphans.length < CAP) orphans.push({ org, findingId });
+      }
+    }
+    if (page.done || !page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+
+  const capped = orphans.length >= CAP ? CAP : null;
+  console.log(`[MIGRATION:ORPHAN] complete totalFindings=${totalFindings} totalIndexed=${totalIndexed} orphans=${orphans.length}${capped ? ` (capped at ${CAP})` : ""}`);
+  return { orphans, totalFindings, totalIndexed, cappedAt: capped };
 }
 
 // ── Snapshot + Verify ────────────────────────────────────────────────────────

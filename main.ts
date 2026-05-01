@@ -50,6 +50,8 @@ import {
 } from "./lib/kv.ts";
 import type { WebhookConfig, WebhookKind, GamificationSettings, SoundPackMeta, SoundSlot, WireDeductionEntry } from "./lib/kv.ts";
 import { S3Ref } from "./lib/s3.ts";
+import { setStoredChunked, loadFirestoreCredentials } from "./lib/firestore.ts";
+import { ChunkedKv } from "./lib/storage/chunked-kv.ts";
 import { sendEmail } from "./providers/postmark.ts";
 import { appendSheetRows, parseSheetsServiceAccount } from "./providers/sheets.ts";
 import { env } from "./env.ts";
@@ -285,6 +287,8 @@ const postRoutes: Record<string, Handler> = {
   "/admin/kv-export": handleKvExport,
   "/admin/kv-inventory": handleKvInventory,
   "/admin/kv-batch-list": handleKvBatchList,
+  "/admin/kv-migrate-day": handleKvMigrateDay,
+  "/admin/kv-migrate-cancel": handleKvMigrateCancel,
 
   // Admin (auth required)
   "/admin/wipe-kv": handleWipeKv,
@@ -436,6 +440,7 @@ const getRoutes: Record<string, Handler> = {
   // Admin
   "/admin/seed": handleSeedDryRun,
   "/admin/token-usage": handleTokenUsage,
+  "/admin/kv-migrate-status": handleKvMigrateStatus,
   "/admin/queues": handleGetQueues,
   "/admin/pipeline-config": handleGetPipelineConfig,
   "/admin/settings/terminate": handleAdminGetSettings,
@@ -4500,6 +4505,368 @@ async function handleKvBatchList(req: Request): Promise<Response> {
   const response: Record<string, unknown> = { ok: true, groups };
   if (partial) response.partial = true;
   return json(response);
+}
+
+// -- Admin: Server-side KV→Firestore migration (one-shot, refactor-branch consumer) --
+
+const MIGRATION_TICK_BUDGET_MS = 30_000;
+const MIGRATION_BATCH_SIZE = 30;
+const MIGRATION_QUEUE_MAX = 5_000;
+const MIGRATION_CANCEL_RECHECK_MS = 5_000;
+
+type MigrationPhase = "init" | "index-walk" | "writing" | "done";
+type MigrationStatus = "running" | "done" | "cancelled" | "error";
+
+interface MigrationOpts {
+  since: number;
+  until: number;
+  dryRun: boolean;
+}
+
+interface MigrationByType { count: number; chunkedCount: number }
+
+interface MigrationJob {
+  jobId: string;
+  startedAt: number;
+  endedAt: number | null;
+  status: MigrationStatus;
+  cancelled: boolean;
+  phase: MigrationPhase;
+  scanned: number;
+  written: number;
+  writtenChunked: number;
+  skipped: number;
+  errors: string[];
+  message: string;
+  opts: MigrationOpts;
+  byType: Record<string, MigrationByType>;
+  knownOrgs: string[];
+  indexCursors: Record<string, string>;
+  todoIdx: number;
+  queueSize: number;
+  lastTickAt: number;
+}
+
+async function handleKvMigrateDay(req: Request): Promise<Response> {
+  const authErr = requireKvExportSecret(req);
+  if (authErr) return authErr;
+  const body = await req.json().catch(() => ({} as Record<string, unknown>));
+  const since = Number((body as Record<string, unknown>).since);
+  const until = Number((body as Record<string, unknown>).until);
+  const dryRun = (body as Record<string, unknown>).dryRun === true;
+  if (!Number.isFinite(since) || !Number.isFinite(until) || until < since) {
+    return json({ error: "since/until required (unix ms, until ≥ since)" }, 400);
+  }
+  if (!dryRun) {
+    try { await loadFirestoreCredentials(); }
+    catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return json({ error: `firestore creds: ${msg}` }, 500);
+    }
+  }
+  const jobId = `m_${crypto.randomUUID().slice(0, 8)}_${Date.now()}`;
+  const job: MigrationJob = {
+    jobId,
+    startedAt: Date.now(),
+    endedAt: null,
+    status: "running",
+    cancelled: false,
+    phase: "init",
+    scanned: 0,
+    written: 0,
+    writtenChunked: 0,
+    skipped: 0,
+    errors: [],
+    message: "queued",
+    opts: { since, until, dryRun },
+    byType: {},
+    knownOrgs: [],
+    indexCursors: {},
+    todoIdx: 0,
+    queueSize: 0,
+    lastTickAt: 0,
+  };
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
+  await db.set(["__migration-job__", jobId], job);
+  console.log(`🚀 [kv-migrate] created jobId=${jobId} since=${since} until=${until} dryRun=${dryRun}`);
+  return json({ ok: true, jobId });
+}
+
+async function handleKvMigrateStatus(req: Request): Promise<Response> {
+  const authErr = requireKvExportSecret(req);
+  if (authErr) return authErr;
+  const url = new URL(req.url);
+  const jobId = url.searchParams.get("jobId");
+  if (!jobId) return json({ error: "jobId query param required" }, 400);
+  const job = await tickMigrationJob(jobId);
+  if (!job) return json({ error: "job not found" }, 404);
+  return json({ ok: true, job: shapeMigrationJobForResponse(job) });
+}
+
+async function handleKvMigrateCancel(req: Request): Promise<Response> {
+  const authErr = requireKvExportSecret(req);
+  if (authErr) return authErr;
+  const body = await req.json().catch(() => ({} as Record<string, unknown>));
+  const jobId = typeof (body as Record<string, unknown>).jobId === "string"
+    ? (body as Record<string, unknown>).jobId as string
+    : null;
+  if (!jobId) return json({ error: "jobId required" }, 400);
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
+  const cur = await db.get<MigrationJob>(["__migration-job__", jobId]);
+  if (!cur.value) return json({ error: "job not found" }, 404);
+  await db.set(["__migration-job__", jobId], { ...cur.value, cancelled: true });
+  console.log(`🛑 [kv-migrate] cancel requested jobId=${jobId}`);
+  return json({ ok: true });
+}
+
+async function tickMigrationJob(jobId: string): Promise<MigrationJob | null> {
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
+  const cur = await db.get<MigrationJob>(["__migration-job__", jobId]);
+  if (!cur.value) return null;
+  let job = cur.value;
+
+  if (job.status !== "running") return job;
+
+  if (job.cancelled) {
+    job = {
+      ...job,
+      status: "cancelled",
+      endedAt: Date.now(),
+      message: `cancelled at scanned=${job.scanned}`,
+      lastTickAt: Date.now(),
+    };
+    await db.set(["__migration-job__", jobId], job);
+    console.log(`🛑 [kv-migrate:${jobId}] cancelled`);
+    return job;
+  }
+
+  const tickStart = Date.now();
+  let lastCancelCheckAt = tickStart;
+
+  try {
+    while (Date.now() - tickStart < MIGRATION_TICK_BUDGET_MS) {
+      if (Date.now() - lastCancelCheckAt > MIGRATION_CANCEL_RECHECK_MS) {
+        const fresh = await db.get<MigrationJob>(["__migration-job__", jobId]);
+        if (fresh.value?.cancelled) { job = { ...job, cancelled: true }; break; }
+        lastCancelCheckAt = Date.now();
+      }
+
+      const before = job.phase;
+      if (job.phase === "init") {
+        job = await migrationPhaseInit(job, db);
+      } else if (job.phase === "index-walk") {
+        job = await migrationPhaseIndexWalk(job, db, tickStart);
+      } else if (job.phase === "writing") {
+        job = await migrationPhaseWriting(job, db, tickStart);
+      } else {
+        // "done" — exit loop
+        break;
+      }
+      // If phase didn't transition AND we're out of budget, exit so we save state
+      if (job.phase === before && Date.now() - tickStart >= MIGRATION_TICK_BUDGET_MS) break;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`❌ [kv-migrate:${jobId}] error:`, err);
+    const errors = [...job.errors, msg];
+    if (errors.length > 50) errors.shift();
+    job = { ...job, status: "error", endedAt: Date.now(), message: `error: ${msg}`, errors };
+  }
+
+  if (job.cancelled && job.status === "running") {
+    job = { ...job, status: "cancelled", endedAt: Date.now(), message: `cancelled at scanned=${job.scanned}` };
+  }
+  if (job.phase === "done" && job.status === "running") {
+    job = { ...job, status: "done", endedAt: Date.now(), message: `done — written ${job.written}` };
+  }
+
+  job.lastTickAt = Date.now();
+  await db.set(["__migration-job__", jobId], job);
+  return job;
+}
+
+async function migrationPhaseInit(job: MigrationJob, db: Deno.Kv): Promise<MigrationJob> {
+  const orgs: string[] = [];
+  for await (const e of db.list({ prefix: ["org"] })) {
+    const orgId = e.key[1];
+    if (typeof orgId === "string") orgs.push(orgId);
+  }
+  console.log(`🔍 [kv-migrate:${job.jobId}] init: found ${orgs.length} orgs`);
+  return { ...job, knownOrgs: orgs, phase: "index-walk", message: `init: found ${orgs.length} orgs` };
+}
+
+async function migrationPhaseIndexWalk(job: MigrationJob, db: Deno.Kv, tickStart: number): Promise<MigrationJob> {
+  const queue = await loadMigrationQueue(db, job.jobId);
+  const since = job.opts.since;
+  const until = job.opts.until;
+  let scanned = job.scanned;
+  let skipped = job.skipped;
+  const indexCursors = { ...job.indexCursors };
+
+  for (const orgId of job.knownOrgs) {
+    if (Date.now() - tickStart >= MIGRATION_TICK_BUDGET_MS) break;
+    if (indexCursors[orgId] === "__DONE__") continue;
+    const cursor = indexCursors[orgId];
+    const iter = db.list<{ findingId?: string; startedAt?: number; completedAt?: number; ts?: number }>(
+      { prefix: [orgId, "audit-done-idx"] },
+      cursor ? { cursor, batchSize: 200 } : { batchSize: 200 },
+    );
+    let pulled = 0;
+    let exhausted = true;
+    for await (const e of iter) {
+      scanned++;
+      pulled++;
+      const v = e.value;
+      const ts = v?.startedAt ?? v?.completedAt ?? v?.ts;
+      const findingId = v?.findingId
+        ?? (typeof e.key[3] === "string" ? e.key[3] : undefined);
+      if (!findingId) {
+        skipped++;
+      } else if (typeof ts === "number" && ts >= since && ts <= until) {
+        queue.push({ orgId, findingId });
+        if (queue.length > MIGRATION_QUEUE_MAX) {
+          throw new Error(`queue exceeded MIGRATION_QUEUE_MAX=${MIGRATION_QUEUE_MAX}; narrow your since/until window`);
+        }
+      }
+      if (pulled % 200 === 0 && Date.now() - tickStart >= MIGRATION_TICK_BUDGET_MS) {
+        exhausted = false;
+        break;
+      }
+    }
+    indexCursors[orgId] = exhausted ? "__DONE__" : (iter.cursor || "__DONE__");
+    if (Date.now() - tickStart >= MIGRATION_TICK_BUDGET_MS) break;
+  }
+
+  await saveMigrationQueue(db, job.jobId, queue);
+
+  const allDone = job.knownOrgs.every((o) => indexCursors[o] === "__DONE__");
+  return {
+    ...job,
+    scanned,
+    skipped,
+    indexCursors,
+    queueSize: queue.length,
+    phase: allDone ? "writing" : "index-walk",
+    message: allDone
+      ? `index-walk complete: ${queue.length} findings queued`
+      : `index-walk: scanned=${scanned} queued=${queue.length}`,
+  };
+}
+
+async function migrationPhaseWriting(job: MigrationJob, db: Deno.Kv, tickStart: number): Promise<MigrationJob> {
+  const queue = await loadMigrationQueue(db, job.jobId);
+  const chunked = new ChunkedKv(db);
+  let written = job.written;
+  let skipped = job.skipped;
+  const errors = [...job.errors];
+  const byType: Record<string, MigrationByType> = { ...job.byType };
+  let idx = job.todoIdx;
+
+  while (idx < queue.length && Date.now() - tickStart < MIGRATION_TICK_BUDGET_MS) {
+    const batch = queue.slice(idx, idx + MIGRATION_BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map((f) => migrateOneFinding(f, db, chunked, job.opts, byType)),
+    );
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status === "fulfilled") {
+        if (r.value === "written") written++;
+        else if (r.value === "skipped") skipped++;
+      } else {
+        skipped++;
+        const msg = `${batch[i].orgId}/${batch[i].findingId}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`;
+        errors.push(msg);
+        if (errors.length > 50) errors.shift();
+        console.error(`❌ [kv-migrate:${job.jobId}] ${msg}`);
+      }
+    }
+    idx += batch.length;
+  }
+
+  return {
+    ...job,
+    written,
+    writtenChunked: written,
+    skipped,
+    errors,
+    byType,
+    todoIdx: idx,
+    phase: idx >= queue.length ? "done" : "writing",
+    message: idx >= queue.length
+      ? `writing complete: ${written}/${queue.length} written`
+      : `writing: ${idx}/${queue.length}`,
+  };
+}
+
+async function migrateOneFinding(
+  f: { orgId: string; findingId: string },
+  db: Deno.Kv,
+  chunked: ChunkedKv,
+  opts: MigrationOpts,
+  byType: Record<string, MigrationByType>,
+): Promise<"written" | "skipped"> {
+  const [finding, transcript, jobRow] = await Promise.all([
+    chunked.get<unknown>(["__audit-finding__", f.orgId, f.findingId]),
+    chunked.get<unknown>(["__audit-transcript__", f.orgId, f.findingId]),
+    db.get(["__audit-job__", f.orgId, f.findingId]).then((r) => r.value),
+  ]);
+  if (finding == null && transcript == null && jobRow == null) return "skipped";
+
+  const writes: Promise<void>[] = [];
+  const bump = (t: string) => {
+    const cur = byType[t] ?? { count: 0, chunkedCount: 0 };
+    byType[t] = { count: cur.count + 1, chunkedCount: cur.chunkedCount + 1 };
+  };
+  if (finding != null) {
+    if (!opts.dryRun) writes.push(setStoredChunked("audit-finding", f.orgId, [f.findingId], finding));
+    bump("audit-finding");
+  }
+  if (transcript != null) {
+    if (!opts.dryRun) writes.push(setStoredChunked("audit-transcript", f.orgId, [f.findingId], transcript));
+    bump("audit-transcript");
+  }
+  if (jobRow != null) {
+    if (!opts.dryRun) writes.push(setStoredChunked("audit-job", f.orgId, [f.findingId], jobRow));
+    bump("audit-job");
+  }
+  if (writes.length) await Promise.all(writes);
+  return "written";
+}
+
+async function loadMigrationQueue(
+  db: Deno.Kv,
+  jobId: string,
+): Promise<{ orgId: string; findingId: string }[]> {
+  const chunked = new ChunkedKv(db);
+  return (await chunked.get<{ orgId: string; findingId: string }[]>(["__migration-job-queue__", jobId])) ?? [];
+}
+
+async function saveMigrationQueue(
+  db: Deno.Kv,
+  jobId: string,
+  queue: { orgId: string; findingId: string }[],
+): Promise<void> {
+  const chunked = new ChunkedKv(db);
+  await chunked.set(["__migration-job-queue__", jobId], queue);
+}
+
+function shapeMigrationJobForResponse(j: MigrationJob) {
+  return {
+    jobId: j.jobId,
+    startedAt: j.startedAt,
+    endedAt: j.endedAt,
+    status: j.status,
+    phase: j.phase,
+    scanned: j.scanned,
+    written: j.written,
+    writtenChunked: j.writtenChunked,
+    skipped: j.skipped,
+    errors: j.errors.slice(-10),
+    message: j.message,
+    opts: j.opts,
+    elapsedMs: (j.endedAt ?? Date.now()) - j.startedAt,
+    byType: j.byType,
+  };
 }
 
 async function handleBackfillReviewScores(req: Request): Promise<Response> {

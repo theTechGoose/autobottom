@@ -4545,6 +4545,7 @@ interface MigrationJob {
   todoIdx: number;
   queueSize: number;
   lastTickAt: number;
+  transcriptMisses: string[];
 }
 
 async function handleKvMigrateDay(req: Request): Promise<Response> {
@@ -4585,6 +4586,7 @@ async function handleKvMigrateDay(req: Request): Promise<Response> {
     todoIdx: 0,
     queueSize: 0,
     lastTickAt: 0,
+    transcriptMisses: [],
   };
   const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   await db.set(["__migration-job__", jobId], job);
@@ -4760,12 +4762,13 @@ async function migrationPhaseWriting(job: MigrationJob, db: Deno.Kv, tickStart: 
   let skipped = job.skipped;
   const errors = [...job.errors];
   const byType: Record<string, MigrationByType> = { ...job.byType };
+  const transcriptMisses = [...job.transcriptMisses];
   let idx = job.todoIdx;
 
   while (idx < queue.length && Date.now() - tickStart < MIGRATION_TICK_BUDGET_MS) {
     const batch = queue.slice(idx, idx + MIGRATION_BATCH_SIZE);
     const results = await Promise.allSettled(
-      batch.map((f) => migrateOneFinding(f, db, chunked, job.opts, byType)),
+      batch.map((f) => migrateOneFinding(f, db, chunked, job.opts, byType, transcriptMisses)),
     );
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
@@ -4790,6 +4793,7 @@ async function migrationPhaseWriting(job: MigrationJob, db: Deno.Kv, tickStart: 
     skipped,
     errors,
     byType,
+    transcriptMisses,
     todoIdx: idx,
     phase: idx >= queue.length ? "done" : "writing",
     message: idx >= queue.length
@@ -4804,13 +4808,18 @@ async function migrateOneFinding(
   chunked: ChunkedKv,
   opts: MigrationOpts,
   byType: Record<string, MigrationByType>,
+  transcriptMisses: string[],
 ): Promise<"written" | "skipped"> {
   const [finding, transcript, jobRow] = await Promise.all([
     chunked.get<unknown>(["__audit-finding__", f.orgId, f.findingId]),
     chunked.get<unknown>(["__audit-transcript__", f.orgId, f.findingId]),
-    db.get(["__audit-job__", f.orgId, f.findingId]).then((r) => r.value),
+    chunked.get<unknown>(["__audit-job__", f.orgId, f.findingId]),
   ]);
   if (finding == null && transcript == null && jobRow == null) return "skipped";
+
+  if (finding != null && transcript == null && transcriptMisses.length < 100) {
+    transcriptMisses.push(`${f.orgId}/${f.findingId}`);
+  }
 
   const writes: Promise<void>[] = [];
   const bump = (t: string) => {
@@ -4866,6 +4875,8 @@ function shapeMigrationJobForResponse(j: MigrationJob) {
     opts: j.opts,
     elapsedMs: (j.endedAt ?? Date.now()) - j.startedAt,
     byType: j.byType,
+    queueSize: j.queueSize,
+    transcriptMisses: j.transcriptMisses,
   };
 }
 

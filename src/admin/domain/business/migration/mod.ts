@@ -30,15 +30,18 @@ const TICK_BUDGET_MS = 30_000;
 const STALE_TICK_MS = 5 * 60_000;
 /** /kv-export pagination batch size. Higher = fewer round-trips, more
  *  memory per request. Deno KV's `kv.list({ limit })` is hard-capped at
- *  1000 by the runtime — exceeding throws "Too many entries (max 1000)". */
-const EXPORT_BATCH_LIMIT = 1000;
+ *  1000 by the runtime, but we use 300 to keep peak memory below the
+ *  512MB isolate limit on heavy chunked values (audit-transcript chunks
+ *  can be 50-500KB each). */
+const EXPORT_BATCH_LIMIT = 300;
 /** Max chunked-group reassemblies to fire in parallel within one tick.
- *  Each is one /kv-export prefix walk (returning ~5-6 entries). */
-const CHUNKED_PARALLEL = 10;
+ *  Each is one /kv-export prefix walk. Lowered to 5 because transcript
+ *  reassemblies pull MB of data per group. */
+const CHUNKED_PARALLEL = 5;
 /** Max prefix walks fired in parallel within one tick. Each walk is a
- *  single /kv-export call (~9s for a full 1000-entry batch). 8-way ≈ 9x
- *  speedup over serial. Watch prod logs for elevated error rates. */
-const PARALLEL_PREFIX_WALKS = 8;
+ *  single /kv-export call. 4-way fits comfortably in 512MB at batch=300
+ *  even for heavy types. Higher values caused isolate OOM kills. */
+const PARALLEL_PREFIX_WALKS = 4;
 /** Sentinel stored in `state.cursors[idx]` for prefixes that have been
  *  assigned to a parallel slot but haven't yielded a real cursor yet
  *  (either: not yet fetched, or the first fetch errored). Distinct from
@@ -578,9 +581,13 @@ export async function tickJob(jobId: string): Promise<PersistedJob | null> {
           dedupe = buildDedupeSet(queue);
         }
         const moved = await scanParallelBatch(state, queue, dedupe!, base, secret, skipped);
-        if (moved) { progressed = true; queueDirty = true; }
-        if (state.phase !== "scanning") {
-          if (queueDirty) { await saveQueue(queue); queueDirty = false; }
+        if (moved) {
+          progressed = true;
+          // Persist queue immediately so an isolate-OOM mid-tick doesn't lose
+          // discovered chunked groups. Without this we'd re-walk many GB of
+          // value data to rediscover them after each restart.
+          await saveQueue(queue);
+          queueDirty = false;
         }
       } else if (state.phase === "chunked") {
         if (queue === null) queue = await loadQueue(jobId);

@@ -38,9 +38,11 @@ const EXPORT_BATCH_LIMIT_FULL = 300;
  *  ~3.3x fewer round-trips on chunked-only prefixes. */
 const EXPORT_BATCH_LIMIT_KEYS_ONLY = 1000;
 /** Max chunked-group reassemblies to fire in parallel within one tick.
- *  Each pulls a full chunked group's worth of value data. Kept low
- *  because transcript reassemblies are MB each. */
-const CHUNKED_PARALLEL = 5;
+ *  Each pulls a full chunked group's worth of value data (transcripts
+ *  can be ~1MB each). 20 × 1MB = 20MB peak memory — comfortable under
+ *  512MB. Bumped from 5 because per-group network latency was the
+ *  reassembly bottleneck. */
+const CHUNKED_PARALLEL = 20;
 /** Max prefix walks fired in parallel within one tick. With keysOnly on
  *  heavy chunked-only prefixes, the dominant memory pressure is gone, so
  *  we push parallelism up. The remaining full-value prefixes are smaller

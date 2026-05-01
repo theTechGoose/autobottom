@@ -203,6 +203,22 @@ async function requireAdminAuth(req: Request): Promise<AuthContext | Response> {
   return auth;
 }
 
+function constantTimeEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
+function requireKvExportSecret(req: Request): Response | null {
+  const secret = Deno.env.get("KV_EXPORT_SECRET");
+  if (!secret) return json({ error: "KV_EXPORT_SECRET not configured" }, 500);
+  const header = req.headers.get("Authorization") ?? "";
+  const expected = `Bearer ${secret}`;
+  if (!constantTimeEq(header, expected)) return json({ error: "unauthorized" }, 401);
+  return null;
+}
+
 /** Resolve orgId: try auth, then ?org query param, then default org. */
 async function resolveOrgId(req: Request): Promise<OrgId | null> {
   const auth = await authenticate(req);
@@ -264,6 +280,10 @@ const postRoutes: Record<string, Handler> = {
   "/register": handleRegisterPost,
   "/login": handleLoginPost,
   "/logout": handleLogoutPost,
+
+  // KV migration export (bearer-token auth, read-only, one-shot)
+  "/admin/kv-export": handleKvExport,
+  "/admin/kv-inventory": handleKvInventory,
 
   // Admin (auth required)
   "/admin/wipe-kv": handleWipeKv,
@@ -4218,6 +4238,91 @@ async function handleWipeKv(_req: Request): Promise<Response> {
   }
   console.log(`[ADMIN] Wiped ${deleted} KV entries`);
   return json({ ok: true, deleted });
+}
+
+// -- Admin: KV migration export (one-shot, refactor-branch consumer) --
+
+function encodeKvValue(v: unknown): unknown {
+  if (v === null || v === undefined) return v;
+  const t = typeof v;
+  if (t === "string" || t === "number" || t === "boolean") return v;
+  if (t === "bigint") {
+    console.warn("⚠️ [kv-export] skipping bigint value");
+    return { __kvType: "skipped", reason: "bigint" };
+  }
+  if (v instanceof Uint8Array) {
+    let bin = "";
+    for (let i = 0; i < v.length; i++) bin += String.fromCharCode(v[i]);
+    return { __kvType: "u8a", data: btoa(bin) };
+  }
+  if (v instanceof Date) return { __kvType: "date", iso: v.toISOString() };
+  if (v instanceof Map || v instanceof Set) {
+    console.warn(`⚠️ [kv-export] skipping ${v.constructor.name} value`);
+    return { __kvType: "skipped", reason: v.constructor.name };
+  }
+  if (Array.isArray(v)) return v.map(encodeKvValue);
+  if (t === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      out[k] = encodeKvValue(val);
+    }
+    return out;
+  }
+  return v;
+}
+
+async function handleKvExport(req: Request): Promise<Response> {
+  const authErr = requireKvExportSecret(req);
+  if (authErr) return authErr;
+
+  let body: { prefix?: unknown; cursor?: string; limit?: number } = {};
+  try { body = await req.json(); } catch { /* empty body OK */ }
+
+  const prefix = Array.isArray(body.prefix) ? (body.prefix as Deno.KvKey) : [];
+  const cursor = typeof body.cursor === "string" ? body.cursor : undefined;
+  const rawLimit = typeof body.limit === "number" ? body.limit : 500;
+  const limit = Math.max(1, Math.min(2000, Math.floor(rawLimit)));
+
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
+  const iter = db.list({ prefix }, { cursor, limit, batchSize: limit });
+
+  const entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }> = [];
+  for await (const e of iter) {
+    entries.push({
+      key: e.key,
+      value: encodeKvValue(e.value),
+      versionstamp: e.versionstamp,
+    });
+  }
+
+  const done = entries.length < limit;
+  console.log(`🔍 [kv-export] prefix=${JSON.stringify(prefix)} returned=${entries.length} done=${done}`);
+  return json({ ok: true, entries, nextCursor: iter.cursor, done });
+}
+
+async function handleKvInventory(req: Request): Promise<Response> {
+  const authErr = requireKvExportSecret(req);
+  if (authErr) return authErr;
+
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
+  const byPrefix: Record<string, number> = {};
+  let totalKeys = 0;
+
+  const iter = db.list({ prefix: [] });
+  for await (const e of iter) {
+    totalKeys++;
+    const a = e.key[0];
+    const b = e.key[1];
+    const fmt = (x: unknown) =>
+      typeof x === "string" || typeof x === "number" || typeof x === "bigint"
+        ? String(x)
+        : "<non-primitive>";
+    const label = b === undefined ? fmt(a) : `${fmt(a)}/${fmt(b)}`;
+    byPrefix[label] = (byPrefix[label] ?? 0) + 1;
+  }
+
+  console.log(`🔍 [kv-inventory] total=${totalKeys} groups=${Object.keys(byPrefix).length}`);
+  return json({ ok: true, totalKeys, byPrefix });
 }
 
 async function handleBackfillReviewScores(req: Request): Promise<Response> {

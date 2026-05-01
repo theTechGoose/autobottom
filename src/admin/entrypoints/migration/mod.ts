@@ -1,6 +1,11 @@
 /** Migration controller — orchestrates KV → Firestore migration jobs from
  *  the Data Maintenance modal. All endpoints assume admin scope (the modal is
- *  admin-only on the frontend). */
+ *  admin-only on the frontend).
+ *
+ *  Driver-mode: /run creates a Firestore-backed job and returns its jobId
+ *  immediately (no background work). /status BOTH advances the job by one
+ *  tick AND returns the rendered state — so each frontend poll moves work
+ *  forward, surviving any number of isolate recycles. */
 import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
@@ -8,9 +13,10 @@ import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { OkMessageResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import {
-  inventoryProdKv, ensureProdKvConfigured, startMigration, getJob, listJobs,
-  cancelJob, captureSnapshot, verifyMigration, GLOBAL_TYPES, SKIP_TYPES,
-  type RunOpts, type JobState, type InventoryRow, type Snapshot, type VerifyReport,
+  inventoryProdKv, ensureProdKvConfigured, createJob, getJob, listJobs,
+  cancelJob, forceCancelJob, killAllRunningJobs, tickJob,
+  captureSnapshot, verifyMigration, GLOBAL_TYPES, SKIP_TYPES,
+  type RunOpts, type PersistedJob, type InventoryRow, type Snapshot, type VerifyReport,
 } from "@admin/domain/business/migration/mod.ts";
 
 @SwaggerDescription("Migration — KV → Firestore data migration tooling")
@@ -26,18 +32,19 @@ export class MigrationController {
   }
 
   @Get("inventory") @ReturnedType(MessageResponse)
-  @Description("Walk prod KV and count entries per (org, type)")
+  @Description("Walk prod KV via paginated /admin/kv-inventory and return per-(org, type) counts")
   async inventory() {
     const ck = ensureProdKvConfigured();
     if (!ck.ok) return { ok: false, error: ck.error };
     try {
-      const rows: InventoryRow[] = await inventoryProdKv();
+      const { rows, partial, scanned } = await inventoryProdKv();
       const totalSimple = rows.reduce((s, r) => s + r.count, 0);
       const totalChunked = rows.reduce((s, r) => s + r.chunkedCount, 0);
       return {
         ok: true,
         rows,
         totalSimple, totalChunked,
+        partial, scanned,
         skipTypes: [...SKIP_TYPES],
         globalTypes: [...GLOBAL_TYPES],
       };
@@ -48,36 +55,64 @@ export class MigrationController {
 
   @Post("run") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   @Description("Start an async migration job. Body: {types?, since?, until?, dryRun?, sinceVersionstamp?}")
-  run(@Body() body: GenericBodyRequest) {
+  async run(@Body() body: GenericBodyRequest) {
     const ck = ensureProdKvConfigured();
     if (!ck.ok) return { ok: false, error: ck.error };
     const opts = parseRunOpts(body);
-    const jobId = startMigration(opts);
-    return { ok: true, jobId, message: `started ${jobId}`, opts };
+    try {
+      const jobId = await createJob(opts);
+      return { ok: true, jobId, message: `started ${jobId}`, opts };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
   }
 
   @Get("status") @ReturnedType(MessageResponse)
-  @Description("Poll job state by jobId. Query: ?jobId=…")
-  status(@Query("jobId") jobId: string) {
+  @Description("Poll job state by jobId. Each call advances the job one tick. Query: ?jobId=…")
+  async status(@Query("jobId") jobId: string) {
     if (!jobId) return { ok: false, error: "jobId required" };
-    const job = getJob(jobId);
-    if (!job) return { ok: false, error: `job ${jobId} not found (lost across isolate restart?)` };
+    let job: PersistedJob | null;
+    try {
+      // Each /status call IS the tick — drives work forward, then returns state.
+      job = await tickJob(jobId);
+    } catch (err) {
+      // tickJob swallows recoverable errors; only true persistence failures bubble.
+      return { ok: false, error: `tick failed: ${String(err).slice(0, 200)}` };
+    }
+    if (!job) return { ok: false, error: `job ${jobId} not found` };
     return { ok: true, job: shallowJob(job) };
   }
 
   @Get("jobs") @ReturnedType(MessageResponse)
   @Description("List recent jobs")
-  jobs() {
-    return { ok: true, jobs: listJobs().map(shallowJob) };
+  async jobs() {
+    const all = await listJobs();
+    return { ok: true, jobs: all.map(shallowJob) };
   }
 
   @Post("cancel") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
-  @Description("Request cancellation of a running job. Body: {jobId}")
-  cancel(@Body() body: GenericBodyRequest) {
+  @Description("Request graceful cancellation of a running job. Body: {jobId}")
+  async cancel(@Body() body: GenericBodyRequest) {
     const jobId = (body as unknown as Record<string, unknown>).jobId as string | undefined;
     if (!jobId) return { ok: false, error: "jobId required" };
-    const ok = cancelJob(jobId);
+    const ok = await cancelJob(jobId);
     return { ok, message: ok ? "cancellation requested" : "job not running" };
+  }
+
+  @Post("force-cancel") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  @Description("Immediately mark a running job as cancelled (no tick wait). Body: {jobId}")
+  async forceCancel(@Body() body: GenericBodyRequest) {
+    const jobId = (body as unknown as Record<string, unknown>).jobId as string | undefined;
+    if (!jobId) return { ok: false, error: "jobId required" };
+    const ok = await forceCancelJob(jobId);
+    return { ok, message: ok ? "force-cancelled" : "job not running" };
+  }
+
+  @Post("kill-all") @ReturnedType(OkMessageResponse)
+  @Description("Mark every running migration job as cancelled. Big red button.")
+  async killAll() {
+    const killed = await killAllRunningJobs();
+    return { ok: true, killed, message: `killed ${killed} running job(s)` };
   }
 
   @Post("snapshot") @ReturnedType(MessageResponse)
@@ -136,22 +171,26 @@ function parseDateOrMs(v: unknown, endOfDay: boolean): number | null {
   return endOfDay ? ms + 24 * 60 * 60 * 1000 - 1 : ms;
 }
 
-function shallowJob(j: JobState) {
+function shallowJob(j: PersistedJob) {
   return {
     jobId: j.jobId,
     startedAt: j.startedAt,
     endedAt: j.endedAt,
     status: j.status,
     cancelled: j.cancelled,
+    phase: j.phase,
     scanned: j.scanned,
     written: j.written,
     writtenChunked: j.writtenChunked,
     skipped: j.skipped,
+    chunkedQueueSize: j.chunkedQueueSize,
+    chunkedQueueProcessed: j.chunkedQueueProcessed,
     errorCount: j.errors.length,
     errors: j.errors.slice(-10),
     message: j.message,
     opts: j.opts,
     elapsedMs: (j.endedAt ?? Date.now()) - j.startedAt,
+    lastTickAt: j.lastTickAt,
   };
 }
 

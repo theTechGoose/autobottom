@@ -223,18 +223,29 @@ function MigrationPanel() {
         <div id="mig-inventory" style="max-height:220px;overflow:auto;"></div>
       </PanelCard>
 
-      <PanelCard title="2. Run Migration" subtitle="Date-range filter is applied only to types with a known timestamp field (audit-finding, completed-audit-stat, etc.). Other types are migrated whole.">
+      <PanelCard title="2. Run Migration" subtitle="Date-range filter is applied only to types with a known timestamp field (audit-finding, completed-audit-stat, etc.). Other types are migrated whole. Each /status poll advances the job ~30s — survives isolate restarts.">
         <form hx-post="/api/admin/migration/run" hx-target="#mig-runs" hx-swap="afterbegin" hx-encoding="multipart/form-data">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
             <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" /></div>
             <div class="sf"><label class="sf-label">To</label><input type="date" name="until" class="sf-input" /></div>
           </div>
           <div class="sf" style="margin-bottom:8px;"><label class="sf-label">Types (comma-separated, blank = all)</label><input type="text" name="types" class="sf-input" placeholder="audit-finding,audit-transcript,user,org" /></div>
-          <div style="display:flex;align-items:center;gap:14px;">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);"><input type="checkbox" name="dryRun" /> Dry run (no writes)</label>
             <button type="submit" class="sf-btn primary" style="padding:6px 14px;font-size:11px;" hx-confirm="Start migration with these options?">Run</button>
+            <div style="flex:1;"></div>
+            <button
+              type="button"
+              class="sf-btn ghost"
+              style="padding:6px 14px;font-size:11px;color:var(--red);border-color:var(--red);"
+              hx-post="/api/admin/migration/kill-all"
+              hx-target="#mig-killall"
+              hx-swap="innerHTML"
+              hx-confirm="KILL ALL running migration jobs? This force-cancels every job currently in progress."
+            >🛑 Kill All</button>
           </div>
         </form>
+        <div id="mig-killall" style="margin-top:6px;font-size:11px;"></div>
         <div id="mig-runs" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;"></div>
       </PanelCard>
 

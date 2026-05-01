@@ -10,6 +10,8 @@ interface InventoryResponse {
   rows?: Array<{ org: string; type: string; count: number; chunkedCount: number }>;
   totalSimple?: number;
   totalChunked?: number;
+  partial?: boolean;
+  scanned?: number;
   skipTypes?: string[];
 }
 
@@ -29,8 +31,13 @@ export const handler = define.handlers({
     return html(
       <div>
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">
-          Found <b>{data.totalSimple ?? 0}</b> simple keys + <b>{data.totalChunked ?? 0}</b> chunked groups across <b>{rows.length}</b> (org, type) pairs.
+          Found <b>{data.totalSimple ?? 0}</b> simple keys + <b>{data.totalChunked ?? 0}</b> chunked groups across <b>{rows.length}</b> (org, type) pairs. Scanned <b>{(data.scanned ?? 0).toLocaleString()}</b> keys.
         </div>
+        {data.partial && (
+          <div style="font-size:11px;color:var(--orange);margin-bottom:8px;padding:6px 10px;border:1px solid var(--orange);border-radius:4px;">
+            ⚠️ Partial result — request budget elapsed before reaching end of DB. Click again to continue, or use a Dry Run for full inventory.
+          </div>
+        )}
         <table style="width:100%;border-collapse:collapse;font-size:11px;">
           <thead>
             <tr style="text-align:left;color:var(--text-dim);border-bottom:1px solid var(--border);">

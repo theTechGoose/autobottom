@@ -1,38 +1,49 @@
 /** KV → Firestore migration business logic.
  *
- *  Reads prod data over HTTP via a password-protected export endpoint on the
- *  prod (`main` branch) deployment. The prod app exposes:
- *    POST {PROD_EXPORT_BASE_URL}/admin/kv-export    — paginated list
- *    POST {PROD_EXPORT_BASE_URL}/admin/kv-inventory — single-shot key counts
+ *  Reads prod data over HTTP via password-protected endpoints on the prod
+ *  (`main` branch) deployment:
+ *    POST {PROD_EXPORT_BASE_URL}/admin/kv-export    — paginated list (data)
+ *    POST {PROD_EXPORT_BASE_URL}/admin/kv-inventory — paginated counts
  *  Both authenticated by KV_EXPORT_SECRET in the Authorization header.
  *
- *  Writes Firestore via the same setStored API the rest of the app uses.
- *  Never writes back to prod KV.
+ *  Driver-mode architecture: job state is persisted to Firestore. The
+ *  /admin/migration/status endpoint is the tick — each call processes up
+ *  to TICK_BUDGET_MS of work, then returns the rendered fragment. The
+ *  frontend self-polls every ~2s. Survives any number of isolate restarts.
+ *  Never writes to prod KV.
  *
- *  Jobs are tracked in-memory; survive only as long as the isolate is alive.
- *  Re-running is safe — every write is an idempotent upsert keyed by
- *  (type, org, ...keyParts). */
+ *  All log lines include the literal string [MIGRATION] for filterability. */
 
-import { setStored, setStoredChunked, getStored } from "@core/data/firestore/mod.ts";
+import { setStored, setStoredChunked, getStored, getStoredChunked, listStored } from "@core/data/firestore/mod.ts";
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+/** Firestore "type" namespace for persisted job state. */
+const JOB_TYPE = "migration-job";
+/** Firestore "type" namespace for the chunked-group reassembly queue. */
+const QUEUE_TYPE = "migration-chunked-queue";
+/** Max wall-clock seconds spent inside one tick. Must stay well under
+ *  Deno Deploy's 60s request timeout so the response always returns. */
+const TICK_BUDGET_MS = 30_000;
+/** A job whose lastTickAt is older than this is auto-marked errored to
+ *  prevent zombie-polling. */
+const STALE_TICK_MS = 5 * 60_000;
+/** /kv-export pagination batch size. Higher = fewer round-trips, more
+ *  memory per request. 500 matches the prod-side default. */
+const EXPORT_BATCH_LIMIT = 500;
 
 // ── Type classification ──────────────────────────────────────────────────────
 
-/** Top-level "global" prefixes used by prod's main.ts that aren't org-scoped.
- *  These appear in keys as ["typeName", ...rest] (no orgId in slot 0). */
 export const GLOBAL_TYPES = new Set([
   "org", "org-by-slug", "email-index", "session", "default-org",
   "audit-finding", "audit-transcript", "token-usage",
 ]);
 
-/** Types we never migrate — transient/in-flight state that would corrupt the
- *  cutover if copied. Sessions expire naturally; review-pending/decided are
- *  active queue state owned by the running pipeline. */
 export const SKIP_TYPES = new Set([
   "session",
   "review-pending", "review-decided", "review-audit-pending",
 ]);
 
-/** Types whose value carries a `ts`/`startedAt`/`createdAt` we can date-filter. */
 const TIMESTAMPED_FIELDS: Record<string, string[]> = {
   "audit-finding": ["startedAt", "ts", "createdAt"],
   "audit-done-idx": ["startedAt", "ts"],
@@ -48,20 +59,12 @@ const TIMESTAMPED_FIELDS: Record<string, string[]> = {
 
 export interface DecodedKey {
   type: string;
-  org: string;          // "" for globals
+  org: string;
   keyParts: (string | number)[];
   isChunkPart: boolean;
   isChunkMeta: boolean;
 }
 
-/** Decode a Deno KV key from prod into (type, org, keyParts).
- *
- *  Three shapes are recognized:
- *    1. ["__TypeName__", orgId, ...rest]  — TypedStore convention
- *    2. ["type-name", ...rest]            — globals (org, email-index, ...)
- *    3. [orgId, "kebab-name", ...rest]    — orgKey() convention
- *
- *  Returns null if we can't decode (probably noise / stray key). */
 export function decodeKey(key: Deno.KvKey): DecodedKey | null {
   if (!Array.isArray(key) || key.length === 0) return null;
   const first = String(key[0] ?? "");
@@ -100,7 +103,7 @@ function classifyChunk(type: string, org: string, rest: (string | number)[]): De
   return { type, org, keyParts: rest, isChunkPart: false, isChunkMeta: false };
 }
 
-// ── Prod connection (HTTP-based) ─────────────────────────────────────────────
+// ── Prod connection ──────────────────────────────────────────────────────────
 
 export function prodExportBaseUrl(): string {
   return (Deno.env.get("PROD_EXPORT_BASE_URL") ?? "").replace(/\/+$/, "");
@@ -118,7 +121,6 @@ export function ensureProdKvConfigured(): { ok: true } | { ok: false; error: str
   return { ok: true };
 }
 
-/** Reverse of the prod-side encodeValue tag scheme. */
 function decodeValue(v: unknown, skipped: Array<{ reason: string }>): unknown {
   if (v === null || typeof v !== "object") return v;
   if (Array.isArray(v)) return v.map((x) => decodeValue(x, skipped));
@@ -138,7 +140,6 @@ function decodeValue(v: unknown, skipped: Array<{ reason: string }>): unknown {
       skipped.push({ reason: String(obj["reason"] ?? "unknown") });
       return null;
     }
-    // Unknown tag — pass through as-is so it's visible in errors
     return v;
   }
   const out: Record<string, unknown> = {};
@@ -146,85 +147,42 @@ function decodeValue(v: unknown, skipped: Array<{ reason: string }>): unknown {
   return out;
 }
 
-/** Read-only HTTP client over the prod /admin/kv-export endpoint. Exposes
- *  a Deno.Kv-like .list() async iterator + .close() so the migration loop's
- *  call sites stay unchanged. */
-export interface ProdReaderEntry {
-  key: Deno.KvKey;
-  value: unknown;
-  versionstamp: string;
+interface ExportPage {
+  ok: boolean;
+  entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>;
+  nextCursor?: string;
+  done: boolean;
+  error?: string;
 }
 
-export interface ProdKvReader {
-  list(opts: { prefix: Deno.KvKey }): AsyncIterable<ProdReaderEntry>;
-  /** Skipped values surfaced during decode — values the prod side couldn't
-   *  represent over JSON (bigint/Map/Set). Caller should surface these as
-   *  errors. Mutated in place as iteration proceeds. */
-  readonly skipped: Array<{ reason: string }>;
-  close(): void;
-}
-
-const EXPORT_BATCH_LIMIT = 500;
-
-class HttpProdKvReader implements ProdKvReader {
-  readonly skipped: Array<{ reason: string }> = [];
-  constructor(private readonly base: string, private readonly secret: string) {}
-
-  async *list(opts: { prefix: Deno.KvKey }): AsyncIterable<ProdReaderEntry> {
-    let cursor: string | undefined;
-    let page = 0;
-    while (true) {
-      const body: Record<string, unknown> = { prefix: opts.prefix, limit: EXPORT_BATCH_LIMIT };
-      if (cursor) body.cursor = cursor;
-      const res = await fetch(`${this.base}/admin/kv-export`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${this.secret}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`kv-export HTTP ${res.status}: ${text.slice(0, 300)}`);
-      }
-      const data = await res.json() as {
-        ok: boolean;
-        entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>;
-        nextCursor?: string;
-        done: boolean;
-        error?: string;
-      };
-      if (!data.ok) throw new Error(`kv-export error: ${data.error ?? "unknown"}`);
-      page++;
-      for (const e of data.entries) {
-        yield {
-          key: e.key,
-          value: decodeValue(e.value, this.skipped),
-          versionstamp: e.versionstamp,
-        };
-      }
-      if (data.done) return;
-      cursor = data.nextCursor;
-      if (!cursor) {
-        throw new Error(`kv-export done=false but no nextCursor (page ${page})`);
-      }
-    }
+/** Fetches one /kv-export page. Surfaces decode-skip warnings via the
+ *  passed-in array so the caller can record them on the job state. */
+async function fetchExportPage(
+  base: string, secret: string, prefix: Deno.KvKey, cursor: string | null,
+  skipped: Array<{ reason: string }>,
+): Promise<{ entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>; nextCursor: string | null; done: boolean }> {
+  const body: Record<string, unknown> = { prefix, limit: EXPORT_BATCH_LIMIT };
+  if (cursor) body.cursor = cursor;
+  const res = await fetch(`${base}/admin/kv-export`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${secret}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`kv-export HTTP ${res.status}: ${text.slice(0, 300)}`);
   }
-
-  close(): void {
-    // No-op — HTTP is stateless, no connection to release.
-  }
-}
-
-function openProdReader(): ProdKvReader {
-  const base = prodExportBaseUrl();
-  if (!base) throw new Error("PROD_EXPORT_BASE_URL not configured");
-  const rawSecret = Deno.env.get("KV_EXPORT_SECRET");
-  if (!rawSecret) throw new Error("KV_EXPORT_SECRET env var is not set");
-  const secret = rawSecret.trim();
-  console.log(`[MIGRATE] prod reader: base=${base} secretLen=${secret.length}`);
-  return new HttpProdKvReader(base, secret);
+  const data = await res.json() as ExportPage;
+  if (!data.ok) throw new Error(`kv-export error: ${data.error ?? "unknown"}`);
+  const decoded = data.entries.map((e) => ({
+    key: e.key,
+    value: decodeValue(e.value, skipped),
+    versionstamp: e.versionstamp,
+  }));
+  return { entries: decoded, nextCursor: data.nextCursor ?? null, done: data.done };
 }
 
 // ── Inventory ────────────────────────────────────────────────────────────────
@@ -236,56 +194,82 @@ export interface InventoryRow {
   chunkedCount: number;
 }
 
-interface InventoryResponse {
+interface InventoryPage {
   ok: boolean;
-  totalKeys: number;
+  scannedThisCall?: number;
+  totalKeys?: number;
   byPrefix: Record<string, number>;
+  nextCursor?: string;
+  done: boolean;
   error?: string;
 }
 
-/** Calls the prod /admin/kv-inventory endpoint (single ~30s POST that walks
- *  the entire prod KV server-side and returns aggregate counts). Translates
- *  the response into the {org, type, count, chunkedCount} row shape the UI
- *  expects. Surfaces errors directly — never silently falls back. */
-export async function inventoryProdKv(): Promise<InventoryRow[]> {
+/** Drives prod's paginated /admin/kv-inventory endpoint. Loops cursor-by-
+ *  cursor with a tight wall-clock budget so the surrounding HTTP request
+ *  doesn't exceed Deno Deploy's 60s timeout. Returns whatever counts we've
+ *  accumulated; on partial completion (done=false at budget exhaustion)
+ *  the caller can decide whether to display partial data or error. */
+export async function inventoryProdKv(): Promise<{ rows: InventoryRow[]; partial: boolean; scanned: number }> {
   const ck = ensureProdKvConfigured();
   if (!ck.ok) throw new Error(ck.error);
 
   const base = prodExportBaseUrl();
   const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
-  const res = await fetch(`${base}/admin/kv-inventory`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${secret}`,
-      "Content-Type": "application/json",
-    },
-    body: "{}",
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`kv-inventory HTTP ${res.status}: ${text.slice(0, 300)}`);
-  }
-  const data = await res.json() as InventoryResponse;
-  if (!data.ok) throw new Error(`kv-inventory error: ${data.error ?? "unknown"}`);
 
-  // Aggregate prefixes into {org, type, count, chunkedCount} rows.
+  const start = Date.now();
+  const BUDGET_MS = 50_000;
+  const accum: Record<string, number> = {};
+  let cursor: string | null = null;
+  let totalScanned = 0;
+  let done = false;
+  let pages = 0;
+
+  console.log(`[MIGRATION:INVENTORY] starting paginated walk base=${base}`);
+
+  while (Date.now() - start < BUDGET_MS) {
+    const body: Record<string, unknown> = { budgetMs: 30_000 };
+    if (cursor) body.cursor = cursor;
+    const res = await fetch(`${base}/admin/kv-inventory`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${secret}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`kv-inventory HTTP ${res.status}: ${text.slice(0, 300)}`);
+    }
+    const data = await res.json() as InventoryPage;
+    if (!data.ok) throw new Error(`kv-inventory error: ${data.error ?? "unknown"}`);
+
+    pages++;
+    const pageCount = data.scannedThisCall ?? 0;
+    totalScanned += pageCount;
+    for (const [k, v] of Object.entries(data.byPrefix)) {
+      accum[k] = (accum[k] ?? 0) + v;
+    }
+    console.log(`[MIGRATION:INVENTORY] page=${pages} scannedThisCall=${pageCount} totalScanned=${totalScanned} done=${data.done}`);
+
+    if (data.done) { done = true; break; }
+    if (!data.nextCursor) {
+      throw new Error(`kv-inventory done=false but no nextCursor (page ${pages})`);
+    }
+    cursor = data.nextCursor;
+  }
+
+  console.log(`[MIGRATION:INVENTORY] complete pages=${pages} totalScanned=${totalScanned} done=${done} elapsedMs=${Date.now() - start}`);
+
+  // Translate byPrefix → InventoryRow[]
   const rows = new Map<string, { count: number; chunkedCount: number }>();
   const chunkRe = /^(.+)-chunk-(\d+)$/;
-  for (const [prefix, count] of Object.entries(data.byPrefix)) {
+  for (const [prefix, count] of Object.entries(accum)) {
     const slash = prefix.indexOf("/");
-    let org: string;
-    let typeRaw: string;
-    if (slash < 0) {
-      org = "";
-      typeRaw = prefix;
-    } else {
-      org = prefix.slice(0, slash);
-      typeRaw = prefix.slice(slash + 1);
-    }
+    const org = slash < 0 ? "" : prefix.slice(0, slash);
+    const typeRaw = slash < 0 ? prefix : prefix.slice(slash + 1);
     const m = chunkRe.exec(typeRaw);
     if (m) {
-      // Per the contract, chunk-N counts are equal across N (each group has
-      // every chunk index). Count chunked groups exactly once via chunk-0.
       const chunkIdx = Number(m[2]);
       const baseType = m[1];
       const k = `${org}\u0001${baseType}`;
@@ -306,58 +290,346 @@ export async function inventoryProdKv(): Promise<InventoryRow[]> {
     out.push({ org, type, count: v.count, chunkedCount: v.chunkedCount });
   }
   out.sort((a, b) => (b.count + b.chunkedCount) - (a.count + a.chunkedCount));
-  return out;
+  return { rows: out, partial: !done, scanned: totalScanned };
 }
 
-// ── Job state ────────────────────────────────────────────────────────────────
+// ── Job state (Firestore-persisted) ──────────────────────────────────────────
 
 export type JobStatus = "running" | "done" | "cancelled" | "error";
-
-export interface JobState {
-  jobId: string;
-  startedAt: number;
-  endedAt: number | null;
-  status: JobStatus;
-  cancelled: boolean;
-  scanned: number;
-  written: number;
-  writtenChunked: number;
-  skipped: number;
-  errors: string[];
-  message: string;
-  opts: RunOpts;
-}
+export type JobPhase = "scanning" | "chunked" | "done";
 
 export interface RunOpts {
   types?: string[];
   since?: number;
   until?: number;
   dryRun?: boolean;
-  /** Versionstamp lower bound — only entries with versionstamp > this get migrated. */
   sinceVersionstamp?: string;
 }
 
-const jobs = new Map<string, JobState>();
-
-export function getJob(jobId: string): JobState | null {
-  return jobs.get(jobId) ?? null;
+export interface PersistedJob {
+  jobId: string;
+  startedAt: number;
+  endedAt: number | null;
+  status: JobStatus;
+  cancelled: boolean;
+  phase: JobPhase;
+  cursor: string | null;
+  scanned: number;
+  written: number;
+  writtenChunked: number;
+  skipped: number;
+  errors: string[];
+  message: string;
+  lastTickAt: number;
+  opts: RunOpts;
+  /** Number of chunked-groups discovered so far. */
+  chunkedQueueSize: number;
+  /** Number of chunked-groups processed (or marked seen) so far. */
+  chunkedQueueProcessed: number;
 }
 
-export function listJobs(): JobState[] {
-  return [...jobs.values()].sort((a, b) => b.startedAt - a.startedAt);
+interface ChunkedQueueDoc {
+  jobId: string;
+  entries: Array<{ type: string; org: string; keyParts: (string | number)[] }>;
 }
 
-export function cancelJob(jobId: string): boolean {
-  const j = jobs.get(jobId);
-  if (!j || j.status !== "running") return false;
-  j.cancelled = true;
+// ─── Persistence helpers ───
+async function loadJob(jobId: string): Promise<PersistedJob | null> {
+  return await getStored<PersistedJob>(JOB_TYPE, "", jobId);
+}
+
+async function saveJob(state: PersistedJob): Promise<void> {
+  await setStored(JOB_TYPE, "", [state.jobId], state);
+}
+
+async function loadQueue(jobId: string): Promise<ChunkedQueueDoc> {
+  const q = await getStoredChunked<ChunkedQueueDoc>(QUEUE_TYPE, "", jobId);
+  return q ?? { jobId, entries: [] };
+}
+
+async function saveQueue(q: ChunkedQueueDoc): Promise<void> {
+  await setStoredChunked(QUEUE_TYPE, "", [q.jobId], q);
+}
+
+// ─── Public API ───
+function newJobId(): string {
+  return "m_" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+}
+
+export async function getJob(jobId: string): Promise<PersistedJob | null> {
+  return await loadJob(jobId);
+}
+
+export async function listJobs(): Promise<PersistedJob[]> {
+  const all = await listStored<PersistedJob>(JOB_TYPE, "");
+  return all.sort((a, b) => b.startedAt - a.startedAt);
+}
+
+export async function createJob(opts: RunOpts): Promise<string> {
+  const ck = ensureProdKvConfigured();
+  if (!ck.ok) throw new Error(ck.error);
+
+  const jobId = newJobId();
+  const sid = jobId.slice(-6);
+  const now = Date.now();
+  const state: PersistedJob = {
+    jobId,
+    startedAt: now,
+    endedAt: null,
+    status: "running",
+    cancelled: false,
+    phase: "scanning",
+    cursor: null,
+    scanned: 0, written: 0, writtenChunked: 0, skipped: 0,
+    errors: [],
+    message: "queued — first tick pending",
+    lastTickAt: now,
+    opts,
+    chunkedQueueSize: 0,
+    chunkedQueueProcessed: 0,
+  };
+  await saveJob(state);
+  await saveQueue({ jobId, entries: [] });
+  console.log(`🚀 [MIGRATION:CREATE:${sid}] types=${opts.types?.join(",") ?? "(all)"} since=${opts.since ?? "-"} until=${opts.until ?? "-"} dryRun=${!!opts.dryRun} sinceVS=${opts.sinceVersionstamp ?? "-"}`);
+  return jobId;
+}
+
+export async function cancelJob(jobId: string): Promise<boolean> {
+  const state = await loadJob(jobId);
+  if (!state) return false;
+  if (state.status !== "running") return false;
+  state.cancelled = true;
+  state.message = "cancellation requested — will halt at next tick boundary";
+  await saveJob(state);
+  console.log(`🛑 [MIGRATION:CANCEL:${jobId.slice(-6)}] flag set`);
   return true;
 }
 
-// ── Run migration ────────────────────────────────────────────────────────────
+export async function forceCancelJob(jobId: string): Promise<boolean> {
+  const state = await loadJob(jobId);
+  if (!state) return false;
+  if (state.status !== "running") return false;
+  state.status = "cancelled";
+  state.cancelled = true;
+  state.endedAt = Date.now();
+  state.message = `force-cancelled at scanned=${state.scanned}`;
+  await saveJob(state);
+  console.log(`⛔ [MIGRATION:FORCE-CANCEL:${jobId.slice(-6)}] terminated immediately scanned=${state.scanned}`);
+  return true;
+}
 
-function newJobId(): string {
-  return "m_" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+export async function killAllRunningJobs(): Promise<number> {
+  const all = await listJobs();
+  let killed = 0;
+  for (const j of all) {
+    if (j.status === "running") {
+      j.status = "cancelled";
+      j.cancelled = true;
+      j.endedAt = Date.now();
+      j.message = "killed by Kill All";
+      await saveJob(j);
+      killed++;
+      console.log(`⛔ [MIGRATION:KILL-ALL:${j.jobId.slice(-6)}] terminated`);
+    }
+  }
+  console.log(`⛔ [MIGRATION:KILL-ALL] killed=${killed}`);
+  return killed;
+}
+
+// ── Tick loop ────────────────────────────────────────────────────────────────
+
+/** Drives one tick of the job. Returns the (possibly updated) state. Safe
+ *  to call repeatedly; idempotent at any granularity. */
+export async function tickJob(jobId: string): Promise<PersistedJob | null> {
+  const sid = jobId.slice(-6);
+  let state = await loadJob(jobId);
+  if (!state) {
+    console.log(`⚠️ [MIGRATION:TICK:${sid}] job not found`);
+    return null;
+  }
+
+  if (state.status !== "running") {
+    return state;
+  }
+
+  // Stale-job detection: if we haven't ticked in 5 minutes, something's
+  // wrong and we shouldn't keep racking up cost on a zombie.
+  const sinceLast = Date.now() - state.lastTickAt;
+  if (sinceLast > STALE_TICK_MS && state.scanned > 0) {
+    state.status = "error";
+    state.endedAt = Date.now();
+    state.message = `stale — no progress in ${Math.round(sinceLast / 1000)}s`;
+    state.errors.push(`stale: lastTickAt was ${sinceLast}ms ago`);
+    await saveJob(state);
+    console.log(`⚠️ [MIGRATION:TICK:${sid}] STALE sinceLast=${sinceLast}ms`);
+    return state;
+  }
+
+  if (state.cancelled) {
+    state.status = "cancelled";
+    state.endedAt = Date.now();
+    state.message = `cancelled at scanned=${state.scanned}`;
+    await saveJob(state);
+    console.log(`🛑 [MIGRATION:TICK:${sid}] cancelled scanned=${state.scanned} written=${state.written}`);
+    return state;
+  }
+
+  const tickStart = Date.now();
+  const skipped: Array<{ reason: string }> = [];
+  const base = prodExportBaseUrl();
+  const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
+  let queue: ChunkedQueueDoc | null = null;
+  let queueDirty = false;
+  let progressed = false;
+  let lastCancelCheckAt = tickStart;
+
+  try {
+    while (Date.now() - tickStart < TICK_BUDGET_MS) {
+      // Re-check cancel flag every ~5s so a cancel during a long tick is observed
+      if (Date.now() - lastCancelCheckAt > 5000) {
+        const fresh = await loadJob(jobId);
+        if (fresh?.cancelled) {
+          state.cancelled = true;
+          break;
+        }
+        lastCancelCheckAt = Date.now();
+      }
+
+      if (state.phase === "scanning") {
+        if (queue === null) queue = await loadQueue(jobId);
+        const moved = await scanOneBatch(state, queue, base, secret, skipped);
+        if (moved) { progressed = true; queueDirty = true; }
+        if (state.phase !== "scanning") {
+          // transitioned to chunked phase — flush queue once now
+          if (queueDirty) { await saveQueue(queue); queueDirty = false; }
+        }
+      } else if (state.phase === "chunked") {
+        if (queue === null) queue = await loadQueue(jobId);
+        const moved = await reassembleNextChunked(state, queue, base, secret);
+        if (moved) progressed = true;
+      } else {
+        break;
+      }
+
+      if (!progressed) break; // defensive — avoid spin loops
+      progressed = false;
+    }
+  } catch (err) {
+    const msg = `tick error: ${String(err).slice(0, 200)}`;
+    state.errors.push(msg);
+    if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+    console.log(`❌ [MIGRATION:TICK:${sid}] ${msg}`);
+    // Do NOT transition to error — let the next tick try again. Only fatal
+    // configuration errors set status="error" (caught at createJob time).
+  }
+
+  // Surface skipped values from decode (bigint/Map/Set on prod side)
+  if (skipped.length > 0) {
+    const reasons = new Map<string, number>();
+    for (const s of skipped) reasons.set(s.reason, (reasons.get(s.reason) ?? 0) + 1);
+    for (const [reason, n] of reasons) {
+      state.errors.push(`⚠️ ${n} value(s) un-migrated this tick: prod-side ${reason} cannot be JSON-encoded`);
+    }
+    if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+  }
+
+  // Persist queue if dirty
+  if (queueDirty && queue !== null) {
+    await saveQueue(queue);
+  }
+
+  state.lastTickAt = Date.now();
+
+  if (state.cancelled && state.status === "running") {
+    state.status = "cancelled";
+    state.endedAt = Date.now();
+    state.message = `cancelled at scanned=${state.scanned}`;
+    console.log(`🛑 [MIGRATION:TICK:${sid}] cancelled mid-tick scanned=${state.scanned}`);
+  } else if (state.phase === "done" && state.status === "running") {
+    state.status = "done";
+    state.endedAt = Date.now();
+    state.message = `complete — scanned ${state.scanned}, wrote ${state.written} simple + ${state.writtenChunked} chunked`;
+    console.log(`✅ [MIGRATION:TICK:${sid}] DONE scanned=${state.scanned} written=${state.written} chunked=${state.writtenChunked} skipped=${state.skipped} errors=${state.errors.length}`);
+  } else {
+    const elapsed = Date.now() - tickStart;
+    console.log(`📝 [MIGRATION:TICK:${sid}] phase=${state.phase} scanned=${state.scanned} written=${state.written} chunked=${state.writtenChunked} skipped=${state.skipped} errors=${state.errors.length} tickMs=${elapsed}`);
+    state.message = `${state.phase}: scanned ${state.scanned} keys, ${state.chunkedQueueProcessed}/${state.chunkedQueueSize} chunked`;
+  }
+
+  await saveJob(state);
+  return state;
+}
+
+// ── Tick phase: scan ─────────────────────────────────────────────────────────
+
+async function scanOneBatch(
+  state: PersistedJob,
+  queue: ChunkedQueueDoc,
+  base: string,
+  secret: string,
+  skipped: Array<{ reason: string }>,
+): Promise<boolean> {
+  const sid = state.jobId.slice(-6);
+  const page = await fetchExportPage(base, secret, [], state.cursor, skipped);
+  console.log(`🔍 [MIGRATION:SCAN:${sid}] cursor=${(state.cursor ?? "-").slice(-8)} returned=${page.entries.length} done=${page.done}`);
+
+  for (const entry of page.entries) {
+    state.scanned++;
+
+    const decoded = decodeKey(entry.key);
+    if (!decoded) { state.skipped++; continue; }
+    if (SKIP_TYPES.has(decoded.type)) { state.skipped++; continue; }
+    if (state.opts.types && !state.opts.types.includes(decoded.type)) { state.skipped++; continue; }
+
+    if (state.opts.sinceVersionstamp && entry.versionstamp <= state.opts.sinceVersionstamp) {
+      state.skipped++; continue;
+    }
+
+    if (state.opts.since !== undefined || state.opts.until !== undefined) {
+      const ts = valueTimestamp(decoded.type, entry.value);
+      if (ts !== null) {
+        if (state.opts.since !== undefined && ts < state.opts.since) { state.skipped++; continue; }
+        if (state.opts.until !== undefined && ts > state.opts.until) { state.skipped++; continue; }
+      }
+    }
+
+    if (decoded.isChunkPart || decoded.isChunkMeta) {
+      const groupHash = `${decoded.type}\u0001${decoded.org}\u0001${JSON.stringify(decoded.keyParts)}`;
+      // De-dupe within the queue. Linear scan because the queue is small per tick.
+      if (!queue.entries.some((e) =>
+        e.type === decoded.type && e.org === decoded.org &&
+        JSON.stringify(e.keyParts) === JSON.stringify(decoded.keyParts)
+      )) {
+        queue.entries.push({ type: decoded.type, org: decoded.org, keyParts: decoded.keyParts });
+        state.chunkedQueueSize++;
+      } else {
+        // Already queued — silently skip the duplicate (chunk-part / meta both reach here)
+      }
+      continue;
+    }
+
+    if (state.opts.dryRun) { state.skipped++; continue; }
+
+    try {
+      await setStored(decoded.type, decoded.org, decoded.keyParts, entry.value);
+      state.written++;
+    } catch (err) {
+      state.errors.push(`${decoded.type}/${decoded.org}/${decoded.keyParts.join(",")}: ${String(err).slice(0, 200)}`);
+      if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+    }
+  }
+
+  state.cursor = page.nextCursor;
+
+  if (page.done) {
+    state.phase = "chunked";
+    console.log(`📦 [MIGRATION:SCAN:${sid}] phase=chunked queueSize=${state.chunkedQueueSize}`);
+    if (state.chunkedQueueSize === 0) {
+      state.phase = "done";
+    }
+  }
+
+  return page.entries.length > 0 || page.done;
 }
 
 function valueTimestamp(type: string, value: unknown): number | null {
@@ -374,139 +646,59 @@ function valueTimestamp(type: string, value: unknown): number | null {
   return null;
 }
 
-/** Spawn a migration job. Returns immediately with the jobId; the job runs
- *  asynchronously and updates its JobState entry. Poll via getJob(jobId). */
-export function startMigration(opts: RunOpts): string {
-  const jobId = newJobId();
-  const sid = jobId.slice(-6);
-  const job: JobState = {
-    jobId, startedAt: Date.now(), endedAt: null,
-    status: "running", cancelled: false,
-    scanned: 0, written: 0, writtenChunked: 0, skipped: 0,
-    errors: [], message: "starting…", opts,
-  };
-  jobs.set(jobId, job);
-  // Fire-and-forget; runs in the same isolate.
-  (async () => {
-    try {
-      await runMigrationLoop(job, sid);
-    } catch (err) {
-      job.status = "error";
-      job.message = String(err);
-      console.error(`❌ [MIGRATE:${sid}] FATAL`, err);
-    } finally {
-      job.endedAt = Date.now();
-    }
-  })();
-  return jobId;
-}
+// ── Tick phase: chunked reassembly ───────────────────────────────────────────
 
-async function runMigrationLoop(job: JobState, sid: string): Promise<void> {
-  const ck = ensureProdKvConfigured();
-  if (!ck.ok) { job.status = "error"; job.message = ck.error; return; }
+async function reassembleNextChunked(
+  state: PersistedJob,
+  queue: ChunkedQueueDoc,
+  base: string,
+  secret: string,
+): Promise<boolean> {
+  const sid = state.jobId.slice(-6);
+  if (state.chunkedQueueProcessed >= queue.entries.length) {
+    state.phase = "done";
+    return false;
+  }
 
-  console.log(`🚀 [MIGRATE:${sid}] start types=${job.opts.types?.join(",") ?? "(all)"} since=${job.opts.since ?? "-"} until=${job.opts.until ?? "-"} dryRun=${!!job.opts.dryRun} sinceVS=${job.opts.sinceVersionstamp ?? "-"}`);
+  const idx = state.chunkedQueueProcessed;
+  const group = queue.entries[idx];
+  const skipped: Array<{ reason: string }> = [];
 
-  const kv = openProdReader();
-  job.message = "scanning prod KV";
-  const chunkedQueued = new Set<string>();
+  console.log(`📦 [MIGRATION:CHUNK:${sid}] processing ${idx + 1}/${queue.entries.length} ${group.type}/${group.org}/${group.keyParts.join(",")}`);
 
   try {
-    for await (const entry of kv.list({ prefix: [] })) {
-      if (job.cancelled) break;
-      job.scanned++;
-
-      const decoded = decodeKey(entry.key);
-      if (!decoded) { job.skipped++; continue; }
-      if (SKIP_TYPES.has(decoded.type)) { job.skipped++; continue; }
-      if (job.opts.types && !job.opts.types.includes(decoded.type)) { job.skipped++; continue; }
-
-      // Versionstamp delta filter (cutover catch-up)
-      if (job.opts.sinceVersionstamp && entry.versionstamp <= job.opts.sinceVersionstamp) {
-        job.skipped++; continue;
-      }
-
-      // Date filter — only applies if value has a known timestamp field
-      if (job.opts.since !== undefined || job.opts.until !== undefined) {
-        const ts = valueTimestamp(decoded.type, entry.value);
-        if (ts !== null) {
-          if (job.opts.since !== undefined && ts < job.opts.since) { job.skipped++; continue; }
-          if (job.opts.until !== undefined && ts > job.opts.until) { job.skipped++; continue; }
-        }
-        // If no timestamp field, fall through and migrate anyway
-      }
-
-      if (decoded.isChunkPart) {
-        chunkedQueued.add(JSON.stringify({ t: decoded.type, o: decoded.org, k: decoded.keyParts }));
-        continue;
-      }
-      if (decoded.isChunkMeta) {
-        chunkedQueued.add(JSON.stringify({ t: decoded.type, o: decoded.org, k: decoded.keyParts }));
-        continue;
-      }
-
-      if (job.opts.dryRun) { job.skipped++; continue; }
-
-      try {
-        await setStored(decoded.type, decoded.org, decoded.keyParts, entry.value);
-        job.written++;
-      } catch (err) {
-        job.errors.push(`${decoded.type}/${decoded.org}/${decoded.keyParts.join(",")}: ${String(err).slice(0, 200)}`);
-        if (job.errors.length > 50) job.errors = job.errors.slice(-50);
-      }
-
-      if (job.scanned % 200 === 0) {
-        console.log(`📝 [MIGRATE:${sid}] scanned=${job.scanned} written=${job.written} skipped=${job.skipped} errors=${job.errors.length}`);
-        job.message = `scanning… ${job.scanned} keys`;
-      }
-    }
-
-    // Second pass — chunked groups
-    job.message = `re-assembling ${chunkedQueued.size} chunked groups`;
-    console.log(`📦 [MIGRATE:${sid}] reassembling ${chunkedQueued.size} chunked groups`);
-    for (const groupStr of chunkedQueued) {
-      if (job.cancelled) break;
-      const { t: type, o: org, k: keyParts } = JSON.parse(groupStr) as { t: string; o: string; k: (string | number)[] };
-      try {
-        await migrateChunkedGroup(kv, type, org, keyParts, job.opts.dryRun);
-        if (!job.opts.dryRun) job.writtenChunked++;
-      } catch (err) {
-        job.errors.push(`chunked ${type}/${org}/${keyParts.join(",")}: ${String(err).slice(0, 200)}`);
-        if (job.errors.length > 50) job.errors = job.errors.slice(-50);
-      }
-    }
-
-    // Surface skipped values from decode (bigint/Map/Set on prod side)
-    if (kv.skipped.length > 0) {
-      const reasons = new Map<string, number>();
-      for (const s of kv.skipped) reasons.set(s.reason, (reasons.get(s.reason) ?? 0) + 1);
-      for (const [reason, n] of reasons) {
-        job.errors.push(`⚠️ ${n} value(s) un-migrated: prod-side ${reason} cannot be JSON-encoded`);
-      }
-    }
-  } finally {
-    kv.close();
+    await migrateChunkedGroup(state, group, base, secret, skipped);
+    if (!state.opts.dryRun) state.writtenChunked++;
+  } catch (err) {
+    state.errors.push(`chunked ${group.type}/${group.org}/${group.keyParts.join(",")}: ${String(err).slice(0, 200)}`);
+    if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+    console.log(`❌ [MIGRATION:CHUNK:${sid}] ${group.type}/${group.org}: ${err}`);
   }
 
-  if (job.cancelled) {
-    job.status = "cancelled";
-    job.message = `cancelled at ${job.scanned} keys`;
-    console.log(`🛑 [MIGRATE:${sid}] cancelled scanned=${job.scanned} written=${job.written}`);
-  } else {
-    job.status = "done";
-    job.message = `complete — scanned ${job.scanned}, wrote ${job.written} simple + ${job.writtenChunked} chunked`;
-    console.log(`✅ [MIGRATE:${sid}] done scanned=${job.scanned} written=${job.written} chunked=${job.writtenChunked} skipped=${job.skipped} errors=${job.errors.length}`);
+  // Surface decode-skipped on this group
+  if (skipped.length > 0) {
+    const reasons = new Map<string, number>();
+    for (const s of skipped) reasons.set(s.reason, (reasons.get(s.reason) ?? 0) + 1);
+    for (const [reason, n] of reasons) {
+      state.errors.push(`⚠️ chunked ${group.type}/${group.org}: ${n} ${reason}-typed value(s) un-migrated`);
+    }
   }
+
+  state.chunkedQueueProcessed++;
+
+  if (state.chunkedQueueProcessed >= queue.entries.length) {
+    state.phase = "done";
+  }
+  return true;
 }
 
-/** Reassemble a chunked group via list-prefix (one or few HTTP calls vs N+1
- *  individual gets). The group's chunk parts share a common prefix; the
- *  meta `_n` key sits at the same level. We list everything under the
- *  prefix and demux meta vs slices in memory. Tries the three known prod
- *  key shapes (TypedStore __TypePascal__, global type, orgKey). */
 async function migrateChunkedGroup(
-  kv: ProdKvReader, type: string, org: string, keyParts: (string | number)[], dryRun?: boolean,
+  state: PersistedJob,
+  group: { type: string; org: string; keyParts: (string | number)[] },
+  base: string, secret: string,
+  skipped: Array<{ reason: string }>,
 ): Promise<void> {
+  const { type, org, keyParts } = group;
   const pascal = type.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
   const candidates: Deno.KvKey[] = [];
   candidates.push([`__${pascal}__`, org, ...keyParts]);
@@ -517,15 +709,22 @@ async function migrateChunkedGroup(
     let metaTotal: number | null = null;
     const slices: string[] = [];
     let foundAny = false;
+    let cursor: string | null = null;
 
-    for await (const e of kv.list({ prefix: groupPrefix })) {
-      foundAny = true;
-      const last = e.key[e.key.length - 1];
-      if (last === "_n" && typeof e.value === "number") {
-        metaTotal = e.value;
-      } else if (typeof last === "number" && typeof e.value === "string") {
-        slices[last] = e.value;
+    while (true) {
+      const page = await fetchExportPage(base, secret, groupPrefix, cursor, skipped);
+      for (const e of page.entries) {
+        foundAny = true;
+        const last = e.key[e.key.length - 1];
+        if (last === "_n" && typeof e.value === "number") {
+          metaTotal = e.value;
+        } else if (typeof last === "number" && typeof e.value === "string") {
+          slices[last] = e.value;
+        }
       }
+      if (page.done) break;
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
     }
 
     if (!foundAny) continue;
@@ -538,7 +737,7 @@ async function migrateChunkedGroup(
       }
     }
     const payload = JSON.parse(slices.slice(0, metaTotal).join(""));
-    if (!dryRun) {
+    if (!state.opts.dryRun) {
       await setStoredChunked(type, org, keyParts, payload);
     }
     return;
@@ -551,29 +750,41 @@ async function migrateChunkedGroup(
 export interface Snapshot {
   capturedAt: number;
   versionstamp: string;
-  /** Sample key whose stamp was read. */
   sampleKey: string;
 }
 
-/** Capture a "high-water mark" of prod KV for cutover delta migration.
- *  We pick the largest versionstamp from a small sample of recent activity. */
+/** Walks ~5000 keys via /kv-export and finds the largest versionstamp.
+ *  Single-shot HTTP request (no driver mode) — caller's request must
+ *  complete in <60s. For huge DBs the sample is biased to the start of
+ *  the keyspace; that's fine because we only need an approximate floor. */
 export async function captureSnapshot(): Promise<Snapshot> {
-  const kv = openProdReader();
+  const ck = ensureProdKvConfigured();
+  if (!ck.ok) throw new Error(ck.error);
+  const base = prodExportBaseUrl();
+  const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
+  const skipped: Array<{ reason: string }> = [];
+
   let maxVs = "00000000000000000000";
   let sampleKey = "";
   let scanned = 0;
-  try {
-    for await (const entry of kv.list({ prefix: [] })) {
+  let cursor: string | null = null;
+
+  console.log(`[MIGRATION:SNAPSHOT] starting`);
+  while (scanned < 5000) {
+    const page = await fetchExportPage(base, secret, [], cursor, skipped);
+    for (const entry of page.entries) {
       scanned++;
       if (entry.versionstamp > maxVs) {
         maxVs = entry.versionstamp;
         sampleKey = JSON.stringify(entry.key);
       }
-      if (scanned >= 5000) break;  // sample first 5k keys
+      if (scanned >= 5000) break;
     }
-  } finally {
-    kv.close();
+    if (page.done) break;
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
   }
+  console.log(`[MIGRATION:SNAPSHOT] complete scanned=${scanned} maxVs=${maxVs}`);
   return { capturedAt: Date.now(), versionstamp: maxVs, sampleKey };
 }
 
@@ -585,36 +796,39 @@ export interface VerifyReport {
   examples: Array<{ key: string; status: "match" | "missing" | "mismatch"; note?: string }>;
 }
 
-/** Sample N random keys from prod KV; for each, read the same value back from
- *  Firestore and compare. Returns a count summary plus up to 20 examples. */
 export async function verifyMigration(sampleSize = 50): Promise<VerifyReport> {
-  const kv = openProdReader();
+  const ck = ensureProdKvConfigured();
+  if (!ck.ok) throw new Error(ck.error);
+  const base = prodExportBaseUrl();
+  const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
+  const skipped: Array<{ reason: string }> = [];
+
   const samples: Array<{ key: Deno.KvKey; value: unknown }> = [];
-  try {
-    let i = 0;
-    for await (const entry of kv.list({ prefix: [] })) {
+  let i = 0;
+  let cursor: string | null = null;
+  console.log(`[MIGRATION:VERIFY] sampling sampleSize=${sampleSize}`);
+  while (i < 10_000) {
+    const page = await fetchExportPage(base, secret, [], cursor, skipped);
+    for (const entry of page.entries) {
       i++;
-      // Reservoir sampling
       if (samples.length < sampleSize) {
         samples.push({ key: entry.key, value: entry.value });
       } else {
         const j = Math.floor(Math.random() * i);
         if (j < sampleSize) samples[j] = { key: entry.key, value: entry.value };
       }
-      if (i > 10000) break;  // cap walk
+      if (i >= 10_000) break;
     }
-  } finally {
-    kv.close();
+    if (page.done) break;
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
   }
 
   const examples: VerifyReport["examples"] = [];
   let matched = 0, missing = 0, mismatched = 0;
   for (const s of samples) {
     const decoded = decodeKey(s.key);
-    if (!decoded || decoded.isChunkPart || decoded.isChunkMeta) {
-      // skip chunk fragments — verification on chunked groups requires reassembly
-      continue;
-    }
+    if (!decoded || decoded.isChunkPart || decoded.isChunkMeta) continue;
     if (SKIP_TYPES.has(decoded.type)) continue;
     const got = await getStored(decoded.type, decoded.org, ...decoded.keyParts);
     const keyStr = `${decoded.type}/${decoded.org}/${decoded.keyParts.join(",")}`;
@@ -628,5 +842,6 @@ export async function verifyMigration(sampleSize = 50): Promise<VerifyReport> {
       if (examples.length < 20) examples.push({ key: keyStr, status: "mismatch", note: "value differs" });
     }
   }
+  console.log(`[MIGRATION:VERIFY] complete sampled=${samples.length} matched=${matched} missing=${missing} mismatched=${mismatched}`);
   return { sampled: samples.length, matched, missing, mismatched, examples };
 }

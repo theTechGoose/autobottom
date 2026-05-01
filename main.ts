@@ -284,6 +284,7 @@ const postRoutes: Record<string, Handler> = {
   // KV migration export (bearer-token auth, read-only, one-shot)
   "/admin/kv-export": handleKvExport,
   "/admin/kv-inventory": handleKvInventory,
+  "/admin/kv-batch-list": handleKvBatchList,
 
   // Admin (auth required)
   "/admin/wipe-kv": handleWipeKv,
@@ -4422,6 +4423,83 @@ async function handleKvInventory(req: Request): Promise<Response> {
     nextCursor: iter.cursor,
     done,
   });
+}
+
+async function handleKvBatchList(req: Request): Promise<Response> {
+  const authErr = requireKvExportSecret(req);
+  if (authErr) return authErr;
+
+  let body: { prefixes?: unknown; perPrefixLimit?: number } = {};
+  try { body = await req.json(); } catch { /* empty body OK */ }
+
+  if (!Array.isArray(body.prefixes)) {
+    return json({ error: "prefixes (array) required" }, 400);
+  }
+  if (body.prefixes.length === 0) {
+    return json({ error: "prefixes must be non-empty" }, 400);
+  }
+  if (body.prefixes.length > 100) {
+    return json({ error: "too many prefixes (max 100)" }, 400);
+  }
+  for (const p of body.prefixes) {
+    if (!Array.isArray(p)) {
+      return json({ error: "each prefix must be an array" }, 400);
+    }
+  }
+  const prefixes = body.prefixes as Deno.KvKey[];
+
+  const rawPerPrefix = typeof body.perPrefixLimit === "number" ? body.perPrefixLimit : 100;
+  const perPrefixLimit = Math.max(1, Math.min(200, Math.floor(rawPerPrefix)));
+
+  const PAYLOAD_BUDGET_BYTES = 100 * 1024 * 1024;
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
+
+  type Entry = { key: Deno.KvKey; value: unknown; versionstamp: string };
+  type Group = { prefix: Deno.KvKey; entries: Entry[]; truncated: boolean };
+
+  const groups: Group[] = [];
+  let payloadBytes = 0;
+  let partial = false;
+
+  for (const prefix of prefixes) {
+    const group: Group = { prefix, entries: [], truncated: false };
+    groups.push(group);
+
+    // Once we've blown the payload budget, push placeholder empty groups for the
+    // remaining prefixes to preserve the "one element per requested prefix, in order"
+    // contract. Caller retries with a smaller batch when partial=true.
+    if (partial) continue;
+
+    const iter = db.list({ prefix }, { batchSize: perPrefixLimit });
+    let count = 0;
+    let budgetHit = false;
+    for await (const e of iter) {
+      const entry: Entry = {
+        key: e.key,
+        value: encodeKvValue(e.value),
+        versionstamp: e.versionstamp,
+      };
+      const entryBytes = JSON.stringify(entry).length;
+      if (payloadBytes + entryBytes > PAYLOAD_BUDGET_BYTES) {
+        budgetHit = true;
+        break;
+      }
+      group.entries.push(entry);
+      payloadBytes += entryBytes;
+      count++;
+      if (count >= perPrefixLimit) {
+        group.truncated = true;
+        break;
+      }
+    }
+    if (budgetHit) partial = true;
+  }
+
+  const totalEntries = groups.reduce((s, g) => s + g.entries.length, 0);
+  console.log(`🔍 [kv-batch-list] prefixes=${prefixes.length} totalEntries=${totalEntries} bytes=${payloadBytes} partial=${partial}`);
+  const response: Record<string, unknown> = { ok: true, groups };
+  if (partial) response.partial = true;
+  return json(response);
 }
 
 async function handleBackfillReviewScores(req: Request): Promise<Response> {

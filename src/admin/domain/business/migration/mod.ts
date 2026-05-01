@@ -55,6 +55,34 @@ export const GLOBAL_TYPES = new Set([
   "audit-finding", "audit-transcript", "token-usage",
 ]);
 
+/** TypedStore prefixes used by prod's lib/storage. Keys are
+ *  [__type__, orgId, ...]. Walking [orgId] does NOT cover these — prod
+ *  stores findings/transcripts/etc under TypedStore prefixes (lowercase
+ *  kebab), not orgKey prefixes. List sourced from
+ *  main:lib/storage/dtos/{audit,stats,config,email,gamification}.ts.
+ *  Add new entries here when prod adds new DTOs. */
+export const KNOWN_TYPED_STORE_PREFIXES: ReadonlyArray<string> = [
+  // audit DTOs
+  "__audit-finding__", "__audit-transcript__", "__audit-job__",
+  "__question-cache__", "__destination-questions__", "__batch-counter__",
+  "__populated-questions__", "__batch-answers__",
+  // stats DTOs
+  "__active-tracking__", "__watchdog-active__", "__completed-audit-stat__",
+  "__error-tracking__", "__retry-tracking__",
+  "__chargeback-entry__", "__wire-deduction-entry__",
+  // config DTOs
+  "__pipeline-config__", "__webhook-config-dto__", "__bad-word-config__",
+  "__reviewer-config__", "__office-bypass-config__",
+  "__manager-scope-config__", "__audit-dimensions-config__",
+  "__partner-dimensions-config__", "__bonus-points-config__",
+  // email DTOs
+  "__email-report-config__", "__email-template__",
+  // game/store DTOs
+  "__gamification-settings-dto__", "__sound-pack-meta__",
+  "__custom-store-item__", "__earned-badge-dto__",
+  "__badge-stats-dto__", "__game-state-dto__",
+];
+
 export const SKIP_TYPES = new Set([
   "session",
   "review-pending", "review-decided", "review-audit-pending",
@@ -121,12 +149,11 @@ function classifyChunk(type: string, org: string, rest: (string | number)[]): De
   if (last === "_n") {
     return { type, org, keyParts: rest.slice(0, -1), isChunkPart: false, isChunkMeta: true };
   }
-  // Only treat numeric-tailed entries as chunk parts when the TYPE NAME
-  // itself indicates chunking (e.g. "audit-finding-chunk-0"). Without this
-  // guard, per-list-item records with numeric tails (review-active question
-  // index, judge-decided question index, etc.) get false-positively flagged
-  // as chunked and fail reassembly. Verified against actual prod key shapes.
-  if (CHUNK_SUFFIX_RE.test(type) && rest.length >= 1 && typeof last === "number") {
+  // Treat numeric-tailed entries as chunk parts. False positives (per-list-
+  // item indexed records like judge-decided/review-active that have qIdx as
+  // a numeric tail) are caught by the fallback path in migrateChunkedGroup,
+  // which writes each entry individually when no _n meta exists.
+  if (rest.length >= 2 && typeof last === "number") {
     return { type, org, keyParts: rest.slice(0, -1), isChunkPart: true, isChunkMeta: false };
   }
   return { type, org, keyParts: rest, isChunkPart: false, isChunkMeta: false };
@@ -673,12 +700,16 @@ export function computeScanPrefixes(
     const prefixes: Deno.KvKey[] = [];
     for (const org of knownOrgs) prefixes.push([org]);
     for (const globalType of GLOBAL_TYPES) prefixes.push([globalType]);
+    // TypedStore prefixes — findings/transcripts/configs live here.
+    for (const tp of KNOWN_TYPED_STORE_PREFIXES) prefixes.push([tp]);
     return prefixes;
   }
   const prefixes: Deno.KvKey[] = [];
   for (const type of types) {
     const pascal = type.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+    // Both PascalCase (legacy) and lowercase-kebab (prod actual) TypedStore prefixes.
     prefixes.push([`__${pascal}__`]);
+    prefixes.push([`__${type}__`]);
     if (GLOBAL_TYPES.has(type)) prefixes.push([type]);
     for (const org of knownOrgs) {
       prefixes.push([org, type]);
@@ -924,6 +955,9 @@ async function migrateChunkedGroup(
   const { type, org, keyParts } = group;
   const pascal = type.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
   const candidates: Deno.KvKey[] = [];
+  // Lowercase-kebab TypedStore (what prod actually uses, e.g. __audit-finding__)
+  candidates.push([`__${type}__`, org, ...keyParts]);
+  // PascalCase TypedStore (legacy / convention check)
   candidates.push([`__${pascal}__`, org, ...keyParts]);
   if (org === "") candidates.push([type, ...keyParts]);
   candidates.push([org, type, ...keyParts]);

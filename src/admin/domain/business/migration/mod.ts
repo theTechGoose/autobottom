@@ -41,8 +41,16 @@ const EXPORT_BATCH_LIMIT_KEYS_ONLY = 1000;
  *  Each pulls a full chunked group's worth of value data (transcripts
  *  can be ~1MB each). 20 × 1MB = 20MB peak memory — comfortable under
  *  512MB. Bumped from 5 because per-group network latency was the
- *  reassembly bottleneck. */
+ *  reassembly bottleneck. Now mostly superseded by BATCH_LIST_*. */
 const CHUNKED_PARALLEL = 20;
+/** Initial batch size for /admin/kv-batch-list during chunked phase.
+ *  Prod hard-caps at 100 prefixes/request; we start at 50 to leave
+ *  headroom for the response's 100MB budget on transcript-heavy
+ *  batches. Adaptively halved when prod returns `partial: true`. */
+const BATCH_LIST_INITIAL = 50;
+/** Floor for the adaptive batch size — never go below this even after
+ *  repeated partial responses. */
+const BATCH_LIST_MIN = 4;
 /** Max prefix walks fired in parallel within one tick. With keysOnly on
  *  heavy chunked-only prefixes, the dominant memory pressure is gone, so
  *  we push parallelism up. The remaining full-value prefixes are smaller
@@ -281,6 +289,62 @@ async function fetchExportPage(
   return { entries: decoded, nextCursor: data.nextCursor ?? null, done: data.done };
 }
 
+interface BatchListGroup {
+  prefix: Deno.KvKey;
+  entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>;
+  truncated: boolean;
+}
+
+interface BatchListResponse {
+  ok: boolean;
+  groups: Array<{
+    prefix: Deno.KvKey;
+    entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>;
+    truncated: boolean;
+  }>;
+  partial?: boolean;
+  error?: string;
+}
+
+/** POST /admin/kv-batch-list: fetch up to 100 group prefixes in one
+ *  request, prod walks each to completion (or perPrefixLimit) and
+ *  returns entries grouped by prefix in the same order. Used by chunked
+ *  reassembly to amortize per-request latency across many groups.
+ *  Caller MUST check `partial` flag — when true, trailing groups with
+ *  empty `entries[]` are placeholders (budget cutoff), not real empties. */
+async function fetchBatchList(
+  base: string, secret: string, prefixes: Array<Deno.KvKey>,
+  skipped: Array<{ reason: string }>,
+  perPrefixLimit?: number,
+): Promise<{ groups: BatchListGroup[]; partial: boolean }> {
+  const body: Record<string, unknown> = { prefixes };
+  if (perPrefixLimit !== undefined) body.perPrefixLimit = perPrefixLimit;
+  const res = await fetch(`${base}/admin/kv-batch-list`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${secret}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`kv-batch-list HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const data = await res.json() as BatchListResponse;
+  if (!data.ok) throw new Error(`kv-batch-list error: ${data.error ?? "unknown"}`);
+  const groups: BatchListGroup[] = data.groups.map((g) => ({
+    prefix: g.prefix,
+    entries: g.entries.map((e) => ({
+      key: e.key,
+      value: decodeValue(e.value, skipped),
+      versionstamp: e.versionstamp,
+    })),
+    truncated: g.truncated,
+  }));
+  return { groups, partial: !!data.partial };
+}
+
 // ── Inventory ────────────────────────────────────────────────────────────────
 
 export interface InventoryRow {
@@ -446,6 +510,10 @@ export interface PersistedJob {
    *  FRESH_CURSOR sentinel means started but no real cursor yet.
    *  Absent means walk for that org is done. */
   indexCursors?: Record<string, string>;
+  /** Adaptive batch size for /admin/kv-batch-list during chunked phase.
+   *  Halved when prod returns partial:true; reset to BATCH_LIST_INITIAL
+   *  on job start. Persisted across ticks so back-off survives restarts. */
+  batchListSize?: number;
 }
 
 interface ChunkedQueueDoc {
@@ -1085,8 +1153,15 @@ function valueTimestamp(type: string, value: unknown): number | null {
 
 // ── Tick phase: chunked reassembly ───────────────────────────────────────────
 
-/** Processes up to CHUNKED_PARALLEL chunked groups concurrently, then
- *  updates state. Returns true if any progress was made this call. */
+/** Processes a batch of chunked groups via /admin/kv-batch-list — one
+ *  HTTP round-trip pulls all entries for up to BATCH_LIST_INITIAL groups
+ *  at once, then we reassemble each in memory. Falls back to per-group
+ *  fetch (migrateChunkedGroup) for groups whose batched response was
+ *  empty (either a real empty due to wrong primary candidate, or a
+ *  placeholder from a `partial: true` budget cutoff).
+ *
+ *  Adaptive batch size: prod's `partial: true` triggers a halving
+ *  (saved on state.batchListSize) so subsequent ticks back off. */
 async function reassembleChunkedBatch(
   state: PersistedJob,
   queue: ChunkedQueueDoc,
@@ -1099,40 +1174,70 @@ async function reassembleChunkedBatch(
     return false;
   }
 
+  const batchSize = state.batchListSize ?? BATCH_LIST_INITIAL;
   const start = state.chunkedQueueProcessed;
-  const end = Math.min(start + CHUNKED_PARALLEL, queue.entries.length);
+  const end = Math.min(start + batchSize, queue.entries.length);
   const batch = queue.entries.slice(start, end);
 
-  console.log(`📦 [MIGRATION:CHUNK:${sid}] processing ${start + 1}-${end}/${queue.entries.length} (parallel=${batch.length})`);
+  console.log(`📦 [MIGRATION:CHUNK:${sid}] batched ${start + 1}-${end}/${queue.entries.length} (batchSize=${batchSize})`);
 
-  const results = await Promise.allSettled(batch.map(async (group) => {
-    const skipped: Array<{ reason: string }> = [];
+  // Compute primary candidate prefix per group — lowercase TypedStore
+  // first since that's what audit-finding/transcript/job all use. False-
+  // positive types (judge-decided/review-active) will return empty here
+  // and fall back to the per-group migrateChunkedGroup which tries all
+  // candidate shapes.
+  const prefixes: Deno.KvKey[] = batch.map((g) =>
+    [`__${g.type}__`, g.org, ...g.keyParts]
+  );
+
+  const skipped: Array<{ reason: string }> = [];
+  let result;
+  try {
+    result = await fetchBatchList(base, secret, prefixes, skipped, 200);
+  } catch (err) {
+    state.errors.push(`batch-list: ${String(err).slice(0, 200)}`);
+    if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+    console.log(`❌ [MIGRATION:CHUNK:${sid}] batch-list failed: ${err}`);
+    return false;
+  }
+
+  if (result.partial) {
+    const newSize = Math.max(BATCH_LIST_MIN, Math.floor(batchSize / 2));
+    state.batchListSize = newSize;
+    console.log(`⚠️ [MIGRATION:CHUNK:${sid}] partial response — halving batch ${batchSize} → ${newSize} for next tick`);
+  }
+
+  // Process each group. If batched returned empty AND the response was
+  // partial, that group might be a placeholder — fall back to per-group
+  // fetch which is authoritative.
+  for (let i = 0; i < batch.length; i++) {
+    const group = batch[i];
+    const r = result.groups[i];
+
     try {
-      await migrateChunkedGroup(state, group, base, secret, skipped);
-      return { ok: true as const, group, skipped };
-    } catch (err) {
-      return { ok: false as const, group, err: String(err).slice(0, 200), skipped };
-    }
-  }));
-
-  for (const r of results) {
-    if (r.status !== "fulfilled") {
-      state.errors.push(`chunked tick exception: ${String(r.reason).slice(0, 200)}`);
-      continue;
-    }
-    const v = r.value;
-    if (v.ok) {
-      if (!state.opts.dryRun) state.writtenChunked++;
-    } else {
-      state.errors.push(`chunked ${v.group.type}/${v.group.org}/${v.group.keyParts.join(",")}: ${v.err}`);
-      console.log(`❌ [MIGRATION:CHUNK:${sid}] ${v.group.type}/${v.group.org}: ${v.err}`);
-    }
-    if (v.skipped.length > 0) {
-      const reasons = new Map<string, number>();
-      for (const s of v.skipped) reasons.set(s.reason, (reasons.get(s.reason) ?? 0) + 1);
-      for (const [reason, n] of reasons) {
-        state.errors.push(`⚠️ chunked ${v.group.type}/${v.group.org}: ${n} ${reason}-typed value(s) un-migrated`);
+      if (r.entries.length === 0) {
+        // Either real empty (false-positive type) or placeholder. Use
+        // the per-group fallback — it tries all candidate shapes and
+        // handles both cases correctly.
+        await migrateChunkedGroup(state, group, base, secret, skipped);
+        if (!state.opts.dryRun) state.writtenChunked++;
+      } else {
+        await reassembleFromEntries(state, group, r.entries, skipped);
+        if (!state.opts.dryRun) state.writtenChunked++;
       }
+    } catch (err) {
+      const msg = `chunked ${group.type}/${group.org}/${group.keyParts.join(",")}: ${String(err).slice(0, 200)}`;
+      state.errors.push(msg);
+      if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+      console.log(`❌ [MIGRATION:CHUNK:${sid}] ${msg}`);
+    }
+  }
+
+  if (skipped.length > 0) {
+    const reasons = new Map<string, number>();
+    for (const s of skipped) reasons.set(s.reason, (reasons.get(s.reason) ?? 0) + 1);
+    for (const [reason, n] of reasons) {
+      state.errors.push(`⚠️ chunked batch: ${n} ${reason}-typed value(s) un-migrated`);
     }
     if (state.errors.length > 50) state.errors = state.errors.slice(-50);
   }
@@ -1143,6 +1248,57 @@ async function reassembleChunkedBatch(
     state.phase = "done";
   }
   return true;
+}
+
+/** Reassembly path from already-fetched entries (the batched fast path).
+ *  Mirrors the inner logic of migrateChunkedGroup but skips the prefix
+ *  walk since the batch endpoint already gave us the entries. */
+async function reassembleFromEntries(
+  state: PersistedJob,
+  group: { type: string; org: string; keyParts: (string | number)[] },
+  entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>,
+  skipped: Array<{ reason: string }>,
+): Promise<void> {
+  let metaTotal: number | null = null;
+  const slices: string[] = [];
+  for (const e of entries) {
+    const last = e.key[e.key.length - 1];
+    if (last === "_n" && typeof e.value === "number") {
+      metaTotal = e.value;
+    } else if (typeof last === "number" && typeof e.value === "string") {
+      slices[last] = e.value;
+    }
+  }
+
+  if (metaTotal === null || metaTotal <= 0) {
+    // No _n meta — false-positive type, write each entry as individual
+    // record preserving its full key path. Same fallback behavior as
+    // migrateChunkedGroup's "FALLBACK" branch.
+    if (!state.opts.dryRun) {
+      for (const e of entries) {
+        const decoded = decodeKey(e.key);
+        if (!decoded) continue;
+        const last = e.key[e.key.length - 1];
+        const fullKey: (string | number)[] = [...decoded.keyParts];
+        if (typeof last === "number") fullKey.push(last);
+        else if (typeof last === "string" && last !== "_n") fullKey.push(last);
+        await setStored(baseType(decoded.type), decoded.org, fullKey, e.value);
+      }
+    }
+    // Note: don't reference `skipped` directly here — the surrounding
+    // batch loop captures decode-skipped warnings via the shared array.
+    void skipped;
+    return;
+  }
+  for (let i = 0; i < metaTotal; i++) {
+    if (typeof slices[i] !== "string") {
+      throw new Error(`chunk ${i}/${metaTotal} missing for ${group.type}/${group.org}/${group.keyParts.join(",")}`);
+    }
+  }
+  const payload = JSON.parse(slices.slice(0, metaTotal).join(""));
+  if (!state.opts.dryRun) {
+    await setStoredChunked(baseType(group.type), group.org, group.keyParts, payload);
+  }
 }
 
 async function migrateChunkedGroup(

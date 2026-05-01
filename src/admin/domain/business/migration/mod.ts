@@ -29,8 +29,9 @@ const TICK_BUDGET_MS = 30_000;
  *  prevent zombie-polling. */
 const STALE_TICK_MS = 5 * 60_000;
 /** /kv-export pagination batch size. Higher = fewer round-trips, more
- *  memory per request. Prod-side max is 2000. */
-const EXPORT_BATCH_LIMIT = 2000;
+ *  memory per request. Deno KV's `kv.list({ limit })` is hard-capped at
+ *  1000 by the runtime — exceeding throws "Too many entries (max 1000)". */
+const EXPORT_BATCH_LIMIT = 1000;
 /** Max chunked-group reassemblies to fire in parallel within one tick.
  *  Each is one /kv-export prefix walk (returning ~5-6 entries). */
 const CHUNKED_PARALLEL = 10;

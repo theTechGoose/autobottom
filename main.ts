@@ -4304,13 +4304,22 @@ async function handleKvInventory(req: Request): Promise<Response> {
   const authErr = requireKvExportSecret(req);
   if (authErr) return authErr;
 
-  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
-  const byPrefix: Record<string, number> = {};
-  let totalKeys = 0;
+  let body: { cursor?: string; budgetMs?: number } = {};
+  try { body = await req.json(); } catch { /* empty body OK */ }
 
-  const iter = db.list({ prefix: [] });
+  const cursor = typeof body.cursor === "string" ? body.cursor : undefined;
+  const rawBudget = typeof body.budgetMs === "number" ? body.budgetMs : 30000;
+  const budgetMs = Math.max(1000, Math.min(55000, Math.floor(rawBudget)));
+
+  const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
+  const iter = db.list({ prefix: [] }, { cursor });
+  const byPrefix: Record<string, number> = {};
+  let scannedThisCall = 0;
+  let timedOut = false;
+  const started = Date.now();
+
   for await (const e of iter) {
-    totalKeys++;
+    scannedThisCall++;
     const a = e.key[0];
     const b = e.key[1];
     const fmt = (x: unknown) =>
@@ -4319,10 +4328,22 @@ async function handleKvInventory(req: Request): Promise<Response> {
         : "<non-primitive>";
     const label = b === undefined ? fmt(a) : `${fmt(a)}/${fmt(b)}`;
     byPrefix[label] = (byPrefix[label] ?? 0) + 1;
+
+    if (scannedThisCall % 1000 === 0 && Date.now() - started > budgetMs) {
+      timedOut = true;
+      break;
+    }
   }
 
-  console.log(`🔍 [kv-inventory] total=${totalKeys} groups=${Object.keys(byPrefix).length}`);
-  return json({ ok: true, totalKeys, byPrefix });
+  const done = !timedOut;
+  console.log(`🔍 [kv-inventory] scannedThisCall=${scannedThisCall} done=${done} groups=${Object.keys(byPrefix).length}`);
+  return json({
+    ok: true,
+    scannedThisCall,
+    byPrefix,
+    nextCursor: iter.cursor,
+    done,
+  });
 }
 
 async function handleBackfillReviewScores(req: Request): Promise<Response> {

@@ -514,6 +514,11 @@ export interface PersistedJob {
    *  Halved when prod returns partial:true; reset to BATCH_LIST_INITIAL
    *  on job start. Persisted across ticks so back-off survives restarts. */
   batchListSize?: number;
+  /** Server-side migration proxy: if set, this job is delegated to prod's
+   *  /admin/kv-migrate-day endpoint. tickJob just polls prod and mirrors
+   *  state back. createJob attempts the proxy when mode=index-driven and
+   *  falls back to local index-walk if prod's endpoint is unavailable. */
+  prodJobId?: string;
 }
 
 interface ChunkedQueueDoc {
@@ -580,20 +585,74 @@ export async function createJob(opts: RunOpts): Promise<string> {
     chunkedQueueProcessed: 0,
     indexCursors: {},
   };
+
+  // Index-driven mode: delegate to prod's /admin/kv-migrate-day for
+  // server-side migration (eliminates the cross-isolate bandwidth bottleneck
+  // that capped local index-driven runs at ~27min/day). Falls back to local
+  // index-walk if prod's endpoint is unavailable (e.g. not yet deployed).
+  if (opts.mode === "index-driven") {
+    try {
+      const base = prodExportBaseUrl();
+      const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
+      const res = await fetch(`${base}/admin/kv-migrate-day`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${secret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          since: opts.since,
+          until: opts.until,
+          dryRun: opts.dryRun,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+      }
+      const data = await res.json() as { ok: boolean; jobId?: string; error?: string };
+      if (!data.ok || !data.jobId) {
+        throw new Error(`prod error: ${data.error ?? "unknown"}`);
+      }
+      state.prodJobId = data.jobId;
+      state.message = `proxying to prod jobId=${data.jobId}`;
+      console.log(`🚀 [MIGRATION:CREATE:${sid}] proxying index-driven to prod jobId=${data.jobId}`);
+    } catch (err) {
+      console.log(`⚠️ [MIGRATION:CREATE:${sid}] prod proxy unavailable, falling back to local index-walk: ${err}`);
+      state.message = `proxy unavailable, running locally — ${String(err).slice(0, 100)}`;
+    }
+  }
+
   await saveJob(state);
   await saveQueue({ jobId, entries: [] });
   console.log(`🚀 [MIGRATION:CREATE:${sid}] mode=${opts.mode ?? "scan"} types=${opts.types?.join(",") ?? "(all)"} since=${opts.since ?? "-"} until=${opts.until ?? "-"} dryRun=${!!opts.dryRun} sinceVS=${opts.sinceVersionstamp ?? "-"}`);
   return jobId;
 }
 
+async function propagateCancelToProd(prodJobId: string, sid: string): Promise<void> {
+  try {
+    const base = prodExportBaseUrl();
+    const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
+    await fetch(`${base}/admin/kv-migrate-cancel`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: prodJobId }),
+    });
+    console.log(`🛑 [MIGRATION:PROXY-CANCEL:${sid}] forwarded to prod jobId=${prodJobId}`);
+  } catch (err) {
+    console.log(`⚠️ [MIGRATION:PROXY-CANCEL:${sid}] failed: ${err}`);
+  }
+}
+
 export async function cancelJob(jobId: string): Promise<boolean> {
   const state = await loadJob(jobId);
   if (!state) return false;
   if (state.status !== "running") return false;
+  if (state.prodJobId) await propagateCancelToProd(state.prodJobId, jobId.slice(-6));
   state.cancelled = true;
   state.message = "cancellation requested — will halt at next tick boundary";
   await saveJob(state);
-  console.log(`🛑 [MIGRATION:CANCEL:${jobId.slice(-6)}] flag set`);
+  console.log(`🛑 [MIGRATION:CANCEL:${jobId.slice(-6)}] flag set${state.prodJobId ? " (+ prod cancel)" : ""}`);
   return true;
 }
 
@@ -601,12 +660,13 @@ export async function forceCancelJob(jobId: string): Promise<boolean> {
   const state = await loadJob(jobId);
   if (!state) return false;
   if (state.status !== "running") return false;
+  if (state.prodJobId) await propagateCancelToProd(state.prodJobId, jobId.slice(-6));
   state.status = "cancelled";
   state.cancelled = true;
   state.endedAt = Date.now();
   state.message = `force-cancelled at scanned=${state.scanned}`;
   await saveJob(state);
-  console.log(`⛔ [MIGRATION:FORCE-CANCEL:${jobId.slice(-6)}] terminated immediately scanned=${state.scanned}`);
+  console.log(`⛔ [MIGRATION:FORCE-CANCEL:${jobId.slice(-6)}] terminated immediately scanned=${state.scanned}${state.prodJobId ? " (+ prod cancel)" : ""}`);
   return true;
 }
 
@@ -615,17 +675,87 @@ export async function killAllRunningJobs(): Promise<number> {
   let killed = 0;
   for (const j of all) {
     if (j.status === "running") {
+      if (j.prodJobId) await propagateCancelToProd(j.prodJobId, j.jobId.slice(-6));
       j.status = "cancelled";
       j.cancelled = true;
       j.endedAt = Date.now();
       j.message = "killed by Kill All";
       await saveJob(j);
       killed++;
-      console.log(`⛔ [MIGRATION:KILL-ALL:${j.jobId.slice(-6)}] terminated`);
+      console.log(`⛔ [MIGRATION:KILL-ALL:${j.jobId.slice(-6)}] terminated${j.prodJobId ? " (+ prod cancel)" : ""}`);
     }
   }
   console.log(`⛔ [MIGRATION:KILL-ALL] killed=${killed}`);
   return killed;
+}
+
+// ── Proxy tick (delegates to prod's server-side migration) ──────────────────
+
+interface ProxyJobShape {
+  jobId?: string;
+  startedAt?: number;
+  endedAt?: number | null;
+  status?: JobStatus;
+  phase?: JobPhase;
+  scanned?: number;
+  written?: number;
+  writtenChunked?: number;
+  skipped?: number;
+  errors?: string[];
+  message?: string;
+  byType?: Record<string, { count: number; chunkedCount: number }>;
+  opts?: RunOpts;
+  elapsedMs?: number;
+}
+
+/** Polls prod's /admin/kv-migrate-status, mirrors its state into ours,
+ *  saves and returns. Doesn't do any local work — prod owns the job. */
+async function tickProxiedJob(state: PersistedJob, sid: string): Promise<PersistedJob> {
+  const base = prodExportBaseUrl();
+  const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
+  try {
+    const res = await fetch(
+      `${base}/admin/kv-migrate-status?jobId=${encodeURIComponent(state.prodJobId!)}`,
+      { headers: { "Authorization": `Bearer ${secret}` } },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      state.errors.push(`prod status HTTP ${res.status}: ${text.slice(0, 160)}`);
+      if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+      state.lastTickAt = Date.now();
+      await saveJob(state);
+      return state;
+    }
+    const data = await res.json() as { ok: boolean; job?: ProxyJobShape; error?: string };
+    if (!data.ok || !data.job) {
+      state.errors.push(`prod status error: ${data.error ?? "unknown"}`);
+      if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+      state.lastTickAt = Date.now();
+      await saveJob(state);
+      return state;
+    }
+    const pj = data.job;
+    if (pj.status) state.status = pj.status;
+    if (pj.phase) state.phase = pj.phase;
+    if (typeof pj.scanned === "number") state.scanned = pj.scanned;
+    if (typeof pj.written === "number") state.written = pj.written;
+    if (typeof pj.writtenChunked === "number") state.writtenChunked = pj.writtenChunked;
+    if (typeof pj.skipped === "number") state.skipped = pj.skipped;
+    if (Array.isArray(pj.errors)) state.errors = pj.errors;
+    if (pj.message) state.message = pj.message;
+    if (pj.byType) state.byType = pj.byType;
+    if (pj.endedAt) state.endedAt = pj.endedAt;
+    state.lastTickAt = Date.now();
+    await saveJob(state);
+    console.log(`🔁 [MIGRATION:PROXY:${sid}] status=${state.status} phase=${state.phase} scanned=${state.scanned} written=${state.written}`);
+  } catch (err) {
+    state.errors.push(`proxy fetch failed: ${String(err).slice(0, 200)}`);
+    if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+    state.lastTickAt = Date.now();
+    await saveJob(state);
+    console.log(`❌ [MIGRATION:PROXY:${sid}] fetch failed: ${err}`);
+  }
+  return state;
 }
 
 // ── Tick loop ────────────────────────────────────────────────────────────────
@@ -664,6 +794,12 @@ export async function tickJob(jobId: string): Promise<PersistedJob | null> {
     await saveJob(state);
     console.log(`🛑 [MIGRATION:TICK:${sid}] cancelled scanned=${state.scanned} written=${state.written}`);
     return state;
+  }
+
+  // Proxy mode: this job is delegated to prod. Just poll prod's status,
+  // mirror its state into ours, return. No local work.
+  if (state.prodJobId) {
+    return await tickProxiedJob(state, sid);
   }
 
   const tickStart = Date.now();

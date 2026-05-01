@@ -15,7 +15,8 @@ import { GenericBodyRequest } from "@core/dto/requests.ts";
 import {
   inventoryProdKv, ensureProdKvConfigured, createJob, getJob, listJobs,
   cancelJob, forceCancelJob, killAllRunningJobs, tickJob,
-  captureSnapshot, verifyMigration, GLOBAL_TYPES, SKIP_TYPES,
+  captureSnapshot, verifyMigration, computeScanPrefixes,
+  GLOBAL_TYPES, SKIP_TYPES,
   type RunOpts, type PersistedJob, type InventoryRow, type Snapshot, type VerifyReport,
 } from "@admin/domain/business/migration/mod.ts";
 
@@ -187,7 +188,7 @@ function shallowJob(j: PersistedJob) {
     chunkedQueueProcessed: j.chunkedQueueProcessed,
     byType: j.byType ?? {},
     knownOrgs: j.knownOrgs ?? [],
-    scanPrefixesTotal: (j.scanPrefixes ?? []).length,
+    scanPrefixesTotal: computeScanPrefixes(j.opts.types, j.knownOrgs ?? []).length,
     scanPrefixIdx: j.scanPrefixIdx ?? 0,
     errorCount: j.errors.length,
     errors: j.errors.slice(-10),

@@ -340,12 +340,12 @@ export interface PersistedJob {
   /** Per-base-type counters; populated even on dry-run so the user can see
    *  what's being matched live. Key = base type (chunk suffix stripped). */
   byType: Record<string, { count: number; chunkedCount: number }>;
-  /** Prefix list to walk during scanning phase. Computed in `init` phase
-   *  from (types, knownOrgs). Empty array = no narrowing (full DB scan). */
-  scanPrefixes: Array<Deno.KvKey>;
-  /** Index into scanPrefixes of the prefix currently being walked. */
+  /** Index into the (deterministic) list of scan prefixes, currently being
+   *  walked. The prefix list itself is recomputed from (opts.types,
+   *  knownOrgs) on every tick — Firestore disallows nested arrays so we
+   *  don't persist Array<Deno.KvKey> directly. */
   scanPrefixIdx: number;
-  /** Orgs discovered during init phase. Used to compute scanPrefixes. */
+  /** Orgs discovered during init phase. Used to compute scan prefixes. */
   knownOrgs: string[];
   /** Number of chunked-groups discovered so far. */
   chunkedQueueSize: number;
@@ -411,7 +411,6 @@ export async function createJob(opts: RunOpts): Promise<string> {
     lastTickAt: now,
     opts,
     byType: {},
-    scanPrefixes: [],
     scanPrefixIdx: 0,
     knownOrgs: [],
     chunkedQueueSize: 0,
@@ -616,11 +615,11 @@ async function initScanPrefixes(
     cursor = page.nextCursor;
   }
   state.knownOrgs = [...orgs];
-  state.scanPrefixes = computeScanPrefixes(state.opts.types, state.knownOrgs);
   state.scanPrefixIdx = 0;
   state.cursor = null;
   state.phase = "scanning";
-  console.log(`🔧 [MIGRATION:INIT:${sid}] orgs=${state.knownOrgs.join(",") || "(none)"} prefixes=${state.scanPrefixes.length} types=${state.opts.types?.join(",") ?? "(all)"}`);
+  const total = computeScanPrefixes(state.opts.types, state.knownOrgs).length;
+  console.log(`🔧 [MIGRATION:INIT:${sid}] orgs=${state.knownOrgs.join(",") || "(none)"} prefixes=${total} types=${state.opts.types?.join(",") ?? "(all)"}`);
 }
 
 /** Computes the list of prefix walks to perform during the scanning phase.
@@ -661,13 +660,16 @@ async function scanOneBatch(
   skipped: Array<{ reason: string }>,
 ): Promise<boolean> {
   const sid = state.jobId.slice(-6);
-  if (state.scanPrefixIdx >= state.scanPrefixes.length) {
+  // Recompute the prefix list from (opts.types, knownOrgs) — it's deterministic
+  // and avoids persisting Array<Deno.KvKey> (Firestore disallows nested arrays).
+  const scanPrefixes = computeScanPrefixes(state.opts.types, state.knownOrgs);
+  if (state.scanPrefixIdx >= scanPrefixes.length) {
     state.phase = state.chunkedQueueSize === 0 ? "done" : "chunked";
     console.log(`📦 [MIGRATION:SCAN:${sid}] all prefixes done queueSize=${state.chunkedQueueSize} phase=${state.phase}`);
     return false;
   }
 
-  const prefix = state.scanPrefixes[state.scanPrefixIdx];
+  const prefix = scanPrefixes[state.scanPrefixIdx];
   const page = await fetchExportPage(base, secret, prefix, state.cursor, skipped);
   console.log(`🔍 [MIGRATION:SCAN:${sid}] prefix=${JSON.stringify(prefix)} cursor=${(state.cursor ?? "-").slice(-8)} returned=${page.entries.length} done=${page.done}`);
 
@@ -730,7 +732,7 @@ async function scanOneBatch(
     // Move to next prefix
     state.scanPrefixIdx++;
     state.cursor = null;
-    if (state.scanPrefixIdx >= state.scanPrefixes.length) {
+    if (state.scanPrefixIdx >= scanPrefixes.length) {
       state.phase = state.chunkedQueueSize === 0 ? "done" : "chunked";
       console.log(`📦 [MIGRATION:SCAN:${sid}] all prefixes done queueSize=${state.chunkedQueueSize} phase=${state.phase}`);
     }

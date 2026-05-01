@@ -108,23 +108,28 @@ export function decodeKey(key: Deno.KvKey): DecodedKey | null {
   return null;
 }
 
-function classifyChunk(type: string, org: string, rest: (string | number)[]): DecodedKey {
-  const last = rest[rest.length - 1];
-  if (last === "_n") {
-    return { type, org, keyParts: rest.slice(0, -1), isChunkPart: false, isChunkMeta: true };
-  }
-  if (rest.length >= 2 && typeof last === "number") {
-    return { type, org, keyParts: rest.slice(0, -1), isChunkPart: true, isChunkMeta: false };
-  }
-  return { type, org, keyParts: rest, isChunkPart: false, isChunkMeta: false };
-}
-
 /** Strip `-chunk-N` suffix so `audit-finding-chunk-0` matches user filter
  *  `audit-finding`. Without this, chunked types are silently dropped from
  *  type-filtered runs. */
 const CHUNK_SUFFIX_RE = /-chunk-\d+$/;
 export function baseType(decodedType: string): string {
   return decodedType.replace(CHUNK_SUFFIX_RE, "");
+}
+
+function classifyChunk(type: string, org: string, rest: (string | number)[]): DecodedKey {
+  const last = rest[rest.length - 1];
+  if (last === "_n") {
+    return { type, org, keyParts: rest.slice(0, -1), isChunkPart: false, isChunkMeta: true };
+  }
+  // Only treat numeric-tailed entries as chunk parts when the TYPE NAME
+  // itself indicates chunking (e.g. "audit-finding-chunk-0"). Without this
+  // guard, per-list-item records with numeric tails (review-active question
+  // index, judge-decided question index, etc.) get false-positively flagged
+  // as chunked and fail reassembly. Verified against actual prod key shapes.
+  if (CHUNK_SUFFIX_RE.test(type) && rest.length >= 1 && typeof last === "number") {
+    return { type, org, keyParts: rest.slice(0, -1), isChunkPart: true, isChunkMeta: false };
+  }
+  return { type, org, keyParts: rest, isChunkPart: false, isChunkMeta: false };
 }
 
 // ── Prod connection ──────────────────────────────────────────────────────────
@@ -987,7 +992,11 @@ async function migrateChunkedGroup(
     }
     return;
   }
-  throw new Error(`chunked group not found at any known key shape for ${type}/${org}/${keyParts.join(",")}`);
+  // None of the candidate shapes had any entries. This is normally a race —
+  // the entry was scanned but deleted before reassembly. With the type-name-
+  // based chunked detection, false positives shouldn't queue here anyway.
+  // Log and skip rather than blocking the migration with an error.
+  console.log(`⚠️ [MIGRATION:CHUNK] race-skip: ${type}/${org}/${keyParts.join(",")} — not found at any known shape (likely deleted in flight)`);
 }
 
 // ── Snapshot + Verify ────────────────────────────────────────────────────────

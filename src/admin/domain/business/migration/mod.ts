@@ -58,6 +58,20 @@ export const GLOBAL_TYPES = new Set([
   "audit-finding", "audit-transcript", "token-usage",
 ]);
 
+/** TypedStore prefixes that hold chunked values exclusively. During scan
+ *  the consumer only needs keys (to enqueue group hashes) — values are
+ *  never used because reassembly fetches them later from the group's own
+ *  prefix. We pass `keysOnly: true` to /admin/kv-export for these to skip
+ *  ~95% of bandwidth and prevent isolate-OOM on transcript walks.
+ *  Verified by prior runs showing 0 simple entries under these prefixes. */
+export const CHUNKED_ONLY_TYPED_STORE_PREFIXES: ReadonlySet<string> = new Set([
+  "__audit-finding__",
+  "__audit-transcript__",
+  "__batch-answers__",
+  "__populated-questions__",
+  "__destination-questions__",
+]);
+
 /** TypedStore prefixes used by prod's lib/storage. Keys are
  *  [__type__, orgId, ...]. Walking [orgId] does NOT cover these — prod
  *  stores findings/transcripts/etc under TypedStore prefixes (lowercase
@@ -215,13 +229,18 @@ interface ExportPage {
 }
 
 /** Fetches one /kv-export page. Surfaces decode-skip warnings via the
- *  passed-in array so the caller can record them on the job state. */
+ *  passed-in array so the caller can record them on the job state.
+ *  When `keysOnly: true`, response entries omit the `value` field —
+ *  caller must handle `entry.value === undefined`. Useful for chunked-
+ *  only TypedStore prefixes during scan (95%+ bandwidth savings). */
 async function fetchExportPage(
   base: string, secret: string, prefix: Deno.KvKey, cursor: string | null,
   skipped: Array<{ reason: string }>,
+  keysOnly = false,
 ): Promise<{ entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>; nextCursor: string | null; done: boolean }> {
   const body: Record<string, unknown> = { prefix, limit: EXPORT_BATCH_LIMIT };
   if (cursor) body.cursor = cursor;
+  if (keysOnly) body.keysOnly = true;
   const res = await fetch(`${base}/admin/kv-export`, {
     method: "POST",
     headers: {
@@ -793,6 +812,17 @@ async function processEntry(
 
   if (state.opts.dryRun) { state.skipped++; return; }
 
+  // Defensive: if we got here without a value, the entry was fetched with
+  // keysOnly=true (chunked-only TypedStore prefix) but somehow decoded as
+  // non-chunked. That'd indicate the prefix list is wrong. Surface the
+  // anomaly rather than silently writing undefined.
+  if (entry.value === undefined) {
+    state.errors.push(`unexpected non-chunked under keysOnly prefix: ${bt}/${decoded.org}/${decoded.keyParts.join(",")}`);
+    if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+    state.skipped++;
+    return;
+  }
+
   try {
     await setStored(bt, decoded.org, decoded.keyParts, entry.value);
     state.written++;
@@ -835,11 +865,18 @@ async function scanParallelBatch(
     return false;
   }
 
-  // Fire all in parallel
-  const results = await Promise.allSettled(todo.map(async (t) => ({
-    idx: t.idx,
-    page: await fetchExportPage(base, secret, scanPrefixes[t.idx], t.cursor, skipped),
-  })));
+  // Fire all in parallel. Use keysOnly for chunked-only TypedStore
+  // prefixes — values aren't needed at scan time and would blow memory.
+  const results = await Promise.allSettled(todo.map(async (t) => {
+    const prefix = scanPrefixes[t.idx];
+    const useKeysOnly = prefix.length === 1
+      && typeof prefix[0] === "string"
+      && CHUNKED_ONLY_TYPED_STORE_PREFIXES.has(prefix[0] as string);
+    return {
+      idx: t.idx,
+      page: await fetchExportPage(base, secret, prefix, t.cursor, skipped, useKeysOnly),
+    };
+  }));
 
   let totalReturned = 0;
   for (let i = 0; i < results.length; i++) {

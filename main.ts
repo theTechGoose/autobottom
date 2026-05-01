@@ -4271,11 +4271,61 @@ function encodeKvValue(v: unknown): unknown {
   return v;
 }
 
+const TIMESTAMPED_FIELDS_BY_TYPE: Record<string, string[]> = {
+  "audit-finding":        ["startedAt", "ts", "createdAt"],
+  "audit-done-idx":       ["startedAt", "ts"],
+  "completed-audit-stat": ["ts", "completedAt"],
+  "appeal":               ["createdAt", "ts"],
+  "appeal-history":       ["ts", "createdAt"],
+  "manager-queue":        ["createdAt"],
+  "manager-remediation":  ["createdAt"],
+  "review-done":          ["reviewedAt"],
+};
+
+function typeNameFromKey(key: Deno.KvKey): string | null {
+  const a = key[0];
+  if (typeof a === "string" && a.length > 4 && a.startsWith("__") && a.endsWith("__")) {
+    return a.slice(2, -2);
+  }
+  const b = key[1];
+  return typeof b === "string" ? b : null;
+}
+
+function isChunkPart(key: Deno.KvKey): boolean {
+  if (key.length === 0) return false;
+  const last = key[key.length - 1];
+  if (typeof last === "number" || typeof last === "bigint") return true;
+  if (last === "_n") return true;
+  return false;
+}
+
+function valueTimestamp(typeName: string, value: unknown): number | null {
+  const fields = TIMESTAMPED_FIELDS_BY_TYPE[typeName];
+  if (!fields || typeof value !== "object" || value === null) return null;
+  const obj = value as Record<string, unknown>;
+  for (const f of fields) {
+    const v = obj[f];
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const ms = Date.parse(v);
+      if (!Number.isNaN(ms)) return ms;
+    }
+  }
+  return null;
+}
+
 async function handleKvExport(req: Request): Promise<Response> {
   const authErr = requireKvExportSecret(req);
   if (authErr) return authErr;
 
-  let body: { prefix?: unknown; cursor?: string; limit?: number; keysOnly?: unknown } = {};
+  let body: {
+    prefix?: unknown;
+    cursor?: string;
+    limit?: number;
+    keysOnly?: unknown;
+    since?: number;
+    until?: number;
+  } = {};
   try { body = await req.json(); } catch { /* empty body OK */ }
 
   const prefix = Array.isArray(body.prefix) ? (body.prefix as Deno.KvKey) : [];
@@ -4283,12 +4333,33 @@ async function handleKvExport(req: Request): Promise<Response> {
   const rawLimit = typeof body.limit === "number" ? body.limit : 500;
   const limit = Math.max(1, Math.min(2000, Math.floor(rawLimit)));
   const keysOnly = body.keysOnly === true;
+  const since = typeof body.since === "number" && Number.isFinite(body.since) ? body.since : -Infinity;
+  const until = typeof body.until === "number" && Number.isFinite(body.until) ? body.until : Infinity;
+  const dateFilterActive = since !== -Infinity || until !== Infinity;
 
   const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const iter = db.list({ prefix }, { cursor, limit, batchSize: limit });
 
   const entries: Array<{ key: Deno.KvKey; value?: unknown; versionstamp: string }> = [];
+  let iteratedCount = 0;
+  let droppedCount = 0;
+
   for await (const e of iter) {
+    iteratedCount++;
+
+    // Date filter: only when active, value is available (not keysOnly), key is not a chunk part,
+    // and the type is in our filterable map. Types not in the map always pass (back-compat).
+    if (dateFilterActive && !keysOnly && !isChunkPart(e.key)) {
+      const typeName = typeNameFromKey(e.key);
+      if (typeName && TIMESTAMPED_FIELDS_BY_TYPE[typeName]) {
+        const ts = valueTimestamp(typeName, e.value);
+        if (ts !== null && (ts < since || ts > until)) {
+          droppedCount++;
+          continue;
+        }
+      }
+    }
+
     if (keysOnly) {
       entries.push({ key: e.key, versionstamp: e.versionstamp });
     } else {
@@ -4300,8 +4371,10 @@ async function handleKvExport(req: Request): Promise<Response> {
     }
   }
 
-  const done = entries.length < limit;
-  console.log(`🔍 [kv-export] prefix=${JSON.stringify(prefix)} returned=${entries.length} keysOnly=${keysOnly} done=${done}`);
+  // `done` reflects iterator exhaustion, not post-filter count — so the consumer's
+  // pagination loop still terminates correctly when filtering drops entries.
+  const done = iteratedCount < limit;
+  console.log(`🔍 [kv-export] prefix=${JSON.stringify(prefix)} iterated=${iteratedCount} returned=${entries.length} dropped=${droppedCount} keysOnly=${keysOnly} dateFilter=${dateFilterActive} done=${done}`);
   return json({ ok: true, entries, nextCursor: iter.cursor, done });
 }
 

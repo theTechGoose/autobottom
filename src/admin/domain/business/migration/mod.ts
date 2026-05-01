@@ -28,20 +28,24 @@ const TICK_BUDGET_MS = 30_000;
 /** A job whose lastTickAt is older than this is auto-marked errored to
  *  prevent zombie-polling. */
 const STALE_TICK_MS = 5 * 60_000;
-/** /kv-export pagination batch size. Higher = fewer round-trips, more
- *  memory per request. Deno KV's `kv.list({ limit })` is hard-capped at
- *  1000 by the runtime, but we use 300 to keep peak memory below the
- *  512MB isolate limit on heavy chunked values (audit-transcript chunks
- *  can be 50-500KB each). */
-const EXPORT_BATCH_LIMIT = 300;
+/** /kv-export pagination batch size for value-bearing requests.
+ *  Deno KV's `kv.list({ limit })` is hard-capped at 1000 by the runtime,
+ *  but we use 300 here to keep peak memory below the 512MB isolate limit
+ *  on heavy values (token-usage 27K records, audit-job 10K, etc). */
+const EXPORT_BATCH_LIMIT_FULL = 300;
+/** /kv-export pagination batch size for keysOnly requests. Responses are
+ *  tiny (just keys + versionstamps), so we use Deno KV's runtime max for
+ *  ~3.3x fewer round-trips on chunked-only prefixes. */
+const EXPORT_BATCH_LIMIT_KEYS_ONLY = 1000;
 /** Max chunked-group reassemblies to fire in parallel within one tick.
- *  Each is one /kv-export prefix walk. Lowered to 5 because transcript
- *  reassemblies pull MB of data per group. */
+ *  Each pulls a full chunked group's worth of value data. Kept low
+ *  because transcript reassemblies are MB each. */
 const CHUNKED_PARALLEL = 5;
-/** Max prefix walks fired in parallel within one tick. Each walk is a
- *  single /kv-export call. 4-way fits comfortably in 512MB at batch=300
- *  even for heavy types. Higher values caused isolate OOM kills. */
-const PARALLEL_PREFIX_WALKS = 4;
+/** Max prefix walks fired in parallel within one tick. With keysOnly on
+ *  heavy chunked-only prefixes, the dominant memory pressure is gone, so
+ *  we push parallelism up. The remaining full-value prefixes are smaller
+ *  org-keyed types where 300 entries × 8 parallel = ~12MB peak. */
+const PARALLEL_PREFIX_WALKS = 8;
 /** Sentinel stored in `state.cursors[idx]` for prefixes that have been
  *  assigned to a parallel slot but haven't yielded a real cursor yet
  *  (either: not yet fetched, or the first fetch errored). Distinct from
@@ -55,7 +59,8 @@ const CHUNK_VARIANT_PROBE_MAX = 10;
 
 export const GLOBAL_TYPES = new Set([
   "org", "org-by-slug", "email-index", "session", "default-org",
-  "audit-finding", "audit-transcript", "token-usage",
+  "audit-finding", "audit-transcript",
+  // token-usage intentionally excluded — opted out of migration for speed.
 ]);
 
 /** TypedStore prefixes that hold chunked values exclusively. During scan
@@ -103,6 +108,9 @@ export const KNOWN_TYPED_STORE_PREFIXES: ReadonlyArray<string> = [
 export const SKIP_TYPES = new Set([
   "session",
   "review-pending", "review-decided", "review-audit-pending",
+  // Opted out of migration — high-volume LLM token counters not worth
+  // the migration cost relative to their value.
+  "token-usage",
 ]);
 
 const TIMESTAMPED_FIELDS: Record<string, string[]> = {
@@ -238,7 +246,8 @@ async function fetchExportPage(
   skipped: Array<{ reason: string }>,
   keysOnly = false,
 ): Promise<{ entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>; nextCursor: string | null; done: boolean }> {
-  const body: Record<string, unknown> = { prefix, limit: EXPORT_BATCH_LIMIT };
+  const limit = keysOnly ? EXPORT_BATCH_LIMIT_KEYS_ONLY : EXPORT_BATCH_LIMIT_FULL;
+  const body: Record<string, unknown> = { prefix, limit };
   if (cursor) body.cursor = cursor;
   if (keysOnly) body.keysOnly = true;
   const res = await fetch(`${base}/admin/kv-export`, {

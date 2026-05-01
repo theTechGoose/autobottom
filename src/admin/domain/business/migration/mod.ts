@@ -35,6 +35,15 @@ const EXPORT_BATCH_LIMIT = 1000;
 /** Max chunked-group reassemblies to fire in parallel within one tick.
  *  Each is one /kv-export prefix walk (returning ~5-6 entries). */
 const CHUNKED_PARALLEL = 10;
+/** Max prefix walks fired in parallel within one tick. Each walk is a
+ *  single /kv-export call (~9s for a full 1000-entry batch). 8-way ≈ 9x
+ *  speedup over serial. Watch prod logs for elevated error rates. */
+const PARALLEL_PREFIX_WALKS = 8;
+/** Sentinel stored in `state.cursors[idx]` for prefixes that have been
+ *  assigned to a parallel slot but haven't yielded a real cursor yet
+ *  (either: not yet fetched, or the first fetch errored). Distinct from
+ *  "real cursor" and from "not in cursors at all = done". */
+const FRESH_CURSOR = "__FRESH__";
 /** Chunk-N variants to probe per (org, type) when prefix-narrowing.
  *  Variants beyond this are missed; we widen if needed. */
 const CHUNK_VARIANT_PROBE_MAX = 10;
@@ -328,7 +337,11 @@ export interface PersistedJob {
   status: JobStatus;
   cancelled: boolean;
   phase: JobPhase;
-  cursor: string | null;
+  /** Cursors for in-progress prefix walks, keyed by prefix idx (as string).
+   *  `FRESH_CURSOR` sentinel = assigned but no real cursor yet. Absent =
+   *  prefix is done OR not yet started. Replaces the single `cursor` field
+   *  to support parallel prefix walks. */
+  cursors: Record<string, string>;
   scanned: number;
   written: number;
   writtenChunked: number;
@@ -404,7 +417,7 @@ export async function createJob(opts: RunOpts): Promise<string> {
     status: "running",
     cancelled: false,
     phase: "init",
-    cursor: null,
+    cursors: {},
     scanned: 0, written: 0, writtenChunked: 0, skipped: 0,
     errors: [],
     message: "queued — first tick pending",
@@ -507,6 +520,7 @@ export async function tickJob(jobId: string): Promise<PersistedJob | null> {
   const base = prodExportBaseUrl();
   const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
   let queue: ChunkedQueueDoc | null = null;
+  let dedupe: Set<string> | null = null;
   let queueDirty = false;
   let progressed = false;
   let lastCancelCheckAt = tickStart;
@@ -527,8 +541,11 @@ export async function tickJob(jobId: string): Promise<PersistedJob | null> {
         await initScanPrefixes(state, base, secret);
         progressed = true;
       } else if (state.phase === "scanning") {
-        if (queue === null) queue = await loadQueue(jobId);
-        const moved = await scanOneBatch(state, queue, base, secret, skipped);
+        if (queue === null) {
+          queue = await loadQueue(jobId);
+          dedupe = buildDedupeSet(queue);
+        }
+        const moved = await scanParallelBatch(state, queue, dedupe!, base, secret, skipped);
         if (moved) { progressed = true; queueDirty = true; }
         if (state.phase !== "scanning") {
           if (queueDirty) { await saveQueue(queue); queueDirty = false; }
@@ -596,34 +613,46 @@ async function initScanPrefixes(
   state: PersistedJob, base: string, secret: string,
 ): Promise<void> {
   const sid = state.jobId.slice(-6);
-  console.log(`🔧 [MIGRATION:INIT:${sid}] discovering orgs`);
+  console.log(`🔧 [MIGRATION:INIT:${sid}] discovering orgs (uuids + slugs)`);
 
-  // Discover orgs by walking ["org"] prefix. Tiny — usually 1-10 entries.
-  const orgs = new Set<string>();
-  let cursor: string | null = null;
+  // Discover org identifiers. Prod uses BOTH UUIDs and slugs in different
+  // contexts: ["org", uuid] for org records, but [slug, "<type>"] for
+  // most org-keyed data (audit-finding, user, etc). We walk both indexes
+  // to enumerate identifiers from both spaces.
+  const ids = new Set<string>();
   const skipped: Array<{ reason: string }> = [];
-  while (true) {
-    const page = await fetchExportPage(base, secret, ["org"], cursor, skipped);
-    for (const e of page.entries) {
-      // ["org", orgId] — orgId is at position 1
-      if (e.key.length >= 2 && typeof e.key[1] === "string") {
-        orgs.add(e.key[1]);
+
+  for (const indexPrefix of [["org"], ["org-by-slug"]] as Deno.KvKey[]) {
+    let cursor: string | null = null;
+    while (true) {
+      const page = await fetchExportPage(base, secret, indexPrefix, cursor, skipped);
+      for (const e of page.entries) {
+        // Both shapes: [indexType, identifier, ...] — identifier at position 1
+        if (e.key.length >= 2 && typeof e.key[1] === "string") {
+          ids.add(e.key[1]);
+        }
       }
+      if (page.done) break;
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
     }
-    if (page.done) break;
-    if (!page.nextCursor) break;
-    cursor = page.nextCursor;
   }
-  state.knownOrgs = [...orgs];
+
+  state.knownOrgs = [...ids];
   state.scanPrefixIdx = 0;
-  state.cursor = null;
+  state.cursors = {};
   state.phase = "scanning";
   const total = computeScanPrefixes(state.opts.types, state.knownOrgs).length;
-  console.log(`🔧 [MIGRATION:INIT:${sid}] orgs=${state.knownOrgs.join(",") || "(none)"} prefixes=${total} types=${state.opts.types?.join(",") ?? "(all)"}`);
+  console.log(`🔧 [MIGRATION:INIT:${sid}] knownOrgs=${state.knownOrgs.length} (${state.knownOrgs.slice(0, 6).join(",")}${state.knownOrgs.length > 6 ? "…" : ""}) prefixes=${total} types=${state.opts.types?.join(",") ?? "(all)"}`);
 }
 
 /** Computes the list of prefix walks to perform during the scanning phase.
- *  When `types` is empty/undefined, we walk the entire DB (one walk of `[]`).
+ *
+ *  When `types` is empty/undefined, we cover the entire DB by walking
+ *  per-org and per-global-type prefixes — this gives us 5-15 parallelizable
+ *  prefixes instead of one giant `[]` walk. (If knownOrgs is empty we fall
+ *  back to a single `[]` walk; should only happen if init failed.)
+ *
  *  When `types` is specified, we narrow to just the keyspaces that could
  *  contain matching values, across all three known prod key shapes:
  *    1. ["__TypePascal__", ...]            — TypedStore convention
@@ -634,7 +663,13 @@ async function initScanPrefixes(
 export function computeScanPrefixes(
   types: string[] | undefined, knownOrgs: string[],
 ): Array<Deno.KvKey> {
-  if (!types || types.length === 0) return [[]];
+  if (!types || types.length === 0) {
+    if (knownOrgs.length === 0) return [[]];
+    const prefixes: Deno.KvKey[] = [];
+    for (const org of knownOrgs) prefixes.push([org]);
+    for (const globalType of GLOBAL_TYPES) prefixes.push([globalType]);
+    return prefixes;
+  }
   const prefixes: Deno.KvKey[] = [];
   for (const type of types) {
     const pascal = type.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
@@ -652,93 +687,151 @@ export function computeScanPrefixes(
 
 // ── Tick phase: scan ─────────────────────────────────────────────────────────
 
-async function scanOneBatch(
+function groupHash(type: string, org: string, keyParts: (string | number)[]): string {
+  return `${type}\u0001${org}\u0001${JSON.stringify(keyParts)}`;
+}
+
+/** Builds a Set of group hashes from queue.entries for O(1) dedupe checks
+ *  during a tick. Without this, each new chunked entry would do an O(n)
+ *  linear scan of the queue — fine when scan is slow, quadratic when it
+ *  isn't. Built once per tick from the persisted queue. */
+function buildDedupeSet(queue: ChunkedQueueDoc): Set<string> {
+  const s = new Set<string>();
+  for (const e of queue.entries) s.add(groupHash(e.type, e.org, e.keyParts));
+  return s;
+}
+
+/** Process a single entry from /kv-export — apply filters, count by type,
+ *  enqueue chunked groups, write non-chunked values. Returns nothing;
+ *  mutates state and queue in place. */
+async function processEntry(
   state: PersistedJob,
   queue: ChunkedQueueDoc,
+  dedupe: Set<string>,
+  entry: { key: Deno.KvKey; value: unknown; versionstamp: string },
+): Promise<void> {
+  state.scanned++;
+
+  const decoded = decodeKey(entry.key);
+  if (!decoded) { state.skipped++; return; }
+  const bt = baseType(decoded.type);
+  if (SKIP_TYPES.has(bt)) { state.skipped++; return; }
+  if (state.opts.types && !state.opts.types.includes(bt)) { state.skipped++; return; }
+
+  if (state.opts.sinceVersionstamp && entry.versionstamp <= state.opts.sinceVersionstamp) {
+    state.skipped++; return;
+  }
+
+  if (state.opts.since !== undefined || state.opts.until !== undefined) {
+    const ts = valueTimestamp(bt, entry.value);
+    if (ts !== null) {
+      if (state.opts.since !== undefined && ts < state.opts.since) { state.skipped++; return; }
+      if (state.opts.until !== undefined && ts > state.opts.until) { state.skipped++; return; }
+    }
+  }
+
+  if (decoded.isChunkPart || decoded.isChunkMeta) {
+    const h = groupHash(decoded.type, decoded.org, decoded.keyParts);
+    if (!dedupe.has(h)) {
+      dedupe.add(h);
+      queue.entries.push({ type: decoded.type, org: decoded.org, keyParts: decoded.keyParts });
+      state.chunkedQueueSize++;
+      const acc = state.byType[bt] ?? { count: 0, chunkedCount: 0 };
+      acc.chunkedCount++;
+      state.byType[bt] = acc;
+    }
+    return;
+  }
+
+  // Non-chunked match — count for byType regardless of dryRun
+  const acc = state.byType[bt] ?? { count: 0, chunkedCount: 0 };
+  acc.count++;
+  state.byType[bt] = acc;
+
+  if (state.opts.dryRun) { state.skipped++; return; }
+
+  try {
+    await setStored(bt, decoded.org, decoded.keyParts, entry.value);
+    state.written++;
+  } catch (err) {
+    state.errors.push(`${bt}/${decoded.org}/${decoded.keyParts.join(",")}: ${String(err).slice(0, 200)}`);
+    if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+  }
+}
+
+/** Fires up to PARALLEL_PREFIX_WALKS /kv-export calls concurrently. Each
+ *  call corresponds to one scan-prefix at its current cursor. Returns true
+ *  if any progress was made this call. */
+async function scanParallelBatch(
+  state: PersistedJob,
+  queue: ChunkedQueueDoc,
+  dedupe: Set<string>,
   base: string,
   secret: string,
   skipped: Array<{ reason: string }>,
 ): Promise<boolean> {
   const sid = state.jobId.slice(-6);
-  // Recompute the prefix list from (opts.types, knownOrgs) — it's deterministic
-  // and avoids persisting Array<Deno.KvKey> (Firestore disallows nested arrays).
   const scanPrefixes = computeScanPrefixes(state.opts.types, state.knownOrgs);
-  if (state.scanPrefixIdx >= scanPrefixes.length) {
+
+  // Build the work batch: continue any in-progress prefixes, then top up
+  // with fresh ones from scanPrefixIdx.
+  const todo: Array<{ idx: number; cursor: string | null }> = [];
+  for (const [idxStr, c] of Object.entries(state.cursors)) {
+    if (todo.length >= PARALLEL_PREFIX_WALKS) break;
+    todo.push({ idx: Number(idxStr), cursor: c === FRESH_CURSOR ? null : c });
+  }
+  while (todo.length < PARALLEL_PREFIX_WALKS && state.scanPrefixIdx < scanPrefixes.length) {
+    state.cursors[String(state.scanPrefixIdx)] = FRESH_CURSOR;
+    todo.push({ idx: state.scanPrefixIdx, cursor: null });
+    state.scanPrefixIdx++;
+  }
+
+  if (todo.length === 0) {
     state.phase = state.chunkedQueueSize === 0 ? "done" : "chunked";
     console.log(`📦 [MIGRATION:SCAN:${sid}] all prefixes done queueSize=${state.chunkedQueueSize} phase=${state.phase}`);
     return false;
   }
 
-  const prefix = scanPrefixes[state.scanPrefixIdx];
-  const page = await fetchExportPage(base, secret, prefix, state.cursor, skipped);
-  console.log(`🔍 [MIGRATION:SCAN:${sid}] prefix=${JSON.stringify(prefix)} cursor=${(state.cursor ?? "-").slice(-8)} returned=${page.entries.length} done=${page.done}`);
+  // Fire all in parallel
+  const results = await Promise.allSettled(todo.map(async (t) => ({
+    idx: t.idx,
+    page: await fetchExportPage(base, secret, scanPrefixes[t.idx], t.cursor, skipped),
+  })));
 
-  for (const entry of page.entries) {
-    state.scanned++;
-
-    const decoded = decodeKey(entry.key);
-    if (!decoded) { state.skipped++; continue; }
-    if (SKIP_TYPES.has(baseType(decoded.type))) { state.skipped++; continue; }
-    if (state.opts.types && !state.opts.types.includes(baseType(decoded.type))) { state.skipped++; continue; }
-
-    if (state.opts.sinceVersionstamp && entry.versionstamp <= state.opts.sinceVersionstamp) {
-      state.skipped++; continue;
-    }
-
-    if (state.opts.since !== undefined || state.opts.until !== undefined) {
-      const ts = valueTimestamp(baseType(decoded.type), entry.value);
-      if (ts !== null) {
-        if (state.opts.since !== undefined && ts < state.opts.since) { state.skipped++; continue; }
-        if (state.opts.until !== undefined && ts > state.opts.until) { state.skipped++; continue; }
-      }
-    }
-
-    const bt = baseType(decoded.type);
-
-    if (decoded.isChunkPart || decoded.isChunkMeta) {
-      // De-dupe by group hash; chunk-part and chunk-meta both surface the same group
-      if (!queue.entries.some((e) =>
-        e.type === decoded.type && e.org === decoded.org &&
-        JSON.stringify(e.keyParts) === JSON.stringify(decoded.keyParts)
-      )) {
-        queue.entries.push({ type: decoded.type, org: decoded.org, keyParts: decoded.keyParts });
-        state.chunkedQueueSize++;
-        const acc = state.byType[bt] ?? { count: 0, chunkedCount: 0 };
-        acc.chunkedCount++;
-        state.byType[bt] = acc;
-      }
+  let totalReturned = 0;
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const idx = todo[i].idx;
+    if (r.status !== "fulfilled") {
+      state.errors.push(`prefix#${idx} (${JSON.stringify(scanPrefixes[idx])}): ${String(r.reason).slice(0, 160)}`);
+      if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+      // Cursor stays as-is (FRESH or previous) so we retry next tick.
       continue;
     }
-
-    // Non-chunked match — count it for byType regardless of dryRun
-    const acc = state.byType[bt] ?? { count: 0, chunkedCount: 0 };
-    acc.count++;
-    state.byType[bt] = acc;
-
-    if (state.opts.dryRun) { state.skipped++; continue; }
-
-    try {
-      await setStored(bt, decoded.org, decoded.keyParts, entry.value);
-      state.written++;
-    } catch (err) {
-      state.errors.push(`${bt}/${decoded.org}/${decoded.keyParts.join(",")}: ${String(err).slice(0, 200)}`);
-      if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+    const { page } = r.value;
+    totalReturned += page.entries.length;
+    for (const entry of page.entries) {
+      await processEntry(state, queue, dedupe, entry);
+    }
+    if (page.done) {
+      delete state.cursors[String(idx)];
+    } else if (page.nextCursor) {
+      state.cursors[String(idx)] = page.nextCursor;
+    } else {
+      // done=false but no cursor — defensive: treat as done to avoid loop
+      delete state.cursors[String(idx)];
     }
   }
 
-  state.cursor = page.nextCursor;
+  console.log(`🔍 [MIGRATION:SCAN:${sid}] parallel=${todo.length} returned=${totalReturned} inFlight=${Object.keys(state.cursors).length} nextIdx=${state.scanPrefixIdx}/${scanPrefixes.length}`);
 
-  if (page.done) {
-    // Move to next prefix
-    state.scanPrefixIdx++;
-    state.cursor = null;
-    if (state.scanPrefixIdx >= scanPrefixes.length) {
-      state.phase = state.chunkedQueueSize === 0 ? "done" : "chunked";
-      console.log(`📦 [MIGRATION:SCAN:${sid}] all prefixes done queueSize=${state.chunkedQueueSize} phase=${state.phase}`);
-    }
+  // If everything assigned has finished AND no new prefixes left, we're done.
+  if (Object.keys(state.cursors).length === 0 && state.scanPrefixIdx >= scanPrefixes.length) {
+    state.phase = state.chunkedQueueSize === 0 ? "done" : "chunked";
+    console.log(`📦 [MIGRATION:SCAN:${sid}] all prefixes done queueSize=${state.chunkedQueueSize} phase=${state.phase}`);
   }
 
-  return page.entries.length > 0 || page.done;
+  return totalReturned > 0 || todo.length > 0;
 }
 
 function valueTimestamp(type: string, value: unknown): number | null {

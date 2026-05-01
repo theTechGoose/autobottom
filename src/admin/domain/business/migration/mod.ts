@@ -1,8 +1,13 @@
 /** KV → Firestore migration business logic.
  *
- *  Runs inside the deployed refactor process. Reads remote prod KV via
- *  PROD_KV_URL + KV_ACCESS_TOKEN. Writes Firestore via the same setStored API
- *  the rest of the app uses. Never writes to prod KV.
+ *  Reads prod data over HTTP via a password-protected export endpoint on the
+ *  prod (`main` branch) deployment. The prod app exposes:
+ *    POST {PROD_EXPORT_BASE_URL}/admin/kv-export    — paginated list
+ *    POST {PROD_EXPORT_BASE_URL}/admin/kv-inventory — single-shot key counts
+ *  Both authenticated by KV_EXPORT_SECRET in the Authorization header.
+ *
+ *  Writes Firestore via the same setStored API the rest of the app uses.
+ *  Never writes back to prod KV.
  *
  *  Jobs are tracked in-memory; survive only as long as the isolate is alive.
  *  Re-running is safe — every write is an idempotent upsert keyed by
@@ -95,80 +100,131 @@ function classifyChunk(type: string, org: string, rest: (string | number)[]): De
   return { type, org, keyParts: rest, isChunkPart: false, isChunkMeta: false };
 }
 
-// ── Prod KV connection ───────────────────────────────────────────────────────
+// ── Prod connection (HTTP-based) ─────────────────────────────────────────────
 
-export function prodKvUrl(): string {
-  return Deno.env.get("PROD_KV_URL") ?? "";
+export function prodExportBaseUrl(): string {
+  return (Deno.env.get("PROD_EXPORT_BASE_URL") ?? "").replace(/\/+$/, "");
 }
 
 export function ensureProdKvConfigured(): { ok: true } | { ok: false; error: string } {
-  const url = prodKvUrl();
-  if (!url) return { ok: false, error: "PROD_KV_URL env var is not set" };
-  if (!Deno.env.get("KV_ACCESS_TOKEN")) {
-    return { ok: false, error: "KV_ACCESS_TOKEN env var is not set" };
+  const url = prodExportBaseUrl();
+  if (!url) return { ok: false, error: "PROD_EXPORT_BASE_URL env var is not set" };
+  if (!Deno.env.get("KV_EXPORT_SECRET")) {
+    return { ok: false, error: "KV_EXPORT_SECRET env var is not set" };
   }
-  if (!url.startsWith("https://api.deno.com/databases/")) {
-    return { ok: false, error: `PROD_KV_URL doesn't look like a Deno Deploy KV URL: ${url}` };
+  if (!url.startsWith("https://")) {
+    return { ok: false, error: `PROD_EXPORT_BASE_URL must start with https://: ${url}` };
   }
   return { ok: true };
 }
 
-/** Direct HTTP probe to the KV Connect URL. Bypasses Deno.openKv entirely
- *  so we can see the raw server response — proves whether the token even
- *  reaches the server, what status code comes back, and what the body says.
- *  Per KV Connect protocol: POST to the base URL with a version-negotiation
- *  body. 200 = token valid for this DB. 401/403 = token wrong scope.
- *  404 = URL wrong. */
-async function probeProdKv(url: string, token: string): Promise<void> {
-  const masked = url.replace(/databases\/([0-9a-f-]+)/i, (_, id) => `databases/${id.slice(0, 8)}…`);
-  console.log(`[MIGRATE-PROBE] POST ${masked} with Authorization: Bearer <${token.length}-char token>`);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ supportedVersions: [1, 2, 3] }),
-    });
-    const bodyText = await res.text();
-    const bodyPreview = bodyText.length > 300 ? bodyText.slice(0, 300) + "…" : bodyText;
-    console.log(`[MIGRATE-PROBE] status=${res.status} ${res.statusText} body=${JSON.stringify(bodyPreview)}`);
-    if (res.status >= 400) {
-      console.log(`[MIGRATE-PROBE] ❌ Token+URL combo rejected by KV server. ${res.status === 401 || res.status === 403 ? "Token lacks scope for this database." : res.status === 404 ? "URL is wrong (database not found)." : "Unexpected error."}`);
-    } else {
-      console.log(`[MIGRATE-PROBE] ✅ Token+URL combo works at HTTP layer. If Deno.openKv still fails, it's a runtime plumbing issue.`);
+/** Reverse of the prod-side encodeValue tag scheme. */
+function decodeValue(v: unknown, skipped: Array<{ reason: string }>): unknown {
+  if (v === null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map((x) => decodeValue(x, skipped));
+  const obj = v as Record<string, unknown>;
+  const tag = obj["__kvType"];
+  if (typeof tag === "string") {
+    if (tag === "u8a" && typeof obj["data"] === "string") {
+      const bin = atob(obj["data"]);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
     }
-  } catch (e) {
-    console.log(`[MIGRATE-PROBE] ❌ fetch() threw: ${e}`);
+    if (tag === "date" && typeof obj["iso"] === "string") {
+      return new Date(obj["iso"]);
+    }
+    if (tag === "skipped") {
+      skipped.push({ reason: String(obj["reason"] ?? "unknown") });
+      return null;
+    }
+    // Unknown tag — pass through as-is so it's visible in errors
+    return v;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(obj)) out[k] = decodeValue(val, skipped);
+  return out;
+}
+
+/** Read-only HTTP client over the prod /admin/kv-export endpoint. Exposes
+ *  a Deno.Kv-like .list() async iterator + .close() so the migration loop's
+ *  call sites stay unchanged. */
+export interface ProdReaderEntry {
+  key: Deno.KvKey;
+  value: unknown;
+  versionstamp: string;
+}
+
+export interface ProdKvReader {
+  list(opts: { prefix: Deno.KvKey }): AsyncIterable<ProdReaderEntry>;
+  /** Skipped values surfaced during decode — values the prod side couldn't
+   *  represent over JSON (bigint/Map/Set). Caller should surface these as
+   *  errors. Mutated in place as iteration proceeds. */
+  readonly skipped: Array<{ reason: string }>;
+  close(): void;
+}
+
+const EXPORT_BATCH_LIMIT = 500;
+
+class HttpProdKvReader implements ProdKvReader {
+  readonly skipped: Array<{ reason: string }> = [];
+  constructor(private readonly base: string, private readonly secret: string) {}
+
+  async *list(opts: { prefix: Deno.KvKey }): AsyncIterable<ProdReaderEntry> {
+    let cursor: string | undefined;
+    let page = 0;
+    while (true) {
+      const body: Record<string, unknown> = { prefix: opts.prefix, limit: EXPORT_BATCH_LIMIT };
+      if (cursor) body.cursor = cursor;
+      const res = await fetch(`${this.base}/admin/kv-export`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.secret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`kv-export HTTP ${res.status}: ${text.slice(0, 300)}`);
+      }
+      const data = await res.json() as {
+        ok: boolean;
+        entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }>;
+        nextCursor?: string;
+        done: boolean;
+        error?: string;
+      };
+      if (!data.ok) throw new Error(`kv-export error: ${data.error ?? "unknown"}`);
+      page++;
+      for (const e of data.entries) {
+        yield {
+          key: e.key,
+          value: decodeValue(e.value, this.skipped),
+          versionstamp: e.versionstamp,
+        };
+      }
+      if (data.done) return;
+      cursor = data.nextCursor;
+      if (!cursor) {
+        throw new Error(`kv-export done=false but no nextCursor (page ${page})`);
+      }
+    }
+  }
+
+  close(): void {
+    // No-op — HTTP is stateless, no connection to release.
   }
 }
 
-async function openProdKv(): Promise<Deno.Kv> {
-  const url = prodKvUrl();
-  if (!url) throw new Error("PROD_KV_URL not configured");
-  const tok = Deno.env.get("KV_ACCESS_TOKEN");
-  if (!tok) throw new Error("KV_ACCESS_TOKEN env var is not set");
-
-  // Probe first — definitive HTTP-layer diagnostic. Tells us whether the
-  // token+URL combo even works against the KV server, independent of any
-  // client-library plumbing.
-  await probeProdKv(url, tok);
-
-  // Try npm:@deno/kv first — accepts an explicit accessToken, bypassing
-  // the DENO_KV_ACCESS_TOKEN env var that Deno Deploy auto-injects with
-  // its own internal token (wrong scope for prod KV).
-  try {
-    const mod = await import("npm:@deno/kv@^0.8.4");
-    // deno-lint-ignore no-explicit-any
-    const openKvExplicit = (mod as any).openKv as (url: string, opts: { accessToken: string }) => Promise<Deno.Kv>;
-    console.log(`[MIGRATE-AUTH] opening prod KV via npm:@deno/kv with explicit accessToken (len=${tok.length})`);
-    return await openKvExplicit(url, { accessToken: tok });
-  } catch (e) {
-    console.log(`[MIGRATE-AUTH] ⚠️ npm:@deno/kv path failed (${(e as Error).message}); falling back to Deno.openKv + env-var bridge`);
-    Deno.env.set("DENO_KV_ACCESS_TOKEN", tok);
-    return await Deno.openKv(url);
-  }
+function openProdReader(): ProdKvReader {
+  const base = prodExportBaseUrl();
+  if (!base) throw new Error("PROD_EXPORT_BASE_URL not configured");
+  const rawSecret = Deno.env.get("KV_EXPORT_SECRET");
+  if (!rawSecret) throw new Error("KV_EXPORT_SECRET env var is not set");
+  const secret = rawSecret.trim();
+  console.log(`[MIGRATE] prod reader: base=${base} secretLen=${secret.length}`);
+  return new HttpProdKvReader(base, secret);
 }
 
 // ── Inventory ────────────────────────────────────────────────────────────────
@@ -180,32 +236,77 @@ export interface InventoryRow {
   chunkedCount: number;
 }
 
-/** Walks every key in prod KV, groups by (org, type), returns counts.
- *  Chunked groups are counted once per group (via _n meta marker). */
+interface InventoryResponse {
+  ok: boolean;
+  totalKeys: number;
+  byPrefix: Record<string, number>;
+  error?: string;
+}
+
+/** Calls the prod /admin/kv-inventory endpoint (single ~30s POST that walks
+ *  the entire prod KV server-side and returns aggregate counts). Translates
+ *  the response into the {org, type, count, chunkedCount} row shape the UI
+ *  expects. Surfaces errors directly — never silently falls back. */
 export async function inventoryProdKv(): Promise<InventoryRow[]> {
-  const kv = await openProdKv();
-  const counts = new Map<string, { count: number; chunkedCount: number }>();
-  try {
-    for await (const entry of kv.list({ prefix: [] })) {
-      const decoded = decodeKey(entry.key);
-      if (!decoded) continue;
-      if (decoded.isChunkPart) continue;
-      const k = `${decoded.org}\u0001${decoded.type}`;
-      const cur = counts.get(k) ?? { count: 0, chunkedCount: 0 };
-      if (decoded.isChunkMeta) cur.chunkedCount++;
-      else cur.count++;
-      counts.set(k, cur);
+  const ck = ensureProdKvConfigured();
+  if (!ck.ok) throw new Error(ck.error);
+
+  const base = prodExportBaseUrl();
+  const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
+  const res = await fetch(`${base}/admin/kv-inventory`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${secret}`,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`kv-inventory HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const data = await res.json() as InventoryResponse;
+  if (!data.ok) throw new Error(`kv-inventory error: ${data.error ?? "unknown"}`);
+
+  // Aggregate prefixes into {org, type, count, chunkedCount} rows.
+  const rows = new Map<string, { count: number; chunkedCount: number }>();
+  const chunkRe = /^(.+)-chunk-(\d+)$/;
+  for (const [prefix, count] of Object.entries(data.byPrefix)) {
+    const slash = prefix.indexOf("/");
+    let org: string;
+    let typeRaw: string;
+    if (slash < 0) {
+      org = "";
+      typeRaw = prefix;
+    } else {
+      org = prefix.slice(0, slash);
+      typeRaw = prefix.slice(slash + 1);
     }
-  } finally {
-    kv.close();
+    const m = chunkRe.exec(typeRaw);
+    if (m) {
+      // Per the contract, chunk-N counts are equal across N (each group has
+      // every chunk index). Count chunked groups exactly once via chunk-0.
+      const chunkIdx = Number(m[2]);
+      const baseType = m[1];
+      const k = `${org}\u0001${baseType}`;
+      const cur = rows.get(k) ?? { count: 0, chunkedCount: 0 };
+      if (chunkIdx === 0) cur.chunkedCount += count;
+      rows.set(k, cur);
+    } else {
+      const k = `${org}\u0001${typeRaw}`;
+      const cur = rows.get(k) ?? { count: 0, chunkedCount: 0 };
+      cur.count += count;
+      rows.set(k, cur);
+    }
   }
-  const rows: InventoryRow[] = [];
-  for (const [k, v] of counts) {
+
+  const out: InventoryRow[] = [];
+  for (const [k, v] of rows) {
     const [org, type] = k.split("\u0001", 2);
-    rows.push({ org, type, count: v.count, chunkedCount: v.chunkedCount });
+    out.push({ org, type, count: v.count, chunkedCount: v.chunkedCount });
   }
-  rows.sort((a, b) => (b.count + b.chunkedCount) - (a.count + a.chunkedCount));
-  return rows;
+  out.sort((a, b) => (b.count + b.chunkedCount) - (a.count + a.chunkedCount));
+  return out;
 }
 
 // ── Job state ────────────────────────────────────────────────────────────────
@@ -306,7 +407,7 @@ async function runMigrationLoop(job: JobState, sid: string): Promise<void> {
 
   console.log(`🚀 [MIGRATE:${sid}] start types=${job.opts.types?.join(",") ?? "(all)"} since=${job.opts.since ?? "-"} until=${job.opts.until ?? "-"} dryRun=${!!job.opts.dryRun} sinceVS=${job.opts.sinceVersionstamp ?? "-"}`);
 
-  const kv = await openProdKv();
+  const kv = openProdReader();
   job.message = "scanning prod KV";
   const chunkedQueued = new Set<string>();
 
@@ -374,6 +475,15 @@ async function runMigrationLoop(job: JobState, sid: string): Promise<void> {
         if (job.errors.length > 50) job.errors = job.errors.slice(-50);
       }
     }
+
+    // Surface skipped values from decode (bigint/Map/Set on prod side)
+    if (kv.skipped.length > 0) {
+      const reasons = new Map<string, number>();
+      for (const s of kv.skipped) reasons.set(s.reason, (reasons.get(s.reason) ?? 0) + 1);
+      for (const [reason, n] of reasons) {
+        job.errors.push(`⚠️ ${n} value(s) un-migrated: prod-side ${reason} cannot be JSON-encoded`);
+      }
+    }
   } finally {
     kv.close();
   }
@@ -389,39 +499,51 @@ async function runMigrationLoop(job: JobState, sid: string): Promise<void> {
   }
 }
 
+/** Reassemble a chunked group via list-prefix (one or few HTTP calls vs N+1
+ *  individual gets). The group's chunk parts share a common prefix; the
+ *  meta `_n` key sits at the same level. We list everything under the
+ *  prefix and demux meta vs slices in memory. Tries the three known prod
+ *  key shapes (TypedStore __TypePascal__, global type, orgKey). */
 async function migrateChunkedGroup(
-  kv: Deno.Kv, type: string, org: string, keyParts: (string | number)[], dryRun?: boolean,
+  kv: ProdKvReader, type: string, org: string, keyParts: (string | number)[], dryRun?: boolean,
 ): Promise<void> {
-  // Try both metadata key shapes — figure out which one the entry actually used.
-  const candidates: Deno.KvKey[] = [];
-  // Typed-store: ["__TypePascal__", org, ...key, "_n"]
   const pascal = type.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
-  candidates.push([`__${pascal}__`, org, ...keyParts, "_n"]);
-  // Global typed: ["type-name", ...key, "_n"]
-  if (org === "") candidates.push([type, ...keyParts, "_n"]);
-  // orgKey: [org, type, ...key, "_n"]
-  candidates.push([org, type, ...keyParts, "_n"]);
+  const candidates: Deno.KvKey[] = [];
+  candidates.push([`__${pascal}__`, org, ...keyParts]);
+  if (org === "") candidates.push([type, ...keyParts]);
+  candidates.push([org, type, ...keyParts]);
 
-  let metaKey: Deno.KvKey | null = null;
-  let totalChunks = 0;
-  for (const c of candidates) {
-    const r = await kv.get<number>(c);
-    if (typeof r.value === "number") { metaKey = c; totalChunks = r.value; break; }
+  for (const groupPrefix of candidates) {
+    let metaTotal: number | null = null;
+    const slices: string[] = [];
+    let foundAny = false;
+
+    for await (const e of kv.list({ prefix: groupPrefix })) {
+      foundAny = true;
+      const last = e.key[e.key.length - 1];
+      if (last === "_n" && typeof e.value === "number") {
+        metaTotal = e.value;
+      } else if (typeof last === "number" && typeof e.value === "string") {
+        slices[last] = e.value;
+      }
+    }
+
+    if (!foundAny) continue;
+    if (metaTotal === null || metaTotal <= 0) {
+      throw new Error(`no _n meta found for chunked group ${JSON.stringify(groupPrefix)}`);
+    }
+    for (let i = 0; i < metaTotal; i++) {
+      if (typeof slices[i] !== "string") {
+        throw new Error(`chunk ${i}/${metaTotal} missing for ${JSON.stringify(groupPrefix)}`);
+      }
+    }
+    const payload = JSON.parse(slices.slice(0, metaTotal).join(""));
+    if (!dryRun) {
+      await setStoredChunked(type, org, keyParts, payload);
+    }
+    return;
   }
-  if (!metaKey || totalChunks <= 0) {
-    throw new Error(`no _n meta found for chunked group`);
-  }
-  const slicePrefix = metaKey.slice(0, -1);
-  const slices: string[] = [];
-  for (let i = 0; i < totalChunks; i++) {
-    const r = await kv.get<string>([...slicePrefix, i]);
-    if (typeof r.value !== "string") throw new Error(`chunk ${i}/${totalChunks} missing`);
-    slices.push(r.value);
-  }
-  const payload = JSON.parse(slices.join(""));
-  if (!dryRun) {
-    await setStoredChunked(type, org, keyParts, payload);
-  }
+  throw new Error(`chunked group not found at any known key shape for ${type}/${org}/${keyParts.join(",")}`);
 }
 
 // ── Snapshot + Verify ────────────────────────────────────────────────────────
@@ -436,7 +558,7 @@ export interface Snapshot {
 /** Capture a "high-water mark" of prod KV for cutover delta migration.
  *  We pick the largest versionstamp from a small sample of recent activity. */
 export async function captureSnapshot(): Promise<Snapshot> {
-  const kv = await openProdKv();
+  const kv = openProdReader();
   let maxVs = "00000000000000000000";
   let sampleKey = "";
   let scanned = 0;
@@ -466,7 +588,7 @@ export interface VerifyReport {
 /** Sample N random keys from prod KV; for each, read the same value back from
  *  Firestore and compare. Returns a count summary plus up to 20 examples. */
 export async function verifyMigration(sampleSize = 50): Promise<VerifyReport> {
-  const kv = await openProdKv();
+  const kv = openProdReader();
   const samples: Array<{ key: Deno.KvKey; value: unknown }> = [];
   try {
     let i = 0;

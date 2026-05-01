@@ -18,7 +18,7 @@ import {
 export class MigrationController {
 
   @Get("config-check") @ReturnedType(MessageResponse)
-  @Description("Check whether PROD_KV_URL + KV_ACCESS_TOKEN are set and look valid")
+  @Description("Check whether PROD_EXPORT_BASE_URL + KV_EXPORT_SECRET are set and look valid")
   configCheck() {
     const r = ensureProdKvConfigured();
     if (!r.ok) return { ok: false, message: r.error };
@@ -156,6 +156,5 @@ function shallowJob(j: JobState) {
 }
 
 function maskUrl(): string {
-  const u = Deno.env.get("PROD_KV_URL") ?? "";
-  return u.replace(/databases\/([0-9a-f-]+)/i, (_, id) => `databases/${id.slice(0, 8)}…`);
+  return Deno.env.get("PROD_EXPORT_BASE_URL") ?? "";
 }

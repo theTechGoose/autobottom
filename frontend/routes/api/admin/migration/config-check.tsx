@@ -1,4 +1,4 @@
-/** HTMX fragment: sanity-check that PROD_KV_URL + KV_ACCESS_TOKEN are set. */
+/** HTMX fragment: sanity-check that PROD_EXPORT_BASE_URL + KV_EXPORT_SECRET are set. */
 import { define } from "../../../../lib/define.ts";
 import { apiFetch } from "../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";

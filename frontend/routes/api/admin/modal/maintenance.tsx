@@ -211,7 +211,7 @@ function BulkFlipPanel() {
 function MigrationPanel() {
   return (
     <div style="display:flex;flex-direction:column;gap:12px;">
-      <PanelCard title="Configuration" subtitle="Read prod KV via PROD_KV_URL + KV_ACCESS_TOKEN env vars; write Firestore. Idempotent — re-run safely.">
+      <PanelCard title="Configuration" subtitle="Read prod KV via PROD_EXPORT_BASE_URL + KV_EXPORT_SECRET env vars (HTTP export endpoint on main); write Firestore. Idempotent — re-run safely.">
         <div style="display:flex;align-items:center;gap:10px;">
           <button class="sf-btn ghost" style="padding:6px 12px;font-size:11px;" hx-get="/api/admin/migration/config-check" hx-target="#mig-config" hx-swap="innerHTML" hx-trigger="click, load">Check Config</button>
           <div id="mig-config" style="flex:1;"></div>

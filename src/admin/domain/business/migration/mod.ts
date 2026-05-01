@@ -456,7 +456,7 @@ export async function inventoryProdKv(): Promise<{ rows: InventoryRow[]; partial
 // ── Job state (Firestore-persisted) ──────────────────────────────────────────
 
 export type JobStatus = "running" | "done" | "cancelled" | "error";
-export type JobPhase = "init" | "scanning" | "index-walk" | "chunked" | "done";
+export type JobPhase = "init" | "scanning" | "index-walk" | "chunked" | "writing" | "done";
 
 export interface RunOpts {
   types?: string[];

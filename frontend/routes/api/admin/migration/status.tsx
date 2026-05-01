@@ -11,7 +11,7 @@ interface JobView {
   endedAt: number | null;
   status: "running" | "done" | "cancelled" | "error";
   cancelled: boolean;
-  phase?: "init" | "scanning" | "chunked" | "done";
+  phase?: "init" | "scanning" | "index-walk" | "chunked" | "writing" | "done";
   scanned: number;
   written: number;
   writtenChunked: number;

@@ -223,7 +223,7 @@ function MigrationPanel() {
         <div id="mig-inventory" style="max-height:220px;overflow:auto;"></div>
       </PanelCard>
 
-      <PanelCard title="⚡ Fast Migration (index-driven)" subtitle="Walks audit-done-idx with server-side date filter, queues finding + transcript + audit-job per indexed findingId. Skips the full TypedStore walk. ~30 sec per day. Doesn't migrate batch-answers / populated-questions / configs — run a normal scan periodically for those.">
+      <PanelCard title="⚡ Fast Migration (index-driven)" subtitle="Walks audit-done-idx with server-side date filter, queues finding + transcript + audit-job per indexed findingId. Skips the full TypedStore walk. ~30 sec per day. Hard cap of 5000 findings per run — chunk by day or narrower if you hit it. Doesn't migrate batch-answers / populated-questions / configs — run a normal scan periodically for those.">
         <form hx-post="/api/admin/migration/run" hx-target="#mig-runs" hx-swap="afterbegin" hx-encoding="multipart/form-data">
           <input type="hidden" name="mode" value="index-driven" />
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">

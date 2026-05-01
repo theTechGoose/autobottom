@@ -4275,28 +4275,33 @@ async function handleKvExport(req: Request): Promise<Response> {
   const authErr = requireKvExportSecret(req);
   if (authErr) return authErr;
 
-  let body: { prefix?: unknown; cursor?: string; limit?: number } = {};
+  let body: { prefix?: unknown; cursor?: string; limit?: number; keysOnly?: unknown } = {};
   try { body = await req.json(); } catch { /* empty body OK */ }
 
   const prefix = Array.isArray(body.prefix) ? (body.prefix as Deno.KvKey) : [];
   const cursor = typeof body.cursor === "string" ? body.cursor : undefined;
   const rawLimit = typeof body.limit === "number" ? body.limit : 500;
   const limit = Math.max(1, Math.min(2000, Math.floor(rawLimit)));
+  const keysOnly = body.keysOnly === true;
 
   const db = await Deno.openKv(Deno.env.get("KV_URL") ?? undefined);
   const iter = db.list({ prefix }, { cursor, limit, batchSize: limit });
 
-  const entries: Array<{ key: Deno.KvKey; value: unknown; versionstamp: string }> = [];
+  const entries: Array<{ key: Deno.KvKey; value?: unknown; versionstamp: string }> = [];
   for await (const e of iter) {
-    entries.push({
-      key: e.key,
-      value: encodeKvValue(e.value),
-      versionstamp: e.versionstamp,
-    });
+    if (keysOnly) {
+      entries.push({ key: e.key, versionstamp: e.versionstamp });
+    } else {
+      entries.push({
+        key: e.key,
+        value: encodeKvValue(e.value),
+        versionstamp: e.versionstamp,
+      });
+    }
   }
 
   const done = entries.length < limit;
-  console.log(`🔍 [kv-export] prefix=${JSON.stringify(prefix)} returned=${entries.length} done=${done}`);
+  console.log(`🔍 [kv-export] prefix=${JSON.stringify(prefix)} returned=${entries.length} keysOnly=${keysOnly} done=${done}`);
   return json({ ok: true, entries, nextCursor: iter.cursor, done });
 }
 

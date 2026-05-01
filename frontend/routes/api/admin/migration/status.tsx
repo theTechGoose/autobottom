@@ -11,10 +11,17 @@ interface JobView {
   endedAt: number | null;
   status: "running" | "done" | "cancelled" | "error";
   cancelled: boolean;
+  phase?: "init" | "scanning" | "chunked" | "done";
   scanned: number;
   written: number;
   writtenChunked: number;
   skipped: number;
+  chunkedQueueSize?: number;
+  chunkedQueueProcessed?: number;
+  byType?: Record<string, { count: number; chunkedCount: number }>;
+  knownOrgs?: string[];
+  scanPrefixesTotal?: number;
+  scanPrefixIdx?: number;
   errorCount: number;
   errors: string[];
   message: string;
@@ -107,7 +114,39 @@ function JobView({ j }: { j: JobView }) {
         <Stat label="Skipped" v={j.skipped} dim />
         <Stat label="Errors" v={j.errorCount} dim={j.errorCount === 0} red={j.errorCount > 0} />
       </div>
-      <div style="font-size:11px;color:var(--text-dim);">{j.message}</div>
+      <div style="font-size:11px;color:var(--text-dim);">
+        {j.phase && <span style="display:inline-block;padding:1px 6px;background:var(--border);border-radius:3px;color:var(--text-bright);font-family:monospace;font-size:10px;text-transform:uppercase;margin-right:6px;">{j.phase}</span>}
+        {typeof j.scanPrefixIdx === "number" && typeof j.scanPrefixesTotal === "number" && j.scanPrefixesTotal > 0 && j.phase === "scanning" && (
+          <span style="margin-right:6px;">prefix {j.scanPrefixIdx + 1}/{j.scanPrefixesTotal}</span>
+        )}
+        {j.phase === "chunked" && typeof j.chunkedQueueProcessed === "number" && typeof j.chunkedQueueSize === "number" && (
+          <span style="margin-right:6px;">chunked {j.chunkedQueueProcessed}/{j.chunkedQueueSize}</span>
+        )}
+        {j.message}
+      </div>
+      {j.byType && Object.keys(j.byType).length > 0 && (
+        <details open style="margin-top:6px;">
+          <summary style="font-size:11px;color:var(--text-dim);cursor:pointer;">Per-type counters ({Object.keys(j.byType).length})</summary>
+          <table style="width:100%;font-size:10px;font-family:monospace;margin-top:4px;border-collapse:collapse;">
+            <thead>
+              <tr style="color:var(--text-dim);text-align:left;">
+                <th style="padding:2px 6px;">Type</th>
+                <th style="padding:2px 6px;text-align:right;">Simple</th>
+                <th style="padding:2px 6px;text-align:right;">Chunked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(j.byType).sort(([, a], [, b]) => (b.count + b.chunkedCount) - (a.count + a.chunkedCount)).map(([type, c]) => (
+                <tr style="border-top:1px solid var(--border-soft);">
+                  <td style="padding:2px 6px;color:var(--text-bright);">{type}</td>
+                  <td style="padding:2px 6px;text-align:right;">{c.count.toLocaleString()}</td>
+                  <td style="padding:2px 6px;text-align:right;">{c.chunkedCount.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
       {j.errors.length > 0 && (
         <details style="margin-top:6px;">
           <summary style="font-size:11px;color:var(--red);cursor:pointer;">{j.errors.length} recent errors</summary>

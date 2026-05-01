@@ -29,8 +29,14 @@ const TICK_BUDGET_MS = 30_000;
  *  prevent zombie-polling. */
 const STALE_TICK_MS = 5 * 60_000;
 /** /kv-export pagination batch size. Higher = fewer round-trips, more
- *  memory per request. 500 matches the prod-side default. */
-const EXPORT_BATCH_LIMIT = 500;
+ *  memory per request. Prod-side max is 2000. */
+const EXPORT_BATCH_LIMIT = 2000;
+/** Max chunked-group reassemblies to fire in parallel within one tick.
+ *  Each is one /kv-export prefix walk (returning ~5-6 entries). */
+const CHUNKED_PARALLEL = 10;
+/** Chunk-N variants to probe per (org, type) when prefix-narrowing.
+ *  Variants beyond this are missed; we widen if needed. */
+const CHUNK_VARIANT_PROBE_MAX = 10;
 
 // ── Type classification ──────────────────────────────────────────────────────
 
@@ -101,6 +107,14 @@ function classifyChunk(type: string, org: string, rest: (string | number)[]): De
     return { type, org, keyParts: rest.slice(0, -1), isChunkPart: true, isChunkMeta: false };
   }
   return { type, org, keyParts: rest, isChunkPart: false, isChunkMeta: false };
+}
+
+/** Strip `-chunk-N` suffix so `audit-finding-chunk-0` matches user filter
+ *  `audit-finding`. Without this, chunked types are silently dropped from
+ *  type-filtered runs. */
+const CHUNK_SUFFIX_RE = /-chunk-\d+$/;
+export function baseType(decodedType: string): string {
+  return decodedType.replace(CHUNK_SUFFIX_RE, "");
 }
 
 // ── Prod connection ──────────────────────────────────────────────────────────
@@ -296,7 +310,7 @@ export async function inventoryProdKv(): Promise<{ rows: InventoryRow[]; partial
 // ── Job state (Firestore-persisted) ──────────────────────────────────────────
 
 export type JobStatus = "running" | "done" | "cancelled" | "error";
-export type JobPhase = "scanning" | "chunked" | "done";
+export type JobPhase = "init" | "scanning" | "chunked" | "done";
 
 export interface RunOpts {
   types?: string[];
@@ -322,6 +336,16 @@ export interface PersistedJob {
   message: string;
   lastTickAt: number;
   opts: RunOpts;
+  /** Per-base-type counters; populated even on dry-run so the user can see
+   *  what's being matched live. Key = base type (chunk suffix stripped). */
+  byType: Record<string, { count: number; chunkedCount: number }>;
+  /** Prefix list to walk during scanning phase. Computed in `init` phase
+   *  from (types, knownOrgs). Empty array = no narrowing (full DB scan). */
+  scanPrefixes: Array<Deno.KvKey>;
+  /** Index into scanPrefixes of the prefix currently being walked. */
+  scanPrefixIdx: number;
+  /** Orgs discovered during init phase. Used to compute scanPrefixes. */
+  knownOrgs: string[];
   /** Number of chunked-groups discovered so far. */
   chunkedQueueSize: number;
   /** Number of chunked-groups processed (or marked seen) so far. */
@@ -378,13 +402,17 @@ export async function createJob(opts: RunOpts): Promise<string> {
     endedAt: null,
     status: "running",
     cancelled: false,
-    phase: "scanning",
+    phase: "init",
     cursor: null,
     scanned: 0, written: 0, writtenChunked: 0, skipped: 0,
     errors: [],
     message: "queued — first tick pending",
     lastTickAt: now,
     opts,
+    byType: {},
+    scanPrefixes: [],
+    scanPrefixIdx: 0,
+    knownOrgs: [],
     chunkedQueueSize: 0,
     chunkedQueueProcessed: 0,
   };
@@ -495,23 +523,25 @@ export async function tickJob(jobId: string): Promise<PersistedJob | null> {
         lastCancelCheckAt = Date.now();
       }
 
-      if (state.phase === "scanning") {
+      if (state.phase === "init") {
+        await initScanPrefixes(state, base, secret);
+        progressed = true;
+      } else if (state.phase === "scanning") {
         if (queue === null) queue = await loadQueue(jobId);
         const moved = await scanOneBatch(state, queue, base, secret, skipped);
         if (moved) { progressed = true; queueDirty = true; }
         if (state.phase !== "scanning") {
-          // transitioned to chunked phase — flush queue once now
           if (queueDirty) { await saveQueue(queue); queueDirty = false; }
         }
       } else if (state.phase === "chunked") {
         if (queue === null) queue = await loadQueue(jobId);
-        const moved = await reassembleNextChunked(state, queue, base, secret);
+        const moved = await reassembleChunkedBatch(state, queue, base, secret);
         if (moved) progressed = true;
       } else {
         break;
       }
 
-      if (!progressed) break; // defensive — avoid spin loops
+      if (!progressed) break;
       progressed = false;
     }
   } catch (err) {
@@ -560,6 +590,66 @@ export async function tickJob(jobId: string): Promise<PersistedJob | null> {
   return state;
 }
 
+// ── Tick phase: init (discover orgs + compute prefixes) ─────────────────────
+
+async function initScanPrefixes(
+  state: PersistedJob, base: string, secret: string,
+): Promise<void> {
+  const sid = state.jobId.slice(-6);
+  console.log(`🔧 [MIGRATION:INIT:${sid}] discovering orgs`);
+
+  // Discover orgs by walking ["org"] prefix. Tiny — usually 1-10 entries.
+  const orgs = new Set<string>();
+  let cursor: string | null = null;
+  const skipped: Array<{ reason: string }> = [];
+  while (true) {
+    const page = await fetchExportPage(base, secret, ["org"], cursor, skipped);
+    for (const e of page.entries) {
+      // ["org", orgId] — orgId is at position 1
+      if (e.key.length >= 2 && typeof e.key[1] === "string") {
+        orgs.add(e.key[1]);
+      }
+    }
+    if (page.done) break;
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+  state.knownOrgs = [...orgs];
+  state.scanPrefixes = computeScanPrefixes(state.opts.types, state.knownOrgs);
+  state.scanPrefixIdx = 0;
+  state.cursor = null;
+  state.phase = "scanning";
+  console.log(`🔧 [MIGRATION:INIT:${sid}] orgs=${state.knownOrgs.join(",") || "(none)"} prefixes=${state.scanPrefixes.length} types=${state.opts.types?.join(",") ?? "(all)"}`);
+}
+
+/** Computes the list of prefix walks to perform during the scanning phase.
+ *  When `types` is empty/undefined, we walk the entire DB (one walk of `[]`).
+ *  When `types` is specified, we narrow to just the keyspaces that could
+ *  contain matching values, across all three known prod key shapes:
+ *    1. ["__TypePascal__", ...]            — TypedStore convention
+ *    2. ["type", ...]                      — global-keyed (only for known globals)
+ *    3. [orgId, "type", ...] AND
+ *       [orgId, "type-chunk-N", ...]       — orgKey + chunked variants
+ *  Empty prefixes are still walked but return one quick HTTP call (~200ms). */
+export function computeScanPrefixes(
+  types: string[] | undefined, knownOrgs: string[],
+): Array<Deno.KvKey> {
+  if (!types || types.length === 0) return [[]];
+  const prefixes: Deno.KvKey[] = [];
+  for (const type of types) {
+    const pascal = type.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+    prefixes.push([`__${pascal}__`]);
+    if (GLOBAL_TYPES.has(type)) prefixes.push([type]);
+    for (const org of knownOrgs) {
+      prefixes.push([org, type]);
+      for (let n = 0; n < CHUNK_VARIANT_PROBE_MAX; n++) {
+        prefixes.push([org, `${type}-chunk-${n}`]);
+      }
+    }
+  }
+  return prefixes;
+}
+
 // ── Tick phase: scan ─────────────────────────────────────────────────────────
 
 async function scanOneBatch(
@@ -570,51 +660,65 @@ async function scanOneBatch(
   skipped: Array<{ reason: string }>,
 ): Promise<boolean> {
   const sid = state.jobId.slice(-6);
-  const page = await fetchExportPage(base, secret, [], state.cursor, skipped);
-  console.log(`🔍 [MIGRATION:SCAN:${sid}] cursor=${(state.cursor ?? "-").slice(-8)} returned=${page.entries.length} done=${page.done}`);
+  if (state.scanPrefixIdx >= state.scanPrefixes.length) {
+    state.phase = state.chunkedQueueSize === 0 ? "done" : "chunked";
+    console.log(`📦 [MIGRATION:SCAN:${sid}] all prefixes done queueSize=${state.chunkedQueueSize} phase=${state.phase}`);
+    return false;
+  }
+
+  const prefix = state.scanPrefixes[state.scanPrefixIdx];
+  const page = await fetchExportPage(base, secret, prefix, state.cursor, skipped);
+  console.log(`🔍 [MIGRATION:SCAN:${sid}] prefix=${JSON.stringify(prefix)} cursor=${(state.cursor ?? "-").slice(-8)} returned=${page.entries.length} done=${page.done}`);
 
   for (const entry of page.entries) {
     state.scanned++;
 
     const decoded = decodeKey(entry.key);
     if (!decoded) { state.skipped++; continue; }
-    if (SKIP_TYPES.has(decoded.type)) { state.skipped++; continue; }
-    if (state.opts.types && !state.opts.types.includes(decoded.type)) { state.skipped++; continue; }
+    if (SKIP_TYPES.has(baseType(decoded.type))) { state.skipped++; continue; }
+    if (state.opts.types && !state.opts.types.includes(baseType(decoded.type))) { state.skipped++; continue; }
 
     if (state.opts.sinceVersionstamp && entry.versionstamp <= state.opts.sinceVersionstamp) {
       state.skipped++; continue;
     }
 
     if (state.opts.since !== undefined || state.opts.until !== undefined) {
-      const ts = valueTimestamp(decoded.type, entry.value);
+      const ts = valueTimestamp(baseType(decoded.type), entry.value);
       if (ts !== null) {
         if (state.opts.since !== undefined && ts < state.opts.since) { state.skipped++; continue; }
         if (state.opts.until !== undefined && ts > state.opts.until) { state.skipped++; continue; }
       }
     }
 
+    const bt = baseType(decoded.type);
+
     if (decoded.isChunkPart || decoded.isChunkMeta) {
-      const groupHash = `${decoded.type}\u0001${decoded.org}\u0001${JSON.stringify(decoded.keyParts)}`;
-      // De-dupe within the queue. Linear scan because the queue is small per tick.
+      // De-dupe by group hash; chunk-part and chunk-meta both surface the same group
       if (!queue.entries.some((e) =>
         e.type === decoded.type && e.org === decoded.org &&
         JSON.stringify(e.keyParts) === JSON.stringify(decoded.keyParts)
       )) {
         queue.entries.push({ type: decoded.type, org: decoded.org, keyParts: decoded.keyParts });
         state.chunkedQueueSize++;
-      } else {
-        // Already queued — silently skip the duplicate (chunk-part / meta both reach here)
+        const acc = state.byType[bt] ?? { count: 0, chunkedCount: 0 };
+        acc.chunkedCount++;
+        state.byType[bt] = acc;
       }
       continue;
     }
 
+    // Non-chunked match — count it for byType regardless of dryRun
+    const acc = state.byType[bt] ?? { count: 0, chunkedCount: 0 };
+    acc.count++;
+    state.byType[bt] = acc;
+
     if (state.opts.dryRun) { state.skipped++; continue; }
 
     try {
-      await setStored(decoded.type, decoded.org, decoded.keyParts, entry.value);
+      await setStored(bt, decoded.org, decoded.keyParts, entry.value);
       state.written++;
     } catch (err) {
-      state.errors.push(`${decoded.type}/${decoded.org}/${decoded.keyParts.join(",")}: ${String(err).slice(0, 200)}`);
+      state.errors.push(`${bt}/${decoded.org}/${decoded.keyParts.join(",")}: ${String(err).slice(0, 200)}`);
       if (state.errors.length > 50) state.errors = state.errors.slice(-50);
     }
   }
@@ -622,10 +726,12 @@ async function scanOneBatch(
   state.cursor = page.nextCursor;
 
   if (page.done) {
-    state.phase = "chunked";
-    console.log(`📦 [MIGRATION:SCAN:${sid}] phase=chunked queueSize=${state.chunkedQueueSize}`);
-    if (state.chunkedQueueSize === 0) {
-      state.phase = "done";
+    // Move to next prefix
+    state.scanPrefixIdx++;
+    state.cursor = null;
+    if (state.scanPrefixIdx >= state.scanPrefixes.length) {
+      state.phase = state.chunkedQueueSize === 0 ? "done" : "chunked";
+      console.log(`📦 [MIGRATION:SCAN:${sid}] all prefixes done queueSize=${state.chunkedQueueSize} phase=${state.phase}`);
     }
   }
 
@@ -648,7 +754,9 @@ function valueTimestamp(type: string, value: unknown): number | null {
 
 // ── Tick phase: chunked reassembly ───────────────────────────────────────────
 
-async function reassembleNextChunked(
+/** Processes up to CHUNKED_PARALLEL chunked groups concurrently, then
+ *  updates state. Returns true if any progress was made this call. */
+async function reassembleChunkedBatch(
   state: PersistedJob,
   queue: ChunkedQueueDoc,
   base: string,
@@ -660,31 +768,45 @@ async function reassembleNextChunked(
     return false;
   }
 
-  const idx = state.chunkedQueueProcessed;
-  const group = queue.entries[idx];
-  const skipped: Array<{ reason: string }> = [];
+  const start = state.chunkedQueueProcessed;
+  const end = Math.min(start + CHUNKED_PARALLEL, queue.entries.length);
+  const batch = queue.entries.slice(start, end);
 
-  console.log(`📦 [MIGRATION:CHUNK:${sid}] processing ${idx + 1}/${queue.entries.length} ${group.type}/${group.org}/${group.keyParts.join(",")}`);
+  console.log(`📦 [MIGRATION:CHUNK:${sid}] processing ${start + 1}-${end}/${queue.entries.length} (parallel=${batch.length})`);
 
-  try {
-    await migrateChunkedGroup(state, group, base, secret, skipped);
-    if (!state.opts.dryRun) state.writtenChunked++;
-  } catch (err) {
-    state.errors.push(`chunked ${group.type}/${group.org}/${group.keyParts.join(",")}: ${String(err).slice(0, 200)}`);
-    if (state.errors.length > 50) state.errors = state.errors.slice(-50);
-    console.log(`❌ [MIGRATION:CHUNK:${sid}] ${group.type}/${group.org}: ${err}`);
-  }
-
-  // Surface decode-skipped on this group
-  if (skipped.length > 0) {
-    const reasons = new Map<string, number>();
-    for (const s of skipped) reasons.set(s.reason, (reasons.get(s.reason) ?? 0) + 1);
-    for (const [reason, n] of reasons) {
-      state.errors.push(`⚠️ chunked ${group.type}/${group.org}: ${n} ${reason}-typed value(s) un-migrated`);
+  const results = await Promise.allSettled(batch.map(async (group) => {
+    const skipped: Array<{ reason: string }> = [];
+    try {
+      await migrateChunkedGroup(state, group, base, secret, skipped);
+      return { ok: true as const, group, skipped };
+    } catch (err) {
+      return { ok: false as const, group, err: String(err).slice(0, 200), skipped };
     }
+  }));
+
+  for (const r of results) {
+    if (r.status !== "fulfilled") {
+      state.errors.push(`chunked tick exception: ${String(r.reason).slice(0, 200)}`);
+      continue;
+    }
+    const v = r.value;
+    if (v.ok) {
+      if (!state.opts.dryRun) state.writtenChunked++;
+    } else {
+      state.errors.push(`chunked ${v.group.type}/${v.group.org}/${v.group.keyParts.join(",")}: ${v.err}`);
+      console.log(`❌ [MIGRATION:CHUNK:${sid}] ${v.group.type}/${v.group.org}: ${v.err}`);
+    }
+    if (v.skipped.length > 0) {
+      const reasons = new Map<string, number>();
+      for (const s of v.skipped) reasons.set(s.reason, (reasons.get(s.reason) ?? 0) + 1);
+      for (const [reason, n] of reasons) {
+        state.errors.push(`⚠️ chunked ${v.group.type}/${v.group.org}: ${n} ${reason}-typed value(s) un-migrated`);
+      }
+    }
+    if (state.errors.length > 50) state.errors = state.errors.slice(-50);
   }
 
-  state.chunkedQueueProcessed++;
+  state.chunkedQueueProcessed = end;
 
   if (state.chunkedQueueProcessed >= queue.entries.length) {
     state.phase = "done";
@@ -738,7 +860,9 @@ async function migrateChunkedGroup(
     }
     const payload = JSON.parse(slices.slice(0, metaTotal).join(""));
     if (!state.opts.dryRun) {
-      await setStoredChunked(type, org, keyParts, payload);
+      // Write under the BASE type so chunked + non-chunked findings live
+      // in the same Firestore namespace.
+      await setStoredChunked(baseType(type), org, keyParts, payload);
     }
     return;
   }

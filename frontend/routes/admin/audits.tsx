@@ -60,18 +60,20 @@ const WINDOWS: Array<{ h: number; label: string }> = [
   { h: 24, label: "24h" }, { h: 72, label: "3d" }, { h: 168, label: "7d" },
 ];
 
-/** JS snippet for window-button click — sets hidden since/until and triggers form. */
+/** JS snippet for window-button click — sets hidden since/until and fires
+ *  the `ah-refresh` custom event the form listens for. (Form's `change from:`
+ *  triggers don't fire on programmatic `htmx.trigger(..., 'change')`.) */
 function windowBtnJs(hours: number): string {
-  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));htmx.trigger('#audit-history-filters','change');})()`;
+  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));htmx.trigger('#audit-history-filters','ah-refresh');})()`;
 }
 
 /** JS for custom-date Go button. */
 const goBtnJs =
-  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));htmx.trigger('#audit-history-filters','change');})()`;
+  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));htmx.trigger('#audit-history-filters','ah-refresh');})()`;
 
 /** JS for Reset button — clears all filters back to defaults and 24h. */
 const resetJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));htmx.trigger('#audit-history-filters','change');})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));htmx.trigger('#audit-history-filters','ah-refresh');})()`;
 
 /** JS for CSV button — gathers form values + format=csv into a download URL. */
 const csvBtnJs =
@@ -97,7 +99,14 @@ export default define.page(async function AdminAuditsPage(ctx) {
   const dd = renderAuditHistoryDropdowns(data, filters);
 
   return (
-    <Layout title="Audit History" section="admin" user={user} pathname={url.pathname}>
+    <Layout title="Audit History" section="admin" user={user} pathname={url.pathname} hideSidebar>
+      <style>{`
+        /* Make native date pickers visible against dark background. */
+        #audit-history-filters input[type="date"] { color-scheme: dark; }
+        #audit-history-filters input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) brightness(1.3); cursor: pointer; }
+        /* Window-button active state. */
+        #audit-history-filters .window-btn.active { background: rgba(88,166,255,0.15); border-color: rgba(88,166,255,0.5); color: var(--blue); }
+      `}</style>
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
         <div>
           <h1>
@@ -108,13 +117,16 @@ export default define.page(async function AdminAuditsPage(ctx) {
         <a href="/admin/dashboard" class="btn btn-ghost btn-sm">&larr; Dashboard</a>
       </div>
 
+      {/* Form's hx-trigger listens for the custom `ah-refresh` event so
+          window/Go/Reset buttons can programmatically kick off a refetch.
+          Native `change` from selects and number inputs still fires on its own. */}
       <form
         id="audit-history-filters"
         class="card"
         style="margin-bottom:16px;padding:14px 18px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;"
         hx-get="/api/admin/audit-history"
         hx-target="#audit-history-table"
-        hx-trigger="change from:select, change delay:300ms from:input[type=number]"
+        hx-trigger="change from:select, change delay:300ms from:input[type=number], ah-refresh"
         hx-swap="innerHTML"
         hx-include="closest form"
       >
@@ -191,6 +203,7 @@ export default define.page(async function AdminAuditsPage(ctx) {
           <input type="number" name="scoreMax" id="f-score-max" value={filters.scoreMax} min="0" max="100" style="width:70px;" />
         </div>
 
+        <button type="button" class="btn btn-primary btn-sm" hx-on--click={`htmx.trigger('#audit-history-filters','ah-refresh')`}>Apply Filters</button>
         <button type="button" class="btn btn-ghost btn-sm" hx-on--click={resetJs}>Reset</button>
         <button type="button" class="btn btn-ghost btn-sm" hx-on--click={csvBtnJs} style="font-size:10px;">⬇ CSV</button>
 

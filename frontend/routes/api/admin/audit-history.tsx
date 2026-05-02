@@ -121,13 +121,13 @@ function renderStats(data: AdminAuditData, windowLabel: string): VNode {
     ? Math.round(items.reduce((a, c) => a + (c.score ?? 0), 0) / items.length)
     : 0;
   return (
-    <div class="stat-grid" style="grid-template-columns:repeat(6,minmax(0,1fr));margin-bottom:14px;">
-      <div class="stat-card"><div class="stat-value">{data.total}</div><div class="stat-label">Total ({windowLabel})</div></div>
-      <div class="stat-card green"><div class="stat-value">{passes}</div><div class="stat-label">≥80% Pass</div></div>
-      <div class="stat-card red"><div class="stat-value">{items.length - passes}</div><div class="stat-label">&lt;80% Fail</div></div>
-      <div class="stat-card yellow"><div class="stat-value">{pkgs}</div><div class="stat-label">Partner</div></div>
-      <div class="stat-card blue"><div class="stat-value">{dls}</div><div class="stat-label">Internal</div></div>
-      <div class="stat-card"><div class="stat-value">{avgScore}%</div><div class="stat-label">Avg Score (page)</div></div>
+    <div class="audits-stats">
+      <div class="stat-card"><div class="val">{data.total}</div><div class="lbl">Total ({windowLabel})</div></div>
+      <div class="stat-card"><div class="val" style="color:var(--green);">{passes}</div><div class="lbl">≥80% Pass</div></div>
+      <div class="stat-card"><div class="val" style="color:var(--red);">{items.length - passes}</div><div class="lbl">&lt;80% Fail</div></div>
+      <div class="stat-card"><div class="val" style="color:var(--yellow);">{pkgs}</div><div class="lbl">Partner</div></div>
+      <div class="stat-card"><div class="val" style="color:var(--blue);">{dls}</div><div class="lbl">Internal</div></div>
+      <div class="stat-card"><div class="val">{avgScore}%</div><div class="lbl">Avg Score (page)</div></div>
     </div>
   );
 }
@@ -135,14 +135,14 @@ function renderStats(data: AdminAuditData, windowLabel: string): VNode {
 function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
   if (data.items.length === 0) {
     return (
-      <div class="tbl">
-        <div class="empty-row" style="padding:40px;text-align:center;color:var(--text-dim);">No audits match the current filters</div>
+      <div class="audits-tbl-wrap">
+        <div class="empty">No audits match the current filters</div>
       </div>
     );
   }
   return (
-    <div class="tbl" style="overflow-x:auto;">
-      <table class="data-table" style="font-size:12px;">
+    <div class="audits-tbl-wrap">
+      <table>
         <thead>
           <tr>
             <th>Finding ID</th>

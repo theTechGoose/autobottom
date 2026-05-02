@@ -101,84 +101,109 @@ export default define.page(async function AdminAuditsPage(ctx) {
   return (
     <Layout title="Audit History" section="admin" user={user} pathname={url.pathname} hideSidebar>
       <style>{`
-        /* Make native date pickers visible against dark background. */
-        #audit-history-filters input[type="date"] { color-scheme: dark; }
-        #audit-history-filters input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) brightness(1.3); cursor: pointer; }
-        /* Window-button active state. */
-        #audit-history-filters .window-btn.active { background: rgba(88,166,255,0.15); border-color: rgba(88,166,255,0.5); color: var(--blue); }
+        /* === Audit History page — prod-parity layout === */
+        .audits-topbar { display:flex; align-items:center; gap:16px; padding:0 24px; height:52px; background:var(--bg-raised); border-bottom:1px solid var(--border); flex-shrink:0; }
+        .audits-topbar h1 { font-size:14px; font-weight:700; color:var(--text-bright); margin:0; }
+        .audits-topbar .ah-back { font-size:11px; color:var(--text-muted); text-decoration:none; padding:4px 10px; border:1px solid var(--border); border-radius:6px; transition:all 0.15s; }
+        .audits-topbar .ah-back:hover { background:var(--bg-surface); color:var(--text); }
+        .audits-topbar .ah-sub { font-size:11px; color:var(--text-dim); margin-left:auto; }
+
+        .audits-filters { display:flex; align-items:center; gap:10px; padding:14px 24px; background:var(--bg-raised); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+        .audits-filters > label { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-muted); display:flex; flex-direction:column; gap:3px; margin:0; }
+        .audits-filters select, .audits-filters input[type=number] { background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:11px; padding:5px 8px; font-family:'SF Mono','Fira Code',monospace; }
+        .audits-filters select:focus, .audits-filters input:focus { outline:none; border-color:var(--blue); }
+        .audits-filters input[type="date"] { background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:11px; padding:3px 8px; height:26px; color-scheme:dark; }
+        .audits-filters input[type="date"]::-webkit-calendar-picker-indicator { filter:invert(1) brightness(1.3); cursor:pointer; }
+
+        .window-btns { display:flex; gap:4px; align-items:center; }
+        .window-btn { padding:4px 10px; border-radius:5px; font-size:10px; font-weight:600; cursor:pointer; border:1px solid var(--border); background:var(--bg); color:var(--text-muted); transition:all 0.15s; }
+        .window-btn:hover { background:var(--bg-surface); color:var(--text); }
+        .window-btn.active { background:rgba(88,166,255,0.15); border-color:rgba(88,166,255,0.5); color:var(--blue); }
+
+        .ah-btn { padding:5px 14px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; border:none; transition:all 0.15s; }
+        .ah-btn-primary { background:#1f6feb; color:#fff; }
+        .ah-btn-primary:hover { background:#388bfd; }
+        .ah-btn-ghost { background:transparent; color:var(--text-muted); border:1px solid var(--border); }
+        .ah-btn-ghost:hover { background:var(--bg-surface); color:var(--text); }
+
+        .audits-content { padding:20px 24px; }
+        .audits-stats { display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+        .audits-stats .stat-card { background:var(--bg-raised); border:1px solid var(--border); border-radius:8px; padding:10px 16px; min-width:120px; }
+        .audits-stats .stat-card .val { font-size:20px; font-weight:700; color:var(--text-bright); line-height:1; }
+        .audits-stats .stat-card .lbl { font-size:10px; color:var(--text-muted); margin-top:3px; }
+
+        .audits-tbl-wrap { background:var(--bg-raised); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+        .audits-tbl-wrap table { width:100%; border-collapse:collapse; font-size:12px; }
+        .audits-tbl-wrap thead th { text-align:left; font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); padding:6px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+        .audits-tbl-wrap tbody tr { border-bottom:1px solid rgba(28,35,51,0.6); transition:background 0.1s; }
+        .audits-tbl-wrap tbody tr:hover { background:var(--bg-raised); }
+        .audits-tbl-wrap tbody td { padding:8px 12px; color:var(--text); vertical-align:middle; }
+        .audits-tbl-wrap .empty { text-align:center; color:var(--text-dim); font-size:12px; padding:40px 0; }
       `}</style>
-      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
-        <div>
-          <h1>
-            Audit History <span id="ah-window" style="font-weight:400;color:var(--text-muted);font-size:14px;">({windowLabel(filters)})</span>
-          </h1>
-          <p class="page-sub"><span id="ah-count">{data.total} audits in window</span></p>
-        </div>
-        <a href="/admin/dashboard" class="btn btn-ghost btn-sm">&larr; Dashboard</a>
+
+      <div class="audits-topbar">
+        <a class="ah-back" href="/admin/dashboard">&larr; Dashboard</a>
+        <h1>
+          Audit History <span id="ah-window" style="font-weight:400;color:var(--text-muted);">({windowLabel(filters)})</span>
+        </h1>
+        <span class="ah-sub" id="ah-count">{data.total} audits in window</span>
       </div>
 
-      {/* Form's hx-trigger listens for the custom `ah-refresh` event so
-          window/Go/Reset buttons can programmatically kick off a refetch.
-          Native `change` from selects and number inputs still fires on its own. */}
+      {/* Filter strip — single horizontal row matching prod. ah-refresh is
+          listed in hx-trigger so programmatic htmx.trigger() from buttons
+          actually fires the GET (the change-from-select source filter
+          ignores form-level dispatched events). */}
       <form
         id="audit-history-filters"
-        class="card"
-        style="margin-bottom:16px;padding:14px 18px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;"
+        class="audits-filters"
         hx-get="/api/admin/audit-history"
         hx-target="#audit-history-table"
         hx-trigger="change from:select, change delay:300ms from:input[type=number], ah-refresh"
         hx-swap="innerHTML"
         hx-include="closest form"
       >
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Date Range</label>
-          <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+        <label>Date Range
+          <div class="window-btns">
             {WINDOWS.map((w) => (
               <button
                 key={w.h}
                 type="button"
-                class={`btn btn-ghost btn-sm window-btn ${activeHours === w.h ? "active" : ""}`}
+                class={`window-btn ${activeHours === w.h ? "active" : ""}`}
                 data-hours={w.h}
-                style={`padding:4px 10px;font-size:10px;${activeHours === w.h ? "background:rgba(88,166,255,0.15);border-color:rgba(88,166,255,0.5);color:var(--blue);" : ""}`}
                 hx-on--click={windowBtnJs(w.h)}
               >{w.label}</button>
             ))}
-            <span style="color:var(--text-dim);font-size:10px;margin:0 4px;">or</span>
-            <input type="date" id="f-date-start" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:3px 6px;height:26px;" />
-            <span style="color:var(--text-dim);">–</span>
-            <input type="date" id="f-date-end" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:3px 6px;height:26px;" />
-            <button type="button" class="btn btn-primary btn-sm" style="padding:4px 10px;font-size:11px;height:26px;" hx-on--click={goBtnJs}>Go</button>
+            <span style="color:var(--text-dim);font-size:10px;margin:0 4px;align-self:center;">or</span>
+            <input type="date" id="f-date-start" />
+            <span style="color:var(--text-dim);align-self:center;">–</span>
+            <input type="date" id="f-date-end" />
+            <button type="button" class="ah-btn ah-btn-primary" style="padding:3px 10px;font-size:11px;height:26px;" hx-on--click={goBtnJs}>Go</button>
           </div>
           <input type="hidden" name="since" id="ah-since" value={filters.since} />
           <input type="hidden" name="until" id="ah-until" value={filters.until} />
-        </div>
+        </label>
 
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Type</label>
+        <label>Type
           <select name="type" id="f-type">
             <option value="" selected={filters.type === ""}>All Types</option>
             <option value="date-leg" selected={filters.type === "date-leg"}>Internal</option>
             <option value="package" selected={filters.type === "package"}>Partner</option>
           </select>
-        </div>
+        </label>
 
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Team Member</label>
+        <label>Team Member
           <select name="owner" id="f-owner">{dd.owner}</select>
-        </div>
+        </label>
 
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Department</label>
+        <label>Department
           <select name="department" id="f-dept">{dd.department}</select>
-        </div>
+        </label>
 
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Shift</label>
+        <label>Shift
           <select name="shift" id="f-shift">{dd.shift}</select>
-        </div>
+        </label>
 
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Reviewed</label>
+        <label>Reviewed
           <select name="reviewed" id="f-reviewed">
             <option value="" selected={filters.reviewed === ""}>All</option>
             <option value="yes" selected={filters.reviewed === "yes"}>Reviewed</option>
@@ -186,32 +211,37 @@ export default define.page(async function AdminAuditsPage(ctx) {
             <option value="auto" selected={filters.reviewed === "auto"}>Auto</option>
             <option value="invalid_genie" selected={filters.reviewed === "invalid_genie"}>Invalid Genie</option>
           </select>
-        </div>
+        </label>
 
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Auditor</label>
+        <label>Auditor
           <select name="auditor" id="f-auditor">{dd.auditor}</select>
-        </div>
+        </label>
 
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Min Score %</label>
+        <label>Min Score %
           <input type="number" name="scoreMin" id="f-score-min" value={filters.scoreMin} min="0" max="100" style="width:70px;" />
-        </div>
+        </label>
 
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Max Score %</label>
+        <label>Max Score %
           <input type="number" name="scoreMax" id="f-score-max" value={filters.scoreMax} min="0" max="100" style="width:70px;" />
-        </div>
+        </label>
 
-        <button type="button" class="btn btn-primary btn-sm" hx-on--click={`htmx.trigger('#audit-history-filters','ah-refresh')`}>Apply Filters</button>
-        <button type="button" class="btn btn-ghost btn-sm" hx-on--click={resetJs}>Reset</button>
-        <button type="button" class="btn btn-ghost btn-sm" hx-on--click={csvBtnJs} style="font-size:10px;">⬇ CSV</button>
+        <label style="align-self:flex-end;">
+          <button type="button" class="ah-btn ah-btn-primary" hx-on--click={`htmx.trigger('#audit-history-filters','ah-refresh')`}>Apply Filters</button>
+        </label>
+        <label style="align-self:flex-end;">
+          <button type="button" class="ah-btn ah-btn-ghost" hx-on--click={resetJs}>Reset</button>
+        </label>
+        <label style="align-self:flex-end;">
+          <button type="button" class="ah-btn ah-btn-ghost" style="font-size:10px;" hx-on--click={csvBtnJs}>⬇ CSV</button>
+        </label>
 
         <input type="hidden" name="page" value={filters.page} id="ah-page" />
         <input type="hidden" name="limit" value="50" />
       </form>
 
-      <div id="audit-history-table" dangerouslySetInnerHTML={{ __html: mainHtml }} />
+      <div class="audits-content">
+        <div id="audit-history-table" dangerouslySetInnerHTML={{ __html: mainHtml }} />
+      </div>
     </Layout>
   );
 });

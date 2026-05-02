@@ -1,81 +1,204 @@
-/** Audit history — search, filter, retry, terminate. */
+/** Admin audit history — full-parity port of prod's /admin/audits page.
+ *
+ *  Filter form drives the table fragment via HTMX; backend re-renders stats,
+ *  table, pagination, and cross-filtered dropdowns on every change. URL
+ *  params (`?hours=24&type=package&reviewed=no&owner=...`) seed the initial
+ *  filters so dashboard drill-down links work. */
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
-import { apiFetch } from "../../lib/api.ts";
-import { timeAgo } from "../../lib/format.ts";
+import {
+  fetchAndRenderFragment,
+  renderAuditHistoryDropdowns,
+  type AdminAuditData,
+  type AdminAuditFilters,
+} from "../api/admin/audit-history.tsx";
+import { renderToString } from "preact-render-to-string";
 
-interface AuditEntry {
-  findingId: string;
-  recordId?: string;
-  type?: string;
-  score?: number;
-  completedAt?: number;
-  findingStatus?: string;
+function defaultSince(hours: number): string {
+  return String(Date.now() - hours * 3_600_000);
 }
 
-export default define.page(async function AdminAudits(ctx) {
+/** Map URL params → backend filter set. Supports both prod-style drill-down
+ *  params (`hours`, `type`, `reviewed`, `owner`) and explicit since/until. */
+function buildInitialFilters(url: URL): AdminAuditFilters {
+  const hoursParam = parseInt(url.searchParams.get("hours") || "", 10);
+  const hours = hoursParam > 0 ? hoursParam : 24;
+  const since = url.searchParams.get("since") ?? defaultSince(hours);
+  const until = url.searchParams.get("until") ?? String(Date.now());
+  return {
+    since,
+    until,
+    type: url.searchParams.get("type") ?? "",
+    owner: url.searchParams.get("owner") ?? "",
+    department: url.searchParams.get("department") ?? "",
+    shift: url.searchParams.get("shift") ?? "",
+    reviewed: url.searchParams.get("reviewed") ?? "",
+    auditor: url.searchParams.get("auditor") ?? "",
+    scoreMin: url.searchParams.get("scoreMin") ?? "0",
+    scoreMax: url.searchParams.get("scoreMax") ?? "100",
+    page: url.searchParams.get("page") ?? "1",
+    limit: "50",
+  };
+}
+
+function windowLabel(f: AdminAuditFilters): string {
+  const since = parseInt(f.since || "0", 10);
+  const until = parseInt(f.until || String(Date.now()), 10);
+  if (since === 0) return "all";
+  const hours = Math.round((until - since) / 3_600_000);
+  if (hours <= 1) return "1h";
+  if (hours <= 4) return "4h";
+  if (hours <= 12) return "12h";
+  if (hours <= 24) return "24h";
+  if (hours <= 72) return "3d";
+  if (hours <= 168) return "7d";
+  return `${Math.round(hours / 24)}d`;
+}
+
+const WINDOWS: Array<{ h: number; label: string }> = [
+  { h: 1, label: "1h" }, { h: 4, label: "4h" }, { h: 12, label: "12h" },
+  { h: 24, label: "24h" }, { h: 72, label: "3d" }, { h: 168, label: "7d" },
+];
+
+/** JS snippet for window-button click — sets hidden since/until and triggers form. */
+function windowBtnJs(hours: number): string {
+  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));htmx.trigger('#audit-history-filters','change');})()`;
+}
+
+/** JS for custom-date Go button. */
+const goBtnJs =
+  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));htmx.trigger('#audit-history-filters','change');})()`;
+
+/** JS for Reset button — clears all filters back to defaults and 24h. */
+const resetJs =
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));htmx.trigger('#audit-history-filters','change');})()`;
+
+/** JS for CSV button — gathers form values + format=csv into a download URL. */
+const csvBtnJs =
+  `(()=>{const f=document.getElementById('audit-history-filters');const fd=new FormData(f);const p=new URLSearchParams();for(const[k,v]of fd.entries()){if(typeof v==='string'&&v!=='')p.set(k,v);}p.set('format','csv');const a=document.createElement('a');a.href='/api/admin/audits-csv?'+p.toString();a.download='audit-history.csv';document.body.appendChild(a);a.click();a.remove();})()`;
+
+export default define.page(async function AdminAuditsPage(ctx) {
   const user = ctx.state.user!;
   const url = new URL(ctx.req.url);
-  const since = url.searchParams.get("since") ?? String(Date.now() - 7 * 86_400_000);
-  const until = url.searchParams.get("until") ?? String(Date.now());
-  const recordId = url.searchParams.get("recordId") ?? "";
+  const filters = buildInitialFilters(url);
+  const activeHours = Math.round((parseInt(filters.until, 10) - parseInt(filters.since, 10)) / 3_600_000);
 
-  let audits: AuditEntry[] = [];
+  let data: AdminAuditData;
+  let mainHtml: string;
   try {
-    if (recordId) {
-      const data = await apiFetch<{ audits: AuditEntry[] }>(`/admin/audits-by-record?recordId=${recordId}`, ctx.req);
-      audits = data.audits ?? [];
-    } else {
-      const data = await apiFetch<{ audits: AuditEntry[] }>(`/admin/audits/data?since=${since}&until=${until}`, ctx.req);
-      audits = data.audits ?? [];
-    }
+    const result = await fetchAndRenderFragment(filters, ctx.req, { includeOob: false });
+    data = result.data;
+    mainHtml = result.html;
   } catch (e) {
-    console.error("Failed to load audits:", e);
+    console.error("[ADMIN/AUDITS] initial load failed:", e);
+    data = { items: [], total: 0, pages: 1, page: 1, owners: [], departments: [], shifts: [], reviewers: [] };
+    mainHtml = renderToString(<div class="empty-row" style="padding:40px;color:var(--red);">Failed to load: {(e as Error).message}</div>);
   }
+  const dd = renderAuditHistoryDropdowns(data, filters);
 
   return (
-    <Layout title="Audits" section="admin" user={user} pathname={url.pathname}>
-      <div class="page-header">
-        <h1>Audit History</h1>
-        <p class="page-sub">{audits.length} audits found</p>
+    <Layout title="Audit History" section="admin" user={user} pathname={url.pathname}>
+      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+        <div>
+          <h1>
+            Audit History <span id="ah-window" style="font-weight:400;color:var(--text-muted);font-size:14px;">({windowLabel(filters)})</span>
+          </h1>
+          <p class="page-sub"><span id="ah-count">{data.total} audits in window</span></p>
+        </div>
+        <a href="/admin/dashboard" class="btn btn-ghost btn-sm">&larr; Dashboard</a>
       </div>
 
-      <div class="card" style="margin-bottom: 16px; padding: 14px 18px;">
-        <form method="GET" action="/admin/audits" style="display:flex;gap:10px;align-items:flex-end;">
-          <div class="form-group" style="margin-bottom:0;flex:1;">
-            <label>Record ID</label>
-            <input type="text" name="recordId" value={recordId} placeholder="Search by QuickBase record ID" />
-          </div>
-          <button class="btn btn-primary" type="submit" style="height:40px;">Search</button>
-          {recordId && <a href="/admin/audits" class="btn btn-ghost" style="height:40px;">Clear</a>}
-        </form>
-      </div>
-
-      <div class="tbl">
-        <table class="data-table">
-          <thead>
-            <tr><th>Finding</th><th>Record</th><th>Type</th><th>Score</th><th>Status</th><th>Completed</th><th>Actions</th></tr>
-          </thead>
-          <tbody>
-            {audits.length === 0 ? (
-              <tr class="empty-row"><td colSpan={7}>No audits found</td></tr>
-            ) : audits.map((a) => (
-              <tr key={a.findingId}>
-                <td class="mono">{a.findingId?.slice(0, 8) ?? "\u2014"}</td>
-                <td class="mono">{a.recordId ?? "\u2014"}</td>
-                <td>{a.type ? <span class={`pill ${a.type === "internal" ? "pill-blue" : "pill-purple"}`}>{a.type}</span> : "\u2014"}</td>
-                <td>{a.score != null ? <span class={`pill pill-${a.score >= 90 ? "green" : a.score >= 70 ? "yellow" : "red"}`}>{a.score}%</span> : "\u2014"}</td>
-                <td>{a.findingStatus ? <span class={`pill pill-${a.findingStatus === "completed" || a.findingStatus === "done" ? "green" : a.findingStatus === "error" ? "red" : "blue"}`}>{a.findingStatus}</span> : "\u2014"}</td>
-                <td class="time-ago">{a.completedAt ? timeAgo(a.completedAt) : "\u2014"}</td>
-                <td style="display:flex;gap:4px;">
-                  <button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;" hx-get={`/api/admin/retry?findingId=${a.findingId}`} hx-swap="none">Retry</button>
-                </td>
-              </tr>
+      <form
+        id="audit-history-filters"
+        class="card"
+        style="margin-bottom:16px;padding:14px 18px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;"
+        hx-get="/api/admin/audit-history"
+        hx-target="#audit-history-table"
+        hx-trigger="change from:select, change delay:300ms from:input[type=number]"
+        hx-swap="innerHTML"
+        hx-include="closest form"
+      >
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Date Range</label>
+          <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+            {WINDOWS.map((w) => (
+              <button
+                key={w.h}
+                type="button"
+                class={`btn btn-ghost btn-sm window-btn ${activeHours === w.h ? "active" : ""}`}
+                data-hours={w.h}
+                style={`padding:4px 10px;font-size:10px;${activeHours === w.h ? "background:rgba(88,166,255,0.15);border-color:rgba(88,166,255,0.5);color:var(--blue);" : ""}`}
+                hx-on--click={windowBtnJs(w.h)}
+              >{w.label}</button>
             ))}
-          </tbody>
-        </table>
-      </div>
+            <span style="color:var(--text-dim);font-size:10px;margin:0 4px;">or</span>
+            <input type="date" id="f-date-start" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:3px 6px;height:26px;" />
+            <span style="color:var(--text-dim);">–</span>
+            <input type="date" id="f-date-end" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:3px 6px;height:26px;" />
+            <button type="button" class="btn btn-primary btn-sm" style="padding:4px 10px;font-size:11px;height:26px;" hx-on--click={goBtnJs}>Go</button>
+          </div>
+          <input type="hidden" name="since" id="ah-since" value={filters.since} />
+          <input type="hidden" name="until" id="ah-until" value={filters.until} />
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Type</label>
+          <select name="type" id="f-type">
+            <option value="" selected={filters.type === ""}>All Types</option>
+            <option value="date-leg" selected={filters.type === "date-leg"}>Internal</option>
+            <option value="package" selected={filters.type === "package"}>Partner</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Team Member</label>
+          <select name="owner" id="f-owner">{dd.owner}</select>
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Department</label>
+          <select name="department" id="f-dept">{dd.department}</select>
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Shift</label>
+          <select name="shift" id="f-shift">{dd.shift}</select>
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Reviewed</label>
+          <select name="reviewed" id="f-reviewed">
+            <option value="" selected={filters.reviewed === ""}>All</option>
+            <option value="yes" selected={filters.reviewed === "yes"}>Reviewed</option>
+            <option value="no" selected={filters.reviewed === "no"}>Not Reviewed</option>
+            <option value="auto" selected={filters.reviewed === "auto"}>Auto</option>
+            <option value="invalid_genie" selected={filters.reviewed === "invalid_genie"}>Invalid Genie</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Auditor</label>
+          <select name="auditor" id="f-auditor">{dd.auditor}</select>
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Min Score %</label>
+          <input type="number" name="scoreMin" id="f-score-min" value={filters.scoreMin} min="0" max="100" style="width:70px;" />
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Max Score %</label>
+          <input type="number" name="scoreMax" id="f-score-max" value={filters.scoreMax} min="0" max="100" style="width:70px;" />
+        </div>
+
+        <button type="button" class="btn btn-ghost btn-sm" hx-on--click={resetJs}>Reset</button>
+        <button type="button" class="btn btn-ghost btn-sm" hx-on--click={csvBtnJs} style="font-size:10px;">⬇ CSV</button>
+
+        <input type="hidden" name="page" value={filters.page} id="ah-page" />
+        <input type="hidden" name="limit" value="50" />
+      </form>
+
+      <div id="audit-history-table" dangerouslySetInnerHTML={{ __html: mainHtml }} />
     </Layout>
   );
 });
-

@@ -11,8 +11,11 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
 import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId } from "@audit/domain/data/stats-repository/mod.ts";
-import { getReviewStats } from "@review/domain/business/review-queue/mod.ts";
+import { getReviewStats, getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
+import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
+import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
@@ -41,11 +44,152 @@ export class DashboardController {
     return { section, data: [] };
   }
 
+  /** Audit history data — supports filtering, pagination, and CSV export.
+   *  Mirrors prod's /admin/audits/data shape (main:main.ts:730).
+   *  When format=csv, returns text/csv with all filtered rows (no pagination). */
   @Get("audits/data") @ReturnedType(AuditsDataResponse)
-  async auditsData(@Query("since") since: string, @Query("until") until: string) {
-    const s = parseInt(since || "0");
-    const u = parseInt(until || String(Date.now()));
-    return { audits: await queryAuditDoneIndex(ORG(), s, u) };
+  async auditsData(
+    @Query("since") since: string,
+    @Query("until") until: string,
+    @Query("type") type: string,
+    @Query("owner") owner: string,
+    @Query("department") department: string,
+    @Query("shift") shift: string,
+    @Query("reviewed") reviewed: string,
+    @Query("auditor") auditor: string,
+    @Query("scoreMin") scoreMin: string,
+    @Query("scoreMax") scoreMax: string,
+    @Query("page") page: string,
+    @Query("limit") limit: string,
+    @Query("format") format: string,
+  ) {
+    const orgId = ORG();
+    const s = parseInt(since || "0", 10) || 0;
+    const u = parseInt(until || String(Date.now()), 10) || Date.now();
+    const t = type || "all";
+    const sMin = Math.max(0, Math.min(100, parseInt(scoreMin || "0", 10) || 0));
+    const sMax = Math.max(0, Math.min(100, parseInt(scoreMax || "100", 10) || 100));
+    const pg = Math.max(1, parseInt(page || "1", 10) || 1);
+    const lim = Math.min(100, Math.max(10, parseInt(limit || "50", 10) || 50));
+
+    const [indexEntries, reviewedIds] = await Promise.all([
+      queryAuditDoneIndex(orgId, s, u),
+      getReviewedFindingIds(orgId),
+    ]);
+
+    type AuditRow = AuditDoneIndexEntry & { ts: number };
+    const windowEntries: AuditRow[] = indexEntries
+      .map((e) => ({ ...e, ts: e.completedAt }))
+      .sort((a, b) => b.ts - a.ts);
+
+    const matchesBase = (c: AuditRow) => {
+      if (t === "date-leg" && c.isPackage) return false;
+      if (t === "package" && !c.isPackage) return false;
+      if (c.score != null && (c.score < sMin || c.score > sMax)) return false;
+      return true;
+    };
+
+    const filtered = windowEntries.filter((c) => {
+      if (!matchesBase(c)) return false;
+      if (owner && (c.voName || c.owner) !== owner) return false;
+      if (department && c.department !== department) return false;
+      if (shift && c.shift !== shift) return false;
+      if (auditor && c.reviewedBy !== auditor) return false;
+      if (reviewed === "yes" && !reviewedIds.has(c.findingId)) return false;
+      if (reviewed === "no" && (reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
+      if (reviewed === "auto" && c.reason !== "perfect_score" && c.reason !== "invalid_genie") return false;
+      if (reviewed === "invalid_genie" && c.reason !== "invalid_genie") return false;
+      return true;
+    });
+
+    // Cross-filtered dropdown options: each dimension excludes its own filter
+    // so user always sees what's still valid given the OTHER active filters.
+    const owners = [...new Set(
+      windowEntries.filter((c) => matchesBase(c) && (!department || c.department === department) && (!shift || c.shift === shift))
+        .map((c) => c.voName || c.owner).filter(Boolean),
+    )].sort() as string[];
+    const departments = [...new Set(
+      windowEntries.filter((c) => matchesBase(c) && (!owner || (c.voName || c.owner) === owner) && (!shift || c.shift === shift))
+        .map((c) => c.department).filter(Boolean),
+    )].sort() as string[];
+    const shifts = [...new Set(
+      windowEntries.filter((c) => matchesBase(c) && (!owner || (c.voName || c.owner) === owner) && (!department || c.department === department))
+        .map((c) => c.shift).filter(Boolean),
+    )].sort() as string[];
+    const reviewers = [...new Set(
+      windowEntries.map((c) => c.reviewedBy).filter(Boolean),
+    )].sort() as string[];
+
+    // Hydrate missing extended fields from finding doc — page items only.
+    // Old audit-done-idx entries lacked voName/owner/department/shift; the
+    // current writer fills them in but historical data needs the lookup.
+    async function hydrateMissing(rows: AuditRow[]): Promise<AuditRow[]> {
+      const needs = rows.filter((r) => r.voName === undefined && r.owner === undefined);
+      if (needs.length === 0) return rows;
+      const findings = await Promise.all(needs.map((r) => getFinding(orgId, r.findingId)));
+      const findingMap = new Map<string, Record<string, unknown>>();
+      findings.forEach((f, i) => { if (f) findingMap.set(needs[i].findingId, f); });
+      return rows.map((r) => {
+        if (r.voName !== undefined || r.owner !== undefined) return r;
+        const f = findingMap.get(r.findingId);
+        if (!f) return r;
+        const rec = f.record as Record<string, unknown> | undefined;
+        const isPkg = f.recordingIdField === "GenieNumber";
+        const rawVo = String(rec?.VoName ?? "");
+        const vo = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+        return {
+          ...r,
+          isPackage: isPkg,
+          voName: vo || undefined,
+          owner: f.owner as string | undefined,
+          department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined,
+          shift: isPkg ? undefined : (String(rec?.Shift ?? "") || undefined),
+          startedAt: f.startedAt as number | undefined,
+        };
+      });
+    }
+
+    if (format === "csv") {
+      const hydratedAll = await hydrateMissing(filtered);
+      const appeals = await Promise.all(hydratedAll.map((c) => getAppeal(orgId, c.findingId)));
+      const headers = ["Finding ID", "Record ID", "Type", "Team Member", "Auditor", "Score", "Started", "Finished", "Duration", "Reviewed", "Appeal Status"];
+      const rows = [headers.join(",")];
+      hydratedAll.forEach((c, i) => {
+        const isReviewed = reviewedIds.has(c.findingId);
+        const appealStatus = appeals[i] ? appeals[i]!.status : null;
+        rows.push([
+          c.findingId || "",
+          c.recordId || "",
+          c.isPackage ? "Partner" : "Internal",
+          '"' + (c.voName || "").replace(/"/g, '""') + '"',
+          '"' + (c.reviewedBy || c.owner || "api").replace(/"/g, '""') + '"',
+          c.score != null ? c.score + "%" : "",
+          c.startedAt ? new Date(c.startedAt).toISOString() : "",
+          c.ts ? new Date(c.ts).toISOString() : "",
+          c.durationMs ? Math.round(c.durationMs / 1000) + "s" : "",
+          isReviewed ? "Reviewed" : (c.reason === "perfect_score" || c.reason === "invalid_genie" ? "Auto" : ""),
+          appealStatus === "pending" ? "Pending" : (appealStatus === "complete" ? "Complete" : ""),
+        ].join(","));
+      });
+      console.log(`📥 [AUDITS] CSV export ${hydratedAll.length} rows`);
+      return new Response(rows.join("\n"), {
+        headers: { "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=audit-history.csv" },
+      });
+    }
+
+    const total = filtered.length;
+    const pages = Math.max(1, Math.ceil(total / lim));
+    const pageItems = filtered.slice((pg - 1) * lim, pg * lim);
+    const hydratedPage = await hydrateMissing(pageItems);
+    const appeals = await Promise.all(hydratedPage.map((c) => getAppeal(orgId, c.findingId)));
+    const items = hydratedPage.map((c, i) => ({
+      ...c,
+      reviewed: reviewedIds.has(c.findingId),
+      appealStatus: appeals[i] ? appeals[i]!.status : null,
+    }));
+
+    console.log(`🔍 [AUDITS] ${total}/${windowEntries.length} in window page=${pg}/${pages} type=${t} owner=${owner || "all"} dept=${department || "all"}`);
+    return { items, total, pages, page: pg, owners, departments, shifts, reviewers };
   }
 
   @Get("review-queue/data") @ReturnedType(ReviewStatsResponse)

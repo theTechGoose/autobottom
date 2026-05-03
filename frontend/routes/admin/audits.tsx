@@ -60,25 +60,28 @@ const WINDOWS: Array<{ h: number; label: string }> = [
   { h: 24, label: "24h" }, { h: 72, label: "3d" }, { h: 168, label: "7d" },
 ];
 
-/** JS snippet for window-button click — sets hidden since/until, hides
- *  the ✕ Clear button (since we're back on a quick window), and fires
- *  the `ah-refresh` custom event. (Form's `change from:` triggers don't
- *  fire on programmatic `htmx.trigger(..., 'change')`.) */
+/** Direct AJAX refresh — bypasses htmx.trigger + custom-event plumbing
+ *  (which silently no-ops in HTMX 2.0.4 when hx-trigger mixes source-filtered
+ *  events with a trailing custom event). htmx.ajax with `source` selector
+ *  serializes the form's values exactly like a native submit. */
+const REFRESH_JS = `htmx.ajax('GET','/api/admin/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'})`;
+
+/** JS snippet for window-button click — sets hidden since/until, hides ✕ Clear, refreshes. */
 function windowBtnJs(hours: number): string {
-  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('f-date-clear').style.display='none';htmx.trigger('#audit-history-filters','ah-refresh');})()`;
+  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
 }
 
 /** JS for custom-date Go button. Reveals ✕ Clear so user can return to 24h. */
 const goBtnJs =
-  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';htmx.trigger('#audit-history-filters','ah-refresh');})()`;
+  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';${REFRESH_JS};})()`;
 
 /** JS for ✕ Clear (visible only after a custom range) — return to 24h default. */
 const clearBtnJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';htmx.trigger('#audit-history-filters','ah-refresh');})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
 
 /** JS for Reset button — clears all filters back to defaults and 24h. */
 const resetJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';htmx.trigger('#audit-history-filters','ah-refresh');})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
 
 /** JS for CSV button — gathers form values + format=csv into a download URL. */
 const csvBtnJs =
@@ -154,16 +157,15 @@ export default define.page(async function AdminAuditsPage(ctx) {
         <span class="ah-sub" id="ah-count">{data.total} audits in window</span>
       </div>
 
-      {/* Filter strip — single horizontal row matching prod. ah-refresh is
-          listed in hx-trigger so programmatic htmx.trigger() from buttons
-          actually fires the GET (the change-from-select source filter
-          ignores form-level dispatched events). */}
+      {/* Filter strip — single horizontal row matching prod. Native triggers
+          on selects + number inputs fire automatically; buttons call
+          htmx.ajax() directly via inline onclick (REFRESH_JS). */}
       <form
         id="audit-history-filters"
         class="audits-filters"
         hx-get="/api/admin/audit-history"
         hx-target="#audit-history-table"
-        hx-trigger="change from:select, change delay:300ms from:input[type=number], ah-refresh"
+        hx-trigger="change from:select, change delay:300ms from:input[type=number]"
         hx-swap="innerHTML"
         hx-include="closest form"
       >
@@ -232,7 +234,7 @@ export default define.page(async function AdminAuditsPage(ctx) {
         </label>
 
         <label style="align-self:flex-end;">
-          <button type="button" class="ah-btn ah-btn-primary" hx-on--click={`htmx.trigger('#audit-history-filters','ah-refresh')`}>Apply Filters</button>
+          <button type="button" class="ah-btn ah-btn-primary" hx-on--click={REFRESH_JS}>Apply Filters</button>
         </label>
         <label style="align-self:flex-end;">
           <button type="button" class="ah-btn ah-btn-ghost" hx-on--click={resetJs}>Reset</button>

@@ -201,20 +201,21 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
 
 function renderPagination(data: AdminAuditData): VNode | null {
   if (data.pages <= 1) return null;
+  const refresh = `htmx.ajax('GET','/api/admin/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'})`;
   return (
     <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:14px;">
       <button
         type="button"
-        class="btn btn-ghost btn-sm"
+        class="ah-btn ah-btn-ghost"
         disabled={data.page <= 1}
-        hx-on--click={`(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.max(1,Number(p.value)-1));htmx.trigger('#audit-history-filters','change');})()`}
+        hx-on--click={`(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.max(1,Number(p.value)-1));${refresh};})()`}
       >&larr; Prev</button>
       <span style="font-size:12px;color:var(--text-muted);">Page {data.page} of {data.pages}</span>
       <button
         type="button"
-        class="btn btn-ghost btn-sm"
+        class="ah-btn ah-btn-ghost"
         disabled={data.page >= data.pages}
-        hx-on--click={`(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.min(${data.pages},Number(p.value)+1));htmx.trigger('#audit-history-filters','change');})()`}
+        hx-on--click={`(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.min(${data.pages},Number(p.value)+1));${refresh};})()`}
       >Next &rarr;</button>
     </div>
   );

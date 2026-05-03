@@ -101,6 +101,17 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
       matchIndex = -1;
     }
 
+    /** Seek audio to the line's start_ms timestamp. Used by both
+     *  navigation paths (Enter/`;` next-match and J/K/H/L scroll). */
+    function jumpAudioToLine(line: HTMLElement) {
+      const tsAttr = line.dataset.tsMs ?? line.querySelector<HTMLElement>(".t-timestamp")?.dataset.seekMs;
+      if (!tsAttr) return;
+      const n = Number(tsAttr);
+      if (!isNaN(n)) {
+        document.dispatchEvent(new CustomEvent("queue:jump-to-audio", { detail: { ms: n } }));
+      }
+    }
+
     function runSearch(query: string) {
       clearSearchMarks();
       if (!query || query.length < 2) {
@@ -130,8 +141,10 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
       if (matches.length === 0) return;
       matches[matchIndex]?.classList.remove("t-search-active");
       matchIndex = (matchIndex + 1) % matches.length;
-      matches[matchIndex].classList.add("t-search-active");
-      matches[matchIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
+      const target = matches[matchIndex];
+      target.classList.add("t-search-active");
+      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      jumpAudioToLine(target);
       if (matchCountRef.current) {
         matchCountRef.current.textContent = `${matchIndex + 1}/${matches.length}`;
       }
@@ -177,8 +190,17 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
     const input = searchInputRef.current;
     const onInput = () => input && runSearch(input.value);
     const onSearchKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
-      if (e.key === "Enter") { e.preventDefault(); nextMatch(); }
+      if (e.key === "Escape") { e.preventDefault(); closeSearch(); return; }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        // First Enter after typing: jump audio to the FIRST match (the one
+        // already activated by runSearch). Subsequent Enters cycle to next.
+        const target = matches[matchIndex];
+        if (target) jumpAudioToLine(target);
+        // Blur the input so subsequent keypresses don't keep typing into it.
+        // The search bar stays visible until Esc.
+        input?.blur();
+      }
     };
     input?.addEventListener("input", onInput);
     input?.addEventListener("keydown", onSearchKey);

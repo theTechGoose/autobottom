@@ -534,7 +534,23 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .verdict-details summary::-webkit-details-marker { display: none; }
 .verdict-thinking, .verdict-defense { font-size: 12px; color: var(--text-muted); line-height: 1.6; padding: 10px 14px; background: var(--bg); border-radius: 8px; margin-top: 8px; border: 1px solid var(--border); white-space: pre-wrap; }
 
-.verdict-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 0; }
+.verdict-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 0; position: relative; }
+.verdict-actions-overlay {
+  position: absolute; inset: 0; display: none;
+  align-items: center; justify-content: center; gap: 8px;
+  background: rgba(11,15,21,0.78); backdrop-filter: blur(2px);
+  border-radius: 8px; z-index: 5;
+  font-size: 12px; font-weight: 600; color: var(--text-bright);
+  pointer-events: all;
+}
+.verdict-actions[data-busy="true"] .verdict-actions-overlay { display: flex; }
+.verdict-actions[data-busy="true"] .verdict-btn { pointer-events: none; opacity: 0.45; }
+.verdict-actions-spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent, var(--blue));
+  animation: vap-spin 0.7s linear infinite;
+}
+@keyframes vap-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 .verdict-btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 0; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.15s; background: none; }
 .verdict-btn kbd { display: inline-flex; align-items: center; justify-content: center; padding: 1px 5px; border-radius: 3px; font-size: 11px; font-weight: 800; font-family: var(--mono); }
 /* Confirm — purple outlined pill (matches prod #btn-confirm) */
@@ -1142,6 +1158,37 @@ textarea.sf-input { height: 48px; resize: vertical; }
   text-align: left;
   margin-bottom: 6px;
 }
+
+/* "Audit Reviewed" completion modal — matches prod's stats card. */
+.queue-completion-box { padding: 26px 28px 22px; }
+.queue-completion-check { display: flex; justify-content: center; margin-bottom: 10px; }
+.queue-completion-stats { font-size: 13px; color: var(--text-muted); margin: 8px 0 16px; }
+.queue-completion-counts { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 4px; }
+.queue-completion-counts strong { color: var(--text-bright); font-size: 22px; font-weight: 700; }
+.queue-completion-sep { color: var(--text-dim); }
+.queue-completion-score { font-size: 13px; color: var(--text-muted); }
+.queue-completion-score strong { color: var(--text-bright); font-size: 16px; }
+.queue-completion-next { min-width: 140px; margin-top: 4px; }
+
+/* "All caught up" empty state for review/judge queues — matches prod. */
+.verdict-caught-up {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; min-height: 420px; padding: 40px 20px; text-align: center;
+}
+.verdict-caught-up h2 {
+  font-size: 22px; font-weight: 700; color: var(--text-bright);
+  margin-bottom: 10px; letter-spacing: -0.3px;
+}
+.verdict-caught-up p {
+  font-size: 13px; color: var(--text-muted); margin-bottom: 22px;
+}
+.verdict-caught-up-link {
+  display: inline-block; padding: 8px 20px; border-radius: 8px;
+  border: 1px solid #1e2736; background: #12161e;
+  color: #8b949e; font-size: 12px; font-weight: 600;
+  text-decoration: none; transition: all 0.15s;
+}
+.verdict-caught-up-link:hover { border-color: #2d333b; color: var(--text-bright); }
 
 /* Pending state shown in #queue-content while the finalize modal is open. */
 .queue-finalize-pending {

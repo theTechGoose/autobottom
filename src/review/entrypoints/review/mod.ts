@@ -37,8 +37,8 @@ export class ReviewController {
     const b = body as { findingId?: string; reviewer?: string };
     if (!b.findingId || !b.reviewer) return { error: "findingId and reviewer required" };
     try {
-      await finalizeReviewedAudit(ORG(), b.findingId, b.reviewer);
-      return { ok: true };
+      const r = await finalizeReviewedAudit(ORG(), b.findingId, b.reviewer);
+      return { ok: true, score: r.score, alreadyFinalized: r.alreadyFinalized ?? false };
     } catch (err) {
       console.error(`❌ [REVIEW] finalize failed for ${b.findingId}:`, err);
       return { ok: false, error: String(err) };

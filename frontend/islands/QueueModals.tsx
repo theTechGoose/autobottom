@@ -18,7 +18,8 @@ export default function QueueModals() {
   const confettiCanvasRef = useRef<HTMLCanvasElement>(null);
   const confirmInputRef = useRef<HTMLInputElement>(null);
   const pendingDecisionRef = useRef<{ button: HTMLButtonElement | null }>({ button: null });
-  const pendingFinalizeRef = useRef<{ findingId: string; reviewer: string }>({ findingId: "", reviewer: "" });
+  const pendingFinalizeRef = useRef<{ findingId: string; reviewer: string; confirms: number; flips: number }>({ findingId: "", reviewer: "", confirms: 0, flips: 0 });
+  const completionStatsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // ── Cheat sheet toggle ──
@@ -78,9 +79,14 @@ export default function QueueModals() {
     // which applies flips, recomputes score, fires the terminate webhook (email).
 
     function onAuditComplete(e: Event) {
-      const detail = (e as CustomEvent).detail as { findingId?: string; reviewer?: string } | undefined;
+      const detail = (e as CustomEvent).detail as { findingId?: string; reviewer?: string; confirms?: number; flips?: number } | undefined;
       if (!detail?.findingId || !detail?.reviewer) return;
-      pendingFinalizeRef.current = { findingId: detail.findingId, reviewer: detail.reviewer };
+      pendingFinalizeRef.current = {
+        findingId: detail.findingId,
+        reviewer: detail.reviewer,
+        confirms: detail.confirms ?? 0,
+        flips: detail.flips ?? 0,
+      };
       if (confirmOverlayRef.current) {
         confirmOverlayRef.current.style.display = "flex";
         if (confirmInputRef.current) {
@@ -93,40 +99,48 @@ export default function QueueModals() {
 
     function cancelConfirm() {
       if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
-      pendingFinalizeRef.current = { findingId: "", reviewer: "" };
+      pendingFinalizeRef.current = { findingId: "", reviewer: "", confirms: 0, flips: 0 };
     }
 
     async function submitConfirm() {
       const typed = (confirmInputRef.current?.value ?? "").trim().toUpperCase();
       if (typed !== "YES") return;
-      const { findingId, reviewer } = pendingFinalizeRef.current;
+      const { findingId, reviewer, confirms, flips } = pendingFinalizeRef.current;
       if (!findingId || !reviewer) { cancelConfirm(); return; }
       // Show "Submitting..." in the modal so user knows finalize is in flight
       const submitBtn = document.getElementById("queue-confirm-submit-btn") as HTMLButtonElement | null;
       if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Submitting..."; }
+      let scorePct = 0;
       try {
-        await fetch("/api/review/finalize", {
+        const res = await fetch("/api/review/finalize", {
           method: "POST",
           headers: { "content-type": "application/json" },
           credentials: "include",
           body: JSON.stringify({ findingId, reviewer }),
         });
+        const json = await res.json().catch(() => ({} as Record<string, unknown>));
+        if (typeof json.score === "number") scorePct = Math.round(json.score);
       } catch (err) {
         console.error("[FINALIZE] call failed:", err);
       }
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Submit"; }
       cancelConfirm();
-      // Completion celebration — confetti
-      if (completionOverlayRef.current) {
+      // Audit Reviewed completion modal — match prod (✓ icon + counts + score + Next Audit btn)
+      if (completionOverlayRef.current && completionStatsRef.current) {
+        completionStatsRef.current.innerHTML =
+          `<div class="queue-completion-counts"><span><strong>${confirms}</strong> confirmed</span><span class="queue-completion-sep">/</span><span><strong>${flips}</strong> flipped</span></div>` +
+          `<div class="queue-completion-score">Score: <strong>${scorePct}%</strong></div>`;
         completionOverlayRef.current.style.display = "flex";
         spawnConfetti();
-        setTimeout(() => {
-          if (completionOverlayRef.current) completionOverlayRef.current.style.display = "none";
-        }, 4000);
       }
-      // Now load the next finding into the queue panel.
-      // The decide handler returned a "pending" placeholder when auditComplete;
-      // this swap replaces that placeholder with the next audit (or empty state).
+    }
+
+    // "Next Audit" button on completion modal → loads next finding via fragment
+    function nextAudit() {
+      if (completionOverlayRef.current) completionOverlayRef.current.style.display = "none";
+      const reviewer = pendingFinalizeRef.current.reviewer
+        || (document.getElementById("hx-email") as HTMLInputElement | null)?.value
+        || "";
       const htmxAny = (globalThis as Record<string, unknown>).htmx as { ajax?: (verb: string, path: string, opts: unknown) => void } | undefined;
       if (htmxAny?.ajax) {
         htmxAny.ajax("GET", `/api/review/next-fragment?reviewer=${encodeURIComponent(reviewer)}`, {
@@ -134,7 +148,6 @@ export default function QueueModals() {
           swap: "innerHTML",
         });
       } else {
-        // Fallback if htmx isn't on globalThis: hard-reload the queue page
         globalThis.location.reload();
       }
     }
@@ -160,12 +173,15 @@ export default function QueueModals() {
     // Submit click → fires custom event from JSX onClick → handle here
     const onFinalizeSubmit = () => { void submitConfirm(); };
     document.addEventListener("queue:finalize-submit", onFinalizeSubmit);
+    const onNextAudit = () => nextAudit();
+    document.addEventListener("queue:next-audit", onNextAudit);
 
     return () => {
       document.removeEventListener("queue:cheat-sheet-toggle", onCheat);
       document.removeEventListener("queue:audit-complete", onAuditComplete);
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("queue:finalize-submit", onFinalizeSubmit);
+      document.removeEventListener("queue:next-audit", onNextAudit);
       confirmInput?.removeEventListener("keydown", onConfirmKey);
     };
   }, [cheatOpen]);
@@ -193,7 +209,7 @@ export default function QueueModals() {
               class="queue-overlay-btn"
               onClick={() => {
                 if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
-                pendingFinalizeRef.current = { findingId: "", reviewer: "" };
+                pendingFinalizeRef.current = { findingId: "", reviewer: "", confirms: 0, flips: 0 };
               }}
             >
               Cancel
@@ -212,12 +228,22 @@ export default function QueueModals() {
         </div>
       </div>
 
-      {/* Audit completion overlay */}
+      {/* Audit completion overlay — matches prod's "Audit Reviewed" card */}
       <div ref={completionOverlayRef} class="queue-overlay completion" style="display:none">
-        <div class="queue-overlay-box">
-          <div style="font-size:48px;margin-bottom:8px">🎉</div>
-          <div class="queue-overlay-title">Audit Complete</div>
-          <div class="queue-overlay-body">Great work! Next audit loading…</div>
+        <div class="queue-overlay-box queue-completion-box">
+          <div class="queue-completion-check">
+            <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
+              <circle cx="12" cy="12" r="11" fill="#22c55e" />
+              <path d="M7 12l4 4 7-8" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </div>
+          <h3 class="queue-overlay-title">Audit Reviewed</h3>
+          <div ref={completionStatsRef} class="queue-completion-stats" />
+          <button
+            type="button"
+            class="queue-overlay-btn primary queue-completion-next"
+            onClick={() => document.dispatchEvent(new CustomEvent("queue:next-audit"))}
+          >Next Audit</button>
         </div>
       </div>
 

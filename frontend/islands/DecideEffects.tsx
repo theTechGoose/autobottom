@@ -106,9 +106,31 @@ export default function DecideEffects() {
     };
     document.addEventListener("htmx:afterSwap", onSwap);
 
+    // Bug 4 — flip data-busy on the Y/N container while a decide POST is
+    // in flight, so CSS shows the "Processing…" overlay over the buttons.
+    const isDecidePath = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { pathInfo?: { requestPath?: string }; requestConfig?: { path?: string } } | undefined;
+      const path = detail?.pathInfo?.requestPath ?? detail?.requestConfig?.path ?? "";
+      return path.startsWith("/api/review/") || path.startsWith("/api/judge/");
+    };
+    const onBefore = (e: Event) => {
+      if (!isDecidePath(e)) return;
+      const el = document.getElementById("decide-buttons");
+      if (el) el.setAttribute("data-busy", "true");
+    };
+    const onAfter = (e: Event) => {
+      if (!isDecidePath(e)) return;
+      const el = document.getElementById("decide-buttons");
+      if (el) el.removeAttribute("data-busy");
+    };
+    document.addEventListener("htmx:beforeRequest", onBefore);
+    document.addEventListener("htmx:afterRequest", onAfter);
+
     return () => {
       document.removeEventListener("click", onClick);
       document.removeEventListener("htmx:afterSwap", onSwap);
+      document.removeEventListener("htmx:beforeRequest", onBefore);
+      document.removeEventListener("htmx:afterRequest", onAfter);
       if (comboTimeout) clearTimeout(comboTimeout);
     };
   }, []);

@@ -96,13 +96,16 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
   const isReview = mode === "review";
 
   if (!item) {
+    // Match prod's "All caught up" empty state — large heading, subtle
+    // empty-text, single ← Dashboard back button. No XP / combo stats.
+    const dashHref = isReview ? "/review/dashboard" : "/judge/dashboard";
+    const emptyText = isReview ? "No items pending review. Check back later." : "No items pending judge review. Check back later.";
     return (
       <div class="verdict-panel">
-        <div class="verdict-empty">
-          <div style="font-size:48px;opacity:0.3;margin-bottom:16px;">{isReview ? "👀" : "⚖️"}</div>
-          <div style="font-size:14px;color:var(--text-muted);">
-            {isReview ? "No items pending review. Check back later." : "No items pending judge review. Check back later."}
-          </div>
+        <div class="verdict-caught-up">
+          <h2>All caught up</h2>
+          <p>{emptyText}</p>
+          <a href={dashHref} class="verdict-caught-up-link">&larr; Dashboard</a>
         </div>
       </div>
     );
@@ -262,8 +265,12 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
 
       {/* Pinned footer — decision buttons + undo/dismiss */}
       <div class="verdict-footer">
-      {/* Decision buttons */}
-      <div class="verdict-actions">
+      {/* Decision buttons (id used by DecideEffects to flip data-busy) */}
+      <div class="verdict-actions" id="decide-buttons">
+      <div class="verdict-actions-overlay">
+        <span class="verdict-actions-spinner" />
+        <span>Processing…</span>
+      </div>
         {isReview ? (
           <>
             <button

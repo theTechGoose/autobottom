@@ -278,12 +278,12 @@ export async function finalizeReviewedAudit(
   orgId: OrgId,
   findingId: string,
   reviewer: string,
-): Promise<void> {
+): Promise<{ ok: true; score: number; alreadyFinalized?: boolean }> {
   // Idempotency guard
-  const existingDone = await getStored("review-done", orgId, findingId);
+  const existingDone = await getStored<{ reviewScore?: number }>("review-done", orgId, findingId);
   if (existingDone) {
     console.log(`⏭️  [REVIEW] ${findingId}: already finalized, skipping`);
-    return;
+    return { ok: true, score: existingDone.reviewScore ?? 0, alreadyFinalized: true };
   }
 
   // Collect all decisions for this finding
@@ -295,7 +295,7 @@ export async function finalizeReviewedAudit(
   }
   if (decisions.size === 0) {
     console.warn(`⚠️  [REVIEW] ${findingId}: no decisions found at finalize — skipping`);
-    return;
+    return { ok: true, score: 0, alreadyFinalized: true };
   }
 
   // Findings are chunk-stored; under a duplicate-call window the first read
@@ -307,7 +307,7 @@ export async function finalizeReviewedAudit(
   }
   if (!finding) {
     console.error(`❌ [REVIEW] ${findingId}: finding not found at finalize (after retries)`);
-    return;
+    return { ok: true, score: 0, alreadyFinalized: false };
   }
 
   const answered: Array<Record<string, unknown>> = Array.isArray(finding.answeredQuestions)
@@ -365,6 +365,8 @@ export async function finalizeReviewedAudit(
     reviewedBy: reviewer,
     reviewScore,
   });
+
+  return { ok: true, score: reviewScore };
 }
 
 // ── Undo Decision ───────────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ export const handler = define.handlers({
     const dryRun = form.get("dryRun") === "on" || form.get("dryRun") === "true";
     const sinceVs = form.get("sinceVersionstamp")?.toString().trim();
     const mode = form.get("mode")?.toString().trim();
+    const deepCompare = form.get("deepCompare") === "on" || form.get("deepCompare") === "true";
 
     const body: Record<string, unknown> = { dryRun };
     if (types.length > 0) body.types = types;
@@ -31,7 +32,8 @@ export const handler = define.handlers({
     if (since) body.since = since;
     if (until) body.until = until;
     if (sinceVs) body.sinceVersionstamp = sinceVs;
-    if (mode === "index-driven" || mode === "scan") body.mode = mode;
+    if (mode === "index-driven" || mode === "scan" || mode === "verify-repair") body.mode = mode;
+    if (deepCompare) body.deepCompare = true;
 
     let r: RunResponse;
     try {

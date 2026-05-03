@@ -167,6 +167,7 @@ function parseRunOpts(body: unknown): RunOpts {
   const until = parseDateOrMs(b.until, true);
   const mode = b.mode === "index-driven" ? "index-driven" as const
     : b.mode === "scan" ? "scan" as const
+    : b.mode === "verify-repair" ? "verify-repair" as const
     : undefined;
   return {
     types: types && types.length > 0 ? types : undefined,
@@ -175,6 +176,7 @@ function parseRunOpts(body: unknown): RunOpts {
     dryRun: b.dryRun === true || b.dryRun === "true",
     sinceVersionstamp: typeof b.sinceVersionstamp === "string" && b.sinceVersionstamp ? b.sinceVersionstamp : undefined,
     mode,
+    deepCompare: b.deepCompare === true || b.deepCompare === "true",
   };
 }
 
@@ -214,6 +216,11 @@ function shallowJob(j: PersistedJob) {
     opts: j.opts,
     elapsedMs: (j.endedAt ?? Date.now()) - j.startedAt,
     lastTickAt: j.lastTickAt,
+    // Verify-repair fields (undefined for other modes — frontend conditional)
+    verifyBuckets: j.verifyBuckets,
+    verifyMatched: j.verifyMatched,
+    verifyRepaired: j.verifyRepaired,
+    prodScanPageNum: j.prodScanPageNum,
   };
 }
 

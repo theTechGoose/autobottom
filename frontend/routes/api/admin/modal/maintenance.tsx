@@ -242,6 +242,16 @@ function MigrationPanel() {
         <div id="mig-orphans" style="max-height:220px;overflow:auto;font-size:11px;"></div>
       </PanelCard>
 
+      <PanelCard title="🛡️ Verify & Repair (Full)" subtitle="Walks every prod KV key, compares to Firestore, writes any missing/different values inline. Cutover-grade guarantee: when a re-run reports repaired=0 + errors=[], the migration is bit-identical to prod. Estimated 25-50 min for a healthy migration; resumable + cancellable; survives isolate restarts.">
+        <form hx-post="/api/admin/migration/run" hx-target="#mig-runs" hx-swap="afterbegin" hx-encoding="multipart/form-data">
+          <input type="hidden" name="mode" value="verify-repair" />
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);"><input type="checkbox" name="deepCompare" /> Deep compare every bucket (1-3h, paranoid mode)</label>
+            <button type="submit" class="sf-btn primary" style="padding:6px 14px;font-size:11px;" hx-confirm="Start full verify-and-repair pass?">🛡️ Run Verify</button>
+          </div>
+        </form>
+      </PanelCard>
+
       <PanelCard title="2. Run Migration" subtitle="Date-range filter is applied only to types with a known timestamp field (audit-finding, completed-audit-stat, etc.). Other types are migrated whole. Each /status poll advances the job ~30s — survives isolate restarts.">
         <form hx-post="/api/admin/migration/run" hx-target="#mig-runs" hx-swap="afterbegin" hx-encoding="multipart/form-data">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">

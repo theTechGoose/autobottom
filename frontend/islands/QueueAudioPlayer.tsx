@@ -34,7 +34,10 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
   const timeRef = useRef<HTMLSpanElement>(null);
   const iconPlayRef = useRef<HTMLSpanElement>(null);
   const iconPauseRef = useRef<HTMLSpanElement>(null);
-  const [speed, setSpeed] = useState(1.0);
+  // Speed is a ref (not state) so bumping it never triggers a re-render —
+  // re-renders were causing currentTime to reset on speed change.
+  const speedRef = useRef(1.0);
+  const speedDisplayRef = useRef<HTMLSpanElement>(null);
   const [currentFid, setCurrentFid] = useState<string | null>(initialFindingId);
 
   useEffect(() => {
@@ -111,7 +114,7 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
       if (fid === currentLoadFid) return;
       currentLoadFid = fid;
       audio!.src = `/audit/recording?id=${encodeURIComponent(fid)}&idx=0`;
-      audio!.playbackRate = speed;
+      audio!.playbackRate = speedRef.current;
       loadWaveform(fid);
     }
 
@@ -148,9 +151,16 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
       audio!.currentTime = Math.max(0, Math.min(audio!.duration, (audio!.currentTime || 0) + delta));
     }
     function bumpSpeed(delta: number) {
-      const next = Math.max(SPEED_MIN, Math.min(SPEED_MAX, speed + delta));
-      setSpeed(next);
+      const next = Math.max(SPEED_MIN, Math.min(SPEED_MAX, speedRef.current + delta));
+      speedRef.current = next;
       audio!.playbackRate = next;
+      // Update display imperatively — no re-render, no audio reload.
+      const el = speedDisplayRef.current;
+      if (el) {
+        el.textContent = `${next.toFixed(1)}×`;
+        el.style.visibility = Math.abs(next - 1.0) > 0.001 ? "visible" : "hidden";
+        el.style.color = next > 1 ? "var(--blue)" : "var(--yellow)";
+      }
     }
 
     // Public events from other islands / components
@@ -236,8 +246,6 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
     };
   }, [initialFindingId]);
 
-  const speedVisible = Math.abs(speed - 1.0) > 0.001;
-  const speedColor = speed > 1 ? "var(--blue)" : "var(--yellow)";
   const hasFinding = !!currentFid;
 
   return (
@@ -259,8 +267,8 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
       </button>
       <canvas class="qap-waveform" ref={canvasRef} />
       <span class="qap-time" ref={timeRef}>0:00 / 0:00</span>
-      <span class="qap-speed" style={speedVisible ? `color:${speedColor}` : "visibility:hidden"}>
-        {speed.toFixed(1)}×
+      <span class="qap-speed" ref={speedDisplayRef} style="visibility:hidden">
+        1.0×
       </span>
     </div>
   );

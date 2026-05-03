@@ -101,6 +101,9 @@ export default function QueueModals() {
       if (typed !== "YES") return;
       const { findingId, reviewer } = pendingFinalizeRef.current;
       if (!findingId || !reviewer) { cancelConfirm(); return; }
+      // Show "Submitting..." in the modal so user knows finalize is in flight
+      const submitBtn = document.getElementById("queue-confirm-submit-btn") as HTMLButtonElement | null;
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Submitting..."; }
       try {
         await fetch("/api/review/finalize", {
           method: "POST",
@@ -111,14 +114,28 @@ export default function QueueModals() {
       } catch (err) {
         console.error("[FINALIZE] call failed:", err);
       }
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Submit"; }
       cancelConfirm();
-      // Completion celebration — confetti + flash of the overlay
+      // Completion celebration — confetti
       if (completionOverlayRef.current) {
         completionOverlayRef.current.style.display = "flex";
         spawnConfetti();
         setTimeout(() => {
           if (completionOverlayRef.current) completionOverlayRef.current.style.display = "none";
         }, 4000);
+      }
+      // Now load the next finding into the queue panel.
+      // The decide handler returned a "pending" placeholder when auditComplete;
+      // this swap replaces that placeholder with the next audit (or empty state).
+      const htmxAny = (globalThis as Record<string, unknown>).htmx as { ajax?: (verb: string, path: string, opts: unknown) => void } | undefined;
+      if (htmxAny?.ajax) {
+        htmxAny.ajax("GET", `/api/review/next-fragment?reviewer=${encodeURIComponent(reviewer)}`, {
+          target: "#queue-content",
+          swap: "innerHTML",
+        });
+      } else {
+        // Fallback if htmx isn't on globalThis: hard-reload the queue page
+        globalThis.location.reload();
       }
     }
 
@@ -140,31 +157,35 @@ export default function QueueModals() {
     };
     confirmInput?.addEventListener("keydown", onConfirmKey);
 
+    // Submit click → fires custom event from JSX onClick → handle here
+    const onFinalizeSubmit = () => { void submitConfirm(); };
+    document.addEventListener("queue:finalize-submit", onFinalizeSubmit);
+
     return () => {
       document.removeEventListener("queue:cheat-sheet-toggle", onCheat);
       document.removeEventListener("queue:audit-complete", onAuditComplete);
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("queue:finalize-submit", onFinalizeSubmit);
       confirmInput?.removeEventListener("keydown", onConfirmKey);
     };
   }, [cheatOpen]);
 
   return (
     <>
-      {/* Confirmation overlay */}
+      {/* Confirmation overlay — port of prod's main:shared/queue-page.ts:1075 */}
       <div ref={confirmOverlayRef} class="queue-overlay" style="display:none">
         <div class="queue-overlay-box">
-          <div class="queue-overlay-title">Confirm Audit Finalization</div>
-          <div class="queue-overlay-body">
-            All questions for this audit have been decided. Finalizing will
-            apply your flips, recompute the audit score, and send the
-            completion email. Type <strong>YES</strong> to confirm.
-          </div>
+          <h3 class="queue-overlay-title">Final Question for This Audit</h3>
+          <p class="queue-overlay-body">
+            This is the last item for this audit. Submitting will finalize the review.
+          </p>
+          <div class="queue-overlay-label">Type YES to proceed</div>
           <input
             ref={confirmInputRef}
             type="text"
             class="queue-overlay-input"
-            placeholder="type YES"
             autoComplete="off"
+            spellcheck={false}
           />
           <div class="queue-overlay-actions">
             <button
@@ -178,29 +199,11 @@ export default function QueueModals() {
               Cancel
             </button>
             <button
+              id="queue-confirm-submit-btn"
               type="button"
               class="queue-overlay-btn primary"
-              onClick={async () => {
-                const typed = (confirmInputRef.current?.value ?? "").trim().toUpperCase();
-                if (typed !== "YES") return;
-                const { findingId, reviewer } = pendingFinalizeRef.current;
-                if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
-                pendingFinalizeRef.current = { findingId: "", reviewer: "" };
-                if (!findingId || !reviewer) return;
-                try {
-                  await fetch("/api/review/finalize", {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    credentials: "include",
-                    body: JSON.stringify({ findingId, reviewer }),
-                  });
-                } catch (err) { console.error("[FINALIZE] call failed:", err); }
-                if (completionOverlayRef.current) {
-                  completionOverlayRef.current.style.display = "flex";
-                  setTimeout(() => {
-                    if (completionOverlayRef.current) completionOverlayRef.current.style.display = "none";
-                  }, 4000);
-                }
+              onClick={() => {
+                document.dispatchEvent(new CustomEvent("queue:finalize-submit"));
               }}
             >
               Submit

@@ -421,7 +421,7 @@ export async function undoDecision(
 
   const decided = chosenDecided.value;
   const { findingId, questionIndex } = decided;
-  const item: ReviewItem = {
+  let item: ReviewItem = {
     findingId: decided.findingId,
     questionIndex: decided.questionIndex,
     reviewIndex: decided.reviewIndex ?? 1,
@@ -436,6 +436,36 @@ export async function undoDecision(
     ...(decided.recordMeta ? { recordMeta: decided.recordMeta } : {}),
     ...(decided.completedAt != null ? { completedAt: decided.completedAt } : {}),
   };
+
+  // Safety net: if the decided record was saved with empty question fields
+  // (can happen when a decision was recorded before active/pending had the
+  // full payload — e.g. stale buffer or race), re-derive the payload from
+  // the finding's answeredQuestions so the panel re-renders with full data.
+  if (!item.header || !item.populated) {
+    try {
+      const finding = await getFinding(orgId, findingId) as Record<string, unknown> | null;
+      const answeredQuestions = (finding?.answeredQuestions as Array<{ answer: string; header: string; populated: string; thinking: string; defense: string }> | undefined) ?? [];
+      const q = answeredQuestions[questionIndex];
+      if (q) {
+        const noOnly = answeredQuestions.filter((x) => x.answer === "No");
+        const reviewIndex = noOnly.findIndex((x) => x.header === q.header) + 1;
+        item = {
+          ...item,
+          header: q.header || item.header,
+          populated: q.populated || item.populated,
+          thinking: q.thinking || item.thinking,
+          defense: q.defense || item.defense,
+          answer: q.answer || item.answer,
+          reviewIndex: reviewIndex || item.reviewIndex,
+          totalForFinding: noOnly.length || item.totalForFinding,
+          ...(finding?.recordingIdField ? { recordingIdField: finding.recordingIdField as string } : {}),
+        };
+        console.log(`🛠️  [REVIEW:UNDO] ${findingId}/${questionIndex}: rehydrated empty fields from finding`);
+      }
+    } catch (e) {
+      console.warn(`⚠️  [REVIEW:UNDO] ${findingId}/${questionIndex}: rehydrate failed`, e);
+    }
+  }
 
   const counterVal = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 0;
   await deleteStored("review-decided", orgId, ...chosenDecided.key);

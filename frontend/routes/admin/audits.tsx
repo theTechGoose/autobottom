@@ -60,20 +60,25 @@ const WINDOWS: Array<{ h: number; label: string }> = [
   { h: 24, label: "24h" }, { h: 72, label: "3d" }, { h: 168, label: "7d" },
 ];
 
-/** JS snippet for window-button click — sets hidden since/until and fires
- *  the `ah-refresh` custom event the form listens for. (Form's `change from:`
- *  triggers don't fire on programmatic `htmx.trigger(..., 'change')`.) */
+/** JS snippet for window-button click — sets hidden since/until, hides
+ *  the ✕ Clear button (since we're back on a quick window), and fires
+ *  the `ah-refresh` custom event. (Form's `change from:` triggers don't
+ *  fire on programmatic `htmx.trigger(..., 'change')`.) */
 function windowBtnJs(hours: number): string {
-  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));htmx.trigger('#audit-history-filters','ah-refresh');})()`;
+  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('f-date-clear').style.display='none';htmx.trigger('#audit-history-filters','ah-refresh');})()`;
 }
 
-/** JS for custom-date Go button. */
+/** JS for custom-date Go button. Reveals ✕ Clear so user can return to 24h. */
 const goBtnJs =
-  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));htmx.trigger('#audit-history-filters','ah-refresh');})()`;
+  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';htmx.trigger('#audit-history-filters','ah-refresh');})()`;
+
+/** JS for ✕ Clear (visible only after a custom range) — return to 24h default. */
+const clearBtnJs =
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';htmx.trigger('#audit-history-filters','ah-refresh');})()`;
 
 /** JS for Reset button — clears all filters back to defaults and 24h. */
 const resetJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));htmx.trigger('#audit-history-filters','ah-refresh');})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';htmx.trigger('#audit-history-filters','ah-refresh');})()`;
 
 /** JS for CSV button — gathers form values + format=csv into a download URL. */
 const csvBtnJs =
@@ -112,7 +117,7 @@ export default define.page(async function AdminAuditsPage(ctx) {
         .audits-filters > label { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-muted); display:flex; flex-direction:column; gap:3px; margin:0; }
         .audits-filters select, .audits-filters input[type=number] { background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:11px; padding:5px 8px; font-family:'SF Mono','Fira Code',monospace; }
         .audits-filters select:focus, .audits-filters input:focus { outline:none; border-color:var(--blue); }
-        .audits-filters input[type="date"] { background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:11px; padding:3px 8px; height:26px; color-scheme:dark; }
+        .audits-filters input[type="date"] { background:var(--bg-raised); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:11px; padding:3px 8px; height:26px; color-scheme:dark; }
         .audits-filters input[type="date"]::-webkit-calendar-picker-indicator { filter:invert(1) brightness(1.3); cursor:pointer; }
 
         .window-btns { display:flex; gap:4px; align-items:center; }
@@ -178,6 +183,7 @@ export default define.page(async function AdminAuditsPage(ctx) {
             <span style="color:var(--text-dim);align-self:center;">–</span>
             <input type="date" id="f-date-end" />
             <button type="button" class="ah-btn ah-btn-primary" style="padding:3px 10px;font-size:11px;height:26px;" hx-on--click={goBtnJs}>Go</button>
+            <button type="button" id="f-date-clear" class="ah-btn ah-btn-ghost" style="padding:3px 8px;font-size:11px;height:26px;display:none;" hx-on--click={clearBtnJs}>✕ Clear</button>
           </div>
           <input type="hidden" name="since" id="ah-since" value={filters.since} />
           <input type="hidden" name="until" id="ah-until" value={filters.until} />

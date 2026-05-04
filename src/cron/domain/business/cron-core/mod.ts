@@ -15,18 +15,19 @@ export function registerCrons(): void {
 
   // Server-side driver for migration jobs. Each /status HTTP poll also ticks,
   // but operators close their tabs and walk away — we cannot rely on browser
-  // polling. This cron guarantees forward progress regardless. tickJob is
-  // wall-clock-budgeted and idempotent; ticking 4× back-to-back gives ~30s of
-  // work per fire so cadence approaches what active polling delivers.
+  // polling. This cron guarantees forward progress regardless.
+  //
+  // Tick once per fire, not 4×. tickJob has a 30s wall-clock budget, so
+  // 4× = up to 120s per fire, which exceeds the 60s cron interval and
+  // backs fires up — Deno Deploy then occasionally skips or delays a fire
+  // long enough to trip the stale watchdog. 1× = ≤30s, fits comfortably.
   Deno.cron("migration-tick", "* * * * *", async () => {
     const all = await listJobs();
     const running = all.filter((j) => j.status === "running");
     if (running.length === 0) return;
+    console.log(`⏰ [CRON:migration-tick] ticking ${running.length} running job(s)`);
     for (const job of running) {
-      for (let i = 0; i < 4; i++) {
-        const after = await tickJob(job.jobId);
-        if (!after || after.status !== "running") break;
-      }
+      await tickJob(job.jobId);
     }
   });
 

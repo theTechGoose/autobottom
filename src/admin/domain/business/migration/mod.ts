@@ -27,7 +27,11 @@ const QUEUE_TYPE = "migration-chunked-queue";
 const TICK_BUDGET_MS = 30_000;
 /** A job whose lastTickAt is older than this is auto-marked errored to
  *  prevent zombie-polling. */
-const STALE_TICK_MS = 5 * 60_000;
+/** Threshold for marking a job as stale (zombie). Cron drives ticks once
+ *  per minute; Deno Deploy isolate cycling and back-to-back tick batches
+ *  mean it's normal to see 2-3 min gaps. 15 min is a real "something
+ *  broke" signal — not a benign cron lull. */
+const STALE_TICK_MS = 15 * 60_000;
 /** /kv-export pagination batch size for value-bearing requests.
  *  Deno KV's `kv.list({ limit })` is hard-capped at 1000 by the runtime,
  *  but we use 300 here to keep peak memory below the 512MB isolate limit
@@ -731,6 +735,24 @@ export async function forceCancelJob(jobId: string): Promise<boolean> {
   state.message = `force-cancelled at scanned=${state.scanned}`;
   await saveJob(state);
   console.log(`⛔ [MIGRATION:FORCE-CANCEL:${jobId.slice(-6)}] terminated immediately scanned=${state.scanned}${state.prodJobId ? " (+ prod cancel)" : ""}`);
+  return true;
+}
+
+/** Re-arm an errored job so the cron driver picks it back up. Used when
+ *  the stale watchdog fired incorrectly (cron lull, isolate cycling, etc.).
+ *  Cursor + verifyBuckets are intact so work resumes without duplication. */
+export async function resumeJob(jobId: string): Promise<boolean> {
+  const state = await loadJob(jobId);
+  if (!state) return false;
+  if (state.status !== "error") return false;
+  state.status = "running";
+  state.endedAt = null;
+  state.cancelled = false;
+  state.lastTickAt = Date.now();
+  state.message = `resumed at ${state.phase}`;
+  appendLog(state, `[resume] flipped error → running, cursor preserved (cron will tick within 1 min)`);
+  await saveJob(state);
+  console.log(`▶️  [MIGRATION:RESUME:${jobId.slice(-6)}] error → running phase=${state.phase}`);
   return true;
 }
 

@@ -14,7 +14,7 @@ import { OkMessageResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import {
   inventoryProdKv, ensureProdKvConfigured, createJob, getJob, listJobs,
-  cancelJob, forceCancelJob, killAllRunningJobs, tickJob,
+  cancelJob, forceCancelJob, killAllRunningJobs, resumeJob, tickJob,
   captureSnapshot, verifyMigration, computeScanPrefixes, orphanCheck,
   GLOBAL_TYPES, SKIP_TYPES,
   type RunOpts, type PersistedJob, type InventoryRow, type Snapshot, type VerifyReport,
@@ -108,6 +108,15 @@ export class MigrationController {
     if (!jobId) return { ok: false, error: "jobId required" };
     const ok = await forceCancelJob(jobId);
     return { ok, message: ok ? "force-cancelled" : "job not running" };
+  }
+
+  @Post("resume") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  @Description("Re-arm an errored job so the cron driver picks it back up. Body: {jobId}")
+  async resume(@Body() body: GenericBodyRequest) {
+    const jobId = (body as unknown as Record<string, unknown>).jobId as string | undefined;
+    if (!jobId) return { ok: false, error: "jobId required" };
+    const ok = await resumeJob(jobId);
+    return { ok, message: ok ? "resumed — cron will tick within 1 min" : "job not found or not in error state" };
   }
 
   @Post("kill-all") @ReturnedType(OkMessageResponse)

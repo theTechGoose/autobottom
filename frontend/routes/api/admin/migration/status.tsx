@@ -131,6 +131,18 @@ export function JobView({ j }: { j: JobView }) {
             hx-swap="outerHTML"
           >Cancel</button>
         )}
+        {j.status === "error" && (
+          <button
+            class="sf-btn primary"
+            style="padding:4px 10px;font-size:11px;"
+            hx-post="/api/admin/migration/resume"
+            hx-vals={`{"jobId":"${j.jobId}"}`}
+            hx-target={`#${id}`}
+            hx-swap="outerHTML"
+            hx-confirm="Resume this errored job from saved cursor?"
+            title="Re-arm this job so the cron picks it up. Cursor + bucket state are preserved — no work is repeated."
+          >▶ Resume</button>
+        )}
       </div>
       {isVerify ? (
         <VerifyView j={j} />

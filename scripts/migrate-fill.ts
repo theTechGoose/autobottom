@@ -229,6 +229,11 @@ interface ChunkedGroup {
   baseKey: (string | number)[];             // key without chunk suffix
 }
 
+// Per-type debug-logging gates: only log the first chunk part / meta seen
+// for each type so we can verify decoding without flooding the terminal.
+const loggedChunkPartShape = new Set<string>();
+const loggedChunkMetaShape = new Set<string>();
+
 interface SharedStats {
   stats: BucketStats;
   pendingChunked: Map<string, ChunkedGroup & { type: string; org: string }>;
@@ -290,6 +295,12 @@ async function walkPrefix(
         let g = pendingChunked.get(groupKey);
         if (!g) { g = { type: decoded.type, org: decoded.org, parts: new Map(), baseKey: decoded.keyParts }; pendingChunked.set(groupKey, g); }
         const partIdx = e.key[e.key.length - 1];
+        // Debug: log the first chunk part shape per type so we can verify our detection.
+        if (!loggedChunkPartShape.has(decoded.type)) {
+          loggedChunkPartShape.add(decoded.type);
+          const valuePreview = typeof e.value === "string" ? `string(${e.value.length} chars)` : typeof e.value === "object" ? `object: ${JSON.stringify(e.value).slice(0, 120)}` : `${typeof e.value}: ${String(e.value).slice(0, 80)}`;
+          log(`  [debug] first chunk PART for type=${decoded.type}: key=${JSON.stringify(e.key)} (partIdx=${String(partIdx)}, type=${typeof partIdx}) value=${valuePreview}`);
+        }
         if (typeof partIdx === "number") g.parts.set(partIdx, e.value);
         continue;
       }
@@ -297,7 +308,24 @@ async function walkPrefix(
         const groupKey = `${bk}|${decoded.keyParts.join("/")}`;
         let g = pendingChunked.get(groupKey);
         if (!g) { g = { type: decoded.type, org: decoded.org, parts: new Map(), baseKey: decoded.keyParts }; pendingChunked.set(groupKey, g); }
-        const n = (e.value as { n?: number })?.n;
+        // Permissive meta extraction. Tries multiple known shapes.
+        // Logs the first meta seen per type so we can debug if detection fails.
+        const v = e.value;
+        let n: number | undefined;
+        if (typeof v === "number") n = v;
+        else if (v && typeof v === "object") {
+          const r = v as Record<string, unknown>;
+          if (typeof r.n === "number") n = r.n;
+          else if (typeof r.totalChunks === "number") n = r.totalChunks;
+          else if (typeof r.count === "number") n = r.count;
+          else if (typeof r.chunks === "number") n = r.chunks;
+          else if (typeof r.parts === "number") n = r.parts;
+          else if (typeof r.length === "number") n = r.length;
+        }
+        if (!loggedChunkMetaShape.has(decoded.type)) {
+          loggedChunkMetaShape.add(decoded.type);
+          log(`  [debug] first chunk META for type=${decoded.type}: key=${JSON.stringify(e.key)} value=${JSON.stringify(e.value).slice(0, 200)} → resolved n=${n}`);
+        }
         if (typeof n === "number") g.meta = n;
         continue;
       }

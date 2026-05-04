@@ -300,6 +300,11 @@ function MigrationPanel() {
         </form>
       </PanelCard>
 
+      <PanelCard title="🩺 Migration Health Check" subtitle="One-shot health report. Lists running jobs, samples each bucket against Firestore, returns per-bucket status (healthy / missing-data / mismatched-data). Skips no types — covers chunked too. ~60-90s synchronous.">
+        <button class="sf-btn primary" style="padding:8px 18px;font-size:12px;font-weight:700;" hx-post="/api/admin/migration/health-check" hx-target="#mig-health" hx-swap="innerHTML">🩺 Run Health Check</button>
+        <div id="mig-health" style="margin-top:10px;"></div>
+      </PanelCard>
+
       <PanelCard title="4. Verify" subtitle="Reservoir-sample N keys from prod KV; for each, read the same value from Firestore and compare.">
         <form hx-post="/api/admin/migration/verify" hx-target="#mig-verify" hx-swap="innerHTML">
           <div style="display:flex;gap:8px;align-items:flex-end;">

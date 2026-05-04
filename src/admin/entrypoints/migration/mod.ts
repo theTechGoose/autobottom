@@ -15,10 +15,10 @@ import { GenericBodyRequest } from "@core/dto/requests.ts";
 import {
   inventoryProdKv, ensureProdKvConfigured, createJob, getJob, listJobs,
   cancelJob, forceCancelJob, killAllRunningJobs, resumeJob, skipToPhase, tickJob,
-  captureSnapshot, verifyMigration, computeScanPrefixes, orphanCheck,
+  captureSnapshot, verifyMigration, computeScanPrefixes, orphanCheck, healthCheck,
   GLOBAL_TYPES, SKIP_TYPES,
   type RunOpts, type PersistedJob, type InventoryRow, type Snapshot, type VerifyReport,
-  type OrphanReport,
+  type OrphanReport, type HealthCheckReport,
 } from "@admin/domain/business/migration/mod.ts";
 
 @SwaggerDescription("Migration — KV → Firestore data migration tooling")
@@ -182,6 +182,19 @@ export class MigrationController {
     try {
       const report: OrphanReport = await orphanCheck();
       return { ok: true, ...report };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  }
+
+  @Post("health-check") @ReturnedType(MessageResponse)
+  @Description("Migration health: lists running jobs, samples each bucket, reports per-bucket healthy/missing/mismatched. Synchronous, ~60-90s.")
+  async healthCheck() {
+    const ck = ensureProdKvConfigured();
+    if (!ck.ok) return { ok: false, error: ck.error };
+    try {
+      const report: HealthCheckReport = await healthCheck();
+      return { ok: true, report };
     } catch (err) {
       return { ok: false, error: String(err) };
     }

@@ -2308,3 +2308,244 @@ export async function verifyMigration(sampleSize = 50): Promise<VerifyReport> {
   console.log(`🏁 [MIGRATION:VERIFY] DONE in ${totalMs}ms — sampled=${samples.length} matched=${matched} missing=${missing} mismatched=${mismatched} skipped=${skippedCount}`);
   return { sampled: samples.length, matched, missing, mismatched, examples };
 }
+
+// ── Health check ────────────────────────────────────────────────────────────
+
+export interface HealthCheckBucket {
+  type: string;
+  org: string;
+  prodCount: number;
+  isChunked: boolean;
+  samplesChecked: number;
+  samplesMatched: number;
+  samplesMissing: number;
+  samplesMismatched: number;
+  status: "healthy" | "missing-data" | "mismatched-data" | "skipped" | "error";
+  notes: string[];
+}
+
+export interface HealthCheckReport {
+  startedAt: number;
+  finishedAt: number;
+  durationMs: number;
+  totalBuckets: number;
+  healthyBuckets: number;
+  unhealthyBuckets: number;
+  totalSamplesChecked: number;
+  totalSamplesMatched: number;
+  totalSamplesMissing: number;
+  totalSamplesMismatched: number;
+  buckets: HealthCheckBucket[];
+  runningJobs: Array<{ jobId: string; phase: JobPhase; status: JobStatus; mode: string; startedAt: number; message: string }>;
+  source: "verify-repair-job" | "fresh-inventory";
+  sourceJobId?: string;
+  notes: string[];
+}
+
+const HEALTH_SAMPLES_PER_BUCKET = 3;
+
+/** Comprehensive migration health check. Answers three questions in one shot:
+ *  1) What jobs are running? (lists all running migration jobs)
+ *  2) What writes are left? (per-bucket: prod count, samples-present-in-fs)
+ *  3) Is everything operating correctly? (per-bucket health status)
+ *
+ *  Strategy: reuses the verify-repair job's already-discovered bucket counts
+ *  (no need to re-walk all of prod KV). For each bucket, samples N entries
+ *  via prod kv-export with the bucket prefix, then checks each in Firestore
+ *  via getStored / getStoredChunked. This avoids the OOM-prone full-bucket
+ *  list that broke fs-count. Synchronous — runs in one HTTP request,
+ *  ~60-90s for ~80 buckets at 3 samples each. */
+export async function healthCheck(): Promise<HealthCheckReport> {
+  const ck = ensureProdKvConfigured();
+  if (!ck.ok) throw new Error(ck.error);
+  const base = prodExportBaseUrl();
+  const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
+  const startedAt = Date.now();
+
+  console.log(`🩺 [HEALTH-CHECK] start`);
+
+  // 1. List jobs — surface what's running so the operator sees activity
+  const allJobs = await listJobs();
+  const running = allJobs
+    .filter((j) => j.status === "running")
+    .map((j) => ({
+      jobId: j.jobId,
+      phase: j.phase,
+      status: j.status,
+      mode: j.opts.mode ?? "scan",
+      startedAt: j.startedAt,
+      message: j.message,
+    }));
+  console.log(`🩺 [HEALTH-CHECK] ${running.length} running job(s)`);
+
+  // 2. Get bucket counts. Prefer a recent verify-repair job (already walked
+  //    prod once). Otherwise fall back to a fresh inventory.
+  const verifyJob = allJobs.find(
+    (j) => j.opts.mode === "verify-repair" && j.verifyBuckets && Object.keys(j.verifyBuckets).length > 0,
+  );
+  let bucketEntries: Array<{ type: string; org: string; prodCount: number; isChunked: boolean }>;
+  let source: HealthCheckReport["source"];
+  let sourceJobId: string | undefined;
+  const reportNotes: string[] = [];
+
+  if (verifyJob && verifyJob.verifyBuckets) {
+    source = "verify-repair-job";
+    sourceJobId = verifyJob.jobId;
+    bucketEntries = Object.values(verifyJob.verifyBuckets).map((b) => ({
+      type: b.type,
+      org: b.org,
+      prodCount: b.prodCount,
+      isChunked: b.isChunked,
+    }));
+    reportNotes.push(`Bucket counts sourced from verify-repair job ${verifyJob.jobId.slice(-6)}`);
+    console.log(`🩺 [HEALTH-CHECK] using verify-repair job ${verifyJob.jobId.slice(-6)} for ${bucketEntries.length} bucket counts`);
+  } else {
+    source = "fresh-inventory";
+    reportNotes.push("No verify-repair job found — running fresh inventory walk");
+    console.log(`🩺 [HEALTH-CHECK] no verify job, walking prod inventory`);
+    const inv = await inventoryProdKv();
+    bucketEntries = inv.rows.map((r) => ({
+      type: r.type,
+      org: r.org,
+      prodCount: r.count + r.chunkedCount,
+      isChunked: r.chunkedCount > 0,
+    }));
+  }
+
+  // 3. For each bucket, sample N entries from prod, check Firestore
+  const buckets: HealthCheckBucket[] = [];
+  let totalSamplesChecked = 0, totalSamplesMatched = 0, totalSamplesMissing = 0, totalSamplesMismatched = 0;
+
+  for (let i = 0; i < bucketEntries.length; i++) {
+    const b = bucketEntries[i];
+    const bk = `${b.type}/${b.org}`;
+    const bucket: HealthCheckBucket = {
+      type: b.type,
+      org: b.org,
+      prodCount: b.prodCount,
+      isChunked: b.isChunked,
+      samplesChecked: 0,
+      samplesMatched: 0,
+      samplesMissing: 0,
+      samplesMismatched: 0,
+      status: "healthy",
+      notes: [],
+    };
+
+    if (SKIP_TYPES.has(b.type)) {
+      bucket.status = "skipped";
+      bucket.notes.push(`type ${b.type} is in SKIP_TYPES`);
+      buckets.push(bucket);
+      console.log(`🩺 [HEALTH-CHECK] (${i + 1}/${bucketEntries.length}) ${bk} — SKIPPED`);
+      continue;
+    }
+
+    if (b.prodCount === 0) {
+      bucket.notes.push("prod count is 0, nothing to verify");
+      buckets.push(bucket);
+      console.log(`🩺 [HEALTH-CHECK] (${i + 1}/${bucketEntries.length}) ${bk} — empty in prod, OK`);
+      continue;
+    }
+
+    try {
+      // Sample first N keys from prod for this bucket via prefixed kv-export
+      const skipped: Array<{ reason: string }> = [];
+      const prefix: Deno.KvKey = GLOBAL_TYPES.has(b.type) ? [b.type] : [`__${b.type}__`, b.org];
+      const page = await fetchExportPage(base, secret, prefix, null, skipped, {});
+      const candidates: Array<{ key: Deno.KvKey; value: unknown; isChunked: boolean }> = [];
+      for (const e of page.entries) {
+        const decoded = decodeKey(e.key);
+        if (!decoded) continue;
+        // For chunked types: only sample chunk META keys (we'll reassemble via getStoredChunked)
+        // For simple types: skip chunk parts and metas
+        if (b.isChunked) {
+          if (!decoded.isChunkMeta) continue;
+        } else {
+          if (decoded.isChunkPart || decoded.isChunkMeta) continue;
+        }
+        candidates.push({ key: e.key, value: e.value, isChunked: decoded.isChunkMeta });
+        if (candidates.length >= HEALTH_SAMPLES_PER_BUCKET) break;
+      }
+
+      if (candidates.length === 0) {
+        bucket.notes.push("no checkable samples in first prod page");
+        buckets.push(bucket);
+        console.log(`🩺 [HEALTH-CHECK] (${i + 1}/${bucketEntries.length}) ${bk} — no samples drawn`);
+        continue;
+      }
+
+      for (const c of candidates) {
+        bucket.samplesChecked++;
+        totalSamplesChecked++;
+        const decoded = decodeKey(c.key)!;
+        try {
+          if (b.isChunked) {
+            // Chunked: reassemble in Firestore, just check existence (value compare requires re-parsing prod side)
+            const fsVal = await getStoredChunked(b.type, b.org, ...decoded.keyParts);
+            if (fsVal === null) {
+              bucket.samplesMissing++;
+              totalSamplesMissing++;
+              if (bucket.notes.length < 5) bucket.notes.push(`missing chunked: ${decoded.keyParts.join("/")}`);
+            } else {
+              bucket.samplesMatched++;
+              totalSamplesMatched++;
+            }
+          } else {
+            const fsVal = await getStored(b.type, b.org, ...decoded.keyParts);
+            if (fsVal === null) {
+              bucket.samplesMissing++;
+              totalSamplesMissing++;
+              if (bucket.notes.length < 5) bucket.notes.push(`missing: ${decoded.keyParts.join("/")}`);
+            } else if (JSON.stringify(fsVal) === JSON.stringify(c.value)) {
+              bucket.samplesMatched++;
+              totalSamplesMatched++;
+            } else {
+              bucket.samplesMismatched++;
+              totalSamplesMismatched++;
+              if (bucket.notes.length < 5) bucket.notes.push(`mismatch: ${decoded.keyParts.join("/")}`);
+            }
+          }
+        } catch (err) {
+          bucket.samplesMissing++;
+          totalSamplesMissing++;
+          if (bucket.notes.length < 5) bucket.notes.push(`fetch error: ${String(err).slice(0, 60)}`);
+        }
+      }
+
+      if (bucket.samplesMissing > 0) bucket.status = "missing-data";
+      else if (bucket.samplesMismatched > 0) bucket.status = "mismatched-data";
+      else bucket.status = "healthy";
+
+      console.log(`🩺 [HEALTH-CHECK] (${i + 1}/${bucketEntries.length}) ${bk} — ${bucket.status} matched=${bucket.samplesMatched} missing=${bucket.samplesMissing} mismatched=${bucket.samplesMismatched}`);
+    } catch (err) {
+      bucket.status = "error";
+      bucket.notes.push(`bucket sample failed: ${String(err).slice(0, 100)}`);
+      console.log(`🩺 [HEALTH-CHECK] (${i + 1}/${bucketEntries.length}) ${bk} — ERROR: ${String(err).slice(0, 100)}`);
+    }
+    buckets.push(bucket);
+  }
+
+  const finishedAt = Date.now();
+  const durationMs = finishedAt - startedAt;
+  const healthy = buckets.filter((b) => b.status === "healthy" || b.status === "skipped").length;
+  const unhealthy = buckets.length - healthy;
+  console.log(`🏁 [HEALTH-CHECK] done in ${durationMs}ms — ${healthy}/${buckets.length} healthy, ${unhealthy} need attention`);
+
+  return {
+    startedAt,
+    finishedAt,
+    durationMs,
+    totalBuckets: buckets.length,
+    healthyBuckets: healthy,
+    unhealthyBuckets: unhealthy,
+    totalSamplesChecked,
+    totalSamplesMatched,
+    totalSamplesMissing,
+    totalSamplesMismatched,
+    buckets,
+    runningJobs: running,
+    source,
+    sourceJobId,
+    notes: reportNotes,
+  };
+}

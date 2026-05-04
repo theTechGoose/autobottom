@@ -224,22 +224,32 @@ interface ChunkedGroup {
   baseKey: (string | number)[];             // key without chunk suffix
 }
 
-async function migrateBucket(
+/** Single-pass migration. Walks all of prod KV with one paginated cursor,
+ *  decoding each entry to (type, org, keyParts, isChunkPart, isChunkMeta).
+ *  Filters by --types / --org / --since inline, writes matching entries
+ *  to Firestore as it goes. Chunked groups buffered in pendingChunked map
+ *  (keyed by type/org/baseKey) across page boundaries; flushed when meta
+ *  + all parts arrive. Avoids the chicken-and-egg discovery problem of
+ *  not knowing which orgs exist before walking — same walk discovers and
+ *  writes simultaneously. */
+async function streamMigrate(
   base: string,
   secret: string,
-  type: string,
-  org: string,
   args: CliArgs,
 ): Promise<BucketStats> {
   const stats: BucketStats = { scanned: 0, written: 0, matched: 0, errors: 0, startedAt: Date.now() };
-  const prefix = buildPrefix(type, org);
-  const bucketLabel = org ? `${type}/${org.slice(0, 8)}…` : type;
+  const allowTypes = args.types ? new Set(args.types) : null;
+  const allowOrg = args.org;
 
-  log(`▶ ${bucketLabel} — starting walk (prefix=${JSON.stringify(prefix)})`);
+  // Chunked groups span page boundaries. Buffered globally; map key includes
+  // type+org so different buckets don't collide.
+  const pendingChunked = new Map<string, ChunkedGroup & { type: string; org: string }>();
+  // Per (type|org) running counters for visibility
+  const perBucket = new Map<string, { scanned: number; written: number; matched: number; errors: number }>();
 
-  // Chunked groups can span page boundaries. Buffer them across pages within
-  // this bucket walk; flush each as soon as it has its meta + all parts.
-  const pendingChunked = new Map<string, ChunkedGroup>();
+  log(`▶ streaming walk of prod KV (single pass, decode + write inline)`);
+  if (allowTypes) log(`  filter: types=${[...allowTypes].join(",")}`);
+  if (allowOrg) log(`  filter: org=${allowOrg}`);
 
   let cursor: string | null = null;
   let pageNum = 0;
@@ -247,62 +257,73 @@ async function migrateBucket(
     pageNum++;
     let page: { entries: Array<{ key: Deno.KvKey; value: unknown }>; nextCursor: string | null; done: boolean };
     try {
-      page = await fetchPage(base, secret, prefix, cursor, { since: args.since ?? undefined });
+      page = await fetchPage(base, secret, [] as Deno.KvKey, cursor, { since: args.since ?? undefined });
     } catch (err) {
       stats.errors++;
       log(`  ❌ page ${pageNum} fetch failed: ${String(err).slice(0, 120)}`);
-      // Stop this bucket; re-run will resume since writes done before the error are persistent.
       break;
     }
-
     stats.scanned += page.entries.length;
 
-    // Partition: simple entries get written directly; chunk parts/metas accumulate
-    const simpleEntries: Array<{ keyParts: (string | number)[]; value: unknown }> = [];
+    // Decode + filter + partition
+    const simpleEntries: Array<{ type: string; org: string; keyParts: (string | number)[]; value: unknown }> = [];
+    let pageDecoded = 0, pageFilteredOut = 0;
     for (const e of page.entries) {
       const decoded = decodeKey(e.key);
       if (!decoded) continue;
+      pageDecoded++;
+      if (allowTypes && !allowTypes.has(decoded.type)) { pageFilteredOut++; continue; }
+      if (allowOrg && decoded.org !== allowOrg) { pageFilteredOut++; continue; }
+
+      const bk = `${decoded.type}|${decoded.org}`;
+      let pb = perBucket.get(bk);
+      if (!pb) { pb = { scanned: 0, written: 0, matched: 0, errors: 0 }; perBucket.set(bk, pb); }
+      pb.scanned++;
+
       if (decoded.isChunkPart) {
-        const groupKey = decoded.keyParts.join("/");
+        const groupKey = `${bk}|${decoded.keyParts.join("/")}`;
         let g = pendingChunked.get(groupKey);
-        if (!g) { g = { parts: new Map(), baseKey: decoded.keyParts }; pendingChunked.set(groupKey, g); }
+        if (!g) { g = { type: decoded.type, org: decoded.org, parts: new Map(), baseKey: decoded.keyParts }; pendingChunked.set(groupKey, g); }
         const partIdx = e.key[e.key.length - 1];
         if (typeof partIdx === "number") g.parts.set(partIdx, e.value);
         continue;
       }
       if (decoded.isChunkMeta) {
-        const groupKey = decoded.keyParts.join("/");
+        const groupKey = `${bk}|${decoded.keyParts.join("/")}`;
         let g = pendingChunked.get(groupKey);
-        if (!g) { g = { parts: new Map(), baseKey: decoded.keyParts }; pendingChunked.set(groupKey, g); }
+        if (!g) { g = { type: decoded.type, org: decoded.org, parts: new Map(), baseKey: decoded.keyParts }; pendingChunked.set(groupKey, g); }
         const n = (e.value as { n?: number })?.n;
         if (typeof n === "number") g.meta = n;
         continue;
       }
-      simpleEntries.push({ keyParts: decoded.keyParts, value: e.value });
+      simpleEntries.push({ type: decoded.type, org: decoded.org, keyParts: decoded.keyParts, value: e.value });
     }
+
+    log(`  page ${pageNum}: +${page.entries.length} keys, ${pageDecoded} decoded, ${pageFilteredOut} filtered out, ${simpleEntries.length} simple writes queued, ${pendingChunked.size} chunked groups buffered`);
 
     // Write simple entries in parallel
     if (simpleEntries.length > 0) {
       await runWithConcurrency(simpleEntries, args.concurrency, async (e) => {
-        const keyStr = `${type}/${org}/${e.keyParts.join("/")}`;
+        const keyStr = `${e.type}/${e.org}/${e.keyParts.join("/")}`;
+        const pb = perBucket.get(`${e.type}|${e.org}`)!;
         try {
           let fsVal: unknown = null;
           if (!args.force) {
-            fsVal = await getStored(type, org, ...e.keyParts);
+            fsVal = await getStored(e.type, e.org, ...e.keyParts);
             if (stableEq(fsVal, e.value)) {
-              stats.matched++;
+              stats.matched++; pb.matched++;
               log(`  = match ${keyStr}`);
               return;
             }
           }
           const reason = fsVal == null ? "missing" : "different";
           if (!args.dryRun) {
-            await setStored(type, org, e.keyParts, e.value as Record<string, unknown> | null);
+            await setStored(e.type, e.org, e.keyParts, e.value as Record<string, unknown> | null);
           }
-          stats.written++;
+          stats.written++; pb.written++;
           log(`  ${args.dryRun ? "(dry) would write" : "✓ wrote"} ${keyStr} (was ${reason})`);
         } catch (err) {
-          stats.errors++;
+          stats.errors++; pb.errors++;
           log(`  ❌ write ${keyStr}: ${String(err).slice(0, 100)}`);
         }
       });
@@ -316,11 +337,11 @@ async function migrateBucket(
     }
     if (completedKeys.length > 0) {
       const completedEntries = completedKeys.map((k) => ({ groupKey: k, group: pendingChunked.get(k)! }));
-      // Remove from pending immediately so they aren't reprocessed
       for (const k of completedKeys) pendingChunked.delete(k);
 
-      await runWithConcurrency(completedEntries, args.concurrency, async ({ groupKey, group }) => {
-        const keyStr = `${type}/${org}/${groupKey}`;
+      await runWithConcurrency(completedEntries, args.concurrency, async ({ group }) => {
+        const keyStr = `${group.type}/${group.org}/${group.baseKey.join("/")}`;
+        const pb = perBucket.get(`${group.type}|${group.org}`)!;
         try {
           const sortedParts: string[] = [];
           for (let i = 0; i < group.meta!; i++) {
@@ -331,115 +352,49 @@ async function migrateBucket(
           const prodValue = JSON.parse(sortedParts.join(""));
           let fsVal: unknown = null;
           if (!args.force) {
-            fsVal = await getStoredChunked(type, org, ...group.baseKey);
+            fsVal = await getStoredChunked(group.type, group.org, ...group.baseKey);
             if (stableEq(fsVal, prodValue)) {
-              stats.matched++;
+              stats.matched++; pb.matched++;
               log(`  = match (chunked, ${group.meta} parts) ${keyStr}`);
               return;
             }
           }
           const reason = fsVal == null ? "missing" : "different";
           if (!args.dryRun) {
-            await setStoredChunked(type, org, group.baseKey, prodValue);
+            await setStoredChunked(group.type, group.org, group.baseKey, prodValue);
           }
-          stats.written++;
+          stats.written++; pb.written++;
           log(`  ${args.dryRun ? "(dry) would write" : "✓ wrote"} chunked (${group.meta} parts) ${keyStr} (was ${reason})`);
         } catch (err) {
-          stats.errors++;
+          stats.errors++; pb.errors++;
           log(`  ❌ chunked ${keyStr}: ${String(err).slice(0, 100)}`);
         }
       });
     }
 
-    log(`  page ${pageNum}: scanned=${page.entries.length} written-so-far=${stats.written} matched-so-far=${stats.matched} errors=${stats.errors} pending-chunked=${pendingChunked.size}`);
+    log(`  page ${pageNum} done: scanned-total=${stats.scanned} written-total=${stats.written} matched-total=${stats.matched} errors-total=${stats.errors} pending-chunked=${pendingChunked.size}`);
 
     if (page.done || !page.nextCursor) break;
     cursor = page.nextCursor;
   }
 
   if (pendingChunked.size > 0) {
-    log(`  ⚠ ${pendingChunked.size} chunked group(s) incomplete (missing meta or parts) — not written`);
+    log(`⚠ ${pendingChunked.size} chunked group(s) incomplete at end of walk (missing meta or parts)`);
+    for (const [, g] of pendingChunked) {
+      log(`  incomplete: ${g.type}/${g.org}/${g.baseKey.join("/")} (have ${g.parts.size} parts, meta=${g.meta ?? "none"})`);
+    }
     stats.errors += pendingChunked.size;
   }
 
-  const elapsedMs = Date.now() - stats.startedAt;
-  log(`✓ ${bucketLabel} COMPLETE: scanned=${stats.scanned} written=${stats.written} matched=${stats.matched} errors=${stats.errors} in ${formatDuration(elapsedMs)}`);
+  // Per-bucket summary
+  log(``);
+  log(`▶ per-bucket summary (${perBucket.size} buckets touched):`);
+  const sortedBuckets = [...perBucket.entries()].sort((a, b) => b[1].written - a[1].written);
+  for (const [bk, pb] of sortedBuckets) {
+    log(`  ${bk.replace("|", "/")}: scanned=${pb.scanned} written=${pb.written} matched=${pb.matched} errors=${pb.errors}`);
+  }
+
   return stats;
-}
-
-// ── Bucket discovery ────────────────────────────────────────────────────────
-
-/** Walk prod KV in keysOnly mode to enumerate every (type, org) bucket
- *  that exists. Returns buckets sorted by total prod-key count ascending
- *  (small ones first so the operator sees fast progress at the start).
- *
- *  When --types is given: walks ONLY those type prefixes (much faster —
- *  for --types=user this scans ~30 keys, not 530K). When --types is
- *  absent: walks all of prod KV with empty prefix. */
-async function discoverBuckets(
-  base: string,
-  secret: string,
-  args: CliArgs,
-): Promise<Array<{ type: string; org: string; approxKeys: number }>> {
-  const counts = new Map<string, { type: string; org: string; n: number }>();
-
-  // Each prefix to walk. With --types, we walk just those type prefixes.
-  // We try BOTH `__type__` (TypedStore-wrapped) and `type` (truly-global)
-  // forms because we can't know upfront which is in use.
-  const prefixesToWalk: Array<{ label: string; prefix: Deno.KvKey }> = args.types
-    ? args.types.flatMap((t) => [
-        { label: t, prefix: [`__${t}__`] as Deno.KvKey },
-        { label: `${t} (global)`, prefix: [t] as Deno.KvKey },
-      ])
-    : [{ label: "(all)", prefix: [] as Deno.KvKey }];
-
-  log(`▶ discovering buckets via prod kv-export keysOnly walk (${prefixesToWalk.length} prefix${prefixesToWalk.length === 1 ? "" : "es"})…`);
-
-  for (const { label, prefix } of prefixesToWalk) {
-    log(`  walking prefix=${JSON.stringify(prefix)} for ${label}…`);
-    let cursor: string | null = null;
-    let pageNum = 0;
-    let prefixKeys = 0;
-    while (true) {
-      pageNum++;
-      const res = await fetch(`${base}/admin/kv-export`, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ prefix, cursor, limit: 1000, keysOnly: true }),
-      });
-      if (!res.ok) throw new Error(`kv-export discovery HTTP ${res.status} for prefix ${JSON.stringify(prefix)}`);
-      const data = await res.json() as ExportPageResponse;
-      if (!data.ok) throw new Error(`kv-export discovery error: ${data.error}`);
-      prefixKeys += data.entries.length;
-      for (const e of data.entries) {
-        const decoded = decodeKey(e.key);
-        if (!decoded) continue;
-        const bk = `${decoded.type}|${decoded.org}`;
-        const existing = counts.get(bk);
-        if (existing) existing.n++;
-        else counts.set(bk, { type: decoded.type, org: decoded.org, n: 1 });
-      }
-      log(`    ${label}: page ${pageNum} +${data.entries.length} keys (total ${prefixKeys}, buckets ${counts.size})`);
-      if (data.done || !data.nextCursor) break;
-      cursor = data.nextCursor;
-    }
-    log(`  ${label}: ${prefixKeys} keys scanned in ${pageNum} page${pageNum === 1 ? "" : "s"}`);
-  }
-  log(`  discovery complete: ${counts.size} bucket${counts.size === 1 ? "" : "s"} found`);
-
-  let buckets = [...counts.values()].map((b) => ({ type: b.type, org: b.org, approxKeys: b.n }));
-  // --types filter applied at prefix level above; redundant filter here is a safety net
-  if (args.types) {
-    const allow = new Set(args.types);
-    buckets = buckets.filter((b) => allow.has(b.type));
-  }
-  if (args.org) {
-    buckets = buckets.filter((b) => b.org === args.org);
-    log(`  --org filter: ${buckets.length} buckets selected`);
-  }
-  // Small buckets first so the operator sees activity quickly
-  buckets.sort((a, b) => a.approxKeys - b.approxKeys);
-  return buckets;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -474,28 +429,10 @@ async function main(): Promise<void> {
   log(`  force:       ${args.force}`);
   log(`  concurrency: ${args.concurrency}`);
 
-  const buckets = await discoverBuckets(base, secret, args);
-  if (buckets.length === 0) {
-    log("⚠ no buckets matched filters — nothing to do");
-    Deno.exit(0);
-  }
-  log(`▶ migrating ${buckets.length} bucket(s) (${buckets.reduce((s, b) => s + b.approxKeys, 0).toLocaleString()} approx keys total)`);
-
-  const totals: BucketStats = { scanned: 0, written: 0, matched: 0, errors: 0, startedAt };
-  for (let i = 0; i < buckets.length; i++) {
-    const b = buckets[i];
-    log(`── [${i + 1}/${buckets.length}] ${b.type}${b.org ? "/" + b.org.slice(0, 8) + "…" : ""} (~${b.approxKeys} keys)`);
-    const s = await migrateBucket(base, secret, b.type, b.org, args);
-    totals.scanned += s.scanned;
-    totals.written += s.written;
-    totals.matched += s.matched;
-    totals.errors += s.errors;
-  }
-
+  const totals = await streamMigrate(base, secret, args);
   const totalMs = Date.now() - startedAt;
   log("");
   log(args.dryRun ? "✅ DRY-RUN COMPLETE (no writes performed)" : "✅ MIGRATION COMPLETE");
-  log(`  buckets:        ${buckets.length}`);
   log(`  total scanned:  ${totals.scanned.toLocaleString()}`);
   log(`  total written:  ${totals.written.toLocaleString()}`);
   log(`  total matched:  ${totals.matched.toLocaleString()}`);

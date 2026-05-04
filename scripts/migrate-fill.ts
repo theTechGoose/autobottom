@@ -224,32 +224,32 @@ interface ChunkedGroup {
   baseKey: (string | number)[];             // key without chunk suffix
 }
 
-/** Single-pass migration. Walks all of prod KV with one paginated cursor,
- *  decoding each entry to (type, org, keyParts, isChunkPart, isChunkMeta).
- *  Filters by --types / --org / --since inline, writes matching entries
- *  to Firestore as it goes. Chunked groups buffered in pendingChunked map
- *  (keyed by type/org/baseKey) across page boundaries; flushed when meta
- *  + all parts arrive. Avoids the chicken-and-egg discovery problem of
- *  not knowing which orgs exist before walking — same walk discovers and
- *  writes simultaneously. */
-async function streamMigrate(
+interface SharedStats {
+  stats: BucketStats;
+  pendingChunked: Map<string, ChunkedGroup & { type: string; org: string }>;
+  perBucket: Map<string, { scanned: number; written: number; matched: number; errors: number }>;
+}
+
+/** Walk a single prod KV prefix and write matching entries to Firestore.
+ *  Shares stats + chunked-group buffer across multiple concurrent walks
+ *  (different prefixes may yield parts of the same chunked group only if
+ *  the prefix scoping is wrong, which we handle by keying buffer entries
+ *  by full type/org/baseKey).
+ *
+ *  Returns when the prefix walk is exhausted (page.done or no nextCursor). */
+async function walkPrefix(
   base: string,
   secret: string,
+  prefix: Deno.KvKey,
+  prefixLabel: string,
+  shared: SharedStats,
   args: CliArgs,
-): Promise<BucketStats> {
-  const stats: BucketStats = { scanned: 0, written: 0, matched: 0, errors: 0, startedAt: Date.now() };
+): Promise<void> {
+  const { stats, pendingChunked, perBucket } = shared;
   const allowTypes = args.types ? new Set(args.types) : null;
   const allowOrg = args.org;
 
-  // Chunked groups span page boundaries. Buffered globally; map key includes
-  // type+org so different buckets don't collide.
-  const pendingChunked = new Map<string, ChunkedGroup & { type: string; org: string }>();
-  // Per (type|org) running counters for visibility
-  const perBucket = new Map<string, { scanned: number; written: number; matched: number; errors: number }>();
-
-  log(`▶ streaming walk of prod KV (single pass, decode + write inline)`);
-  if (allowTypes) log(`  filter: types=${[...allowTypes].join(",")}`);
-  if (allowOrg) log(`  filter: org=${allowOrg}`);
+  log(`▶ [${prefixLabel}] starting walk (prefix=${JSON.stringify(prefix)})`);
 
   let cursor: string | null = null;
   let pageNum = 0;
@@ -257,10 +257,10 @@ async function streamMigrate(
     pageNum++;
     let page: { entries: Array<{ key: Deno.KvKey; value: unknown }>; nextCursor: string | null; done: boolean };
     try {
-      page = await fetchPage(base, secret, [] as Deno.KvKey, cursor, { since: args.since ?? undefined });
+      page = await fetchPage(base, secret, prefix, cursor, { since: args.since ?? undefined });
     } catch (err) {
       stats.errors++;
-      log(`  ❌ page ${pageNum} fetch failed: ${String(err).slice(0, 120)}`);
+      log(`  ❌ [${prefixLabel}] page ${pageNum} fetch failed: ${String(err).slice(0, 120)}`);
       break;
     }
     stats.scanned += page.entries.length;
@@ -299,7 +299,7 @@ async function streamMigrate(
       simpleEntries.push({ type: decoded.type, org: decoded.org, keyParts: decoded.keyParts, value: e.value });
     }
 
-    log(`  page ${pageNum}: +${page.entries.length} keys, ${pageDecoded} decoded, ${pageFilteredOut} filtered out, ${simpleEntries.length} simple writes queued, ${pendingChunked.size} chunked groups buffered`);
+    log(`  [${prefixLabel}] page ${pageNum}: +${page.entries.length} keys, ${pageDecoded} decoded, ${pageFilteredOut} filtered out, ${simpleEntries.length} simple writes queued, ${pendingChunked.size} chunked groups buffered`);
 
     // Write simple entries in parallel
     if (simpleEntries.length > 0) {
@@ -415,30 +415,105 @@ async function streamMigrate(
       }
     }
 
-    log(`  page ${pageNum} done: scanned-total=${stats.scanned} written-total=${stats.written} matched-total=${stats.matched} errors-total=${stats.errors} pending-chunked=${pendingChunked.size}`);
+    log(`  [${prefixLabel}] page ${pageNum} done: scanned-total=${stats.scanned} written-total=${stats.written} matched-total=${stats.matched} errors-total=${stats.errors} pending-chunked=${pendingChunked.size}`);
 
     if (page.done || !page.nextCursor) break;
     cursor = page.nextCursor;
   }
+  log(`✓ [${prefixLabel}] walk complete (${pageNum} pages)`);
+}
 
-  if (pendingChunked.size > 0) {
-    log(`⚠ ${pendingChunked.size} chunked group(s) incomplete at end of walk (missing meta or parts)`);
-    for (const [, g] of pendingChunked) {
+/** Discover orgs by walking [__org__] keysOnly (typically 1 page).
+ *  Used to seed per-(org, type) prefix walks for org-first storage shapes
+ *  like user. */
+async function listOrgs(base: string, secret: string): Promise<string[]> {
+  const orgs = new Set<string>();
+  let cursor: string | null = null;
+  let pageNum = 0;
+  while (true) {
+    pageNum++;
+    const res = await fetch(`${base}/admin/kv-export`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ prefix: ["__org__"], cursor, limit: 1000, keysOnly: true }),
+    });
+    if (!res.ok) throw new Error(`org enumeration HTTP ${res.status}`);
+    const data = await res.json() as ExportPageResponse;
+    if (!data.ok) throw new Error(`org enumeration error: ${data.error ?? "unknown"}`);
+    for (const e of data.entries) {
+      if (Array.isArray(e.key) && e.key.length >= 2) {
+        const orgId = String(e.key[1]);
+        if (orgId) orgs.add(orgId);
+      }
+    }
+    if (data.done || !data.nextCursor) break;
+    cursor = data.nextCursor;
+  }
+  return [...orgs];
+}
+
+/** Drive multiple prefix walks in parallel and aggregate stats. */
+async function streamMigrate(
+  base: string,
+  secret: string,
+  args: CliArgs,
+): Promise<BucketStats> {
+  const shared: SharedStats = {
+    stats: { scanned: 0, written: 0, matched: 0, errors: 0, startedAt: Date.now() },
+    pendingChunked: new Map(),
+    perBucket: new Map(),
+  };
+
+  // Build prefix list. With --types: walk [__type__], [type], and [orgId, type]
+  // for each org to cover all three storage shapes. Without --types: one big
+  // walk of all of prod KV with empty prefix.
+  const prefixes: Array<{ label: string; prefix: Deno.KvKey }> = [];
+  if (args.types && args.types.length > 0) {
+    log("▶ enumerating orgs to seed per-(org, type) walks…");
+    let orgs: string[] = [];
+    try {
+      orgs = await listOrgs(base, secret);
+      log(`  found ${orgs.length} org${orgs.length === 1 ? "" : "s"}: ${orgs.join(", ")}`);
+    } catch (err) {
+      log(`  ⚠ org enumeration failed: ${String(err).slice(0, 100)} — falling back to empty-prefix walk`);
+    }
+
+    for (const t of args.types) {
+      prefixes.push({ label: `__${t}__`, prefix: [`__${t}__`] as Deno.KvKey });
+      prefixes.push({ label: `${t} (global)`, prefix: [t] as Deno.KvKey });
+      for (const org of orgs) {
+        prefixes.push({ label: `${org.slice(0, 8)}…/${t}`, prefix: [org, t] as Deno.KvKey });
+      }
+    }
+    log(`▶ ${prefixes.length} prefix${prefixes.length === 1 ? "" : "es"} queued (parallel walks of ${PARALLEL_WALKS})`);
+  } else {
+    prefixes.push({ label: "all-of-prod", prefix: [] as Deno.KvKey });
+    log("▶ no --types filter — walking all of prod KV with empty prefix");
+  }
+
+  // Run walks in parallel batches
+  await runWithConcurrency(prefixes, PARALLEL_WALKS, ({ label, prefix }) => walkPrefix(base, secret, prefix, label, shared, args));
+
+  if (shared.pendingChunked.size > 0) {
+    log(`⚠ ${shared.pendingChunked.size} chunked group(s) incomplete at end of walk (missing meta or parts)`);
+    for (const [, g] of shared.pendingChunked) {
       log(`  incomplete: ${g.type}/${g.org}/${g.baseKey.join("/")} (have ${g.parts.size} parts, meta=${g.meta ?? "none"})`);
     }
-    stats.errors += pendingChunked.size;
+    shared.stats.errors += shared.pendingChunked.size;
   }
 
   // Per-bucket summary
   log(``);
-  log(`▶ per-bucket summary (${perBucket.size} buckets touched):`);
-  const sortedBuckets = [...perBucket.entries()].sort((a, b) => b[1].written - a[1].written);
+  log(`▶ per-bucket summary (${shared.perBucket.size} buckets touched):`);
+  const sortedBuckets = [...shared.perBucket.entries()].sort((a, b) => b[1].written - a[1].written);
   for (const [bk, pb] of sortedBuckets) {
     log(`  ${bk.replace("|", "/")}: scanned=${pb.scanned} written=${pb.written} matched=${pb.matched} errors=${pb.errors}`);
   }
 
-  return stats;
+  return shared.stats;
 }
+
+const PARALLEL_WALKS = 4;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

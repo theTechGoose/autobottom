@@ -400,6 +400,7 @@ async function restListByCompletedAt(
   from: number,
   to: number,
   limit: number,
+  fieldName: string,
 ): Promise<DocBody[]> {
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
   const body = {
@@ -411,12 +412,12 @@ async function restListByCompletedAt(
           filters: [
             { fieldFilter: { field: { fieldPath: "_type" }, op: "EQUAL", value: { stringValue: type } } },
             { fieldFilter: { field: { fieldPath: "_org" }, op: "EQUAL", value: { stringValue: org } } },
-            { fieldFilter: { field: { fieldPath: "completedAt" }, op: "GREATER_THAN_OR_EQUAL", value: { integerValue: String(from) } } },
-            { fieldFilter: { field: { fieldPath: "completedAt" }, op: "LESS_THAN_OR_EQUAL", value: { integerValue: String(to) } } },
+            { fieldFilter: { field: { fieldPath: fieldName }, op: "GREATER_THAN_OR_EQUAL", value: { integerValue: String(from) } } },
+            { fieldFilter: { field: { fieldPath: fieldName }, op: "LESS_THAN_OR_EQUAL", value: { integerValue: String(to) } } },
           ],
         },
       },
-      orderBy: [{ field: { fieldPath: "completedAt" }, direction: "DESCENDING" }],
+      orderBy: [{ field: { fieldPath: fieldName }, direction: "DESCENDING" }],
       limit,
     },
   };
@@ -450,17 +451,17 @@ async function restListByCompletedAt(
   return out;
 }
 
-function inMemListByCompletedAt(type: string, org: string, from: number, to: number, limit: number): DocBody[] {
+function inMemListByCompletedAt(type: string, org: string, from: number, to: number, limit: number, fieldName: string): DocBody[] {
   const out: DocBody[] = [];
   for (const body of _inMem.values()) {
     if (out.length >= limit) break;
     if (body._type !== type || body._org !== org) continue;
     if (isExpired(body)) continue;
-    const ts = (body as Record<string, unknown>).completedAt;
+    const ts = (body as Record<string, unknown>)[fieldName];
     if (typeof ts !== "number" || ts < from || ts > to) continue;
     out.push(body);
   }
-  out.sort((a, b) => Number((b as Record<string, unknown>).completedAt) - Number((a as Record<string, unknown>).completedAt));
+  out.sort((a, b) => Number((b as Record<string, unknown>)[fieldName]) - Number((a as Record<string, unknown>)[fieldName]));
   return out;
 }
 
@@ -617,23 +618,27 @@ export async function listAllStoredByOrg(
   return restListByOrg(creds, org, limit);
 }
 
-/** List values matching this type+org whose `completedAt` field is in
- *  [from, to] (ms since epoch, inclusive), sorted newest-first. Backed by
- *  a Firestore composite-indexed range query — fast and bounded.
+/** List values matching this type+org whose timestamp field is in [from, to]
+ *  (ms since epoch, inclusive), sorted newest-first. Backed by a Firestore
+ *  composite-indexed range query — fast and bounded.
  *  First-time use surfaces a Firestore "create index" URL; click it once,
- *  wait ~1-5 min for the index to build, then this query is fast forever. */
+ *  wait ~1-5 min for the index to build, then this query is fast forever.
+ *
+ *  fieldName defaults to "completedAt" for backwards compat. For
+ *  completed-audit-stat use fieldName="ts". */
 export async function listStoredByCompletedAt<T>(
   type: string,
   org: string,
   from: number,
   to: number,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; fieldName?: string } = {},
 ): Promise<T[]> {
   const limit = opts.limit ?? 5000;
+  const fieldName = opts.fieldName ?? "completedAt";
   const creds = await loadFirestoreCredentials();
   const bodies = creds
-    ? await restListByCompletedAt(creds, type, org, from, to, limit)
-    : inMemListByCompletedAt(type, org, from, to, limit);
+    ? await restListByCompletedAt(creds, type, org, from, to, limit, fieldName)
+    : inMemListByCompletedAt(type, org, from, to, limit, fieldName);
   return bodies.map((b) => unwrapPayload<T>(b));
 }
 

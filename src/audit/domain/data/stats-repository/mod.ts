@@ -104,60 +104,49 @@ export async function deleteCompletedStat(orgId: OrgId, findingId: string): Prom
 // every finding present in Firestore, including bulk-migrated historical
 // data that never went through the live finalize step.
 
-interface FindingShape {
+// queryAuditDoneIndex / findAuditsByRecordId read directly from
+// `completed-audit-stat` records — those are small, non-chunked, and
+// already contain every field the audit-history page needs (recordId,
+// owner, department, voName, score, ts). Unlike audit-finding, they
+// don't need hydration. Migrated audits have these stats as part of the
+// migration scope.
+
+interface CompletedStatShape {
   findingId?: string;
-  completedAt?: number;
+  ts?: number;
+  recordId?: string;
+  isPackage?: boolean;
   startedAt?: number;
   durationMs?: number;
-  findingStatus?: string;
-  recordingIdField?: string;
+  score?: number;
   owner?: string;
-  reviewedAt?: number | string;
-  reviewScore?: number;
-  reviewedBy?: string;
-  answeredQuestions?: Array<{ answer?: string }>;
-  record?: Record<string, unknown>;
+  department?: string;
+  voName?: string;
+  reason?: string;
+  shift?: string;
 }
 
-function findingToIndexEntry(finding: FindingShape): AuditDoneIndexEntry | null {
-  const findingId = finding.findingId;
-  const completedAt = finding.completedAt;
-  if (!findingId || typeof completedAt !== "number") return null;
-
-  const isPackage = finding.recordingIdField === "GenieNumber";
-  const aq = finding.answeredQuestions ?? [];
-  const yes = aq.filter((q) => /^y/i.test(String(q?.answer ?? ""))).length;
-  const score = aq.length > 0 ? Math.round((yes / aq.length) * 100) : 0;
-  const rec = (finding.record ?? {}) as Record<string, unknown>;
-  const department = String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined;
-  const rawVo = typeof rec.VoName === "string" ? rec.VoName : undefined;
-  const voName = rawVo
-    ? (rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim()) || undefined
+function statToIndexEntry(stat: CompletedStatShape): AuditDoneIndexEntry | null {
+  const findingId = stat.findingId;
+  const ts = stat.ts;
+  if (!findingId || typeof ts !== "number") return null;
+  const reason = stat.reason === "perfect_score" || stat.reason === "invalid_genie" || stat.reason === "reviewed"
+    ? stat.reason as AuditDoneIndexEntry["reason"]
     : undefined;
-  const recordId = String(rec.RecordId ?? "") || undefined;
-  const shift = isPackage ? undefined : String(rec.Shift ?? "") || undefined;
-
-  const reviewed = finding.reviewedAt != null;
-  const score100 = (typeof finding.reviewScore === "number" ? finding.reviewScore : score) === 100;
-  const reason: AuditDoneIndexEntry["reason"] | undefined = reviewed
-    ? "reviewed"
-    : (score100 ? "perfect_score" : undefined);
-
   return {
     findingId,
-    completedAt,
-    score: typeof finding.reviewScore === "number" ? finding.reviewScore : score,
-    completed: finding.findingStatus === "finished" || reviewed,
-    ...(reason ? { doneAt: completedAt, reason } : {}),
-    recordId,
-    isPackage,
-    voName,
-    owner: finding.owner,
-    department,
-    shift,
-    startedAt: finding.startedAt,
-    durationMs: finding.durationMs,
-    ...(finding.reviewedBy ? { reviewedBy: finding.reviewedBy } : {}),
+    completedAt: ts,
+    score: typeof stat.score === "number" ? stat.score : 0,
+    completed: reason != null,
+    ...(reason ? { doneAt: ts, reason } : {}),
+    recordId: stat.recordId,
+    isPackage: stat.isPackage,
+    voName: stat.voName,
+    owner: stat.owner,
+    department: stat.department,
+    shift: stat.shift,
+    startedAt: stat.startedAt,
+    durationMs: stat.durationMs,
   };
 }
 
@@ -166,36 +155,38 @@ export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEnt
 }
 
 export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number): Promise<AuditDoneIndexEntry[]> {
-  console.log(`🔍 [AUDIT-HISTORY] [Q-IDX] start orgId=${orgId} from=${from} to=${to}`);
-  let findings: FindingShape[];
+  console.log(`[AUDIT-HISTORY] [Q-IDX] start orgId=${orgId} from=${from} to=${to}`);
+  let stats: CompletedStatShape[];
   try {
-    findings = await listStoredByCompletedAt<FindingShape>("audit-finding", orgId, from, to, { limit: 5000 });
+    stats = await listStoredByCompletedAt<CompletedStatShape>(
+      "completed-audit-stat", orgId, from, to,
+      { limit: 5000, fieldName: "ts" },
+    );
   } catch (err) {
-    console.error(`❌ [AUDIT-HISTORY] [Q-IDX] listStoredByCompletedAt threw:`, err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[AUDIT-HISTORY] [Q-IDX] ❌ listStoredByCompletedAt threw: ${msg}`);
     throw err;
   }
-  console.log(`🔍 [AUDIT-HISTORY] [Q-IDX] got ${findings.length} findings from Firestore`);
+  console.log(`[AUDIT-HISTORY] [Q-IDX] got ${stats.length} completed-audit-stat rows from Firestore`);
   const out: AuditDoneIndexEntry[] = [];
-  for (const f of findings) {
+  for (const s of stats) {
     try {
-      if (f.findingStatus !== "finished" && f.findingStatus !== "completed" && f.reviewedAt == null) continue;
-      const e = findingToIndexEntry(f);
+      const e = statToIndexEntry(s);
       if (e) out.push(e);
     } catch (err) {
-      console.error(`❌ [AUDIT-HISTORY] [Q-IDX] findingToIndexEntry threw on findingId=${f.findingId}:`, err);
+      console.error(`[AUDIT-HISTORY] [Q-IDX] ❌ statToIndexEntry threw on findingId=${s.findingId}:`, err);
     }
   }
-  console.log(`✅ [AUDIT-HISTORY] [Q-IDX] returning ${out.length} entries`);
+  console.log(`[AUDIT-HISTORY] [Q-IDX] returning ${out.length} entries`);
   return out;
 }
 
 export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
-  const findings = await listStored<FindingShape>("audit-finding", orgId, { limit: 5000 });
+  const stats = await listStored<CompletedStatShape>("completed-audit-stat", orgId, { limit: 5000 });
   const out: AuditDoneIndexEntry[] = [];
-  for (const f of findings) {
-    const rid = String((f.record ?? {} as Record<string, unknown>).RecordId ?? "");
-    if (rid !== recordId) continue;
-    const e = findingToIndexEntry(f);
+  for (const s of stats) {
+    if (s.recordId !== recordId) continue;
+    const e = statToIndexEntry(s);
     if (e) out.push(e);
   }
   return out.sort((a, b) => b.completedAt - a.completedAt);

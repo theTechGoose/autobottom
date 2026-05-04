@@ -275,7 +275,18 @@ function MigrationPanel() {
           </div>
         </form>
         <div id="mig-killall" style="margin-top:6px;font-size:11px;"></div>
-        <div id="mig-runs" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;"></div>
+        {/* Persistent job history — auto-loads last 24h on panel-open and
+            self-refreshes every 30s to surface newly-completed jobs. Newly
+            kicked jobs prepend via `hx-swap="afterbegin"` from the Run forms. */}
+        <div
+          id="mig-runs"
+          hx-get="/api/admin/migration/runs"
+          hx-trigger="load"
+          hx-swap="outerHTML"
+          style="display:flex;flex-direction:column;gap:10px;margin-top:10px;"
+        >
+          <div style="padding:8px;color:var(--text-dim);font-size:11px;text-align:center;">loading recent jobs…</div>
+        </div>
       </PanelCard>
 
       <PanelCard title="3. Cutover Snapshot + Delta" subtitle="Capture a versionstamp before pointing prod traffic at Firestore; afterward, run delta to migrate any KV writes that landed during the switch.">

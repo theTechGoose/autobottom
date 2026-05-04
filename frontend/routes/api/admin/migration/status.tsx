@@ -5,7 +5,7 @@ import { apiFetch } from "../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-interface VerifyBucketView {
+export interface VerifyBucketView {
   type: string;
   org: string;
   prodCount: number;
@@ -20,7 +20,7 @@ interface VerifyBucketView {
   errors: string[];
 }
 
-interface JobView {
+export interface JobView {
   jobId: string;
   startedAt: number;
   endedAt: number | null;
@@ -48,6 +48,8 @@ interface JobView {
   verifyMatched?: number;
   verifyRepaired?: number;
   prodScanPageNum?: number;
+  // Live activity log — newest entries last
+  logTail?: string[];
 }
 
 interface StatusResponse {
@@ -94,7 +96,7 @@ function fmtElapsed(ms: number): string {
   return `${m}m ${s - m * 60}s`;
 }
 
-function JobView({ j }: { j: JobView }) {
+export function JobView({ j }: { j: JobView }) {
   const isRunning = j.status === "running";
   const id = `mig-job-${j.jobId}`;
   const pollAttrs = isRunning
@@ -174,6 +176,9 @@ function JobView({ j }: { j: JobView }) {
           </table>
         </details>
       )}
+      {j.logTail && j.logTail.length > 0 && (
+        <LogTail lines={j.logTail} open={isRunning} />
+      )}
       {j.errors.length > 0 && (
         <details style="margin-top:6px;">
           <summary style="font-size:11px;color:var(--red);cursor:pointer;">{j.errors.length} recent errors</summary>
@@ -183,6 +188,26 @@ function JobView({ j }: { j: JobView }) {
         </details>
       )}
     </div>
+  );
+}
+
+/** Rolling activity log — newest 30 lines, monospace, dark scrollable panel.
+ *  Scrolls to the bottom on each render so the freshest line stays visible. */
+function LogTail({ lines, open }: { lines: string[]; open: boolean }) {
+  const recent = lines.slice(-30);
+  return (
+    <details open={open} style="margin-top:6px;">
+      <summary style="font-size:11px;color:var(--text-dim);cursor:pointer;">
+        Activity log ({lines.length} lines, showing last {recent.length})
+      </summary>
+      <div
+        style="max-height:240px;overflow-y:auto;background:#0a0e17;border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin-top:4px;font-family:monospace;font-size:10.5px;line-height:1.5;color:var(--text);"
+      >
+        {recent.map((line) => (
+          <div style="white-space:pre-wrap;word-break:break-all;">{line}</div>
+        ))}
+      </div>
+    </details>
   );
 }
 

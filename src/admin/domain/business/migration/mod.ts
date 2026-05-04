@@ -565,6 +565,10 @@ export interface PersistedJob {
   /** verify-repair only — total matched + repaired entry counters. */
   verifyMatched?: number;
   verifyRepaired?: number;
+  /** Rolling activity log — last 200 lines, FIFO. Lets the operator see
+   *  what's happening RIGHT NOW inside the job (per-page, per-bucket,
+   *  per-write). Each tick appends multiple lines; oldest drop. */
+  logTail?: string[];
 }
 
 interface ChunkedQueueDoc {
@@ -630,6 +634,7 @@ export async function createJob(opts: RunOpts): Promise<string> {
     chunkedQueueSize: 0,
     chunkedQueueProcessed: 0,
     indexCursors: {},
+    logTail: [],
   };
 
   // Index-driven mode: delegate to prod's /admin/kv-migrate-day for
@@ -886,6 +891,7 @@ async function tickVerifyRepair(state: PersistedJob, sid: string): Promise<Persi
     const msg = `verify tick error: ${String(err).slice(0, 200)}`;
     state.errors.push(msg);
     if (state.errors.length > 50) state.errors = state.errors.slice(-50);
+    appendLog(state, `[error] ${msg}`);
     console.log(`❌ [MIGRATION:VERIFY:${sid}] ${msg}`);
   }
 
@@ -956,11 +962,14 @@ async function walkProdCount(state: PersistedJob, base: string, secret: string):
   state.scanned += page.entries.length;
   state.prodScanPageNum = (state.prodScanPageNum ?? 0) + 1;
   state.prodScanCursor = page.nextCursor ?? undefined;
-  state.message = `prod-count: ${state.prodScanPageNum} pages · ${state.scanned} keys scanned · ${Object.keys(state.verifyBuckets!).length} buckets`;
+  const totalBuckets = Object.keys(state.verifyBuckets!).length;
+  state.message = `prod-count: ${state.prodScanPageNum} pages · ${state.scanned} keys scanned · ${totalBuckets} buckets`;
+  appendLog(state, `[prod-count] page ${state.prodScanPageNum}: +${page.entries.length} keys (total ${state.scanned}), ${totalBuckets} buckets discovered`);
   if (page.done) {
     state.phase = "fs-count";
     state.verifyBucketIdx = 0;
-    state.message = `prod-count complete: ${Object.keys(state.verifyBuckets!).length} buckets, ${state.scanned} keys`;
+    state.message = `prod-count complete: ${totalBuckets} buckets, ${state.scanned} keys`;
+    appendLog(state, `[prod-count] DONE — ${totalBuckets} buckets, ${state.scanned} keys total → starting fs-count`);
     return true;
   }
   return added > 0 || page.entries.length > 0;
@@ -986,9 +995,11 @@ async function walkFsCount(state: PersistedJob): Promise<boolean> {
     const rows = await listStoredWithKeys(bucket.type, bucket.org, { limit: 100_000 });
     bucket.fsCount = rows.length;
     bucket.status = "counted";
+    appendLog(state, `[fs-count] ${bk}: prod=${bucket.prodCount} fs=${bucket.fsCount}${bucket.fsCount === bucket.prodCount ? " ✓" : " ⚠ drift"}`);
   } catch (err) {
     bucket.errors.push(`fs-count: ${String(err).slice(0, 100)}`);
     bucket.status = "error";
+    appendLog(state, `[fs-count] ${bk}: ERROR ${String(err).slice(0, 80)}`);
   }
   state.verifyBucketIdx = idx + 1;
   state.message = `fs-count: ${idx + 1}/${bucketKeys.length} buckets`;
@@ -998,23 +1009,32 @@ async function walkFsCount(state: PersistedJob): Promise<boolean> {
 /** Phase 3 — pure in-memory diff. Classify each bucket: match (counts equal),
  *  mismatch (fs short), missing-fs (fs is 0), extra-fs (fs has more). */
 function computeVerifyDiff(state: PersistedJob): void {
-  for (const bucket of Object.values(state.verifyBuckets!)) {
+  let mismatches = 0;
+  let matches = 0;
+  for (const [bk, bucket] of Object.entries(state.verifyBuckets!)) {
     if (bucket.status === "error") continue;
     if (bucket.fsCount === 0 && bucket.prodCount > 0) {
       bucket.status = "mismatched";
       bucket.mismatchExamples.push(`(empty in firestore, ${bucket.prodCount} on prod)`);
+      appendLog(state, `[diff] ${bk}: prod=${bucket.prodCount} fs=0 → MISSING-FS, queued for repair`);
+      mismatches++;
     } else if (bucket.fsCount < bucket.prodCount) {
       bucket.status = "mismatched";
       bucket.mismatchExamples.push(`(fs=${bucket.fsCount} < prod=${bucket.prodCount})`);
+      appendLog(state, `[diff] ${bk}: prod=${bucket.prodCount} fs=${bucket.fsCount} → MISMATCHED (-${bucket.prodCount - bucket.fsCount}), queued for repair`);
+      mismatches++;
     } else {
       // counts equal OR fs has more (extra-fs is logged as note but not a repair-need)
       bucket.status = state.opts.deepCompare ? "mismatched" : "counted";
       if (bucket.fsCount > bucket.prodCount) {
         bucket.errors.push(`extra in fs: ${bucket.fsCount - bucket.prodCount} more rows than prod`);
+        appendLog(state, `[diff] ${bk}: prod=${bucket.prodCount} fs=${bucket.fsCount} → extra-fs (+${bucket.fsCount - bucket.prodCount}), no repair needed`);
       }
+      if (state.opts.deepCompare) mismatches++; else matches++;
     }
   }
-  state.message = `diff complete · ${Object.values(state.verifyBuckets!).filter((b) => b.status === "mismatched").length} buckets need repair`;
+  state.message = `diff complete · ${mismatches} buckets need repair`;
+  appendLog(state, `[diff] DONE — ${matches} count-matched, ${mismatches} need repair → starting sample`);
 }
 
 /** Phase 4 — random sample N entries per count-matched bucket, value-compare
@@ -1029,8 +1049,10 @@ async function walkSample(state: PersistedJob, base: string, secret: string): Pr
     const bucket = state.verifyBuckets![bk];
     if (bucket.status === "counted") {
       bucket.status = "sampling";
+      appendLog(state, `[sample] ${bk}: sampling up to ${VERIFY_SAMPLE_PER_BUCKET} entries…`);
       const ok = await sampleBucket(bucket, base, secret);
       bucket.status = ok ? "verified" : "mismatched";
+      appendLog(state, `[sample] ${bk}: ${bucket.matchedSamples}/${bucket.sampled} matched ${ok ? "✓ verified" : "✗ → queued for repair"}`);
       state.verifyBucketIdx = idx + 1;
       state.message = `sample: ${idx + 1}/${bucketKeys.length} buckets`;
       return true;
@@ -1039,7 +1061,9 @@ async function walkSample(state: PersistedJob, base: string, secret: string): Pr
   }
   state.phase = "repair";
   state.verifyBucketIdx = 0;
-  state.message = `sample complete · ${Object.values(state.verifyBuckets!).filter((b) => b.status === "mismatched").length} buckets to repair`;
+  const toRepair = Object.values(state.verifyBuckets!).filter((b) => b.status === "mismatched").length;
+  state.message = `sample complete · ${toRepair} buckets to repair`;
+  appendLog(state, `[sample] DONE — ${toRepair} buckets need full repair → starting repair phase`);
   return true;
 }
 
@@ -1095,11 +1119,19 @@ async function walkRepair(state: PersistedJob, base: string, secret: string): Pr
     const bk = bucketKeys[idx];
     const bucket = state.verifyBuckets![bk];
     if (bucket.status === "mismatched" || bucket.status === "repairing") {
+      const wasFresh = bucket.status === "mismatched";
       bucket.status = "repairing";
+      if (wasFresh) appendLog(state, `[repair] ${bk}: starting (prod=${bucket.prodCount} fs=${bucket.fsCount})`);
+      const repairedBefore = bucket.repairedCount;
+      const matchedBefore = bucket.matchedCount;
       const done = await repairBucketPage(bucket, state, base, secret);
+      const repairedDelta = bucket.repairedCount - repairedBefore;
+      const matchedDelta = bucket.matchedCount - matchedBefore;
+      appendLog(state, `[repair] ${bk}: page → matched +${matchedDelta} · repaired +${repairedDelta} (bucket totals: matched=${bucket.matchedCount} repaired=${bucket.repairedCount})`);
       if (done) {
         bucket.status = "repaired";
         state.verifyBucketIdx = idx + 1;
+        appendLog(state, `[repair] ${bk}: ✓ DONE — matched=${bucket.matchedCount} repaired=${bucket.repairedCount}`);
       }
       return true;
     }
@@ -1107,6 +1139,7 @@ async function walkRepair(state: PersistedJob, base: string, secret: string): Pr
   }
   state.phase = "done";
   state.message = `verify-repair complete · ${state.verifyMatched} matched · ${state.verifyRepaired} repaired`;
+  appendLog(state, `[done] verify-repair complete — matched=${state.verifyMatched} repaired=${state.verifyRepaired} errors=${state.errors.length}`);
   return true;
 }
 
@@ -1146,14 +1179,17 @@ async function repairBucketPage(
         bucket.matchedCount++;
         state.verifyMatched = (state.verifyMatched ?? 0) + 1;
       } else {
+        const reason = fsVal == null ? "missing in fs" : "fs value differed";
         await setStored(decoded.type, decoded.org, decoded.keyParts, e.value as Record<string, unknown> | null);
         bucket.repairedCount++;
         state.verifyRepaired = (state.verifyRepaired ?? 0) + 1;
         if (bucket.mismatchExamples.length < 10) bucket.mismatchExamples.push(decoded.keyParts.join("/"));
+        appendLog(state, `[repair] wrote ${decoded.type}/${decoded.org}/${decoded.keyParts.join("/")} (${reason})`);
       }
     } catch (err) {
       bucket.errors.push(`repair: ${String(err).slice(0, 80)}`);
       if (bucket.errors.length > 5) bucket.errors = bucket.errors.slice(-5);
+      appendLog(state, `[repair] ERROR ${decoded.type}/${decoded.org}/${decoded.keyParts.join("/")}: ${String(err).slice(0, 80)}`);
     }
   }));
   // Process completed chunked groups
@@ -1176,14 +1212,17 @@ async function repairBucketPage(
         bucket.matchedCount++;
         state.verifyMatched = (state.verifyMatched ?? 0) + 1;
       } else {
+        const reason = fsValue == null ? "missing in fs" : "fs value differed";
         await setStoredChunked(bucket.type, bucket.org, g.baseKey, prodValue);
         bucket.repairedCount++;
         state.verifyRepaired = (state.verifyRepaired ?? 0) + 1;
         if (bucket.mismatchExamples.length < 10) bucket.mismatchExamples.push(g.baseKey.join("/"));
+        appendLog(state, `[repair] wrote chunked ${bucket.type}/${bucket.org}/${g.baseKey.join("/")} (${g.metaCount} parts, ${reason})`);
       }
     } catch (err) {
       bucket.errors.push(`chunked: ${String(err).slice(0, 80)}`);
       if (bucket.errors.length > 5) bucket.errors = bucket.errors.slice(-5);
+      appendLog(state, `[repair] ERROR chunked ${bucket.type}/${bucket.org}/${g.baseKey.join("/")}: ${String(err).slice(0, 80)}`);
     }
   }
   bucket.repairCursor = page.nextCursor ?? undefined;
@@ -1198,6 +1237,19 @@ function buildPrefixForBucket(bucket: VerifyBucket): Deno.KvKey {
     return [bucket.type] as Deno.KvKey;
   }
   return [`__${bucket.type}__`, bucket.org] as Deno.KvKey;
+}
+
+/** Append a line to the job's rolling activity log (last 200 lines, FIFO).
+ *  Cheap — just an array push + trim. Persisted on next saveJob(). Lets the
+ *  operator watch what's actively being processed inside the job card. */
+const LOG_TAIL_MAX = 200;
+function appendLog(state: PersistedJob, line: string): void {
+  state.logTail ??= [];
+  const ts = new Date().toISOString().slice(11, 19); // HH:MM:SS
+  state.logTail.push(`${ts} ${line}`);
+  if (state.logTail.length > LOG_TAIL_MAX) {
+    state.logTail = state.logTail.slice(-LOG_TAIL_MAX);
+  }
 }
 
 /** Stable structural equality check via sorted-key JSON. Good enough for

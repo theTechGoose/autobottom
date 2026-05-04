@@ -221,6 +221,8 @@ function shallowJob(j: PersistedJob) {
     verifyMatched: j.verifyMatched,
     verifyRepaired: j.verifyRepaired,
     prodScanPageNum: j.prodScanPageNum,
+    // Rolling activity log — last 200 lines (newest last)
+    logTail: j.logTail ?? [],
   };
 }
 

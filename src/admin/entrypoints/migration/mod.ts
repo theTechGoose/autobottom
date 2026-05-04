@@ -70,17 +70,16 @@ export class MigrationController {
   }
 
   @Get("status") @ReturnedType(MessageResponse)
-  @Description("Poll job state by jobId. Each call advances the job one tick. Query: ?jobId=…")
+  @Description("Poll job state by jobId. Read-only — cron is the single writer. Query: ?jobId=…")
   async status(@Query("jobId") jobId: string) {
     if (!jobId) return { ok: false, error: "jobId required" };
-    let job: PersistedJob | null;
-    try {
-      // Each /status call IS the tick — drives work forward, then returns state.
-      job = await tickJob(jobId);
-    } catch (err) {
-      // tickJob swallows recoverable errors; only true persistence failures bubble.
-      return { ok: false, error: `tick failed: ${String(err).slice(0, 200)}` };
-    }
+    // READ-ONLY. Originally /status drove the job forward each poll, but
+    // when the cron-tick driver was added, two concurrent ticks (one from
+    // /status polls every 2s, one from cron every minute) raced — both
+    // would read state, both would make progress, the second writer's
+    // save would overwrite the first. State (phase, cursor, logTail) got
+    // clobbered. Cron is now the single writer; /status just reads.
+    const job = await getJob(jobId);
     if (!job) return { ok: false, error: `job ${jobId} not found` };
     return { ok: true, job: shallowJob(job) };
   }

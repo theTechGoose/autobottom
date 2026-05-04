@@ -147,6 +147,17 @@ export default define.page(async function AdminAuditsPage(ctx) {
         .audits-tbl-wrap tbody tr:hover { background:var(--bg-raised); }
         .audits-tbl-wrap tbody td { padding:8px 12px; color:var(--text); vertical-align:middle; }
         .audits-tbl-wrap .empty { text-align:center; color:var(--text-dim); font-size:12px; padding:40px 0; }
+
+        /* Loading state — appears while a filter request is in flight. */
+        #audit-history-table[aria-busy="true"] { opacity:0.45; pointer-events:none; position:relative; min-height:80px; }
+        #audit-history-table[aria-busy="true"]::after {
+          content:''; position:absolute; top:24px; left:50%;
+          width:28px; height:28px; margin-left:-14px;
+          border:3px solid var(--border); border-top-color:var(--blue);
+          border-radius:50%; animation:ah-spin 0.7s linear infinite;
+        }
+        @keyframes ah-spin { to { transform:rotate(360deg); } }
+        .ah-updated { font-size:10px; color:var(--text-dim); margin-left:8px; font-family:'SF Mono','Fira Code',monospace; }
       `}</style>
 
       <div class="audits-topbar">
@@ -155,7 +166,41 @@ export default define.page(async function AdminAuditsPage(ctx) {
           Audit History <span id="ah-window" style="font-weight:400;color:var(--text-muted);">({windowLabel(filters)})</span>
         </h1>
         <span class="ah-sub" id="ah-count">{data.total} audits in window</span>
+        <span class="ah-updated" id="ah-last-updated">loaded</span>
       </div>
+
+      {/* Loading + last-updated indicator wiring. Document-level listeners
+          fire for every swap into #audit-history-table — covers Go,
+          Apply Filters, Reset, window buttons, native select changes. */}
+      <script dangerouslySetInnerHTML={{ __html: `
+        (function(){
+          var T='audit-history-table';
+          function on(name, fn){ document.addEventListener(name, fn); }
+          on('htmx:beforeRequest', function(e){
+            var d=e.detail, t=d&&d.target;
+            if(t && t.id===T) t.setAttribute('aria-busy','true');
+          });
+          on('htmx:afterRequest', function(e){
+            var d=e.detail, t=d&&d.target;
+            if(t && t.id===T) t.removeAttribute('aria-busy');
+          });
+          on('htmx:afterSwap', function(e){
+            var d=e.detail, t=d&&d.target;
+            if(t && t.id===T){
+              var u=document.getElementById('ah-last-updated');
+              if(u) u.textContent='updated '+new Date().toLocaleTimeString();
+            }
+          });
+          on('htmx:responseError', function(e){
+            var d=e.detail, t=d&&d.target;
+            if(t && t.id===T){
+              t.removeAttribute('aria-busy');
+              var u=document.getElementById('ah-last-updated');
+              if(u) u.textContent='error — see console';
+            }
+          });
+        })();
+      `}} />
 
       {/* Filter strip — single horizontal row matching prod.
           Buttons use the canonical HTMX 2.0 `hx-on:click` attribute (via JSX

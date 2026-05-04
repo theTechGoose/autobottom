@@ -2,7 +2,7 @@
  *  Firestore-backed via setStored* helpers. */
 
 import {
-  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredByIdPrefix,
+  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredByIdPrefix, listStoredByCompletedAt,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
@@ -95,22 +95,97 @@ export async function deleteCompletedStat(orgId: OrgId, findingId: string): Prom
 }
 
 // ── Audit Done Index ─────────────────────────────────────────────────────────
+//
+// queryAuditDoneIndex / findAuditsByRecordId read directly from `audit-finding`
+// records and synthesize the index entry shape on the fly. The audit-done-idx
+// type itself is now vestigial — writeAuditDoneIndex still populates it for
+// any new audit completion (so live-pipeline behavior is unchanged), but
+// readers no longer rely on it. This means the audit-history page reflects
+// every finding present in Firestore, including bulk-migrated historical
+// data that never went through the live finalize step.
+
+interface FindingShape {
+  findingId?: string;
+  completedAt?: number;
+  startedAt?: number;
+  durationMs?: number;
+  findingStatus?: string;
+  recordingIdField?: string;
+  owner?: string;
+  reviewedAt?: number | string;
+  reviewScore?: number;
+  reviewedBy?: string;
+  answeredQuestions?: Array<{ answer?: string }>;
+  record?: Record<string, unknown>;
+}
+
+function findingToIndexEntry(finding: FindingShape): AuditDoneIndexEntry | null {
+  const findingId = finding.findingId;
+  const completedAt = finding.completedAt;
+  if (!findingId || typeof completedAt !== "number") return null;
+
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const aq = finding.answeredQuestions ?? [];
+  const yes = aq.filter((q) => /^y/i.test(String(q?.answer ?? ""))).length;
+  const score = aq.length > 0 ? Math.round((yes / aq.length) * 100) : 0;
+  const rec = (finding.record ?? {}) as Record<string, unknown>;
+  const department = String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined;
+  const rawVo = typeof rec.VoName === "string" ? rec.VoName : undefined;
+  const voName = rawVo
+    ? (rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim()) || undefined
+    : undefined;
+  const recordId = String(rec.RecordId ?? "") || undefined;
+  const shift = isPackage ? undefined : String(rec.Shift ?? "") || undefined;
+
+  const reviewed = finding.reviewedAt != null;
+  const score100 = (typeof finding.reviewScore === "number" ? finding.reviewScore : score) === 100;
+  const reason: AuditDoneIndexEntry["reason"] | undefined = reviewed
+    ? "reviewed"
+    : (score100 ? "perfect_score" : undefined);
+
+  return {
+    findingId,
+    completedAt,
+    score: typeof finding.reviewScore === "number" ? finding.reviewScore : score,
+    completed: finding.findingStatus === "finished" || reviewed,
+    ...(reason ? { doneAt: completedAt, reason } : {}),
+    recordId,
+    isPackage,
+    voName,
+    owner: finding.owner,
+    department,
+    shift,
+    startedAt: finding.startedAt,
+    durationMs: finding.durationMs,
+    ...(finding.reviewedBy ? { reviewedBy: finding.reviewedBy } : {}),
+  };
+}
 
 export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEntry): Promise<void> {
   await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], entry);
 }
 
 export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number): Promise<AuditDoneIndexEntry[]> {
-  // Range query via doc-ID prefix — encodeDocId produces sortable IDs because
-  // padTs zero-pads to 15 digits. We list everything with the type+org prefix
-  // and filter by completedAt range. Acceptable for our typical org sizes.
-  const all = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId);
-  return all.filter((e) => e.completedAt >= from && e.completedAt <= to);
+  const findings = await listStoredByCompletedAt<FindingShape>("audit-finding", orgId, from, to, { limit: 5000 });
+  const out: AuditDoneIndexEntry[] = [];
+  for (const f of findings) {
+    if (f.findingStatus !== "finished" && f.findingStatus !== "completed" && f.reviewedAt == null) continue;
+    const e = findingToIndexEntry(f);
+    if (e) out.push(e);
+  }
+  return out;
 }
 
 export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
-  const all = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId);
-  return all.filter((e) => e.recordId === recordId).sort((a, b) => b.completedAt - a.completedAt);
+  const findings = await listStored<FindingShape>("audit-finding", orgId, { limit: 5000 });
+  const out: AuditDoneIndexEntry[] = [];
+  for (const f of findings) {
+    const rid = String((f.record ?? {} as Record<string, unknown>).RecordId ?? "");
+    if (rid !== recordId) continue;
+    const e = findingToIndexEntry(f);
+    if (e) out.push(e);
+  }
+  return out.sort((a, b) => b.completedAt - a.completedAt);
 }
 
 export async function deleteAuditDoneIndexEntry(orgId: OrgId, findingId: string, completedAt: number): Promise<void> {

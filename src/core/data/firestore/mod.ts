@@ -388,6 +388,65 @@ async function restListByType(creds: FirestoreCreds, type: string, org: string, 
   return out;
 }
 
+/** List docs of a given type+org whose `completedAt` field falls within
+ *  [from, to] (inclusive). Used by audit-history to read findings directly,
+ *  bypassing the audit-done-idx denormalization. Requires a Firestore
+ *  composite index on (_type, _org, completedAt) — Firestore will surface a
+ *  one-click create-index URL on the first query if the index is missing. */
+async function restListByCompletedAt(
+  creds: FirestoreCreds,
+  type: string,
+  org: string,
+  from: number,
+  to: number,
+  limit: number,
+): Promise<DocBody[]> {
+  const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
+  const body = {
+    structuredQuery: {
+      from: [{ collectionId: creds.collection }],
+      where: {
+        compositeFilter: {
+          op: "AND",
+          filters: [
+            { fieldFilter: { field: { fieldPath: "_type" }, op: "EQUAL", value: { stringValue: type } } },
+            { fieldFilter: { field: { fieldPath: "_org" }, op: "EQUAL", value: { stringValue: org } } },
+            { fieldFilter: { field: { fieldPath: "completedAt" }, op: "GREATER_THAN_OR_EQUAL", value: { integerValue: String(from) } } },
+            { fieldFilter: { field: { fieldPath: "completedAt" }, op: "LESS_THAN_OR_EQUAL", value: { integerValue: String(to) } } },
+          ],
+        },
+      },
+      orderBy: [{ field: { fieldPath: "completedAt" }, direction: "DESCENDING" }],
+      limit,
+    },
+  };
+  const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`Firestore completedAt query failed: ${res.status} ${await res.text()}`);
+  const rows = await res.json() as Array<{ document?: { fields?: Record<string, FsValue> } }>;
+  const out: DocBody[] = [];
+  for (const row of rows) {
+    if (!row.document?.fields) continue;
+    const obj = objectFromFields(row.document.fields) as DocBody;
+    if (isExpired(obj)) continue;
+    out.push(obj);
+  }
+  return out;
+}
+
+function inMemListByCompletedAt(type: string, org: string, from: number, to: number, limit: number): DocBody[] {
+  const out: DocBody[] = [];
+  for (const body of _inMem.values()) {
+    if (out.length >= limit) break;
+    if (body._type !== type || body._org !== org) continue;
+    if (isExpired(body)) continue;
+    const ts = (body as Record<string, unknown>).completedAt;
+    if (typeof ts !== "number" || ts < from || ts > to) continue;
+    out.push(body);
+  }
+  out.sort((a, b) => Number((b as Record<string, unknown>).completedAt) - Number((a as Record<string, unknown>).completedAt));
+  return out;
+}
+
 async function restListByIdPrefix(creds: FirestoreCreds, prefix: string, limit: number): Promise<Array<{ id: string; body: DocBody }>> {
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
   const startName = `${parent}/${creds.collection}/${prefix}`;
@@ -539,6 +598,26 @@ export async function listAllStoredByOrg(
     return out;
   }
   return restListByOrg(creds, org, limit);
+}
+
+/** List values matching this type+org whose `completedAt` field is in
+ *  [from, to] (ms since epoch, inclusive), sorted newest-first. Backed by
+ *  a Firestore composite-indexed range query — fast and bounded.
+ *  First-time use surfaces a Firestore "create index" URL; click it once,
+ *  wait ~1-5 min for the index to build, then this query is fast forever. */
+export async function listStoredByCompletedAt<T>(
+  type: string,
+  org: string,
+  from: number,
+  to: number,
+  opts: { limit?: number } = {},
+): Promise<T[]> {
+  const limit = opts.limit ?? 5000;
+  const creds = await loadFirestoreCredentials();
+  const bodies = creds
+    ? await restListByCompletedAt(creds, type, org, from, to, limit)
+    : inMemListByCompletedAt(type, org, from, to, limit);
+  return bodies.map((b) => unwrapPayload<T>(b));
 }
 
 /** List values whose doc ID begins with the given prefix.

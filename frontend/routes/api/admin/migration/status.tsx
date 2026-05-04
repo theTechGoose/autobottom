@@ -121,6 +121,17 @@ export function JobView({ j }: { j: JobView }) {
           <span style="margin-left:10px;font-size:11px;color:var(--text-dim);">{fmtElapsed(j.elapsedMs)}</span>
           {isVerify && <span style="margin-left:10px;padding:2px 8px;background:rgba(34,197,94,0.12);color:#22c55e;border:1px solid rgba(34,197,94,0.3);border-radius:4px;font-size:10px;font-weight:700;">VERIFY</span>}
         </div>
+        {isRunning && (
+          <button
+            class="sf-btn primary"
+            style="padding:4px 10px;font-size:11px;margin-right:6px;"
+            hx-post="/api/admin/migration/tick-now"
+            hx-vals={`{"jobId":"${j.jobId}"}`}
+            hx-target={`#${id}`}
+            hx-swap="outerHTML"
+            title="Manually drive one tick (~10s of work). Use when cron isn't reliably firing."
+          >👆 Tick Now</button>
+        )}
         {isRunning && isVerify && j.phase === "prod-count" && (
           <button
             class="sf-btn ghost"

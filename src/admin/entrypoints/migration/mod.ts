@@ -69,6 +69,21 @@ export class MigrationController {
     }
   }
 
+  @Post("tick-now") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
+  @Description("Manually drive one tick on a running job. For when cron isn't firing. Body: {jobId}")
+  async tickNow(@Body() body: GenericBodyRequest) {
+    const jobId = (body as unknown as Record<string, unknown>).jobId as string | undefined;
+    if (!jobId) return { ok: false, error: "jobId required" };
+    console.log(`👆 [MIGRATION:TICK-NOW:${jobId.slice(-6)}] manual tick triggered`);
+    try {
+      const job = await tickJob(jobId);
+      if (!job) return { ok: false, error: `job ${jobId} not found` };
+      return { ok: true, job: shallowJob(job) };
+    } catch (err) {
+      return { ok: false, error: `tick failed: ${String(err).slice(0, 200)}` };
+    }
+  }
+
   @Get("status") @ReturnedType(MessageResponse)
   @Description("Poll job state by jobId. Read-only — cron is the single writer. Query: ?jobId=…")
   async status(@Query("jobId") jobId: string) {

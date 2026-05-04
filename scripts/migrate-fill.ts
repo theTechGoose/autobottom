@@ -284,21 +284,26 @@ async function migrateBucket(
     // Write simple entries in parallel
     if (simpleEntries.length > 0) {
       await runWithConcurrency(simpleEntries, args.concurrency, async (e) => {
+        const keyStr = `${type}/${org}/${e.keyParts.join("/")}`;
         try {
+          let fsVal: unknown = null;
           if (!args.force) {
-            const fsVal = await getStored(type, org, ...e.keyParts);
+            fsVal = await getStored(type, org, ...e.keyParts);
             if (stableEq(fsVal, e.value)) {
               stats.matched++;
+              log(`  = match ${keyStr}`);
               return;
             }
           }
+          const reason = fsVal == null ? "missing" : "different";
           if (!args.dryRun) {
             await setStored(type, org, e.keyParts, e.value as Record<string, unknown> | null);
           }
           stats.written++;
+          log(`  ${args.dryRun ? "(dry) would write" : "✓ wrote"} ${keyStr} (was ${reason})`);
         } catch (err) {
           stats.errors++;
-          log(`  ❌ write ${type}/${org}/${e.keyParts.join("/")}: ${String(err).slice(0, 100)}`);
+          log(`  ❌ write ${keyStr}: ${String(err).slice(0, 100)}`);
         }
       });
     }
@@ -315,6 +320,7 @@ async function migrateBucket(
       for (const k of completedKeys) pendingChunked.delete(k);
 
       await runWithConcurrency(completedEntries, args.concurrency, async ({ groupKey, group }) => {
+        const keyStr = `${type}/${org}/${groupKey}`;
         try {
           const sortedParts: string[] = [];
           for (let i = 0; i < group.meta!; i++) {
@@ -323,20 +329,24 @@ async function migrateBucket(
             sortedParts.push(p as string);
           }
           const prodValue = JSON.parse(sortedParts.join(""));
+          let fsVal: unknown = null;
           if (!args.force) {
-            const fsVal = await getStoredChunked(type, org, ...group.baseKey);
+            fsVal = await getStoredChunked(type, org, ...group.baseKey);
             if (stableEq(fsVal, prodValue)) {
               stats.matched++;
+              log(`  = match (chunked, ${group.meta} parts) ${keyStr}`);
               return;
             }
           }
+          const reason = fsVal == null ? "missing" : "different";
           if (!args.dryRun) {
             await setStoredChunked(type, org, group.baseKey, prodValue);
           }
           stats.written++;
+          log(`  ${args.dryRun ? "(dry) would write" : "✓ wrote"} chunked (${group.meta} parts) ${keyStr} (was ${reason})`);
         } catch (err) {
           stats.errors++;
-          log(`  ❌ chunked ${type}/${org}/${groupKey}: ${String(err).slice(0, 100)}`);
+          log(`  ❌ chunked ${keyStr}: ${String(err).slice(0, 100)}`);
         }
       });
     }
@@ -360,49 +370,68 @@ async function migrateBucket(
 // ── Bucket discovery ────────────────────────────────────────────────────────
 
 /** Walk prod KV in keysOnly mode to enumerate every (type, org) bucket
- *  that exists. Filters by --types and --org if provided. Returns the
- *  buckets sorted by total prod-key count ascending (small ones first
- *  so the operator sees fast progress at the start). */
+ *  that exists. Returns buckets sorted by total prod-key count ascending
+ *  (small ones first so the operator sees fast progress at the start).
+ *
+ *  When --types is given: walks ONLY those type prefixes (much faster —
+ *  for --types=user this scans ~30 keys, not 530K). When --types is
+ *  absent: walks all of prod KV with empty prefix. */
 async function discoverBuckets(
   base: string,
   secret: string,
   args: CliArgs,
 ): Promise<Array<{ type: string; org: string; approxKeys: number }>> {
-  log("▶ discovering buckets via prod kv-export keysOnly walk…");
   const counts = new Map<string, { type: string; org: string; n: number }>();
-  let cursor: string | null = null;
-  let pageNum = 0;
-  while (true) {
-    pageNum++;
-    const res = await fetch(`${base}/admin/kv-export`, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ prefix: [], cursor, limit: 1000, keysOnly: true }),
-    });
-    if (!res.ok) throw new Error(`kv-export discovery HTTP ${res.status}`);
-    const data = await res.json() as ExportPageResponse;
-    if (!data.ok) throw new Error(`kv-export discovery error: ${data.error}`);
-    for (const e of data.entries) {
-      const decoded = decodeKey(e.key);
-      if (!decoded) continue;
-      const bk = `${decoded.type}|${decoded.org}`;
-      const existing = counts.get(bk);
-      if (existing) existing.n++;
-      else counts.set(bk, { type: decoded.type, org: decoded.org, n: 1 });
+
+  // Each prefix to walk. With --types, we walk just those type prefixes.
+  // We try BOTH `__type__` (TypedStore-wrapped) and `type` (truly-global)
+  // forms because we can't know upfront which is in use.
+  const prefixesToWalk: Array<{ label: string; prefix: Deno.KvKey }> = args.types
+    ? args.types.flatMap((t) => [
+        { label: t, prefix: [`__${t}__`] as Deno.KvKey },
+        { label: `${t} (global)`, prefix: [t] as Deno.KvKey },
+      ])
+    : [{ label: "(all)", prefix: [] as Deno.KvKey }];
+
+  log(`▶ discovering buckets via prod kv-export keysOnly walk (${prefixesToWalk.length} prefix${prefixesToWalk.length === 1 ? "" : "es"})…`);
+
+  for (const { label, prefix } of prefixesToWalk) {
+    log(`  walking prefix=${JSON.stringify(prefix)} for ${label}…`);
+    let cursor: string | null = null;
+    let pageNum = 0;
+    let prefixKeys = 0;
+    while (true) {
+      pageNum++;
+      const res = await fetch(`${base}/admin/kv-export`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ prefix, cursor, limit: 1000, keysOnly: true }),
+      });
+      if (!res.ok) throw new Error(`kv-export discovery HTTP ${res.status} for prefix ${JSON.stringify(prefix)}`);
+      const data = await res.json() as ExportPageResponse;
+      if (!data.ok) throw new Error(`kv-export discovery error: ${data.error}`);
+      prefixKeys += data.entries.length;
+      for (const e of data.entries) {
+        const decoded = decodeKey(e.key);
+        if (!decoded) continue;
+        const bk = `${decoded.type}|${decoded.org}`;
+        const existing = counts.get(bk);
+        if (existing) existing.n++;
+        else counts.set(bk, { type: decoded.type, org: decoded.org, n: 1 });
+      }
+      log(`    ${label}: page ${pageNum} +${data.entries.length} keys (total ${prefixKeys}, buckets ${counts.size})`);
+      if (data.done || !data.nextCursor) break;
+      cursor = data.nextCursor;
     }
-    if (pageNum % 25 === 0) {
-      log(`  discovery page ${pageNum}: ${counts.size} buckets seen so far, scanned ~${pageNum * 1000} keys`);
-    }
-    if (data.done || !data.nextCursor) break;
-    cursor = data.nextCursor;
+    log(`  ${label}: ${prefixKeys} keys scanned in ${pageNum} page${pageNum === 1 ? "" : "s"}`);
   }
-  log(`  discovery complete: ${counts.size} buckets, ${pageNum} pages walked`);
+  log(`  discovery complete: ${counts.size} bucket${counts.size === 1 ? "" : "s"} found`);
 
   let buckets = [...counts.values()].map((b) => ({ type: b.type, org: b.org, approxKeys: b.n }));
+  // --types filter applied at prefix level above; redundant filter here is a safety net
   if (args.types) {
     const allow = new Set(args.types);
     buckets = buckets.filter((b) => allow.has(b.type));
-    log(`  --types filter: ${buckets.length}/${counts.size} buckets selected`);
   }
   if (args.org) {
     buckets = buckets.filter((b) => b.org === args.org);

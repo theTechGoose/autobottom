@@ -157,17 +157,19 @@ export default define.page(async function AdminAuditsPage(ctx) {
         <span class="ah-sub" id="ah-count">{data.total} audits in window</span>
       </div>
 
-      {/* Filter strip — single horizontal row matching prod. Native triggers
-          on selects + number inputs fire automatically; buttons call
-          htmx.ajax() directly via inline onclick (REFRESH_JS). */}
+      {/* Filter strip — single horizontal row matching prod.
+          Buttons use the canonical HTMX 2.0 `hx-on:click` attribute (via JSX
+          spread syntax — Preact strips/garbles the `hx-on--click` alias on
+          this codebase, leaving the buttons inert). All click handlers call
+          htmx.ajax() with source:'#audit-history-filters' to respect the
+          gotcha that htmx.trigger(form,'custom-event') no-ops in 2.0.4. */}
       <form
         id="audit-history-filters"
         class="audits-filters"
         hx-get="/api/admin/audit-history"
         hx-target="#audit-history-table"
-        hx-trigger="change from:select, change delay:300ms from:input[type=number]"
+        hx-trigger="change from:select, change delay:300ms from:input[type=number], submit"
         hx-swap="innerHTML"
-        hx-include="closest form"
       >
         <label>Date Range
           <div class="window-btns">
@@ -177,15 +179,15 @@ export default define.page(async function AdminAuditsPage(ctx) {
                 type="button"
                 class={`window-btn ${activeHours === w.h ? "active" : ""}`}
                 data-hours={w.h}
-                hx-on--click={windowBtnJs(w.h)}
+                {...{ "hx-on:click": windowBtnJs(w.h) }}
               >{w.label}</button>
             ))}
             <span style="color:var(--text-dim);font-size:10px;margin:0 4px;align-self:center;">or</span>
             <input type="date" id="f-date-start" />
             <span style="color:var(--text-dim);align-self:center;">–</span>
             <input type="date" id="f-date-end" />
-            <button type="button" class="ah-btn ah-btn-primary" style="padding:3px 10px;font-size:11px;height:26px;" hx-on--click={goBtnJs}>Go</button>
-            <button type="button" id="f-date-clear" class="ah-btn ah-btn-ghost" style="padding:3px 8px;font-size:11px;height:26px;display:none;" hx-on--click={clearBtnJs}>✕ Clear</button>
+            <button type="button" class="ah-btn ah-btn-primary" style="padding:3px 10px;font-size:11px;height:26px;" {...{ "hx-on:click": goBtnJs }}>Go</button>
+            <button type="button" id="f-date-clear" class="ah-btn ah-btn-ghost" style="padding:3px 8px;font-size:11px;height:26px;display:none;" {...{ "hx-on:click": clearBtnJs }}>✕ Clear</button>
           </div>
           <input type="hidden" name="since" id="ah-since" value={filters.since} />
           <input type="hidden" name="until" id="ah-until" value={filters.until} />
@@ -234,13 +236,13 @@ export default define.page(async function AdminAuditsPage(ctx) {
         </label>
 
         <label style="align-self:flex-end;">
-          <button type="button" class="ah-btn ah-btn-primary" hx-on--click={REFRESH_JS}>Apply Filters</button>
+          <button type="button" class="ah-btn ah-btn-primary" {...{ "hx-on:click": REFRESH_JS }}>Apply Filters</button>
         </label>
         <label style="align-self:flex-end;">
-          <button type="button" class="ah-btn ah-btn-ghost" hx-on--click={resetJs}>Reset</button>
+          <button type="button" class="ah-btn ah-btn-ghost" {...{ "hx-on:click": resetJs }}>Reset</button>
         </label>
         <label style="align-self:flex-end;">
-          <button type="button" class="ah-btn ah-btn-ghost" style="font-size:10px;" hx-on--click={csvBtnJs}>⬇ CSV</button>
+          <button type="button" class="ah-btn ah-btn-ghost" style="font-size:10px;" {...{ "hx-on:click": csvBtnJs }}>⬇ CSV</button>
         </label>
 
         <input type="hidden" name="page" value={filters.page} id="ah-page" />

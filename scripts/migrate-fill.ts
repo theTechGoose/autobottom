@@ -31,6 +31,7 @@ import {
   setStoredChunked,
   getStored,
   getStoredChunked,
+  listStoredWithKeys,
 } from "@core/data/firestore/mod.ts";
 import { decodeKey } from "@admin/domain/business/migration/mod.ts";
 
@@ -42,7 +43,8 @@ interface CliArgs {
   dryRun: boolean;
   force: boolean;
   concurrency: number;
-  org: string | null;
+  org: string | null;              // single-org filter for matching
+  orgs: string[] | null;           // explicit org list for prefix enumeration
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -53,6 +55,7 @@ function parseArgs(argv: string[]): CliArgs {
     force: false,
     concurrency: 20,
     org: null,
+    orgs: null,
   };
   for (const a of argv) {
     if (a === "--dry-run") args.dryRun = true;
@@ -68,6 +71,8 @@ function parseArgs(argv: string[]): CliArgs {
       args.concurrency = Math.max(1, parseInt(a.slice(14), 10) || 20);
     } else if (a.startsWith("--org=")) {
       args.org = a.slice(6);
+    } else if (a.startsWith("--orgs=")) {
+      args.orgs = a.slice(7).split(",").map((s) => s.trim()).filter(Boolean);
     } else if (a === "--help" || a === "-h") {
       console.log(USAGE);
       Deno.exit(0);
@@ -423,23 +428,60 @@ async function walkPrefix(
   log(`✓ [${prefixLabel}] walk complete (${pageNum} pages)`);
 }
 
-/** Discover orgs by walking [__org__] keysOnly (typically 1 page).
- *  Used to seed per-(org, type) prefix walks for org-first storage shapes
- *  like user. */
+/** Discover orgs from multiple sources, in order:
+ *  1. Walk [__org__] keysOnly (TypedStore-wrapped — most common)
+ *  2. Walk [org] keysOnly (truly global storage)
+ *  3. listStored("org", "") from Firestore (whatever's already migrated)
+ *
+ *  Returns the union — used to seed per-(org, type) prefix walks for
+ *  org-first storage shapes like user, app-event, etc. */
 async function listOrgs(base: string, secret: string): Promise<string[]> {
   const orgs = new Set<string>();
+
+  // Source 1: prod KV [__org__] walk
+  await walkKeysOnlyForOrgs(base, secret, ["__org__"], orgs);
+  if (orgs.size > 0) {
+    log(`  found ${orgs.size} orgs via [__org__] walk`);
+    return [...orgs];
+  }
+
+  // Source 2: prod KV [org] walk
+  await walkKeysOnlyForOrgs(base, secret, ["org"], orgs);
+  if (orgs.size > 0) {
+    log(`  found ${orgs.size} orgs via [org] walk`);
+    return [...orgs];
+  }
+
+  // Source 3: Firestore listStoredWithKeys for any already-migrated orgs
+  try {
+    const rows = await listStoredWithKeys<unknown>("org", "", { limit: 100 });
+    for (const r of rows) {
+      // The doc key array's last element is the orgId
+      const orgId = String(r.key[r.key.length - 1] ?? "");
+      if (orgId) orgs.add(orgId);
+    }
+    if (orgs.size > 0) {
+      log(`  found ${orgs.size} orgs via Firestore listStored("org", "")`);
+      return [...orgs];
+    }
+  } catch (err) {
+    log(`  Firestore org enumeration failed: ${String(err).slice(0, 80)}`);
+  }
+
+  return [...orgs];
+}
+
+async function walkKeysOnlyForOrgs(base: string, secret: string, prefix: Deno.KvKey, orgs: Set<string>): Promise<void> {
   let cursor: string | null = null;
-  let pageNum = 0;
   while (true) {
-    pageNum++;
     const res = await fetch(`${base}/admin/kv-export`, {
       method: "POST",
       headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ prefix: ["__org__"], cursor, limit: 1000, keysOnly: true }),
+      body: JSON.stringify({ prefix, cursor, limit: 1000, keysOnly: true }),
     });
-    if (!res.ok) throw new Error(`org enumeration HTTP ${res.status}`);
+    if (!res.ok) return;
     const data = await res.json() as ExportPageResponse;
-    if (!data.ok) throw new Error(`org enumeration error: ${data.error ?? "unknown"}`);
+    if (!data.ok) return;
     for (const e of data.entries) {
       if (Array.isArray(e.key) && e.key.length >= 2) {
         const orgId = String(e.key[1]);
@@ -449,7 +491,6 @@ async function listOrgs(base: string, secret: string): Promise<string[]> {
     if (data.done || !data.nextCursor) break;
     cursor = data.nextCursor;
   }
-  return [...orgs];
 }
 
 /** Drive multiple prefix walks in parallel and aggregate stats. */
@@ -469,13 +510,22 @@ async function streamMigrate(
   // walk of all of prod KV with empty prefix.
   const prefixes: Array<{ label: string; prefix: Deno.KvKey }> = [];
   if (args.types && args.types.length > 0) {
-    log("▶ enumerating orgs to seed per-(org, type) walks…");
     let orgs: string[] = [];
-    try {
-      orgs = await listOrgs(base, secret);
-      log(`  found ${orgs.length} org${orgs.length === 1 ? "" : "s"}: ${orgs.join(", ")}`);
-    } catch (err) {
-      log(`  ⚠ org enumeration failed: ${String(err).slice(0, 100)} — falling back to empty-prefix walk`);
+    if (args.orgs) {
+      orgs = args.orgs;
+      log(`▶ using ${orgs.length} explicit --orgs: ${orgs.join(", ")}`);
+    } else {
+      log("▶ enumerating orgs to seed per-(org, type) walks…");
+      try {
+        orgs = await listOrgs(base, secret);
+        if (orgs.length === 0) {
+          log(`  ⚠ no orgs found via any source — pass --orgs=<a,b,c> to specify explicitly`);
+        } else {
+          log(`  resolved ${orgs.length} orgs: ${orgs.join(", ")}`);
+        }
+      } catch (err) {
+        log(`  ⚠ org enumeration failed: ${String(err).slice(0, 100)}`);
+      }
     }
 
     for (const t of args.types) {

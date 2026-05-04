@@ -6,8 +6,17 @@ import { renderToString } from "preact-render-to-string";
 
 export const handler = define.handlers({
   async POST(ctx) {
-    const body = await ctx.req.json().catch(() => ({}));
-    const jobId = body?.jobId as string | undefined;
+    // HTMX hx-vals serializes as form-encoded by default. Try JSON first
+    // (in case the caller sent JSON), fall back to formData.
+    let jobId: string | undefined;
+    const ct = ctx.req.headers.get("content-type") ?? "";
+    if (ct.includes("application/json")) {
+      const body = await ctx.req.json().catch(() => ({}));
+      jobId = (body as Record<string, unknown>)?.jobId as string | undefined;
+    } else {
+      const form = await ctx.req.formData().catch(() => null);
+      jobId = form?.get("jobId")?.toString();
+    }
     if (!jobId) {
       return new Response(`<div class="error-text">missing jobId</div>`, { headers: { "content-type": "text/html" } });
     }

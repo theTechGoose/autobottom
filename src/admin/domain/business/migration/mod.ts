@@ -24,7 +24,10 @@ const JOB_TYPE = "migration-job";
 const QUEUE_TYPE = "migration-chunked-queue";
 /** Max wall-clock seconds spent inside one tick. Must stay well under
  *  Deno Deploy's 60s request timeout so the response always returns. */
-const TICK_BUDGET_MS = 30_000;
+/** Per-tick wall-clock budget. Was 30s but Deno Deploy isolates were OOMing
+ *  on long ticks — too many KV-export pages allocated and held before GC.
+ *  10s caps allocations at ~10 pages worth, well under the memory limit. */
+const TICK_BUDGET_MS = 10_000;
 /** A job whose lastTickAt is older than this is auto-marked errored to
  *  prevent zombie-polling. */
 /** Threshold for marking a job as stale (zombie). Cron drives ticks once
@@ -738,6 +741,26 @@ export async function forceCancelJob(jobId: string): Promise<boolean> {
   return true;
 }
 
+/** Manually advance a verify-repair job to the next phase. Used when
+ *  prod-count is wedged — bucket discovery is already done (counts visible
+ *  in UI) but state.phase didn't persist its advance to "fs-count" due to
+ *  earlier race or OOM. fs-count is small + memory-light; once we're there,
+ *  the rest of the pipeline can run cleanly. */
+export async function skipToPhase(jobId: string, target: JobPhase): Promise<boolean> {
+  const state = await loadJob(jobId);
+  if (!state) return false;
+  if (state.opts.mode !== "verify-repair") return false;
+  const before = state.phase;
+  state.phase = target;
+  state.verifyBucketIdx = 0;
+  state.lastTickAt = Date.now();
+  state.message = `manually advanced ${before} → ${target}`;
+  appendLog(state, `[skip-phase] ${before} → ${target} (manual override)`);
+  await saveJob(state);
+  console.log(`⏭  [MIGRATION:SKIP-PHASE:${jobId.slice(-6)}] ${before} → ${target}`);
+  return true;
+}
+
 /** Re-arm an errored job so the cron driver picks it back up. Used when
  *  the stale watchdog fired incorrectly (cron lull, isolate cycling, etc.).
  *  Cursor + verifyBuckets are intact so work resumes without duplication. */
@@ -1264,7 +1287,7 @@ function buildPrefixForBucket(bucket: VerifyBucket): Deno.KvKey {
 /** Append a line to the job's rolling activity log (last 200 lines, FIFO).
  *  Cheap — just an array push + trim. Persisted on next saveJob(). Lets the
  *  operator watch what's actively being processed inside the job card. */
-const LOG_TAIL_MAX = 200;
+const LOG_TAIL_MAX = 50;
 function appendLog(state: PersistedJob, line: string): void {
   state.logTail ??= [];
   const ts = new Date().toISOString().slice(11, 19); // HH:MM:SS

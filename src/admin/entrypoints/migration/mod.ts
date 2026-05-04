@@ -14,7 +14,7 @@ import { OkMessageResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import {
   inventoryProdKv, ensureProdKvConfigured, createJob, getJob, listJobs,
-  cancelJob, forceCancelJob, killAllRunningJobs, resumeJob, tickJob,
+  cancelJob, forceCancelJob, killAllRunningJobs, resumeJob, skipToPhase, tickJob,
   captureSnapshot, verifyMigration, computeScanPrefixes, orphanCheck,
   GLOBAL_TYPES, SKIP_TYPES,
   type RunOpts, type PersistedJob, type InventoryRow, type Snapshot, type VerifyReport,
@@ -107,6 +107,18 @@ export class MigrationController {
     if (!jobId) return { ok: false, error: "jobId required" };
     const ok = await forceCancelJob(jobId);
     return { ok, message: ok ? "force-cancelled" : "job not running" };
+  }
+
+  @Post("skip-phase") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  @Description("Manually advance a verify-repair job's phase. Body: {jobId, phase}")
+  async skipPhase(@Body() body: GenericBodyRequest) {
+    const b = body as unknown as Record<string, unknown>;
+    const jobId = b.jobId as string | undefined;
+    const phase = b.phase as string | undefined;
+    if (!jobId) return { ok: false, error: "jobId required" };
+    if (!phase) return { ok: false, error: "phase required" };
+    const ok = await skipToPhase(jobId, phase as never);
+    return { ok, message: ok ? `advanced to ${phase}` : "job not found or not verify-repair" };
   }
 
   @Post("resume") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)

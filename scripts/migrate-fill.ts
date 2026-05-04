@@ -372,6 +372,49 @@ async function streamMigrate(
       });
     }
 
+    // Spot-check: pick the first simple write + first chunked write from this
+    // page's actual writes, read them back via the same getStored/getStoredChunked
+    // the deployed refactor branch uses, and confirm round-trip. If this passes,
+    // the FORMAT is correct (same encode/decode both sides). Logs visibly so
+    // the operator can see write→read→match working live.
+    if (!args.dryRun && simpleEntries.length > 0) {
+      const sample = simpleEntries[0];
+      const keyStr = `${sample.type}/${sample.org}/${sample.keyParts.join("/")}`;
+      try {
+        const readBack = await getStored(sample.type, sample.org, ...sample.keyParts);
+        if (stableEq(readBack, sample.value)) {
+          log(`  🔍 SPOT-CHECK pass — read-back matches write for ${keyStr}`);
+        } else {
+          log(`  ⚠️  SPOT-CHECK MISMATCH — wrote ${keyStr} but read-back differs (format issue?)`);
+          stats.errors++;
+        }
+      } catch (err) {
+        log(`  ⚠️  SPOT-CHECK error for ${keyStr}: ${String(err).slice(0, 100)}`);
+      }
+    }
+    if (!args.dryRun && completedKeys.length > 0) {
+      const sampleGroupKey = completedKeys[0];
+      // Re-look up the group from the (now-cleared) map by examining what we
+      // just deleted. Re-query Firestore via the same path the refactor reads.
+      const parts = sampleGroupKey.split("|");
+      // groupKey format: `${type}|${org}|${baseKey.join("/")}`
+      const t = parts[0], o = parts[1];
+      const baseKeyStr = parts.slice(2).join("|");
+      const keyStr = `${t}/${o}/${baseKeyStr}`;
+      try {
+        const baseKeyArr = baseKeyStr.split("/");
+        const readBack = await getStoredChunked(t, o, ...baseKeyArr);
+        if (readBack !== null) {
+          log(`  🔍 SPOT-CHECK pass — chunked read-back exists for ${keyStr}`);
+        } else {
+          log(`  ⚠️  SPOT-CHECK chunked MISSING — wrote ${keyStr} but read-back is null (format issue?)`);
+          stats.errors++;
+        }
+      } catch (err) {
+        log(`  ⚠️  SPOT-CHECK chunked error for ${keyStr}: ${String(err).slice(0, 100)}`);
+      }
+    }
+
     log(`  page ${pageNum} done: scanned-total=${stats.scanned} written-total=${stats.written} matched-total=${stats.matched} errors-total=${stats.errors} pending-chunked=${pendingChunked.size}`);
 
     if (page.done || !page.nextCursor) break;

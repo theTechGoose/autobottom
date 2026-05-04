@@ -63,6 +63,22 @@ export class DashboardController {
     @Query("limit") limit: string,
     @Query("format") format: string,
   ) {
+    try {
+      return await this.auditsDataImpl(since, until, type, owner, department, shift, reviewed, auditor, scoreMin, scoreMax, page, limit, format);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error && err.stack ? err.stack : "<no stack>";
+      console.error(`[AUDIT-HISTORY] ❌ FATAL handler error: ${msg}`);
+      console.error(`[AUDIT-HISTORY] ❌ stack: ${stack}`);
+      throw err;
+    }
+  }
+
+  private async auditsDataImpl(
+    since: string, until: string, type: string, owner: string, department: string,
+    shift: string, reviewed: string, auditor: string, scoreMin: string, scoreMax: string,
+    page: string, limit: string, format: string,
+  ) {
     const orgId = ORG();
     const s = parseInt(since || "0", 10) || 0;
     const u = parseInt(until || String(Date.now()), 10) || Date.now();
@@ -72,11 +88,27 @@ export class DashboardController {
     const pg = Math.max(1, parseInt(page || "1", 10) || 1);
     const lim = Math.min(100, Math.max(10, parseInt(limit || "50", 10) || 50));
 
-    const [indexEntries, reviewedIds] = await Promise.all([
-      queryAuditDoneIndex(orgId, s, u),
-      getReviewedFindingIds(orgId),
-    ]);
-
+    console.log(`[AUDIT-HISTORY] ▶ START orgId=${orgId} since=${s} until=${u} type=${t} page=${pg} limit=${lim}`);
+    let indexEntries: AuditDoneIndexEntry[];
+    let reviewedIds: Set<string>;
+    try {
+      console.log(`[AUDIT-HISTORY] calling queryAuditDoneIndex...`);
+      indexEntries = await queryAuditDoneIndex(orgId, s, u);
+      console.log(`[AUDIT-HISTORY] queryAuditDoneIndex returned ${indexEntries.length} entries`);
+    } catch (err) {
+      console.error(`[AUDIT-HISTORY] ❌ queryAuditDoneIndex threw: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[AUDIT-HISTORY] ❌ stack: ${err instanceof Error && err.stack ? err.stack : "<no stack>"}`);
+      throw err;
+    }
+    try {
+      console.log(`[AUDIT-HISTORY] calling getReviewedFindingIds...`);
+      reviewedIds = await getReviewedFindingIds(orgId);
+      console.log(`[AUDIT-HISTORY] getReviewedFindingIds returned ${reviewedIds.size} ids`);
+    } catch (err) {
+      console.error(`[AUDIT-HISTORY] ❌ getReviewedFindingIds threw: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[AUDIT-HISTORY] ❌ stack: ${err instanceof Error && err.stack ? err.stack : "<no stack>"}`);
+      throw err;
+    }
     type AuditRow = AuditDoneIndexEntry & { ts: number };
     const windowEntries: AuditRow[] = indexEntries
       .map((e) => ({ ...e, ts: e.completedAt }))
@@ -180,15 +212,33 @@ export class DashboardController {
     const total = filtered.length;
     const pages = Math.max(1, Math.ceil(total / lim));
     const pageItems = filtered.slice((pg - 1) * lim, pg * lim);
-    const hydratedPage = await hydrateMissing(pageItems);
-    const appeals = await Promise.all(hydratedPage.map((c) => getAppeal(orgId, c.findingId)));
+    console.log(`[AUDIT-HISTORY] hydrating ${pageItems.length} page rows...`);
+    let hydratedPage: AuditRow[];
+    try {
+      hydratedPage = await hydrateMissing(pageItems);
+      console.log(`[AUDIT-HISTORY] hydrated ${hydratedPage.length} rows`);
+    } catch (err) {
+      console.error(`[AUDIT-HISTORY] ❌ hydrateMissing threw: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[AUDIT-HISTORY] ❌ stack: ${err instanceof Error && err.stack ? err.stack : "<no stack>"}`);
+      throw err;
+    }
+    console.log(`[AUDIT-HISTORY] fetching ${hydratedPage.length} appeal records...`);
+    let appeals: Array<{ status?: string } | null>;
+    try {
+      appeals = await Promise.all(hydratedPage.map((c) => getAppeal(orgId, c.findingId))) as Array<{ status?: string } | null>;
+      console.log(`[AUDIT-HISTORY] fetched ${appeals.length} appeal records`);
+    } catch (err) {
+      console.error(`[AUDIT-HISTORY] ❌ getAppeal threw: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[AUDIT-HISTORY] ❌ stack: ${err instanceof Error && err.stack ? err.stack : "<no stack>"}`);
+      throw err;
+    }
     const items = hydratedPage.map((c, i) => ({
       ...c,
       reviewed: reviewedIds.has(c.findingId),
       appealStatus: appeals[i] ? appeals[i]!.status : null,
     }));
 
-    console.log(`🔍 [AUDITS] ${total}/${windowEntries.length} in window page=${pg}/${pages} type=${t} owner=${owner || "all"} dept=${department || "all"}`);
+    console.log(`[AUDIT-HISTORY] ✅ DONE total=${total}/${windowEntries.length} page=${pg}/${pages} type=${t} owner=${owner || "all"} dept=${department || "all"}`);
     return { items, total, pages, page: pg, owners, departments, shifts, reviewers };
   }
 

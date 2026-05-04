@@ -420,21 +420,21 @@ async function restListByCompletedAt(
       limit,
     },
   };
-  console.log(`🔍 [FS-COMPLETED-AT] query type=${type} org=${org} from=${from} to=${to} limit=${limit}`);
+  console.log(`🔍 [AUDIT-HISTORY] [FS] query type=${type} org=${org} from=${from} to=${to} limit=${limit}`);
   const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) {
     const errText = await res.text().catch(() => "<no body>");
-    console.error(`❌ [FS-COMPLETED-AT] Firestore returned ${res.status}: ${errText}`);
+    console.error(`❌ [AUDIT-HISTORY] [FS] Firestore returned ${res.status}: ${errText}`);
     throw new Error(`Firestore completedAt query failed: ${res.status} ${errText}`);
   }
   let rows: Array<{ document?: { fields?: Record<string, FsValue> } }>;
   try {
     rows = await res.json() as Array<{ document?: { fields?: Record<string, FsValue> } }>;
   } catch (err) {
-    console.error(`❌ [FS-COMPLETED-AT] failed to parse Firestore response:`, err);
+    console.error(`❌ [AUDIT-HISTORY] [FS] failed to parse Firestore response:`, err);
     throw err;
   }
-  console.log(`✅ [FS-COMPLETED-AT] Firestore returned ${rows.length} rows`);
+  console.log(`✅ [AUDIT-HISTORY] [FS] Firestore returned ${rows.length} rows`);
   const out: DocBody[] = [];
   for (const row of rows) {
     if (!row.document?.fields) continue;
@@ -443,10 +443,10 @@ async function restListByCompletedAt(
       if (isExpired(obj)) continue;
       out.push(obj);
     } catch (err) {
-      console.error(`❌ [FS-COMPLETED-AT] objectFromFields threw on row:`, err);
+      console.error(`❌ [AUDIT-HISTORY] [FS] objectFromFields threw on row:`, err);
     }
   }
-  console.log(`✅ [FS-COMPLETED-AT] decoded ${out.length} valid docs`);
+  console.log(`✅ [AUDIT-HISTORY] [FS] decoded ${out.length} valid docs`);
   return out;
 }
 

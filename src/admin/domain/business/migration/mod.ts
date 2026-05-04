@@ -2245,13 +2245,16 @@ export async function verifyMigration(sampleSize = 50): Promise<VerifyReport> {
   const base = prodExportBaseUrl();
   const secret = (Deno.env.get("KV_EXPORT_SECRET") ?? "").trim();
   const skipped: Array<{ reason: string }> = [];
+  const startedAt = Date.now();
 
   const samples: Array<{ key: Deno.KvKey; value: unknown }> = [];
   let i = 0;
   let cursor: string | null = null;
-  console.log(`[MIGRATION:VERIFY] sampling sampleSize=${sampleSize}`);
+  let pageNum = 0;
+  console.log(`🔬 [MIGRATION:VERIFY] PHASE 1 — reservoir-sampling ${sampleSize} entries from up to 10000 prod KV keys`);
   while (i < 10_000) {
     const page = await fetchExportPage(base, secret, [], cursor, skipped);
+    pageNum++;
     for (const entry of page.entries) {
       i++;
       if (samples.length < sampleSize) {
@@ -2262,29 +2265,46 @@ export async function verifyMigration(sampleSize = 50): Promise<VerifyReport> {
       }
       if (i >= 10_000) break;
     }
+    console.log(`🔬 [MIGRATION:VERIFY] sampling page ${pageNum}: scanned ${i}/10000 keys, reservoir=${samples.length}/${sampleSize}${page.done ? " (prod walk complete)" : ""}`);
     if (page.done) break;
     if (!page.nextCursor) break;
     cursor = page.nextCursor;
   }
+  const sampledMs = Date.now() - startedAt;
+  console.log(`🔬 [MIGRATION:VERIFY] PHASE 1 done in ${sampledMs}ms — ${samples.length} samples drawn from ${i} keys, now comparing each to Firestore`);
 
   const examples: VerifyReport["examples"] = [];
-  let matched = 0, missing = 0, mismatched = 0;
+  let matched = 0, missing = 0, mismatched = 0, skippedCount = 0;
+  let n = 0;
   for (const s of samples) {
+    n++;
     const decoded = decodeKey(s.key);
-    if (!decoded || decoded.isChunkPart || decoded.isChunkMeta) continue;
-    if (SKIP_TYPES.has(decoded.type)) continue;
+    if (!decoded || decoded.isChunkPart || decoded.isChunkMeta) {
+      skippedCount++;
+      console.log(`🔬 [MIGRATION:VERIFY] (${n}/${samples.length}) SKIP chunked/undecodable`);
+      continue;
+    }
+    if (SKIP_TYPES.has(decoded.type)) {
+      skippedCount++;
+      console.log(`🔬 [MIGRATION:VERIFY] (${n}/${samples.length}) SKIP type=${decoded.type}`);
+      continue;
+    }
     const got = await getStored(decoded.type, decoded.org, ...decoded.keyParts);
     const keyStr = `${decoded.type}/${decoded.org}/${decoded.keyParts.join(",")}`;
     if (got === null) {
       missing++;
+      console.log(`❌ [MIGRATION:VERIFY] (${n}/${samples.length}) MISSING ${keyStr}`);
       if (examples.length < 20) examples.push({ key: keyStr, status: "missing" });
     } else if (JSON.stringify(got) === JSON.stringify(s.value)) {
       matched++;
+      console.log(`✅ [MIGRATION:VERIFY] (${n}/${samples.length}) MATCH ${keyStr}`);
     } else {
       mismatched++;
+      console.log(`⚠️  [MIGRATION:VERIFY] (${n}/${samples.length}) MISMATCH ${keyStr}`);
       if (examples.length < 20) examples.push({ key: keyStr, status: "mismatch", note: "value differs" });
     }
   }
-  console.log(`[MIGRATION:VERIFY] complete sampled=${samples.length} matched=${matched} missing=${missing} mismatched=${mismatched}`);
+  const totalMs = Date.now() - startedAt;
+  console.log(`🏁 [MIGRATION:VERIFY] DONE in ${totalMs}ms — sampled=${samples.length} matched=${matched} missing=${missing} mismatched=${mismatched} skipped=${skippedCount}`);
   return { sampled: samples.length, matched, missing, mismatched, examples };
 }

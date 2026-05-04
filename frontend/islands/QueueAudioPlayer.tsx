@@ -39,6 +39,11 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
   const speedRef = useRef(1.0);
   const speedDisplayRef = useRef<HTMLSpanElement>(null);
   const [currentFid, setCurrentFid] = useState<string | null>(initialFindingId);
+  // Stable handle to loadFinding so the per-finding effect can invoke it
+  // without forcing the setup effect to re-run (which would re-bind listeners
+  // and reset closure-local state, causing audio to jump to 00:00 on every
+  // parent re-render that changed `initialFindingId`).
+  const loadFindingRef = useRef<((fid: string | null) => void) | null>(null);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -117,6 +122,9 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
       audio!.playbackRate = speedRef.current;
       loadWaveform(fid);
     }
+    // Expose to the per-finding useEffect so it can request loads without
+    // triggering this setup effect to re-run.
+    loadFindingRef.current = loadFinding;
 
     function updateTime() {
       if (!audio || !timeRef.current) return;
@@ -227,7 +235,8 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
     document.addEventListener("click", onChipClick);
 
     sizeCanvas();
-    if (initialFindingId) loadFinding(initialFindingId);
+    // Initial load handled by the per-finding useEffect below — keeping it
+    // out of this setup effect means setup runs exactly once.
 
     return () => {
       audio.removeEventListener("play", onPlay);
@@ -243,7 +252,18 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
       document.removeEventListener("htmx:afterSwap", onHtmxSwap);
       document.removeEventListener("click", onChipClick);
       globalThis.removeEventListener("resize", onResize);
+      loadFindingRef.current = null;
     };
+  }, []);
+
+  // Per-finding effect — runs only when initialFindingId changes. Calls into
+  // loadFindingRef which has full closure scope inside the setup effect.
+  // currentLoadFid (in the setup closure) prevents redundant loads.
+  useEffect(() => {
+    if (initialFindingId && loadFindingRef.current) {
+      loadFindingRef.current(initialFindingId);
+      setCurrentFid(initialFindingId);
+    }
   }, [initialFindingId]);
 
   const hasFinding = !!currentFid;

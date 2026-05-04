@@ -13,7 +13,12 @@ import QueueModals from "../../islands/QueueModals.tsx";
 import BottomBar from "../../islands/BottomBar.tsx";
 import DecideEffects from "../../islands/DecideEffects.tsx";
 
-interface BufferResponse { buffer: ReviewItem[]; remaining: number; }
+interface BufferResponse {
+  buffer: ReviewItem[];
+  remaining: number;
+  fullBuffer?: ReviewItem[];
+  decisions?: Record<string, "confirm" | "flip">;
+}
 
 export default define.page(async function ReviewQueue(ctx) {
   const user = ctx.state.user!;
@@ -22,8 +27,13 @@ export default define.page(async function ReviewQueue(ctx) {
     data = await apiFetch<BufferResponse>(`/review/api/next?reviewer=${encodeURIComponent(user.email)}&types=`, ctx.req);
   } catch (e) { console.error("Failed to load review queue:", e); }
   const buffer = data.buffer ?? [];
-  const currentIndex = 0;
-  const item = buffer[currentIndex] ?? null;
+  const fullBuffer = data.fullBuffer ?? [];
+  const decisions = data.decisions ?? {};
+  const item = buffer[0] ?? null;
+  const pillBuffer = fullBuffer.length > 0 ? fullBuffer : buffer;
+  const currentIndex = item
+    ? Math.max(0, pillBuffer.findIndex((b) => b.questionIndex === item.questionIndex))
+    : 0;
 
   return (
     <Layout title="Review Queue" section="review" user={user} hideSidebar>
@@ -34,12 +44,13 @@ export default define.page(async function ReviewQueue(ctx) {
         <div class="queue-left">
           <VerdictPanel
             item={item}
-            buffer={buffer}
+            buffer={pillBuffer}
             currentIndex={currentIndex}
             mode="review"
             remaining={data.remaining}
             email={user.email}
             combo={0}
+            decisions={decisions}
           />
         </div>
         <div class="queue-right">

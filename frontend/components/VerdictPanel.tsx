@@ -44,6 +44,9 @@ interface VerdictPanelProps {
   remaining: number;
   email: string;
   combo: number;
+  /** Map of questionIndex (string) → decision. When provided, the Failed Questions
+   *  pill list shows a status dot per question and the counter reads decided/total. */
+  decisions?: Record<string, "confirm" | "flip">;
 }
 
 function qbUrl(recordId: string | undefined, isPackage: boolean): string | null {
@@ -92,7 +95,7 @@ function RecordDetails({ item, isPackage }: { item: ReviewItem; isPackage: boole
   );
 }
 
-export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, email, combo }: VerdictPanelProps) {
+export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, email, combo, decisions }: VerdictPanelProps) {
   const isReview = mode === "review";
 
   if (!item) {
@@ -219,23 +222,38 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
       )}
 
       {/* Failed Questions pill list (review only, audit has more than one item) */}
-      {isReview && buffer.length > 1 && (
-        <details class="verdict-accordion" open>
-          <summary>Failed Questions <span class="verdict-failed-counter">0/{buffer.length}</span></summary>
-          <ul class="failed-q-list">
-            {buffer.map((bi, idx) => (
-              <li
-                key={`${bi.findingId}-${bi.questionIndex}`}
-                class={`failed-q-pill ${idx === currentIndex ? "current" : ""}`}
-              >
-                <span class="failed-q-num">{idx + 1}</span>
-                <span class="failed-q-dot" />
-                <span class="failed-q-name">{truncate(bi.header, 40)}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      {isReview && buffer.length > 1 && (() => {
+        const decMap = decisions ?? {};
+        const decidedCount = Object.keys(decMap).length;
+        return (
+          <details class="verdict-accordion" open>
+            <summary>Failed Questions <span class="verdict-failed-counter">{decidedCount}/{buffer.length}</span></summary>
+            <ul class="failed-q-list">
+              {buffer.map((bi, idx) => {
+                const dec = decMap[String(bi.questionIndex)];
+                const isCurrent = idx === currentIndex;
+                const dotClass = isCurrent
+                  ? "failed-q-dot current"
+                  : dec === "confirm"
+                    ? "failed-q-dot confirmed"
+                    : dec === "flip"
+                      ? "failed-q-dot flipped"
+                      : "failed-q-dot";
+                return (
+                  <li
+                    key={`${bi.findingId}-${bi.questionIndex}`}
+                    class={`failed-q-pill ${isCurrent ? "current" : ""}`}
+                  >
+                    <span class="failed-q-num">{idx + 1}</span>
+                    <span class={dotClass} />
+                    <span class="failed-q-name">{truncate(bi.header, 40)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        );
+      })()}
 
       {/* Meta chips */}
       <div class="verdict-meta-row">

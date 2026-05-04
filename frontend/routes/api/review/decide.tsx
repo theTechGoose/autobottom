@@ -18,14 +18,24 @@ export const handler = define.handlers({
   async POST(ctx) {
     try {
       const body = await parseHtmxBody(ctx.req);
-      const decideResult = await apiPost<{ ok: boolean; remaining: number; auditComplete: boolean; xpGained: number; newBadges: string[] }>(
-        "/review/api/decide", ctx.req, body,
-      );
+      const decideResult = await apiPost<{
+        ok: boolean;
+        remaining: number;
+        auditComplete: boolean;
+        xpGained: number;
+        newBadges: string[];
+        fullBuffer?: ReviewItem[];
+        decisions?: Record<string, "confirm" | "flip">;
+      }>("/review/api/decide", ctx.req, body);
       const reviewer = String(body.reviewer ?? "");
       const findingId = String(body.findingId ?? "");
 
       let buffer: ReviewItem[] = [];
       let remaining = decideResult.remaining;
+      // Full failed-questions list + decisions — keeps the pill list intact across
+      // decisions so each question shows a status dot instead of disappearing.
+      const fullBuffer: ReviewItem[] = decideResult.fullBuffer ?? [];
+      const decisions: Record<string, "confirm" | "flip"> = decideResult.decisions ?? {};
 
       if (!decideResult.auditComplete) {
         // Normal path — load the next question's fragment.
@@ -39,6 +49,11 @@ export const handler = define.handlers({
       // QueueModals re-fetches next via /api/review/next-fragment after YES.
 
       const item = buffer[0] ?? null;
+      // Pill list shows fullBuffer when available; otherwise falls back to active buffer.
+      const pillBuffer = fullBuffer.length > 0 ? fullBuffer : buffer;
+      const pillCurrentIndex = item
+        ? Math.max(0, pillBuffer.findIndex((b) => b.questionIndex === item.questionIndex))
+        : 0;
       const html = renderToString(
         <>
           <div
@@ -64,12 +79,13 @@ export const handler = define.handlers({
               <div class="queue-left">
                 <VerdictPanel
                   item={item}
-                  buffer={buffer}
-                  currentIndex={0}
+                  buffer={pillBuffer}
+                  currentIndex={pillCurrentIndex}
                   mode="review"
                   remaining={remaining}
                   email={reviewer}
                   combo={0}
+                  decisions={decisions}
                 />
               </div>
               <div class="queue-right">

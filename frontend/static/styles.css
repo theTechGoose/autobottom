@@ -619,7 +619,10 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .failed-q-pill.current { background: rgba(139,92,246,0.10); border-color: rgba(139,92,246,0.25); }
 .failed-q-num { font-family: var(--mono); font-size: 10px; color: var(--text-muted); min-width: 18px; text-align: center; }
 .failed-q-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
-.failed-q-pill.current .failed-q-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent-bg); }
+.failed-q-dot.confirmed { background: #f85149; }
+.failed-q-dot.flipped { background: #3fb950; }
+.failed-q-dot.current { background: #8b5cf6; box-shadow: 0 0 6px rgba(139, 92, 246, 0.5); }
+.failed-q-pill.current .failed-q-dot { background: #8b5cf6; box-shadow: 0 0 6px rgba(139, 92, 246, 0.5); }
 .failed-q-name { color: var(--text); flex: 1; }
 
 /* Meta row — prod #meta-row with top divider above it */

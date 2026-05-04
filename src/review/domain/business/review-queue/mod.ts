@@ -608,6 +608,50 @@ export async function previewFinding(orgId: OrgId, findingId: string): Promise<B
   return items;
 }
 
+// ── Full failed-questions buffer + decisions for a finding ─────────────────
+// Used by /review/api/decide and /review/api/next so the UI can render the
+// full failed-questions list with status dots that don't shrink as decisions
+// are made.
+
+export async function getFailedQuestionsForFinding(orgId: OrgId, findingId: string): Promise<BufferItem[]> {
+  const finding = await getFinding(orgId, findingId);
+  if (!finding || !finding.answeredQuestions?.length) return [];
+  const transcript = await getTranscript(orgId, findingId);
+  const noAnswers = (finding.answeredQuestions as any[])
+    .map((q: any, i: number) => ({ ...q, index: i }))
+    .filter((q: any) => q.answer === "No");
+  const recRaw = (finding.record ?? {}) as Record<string, unknown>;
+  const recordingIdField = recRaw.GenieNumber != null ? "GenieNumber" : undefined;
+  const recordId = String(recRaw.RecordId ?? recRaw.RelatedDestinationId ?? recRaw.GenieNumber ?? "");
+  return noAnswers.map((q, idx) => ({
+    findingId,
+    questionIndex: q.index,
+    reviewIndex: idx + 1,
+    totalForFinding: noAnswers.length,
+    header: q.header ?? "",
+    populated: q.populated ?? "",
+    thinking: q.thinking ?? "",
+    defense: q.defense ?? "",
+    answer: q.answer ?? "No",
+    recordingIdField,
+    recordId,
+    auditRemaining: 0,
+    transcript,
+  }));
+}
+
+export async function getDecisionsByFinding(orgId: OrgId, findingId: string): Promise<Record<string, "confirm" | "flip">> {
+  const all = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
+  const out: Record<string, "confirm" | "flip"> = {};
+  for (const { key, value } of all) {
+    if (key[0] !== findingId) continue;
+    if (value?.questionIndex != null && (value.decision === "confirm" || value.decision === "flip")) {
+      out[String(value.questionIndex)] = value.decision;
+    }
+  }
+  return out;
+}
+
 // ── Backfill review queue from finished findings ────────────────────────────
 
 export async function backfillFromFinished(orgId: OrgId): Promise<{ queued: number }> {

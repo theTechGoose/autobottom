@@ -14,22 +14,32 @@ export const handler = define.handlers({
     const url = new URL(ctx.req.url);
     const reviewer = url.searchParams.get("reviewer") ?? "";
     try {
-      const next = await apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
-        `/review/api/next?reviewer=${encodeURIComponent(reviewer)}&types=`, ctx.req,
-      );
+      const next = await apiFetch<{
+        buffer: ReviewItem[];
+        remaining: number;
+        fullBuffer?: ReviewItem[];
+        decisions?: Record<string, "confirm" | "flip">;
+      }>(`/review/api/next?reviewer=${encodeURIComponent(reviewer)}&types=`, ctx.req);
       const buffer = next.buffer ?? [];
       const item = buffer[0] ?? null;
+      const fullBuffer = next.fullBuffer ?? [];
+      const decisions = next.decisions ?? {};
+      const pillBuffer = fullBuffer.length > 0 ? fullBuffer : buffer;
+      const pillCurrentIndex = item
+        ? Math.max(0, pillBuffer.findIndex((b) => b.questionIndex === item.questionIndex))
+        : 0;
       const html = renderToString(
         <>
           <div class="queue-left">
             <VerdictPanel
               item={item}
-              buffer={buffer}
-              currentIndex={0}
+              buffer={pillBuffer}
+              currentIndex={pillCurrentIndex}
               mode="review"
               remaining={next.remaining}
               email={reviewer}
               combo={0}
+              decisions={decisions}
             />
           </div>
           <div class="queue-right">

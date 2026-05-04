@@ -5,7 +5,7 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { ReviewBufferResponse, DecisionResponse, ReviewStatsResponse, OkResponse, OkMessageResponse, ReviewerConfigResponse, MessageResponse, GamificationSettingsResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, ReviewDecideRequest, ReviewBackRequest } from "@core/dto/requests.ts";
-import { recordDecision, finalizeReviewedAudit, getReviewStats, getReviewedFindingIds, clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
+import { recordDecision, finalizeReviewedAudit, getReviewStats, getReviewedFindingIds, clearReviewQueue, getFailedQuestionsForFinding, getDecisionsByFinding } from "@review/domain/business/review-queue/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
@@ -20,7 +20,14 @@ export class ReviewController {
     if (!reviewer) return { error: "reviewer query param required" };
     const { claimNextItemLegacy: claimNextItem } = await import("@review/domain/business/review-queue/mod.ts");
     const allowedTypes = types ? types.split(",").map((t: string) => t.trim()) : undefined;
-    return claimNextItem(ORG(), reviewer, allowedTypes);
+    const result = await claimNextItem(ORG(), reviewer, allowedTypes);
+    const fid = result.buffer[0]?.findingId;
+    if (!fid) return { ...result, fullBuffer: [], decisions: {} };
+    const [fullBuffer, decisions] = await Promise.all([
+      getFailedQuestionsForFinding(ORG(), fid),
+      getDecisionsByFinding(ORG(), fid),
+    ]);
+    return { ...result, fullBuffer, decisions };
   }
 
   @Post("decide") @ReturnedType(DecisionResponse) @Description("Confirm or flip a reviewed question") @BodyType(ReviewDecideRequest)
@@ -29,7 +36,18 @@ export class ReviewController {
       return { error: "findingId, questionIndex, decision, reviewer required" };
     }
     const result = await recordDecision(ORG(), body.findingId, body.questionIndex, body.decision, body.reviewer);
-    return { ok: true, ...result, xpGained: body.decision === "flip" ? 15 : 10, newBadges: [] as string[] };
+    const [fullBuffer, decisions] = await Promise.all([
+      getFailedQuestionsForFinding(ORG(), body.findingId),
+      getDecisionsByFinding(ORG(), body.findingId),
+    ]);
+    return {
+      ok: true,
+      ...result,
+      xpGained: body.decision === "flip" ? 15 : 10,
+      newBadges: [] as string[],
+      fullBuffer,
+      decisions,
+    };
   }
 
   @Post("finalize") @ReturnedType(OkResponse) @Description("Finalize a reviewed audit — apply flips, recompute score, fire terminate webhook") @BodyType(GenericBodyRequest)

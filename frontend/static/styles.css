@@ -565,11 +565,10 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .verdict-btn.uphold { width: 100%; justify-content: center; border: 1px solid rgba(20,184,166,0.35); background: rgba(20,184,166,0.10); color: #5eead4; }
 .verdict-btn.uphold:hover { background: rgba(20,184,166,0.16); border-color: rgba(20,184,166,0.55); }
 .verdict-btn.uphold kbd { background: #0f1a19; border: 1px solid rgba(20,184,166,0.4); color: #14b8a6; }
-.verdict-overturn-group { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; align-items: center; }
-.verdict-overturn-label { font-size: 10px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
-.verdict-btn.overturn { background: var(--bg-surface); color: var(--red); border: 1px solid rgba(248,81,73,0.2); font-size: 11px; padding: 6px 12px; }
-.verdict-btn.overturn:hover { background: var(--red-bg); }
-.verdict-btn.overturn kbd { background: var(--bg); border: 1px solid rgba(248,81,73,0.2); color: var(--red); font-size: 9px; }
+.verdict-overturn-group { display: flex; gap: 8px; width: 100%; align-items: stretch; }
+.verdict-btn.overturn { flex: 1; min-width: 0; justify-content: center; background: rgba(248,81,73,0.07); color: var(--red); border: 1px solid rgba(248,81,73,0.30); font-size: 12px; font-weight: 700; padding: 8px 0; }
+.verdict-btn.overturn:hover { background: rgba(248,81,73,0.14); border-color: rgba(248,81,73,0.5); }
+.verdict-btn.overturn kbd { background: #1a0f0e; border: 1px solid rgba(248,81,73,0.35); color: var(--red); font-size: 10px; }
 
 .verdict-undo { background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 6px 14px; font-size: 11px; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; }
 .verdict-undo:hover { border-color: var(--border-hover); color: var(--text-muted); }

@@ -322,8 +322,7 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
               <kbd>Y</kbd> Uphold
             </button>
             <div class="verdict-overturn-group">
-              <span class="verdict-overturn-label">Overturn:</span>
-              {[["A", "error"], ["S", "logic"], ["D", "fragment"], ["F", "transcript"]].map(([key, reason]) => (
+              {[["A", "error", "Error"], ["S", "logic", "Logic"], ["D", "fragment", "Fragment"], ["F", "transcript", "Transcript"]].map(([key, reason, label]) => (
                 <button
                   key={reason}
                   class="verdict-btn overturn"
@@ -331,8 +330,9 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
                   hx-vals={JSON.stringify({ findingId: item.findingId, questionIndex: item.questionIndex, decision: "overturn", reason, judge: email })}
                   hx-target="#queue-content"
                   hx-swap="innerHTML"
+                  title={`Overturn: ${label} (${key})`}
                 >
-                  <kbd>{key}</kbd> {reason}
+                  <kbd>{key}</kbd> {label}
                 </button>
               ))}
             </div>

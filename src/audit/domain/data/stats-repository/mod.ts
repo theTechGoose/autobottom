@@ -166,13 +166,26 @@ export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEnt
 }
 
 export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number): Promise<AuditDoneIndexEntry[]> {
-  const findings = await listStoredByCompletedAt<FindingShape>("audit-finding", orgId, from, to, { limit: 5000 });
+  console.log(`🔍 [Q-AUDIT-IDX] start orgId=${orgId} from=${from} to=${to}`);
+  let findings: FindingShape[];
+  try {
+    findings = await listStoredByCompletedAt<FindingShape>("audit-finding", orgId, from, to, { limit: 5000 });
+  } catch (err) {
+    console.error(`❌ [Q-AUDIT-IDX] listStoredByCompletedAt threw:`, err);
+    throw err;
+  }
+  console.log(`🔍 [Q-AUDIT-IDX] got ${findings.length} findings from Firestore`);
   const out: AuditDoneIndexEntry[] = [];
   for (const f of findings) {
-    if (f.findingStatus !== "finished" && f.findingStatus !== "completed" && f.reviewedAt == null) continue;
-    const e = findingToIndexEntry(f);
-    if (e) out.push(e);
+    try {
+      if (f.findingStatus !== "finished" && f.findingStatus !== "completed" && f.reviewedAt == null) continue;
+      const e = findingToIndexEntry(f);
+      if (e) out.push(e);
+    } catch (err) {
+      console.error(`❌ [Q-AUDIT-IDX] findingToIndexEntry threw on findingId=${f.findingId}:`, err);
+    }
   }
+  console.log(`✅ [Q-AUDIT-IDX] returning ${out.length} entries`);
   return out;
 }
 

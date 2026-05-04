@@ -420,16 +420,33 @@ async function restListByCompletedAt(
       limit,
     },
   };
+  console.log(`🔍 [FS-COMPLETED-AT] query type=${type} org=${org} from=${from} to=${to} limit=${limit}`);
   const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Firestore completedAt query failed: ${res.status} ${await res.text()}`);
-  const rows = await res.json() as Array<{ document?: { fields?: Record<string, FsValue> } }>;
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "<no body>");
+    console.error(`❌ [FS-COMPLETED-AT] Firestore returned ${res.status}: ${errText}`);
+    throw new Error(`Firestore completedAt query failed: ${res.status} ${errText}`);
+  }
+  let rows: Array<{ document?: { fields?: Record<string, FsValue> } }>;
+  try {
+    rows = await res.json() as Array<{ document?: { fields?: Record<string, FsValue> } }>;
+  } catch (err) {
+    console.error(`❌ [FS-COMPLETED-AT] failed to parse Firestore response:`, err);
+    throw err;
+  }
+  console.log(`✅ [FS-COMPLETED-AT] Firestore returned ${rows.length} rows`);
   const out: DocBody[] = [];
   for (const row of rows) {
     if (!row.document?.fields) continue;
-    const obj = objectFromFields(row.document.fields) as DocBody;
-    if (isExpired(obj)) continue;
-    out.push(obj);
+    try {
+      const obj = objectFromFields(row.document.fields) as DocBody;
+      if (isExpired(obj)) continue;
+      out.push(obj);
+    } catch (err) {
+      console.error(`❌ [FS-COMPLETED-AT] objectFromFields threw on row:`, err);
+    }
   }
+  console.log(`✅ [FS-COMPLETED-AT] decoded ${out.length} valid docs`);
   return out;
 }
 

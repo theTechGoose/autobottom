@@ -30,11 +30,12 @@ const QUEUE_TYPE = "migration-chunked-queue";
 const TICK_BUDGET_MS = 10_000;
 /** A job whose lastTickAt is older than this is auto-marked errored to
  *  prevent zombie-polling. */
-/** Threshold for marking a job as stale (zombie). Cron drives ticks once
- *  per minute; Deno Deploy isolate cycling and back-to-back tick batches
- *  mean it's normal to see 2-3 min gaps. 15 min is a real "something
- *  broke" signal — not a benign cron lull. */
-const STALE_TICK_MS = 15 * 60_000;
+/** Threshold for marking a job as stale (zombie). Was 15 min but Deno
+ *  Deploy's cron scheduler turned out to be unreliable — operators end up
+ *  driving via the manual Tick Now button with arbitrary gaps. 24h means
+ *  the watchdog only fires for genuinely abandoned jobs, not ones being
+ *  babysat manually. Resume + Cancel give the operator manual control. */
+const STALE_TICK_MS = 24 * 60 * 60_000;
 /** /kv-export pagination batch size for value-bearing requests.
  *  Deno KV's `kv.list({ limit })` is hard-capped at 1000 by the runtime,
  *  but we use 300 here to keep peak memory below the 512MB isolate limit

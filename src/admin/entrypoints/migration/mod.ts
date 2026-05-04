@@ -70,11 +70,20 @@ export class MigrationController {
   }
 
   @Post("tick-now") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
-  @Description("Manually drive one tick on a running job. For when cron isn't firing. Body: {jobId}")
+  @Description("Manually drive one tick. Auto-resumes an errored job. Body: {jobId}")
   async tickNow(@Body() body: GenericBodyRequest) {
     const jobId = (body as unknown as Record<string, unknown>).jobId as string | undefined;
     if (!jobId) return { ok: false, error: "jobId required" };
     console.log(`👆 [MIGRATION:TICK-NOW:${jobId.slice(-6)}] manual tick triggered`);
+    // Auto-resume if errored — saves the user a two-click round trip when
+    // stale-watchdog fired between manual ticks. Idempotent: returns false
+    // if not in error state, which we ignore.
+    const existing = await getJob(jobId);
+    if (!existing) return { ok: false, error: `job ${jobId} not found` };
+    if (existing.status === "error") {
+      console.log(`▶️  [MIGRATION:TICK-NOW:${jobId.slice(-6)}] auto-resuming errored job before tick`);
+      await resumeJob(jobId);
+    }
     try {
       const job = await tickJob(jobId);
       if (!job) return { ok: false, error: `job ${jobId} not found` };

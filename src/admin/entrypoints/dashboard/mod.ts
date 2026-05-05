@@ -63,23 +63,8 @@ export class DashboardController {
     @Query("limit") limit: string,
     @Query("format") format: string,
   ) {
-    try {
-      return await this.auditsDataImpl(since, until, type, owner, department, shift, reviewed, auditor, scoreMin, scoreMax, page, limit, format);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const stack = err instanceof Error && err.stack ? err.stack : "<no stack>";
-      console.error(`[AUDIT-HISTORY] ❌ FATAL handler error: ${msg}`);
-      console.error(`[AUDIT-HISTORY] ❌ stack: ${stack}`);
-      throw err;
-    }
-  }
-
-  private async auditsDataImpl(
-    since: string, until: string, type: string, owner: string, department: string,
-    shift: string, reviewed: string, auditor: string, scoreMin: string, scoreMax: string,
-    page: string, limit: string, format: string,
-  ) {
     const orgId = ORG();
+    try {
     const s = parseInt(since || "0", 10) || 0;
     const u = parseInt(until || String(Date.now()), 10) || Date.now();
     const t = type || "all";
@@ -232,14 +217,21 @@ export class DashboardController {
       console.error(`[AUDIT-HISTORY] ❌ stack: ${err instanceof Error && err.stack ? err.stack : "<no stack>"}`);
       throw err;
     }
-    const items = hydratedPage.map((c, i) => ({
-      ...c,
-      reviewed: reviewedIds.has(c.findingId),
-      appealStatus: appeals[i] ? appeals[i]!.status : null,
-    }));
+      const items = hydratedPage.map((c, i) => ({
+        ...c,
+        reviewed: reviewedIds.has(c.findingId),
+        appealStatus: appeals[i] ? appeals[i]!.status : null,
+      }));
 
-    console.log(`[AUDIT-HISTORY] ✅ DONE total=${total}/${windowEntries.length} page=${pg}/${pages} type=${t} owner=${owner || "all"} dept=${department || "all"}`);
-    return { items, total, pages, page: pg, owners, departments, shifts, reviewers };
+      console.log(`[AUDIT-HISTORY] ✅ DONE total=${total}/${windowEntries.length} page=${pg}/${pages} type=${t} owner=${owner || "all"} dept=${department || "all"}`);
+      return { items, total, pages, page: pg, owners, departments, shifts, reviewers };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error && err.stack ? err.stack : "<no stack>";
+      console.error(`[AUDIT-HISTORY] ❌ FATAL handler error: ${msg}`);
+      console.error(`[AUDIT-HISTORY] ❌ stack: ${stack}`);
+      throw err;
+    }
   }
 
   @Get("review-queue/data") @ReturnedType(ReviewStatsResponse)

@@ -392,7 +392,13 @@ async function restListByType(creds: FirestoreCreds, type: string, org: string, 
  *  [from, to] (inclusive). Used by audit-history to read findings directly,
  *  bypassing the audit-done-idx denormalization. Requires a Firestore
  *  composite index on (_type, _org, completedAt) — Firestore will surface a
- *  one-click create-index URL on the first query if the index is missing. */
+ *  one-click create-index URL on the first query if the index is missing.
+ *
+ *  Internally pages via Firestore cursors (`startAt` after the previous
+ *  page's last doc) so a single call can return up to `limit` docs even
+ *  when that exceeds Firestore's per-runQuery response budget. */
+const COMPLETED_AT_PAGE_SIZE = 2000;
+
 async function restListByCompletedAt(
   creds: FirestoreCreds,
   type: string,
@@ -403,8 +409,14 @@ async function restListByCompletedAt(
   fieldName: string,
 ): Promise<DocBody[]> {
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
-  const body = {
-    structuredQuery: {
+  const out: DocBody[] = [];
+  let cursor: { fieldVal: number; docName: string } | null = null;
+  let pageNum = 0;
+
+  while (out.length < limit) {
+    pageNum++;
+    const pageLimit = Math.min(COMPLETED_AT_PAGE_SIZE, limit - out.length);
+    const structuredQuery: Record<string, unknown> = {
       from: [{ collectionId: creds.collection }],
       where: {
         compositeFilter: {
@@ -417,37 +429,63 @@ async function restListByCompletedAt(
           ],
         },
       },
-      orderBy: [{ field: { fieldPath: fieldName }, direction: "DESCENDING" }],
-      limit,
-    },
-  };
-  console.log(`🔍 [AUDIT-HISTORY] [FS] query type=${type} org=${org} from=${from} to=${to} limit=${limit}`);
-  const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "<no body>");
-    console.error(`❌ [AUDIT-HISTORY] [FS] Firestore returned ${res.status}: ${errText}`);
-    throw new Error(`Firestore completedAt query failed: ${res.status} ${errText}`);
-  }
-  let rows: Array<{ document?: { fields?: Record<string, FsValue> } }>;
-  try {
-    rows = await res.json() as Array<{ document?: { fields?: Record<string, FsValue> } }>;
-  } catch (err) {
-    console.error(`❌ [AUDIT-HISTORY] [FS] failed to parse Firestore response:`, err);
-    throw err;
-  }
-  console.log(`✅ [AUDIT-HISTORY] [FS] Firestore returned ${rows.length} rows`);
-  const out: DocBody[] = [];
-  for (const row of rows) {
-    if (!row.document?.fields) continue;
-    try {
-      const obj = objectFromFields(row.document.fields) as DocBody;
-      if (isExpired(obj)) continue;
-      out.push(obj);
-    } catch (err) {
-      console.error(`❌ [AUDIT-HISTORY] [FS] objectFromFields threw on row:`, err);
+      orderBy: [
+        { field: { fieldPath: fieldName }, direction: "DESCENDING" },
+        { field: { fieldPath: "__name__" }, direction: "DESCENDING" },
+      ],
+      limit: pageLimit,
+    };
+    if (cursor) {
+      structuredQuery.startAt = {
+        values: [
+          { integerValue: String(cursor.fieldVal) },
+          { referenceValue: cursor.docName },
+        ],
+        before: false,
+      };
     }
+
+    console.log(`🔍 [AUDIT-HISTORY] [FS] page ${pageNum} type=${type} org=${org} from=${from} to=${to} pageLimit=${pageLimit} cursor=${cursor ? `ts=${cursor.fieldVal}` : "none"}`);
+    const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify({ structuredQuery }) });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "<no body>");
+      console.error(`❌ [AUDIT-HISTORY] [FS] Firestore returned ${res.status}: ${errText}`);
+      throw new Error(`Firestore completedAt query failed: ${res.status} ${errText}`);
+    }
+    let rows: Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
+    try {
+      rows = await res.json() as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
+    } catch (err) {
+      console.error(`❌ [AUDIT-HISTORY] [FS] failed to parse Firestore response:`, err);
+      throw err;
+    }
+
+    let docRows = 0;
+    let lastFieldVal: number | null = null;
+    let lastDocName: string | null = null;
+    for (const row of rows) {
+      if (!row.document?.fields || !row.document?.name) continue;
+      docRows++;
+      try {
+        const obj = objectFromFields(row.document.fields) as DocBody;
+        if (isExpired(obj)) continue;
+        out.push(obj);
+        const fv = (obj as Record<string, unknown>)[fieldName];
+        if (typeof fv === "number") lastFieldVal = fv;
+        lastDocName = row.document.name;
+        if (out.length >= limit) break;
+      } catch (err) {
+        console.error(`❌ [AUDIT-HISTORY] [FS] objectFromFields threw on row:`, err);
+      }
+    }
+    console.log(`✅ [AUDIT-HISTORY] [FS] page ${pageNum} returned ${docRows} doc rows (accumulated ${out.length})`);
+
+    if (docRows < pageLimit) break;
+    if (lastFieldVal == null || !lastDocName) break;
+    cursor = { fieldVal: lastFieldVal, docName: lastDocName };
   }
-  console.log(`✅ [AUDIT-HISTORY] [FS] decoded ${out.length} valid docs`);
+
+  console.log(`✅ [AUDIT-HISTORY] [FS] decoded ${out.length} valid docs across ${pageNum} page(s)`);
   return out;
 }
 

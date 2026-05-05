@@ -160,7 +160,7 @@ export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number
   try {
     stats = await listStoredByCompletedAt<CompletedStatShape>(
       "completed-audit-stat", orgId, from, to,
-      { limit: 5000, fieldName: "ts" },
+      { limit: 50_000, fieldName: "ts" },
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -182,7 +182,7 @@ export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number
 }
 
 export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
-  const stats = await listStored<CompletedStatShape>("completed-audit-stat", orgId, { limit: 5000 });
+  const stats = await listStored<CompletedStatShape>("completed-audit-stat", orgId, { limit: 50_000 });
   const out: AuditDoneIndexEntry[] = [];
   for (const s of stats) {
     if (s.recordId !== recordId) continue;

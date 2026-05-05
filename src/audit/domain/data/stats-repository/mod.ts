@@ -160,7 +160,7 @@ export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number
   try {
     stats = await listStoredByCompletedAt<CompletedStatShape>(
       "completed-audit-stat", orgId, from, to,
-      { limit: 50_000, fieldName: "ts" },
+      { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

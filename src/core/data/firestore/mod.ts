@@ -397,7 +397,7 @@ async function restListByType(creds: FirestoreCreds, type: string, org: string, 
  *  Internally pages via Firestore cursors (`startAt` after the previous
  *  page's last doc) so a single call can return up to `limit` docs even
  *  when that exceeds Firestore's per-runQuery response budget. */
-const COMPLETED_AT_PAGE_SIZE = 2000;
+const COMPLETED_AT_PAGE_SIZE = 5000;
 
 async function restListByCompletedAt(
   creds: FirestoreCreds,

@@ -269,13 +269,12 @@ export async function getStats(orgId: OrgId): Promise<{
     findingId: (value.findingId as string) || String(key[key.length - 1]),
   }));
 
-  const completed = await listStored<Record<string, unknown>>("completed-audit-stat", orgId);
+  const completed = await listStoredByCompletedAt<{ ts?: number }>(
+    "completed-audit-stat", orgId, cutoff, now,
+    { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
+  );
   const completedCount = completed.length;
-  const completedTs: number[] = [];
-  for (const v of completed) {
-    const ts = Number(v?.ts ?? 0);
-    if (ts >= cutoff) completedTs.push(ts);
-  }
+  const completedTs: number[] = completed.map((v) => Number(v?.ts ?? 0));
 
   const errors = await listStored<Record<string, unknown>>("error-tracking", orgId);
   const errorsTs: number[] = [];

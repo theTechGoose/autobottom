@@ -95,60 +95,6 @@ export async function deleteCompletedStat(orgId: OrgId, findingId: string): Prom
 }
 
 // ── Audit Done Index ─────────────────────────────────────────────────────────
-//
-// queryAuditDoneIndex / findAuditsByRecordId read directly from `audit-finding`
-// records and synthesize the index entry shape on the fly. The audit-done-idx
-// type itself is now vestigial — writeAuditDoneIndex still populates it for
-// any new audit completion (so live-pipeline behavior is unchanged), but
-// readers no longer rely on it. This means the audit-history page reflects
-// every finding present in Firestore, including bulk-migrated historical
-// data that never went through the live finalize step.
-
-// queryAuditDoneIndex / findAuditsByRecordId read directly from
-// `completed-audit-stat` records — those are small, non-chunked, and
-// already contain every field the audit-history page needs (recordId,
-// owner, department, voName, score, ts). Unlike audit-finding, they
-// don't need hydration. Migrated audits have these stats as part of the
-// migration scope.
-
-interface CompletedStatShape {
-  findingId?: string;
-  ts?: number;
-  recordId?: string;
-  isPackage?: boolean;
-  startedAt?: number;
-  durationMs?: number;
-  score?: number;
-  owner?: string;
-  department?: string;
-  voName?: string;
-  reason?: string;
-  shift?: string;
-}
-
-function statToIndexEntry(stat: CompletedStatShape): AuditDoneIndexEntry | null {
-  const findingId = stat.findingId;
-  const ts = stat.ts;
-  if (!findingId || typeof ts !== "number") return null;
-  const reason = stat.reason === "perfect_score" || stat.reason === "invalid_genie" || stat.reason === "reviewed"
-    ? stat.reason as AuditDoneIndexEntry["reason"]
-    : undefined;
-  return {
-    findingId,
-    completedAt: ts,
-    score: typeof stat.score === "number" ? stat.score : 0,
-    completed: reason != null,
-    ...(reason ? { doneAt: ts, reason } : {}),
-    recordId: stat.recordId,
-    isPackage: stat.isPackage,
-    voName: stat.voName,
-    owner: stat.owner,
-    department: stat.department,
-    shift: stat.shift,
-    startedAt: stat.startedAt,
-    durationMs: stat.durationMs,
-  };
-}
 
 export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEntry): Promise<void> {
   await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], entry);
@@ -156,38 +102,27 @@ export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEnt
 
 export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number): Promise<AuditDoneIndexEntry[]> {
   console.log(`[AUDIT-HISTORY] [Q-IDX] start orgId=${orgId} from=${from} to=${to}`);
-  let stats: CompletedStatShape[];
+  let entries: AuditDoneIndexEntry[];
   try {
-    stats = await listStoredByCompletedAt<CompletedStatShape>(
-      "completed-audit-stat", orgId, from, to,
-      { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
+    entries = await listStoredByCompletedAt<AuditDoneIndexEntry>(
+      "audit-done-idx", orgId, from, to,
+      { limit: Number.MAX_SAFE_INTEGER, fieldName: "completedAt" },
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[AUDIT-HISTORY] [Q-IDX] ❌ listStoredByCompletedAt threw: ${msg}`);
     throw err;
   }
-  console.log(`[AUDIT-HISTORY] [Q-IDX] got ${stats.length} completed-audit-stat rows from Firestore`);
-  const out: AuditDoneIndexEntry[] = [];
-  for (const s of stats) {
-    try {
-      const e = statToIndexEntry(s);
-      if (e) out.push(e);
-    } catch (err) {
-      console.error(`[AUDIT-HISTORY] [Q-IDX] ❌ statToIndexEntry threw on findingId=${s.findingId}:`, err);
-    }
-  }
-  console.log(`[AUDIT-HISTORY] [Q-IDX] returning ${out.length} entries`);
-  return out;
+  console.log(`[AUDIT-HISTORY] [Q-IDX] got ${entries.length} audit-done-idx rows from Firestore`);
+  return entries;
 }
 
 export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
-  const stats = await listStored<CompletedStatShape>("completed-audit-stat", orgId, { limit: 50_000 });
+  const entries = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId, { limit: 50_000 });
   const out: AuditDoneIndexEntry[] = [];
-  for (const s of stats) {
-    if (s.recordId !== recordId) continue;
-    const e = statToIndexEntry(s);
-    if (e) out.push(e);
+  for (const e of entries) {
+    if (e.recordId !== recordId) continue;
+    out.push(e);
   }
   return out.sort((a, b) => b.completedAt - a.completedAt);
 }

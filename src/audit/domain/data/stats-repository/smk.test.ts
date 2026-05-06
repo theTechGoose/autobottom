@@ -84,11 +84,14 @@ Deno.test({ name: "audit-done-idx — write and query by range", ...kvOpts, fn: 
 }});
 
 Deno.test({ name: "audit-done-idx — findAuditsByRecordId", ...kvOpts, fn: async () => {
-  await writeAuditDoneIndex(ORG, { findingId: "f-idx-r1", completedAt: 2000000, score: 90, completed: true, recordId: "REC-1" });
-  await writeAuditDoneIndex(ORG, { findingId: "f-idx-r2", completedAt: 2000001, score: 70, completed: true, recordId: "REC-1" });
+  // Use realistic recent timestamps — findAuditsByRecordId pages by completedAt
+  // within the last 365 days to avoid 50k-doc abort timeouts.
+  const now = Date.now();
+  await writeAuditDoneIndex(ORG, { findingId: "f-idx-r1", completedAt: now - 1000, score: 90, completed: true, recordId: "REC-1" });
+  await writeAuditDoneIndex(ORG, { findingId: "f-idx-r2", completedAt: now,        score: 70, completed: true, recordId: "REC-1" });
   const results = await findAuditsByRecordId(ORG, "REC-1");
   assertEquals(results.length, 2);
-  assertEquals(results[0].completedAt, 2000001); // newest first
+  assertEquals(results[0].completedAt, now); // newest first
 }});
 
 Deno.test({ name: "chargeback — save, get, list, delete", ...kvOpts, fn: async () => {

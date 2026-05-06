@@ -68,7 +68,11 @@ export const handler = define.handlers({
 
     if (audits.length === 0) {
       return new Response(
-        renderToString(<div style="font-size:11px;color:var(--text-dim);padding:6px 0;">No audits found for record {recordId}.</div>),
+        renderToString(
+          <div style="padding:12px;color:var(--text-dim);font-size:13px;border:1px dashed var(--border);border-radius:6px;background:var(--bg);">
+            No audits found for record ID <code style="font-family:var(--mono);color:var(--text);">{recordId}</code>.
+          </div>,
+        ),
         { headers: { "content-type": "text/html" } },
       );
     }

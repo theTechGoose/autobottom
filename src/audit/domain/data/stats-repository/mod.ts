@@ -122,13 +122,72 @@ export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number
 }
 
 export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
-  const entries = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId, { limit: 50_000 });
+  console.log(`🔍 [FIND-BY-RECORD] orgId=${orgId} recordId=${recordId} starting`);
+  // Page via the (_type, _org, completedAt)-indexed scan instead of a single
+  // 50k-doc listStored — that single-shot read hit our 20s fsFetch abort on
+  // hot orgs ("The signal has been aborted"). listStoredByCompletedAt pages
+  // in 5000-doc chunks, each well under the per-attempt timeout, and uses
+  // an existing composite index. Default window: 365 days.
+  const now = Date.now();
+  const since = now - 365 * DAY_MS;
+
+  const idx = await listStoredByCompletedAt<AuditDoneIndexEntry>(
+    "audit-done-idx", orgId, since, now,
+    { limit: Number.MAX_SAFE_INTEGER, fieldName: "completedAt" },
+  );
   const out: AuditDoneIndexEntry[] = [];
-  for (const e of entries) {
+  for (const e of idx) {
     if (e.recordId !== recordId) continue;
     out.push(e);
   }
-  return out.sort((a, b) => b.completedAt - a.completedAt);
+  console.log(`🔍 [FIND-BY-RECORD] audit-done-idx primary count=${out.length} (scanned ${idx.length})`);
+
+  // Fallback: completed-audit-stat (post-migration, audit-done-idx may be sparse
+  // for old orgs). Same paged scan; merge matches into the AuditDoneIndexEntry shape.
+  if (out.length === 0) {
+    type CompletedStatRow = {
+      findingId: string;
+      ts: number;
+      recordId?: string;
+      score?: number;
+      isPackage?: boolean;
+      voName?: string;
+      owner?: string;
+      department?: string;
+      shift?: string;
+      startedAt?: number;
+      durationMs?: number;
+      reason?: string;
+    };
+    const stats = await listStoredByCompletedAt<CompletedStatRow>(
+      "completed-audit-stat", orgId, since, now,
+      { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
+    );
+    let fallbackCount = 0;
+    for (const s of stats) {
+      if (s.recordId !== recordId) continue;
+      fallbackCount++;
+      out.push({
+        findingId: s.findingId,
+        completedAt: s.ts,
+        completed: true,
+        reason: (s.reason as AuditDoneIndexEntry["reason"]) ?? undefined,
+        score: typeof s.score === "number" ? s.score : 0,
+        recordId: s.recordId,
+        isPackage: s.isPackage,
+        voName: s.voName,
+        owner: s.owner,
+        department: s.department,
+        shift: s.shift,
+        startedAt: s.startedAt,
+        durationMs: s.durationMs,
+      });
+    }
+    console.log(`🔍 [FIND-BY-RECORD] completed-audit-stat fallback count=${fallbackCount} (scanned ${stats.length})`);
+  }
+
+  console.log(`🔍 [FIND-BY-RECORD] total=${out.length}`);
+  return out.sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
 }
 
 export async function deleteAuditDoneIndexEntry(orgId: OrgId, findingId: string, completedAt: number): Promise<void> {

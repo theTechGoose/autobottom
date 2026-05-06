@@ -181,6 +181,63 @@ export async function claimNextItem(
     return { buffer, remaining: 0 };
   }
 
+  // 4b. Resume-stranded-audit guard: if all the reviewer's decisions have
+  //     moved from review-active to review-decided but the finding was never
+  //     finalized (Cancel-on-finalize, or browser closed mid-finalize), bring
+  //     the audit back instead of handing the reviewer a fresh one. Without
+  //     this, the original audit sits with all decisions recorded but no
+  //     review-done marker, and a different reviewer won't pick it up either
+  //     because review-pending was drained when the items were claimed.
+  const allDecided = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
+  const myDecidedByFinding = new Map<string, ReviewDecision[]>();
+  for (const { value } of allDecided) {
+    if (value.reviewer !== reviewer) continue;
+    const fid = value.findingId;
+    if (!myDecidedByFinding.has(fid)) myDecidedByFinding.set(fid, []);
+    myDecidedByFinding.get(fid)!.push(value);
+  }
+  for (const [fid, decisions] of myDecidedByFinding) {
+    // Skip if already finalized
+    const done = await getStored<{ reviewedAt?: string }>("review-done", orgId, fid);
+    if (done) continue;
+    // Skip if pending or active items still exist for this finding (audit
+    // not really complete — let normal flow handle it)
+    const counter = await getStored<number>("review-audit-pending", orgId, fid);
+    if (counter == null || counter > 0) continue;
+    // Type filter still applies
+    const sample = decisions[0];
+    if (allowedTypes) {
+      const isPackage = sample.recordingIdField === "GenieNumber";
+      const itemType = isPackage ? "package" : "date-leg";
+      if (!allowedTypes.includes(itemType)) continue;
+    }
+    // Hydrate buffer from decided records — the panel re-renders with the
+    // full failed-questions list (the controller already merges decisions).
+    const transcript = await getTranscript(orgId, fid);
+    const buffer: BufferItem[] = [];
+    decisions.sort((a, b) => (a.reviewIndex ?? 0) - (b.reviewIndex ?? 0));
+    for (const d of decisions) {
+      const item: ReviewItem = {
+        findingId: d.findingId,
+        questionIndex: d.questionIndex,
+        reviewIndex: d.reviewIndex ?? 1,
+        totalForFinding: d.totalForFinding ?? decisions.length,
+        header: d.header ?? "",
+        populated: d.populated ?? "",
+        thinking: d.thinking ?? "",
+        defense: d.defense ?? "",
+        answer: d.answer ?? "No",
+        ...(d.recordingIdField ? { recordingIdField: d.recordingIdField } : {}),
+        ...(d.recordId ? { recordId: d.recordId } : {}),
+        ...(d.recordMeta ? { recordMeta: d.recordMeta } : {}),
+        ...(d.completedAt != null ? { completedAt: d.completedAt } : {}),
+      };
+      buffer.push(await enrichItem(orgId, item, transcript));
+    }
+    console.log(`[REVIEW] ${reviewer}: Resumed stranded audit ${fid} (${decisions.length} decided, awaiting finalize)`);
+    return { buffer, remaining: 0 };
+  }
+
   // 5. No active items — claim ALL pending items for the OLDEST audit (FIFO by completedAt)
   const allPending = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
   const findingTimestamps = new Map<string, number>();
@@ -476,6 +533,77 @@ export async function undoDecision(
   if (chosenUndoIdx) await deleteStored("review-undo-idx", orgId, ...chosenUndoIdx);
 
   return claimNextItem(orgId, reviewer, allowedTypes);
+}
+
+// ── Discard Review (release stranded audit) ─────────────────────────────────
+
+/** Release this reviewer's claim on `findingId` and roll back any decisions
+ *  they recorded — the audit goes back into review-pending so somebody else
+ *  (or the same reviewer next time) can pick it up. Used when the finalize
+ *  modal's "Discard This Audit" action fires. */
+export async function discardReview(
+  orgId: OrgId,
+  reviewer: string,
+  findingId: string,
+): Promise<{ ok: true; restored: number }> {
+  let restored = 0;
+
+  // 1. Move any active claims this reviewer has on this finding back to pending.
+  const active = await listStoredWithKeys<ReviewItem & { claimedAt: number }>("review-active", orgId);
+  for (const { key, value } of active) {
+    if (key[0] !== reviewer || value.findingId !== findingId) continue;
+    const { claimedAt: _, ...baseItem } = value;
+    await setStored("review-pending", orgId, [findingId, value.questionIndex], baseItem as ReviewItem);
+    await deleteStored("review-active", orgId, ...key);
+    restored++;
+  }
+
+  // 2. Move decisions back to pending so the audit isn't stuck "all decided
+  //    but never finalized". Restore the audit-pending counter.
+  const decided = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
+  for (const { key, value } of decided) {
+    if (key[0] !== findingId) continue;
+    if (value.reviewer && value.reviewer !== reviewer) continue;
+    const item: ReviewItem = {
+      findingId: value.findingId,
+      questionIndex: value.questionIndex,
+      reviewIndex: value.reviewIndex ?? 1,
+      totalForFinding: value.totalForFinding ?? 1,
+      header: value.header ?? "",
+      populated: value.populated ?? "",
+      thinking: value.thinking ?? "",
+      defense: value.defense ?? "",
+      answer: value.answer ?? "No",
+      ...(value.recordingIdField ? { recordingIdField: value.recordingIdField } : {}),
+      ...(value.recordId ? { recordId: value.recordId } : {}),
+      ...(value.recordMeta ? { recordMeta: value.recordMeta } : {}),
+      ...(value.completedAt != null ? { completedAt: value.completedAt } : {}),
+    };
+    await setStored("review-pending", orgId, [findingId, value.questionIndex], item);
+    await deleteStored("review-decided", orgId, ...key);
+    restored++;
+  }
+
+  // 3. Refresh the audit-pending counter to match what's now in review-pending.
+  const pendingForFinding = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
+  const newCount = pendingForFinding.filter(({ key }) => key[0] === findingId).length;
+  if (newCount > 0) {
+    await setStored("review-audit-pending", orgId, [findingId], newCount);
+  } else {
+    // No pending items remain — leave the counter alone (could be admin-flipped or already finalized).
+  }
+
+  // 4. Drop any undo-index entries this reviewer had for the finding so the
+  //    next undo doesn't surface a stale ghost decision.
+  const undo = await listStoredWithKeys<{ findingId: string; questionIndex: number }>("review-undo-idx", orgId);
+  for (const { key, value } of undo) {
+    if (key[0] !== reviewer) continue;
+    if (value.findingId !== findingId) continue;
+    await deleteStored("review-undo-idx", orgId, ...key);
+  }
+
+  console.log(`[REVIEW] ${reviewer}: Discarded audit ${findingId} (${restored} entries restored to pending)`);
+  return { ok: true, restored };
 }
 
 // ── Admin-flip finding — set all "No" answers to "Yes" ──────────────────────

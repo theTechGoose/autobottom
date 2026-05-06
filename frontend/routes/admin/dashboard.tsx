@@ -99,11 +99,15 @@ export default define.page(async function AdminDashboard(ctx) {
           hx-target="#find-record-result"
           hx-swap="innerHTML"
           hx-trigger="submit"
+          hx-indicator="#find-record-spinner"
         >
           <div class="form-group" style="margin-bottom:0;flex:1;">
             <input type="text" name="recordId" placeholder="QB Record ID..." style="font-family:var(--mono);font-size:13px;" />
           </div>
           <button class="btn btn-primary" type="submit" style="height:40px;">Search</button>
+          <span id="find-record-spinner" class="htmx-indicator" style="align-items:center;gap:6px;font-size:11px;color:var(--text-dim);height:40px;">
+            <span class="qlab-spinner"></span><span>Searching…</span>
+          </span>
         </form>
         <div id="find-record-result" style="margin-top:8px;"></div>
       </div>

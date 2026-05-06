@@ -19,14 +19,19 @@ function jsonReq(url: string, body: unknown) {
 Deno.test("review decide — posts decision then fetches next item", async () => {
   const mock = mockFetch({
     "/review/api/decide": { body: { ok: true } },
+    // Fix 1: decide also looks up reviewer settings to forward the type
+    // filter on the follow-up /next call. Mocked here so the route doesn't
+    // 500 on an unmocked /settings request.
+    "/review/api/settings": { body: { allowedTypes: [] } },
     "/review/api/next": { body: MOCK_NEXT },
   });
   try {
     const ctx = { req: jsonReq("/api/review/decide", { findingId: "f1", questionIndex: 0, decision: "confirm", reviewer: "r@co.com" }), state: {} };
     const res = await (decideHandler as any).POST(ctx);
-    assertEquals(mock.callCount(), 2);
+    assertEquals(mock.callCount(), 3);
     assertEquals(mock.calls[0].url.includes("/review/api/decide"), true);
-    assertEquals(mock.calls[1].url.includes("/review/api/next"), true);
+    assertEquals(mock.calls[1].url.includes("/review/api/settings"), true);
+    assertEquals(mock.calls[2].url.includes("/review/api/next"), true);
     const html = await res.text();
     assertEquals(html.includes("queue-left"), true);
     assertEquals(html.includes("queue-right"), true);
@@ -36,6 +41,7 @@ Deno.test("review decide — posts decision then fetches next item", async () =>
 Deno.test("review decide — returns empty state when no items", async () => {
   const mock = mockFetch({
     "/review/api/decide": { body: { ok: true } },
+    "/review/api/settings": { body: { allowedTypes: [] } },
     "/review/api/next": { body: { buffer: [], remaining: 0 } },
   });
   try {

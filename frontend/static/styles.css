@@ -1151,6 +1151,25 @@ textarea.sf-input { height: 48px; resize: vertical; }
 }
 .queue-overlay-btn.primary:hover { box-shadow: 0 0 14px rgba(139,92,246,0.35); }
 .queue-overlay-btn:disabled { opacity: 0.6; cursor: default; }
+.queue-overlay-discard {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+.queue-overlay-discard-link {
+  background: transparent;
+  border: none;
+  color: #f87171;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 4px 8px;
+}
+.queue-overlay-discard-link:hover { color: #fca5a5; }
 .queue-overlay-label {
   font-size: 10px;
   font-weight: 700;
@@ -1189,8 +1208,12 @@ textarea.sf-input { height: 48px; resize: vertical; }
   border: 1px solid #1e2736; background: #12161e;
   color: #8b949e; font-size: 12px; font-weight: 600;
   text-decoration: none; transition: all 0.15s;
+  cursor: pointer; font-family: inherit;
 }
 .verdict-caught-up-link:hover { border-color: #2d333b; color: var(--text-bright); }
+.verdict-caught-up-actions {
+  display: flex; flex-direction: row; gap: 10px; align-items: center;
+}
 
 /* Pending state shown in #queue-content while the finalize modal is open. */
 .queue-finalize-pending {

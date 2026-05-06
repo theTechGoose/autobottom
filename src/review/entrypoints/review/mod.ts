@@ -5,7 +5,7 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { ReviewBufferResponse, DecisionResponse, ReviewStatsResponse, OkResponse, OkMessageResponse, ReviewerConfigResponse, MessageResponse, GamificationSettingsResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, ReviewDecideRequest, ReviewBackRequest } from "@core/dto/requests.ts";
-import { recordDecision, finalizeReviewedAudit, getReviewStats, getReviewedFindingIds, clearReviewQueue, getFailedQuestionsForFinding, getDecisionsByFinding } from "@review/domain/business/review-queue/mod.ts";
+import { recordDecision, finalizeReviewedAudit, getReviewStats, getReviewedFindingIds, clearReviewQueue, getFailedQuestionsForFinding, getDecisionsByFinding, discardReview } from "@review/domain/business/review-queue/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
@@ -120,4 +120,17 @@ export class ReviewController {
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill review queue")
   async backfill() { const { backfillFromFinishedLegacy: backfillFromFinished } = await import("@review/domain/business/review-queue/mod.ts"); await backfillFromFinished(ORG()); return { ok: true }; }
+
+  @Post("discard") @ReturnedType(OkResponse) @Description("Release stranded review claim — moves all decisions for findingId back to pending") @BodyType(GenericBodyRequest)
+  async discard(@Body() body: GenericBodyRequest) {
+    const b = body as { findingId?: string; reviewer?: string };
+    if (!b.findingId || !b.reviewer) return { error: "findingId and reviewer required" };
+    try {
+      const r = await discardReview(ORG(), b.reviewer, b.findingId);
+      return { ok: true, restored: r.restored };
+    } catch (err) {
+      console.error(`❌ [REVIEW] discard failed for ${b.findingId}:`, err);
+      return { ok: false, error: String(err) };
+    }
+  }
 }

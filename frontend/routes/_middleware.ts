@@ -1,7 +1,7 @@
 /** Auth middleware — resolves user from session cookie via direct in-process authenticate().
  *  Does NOT make HTTP self-requests — Deno Deploy isolates can't fetch their own localhost. */
 import { define } from "../lib/define.ts";
-import { isPublicPath } from "../lib/auth.ts";
+import { isPublicPath, roleRedirect } from "../lib/auth.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
 import { listUsers } from "@core/business/auth/mod.ts";
 
@@ -66,6 +66,16 @@ export default define.middleware(async (ctx) => {
       } catch (e) {
         console.error(`[MIDDLEWARE] impersonation lookup failed:`, e);
       }
+    }
+
+    // /admin/* and /api/admin/* are gated to real admins. Use the REAL role
+    // (auth.role, captured via impersonatedBy) so an admin impersonating a
+    // manager can still access admin tools — ctx.state.user.role here may
+    // be "manager" because of the impersonation swap above.
+    const isAdminPath = path.startsWith("/admin") || path.startsWith("/api/admin");
+    const realRole = ctx.state.impersonatedBy ? "admin" : ctx.state.user.role;
+    if (isAdminPath && realRole !== "admin") {
+      return new Response(null, { status: 302, headers: { location: roleRedirect(ctx.state.user.role) } });
     }
 
     return ctx.next();

@@ -13,13 +13,26 @@ export const handler = define.handlers({
   async GET(ctx) {
     const url = new URL(ctx.req.url);
     const reviewer = url.searchParams.get("reviewer") ?? "";
+    // Prefer caller-supplied types (used by QueueModals/Refresh button which
+    // already have the reviewer's preference in the DOM). Fall back to looking
+    // it up directly so any direct hit still respects the saved filter.
+    let typesCsv = url.searchParams.get("types") ?? "";
+    if (typesCsv === "" && reviewer) {
+      try {
+        const cfg = await apiFetch<{ allowedTypes?: ("date-leg" | "package")[] }>(
+          `/review/api/settings?email=${encodeURIComponent(reviewer)}`, ctx.req,
+        );
+        const at = cfg?.allowedTypes ?? [];
+        if (at.length > 0 && at.length < 2) typesCsv = at.join(",");
+      } catch { /* fall through with empty types */ }
+    }
     try {
       const next = await apiFetch<{
         buffer: ReviewItem[];
         remaining: number;
         fullBuffer?: ReviewItem[];
         decisions?: Record<string, "confirm" | "flip">;
-      }>(`/review/api/next?reviewer=${encodeURIComponent(reviewer)}&types=`, ctx.req);
+      }>(`/review/api/next?reviewer=${encodeURIComponent(reviewer)}&types=${encodeURIComponent(typesCsv)}`, ctx.req);
       const buffer = next.buffer ?? [];
       const item = buffer[0] ?? null;
       const fullBuffer = next.fullBuffer ?? [];
@@ -40,6 +53,7 @@ export const handler = define.handlers({
               email={reviewer}
               combo={0}
               decisions={decisions}
+              allowedTypesCsv={typesCsv}
             />
           </div>
           <div class="queue-right">

@@ -37,10 +37,21 @@ export const handler = define.handlers({
       const fullBuffer: ReviewItem[] = decideResult.fullBuffer ?? [];
       const decisions: Record<string, "confirm" | "flip"> = decideResult.decisions ?? {};
 
+      let typesCsv = "";
+      if (reviewer) {
+        try {
+          const cfg = await apiFetch<{ allowedTypes?: ("date-leg" | "package")[] }>(
+            `/review/api/settings?email=${encodeURIComponent(reviewer)}`, ctx.req,
+          );
+          const at = cfg?.allowedTypes ?? [];
+          if (at.length > 0 && at.length < 2) typesCsv = at.join(",");
+        } catch { /* fall through with empty types */ }
+      }
+
       if (!decideResult.auditComplete) {
         // Normal path — load the next question's fragment.
         const next = await apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
-          `/review/api/next?reviewer=${encodeURIComponent(reviewer)}&types=`, ctx.req,
+          `/review/api/next?reviewer=${encodeURIComponent(reviewer)}&types=${encodeURIComponent(typesCsv)}`, ctx.req,
         );
         buffer = next.buffer ?? [];
         remaining = next.remaining;
@@ -86,6 +97,7 @@ export const handler = define.handlers({
                   email={reviewer}
                   combo={0}
                   decisions={decisions}
+                  allowedTypesCsv={typesCsv}
                 />
               </div>
               <div class="queue-right">

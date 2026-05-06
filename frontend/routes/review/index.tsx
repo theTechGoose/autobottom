@@ -22,9 +22,25 @@ interface BufferResponse {
 
 export default define.page(async function ReviewQueue(ctx) {
   const user = ctx.state.user!;
+  // Fetch reviewer's saved type preference so the backend's allowedTypes
+  // filter actually applies. Empty string = no preference (= match all).
+  let typesCsv = "";
+  try {
+    const cfg = await apiFetch<{ allowedTypes?: ("date-leg" | "package")[] }>(
+      `/review/api/settings?email=${encodeURIComponent(user.email)}`, ctx.req,
+    );
+    const at = cfg?.allowedTypes ?? [];
+    // Only forward the filter when it's a non-empty PROPER subset (i.e.
+    // the reviewer actually narrowed it). An empty array or all-types
+    // saved preference both mean "no filter".
+    if (at.length > 0 && at.length < 2) typesCsv = at.join(",");
+  } catch (e) { console.error("Failed to load reviewer config:", e); }
   let data: BufferResponse = { buffer: [], remaining: 0 };
   try {
-    data = await apiFetch<BufferResponse>(`/review/api/next?reviewer=${encodeURIComponent(user.email)}&types=`, ctx.req);
+    data = await apiFetch<BufferResponse>(
+      `/review/api/next?reviewer=${encodeURIComponent(user.email)}&types=${encodeURIComponent(typesCsv)}`,
+      ctx.req,
+    );
   } catch (e) { console.error("Failed to load review queue:", e); }
   const buffer = data.buffer ?? [];
   const fullBuffer = data.fullBuffer ?? [];
@@ -40,7 +56,7 @@ export default define.page(async function ReviewQueue(ctx) {
       <HotkeyHandler mode="review" />
       <SoundEngine />
       <DecideEffects />
-      <div class="queue-layout" id="queue-content" data-mode="review">
+      <div class="queue-layout" id="queue-content" data-mode="review" data-allowed-types={typesCsv}>
         <div class="queue-left">
           <VerdictPanel
             item={item}
@@ -51,6 +67,7 @@ export default define.page(async function ReviewQueue(ctx) {
             email={user.email}
             combo={0}
             decisions={decisions}
+            allowedTypesCsv={typesCsv}
           />
         </div>
         <div class="queue-right">

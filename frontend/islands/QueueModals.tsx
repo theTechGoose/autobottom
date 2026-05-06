@@ -141,9 +141,13 @@ export default function QueueModals() {
       const reviewer = pendingFinalizeRef.current.reviewer
         || (document.getElementById("hx-email") as HTMLInputElement | null)?.value
         || "";
+      // Pull the saved type filter the page rendered server-side. Empty
+      // string = no filter (matches today's behaviour for unscoped reviewers).
+      const typesCsv = (document.querySelector("[data-allowed-types]") as HTMLElement | null)
+        ?.dataset.allowedTypes ?? "";
       const htmxAny = (globalThis as Record<string, unknown>).htmx as { ajax?: (verb: string, path: string, opts: unknown) => void } | undefined;
       if (htmxAny?.ajax) {
-        htmxAny.ajax("GET", `/api/review/next-fragment?reviewer=${encodeURIComponent(reviewer)}`, {
+        htmxAny.ajax("GET", `/api/review/next-fragment?reviewer=${encodeURIComponent(reviewer)}&types=${encodeURIComponent(typesCsv)}`, {
           target: "#queue-content",
           swap: "innerHTML",
         });
@@ -209,10 +213,11 @@ export default function QueueModals() {
               class="queue-overlay-btn"
               onClick={() => {
                 if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
-                pendingFinalizeRef.current = { findingId: "", reviewer: "", confirms: 0, flips: 0 };
+                // Stay on this audit — keep the pendingFinalizeRef intact so
+                // the user can re-open the modal by clicking Submit again.
               }}
             >
-              Cancel
+              Back to Audit
             </button>
             <button
               id="queue-confirm-submit-btn"
@@ -222,7 +227,32 @@ export default function QueueModals() {
                 document.dispatchEvent(new CustomEvent("queue:finalize-submit"));
               }}
             >
-              Submit
+              Submit &amp; Finalize
+            </button>
+          </div>
+          <div class="queue-overlay-discard">
+            <button
+              type="button"
+              class="queue-overlay-discard-link"
+              onClick={async () => {
+                const { findingId, reviewer } = pendingFinalizeRef.current;
+                if (!findingId || !reviewer) {
+                  if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
+                  return;
+                }
+                if (!globalThis.confirm("Discard this audit? All decisions you've recorded will be cleared and the audit returns to the queue.")) return;
+                try {
+                  const fd = new FormData();
+                  fd.append("findingId", findingId);
+                  fd.append("reviewer", reviewer);
+                  await fetch("/api/review/discard", { method: "POST", credentials: "include", body: fd });
+                } catch (err) {
+                  console.error("[DISCARD] call failed:", err);
+                }
+                globalThis.location.href = "/review/dashboard";
+              }}
+            >
+              Discard This Audit
             </button>
           </div>
         </div>

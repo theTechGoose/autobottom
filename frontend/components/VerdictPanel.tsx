@@ -47,6 +47,9 @@ interface VerdictPanelProps {
   /** Map of questionIndex (string) → decision. When provided, the Failed Questions
    *  pill list shows a status dot per question and the counter reads decided/total. */
   decisions?: Record<string, "confirm" | "flip">;
+  /** CSV of saved type preference ("date-leg", "package", or "" for all).
+   *  Threaded through so the empty-state Refresh button keeps the same filter. */
+  allowedTypesCsv?: string;
 }
 
 function qbUrl(recordId: string | undefined, isPackage: boolean): string | null {
@@ -95,20 +98,37 @@ function RecordDetails({ item, isPackage }: { item: ReviewItem; isPackage: boole
   );
 }
 
-export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, email, combo, decisions }: VerdictPanelProps) {
+export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, email, combo, decisions, allowedTypesCsv }: VerdictPanelProps) {
   const isReview = mode === "review";
 
   if (!item) {
     // Match prod's "All caught up" empty state — large heading, subtle
-    // empty-text, single ← Dashboard back button. No XP / combo stats.
+    // empty-text, ← Dashboard back button + a Refresh button so reviewers
+    // don't have to reload the whole page when work clears.
     const dashHref = isReview ? "/review/dashboard" : "/judge/dashboard";
     const emptyText = isReview ? "No items pending review. Check back later." : "No items pending judge review. Check back later.";
+    const refreshHref = isReview
+      ? `/api/review/next-fragment?reviewer=${encodeURIComponent(email)}&types=${encodeURIComponent(allowedTypesCsv ?? "")}`
+      : null;
     return (
       <div class="verdict-panel">
         <div class="verdict-caught-up">
           <h2>All caught up</h2>
           <p>{emptyText}</p>
-          <a href={dashHref} class="verdict-caught-up-link">&larr; Dashboard</a>
+          <div class="verdict-caught-up-actions">
+            <a href={dashHref} class="verdict-caught-up-link">&larr; Dashboard</a>
+            {refreshHref && (
+              <button
+                type="button"
+                class="verdict-caught-up-link"
+                hx-get={refreshHref}
+                hx-target="#queue-content"
+                hx-swap="innerHTML"
+              >
+                Refresh
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );

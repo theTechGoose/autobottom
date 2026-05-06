@@ -189,7 +189,7 @@ export async function backfillPartnerDimensions(
     if (changed) { dims.offices[officeName] = merged.sort(); saved++; }
   }
 
-  await setStored("partner-dimensions", orgId, [], dims);
+  await setStored("partner-dimensions-config", orgId, [], dims);
   return { scanned, saved, cursor: nextCursor, done };
 }
 

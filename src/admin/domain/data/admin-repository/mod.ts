@@ -140,11 +140,11 @@ export async function listManagerScopes(orgId: OrgId): Promise<Record<string, Ma
 export interface AuditDimensions { departments: string[]; shifts: string[]; }
 
 export async function getAuditDimensions(orgId: OrgId): Promise<AuditDimensions> {
-  return (await getStored<AuditDimensions>("audit-dimensions", orgId)) ?? { departments: [], shifts: [] };
+  return (await getStored<AuditDimensions>("audit-dimensions-config", orgId)) ?? { departments: [], shifts: [] };
 }
 
 export async function saveAuditDimensions(orgId: OrgId, dims: AuditDimensions): Promise<void> {
-  await setStored("audit-dimensions", orgId, [], dims);
+  await setStored("audit-dimensions-config", orgId, [], dims);
 }
 
 export async function updateAuditDimensions(orgId: OrgId, department?: string, shift?: string): Promise<void> {
@@ -160,14 +160,14 @@ export async function updateAuditDimensions(orgId: OrgId, department?: string, s
 export interface PartnerDimensions { offices: Record<string, string[]>; }
 
 export async function getPartnerDimensions(orgId: OrgId): Promise<PartnerDimensions> {
-  return (await getStored<PartnerDimensions>("partner-dimensions", orgId)) ?? { offices: {} };
+  return (await getStored<PartnerDimensions>("partner-dimensions-config", orgId)) ?? { offices: {} };
 }
 
 export async function updatePartnerDimensions(orgId: OrgId, officeName: string, gmEmail: string): Promise<void> {
   const current = await getPartnerDimensions(orgId);
   if (!current.offices[officeName]) current.offices[officeName] = [];
   if (!current.offices[officeName].includes(gmEmail)) current.offices[officeName].push(gmEmail);
-  await setStored("partner-dimensions", orgId, [], current);
+  await setStored("partner-dimensions-config", orgId, [], current);
 }
 
 // ── Reviewer Config ──────────────────────────────────────────────────────────

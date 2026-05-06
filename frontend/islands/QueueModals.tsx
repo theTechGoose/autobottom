@@ -19,6 +19,10 @@ export default function QueueModals() {
   const confirmInputRef = useRef<HTMLInputElement>(null);
   const pendingDecisionRef = useRef<{ button: HTMLButtonElement | null }>({ button: null });
   const pendingFinalizeRef = useRef<{ findingId: string; reviewer: string; confirms: number; flips: number }>({ findingId: "", reviewer: "", confirms: 0, flips: 0 });
+  // The final-question answer the reviewer chose but hasn't committed yet.
+  // Cleared on Back-to-Audit (and on successful finalize). Persisted only when
+  // the user types YES; until then, NOTHING is recorded server-side.
+  const pendingFinalAnswerRef = useRef<{ findingId: string; questionIndex: number; decision: "confirm" | "flip"; reviewer: string } | null>(null);
   const completionStatsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -78,6 +82,15 @@ export default function QueueModals() {
     // final decision has been recorded. User types YES, we call /api/review/finalize
     // which applies flips, recomputes score, fires the terminate webhook (email).
 
+    function openConfirmOverlay() {
+      if (!confirmOverlayRef.current) return;
+      confirmOverlayRef.current.style.display = "flex";
+      if (confirmInputRef.current) {
+        confirmInputRef.current.value = "";
+        setTimeout(() => confirmInputRef.current?.focus(), 40);
+      }
+    }
+
     function onAuditComplete(e: Event) {
       const detail = (e as CustomEvent).detail as { findingId?: string; reviewer?: string; confirms?: number; flips?: number } | undefined;
       if (!detail?.findingId || !detail?.reviewer) return;
@@ -87,19 +100,41 @@ export default function QueueModals() {
         confirms: detail.confirms ?? 0,
         flips: detail.flips ?? 0,
       };
-      if (confirmOverlayRef.current) {
-        confirmOverlayRef.current.style.display = "flex";
-        if (confirmInputRef.current) {
-          confirmInputRef.current.value = "";
-          setTimeout(() => confirmInputRef.current?.focus(), 40);
-        }
-      }
+      openConfirmOverlay();
     }
     document.addEventListener("queue:audit-complete", onAuditComplete);
+
+    // Intercept clicks on the final-question answer buttons. These render
+    // WITHOUT hx-post (see VerdictPanel.tsx isLastForAudit branch), so we
+    // open the YES-confirm modal here without recording anything yet. The
+    // decision is committed only after the user types YES (see submitConfirm).
+    function onFinalAnswerClick(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      const btn = target?.closest<HTMLElement>(".verdict-final-answer-btn");
+      if (!btn) return;
+      e.preventDefault();
+      const findingId = btn.dataset.findingId ?? "";
+      const reviewer = btn.dataset.reviewer ?? "";
+      const decision = btn.dataset.finalDecision === "flip" ? "flip" : "confirm";
+      const questionIndex = Number(btn.dataset.questionIndex ?? "0");
+      const priorConfirms = Number(btn.dataset.priorConfirms ?? "0");
+      const priorFlips = Number(btn.dataset.priorFlips ?? "0");
+      if (!findingId || !reviewer) return;
+      pendingFinalAnswerRef.current = { findingId, questionIndex, decision, reviewer };
+      pendingFinalizeRef.current = {
+        findingId,
+        reviewer,
+        confirms: priorConfirms + (decision === "confirm" ? 1 : 0),
+        flips: priorFlips + (decision === "flip" ? 1 : 0),
+      };
+      openConfirmOverlay();
+    }
+    document.addEventListener("click", onFinalAnswerClick);
 
     function cancelConfirm() {
       if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
       pendingFinalizeRef.current = { findingId: "", reviewer: "", confirms: 0, flips: 0 };
+      pendingFinalAnswerRef.current = null;
     }
 
     async function submitConfirm() {
@@ -112,6 +147,29 @@ export default function QueueModals() {
       if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Submitting..."; }
       let scorePct = 0;
       try {
+        // 1. Commit the held final-question decision (if any). For audits that
+        //    reached this modal via the deferred-commit path, the last decision
+        //    has NOT been written to review-decided yet — do it now. For audits
+        //    that reached via the legacy path (htmx swap with auditComplete=true,
+        //    e.g. server-driven finalize), pendingFinalAnswerRef is null and we
+        //    skip directly to finalize.
+        const finalAnswer = pendingFinalAnswerRef.current;
+        if (finalAnswer) {
+          const fd = new URLSearchParams({
+            findingId: finalAnswer.findingId,
+            questionIndex: String(finalAnswer.questionIndex),
+            decision: finalAnswer.decision,
+            reviewer: finalAnswer.reviewer,
+          });
+          const decideRes = await fetch("/api/review/decide", {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            credentials: "include",
+            body: fd.toString(),
+          });
+          if (!decideRes.ok) throw new Error(`decide failed: ${decideRes.status}`);
+        }
+        // 2. Finalize.
         const res = await fetch("/api/review/finalize", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -121,9 +179,11 @@ export default function QueueModals() {
         const json = await res.json().catch(() => ({} as Record<string, unknown>));
         if (typeof json.score === "number") scorePct = Math.round(json.score);
       } catch (err) {
-        console.error("[FINALIZE] call failed:", err);
+        console.error("[FINALIZE] sequence failed:", err);
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Submit & Finalize"; }
+        return; // keep modal open so the user can retry
       }
-      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Submit"; }
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Submit & Finalize"; }
       cancelConfirm();
       // Audit Reviewed completion modal — match prod (✓ icon + counts + score + Next Audit btn)
       if (completionOverlayRef.current && completionStatsRef.current) {
@@ -183,6 +243,7 @@ export default function QueueModals() {
     return () => {
       document.removeEventListener("queue:cheat-sheet-toggle", onCheat);
       document.removeEventListener("queue:audit-complete", onAuditComplete);
+      document.removeEventListener("click", onFinalAnswerClick);
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("queue:finalize-submit", onFinalizeSubmit);
       document.removeEventListener("queue:next-audit", onNextAudit);
@@ -213,8 +274,11 @@ export default function QueueModals() {
               class="queue-overlay-btn"
               onClick={() => {
                 if (confirmOverlayRef.current) confirmOverlayRef.current.style.display = "none";
-                // Stay on this audit — keep the pendingFinalizeRef intact so
-                // the user can re-open the modal by clicking Submit again.
+                // Clear the held final-question decision so the user can pick
+                // a different answer (or the same one) on the live final question.
+                // Nothing was persisted server-side — the question is still open.
+                pendingFinalAnswerRef.current = null;
+                pendingFinalizeRef.current = { findingId: "", reviewer: "", confirms: 0, flips: 0 };
               }}
             >
               Back to Audit

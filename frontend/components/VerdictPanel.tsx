@@ -310,26 +310,71 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
         <span>Processing…</span>
       </div>
         {isReview ? (
-          <>
-            <button
-              class="verdict-btn confirm"
-              hx-post="/api/review/decide"
-              hx-vals={JSON.stringify({ findingId: item.findingId, questionIndex: item.questionIndex, decision: "confirm", reviewer: email })}
-              hx-target="#queue-content"
-              hx-swap="innerHTML"
-            >
-              <kbd>Y</kbd> Confirm No
-            </button>
-            <button
-              class="verdict-btn flip"
-              hx-post="/api/review/decide"
-              hx-vals={JSON.stringify({ findingId: item.findingId, questionIndex: item.questionIndex, decision: "flip", reviewer: email })}
-              hx-target="#queue-content"
-              hx-swap="innerHTML"
-            >
-              <kbd>N</kbd> Flip to Yes
-            </button>
-          </>
+          isLastForAudit ? (() => {
+            // Final-question deferred-commit path: do NOT hx-post on click.
+            // QueueModals's click interceptor opens the YES-confirm modal and
+            // holds the pending decision in client state. Only after the user
+            // types YES is /api/review/decide POSTed (followed by /finalize).
+            // Clicking either button repeatedly just updates the pending choice;
+            // "Back to Audit" clears it without persisting anything. See
+            // QueueModals.tsx — listener on `.verdict-final-answer-btn`.
+            const decMap = decisions ?? {};
+            let priorConfirms = 0;
+            let priorFlips = 0;
+            for (const v of Object.values(decMap)) {
+              if (v === "confirm") priorConfirms++;
+              else if (v === "flip") priorFlips++;
+            }
+            return (
+              <>
+                <button
+                  type="button"
+                  class="verdict-btn confirm verdict-final-answer-btn"
+                  data-finding-id={item.findingId}
+                  data-question-index={String(item.questionIndex)}
+                  data-final-decision="confirm"
+                  data-reviewer={email}
+                  data-prior-confirms={String(priorConfirms)}
+                  data-prior-flips={String(priorFlips)}
+                >
+                  <kbd>Y</kbd> Confirm No
+                </button>
+                <button
+                  type="button"
+                  class="verdict-btn flip verdict-final-answer-btn"
+                  data-finding-id={item.findingId}
+                  data-question-index={String(item.questionIndex)}
+                  data-final-decision="flip"
+                  data-reviewer={email}
+                  data-prior-confirms={String(priorConfirms)}
+                  data-prior-flips={String(priorFlips)}
+                >
+                  <kbd>N</kbd> Flip to Yes
+                </button>
+              </>
+            );
+          })() : (
+            <>
+              <button
+                class="verdict-btn confirm"
+                hx-post="/api/review/decide"
+                hx-vals={JSON.stringify({ findingId: item.findingId, questionIndex: item.questionIndex, decision: "confirm", reviewer: email })}
+                hx-target="#queue-content"
+                hx-swap="innerHTML"
+              >
+                <kbd>Y</kbd> Confirm No
+              </button>
+              <button
+                class="verdict-btn flip"
+                hx-post="/api/review/decide"
+                hx-vals={JSON.stringify({ findingId: item.findingId, questionIndex: item.questionIndex, decision: "flip", reviewer: email })}
+                hx-target="#queue-content"
+                hx-swap="innerHTML"
+              >
+                <kbd>N</kbd> Flip to Yes
+              </button>
+            </>
+          )
         ) : (
           <>
             <button

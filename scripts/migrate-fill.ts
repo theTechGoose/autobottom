@@ -572,12 +572,50 @@ async function streamMigrate(
   // Run walks in parallel batches
   await runWithConcurrency(prefixes, PARALLEL_WALKS, ({ label, prefix }) => walkPrefix(base, secret, prefix, label, shared, args));
 
+  // Fallback: when a "chunked group" has parts but no _n meta arrived, the
+  // numeric tail was almost certainly a per-item index (review-pending,
+  // judge-pending, review-decided, judge-decided, etc.) — not a real chunk.
+  // Write each buffered part as a simple doc preserving the full key shape.
   if (shared.pendingChunked.size > 0) {
-    log(`⚠ ${shared.pendingChunked.size} chunked group(s) incomplete at end of walk (missing meta or parts)`);
+    const fallbackEntries: Array<{ type: string; org: string; keyParts: (string | number)[]; value: unknown }> = [];
+    let metaMissing = 0;
+    let metaShortPart = 0;
     for (const [, g] of shared.pendingChunked) {
-      log(`  incomplete: ${g.type}/${g.org}/${g.baseKey.join("/")} (have ${g.parts.size} parts, meta=${g.meta ?? "none"})`);
+      if (g.meta == null) {
+        metaMissing++;
+        for (const [partIdx, value] of g.parts) {
+          fallbackEntries.push({ type: g.type, org: g.org, keyParts: [...g.baseKey, partIdx], value });
+        }
+      } else {
+        // Meta exists but parts were short — keep as error (real corruption).
+        metaShortPart++;
+        log(`  incomplete: ${g.type}/${g.org}/${g.baseKey.join("/")} (have ${g.parts.size}/${g.meta} parts — chunked group genuinely missing parts)`);
+      }
     }
-    shared.stats.errors += shared.pendingChunked.size;
+    if (fallbackEntries.length > 0) {
+      log(`▶ fallback: writing ${fallbackEntries.length} entries from ${metaMissing} indexed-but-not-chunked groups (numeric-tail false positives)`);
+      await runWithConcurrency(fallbackEntries, args.concurrency, async (e) => {
+        const keyStr = `${e.type}/${e.org}/${e.keyParts.join("/")}`;
+        const bk = `${e.type}|${e.org}`;
+        let pb = shared.perBucket.get(bk);
+        if (!pb) { pb = { scanned: 0, written: 0, matched: 0, errors: 0 }; shared.perBucket.set(bk, pb); }
+        try {
+          let fsVal: unknown = null;
+          if (!args.force) {
+            fsVal = await getStored(e.type, e.org, ...e.keyParts);
+            if (stableEq(fsVal, e.value)) { shared.stats.matched++; pb.matched++; return; }
+          }
+          if (!args.dryRun) {
+            await setStored(e.type, e.org, e.keyParts, e.value as Record<string, unknown> | null);
+          }
+          shared.stats.written++; pb.written++;
+        } catch (err) {
+          shared.stats.errors++; pb.errors++;
+          log(`  ❌ fallback write ${keyStr}: ${String(err).slice(0, 100)}`);
+        }
+      });
+    }
+    if (metaShortPart > 0) shared.stats.errors += metaShortPart;
   }
 
   // Per-bucket summary

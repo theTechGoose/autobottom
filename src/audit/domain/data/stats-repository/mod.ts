@@ -72,8 +72,12 @@ export async function trackRetry(orgId: OrgId, findingId: string, step: string, 
 // ── Completed Stats ──────────────────────────────────────────────────────────
 
 export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<Record<string, unknown>[]> {
-  const all = await listStored<Record<string, unknown>>("completed-audit-stat", orgId);
-  return all.slice(0, limit);
+  const now = Date.now();
+  const cutoff = now - DAY_MS;
+  return await listStoredByCompletedAt<Record<string, unknown>>(
+    "completed-audit-stat", orgId, cutoff, now,
+    { limit, fieldName: "ts" },
+  );
 }
 
 export async function updateCompletedStatScore(orgId: OrgId, findingId: string, score: number): Promise<void> {

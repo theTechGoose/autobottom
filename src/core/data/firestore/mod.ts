@@ -294,30 +294,50 @@ function docPath(creds: FirestoreCreds, docId: string): string {
 
 /** Retry transient HTTP/2 stream errors and 5xx responses. Deno Deploy's
  *  long-lived HTTP/2 connections to Firestore intermittently fail with
- *  "stream error received: unexpected internal error" — a single retry
- *  resolves nearly all of them. */
+ *  "stream error received: unexpected internal error" or
+ *  "error reading a body from connection" — a single retry resolves most.
+ *  Body consumption happens INSIDE the retry loop so mid-stream body
+ *  failures also trigger retry. Per-attempt 20s abort prevents 120s hangs. */
 const FS_RETRY_DELAYS_MS = [200, 600];
+const FS_ATTEMPT_TIMEOUT_MS = 20_000;
 
-async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): Promise<Response> {
+interface FsResult { status: number; ok: boolean; text: string }
+
+function isTransientFsError(msg: string): boolean {
+  return msg.includes("http2 error")
+    || msg.includes("stream error")
+    || msg.includes("error sending request")
+    || msg.includes("error reading a body")
+    || msg.includes("connection closed")
+    || msg.includes("connection reset")
+    || msg.includes("aborted");
+}
+
+async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): Promise<FsResult> {
   const token = await getAccessToken(creds);
   const url = `https://firestore.googleapis.com/v1/${path}`;
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) };
 
   let lastErr: unknown;
   for (let attempt = 0; attempt <= FS_RETRY_DELAYS_MS.length; attempt++) {
+    const ctrl = new AbortController();
+    const timeoutId = setTimeout(() => ctrl.abort(), FS_ATTEMPT_TIMEOUT_MS);
     try {
-      const res = await fetch(url, { ...init, headers });
+      const res = await fetch(url, { ...init, headers, signal: ctrl.signal });
+      const text = await res.text();
+      clearTimeout(timeoutId);
       if (res.status >= 500 && res.status < 600 && attempt < FS_RETRY_DELAYS_MS.length) {
         console.warn(`⚠️ [FS] ${res.status} from Firestore (attempt ${attempt + 1}) — retrying`);
         await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));
         continue;
       }
-      return res;
+      return { status: res.status, ok: res.ok, text };
     } catch (err) {
+      clearTimeout(timeoutId);
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
-      const isTransient = msg.includes("http2 error") || msg.includes("stream error") || msg.includes("error sending request") || msg.includes("connection closed");
-      if (!isTransient || attempt >= FS_RETRY_DELAYS_MS.length) break;
+      const transient = isTransientFsError(msg);
+      if (!transient || attempt >= FS_RETRY_DELAYS_MS.length) break;
       console.warn(`⚠️ [FS] transient fetch error (attempt ${attempt + 1}): ${msg.slice(0, 120)} — retrying`);
       await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));
     }
@@ -328,8 +348,8 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
 async function restGet(creds: FirestoreCreds, docId: string): Promise<DocBody | null> {
   const res = await fsFetch(creds, docPath(creds, docId), { method: "GET" });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Firestore get failed: ${res.status} ${await res.text()}`);
-  const json = await res.json() as { fields?: Record<string, FsValue> };
+  if (!res.ok) throw new Error(`Firestore get failed: ${res.status} ${res.text}`);
+  const json = JSON.parse(res.text) as { fields?: Record<string, FsValue> };
   const obj = objectFromFields(json.fields) as DocBody;
   if (isExpired(obj)) return null;
   return obj;
@@ -340,12 +360,12 @@ async function restSet(creds: FirestoreCreds, docId: string, body: DocBody): Pro
     method: "PATCH",
     body: JSON.stringify({ fields: fieldsFromObject(body) }),
   });
-  if (!res.ok) throw new Error(`Firestore set failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`Firestore set failed: ${res.status} ${res.text}`);
 }
 
 async function restDelete(creds: FirestoreCreds, docId: string): Promise<void> {
   const res = await fsFetch(creds, docPath(creds, docId), { method: "DELETE" });
-  if (!res.ok && res.status !== 404) throw new Error(`Firestore delete failed: ${res.status} ${await res.text()}`);
+  if (!res.ok && res.status !== 404) throw new Error(`Firestore delete failed: ${res.status} ${res.text}`);
 }
 
 async function restSetIfAbsent(creds: FirestoreCreds, docId: string, body: DocBody): Promise<boolean> {
@@ -355,7 +375,7 @@ async function restSetIfAbsent(creds: FirestoreCreds, docId: string, body: DocBo
     body: JSON.stringify({ fields: fieldsFromObject(body) }),
   });
   if (res.status === 409 || res.status === 412) return false;
-  if (!res.ok) throw new Error(`Firestore setIfAbsent failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`Firestore setIfAbsent failed: ${res.status} ${res.text}`);
   return true;
 }
 
@@ -369,8 +389,8 @@ async function restListByOrg(creds: FirestoreCreds, org: string, limit: number):
     },
   };
   const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Firestore org query failed: ${res.status} ${await res.text()}`);
-  const rows = await res.json() as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
+  if (!res.ok) throw new Error(`Firestore org query failed: ${res.status} ${res.text}`);
+  const rows = JSON.parse(res.text) as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
   const out: Array<{ id: string; body: DocBody }> = [];
   const idPrefix = `${parent}/${creds.collection}/`;
   for (const row of rows) {
@@ -401,8 +421,8 @@ async function restListByType(creds: FirestoreCreds, type: string, org: string, 
     },
   };
   const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Firestore query failed: ${res.status} ${await res.text()}`);
-  const rows = await res.json() as Array<{ document?: { fields?: Record<string, FsValue> } }>;
+  if (!res.ok) throw new Error(`Firestore query failed: ${res.status} ${res.text}`);
+  const rows = JSON.parse(res.text) as Array<{ document?: { fields?: Record<string, FsValue> } }>;
   const out: DocBody[] = [];
   for (const row of rows) {
     if (!row.document?.fields) continue;
@@ -473,13 +493,12 @@ async function restListByCompletedAt(
     console.log(`🔍 [AUDIT-HISTORY] [FS] page ${pageNum} type=${type} org=${org} from=${from} to=${to} pageLimit=${pageLimit} cursor=${cursor ? `ts=${cursor.fieldVal}` : "none"}`);
     const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify({ structuredQuery }) });
     if (!res.ok) {
-      const errText = await res.text().catch(() => "<no body>");
-      console.error(`❌ [AUDIT-HISTORY] [FS] Firestore returned ${res.status}: ${errText}`);
-      throw new Error(`Firestore completedAt query failed: ${res.status} ${errText}`);
+      console.error(`❌ [AUDIT-HISTORY] [FS] Firestore returned ${res.status}: ${res.text}`);
+      throw new Error(`Firestore completedAt query failed: ${res.status} ${res.text}`);
     }
     let rows: Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
     try {
-      rows = await res.json() as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
+      rows = JSON.parse(res.text) as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
     } catch (err) {
       console.error(`❌ [AUDIT-HISTORY] [FS] failed to parse Firestore response:`, err);
       throw err;
@@ -548,8 +567,8 @@ async function restListByIdPrefix(creds: FirestoreCreds, prefix: string, limit: 
     },
   };
   const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Firestore prefix query failed: ${res.status} ${await res.text()}`);
-  const rows = await res.json() as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
+  if (!res.ok) throw new Error(`Firestore prefix query failed: ${res.status} ${res.text}`);
+  const rows = JSON.parse(res.text) as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
   const out: Array<{ id: string; body: DocBody }> = [];
   const idPrefix = `${parent}/${creds.collection}/`;
   for (const row of rows) {

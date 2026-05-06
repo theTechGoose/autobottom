@@ -5,6 +5,19 @@ import { isPublicPath, roleRedirect } from "../lib/auth.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
 import { listUsers } from "@core/business/auth/mod.ts";
 
+/** Build a redirect that's safe for both browser navigation and HTMX swaps.
+ *  Without this, an HTMX widget XHR receiving a 302 to /login follows the
+ *  redirect, gets 200 + login HTML, and HTMX cheerfully swaps that login
+ *  page into the widget's target div. The fix is the HX-Redirect header,
+ *  which tells HTMX to do a full-page navigation instead of a swap. */
+function authRedirect(req: Request, location: string): Response {
+  const isHtmx = req.headers.get("hx-request") === "true";
+  if (isHtmx) {
+    return new Response(null, { status: 401, headers: { "hx-redirect": location } });
+  }
+  return new Response(null, { status: 302, headers: { location } });
+}
+
 export default define.middleware(async (ctx) => {
   const url = new URL(ctx.req.url);
   const path = url.pathname;
@@ -42,7 +55,7 @@ export default define.middleware(async (ctx) => {
     // impersonation swap below because we want the REAL user's view.
     if (path.startsWith("/super-admin")) {
       if (auth.email !== "ai@monsterrg.com") {
-        return new Response(null, { status: 302, headers: { location: "/admin/dashboard" } });
+        return authRedirect(ctx.req, "/admin/dashboard");
       }
       return ctx.next();
     }
@@ -75,15 +88,13 @@ export default define.middleware(async (ctx) => {
     const isAdminPath = path.startsWith("/admin") || path.startsWith("/api/admin");
     const realRole = ctx.state.impersonatedBy ? "admin" : ctx.state.user.role;
     if (isAdminPath && realRole !== "admin") {
-      return new Response(null, { status: 302, headers: { location: roleRedirect(ctx.state.user.role) } });
+      return authRedirect(ctx.req, roleRedirect(ctx.state.user.role));
     }
 
     return ctx.next();
   }
 
-  // Unauthenticated — redirect to login
-  return new Response(null, {
-    status: 302,
-    headers: { location: `/login?redirect=${encodeURIComponent(path)}` },
-  });
+  // Unauthenticated — redirect to login (HX-Redirect for HTMX so widgets
+  // don't get the login page swapped into their target slots).
+  return authRedirect(ctx.req, `/login?redirect=${encodeURIComponent(path)}`);
 });

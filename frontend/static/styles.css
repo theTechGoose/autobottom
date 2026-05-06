@@ -788,7 +788,11 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .bb-play:disabled { opacity: 0.4; cursor: not-allowed; }
 .bb-play svg { width: 12px; height: 12px; fill: #fff; }
 .bb-waveform {
-  flex: 0 1 260px;
+  /* High flex-grow weight (10) outpaces the two bb-spacer elements (each
+   * flex-grow:1) so the waveform absorbs ~83% of the row's free space. The
+   * timer + speed sit immediately after it; gamification + chrome stay
+   * pushed to the right by the remaining spacers. */
+  flex: 10 1 260px;
   min-width: 120px;
   height: 40px;
   cursor: pointer;

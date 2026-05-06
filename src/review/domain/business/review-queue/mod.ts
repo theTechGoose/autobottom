@@ -176,6 +176,70 @@ async function enrichItem(
   return { ...item, auditRemaining: counterVal, transcript };
 }
 
+/** Re-derive question payload + recordMeta from the finding when the stored
+ *  ReviewItem has empty/missing fields. Happens when a decision was recorded
+ *  from a stale active buffer (race) or after a discardReview round-trip
+ *  copied empty fields back to pending. The recordMeta shape mirrors what
+ *  populateReviewQueue's caller (step-finalize) builds on first ingest. */
+async function rehydrateItemFromFinding(orgId: OrgId, item: ReviewItem): Promise<ReviewItem> {
+  const hasMeta = item.recordMeta && Object.keys(item.recordMeta).length > 0;
+  if (item.header && item.populated && hasMeta && item.totalForFinding) return item;
+  try {
+    const finding = await getFinding(orgId, item.findingId) as Record<string, unknown> | null;
+    if (!finding) return item;
+    const answeredQuestions = (finding.answeredQuestions as Array<{ answer: string; header: string; populated: string; thinking: string; defense: string }> | undefined) ?? [];
+    const q = answeredQuestions[item.questionIndex];
+    const noOnly = answeredQuestions.filter((x) => x.answer === "No");
+    const reviewIndexFromFinding = q ? noOnly.findIndex((x) => x.header === q.header) + 1 : 0;
+
+    const rec = (finding.record ?? {}) as Record<string, unknown>;
+    const isPackage = finding.recordingIdField === "GenieNumber";
+    const builtMeta = isPackage ? {
+      voName: rec.VoName ? String(rec.VoName) : undefined,
+      guestName: rec.GuestName ? String(rec.GuestName) : undefined,
+      maritalStatus: rec["67"] ? String(rec["67"]) : undefined,
+      officeName: rec.OfficeName ? String(rec.OfficeName) : undefined,
+      totalAmountPaid: rec["145"] ? String(rec["145"]) : undefined,
+      hasMCC: rec["345"] ? String(rec["345"]) : undefined,
+      mspSubscription: rec["306"] ? String(rec["306"]) : undefined,
+    } : {
+      voName: rec.VoName ? String(rec.VoName) : undefined,
+      guestName: rec.GuestName ? String(rec.GuestName) : (rec["32"] ? String(rec["32"]) : undefined),
+      spouseName: rec["33"] ? String(rec["33"]) : undefined,
+      maritalStatus: rec["49"] ? String(rec["49"]) : undefined,
+      roomTypeMaxOccupancy: rec["297"] ? String(rec["297"]) : undefined,
+      destination: rec.DestinationDisplay ? String(rec.DestinationDisplay) : (rec["314"] ? String(rec["314"]) : undefined),
+      arrivalDate: rec["8"] ? String(rec["8"]) : undefined,
+      departureDate: rec["10"] ? String(rec["10"]) : undefined,
+      totalWGS: rec["460"] ? String(rec["460"]) : undefined,
+      totalMCC: rec["594"] ? String(rec["594"]) : undefined,
+    };
+
+    const recordIdFromFinding = String(rec.RecordId ?? rec.RelatedDestinationId ?? rec.GenieNumber ?? "");
+
+    const filled: ReviewItem = {
+      ...item,
+      header: item.header || q?.header || "",
+      populated: item.populated || q?.populated || "",
+      thinking: item.thinking || q?.thinking || "",
+      defense: item.defense || q?.defense || "",
+      answer: item.answer || q?.answer || "No",
+      reviewIndex: item.reviewIndex || reviewIndexFromFinding || 1,
+      totalForFinding: item.totalForFinding || noOnly.length || 1,
+      ...(finding.recordingIdField ? { recordingIdField: String(finding.recordingIdField) } : {}),
+      ...(item.recordId || recordIdFromFinding ? { recordId: item.recordId || recordIdFromFinding } : {}),
+      recordMeta: hasMeta ? item.recordMeta : builtMeta,
+    };
+    if (!item.header || !item.populated || !hasMeta) {
+      console.log(`🛠️  [REVIEW:REHYDRATE] ${item.findingId}/${item.questionIndex}: filled empty fields from finding`);
+    }
+    return filled;
+  } catch (e) {
+    console.warn(`⚠️  [REVIEW:REHYDRATE] ${item.findingId}/${item.questionIndex}: rehydrate failed`, e);
+    return item;
+  }
+}
+
 export async function claimNextItem(
   orgId: OrgId,
   reviewer: string,
@@ -264,11 +328,15 @@ export async function claimNextItem(
     }
     // Hydrate buffer from decided records — the panel re-renders with the
     // full failed-questions list (the controller already merges decisions).
+    // Empty header/populated/recordMeta on a decided record (can happen when
+    // the original active buffer was hollow) would render dashes for guest /
+    // record / question text — apply the rehydrate safety net so the resumed
+    // audit looks identical to a fresh claim.
     const transcript = await getTranscript(orgId, fid);
     const buffer: BufferItem[] = [];
     decisions.sort((a, b) => (a.reviewIndex ?? 0) - (b.reviewIndex ?? 0));
     for (const d of decisions) {
-      const item: ReviewItem = {
+      const baseItem: ReviewItem = {
         findingId: d.findingId,
         questionIndex: d.questionIndex,
         reviewIndex: d.reviewIndex ?? 1,
@@ -283,6 +351,7 @@ export async function claimNextItem(
         ...(d.recordMeta ? { recordMeta: d.recordMeta } : {}),
         ...(d.completedAt != null ? { completedAt: d.completedAt } : {}),
       };
+      const item = await rehydrateItemFromFinding(orgId, baseItem);
       buffer.push(await enrichItem(orgId, item, transcript));
     }
     console.log(`[REVIEW] ${reviewer}: Resumed stranded audit ${fid} (${decisions.length} decided, awaiting finalize)`);
@@ -587,35 +656,10 @@ export async function undoDecision(
     ...(decided.completedAt != null ? { completedAt: decided.completedAt } : {}),
   };
 
-  // Safety net: if the decided record was saved with empty question fields
-  // (can happen when a decision was recorded before active/pending had the
-  // full payload — e.g. stale buffer or race), re-derive the payload from
-  // the finding's answeredQuestions so the panel re-renders with full data.
-  if (!item.header || !item.populated) {
-    try {
-      const finding = await getFinding(orgId, findingId) as Record<string, unknown> | null;
-      const answeredQuestions = (finding?.answeredQuestions as Array<{ answer: string; header: string; populated: string; thinking: string; defense: string }> | undefined) ?? [];
-      const q = answeredQuestions[questionIndex];
-      if (q) {
-        const noOnly = answeredQuestions.filter((x) => x.answer === "No");
-        const reviewIndex = noOnly.findIndex((x) => x.header === q.header) + 1;
-        item = {
-          ...item,
-          header: q.header || item.header,
-          populated: q.populated || item.populated,
-          thinking: q.thinking || item.thinking,
-          defense: q.defense || item.defense,
-          answer: q.answer || item.answer,
-          reviewIndex: reviewIndex || item.reviewIndex,
-          totalForFinding: noOnly.length || item.totalForFinding,
-          ...(finding?.recordingIdField ? { recordingIdField: finding.recordingIdField as string } : {}),
-        };
-        console.log(`🛠️  [REVIEW:UNDO] ${findingId}/${questionIndex}: rehydrated empty fields from finding`);
-      }
-    } catch (e) {
-      console.warn(`⚠️  [REVIEW:UNDO] ${findingId}/${questionIndex}: rehydrate failed`, e);
-    }
-  }
+  // Safety net: if the decided record was saved with empty question/meta
+  // fields (stale active buffer or race), re-derive from the finding so the
+  // panel re-renders with full data. Shared with the resume-stranded path.
+  item = await rehydrateItemFromFinding(orgId, item);
 
   const counterVal = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 0;
   await deleteStored("review-decided", orgId, ...chosenDecided.key);

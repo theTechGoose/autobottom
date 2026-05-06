@@ -137,13 +137,28 @@ export async function createSession(auth: AuthContext): Promise<string> {
   return token;
 }
 
+/** In-memory session cache. Every Fresh request re-runs auth middleware,
+ *  which would otherwise hit Firestore on every page/HTMX request. Caching
+ *  for 30s drops Firestore session reads ~99% under typical browse load
+ *  and stops HTTP/2 connection-pool exhaustion that was 503ing the
+ *  dashboard. Logout still works because deleteSession evicts the cache. */
+const SESSION_CACHE_TTL_MS = 30_000;
+const _sessionCache = new Map<string, { auth: AuthContext; expiresAt: number }>();
+
 export async function getSession(token: string): Promise<AuthContext | null> {
+  const cached = _sessionCache.get(token);
+  if (cached && cached.expiresAt > Date.now()) return cached.auth;
+  if (cached) _sessionCache.delete(token);
+
   const v = await getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token);
   if (!v) return null;
-  return { email: v.email, orgId: v.orgId, role: v.role };
+  const auth: AuthContext = { email: v.email, orgId: v.orgId, role: v.role };
+  _sessionCache.set(token, { auth, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
+  return auth;
 }
 
 export async function deleteSession(token: string): Promise<void> {
+  _sessionCache.delete(token);
   await deleteStored("session", GLOBAL, token);
 }
 

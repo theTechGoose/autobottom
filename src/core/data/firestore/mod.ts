@@ -292,12 +292,37 @@ function docPath(creds: FirestoreCreds, docId: string): string {
   return `projects/${encodeURIComponent(creds.projectId)}/databases/${encodeURIComponent(creds.databaseId)}/documents/${encodeURIComponent(creds.collection)}/${encodeURIComponent(docId)}`;
 }
 
+/** Retry transient HTTP/2 stream errors and 5xx responses. Deno Deploy's
+ *  long-lived HTTP/2 connections to Firestore intermittently fail with
+ *  "stream error received: unexpected internal error" — a single retry
+ *  resolves nearly all of them. */
+const FS_RETRY_DELAYS_MS = [200, 600];
+
 async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): Promise<Response> {
   const token = await getAccessToken(creds);
-  return await fetch(`https://firestore.googleapis.com/v1/${path}`, {
-    ...init,
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) },
-  });
+  const url = `https://firestore.googleapis.com/v1/${path}`;
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) };
+
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= FS_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const res = await fetch(url, { ...init, headers });
+      if (res.status >= 500 && res.status < 600 && attempt < FS_RETRY_DELAYS_MS.length) {
+        console.warn(`⚠️ [FS] ${res.status} from Firestore (attempt ${attempt + 1}) — retrying`);
+        await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTransient = msg.includes("http2 error") || msg.includes("stream error") || msg.includes("error sending request") || msg.includes("connection closed");
+      if (!isTransient || attempt >= FS_RETRY_DELAYS_MS.length) break;
+      console.warn(`⚠️ [FS] transient fetch error (attempt ${attempt + 1}): ${msg.slice(0, 120)} — retrying`);
+      await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 async function restGet(creds: FirestoreCreds, docId: string): Promise<DocBody | null> {

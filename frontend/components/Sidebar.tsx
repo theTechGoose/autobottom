@@ -123,10 +123,7 @@ const JUDGE_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
 ]}];
 
 const MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
-  { label: "Queue", icon: Icon.clipboardList, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/manager" },
   { label: "Audit History", icon: Icon.barChart, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/audits" },
-  { label: "Store", icon: Icon.trophy, color: "var(--yellow-bg)", iconColor: "var(--yellow)", href: "/store" },
-  { label: "Chat", icon: Icon.messageCircle, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/chat" },
 ]}];
 
 const USER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [

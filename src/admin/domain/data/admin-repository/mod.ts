@@ -118,15 +118,15 @@ export async function saveBonusPointsConfig(orgId: OrgId, config: BonusPointsCon
 export interface ManagerScope { departments: string[]; shifts: string[]; }
 
 export async function getManagerScope(orgId: OrgId, managerEmail: string): Promise<ManagerScope> {
-  return (await getStored<ManagerScope>("manager-scope", orgId, managerEmail)) ?? { departments: [], shifts: [] };
+  return (await getStored<ManagerScope>("manager-scope-config", orgId, managerEmail)) ?? { departments: [], shifts: [] };
 }
 
 export async function saveManagerScope(orgId: OrgId, managerEmail: string, scope: ManagerScope): Promise<void> {
-  await setStored("manager-scope", orgId, [managerEmail], scope);
+  await setStored("manager-scope-config", orgId, [managerEmail], scope);
 }
 
 export async function listManagerScopes(orgId: OrgId): Promise<Record<string, ManagerScope>> {
-  const rows = await listStoredWithKeys<ManagerScope>("manager-scope", orgId);
+  const rows = await listStoredWithKeys<ManagerScope>("manager-scope-config", orgId);
   const result: Record<string, ManagerScope> = {};
   for (const { key, value } of rows) {
     const email = String(key[key.length - 1]);

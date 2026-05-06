@@ -17,6 +17,33 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => map[c]);
 }
 
+/** Redact credit-card-like digit runs in a transcript. Matches a leading
+ *  4-digit group followed by 2-3 more 4-digit groups (separated by `-` or
+ *  whitespace) plus an optional 1-3 digit trailing group — covers 12-19
+ *  digit cards (Visa-13 / Amex-15 / Visa-MC-Discover-16 / Maestro-19).
+ *  Replaces every digit EXCEPT the last 4 with `*`. Length-preserving:
+ *  each digit becomes exactly one `*`, separators stay in place — so
+ *  highlight match offsets computed against the original transcript still
+ *  line up with the redacted output. Industry-standard last-4 masking.
+ *
+ *  Conservative pattern: requires the 4-4-4 prefix (so 8-digit 4-4 order
+ *  numbers like "1234-5678" don't trip it), and won't match inside a
+ *  longer digit run thanks to lookarounds. Phone numbers are 3-3-4 or
+ *  3-4 — they don't fit. */
+export function redactCreditCards(text: string): string {
+  if (!text) return text;
+  const cc = /(?<!\d)\d{4}(?:[-\s]?\d{4}){2,3}(?:[-\s]?\d{1,3})?(?!\d)/g;
+  return text.replace(cc, (match) => {
+    const digitCount = (match.match(/\d/g) ?? []).length;
+    if (digitCount < 12 || digitCount > 19) return match;
+    let seen = 0;
+    return match.replace(/\d/g, (d) => {
+      seen++;
+      return seen <= digitCount - 4 ? "*" : d;
+    });
+  });
+}
+
 export interface BadWordMatch {
   word: string;
   start: number;
@@ -132,7 +159,11 @@ export async function sendBadWordAlert(
   }) + " EST";
 
   const triggerList = result.violations.join(", ");
-  const highlightedTranscript = buildHighlightedTranscript(transcript, result.matches);
+  // Redact credit-card-like digit sequences before rendering. Length-preserving
+  // so result.matches offsets (computed against the original transcript) still
+  // align with the redacted output.
+  const safeTranscript = redactCreditCards(transcript);
+  const highlightedTranscript = buildHighlightedTranscript(safeTranscript, result.matches);
 
   const metaRow = (label: string, val: string | undefined, url?: string) =>
     val ? `<tr><td style="font-size:10px;color:#7f8c8d;padding:4px 0 1px;text-transform:uppercase;letter-spacing:.5px;">${escapeHtml(label)}</td><td style="font-size:14px;color:#2c3e50;padding-bottom:6px;">${url ? `<a href="${escapeHtml(url)}" style="color:#2980b9;text-decoration:none;font-weight:600;">${escapeHtml(val)}</a>` : escapeHtml(val)}</td></tr>` : "";

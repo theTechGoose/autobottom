@@ -13,12 +13,31 @@ export default function JudgeModals() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    const onOpen = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { findingId?: string } | undefined;
-      const fid = detail?.findingId || (document.getElementById("hx-findingId") as HTMLInputElement | null)?.value || "";
+    const openModalWithFid = (fidArg?: string | null) => {
+      const fid = fidArg
+        || (document.getElementById("hx-findingId") as HTMLInputElement | null)?.value
+        || "";
       setFindingId(fid);
       setOpen(true);
       setTimeout(() => textareaRef.current?.focus(), 40);
+    };
+
+    // The Dismiss Appeal button in VerdictPanel is server-rendered; its onClick
+    // never hydrates because VerdictPanel isn't an island. Listen via document-
+    // level click delegation against the data-action attribute instead — the
+    // listener survives every HTMX swap because it's anchored on `document`.
+    const onDismissBtnClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const btn = target?.closest<HTMLElement>('[data-action="dismiss-appeal"]');
+      if (!btn) return;
+      e.preventDefault();
+      openModalWithFid(btn.dataset.findingId);
+    };
+
+    // Defensive — anything still firing the legacy CustomEvent path keeps working.
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { findingId?: string } | undefined;
+      openModalWithFid(detail?.findingId);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && open) {
@@ -26,9 +45,11 @@ export default function JudgeModals() {
         setOpen(false);
       }
     };
+    document.addEventListener("click", onDismissBtnClick);
     document.addEventListener("queue:dismiss-appeal-open", onOpen);
     document.addEventListener("keydown", onKey);
     return () => {
+      document.removeEventListener("click", onDismissBtnClick);
       document.removeEventListener("queue:dismiss-appeal-open", onOpen);
       document.removeEventListener("keydown", onKey);
     };

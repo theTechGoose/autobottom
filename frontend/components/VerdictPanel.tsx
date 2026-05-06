@@ -417,10 +417,15 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
           <kbd>B</kbd> Undo
         </button>
         {!isReview && (
+          // VerdictPanel is server-rendered (not an island), so Preact's onClick
+          // would be dropped by renderToString. Use a real HTML data-attribute
+          // and let JudgeModals intercept the click via document-level
+          // delegation — same pattern as data-action="jump-to-audio".
           <button
-            class="verdict-dismiss"
             type="button"
-            onClick={() => document.dispatchEvent(new CustomEvent("queue:dismiss-appeal-open", { detail: { findingId: item.findingId } }))}
+            class="verdict-dismiss"
+            data-action="dismiss-appeal"
+            data-finding-id={item.findingId}
           >
             Dismiss Appeal
           </button>

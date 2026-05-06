@@ -4,9 +4,10 @@ import { UserController } from "@admin/entrypoints/user/mod.ts";
 import { WebhookController } from "@admin/entrypoints/webhook/mod.ts";
 import { DashboardController } from "@admin/entrypoints/dashboard/mod.ts";
 import { MigrationController } from "@admin/entrypoints/migration/mod.ts";
+import { KvExportController } from "@admin/entrypoints/kv-export/mod.ts";
 
 @Module({
-  controllers: [AdminConfigController, UserController, WebhookController, DashboardController, MigrationController],
+  controllers: [AdminConfigController, UserController, WebhookController, DashboardController, MigrationController, KvExportController],
   injectables: [],
 })
 export class AdminModule {}

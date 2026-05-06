@@ -26,6 +26,7 @@ import { startUploadReaudit } from "@audit/domain/business/upload-reaudit/mod.ts
 import { startReauditWithGenies } from "@audit/domain/business/reaudit/mod.ts";
 import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
+import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 // --- Pipeline step functions: dispatched DIRECTLY by this handler (bypassing
@@ -477,6 +478,22 @@ Deno.serve({ port }, (req, info) => {
       const auth = await authenticate(req);
       if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
       return Response.json({ email: auth.email, orgId: auth.orgId, role: auth.role });
+    }
+
+    // /admin/kv-export, /admin/kv-inventory, /admin/kv-batch-list — direct
+    // dispatch (KV_EXPORT_SECRET-gated, used by scripts/migrate-fill.ts).
+    // Same @Req-broken-via-router.fetch workaround as /admin/api/me.
+    if (path === "/admin/kv-export") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct kv-export handler`);
+      return handleKvExport(req);
+    }
+    if (path === "/admin/kv-inventory") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct kv-inventory handler`);
+      return handleKvInventory(req);
+    }
+    if (path === "/admin/kv-batch-list") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct kv-batch-list handler`);
+      return handleKvBatchList(req);
     }
 
     // /audit/api/appeal/upload-recording — direct (multipart; @Req broken)

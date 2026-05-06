@@ -5,7 +5,7 @@
  *  acceptable given typical reviewer concurrency and idempotent finalize. */
 
 import {
-  getStored, setStored, deleteStored, listStoredWithKeys,
+  getStored, setStored, setStoredIfAbsent, deleteStored, listStoredWithKeys,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewItem, ReviewDecision } from "@core/dto/types.ts";
@@ -25,6 +25,57 @@ import {
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;
+const LOCK_TTL = ACTIVE_TTL;
+
+// ── Per-question mutual-exclusion lock ──────────────────────────────────────
+// Two reviewers must NEVER work the same question. Pre-refactor this used
+// Deno KV's atomic().check().set() against a "review-lock" table; the refactor
+// dropped the lock table and stored claims under the reviewer email, so two
+// reviewers writing concurrently each got their own active-claim doc and the
+// same question appeared in both queues. Restored here using Firestore's
+// create-only-if-absent precondition (setStoredIfAbsent), which is atomic at
+// the document level. The lock value records who holds it; lock TTL matches
+// ACTIVE_TTL so abandoned audits free up at the same cadence.
+
+async function acquireLock(orgId: OrgId, findingId: string, questionIndex: number, reviewer: string, now: number): Promise<boolean> {
+  const got = await setStoredIfAbsent(
+    "review-lock", orgId,
+    [findingId, questionIndex],
+    { reviewer, claimedAt: now },
+    { expireInMs: LOCK_TTL },
+  );
+  if (got) return true;
+  // Doc exists physically. Two cases:
+  //  - it's ours (reclaim after retry / partial failure) → success.
+  //  - it's expired but the physical doc lingers → delete + retry.
+  //  - it's held by another reviewer → fail.
+  const existing = await getStored<{ reviewer: string; claimedAt: number }>("review-lock", orgId, findingId, questionIndex);
+  if (existing && existing.reviewer === reviewer) return true;
+  if (!existing) {
+    // getStored() filters out expired docs but the physical row still exists.
+    // Reset and retry the create.
+    await deleteStored("review-lock", orgId, findingId, questionIndex);
+    return await setStoredIfAbsent(
+      "review-lock", orgId,
+      [findingId, questionIndex],
+      { reviewer, claimedAt: now },
+      { expireInMs: LOCK_TTL },
+    );
+  }
+  return false;
+}
+
+async function releaseLock(orgId: OrgId, findingId: string, questionIndex: number): Promise<void> {
+  await deleteStored("review-lock", orgId, findingId, questionIndex);
+}
+
+async function releaseLocksForFinding(orgId: OrgId, findingId: string): Promise<void> {
+  const locks = await listStoredWithKeys<{ reviewer: string }>("review-lock", orgId);
+  for (const { key } of locks) {
+    if (key[0] !== findingId) continue;
+    await deleteStored("review-lock", orgId, ...key);
+  }
+}
 
 /** Review buffer item — ReviewItem enriched with audit-context fields. */
 export interface BufferItem extends ReviewItem {
@@ -238,7 +289,12 @@ export async function claimNextItem(
     return { buffer, remaining: 0 };
   }
 
-  // 5. No active items — claim ALL pending items for the OLDEST audit (FIFO by completedAt)
+  // 5. No active items — claim the OLDEST pending audit whose questions we
+  //    can fully lock. Lock acquisition is atomic per question via
+  //    setStoredIfAbsent against the shared review-lock table. If ANY question
+  //    of an audit is held by another reviewer, we roll back our partial locks
+  //    and try the next-oldest audit. This is the multi-reviewer mutual-exclusion
+  //    guarantee that pre-refactor used db.atomic().check().set() to provide.
   const allPending = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
   const findingTimestamps = new Map<string, number>();
   const pendingByFinding = new Map<string, Array<{ key: string[]; value: ReviewItem }>>();
@@ -257,30 +313,56 @@ export async function claimNextItem(
     }
   }
 
-  let targetFindingId: string | null = null;
-  let oldestTs = Infinity;
-  for (const [fid, ts] of findingTimestamps) {
-    if (ts < oldestTs) { oldestTs = ts; targetFindingId = fid; }
+  // FIFO order — oldest completedAt first.
+  const findingsByAge = [...findingTimestamps.entries()].sort((a, b) => a[1] - b[1]);
+
+  for (const [targetFindingId, _ts] of findingsByAge) {
+    const pendingEntries = pendingByFinding.get(targetFindingId) ?? [];
+    if (pendingEntries.length === 0) continue;
+
+    // Phase 1: try to acquire ALL question-level locks for this finding.
+    const acquired: Array<{ findingId: string; questionIndex: number }> = [];
+    let allAcquired = true;
+    for (const { value } of pendingEntries) {
+      const got = await acquireLock(orgId, value.findingId, value.questionIndex, reviewer, now);
+      if (got) {
+        acquired.push({ findingId: value.findingId, questionIndex: value.questionIndex });
+        continue;
+      }
+      allAcquired = false;
+      break;
+    }
+
+    if (!allAcquired) {
+      // Roll back partial locks and try the next-oldest finding.
+      for (const lk of acquired) await releaseLock(orgId, lk.findingId, lk.questionIndex);
+      console.log(`[REVIEW] ${reviewer}: Lost lock race on audit ${targetFindingId}, trying next finding`);
+      continue;
+    }
+
+    // Phase 2: locks acquired — safe to write active claims and clear pending.
+    const claimed: ReviewItem[] = [];
+    for (const { key, value } of pendingEntries) {
+      await setStored("review-active", orgId, [reviewer, value.findingId, value.questionIndex], { ...value, claimedAt: now });
+      await deleteStored("review-pending", orgId, ...key);
+      claimed.push(value);
+    }
+
+    if (claimed.length === 0) {
+      // Nothing actually pending after lock — release locks and continue.
+      for (const lk of acquired) await releaseLock(orgId, lk.findingId, lk.questionIndex);
+      continue;
+    }
+
+    claimed.sort((a, b) => a.reviewIndex - b.reviewIndex);
+    const transcript = await getTranscript(orgId, claimed[0].findingId);
+    const buffer: BufferItem[] = [];
+    for (const item of claimed) buffer.push(await enrichItem(orgId, item, transcript));
+    console.log(`[REVIEW] ${reviewer}: Claimed ${claimed.length} items for audit ${targetFindingId}`);
+    return { buffer, remaining: 0 };
   }
-  const pendingEntries = targetFindingId ? (pendingByFinding.get(targetFindingId) ?? []) : [];
-  if (pendingEntries.length === 0) return { buffer: [], remaining: 0 };
 
-  // Non-atomic claim. Race: another reviewer could grab the same item. Acceptable.
-  const claimed: ReviewItem[] = [];
-  for (const { key, value } of pendingEntries) {
-    await setStored("review-active", orgId, [reviewer, value.findingId, value.questionIndex], { ...value, claimedAt: now });
-    await deleteStored("review-pending", orgId, ...key);
-    claimed.push(value);
-  }
-
-  if (claimed.length === 0) return { buffer: [], remaining: 0 };
-
-  claimed.sort((a, b) => a.reviewIndex - b.reviewIndex);
-  const transcript = await getTranscript(orgId, claimed[0].findingId);
-  const buffer: BufferItem[] = [];
-  for (const item of claimed) buffer.push(await enrichItem(orgId, item, transcript));
-  console.log(`[REVIEW] ${reviewer}: Claimed ${claimed.length} items for audit ${targetFindingId}`);
-  return { buffer, remaining: 0 };
+  return { buffer: [], remaining: 0 };
 }
 
 // ── Decision Recording ──────────────────────────────────────────────────────
@@ -319,6 +401,10 @@ export async function recordDecision(
   await setStored("review-undo-idx", orgId, [reviewer, undoIdxKey], { findingId, questionIndex });
 
   await deleteStored("review-active", orgId, reviewer, findingId, questionIndex);
+  // Release this question's mutual-exclusion lock now that the decision is
+  // recorded. The audit's other questions remain locked until they're decided
+  // (or until LOCK_TTL fires and we sweep on the next claim attempt).
+  await releaseLock(orgId, findingId, questionIndex);
 
   const counter = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 1;
   const newCount = Math.max(0, counter - 1);
@@ -397,6 +483,11 @@ export async function finalizeReviewedAudit(
   await saveFinding(orgId, correctedFinding);
 
   await setStored("review-done", orgId, [findingId], { reviewedAt: new Date(reviewedAt).toISOString(), reviewScore, reviewedBy: reviewer });
+  // Defensive sweep: drop any lingering locks for this finding. Per-question
+  // locks should already be released by recordDecision, but if a question was
+  // committed via a path that bypassed recordDecision (e.g. legacy backfill)
+  // we'd leave a stranded lock that blocks future claims.
+  await releaseLocksForFinding(orgId, findingId);
 
   await writeAuditDoneIndex(orgId, {
     findingId,
@@ -602,6 +693,10 @@ export async function discardReview(
     await deleteStored("review-undo-idx", orgId, ...key);
   }
 
+  // 5. Release every lock this reviewer was holding on the finding so the next
+  //    claimNextItem can hand the audit to whoever picks it up next.
+  await releaseLocksForFinding(orgId, findingId);
+
   console.log(`[REVIEW] ${reviewer}: Discarded audit ${findingId} (${restored} entries restored to pending)`);
   return { ok: true, restored };
 }
@@ -643,6 +738,7 @@ export async function adminFlipFinding(
     if (value?.findingId === findingId) { await deleteStored("review-active", orgId, ...key); cleared++; }
   }
   await deleteStored("review-audit-pending", orgId, findingId); cleared++;
+  await releaseLocksForFinding(orgId, findingId);
 
   await setStored("review-done", orgId, [findingId], { reviewedAt: new Date().toISOString() });
 

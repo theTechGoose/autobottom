@@ -1,0 +1,35 @@
+{
+  "tasks": {
+    "dev": "deno run -A --watch=routes/,components/,islands/,lib/,static/ main.ts",
+    "build": "deno run -A main.ts build",
+    "start": "deno run -A main.ts",
+    "check": "deno check main.ts",
+    "test": "deno test -A"
+  },
+  "imports": {
+    "@fresh/core": "jsr:@fresh/core@^2.2.0",
+    "preact": "npm:preact@^10.25.4",
+    "preact/hooks": "npm:preact@^10.25.4/hooks",
+    "@preact/signals": "npm:@preact/signals@^2.0.0",
+    "@std/assert": "jsr:@std/assert",
+    "preact-render-to-string": "npm:preact-render-to-string@^6.5.0",
+    "@core/": "../src/core/",
+    "@mrg-keystone/danet": "jsr:@mrg-keystone/danet@^1.0.2",
+    "@danet/core": "jsr:@danet/core@2",
+    "@danet/swagger": "jsr:@danet/swagger@2",
+    "#reflect-metadata": "npm:reflect-metadata@0.1.13",
+    "#danet/core": "jsr:@danet/core@2",
+    "#danet/swagger": "jsr:@danet/swagger@2",
+    "#danet/swagger-decorators": "jsr:@danet/swagger@2/decorators",
+    "#openapi3-ts": "npm:openapi3-ts@4.5.0",
+    "#zod": "npm:zod@3",
+    "#assert": "jsr:@std/assert",
+    "#handlebars": "npm:handlebars@^4.7.8"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
+}

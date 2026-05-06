@@ -1,0 +1,46 @@
+/** STEP 2c: Async speaker diarization — runs in parallel with prepare, not on the critical path. */
+import { getFinding, saveFinding, saveTranscript } from "@audit/domain/data/audit-repository/mod.ts";
+import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
+import { diarize } from "@audit/domain/data/groq/mod.ts";
+
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+}
+
+export async function stepDiarizeAsync(req: Request): Promise<Response> {
+  const body = await req.json();
+  const { findingId, orgId } = body;
+
+  const finding = await getFinding(orgId, findingId);
+  if (!finding) return json({ error: "finding not found" }, 404);
+  if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
+
+  if (finding.findingStatus !== "finished") {
+    trackActive(orgId, findingId, "diarize-async").catch(() => {});
+  }
+
+  if (finding.diarizedTranscript) {
+    console.log(`[STEP-DIARIZE] ${findingId}: Already diarized, skipping`);
+    return json({ ok: true, skipped: true });
+  }
+
+  console.log(`[STEP-DIARIZE] ${findingId}: Starting diarization...`);
+
+  const raw = finding.rawTranscript ?? "";
+  if (!raw || raw.includes("Invalid Genie") || raw.includes("Genie Invalid")) {
+    console.log(`[STEP-DIARIZE] ${findingId}: Skipping — no valid transcript`);
+    return json({ ok: true, skipped: true });
+  }
+
+  try {
+    const diarized = await diarize(raw);
+    finding.diarizedTranscript = diarized;
+    await saveFinding(orgId, finding);
+    await saveTranscript(orgId, findingId, raw, diarized);
+    console.log(`[STEP-DIARIZE] ${findingId}: Diarization complete`);
+  } catch (err) {
+    console.error(`[STEP-DIARIZE] ${findingId}: Diarization failed:`, err);
+  }
+
+  return json({ ok: true });
+}

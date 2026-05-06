@@ -1,2 +1,4 @@
 .env
 seed-data.json
+_fresh
+frontend/_fresh

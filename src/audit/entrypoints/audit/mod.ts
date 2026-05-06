@@ -134,9 +134,36 @@ export class AuditController {
   async getFinding(@Query("id") id: string) {
     if (!id) return { error: "id parameter required" };
     const orgId = defaultOrgId() as OrgId;
-    const finding = await getFinding(orgId, id);
-    if (!finding) return { error: "not found" };
-    return finding;
+    console.log(`[GET-FINDING] looking up id=${id} orgId=${orgId}`);
+    let finding: Record<string, unknown> | null = null;
+    try {
+      finding = await getFinding(orgId, id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[GET-FINDING] ❌ getFinding threw for id=${id} orgId=${orgId}: ${msg}`);
+      return { error: "lookup failed", detail: msg };
+    }
+    if (finding) {
+      console.log(`[GET-FINDING] ✅ found id=${id} orgId=${orgId}`);
+      return finding;
+    }
+    // Diagnostic: where else might this finding live?
+    try {
+      const { listStoredByIdPrefix, getDoc, encodeDocId } = await import("@core/data/firestore/mod.ts");
+      const exactDocId = encodeDocId("audit-finding", orgId, id);
+      const headerDoc = await getDoc(exactDocId);
+      console.log(`[GET-FINDING] header doc at ${exactDocId} → ${headerDoc ? "EXISTS" : "missing"}`);
+      if (headerDoc) {
+        console.log(`[GET-FINDING] header keys: ${Object.keys(headerDoc).join(", ")} totalChunks=${(headerDoc as Record<string, unknown>).totalChunks ?? "n/a"}`);
+      }
+      const matches = await listStoredByIdPrefix<unknown>(`audit-finding__`, { limit: 50000 });
+      const byId = matches.filter((m) => m.id.endsWith(`__${id}`));
+      console.log(`[GET-FINDING] found ${byId.length} doc(s) with finding id ${id} across all orgs:`);
+      for (const m of byId.slice(0, 10)) console.log(`[GET-FINDING]   - ${m.id} (key=${JSON.stringify(m.key)})`);
+    } catch (err) {
+      console.error(`[GET-FINDING] diagnostic scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return { error: "not found" };
   }
 
   @Get("recording") @Description("Stream audit recording audio from S3 as audio/mpeg")

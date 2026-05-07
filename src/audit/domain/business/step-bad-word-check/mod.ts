@@ -48,6 +48,12 @@ export async function stepBadWordCheck(req: Request): Promise<Response> {
     reservationId: String(finding.record?.ReservationId ?? finding.record?.ResPkgId ?? ""),
     findingUrl,
     recordUrl: isPackage ? recordUrl : undefined,
+    // Rich-template context: pass the full QB record + recording ID so the
+    // email can render the two-column Guest/Booking sections that
+    // stakeholders specifically asked us to restore from prod.
+    record: finding.record as Record<string, unknown> | undefined,
+    recordingId: (finding as Record<string, unknown>).recordingId as string | undefined,
+    findingOwner: (finding as Record<string, unknown>).owner as string | undefined,
   };
 
   try {

@@ -184,6 +184,46 @@ export interface BadWordEmailContext {
   reservationId?: string;
   findingUrl?: string;
   recordUrl?: string;
+  // Optional richer context — when provided, sendBadWordAlert renders the
+  // two-column Guest Information / Booking Information layout that
+  // stakeholders flagged as the "right office on the email" template.
+  record?: Record<string, unknown>;
+  recordingId?: string;
+  findingOwner?: string;
+}
+
+/** RelatedOfficeId → canonical office name. Ported from the pre-refactor
+ *  providers/bad-words.ts (commit 51b89f8). The QB record's OfficeName field
+ *  is sometimes truncated or wrong; the office ID is the source of truth.
+ *  Stakeholders explicitly asked for the right office to appear in alerts. */
+export const OFFICE_NAMES_BY_ID: Record<number, string> = {
+  21: "JAY", 147: "JAY209O", 150: "JAY209N", 151: "JAY123", 152: "JAY187",
+  153: "JAY201", 154: "JAY301", 155: "JAY314", 156: "JAY315", 157: "JAY309",
+  158: "JAY401", 159: "JAY407", 160: "JAY484", 161: "JAY514", 162: "JAY702",
+  163: "JAY915", 164: "JAY954", 165: "JAY390", 201: "JAY111", 202: "JAY249",
+  203: "JAY250", 204: "JAY732", 205: "JAY754", 206: "JAY863", 221: "JAY777",
+  227: "JAY423", 228: "JAY532", 229: "JAY626", 230: "JAY676", 231: "JAY696",
+  233: "JAY778", 234: "JAY779", 1259: "JAY747", 1262: "JAY703", 1266: "JAY917",
+  1267: "JAY703", 1268: "JAY908", 1273: "JAY101", 1274: "JAY316", 1275: "JAY125",
+  1281: "JAY430", 1436: "JAY916", 1437: "JAY772", 1456: "JAY311", 1462: "JAY007",
+  1480: "JAY705", 1483: "JAY615", 1488: "JAY918", 1491: "JAY720", 1492: "JAY611",
+  1493: "JAY973",
+};
+
+function resolveOfficeName(ctx: BadWordEmailContext): string {
+  const rec = ctx.record ?? {};
+  const idCandidates = [
+    ctx.officeId,
+    rec.RelatedOfficeId,
+    rec.OfficeId,
+    rec.officeId,
+  ];
+  for (const c of idCandidates) {
+    if (c == null) continue;
+    const n = Number(c);
+    if (Number.isFinite(n) && OFFICE_NAMES_BY_ID[n]) return OFFICE_NAMES_BY_ID[n];
+  }
+  return ctx.officeName ?? "";
 }
 
 /** Send bad word alert email via Postmark. */
@@ -216,58 +256,93 @@ export async function sendBadWordAlert(
     result.matches,
   );
 
-  const metaRow = (label: string, val: string | undefined, url?: string) =>
-    val
-      ? `<tr><td style="font-size:10px;color:#7f8c8d;padding:4px 0 1px;text-transform:uppercase;letter-spacing:.5px;">${
-        escapeHtml(label)
-      }</td><td style="font-size:14px;color:#2c3e50;padding-bottom:6px;">${
-        url
-          ? `<a href="${
-            escapeHtml(url)
-          }" style="color:#2980b9;text-decoration:none;font-weight:600;">${
-            escapeHtml(val)
-          }</a>`
-          : escapeHtml(val)
-      }</td></tr>`
-      : "";
+  // Two-column "Monster Verified AI Detection" layout — stakeholders asked
+  // us to restore the rich template so the right office is unambiguous on
+  // every alert. Office name resolves from the office-id lookup first, with
+  // the QB record's OfficeName as fallback.
+  const rec = (ctx.record ?? {}) as Record<string, unknown>;
+  const pick = (...keys: string[]): string => {
+    for (const k of keys) {
+      const v = rec[k];
+      if (v == null) continue;
+      const s = String(v).trim();
+      if (s) return s;
+    }
+    return "";
+  };
+  const officeName = resolveOfficeName(ctx);
+  const officeId = (() => {
+    const candidates = [ctx.officeId, rec.RelatedOfficeId, rec.OfficeId, rec.officeId];
+    for (const c of candidates) {
+      if (c == null) continue;
+      const n = Number(c);
+      if (Number.isFinite(n)) return String(n);
+    }
+    return "";
+  })();
+
+  const guestEmail = pick("EmailAddress", "GuestEmail", "Email");
+  const guestEmailHtml = guestEmail
+    ? `<a href="mailto:${escapeHtml(guestEmail)}" style="color:#2980b9;text-decoration:none;">${escapeHtml(guestEmail)}</a>`
+    : "";
+
+  /** Field card — same look as the screenshot: small uppercase label,
+   *  larger value, blue left border, light grey background. Renders even
+   *  when value is empty so the layout stays stable. */
+  const card = (icon: string, label: string, valueHtml: string) =>
+    `<div style="background:#f8f9fa;border-left:4px solid #2980b9;padding:10px 14px;margin-bottom:10px;border-radius:0 4px 4px 0;">
+      <div style="font-size:10px;color:#7f8c8d;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">${icon} ${escapeHtml(label)}</div>
+      <div style="font-size:14px;color:#2c3e50;font-weight:500;">${valueHtml || "&nbsp;"}</div>
+    </div>`;
+
+  const guestSection = `
+    <h2 style="margin:0 0 12px;font-size:16px;color:#2c3e50;border-left:4px solid #2980b9;padding-left:10px;">👤 Guest Information</h2>
+    ${card("🔑", "RecordID", escapeHtml(ctx.recordId ?? pick("RecordId")))}
+    ${card("👤", "GuestFull Name", escapeHtml(ctx.guestName ?? pick("GuestFullName", "GuestName")))}
+    ${card("👥", "SpouseFull Name", escapeHtml(pick("SpouseFullName", "SpouseName")))}
+    ${card("📧", "EmailAddress", guestEmailHtml)}
+    ${card("📱", "PhoneNumber", escapeHtml(pick("PhoneNumber", "Phone")))}
+    ${card("📞", "AlternateNumber", escapeHtml(pick("AlternateNumber", "AltPhone")))}
+    ${card("🏢", "Office Name", escapeHtml(officeName))}
+    ${card("🏢", "RelatedOfficeId", escapeHtml(officeId))}
+    ${card("🌍", "Destination", escapeHtml(pick("DestinationDisplay", "Destination")))}
+  `;
+
+  const bookingSection = `
+    <h2 style="margin:0 0 12px;font-size:16px;color:#2c3e50;border-left:4px solid #2980b9;padding-left:10px;">📅 Booking Information</h2>
+    ${card("📅", "DateOfBooking", escapeHtml(pick("DateOfBooking", "BookingDate")))}
+    ${card("🎫", "ReservationID", escapeHtml(ctx.reservationId ?? pick("ReservationId")))}
+    ${card("🎫", "RespkgID", escapeHtml(pick("ResPkgId", "RespkgId")))}
+    ${card("🎤", "Genie", escapeHtml(ctx.recordingId ?? pick("GenieNumber")))}
+    ${card("💰", "TotalPaid", escapeHtml(pick("TotalPaid", "145")))}
+    ${card("📋", "Finding_Owner", escapeHtml(ctx.findingOwner ?? ""))}
+  `;
 
   const htmlBody =
     `<!DOCTYPE html><html><body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#ecf0f1;">
 <table width="100%" cellpadding="0" cellspacing="0" style="padding:20px 0;background:#ecf0f1;">
 <tr><td align="center">
-<table width="100%" style="max-width:820px;background:#fff;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);overflow:hidden;" cellpadding="0" cellspacing="0">
+<table width="100%" style="max-width:980px;background:#fff;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);overflow:hidden;" cellpadding="0" cellspacing="0">
   <tr><td style="background:linear-gradient(135deg,#e74c3c,#c0392b);padding:28px;text-align:center;">
-    <h1 style="margin:0;color:#fff;font-size:26px;font-weight:700;">Bad Word Alert</h1>
+    <h1 style="margin:0;color:#fff;font-size:26px;font-weight:700;">⚠️ Monster Verified AI Detection</h1>
   </td></tr>
-  <tr><td style="padding:18px 28px;background:#fff3cd;border-bottom:3px solid #f39c12;">
+  <tr><td style="padding:18px 28px;background:linear-gradient(135deg,#fff8dc,#fff3cd);border-bottom:3px solid #f39c12;">
     <div style="font-size:10px;color:#856404;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">TRIGGER KEYWORDS</div>
-    <div style="font-size:20px;font-weight:700;color:#c0392b;">${
-      escapeHtml(triggerList)
-    }</div>
-    <div style="margin-top:8px;font-size:11px;color:#856404;">${
-      escapeHtml(timestamp)
-    }</div>
+    <div style="font-size:22px;font-weight:700;color:#c0392b;">${escapeHtml(triggerList)}</div>
+    <div style="margin-top:10px;font-size:11px;color:#856404;"><strong>TIMESTAMP:</strong> ${escapeHtml(timestamp)}</div>
   </td></tr>
   <tr><td style="padding:22px 28px;">
-    <h2 style="margin:0 0 12px;font-size:16px;color:#2c3e50;">Finding Details</h2>
     <table cellpadding="0" cellspacing="0" style="width:100%;">
-      ${metaRow("Finding ID", ctx.findingId, ctx.findingUrl)}
-      ${metaRow("Record ID", ctx.recordId, ctx.recordUrl)}
-      ${metaRow("Agent", ctx.agentEmail)}
-      ${
-      metaRow(
-        "Office",
-        ctx.officeName ??
-          (ctx.officeId != null ? String(ctx.officeId) : undefined),
-      )
-    }
-      ${metaRow("Guest Name", ctx.guestName)}
-      ${metaRow("Reservation ID", ctx.reservationId)}
+      <tr>
+        <td valign="top" style="width:50%;padding-right:12px;">${guestSection}</td>
+        <td valign="top" style="width:50%;padding-left:12px;">${bookingSection}</td>
+      </tr>
     </table>
   </td></tr>
   <tr><td style="padding:0 28px 28px;">
-    <h2 style="margin:0 0 12px;font-size:16px;color:#2c3e50;">Transcript</h2>
+    <h2 style="margin:0 0 12px;font-size:16px;color:#2c3e50;border-left:4px solid #2980b9;padding-left:10px;">📝 Transcript</h2>
     <div style="background:#f8f9fa;padding:18px;border-radius:6px;line-height:1.8;font-size:14px;color:#2c3e50;white-space:pre-wrap;word-wrap:break-word;border:1px solid #e1e8ed;">${highlightedTranscript}</div>
+    ${ctx.findingUrl ? `<div style="margin-top:14px;font-size:12px;"><a href="${escapeHtml(ctx.findingUrl)}" style="color:#2980b9;font-weight:600;text-decoration:none;">View Finding →</a>${ctx.recordUrl ? ` &middot; <a href="${escapeHtml(ctx.recordUrl)}" style="color:#2980b9;font-weight:600;text-decoration:none;">View QB Record →</a>` : ""}</div>` : ""}
   </td></tr>
   <tr><td style="padding:16px 28px;background:#34495e;text-align:center;">
     <p style="margin:0;font-size:11px;color:#ecf0f1;">Monster Reservations Group · AI Verification System · Automated compliance alert</p>

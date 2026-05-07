@@ -12,7 +12,7 @@ import { authenticate } from "@core/business/auth/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { saveFinding, saveJob, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
-import { enqueueStep, getSelfUrl } from "@core/data/qstash/mod.ts";
+import { enqueueStep, getSelfUrl, getQueueCounts } from "@core/data/qstash/mod.ts";
 import { S3Ref } from "@core/data/s3/mod.ts";
 import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
 import { startReauditWithGenies } from "@audit/domain/business/reaudit/mod.ts";
@@ -257,9 +257,18 @@ export class AuditController {
   @Get("stats") @ReturnedType(PipelineStatsResponse) @Description("Get pipeline stats")
   async getStats() {
     const orgId = defaultOrgId();
-    const stats = await getStats(orgId);
+    // inPipe = QStash queue depth (messages NOT yet delivered to a handler).
+    // Previously this was set to stats.active.length, which made "In Pipeline"
+    // mirror the Active panel — useless because a queued message never has
+    // an active-tracking row until its handler starts. Reading queue counts
+    // directly from QStash is the only honest source of "still waiting".
+    const [stats, queueCounts] = await Promise.all([
+      getStats(orgId),
+      getQueueCounts().catch(() => ({} as Record<string, number>)),
+    ]);
+    const inPipe = Object.values(queueCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
     return {
-      inPipe: stats.active.length,
+      inPipe,
       active: stats.active,
       completed24h: stats.completedCount,
       errors24h: stats.errors.length,

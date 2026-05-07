@@ -25,6 +25,11 @@ import { defaultOrgId } from "@core/business/auth/mod.ts";
 import { startUploadReaudit } from "@audit/domain/business/upload-reaudit/mod.ts";
 import { startReauditWithGenies } from "@audit/domain/business/reaudit/mod.ts";
 import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
+import { saveFinding, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
+import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
+import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
+import { enqueueStep, getSelfUrl } from "@core/data/qstash/mod.ts";
+import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -257,6 +262,154 @@ async function handleReauditDifferentRecording(req: Request): Promise<Response> 
     console.error(`❌ [REAUDIT-DIFFERENT] failed fid=${findingId}:`, err);
     return Response.json({ ok: false, error: (err as Error).message ?? String(err) }, { status: 500 });
   }
+}
+
+// Direct-dispatch: POST /audit/test-by-rid and /audit/package-by-rid — n8n
+// triggers send `?rid=…` with NO body, but danet's @Body decorator
+// unconditionally JSON.parse()'s the request body and throws "Unexpected end
+// of JSON input" on empty input → 500. The handlers don't need a body
+// (everything's in the query string), so we skip danet entirely and parse
+// the body tolerantly here. Same workaround pattern as the appeal endpoints.
+
+async function readJsonBodyTolerant(req: Request): Promise<Record<string, unknown>> {
+  if (req.method === "GET" || req.method === "HEAD") return {};
+  const ct = req.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) return {};
+  try {
+    const text = await req.text();
+    if (!text.trim()) return {};
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function handleCreateDateLegAudit(req: Request): Promise<Response> {
+  if (req.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
+  const url = new URL(req.url);
+  const rid = url.searchParams.get("rid") ?? "";
+  if (!rid) return Response.json({ error: "rid parameter required" }, { status: 400 });
+  const callbackUrl = url.searchParams.get("callback_url") ?? "none";
+  const qlabConfig = url.searchParams.get("qlab_config") ?? undefined;
+  const override = url.searchParams.get("override") ?? undefined;
+  const auditId = url.searchParams.get("audit_id") ?? undefined;
+
+  const body = await readJsonBodyTolerant(req);
+  const record = (await getDateLegByRid(rid)) ?? (body.record as Record<string, unknown> | undefined) ?? { RecordId: rid };
+  const recordingIdField = (body.recordingIdField as string | undefined) ?? "VoGenie";
+
+  const orgId = defaultOrgId() as OrgId;
+  const jobId = auditId ?? nanoid();
+  const job = {
+    id: jobId, doneAuditIds: [], status: "running",
+    timestamp: new Date().toISOString(),
+    owner: (body.owner as string | undefined) ?? "api",
+    updateEndpoint: callbackUrl, recordsToAudit: [rid],
+  };
+  await saveJob(orgId, job);
+
+  const findingId = nanoid();
+  const rawRecordingId = (record as Record<string, unknown>)[recordingIdField] != null
+    ? String((record as Record<string, unknown>)[recordingIdField])
+    : undefined;
+  const genieIdList = rawRecordingId ? rawRecordingId.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
+  const finding = {
+    id: findingId, auditJobId: jobId, findingStatus: "pending",
+    feedback: { heading: "", text: "", viewUrl: "" },
+    job, record, recordingIdField,
+    recordingId: override ?? genieIdList[0] ?? rawRecordingId,
+    genieIds: !override && genieIdList.length > 1 ? genieIdList : undefined,
+    owner: job.owner, updateEndpoint: callbackUrl,
+    qlabConfig: qlabConfig ?? (body.qlabConfig as string | undefined),
+    isTest: body.isTest,
+    testEmailRecipients: body.testEmailRecipients,
+    startedAt: Date.now(),
+  };
+  await saveFinding(orgId, finding);
+
+  let enqueueResult: { ok: boolean; messageId?: string; callback?: string; error?: string };
+  try {
+    const messageId = await enqueueStep("init", { findingId, orgId });
+    enqueueResult = { ok: true, messageId, callback: `${getSelfUrl()}/audit/step/init` };
+  } catch (e) {
+    enqueueResult = { ok: false, error: (e as Error).message };
+    console.error(`❌ [AUDIT] enqueueStep FAILED orgId=${orgId} finding=${findingId}:`, e);
+  }
+
+  let trackActiveResult: { ok: boolean; error?: string };
+  try {
+    await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: false, startedAt: Date.now() });
+    trackActiveResult = { ok: true };
+  } catch (e) {
+    trackActiveResult = { ok: false, error: (e as Error).message };
+    console.error(`❌ [AUDIT] trackActive FAILED orgId=${orgId} finding=${findingId}:`, e);
+  }
+
+  console.log(`🚀 [AUDIT] Date-leg audit started: job=${jobId} finding=${findingId} rid=${rid} orgId=${orgId}`);
+  return Response.json({ jobId, findingId, status: "queued", enqueue: enqueueResult, trackActive: trackActiveResult });
+}
+
+async function handleCreatePackageAudit(req: Request): Promise<Response> {
+  if (req.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
+  const url = new URL(req.url);
+  const rid = url.searchParams.get("rid") ?? "";
+  if (!rid) return Response.json({ error: "rid parameter required" }, { status: 400 });
+  const callbackUrl = url.searchParams.get("callback_url") ?? "none";
+  const qlabConfig = url.searchParams.get("qlab_config") ?? undefined;
+
+  const body = await readJsonBodyTolerant(req);
+  const record = (await getPackageByRid(rid)) ?? (body.record as Record<string, unknown> | undefined) ?? { RecordId: rid };
+  const recordingIdField = (body.recordingIdField as string | undefined) ?? "GenieNumber";
+
+  const orgId = defaultOrgId() as OrgId;
+  const jobId = nanoid();
+  const job = {
+    id: jobId, doneAuditIds: [], status: "running",
+    timestamp: new Date().toISOString(),
+    owner: (body.owner as string | undefined) ?? "api",
+    updateEndpoint: callbackUrl, recordsToAudit: [rid],
+  };
+  await saveJob(orgId, job);
+
+  const findingId = nanoid();
+  const rawRecordingId = (record as Record<string, unknown>)[recordingIdField] != null
+    ? String((record as Record<string, unknown>)[recordingIdField])
+    : undefined;
+  const genieIdList = rawRecordingId ? rawRecordingId.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
+  const finding = {
+    id: findingId, auditJobId: jobId, findingStatus: "pending",
+    feedback: { heading: "", text: "", viewUrl: "" },
+    job, record, recordingIdField,
+    recordingId: genieIdList[0] ?? rawRecordingId,
+    genieIds: genieIdList.length > 1 ? genieIdList : undefined,
+    owner: job.owner, updateEndpoint: callbackUrl,
+    qlabConfig: qlabConfig ?? (body.qlabConfig as string | undefined),
+    isTest: body.isTest,
+    testEmailRecipients: body.testEmailRecipients,
+    startedAt: Date.now(),
+  };
+  await saveFinding(orgId, finding);
+
+  let enqueueResult: { ok: boolean; messageId?: string; callback?: string; error?: string };
+  try {
+    const messageId = await enqueueStep("init", { findingId, orgId });
+    enqueueResult = { ok: true, messageId, callback: `${getSelfUrl()}/audit/step/init` };
+  } catch (e) {
+    enqueueResult = { ok: false, error: (e as Error).message };
+    console.error(`❌ [AUDIT] enqueueStep FAILED orgId=${orgId} finding=${findingId}:`, e);
+  }
+
+  let trackActiveResult: { ok: boolean; error?: string };
+  try {
+    await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: true, startedAt: Date.now() });
+    trackActiveResult = { ok: true };
+  } catch (e) {
+    trackActiveResult = { ok: false, error: (e as Error).message };
+    console.error(`❌ [AUDIT] trackActive FAILED orgId=${orgId} finding=${findingId}:`, e);
+  }
+
+  console.log(`🚀 [AUDIT] Package audit started: job=${jobId} finding=${findingId} rid=${rid} orgId=${orgId}`);
+  return Response.json({ jobId, findingId, status: "queued", enqueue: enqueueResult, trackActive: trackActiveResult });
 }
 
 // Direct-dispatch: POST /audit/api/appeal — file a judge appeal. Same body-
@@ -515,6 +668,17 @@ Deno.serve({ port }, (req, info) => {
     if (path === "/audit/api/appeal" || path === "/api/audit/appeal") {
       console.log(`[ROUTER] ${req.method} ${path} → direct file-appeal handler`);
       return handleFileAppeal(req);
+    }
+
+    // /audit/test-by-rid + /audit/package-by-rid — direct-dispatch so n8n
+    // POSTs with no body don't crash danet's @Body decoder.
+    if (path === "/audit/test-by-rid") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct date-leg-audit handler`);
+      return handleCreateDateLegAudit(req);
+    }
+    if (path === "/audit/package-by-rid") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct package-audit handler`);
+      return handleCreatePackageAudit(req);
     }
 
     // /gamification/api/upload-sound — direct (multipart; @Req broken)

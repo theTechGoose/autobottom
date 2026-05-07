@@ -4,7 +4,7 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import * as cfg from "@admin/domain/data/admin-repository/mod.ts";
 import * as stats from "@audit/domain/data/stats-repository/mod.ts";
-import { pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts, getQueueInfo } from "@core/data/qstash/mod.ts";
+import { pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts, getQueueInfo, setQstashQueueParallelism } from "@core/data/qstash/mod.ts";
 import { publishStep } from "@core/data/qstash/mod.ts";
 import { clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getTokenUsage } from "@audit/domain/data/groq/mod.ts";
@@ -161,6 +161,25 @@ export class AdminConfigController {
   async queueInfo() {
     const info = await getQueueInfo();
     return { ok: true, queues: info };
+  }
+
+  /** Push parallelism to a specific QStash queue. Body OR query:
+   *  { queueName: "audit-transcribe" | "audit-questions" | "audit-cleanup",
+   *    parallelism: <integer> }
+   *  Returns the new queue-info after the push so the caller can verify
+   *  it landed. QStash enforces parallelism server-side — once set, no
+   *  more than that many messages of that queue can be in-flight. */
+  @Post("set-queue-parallelism") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
+  async setQueueParallelism(@Body() body: GenericBodyRequest, @Query("queueName") queueQ: string, @Query("parallelism") parallelismQ: string) {
+    const b = (body ?? {}) as { queueName?: string; parallelism?: number };
+    const queueName = (b.queueName ?? queueQ ?? "").trim();
+    const parallelism = b.parallelism ?? parseInt(parallelismQ || "0", 10);
+    if (!queueName) return { error: "queueName required" };
+    if (!Number.isFinite(parallelism) || parallelism < 1) return { error: "parallelism must be a positive integer" };
+    const result = await setQstashQueueParallelism(queueName, parallelism);
+    if (!result.ok) return { ok: false, error: result.error };
+    const info = await getQueueInfo();
+    return { ok: true, set: { queueName, parallelism }, queues: info };
   }
 
   /** FAST bulk-delete of active-tracking + watchdog entries — no per-finding

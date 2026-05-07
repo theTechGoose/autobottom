@@ -261,11 +261,35 @@ export async function getStats(orgId: OrgId): Promise<{
   const now = Date.now();
   const cutoff = now - DAY_MS;
 
+  // Active = a row whose step has reported in within the last STALE_MS.
+  // Anything older almost certainly crashed/timed out without calling
+  // untrackActive, so it's not actually running on QStash anymore. We
+  // filter stale rows out of the dashboard view AND fire-and-forget
+  // delete them so they don't keep accumulating across reads.
+  const STALE_MS = 5 * 60 * 1000;
   const activeRows = await listStoredWithKeys<Record<string, unknown>>("active-tracking", orgId);
-  const active: Record<string, unknown>[] = activeRows.map(({ key, value }) => ({
-    ...value,
-    findingId: (value.findingId as string) || String(key[key.length - 1]),
-  }));
+  const active: Record<string, unknown>[] = [];
+  const staleFindingIds: string[] = [];
+  for (const { key, value } of activeRows) {
+    const ts = Number(value?.ts ?? 0);
+    const ageMs = ts > 0 ? now - ts : Number.POSITIVE_INFINITY;
+    const findingId = (value?.findingId as string) || String(key[key.length - 1]);
+    if (ageMs <= STALE_MS) {
+      active.push({ ...value, findingId });
+    } else {
+      staleFindingIds.push(findingId);
+    }
+  }
+  if (staleFindingIds.length > 0) {
+    queueMicrotask(async () => {
+      for (const fid of staleFindingIds) {
+        try {
+          await deleteStored("active-tracking", orgId, fid);
+          await deleteStored("watchdog-active", GLOBAL, fid);
+        } catch { /* best-effort */ }
+      }
+    });
+  }
 
   const completed = await listStoredByCompletedAt<{ ts?: number }>(
     "completed-audit-stat", orgId, cutoff, now,

@@ -32,6 +32,10 @@ export const handler = define.handlers({
     const byName = new Map<string, { parallelism?: number; messageCount?: number; paused?: boolean }>();
     for (const q of info.queues ?? []) byName.set(q.queueName, q);
 
+    const totalQueued = (info.queues ?? []).reduce((s, q) => s + (typeof q.messageCount === "number" ? q.messageCount : 0), 0);
+    const totalParallelism = (info.queues ?? []).reduce((s, q) => s + (typeof q.parallelism === "number" ? q.parallelism : 0), 0);
+    const anyPaused = (info.queues ?? []).some((q) => q.paused === true);
+
     const html = renderToString(
       <div>
         {/* Header */}
@@ -40,6 +44,22 @@ export const handler = define.handlers({
           <div>
             <div class="modal-title" style="margin-bottom:2px;">Pipeline Settings</div>
             <div class="modal-sub" style="margin-bottom:0;">Per-queue QStash parallelism & retry policy</div>
+          </div>
+        </div>
+
+        {/* Remaining-to-run summary (live from QStash) */}
+        <div class="pm-section" style="border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin:0 28px 12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;">
+            <div>
+              <span style="color:var(--text-dim);text-transform:uppercase;letter-spacing:0.8px;font-size:10px;">Remaining to run</span>
+              <div style="font-size:18px;font-weight:600;color:var(--text);margin-top:2px;">
+                {totalQueued} <span style="font-size:11px;font-weight:400;color:var(--text-dim);">queued in QStash</span>
+              </div>
+            </div>
+            <div style="text-align:right;color:var(--text-dim);">
+              <div>cap: {totalParallelism} concurrent</div>
+              <div style={anyPaused ? "color:var(--orange);" : ""}>{anyPaused ? "paused" : "running"}</div>
+            </div>
           </div>
         </div>
 

@@ -17,13 +17,69 @@ async function hashString(input: string): Promise<string> {
 }
 
 // ── Finding CRUD (chunked) ──────────────────────────────────────────────────
+// Per-isolate in-memory cache. audit-finding docs are heavily chunked
+// (record + transcript + answeredQuestions), so each getFinding can cost
+// 5-10 Firestore reads. Pipeline steps (init, transcribe, prepare, askAll,
+// finalize, cleanup) all read the same finding, often within seconds, and
+// were previously hitting Firestore for every single one.
+//
+// TTL is short (30s) so cross-isolate writes stay visible quickly. Within
+// the same isolate, saveFinding refreshes the cached value so subsequent
+// reads observe their own writes immediately. The cache is bounded by a
+// hard size cap to prevent unbounded growth on a long-lived isolate.
+
+const FINDING_CACHE_TTL_MS = 30_000;
+const FINDING_CACHE_MAX = 1000;
+const _findingCache = new Map<string, { value: Record<string, any> | null; expiresAt: number }>();
+
+function cacheFindingKey(orgId: OrgId, id: string): string {
+  return `${orgId}:${id}`;
+}
+
+function trimFindingCache(): void {
+  if (_findingCache.size <= FINDING_CACHE_MAX) return;
+  const now = Date.now();
+  // Drop expired entries first.
+  for (const [k, v] of _findingCache) {
+    if (v.expiresAt <= now) _findingCache.delete(k);
+  }
+  // If still over cap, drop oldest entries (insertion order = approx FIFO).
+  while (_findingCache.size > FINDING_CACHE_MAX) {
+    const oldest = _findingCache.keys().next().value;
+    if (!oldest) break;
+    _findingCache.delete(oldest);
+  }
+}
 
 export async function getFinding(orgId: OrgId, id: string): Promise<Record<string, any> | null> {
-  return await getStoredChunked<Record<string, any>>("audit-finding", orgId, id);
+  const key = cacheFindingKey(orgId, id);
+  const now = Date.now();
+  const cached = _findingCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  const value = await getStoredChunked<Record<string, any>>("audit-finding", orgId, id);
+  _findingCache.set(key, { value, expiresAt: now + FINDING_CACHE_TTL_MS });
+  trimFindingCache();
+  return value;
 }
 
 export async function saveFinding(orgId: OrgId, finding: Record<string, any>): Promise<void> {
   await setStoredChunked("audit-finding", orgId, [finding.id], finding);
+  // Refresh cache with what we just wrote so subsequent getFinding calls
+  // in this isolate see their own write without a Firestore round-trip.
+  _findingCache.set(cacheFindingKey(orgId, finding.id), {
+    value: finding,
+    expiresAt: Date.now() + FINDING_CACHE_TTL_MS,
+  });
+  trimFindingCache();
+}
+
+/** Invalidate the in-memory finding cache for a given findingId (or all,
+ *  if no id passed). Used by tests and by deletion paths that need to
+ *  guarantee the next read goes to Firestore. */
+export function invalidateFindingCache(orgId?: OrgId, id?: string): void {
+  if (orgId && id) { _findingCache.delete(cacheFindingKey(orgId, id)); return; }
+  _findingCache.clear();
 }
 
 // ── Audit Deduplication ─────────────────────────────────────────────────────

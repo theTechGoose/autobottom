@@ -28,7 +28,7 @@ import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
 import { saveFinding, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
 import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
-import { enqueueStep, getSelfUrl } from "@core/data/qstash/mod.ts";
+import { enqueueStep, getSelfUrl, applyDefaultQueueParallelism } from "@core/data/qstash/mod.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
@@ -610,7 +610,13 @@ function isBackendRequest(req: Request): boolean {
 }
 
 // Build banner — proves the deployment is running this commit.
-console.log(`🚀 [BOOT] autobottom deployed at ${new Date().toISOString()} — direct-dispatch v3 (appeal+reaudit)`);
+// Push parallelism settings to QStash so the queues actually enforce a
+// concurrency cap. Fire-and-forget so boot doesn't block on QStash.
+applyDefaultQueueParallelism().catch((e) => {
+  console.error(`⚠️ [BOOT] applyDefaultQueueParallelism failed: ${e instanceof Error ? e.message : String(e)}`);
+});
+
+console.log(`🚀 [BOOT] autobottom deployed at ${new Date().toISOString()} — direct-dispatch v3 (appeal+reaudit) + qstash-parallelism`);
 
 Deno.serve({ port }, (req, info) => {
   // Wrap the entire request lifecycle in AsyncLocalStorage so QStash callbacks

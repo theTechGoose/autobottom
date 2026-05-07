@@ -4,7 +4,7 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import * as cfg from "@admin/domain/data/admin-repository/mod.ts";
 import * as stats from "@audit/domain/data/stats-repository/mod.ts";
-import { pauseAllQueues, resumeAllQueues, getQueueCounts } from "@core/data/qstash/mod.ts";
+import { pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts } from "@core/data/qstash/mod.ts";
 import { publishStep } from "@core/data/qstash/mod.ts";
 import { clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getTokenUsage } from "@audit/domain/data/groq/mod.ts";
@@ -140,6 +140,18 @@ export class AdminConfigController {
     await resumeAllQueues();
     await cfg.setPipelinePaused(ORG(), false);
     return { ok: true, paused: false };
+  }
+
+  /** NUKE every queued message from QStash for all three audit queues.
+   *  Use when n8n bulk-fired more than the system can handle and you need
+   *  to start over rather than wait the backlog out. Caller is responsible
+   *  for also clearing active-tracking via /admin/terminate-all-active or
+   *  letting the watchdog sweep stale entries. Returns the count purged. */
+  @Post("purge-queues") @ReturnedType(OkMessageResponse)
+  async purgeQueues() {
+    const purged = await purgeAllQueues();
+    console.log(`💣 [ADMIN] Purged ${purged} messages from all QStash queues`);
+    return { ok: true, message: `purged ${purged} messages` };
   }
 
   @Post("clear-review-queue") @ReturnedType(ClearedResponse)

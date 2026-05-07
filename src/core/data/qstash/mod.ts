@@ -232,6 +232,46 @@ export async function purgeAllQueues(): Promise<number> {
   }, {}, "client");
 }
 
+/** Push parallelism settings to QStash so the queue itself enforces the
+ *  in-flight cap — without this, "parallelism=20" in our admin UI is purely
+ *  cosmetic and QStash defaults (typically 1) apply, causing massive
+ *  backlogs when n8n bulk-fires hundreds of audits.
+ *
+ *  Calls POST /v2/queues with { queueName, parallelism } per QStash's
+ *  upsert API. Per-queue, so we can tune each step type independently
+ *  if needed. Idempotent — same value re-pushed is a no-op on QStash. */
+export async function setQstashQueueParallelism(queueName: string, parallelism: number): Promise<{ ok: boolean; error?: string }> {
+  return withSpan("qstash.setQueueParallelism", async (span) => {
+    if (isLocalMode()) return { ok: true };
+    span.setAttribute("qstash.queue", queueName);
+    span.setAttribute("qstash.parallelism", parallelism);
+    const res = await fetch(`${qstashUrl()}/v2/queues`, {
+      method: "POST",
+      headers: { ...qstashAuth(), "content-type": "application/json" },
+      body: JSON.stringify({ queueName, parallelism: Math.max(1, Math.floor(parallelism)) }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(`[QSTASH] set parallelism ${queueName}=${parallelism} failed: ${res.status} ${text.slice(0, 200)}`);
+      return { ok: false, error: `${res.status}: ${text.slice(0, 200)}` };
+    }
+    console.log(`✅ [QSTASH] queue ${queueName} parallelism=${parallelism}`);
+    metric("autobottom.qstash.set_parallelism", 1, { queue: queueName });
+    return { ok: true };
+  }, {}, "client");
+}
+
+/** Apply default parallelism to all three audit queues. Called on boot so
+ *  fresh deployments + new QStash queues land at sensible values without
+ *  manual configuration. transcribe/cleanup are I/O-heavy → can run higher
+ *  concurrency; questions is LLM-heavy and rate-limit-sensitive → kept lower. */
+export async function applyDefaultQueueParallelism(): Promise<void> {
+  if (isLocalMode()) return;
+  await setQstashQueueParallelism(TRANSCRIBE_QUEUE, 8);
+  await setQstashQueueParallelism(QUESTIONS_QUEUE, 4);
+  await setQstashQueueParallelism(CLEANUP_QUEUE, 8);
+}
+
 export async function getQueueCounts(): Promise<Record<string, number>> {
   return withSpan("qstash.getQueueCounts", async () => {
     if (isLocalMode()) return Object.fromEntries(ALL_QUEUES.map((q) => [q, 0]));

@@ -206,25 +206,73 @@ export async function resumeAllQueues(): Promise<void> {
   }, {}, "client");
 }
 
+/** Purge every queued message from each audit queue.
+ *
+ *  The previous implementation walked GET /v2/messages?queueName=X and
+ *  deleted each by id, but that endpoint doesn't surface messages still
+ *  sitting in the queue waiting to be delivered (only ones with delivery
+ *  attempts already recorded). Result: a queue with lag=200 returned
+ *  "purged 0 messages" and the backlog stayed.
+ *
+ *  Reliable approach: DELETE the queue (which discards every queued
+ *  message) and recreate it with the same parallelism + paused state.
+ *  We read the current state first so the recreate doesn't unpause a
+ *  queue an operator just paused or reset parallelism. */
 export async function purgeAllQueues(): Promise<number> {
   return withSpan("qstash.purgeAllQueues", async (span) => {
     if (isLocalMode()) return 0;
     let total = 0;
     await Promise.all(ALL_QUEUES.map(async (q) => {
-      let cursor: string | undefined;
-      do {
-        const url = new URL(`${qstashUrl()}/v2/messages`);
-        url.searchParams.set("queueName", q);
-        if (cursor) url.searchParams.set("cursor", cursor);
-        const res = await fetch(url.toString(), { headers: qstashAuth() });
-        if (!res.ok) { console.error(`[QSTASH] list ${q} failed: ${res.status}`); return; }
-        const { messages = [], cursor: next } = await res.json();
-        cursor = next;
-        await Promise.all((messages as { messageId: string }[]).map(async (m) => {
-          const del = await fetch(`${qstashUrl()}/v2/messages/${m.messageId}`, { method: "DELETE", headers: qstashAuth() });
-          if (del.ok) total++;
-        }));
-      } while (cursor);
+      // Snapshot current settings so we can recreate the queue identically.
+      let parallelism = 1;
+      let paused = false;
+      let lag = 0;
+      try {
+        const cur = await fetch(`${qstashUrl()}/v2/queues/${q}`, { headers: qstashAuth() });
+        if (cur.ok) {
+          const data = await cur.json();
+          parallelism = typeof data.parallelism === "number" ? data.parallelism : 1;
+          paused = !!data.paused;
+          lag = typeof data.lag === "number" ? data.lag : 0;
+        }
+      } catch (err) {
+        console.warn(`[QSTASH] purge ${q}: read state failed:`, err);
+      }
+
+      // Delete the queue. This force-discards every message still queued
+      // for delivery — including those a paused queue is holding.
+      try {
+        const del = await fetch(`${qstashUrl()}/v2/queues/${q}`, { method: "DELETE", headers: qstashAuth() });
+        if (!del.ok) {
+          const text = await del.text().catch(() => "");
+          console.error(`[QSTASH] purge ${q}: delete failed: ${del.status} ${text.slice(0, 200)}`);
+          return;
+        }
+      } catch (err) {
+        console.error(`[QSTASH] purge ${q}: delete threw:`, err);
+        return;
+      }
+
+      // Recreate with the same parallelism + paused so the operator's
+      // earlier configuration is preserved across the purge.
+      try {
+        const re = await fetch(`${qstashUrl()}/v2/queues`, {
+          method: "POST",
+          headers: { ...qstashAuth(), "content-type": "application/json" },
+          body: JSON.stringify({ queueName: q, parallelism: Math.max(1, Math.floor(parallelism)), paused }),
+        });
+        if (!re.ok) {
+          const text = await re.text().catch(() => "");
+          console.error(`[QSTASH] purge ${q}: recreate failed: ${re.status} ${text.slice(0, 200)}`);
+          return;
+        }
+      } catch (err) {
+        console.error(`[QSTASH] purge ${q}: recreate threw:`, err);
+        return;
+      }
+
+      console.log(`💣 [QSTASH] purged ${q}: discarded ${lag} queued messages, recreated parallelism=${parallelism} paused=${paused}`);
+      total += lag;
     }));
     span.setAttribute("qstash.purged_count", total);
     metric("autobottom.qstash.purge", 1);

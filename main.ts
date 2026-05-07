@@ -726,15 +726,18 @@ Deno.serve({ port }, (req, info) => {
       // Pre-track WITH rid so the dashboard's QB Record column populates.
       // We delete the row at end-of-handler (so Active = currently-running
       // only), which means each handler starts with no row — rid would
-      // otherwise be lost. If rid isn't in the QStash body, fall back to
-      // the finding doc (cached, ~free on warm isolate). Idempotent —
-      // the step's own trackActive call will merge over this with the
-      // same data.
+      // otherwise be lost. If rid isn't in the QStash body, try the
+      // finding doc (cached) but bound the lookup to 2s so we don't
+      // inherit the 60s Firestore timeout when the DB is lagging.
+      // Idempotent — the step's own trackActive call will merge over
+      // this with the same data.
       if (orgId && findingId !== "<unknown>") {
         try {
           if (!rid) {
             const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
-            const finding = await getFinding(orgId as OrgId, findingId);
+            const lookup = getFinding(orgId as OrgId, findingId);
+            const timeout = new Promise<null>((r) => setTimeout(() => r(null), 2000));
+            const finding = await Promise.race([lookup, timeout]);
             const r = finding?.rid ?? finding?.recordId;
             if (typeof r === "string" || typeof r === "number") rid = String(r);
           }

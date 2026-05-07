@@ -299,7 +299,13 @@ function docPath(creds: FirestoreCreds, docId: string): string {
  *  Body consumption happens INSIDE the retry loop so mid-stream body
  *  failures also trigger retry. Per-attempt 20s abort prevents 120s hangs. */
 const FS_RETRY_DELAYS_MS = [200, 600];
-const FS_ATTEMPT_TIMEOUT_MS = 20_000;
+// Per-attempt abort budget. Originally 20s — too aggressive: under normal
+// Firestore load, paginated reads (a 5000-doc page is several MB of body
+// to consume) can legitimately exceed 20s, and every abort cascades into
+// failed middleware auth → redirect to /login → broken audio + breaks
+// queue UX. 60s is plenty for any single fetch + body read while still
+// guarding against the 120s isolate-stall mode that motivated the timeout.
+const FS_ATTEMPT_TIMEOUT_MS = 60_000;
 
 interface FsResult { status: number; ok: boolean; text: string }
 

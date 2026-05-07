@@ -155,27 +155,38 @@ export class AdminConfigController {
   }
 
   /** FAST bulk-delete of active-tracking + watchdog entries — no per-finding
-   *  read/write work, just blast the tracking rows. Use when the dashboard
-   *  is showing stale "queued" entries from crashed step-init runs and the
-   *  regular /admin/terminate-all-active is too slow because it does a
-   *  getFinding + saveFinding for each entry. */
+   *  read/write work, just blast the tracking rows in parallel batches.
+   *  Use when the dashboard is showing stale "queued" entries from crashed
+   *  step-init runs and the regular /admin/terminate-all-active is too slow
+   *  (it does a getFinding + saveFinding for each entry).
+   *
+   *  Sequential deletes hit the 60s isolate timeout when there are 700+
+   *  rows; parallelize at 50 in flight to drain a full backlog in seconds. */
   @Post("nuke-tracking") @ReturnedType(OkMessageResponse)
   async nukeTracking() {
     const orgId = ORG();
     const { listStoredWithKeys, deleteStored } = await import("@core/data/firestore/mod.ts");
     const active = await listStoredWithKeys<{ findingId?: string }>("active-tracking", orgId);
     const watchdog = await listStoredWithKeys<{ findingId?: string }>("watchdog-active", "");
-    let cleared = 0;
-    for (const { key } of active) {
-      await deleteStored("active-tracking", orgId, ...key);
-      cleared++;
+
+    const PARALLEL = 50;
+    async function bulkDelete(type: string, org: string, rows: Array<{ key: string[] }>): Promise<number> {
+      let done = 0;
+      for (let i = 0; i < rows.length; i += PARALLEL) {
+        const batch = rows.slice(i, i + PARALLEL);
+        await Promise.all(batch.map(({ key }) => deleteStored(type, org, ...key).catch(() => {})));
+        done += batch.length;
+      }
+      return done;
     }
-    for (const { key } of watchdog) {
-      await deleteStored("watchdog-active", "", ...key);
-      cleared++;
-    }
-    console.log(`💣 [ADMIN] Nuked ${cleared} tracking entries (active=${active.length} watchdog=${watchdog.length})`);
-    return { ok: true, message: `nuked ${cleared} entries (${active.length} active + ${watchdog.length} watchdog)` };
+
+    const [activeCleared, watchdogCleared] = await Promise.all([
+      bulkDelete("active-tracking", orgId, active),
+      bulkDelete("watchdog-active", "", watchdog),
+    ]);
+    const cleared = activeCleared + watchdogCleared;
+    console.log(`💣 [ADMIN] Nuked ${cleared} tracking entries (active=${activeCleared} watchdog=${watchdogCleared})`);
+    return { ok: true, message: `nuked ${cleared} entries (${activeCleared} active + ${watchdogCleared} watchdog)` };
   }
 
   @Post("clear-review-queue") @ReturnedType(ClearedResponse)

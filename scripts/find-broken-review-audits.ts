@@ -28,13 +28,15 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 interface Args {
   org: string | null;
   json: boolean;
+  idsOnly: boolean;
   concurrency: number;
 }
 
 function parseArgs(argv: string[]): Args {
-  const out: Args = { org: null, json: false, concurrency: 20 };
+  const out: Args = { org: null, json: false, idsOnly: false, concurrency: 20 };
   for (const a of argv) {
     if (a === "--json") out.json = true;
+    else if (a === "--ids-only") out.idsOnly = true;
     else if (a === "--help" || a === "-h") {
       console.log(USAGE);
       Deno.exit(0);
@@ -54,6 +56,8 @@ Usage:
 Options:
   --org=<orgId>         Single org (default: defaultOrgId() from env)
   --json                JSON output instead of table (good for piping)
+  --ids-only            Print ONLY the comma-separated finding IDs to stdout
+                        (progress logs go to stderr). Pipe-friendly.
   --concurrency=N       Parallel finding lookups (default: 20)
 `;
 
@@ -163,6 +167,13 @@ async function main() {
     if (a.recordId && !b.recordId) return -1;
     return (a.recordId ?? "").localeCompare(b.recordId ?? "");
   });
+
+  if (args.idsOnly) {
+    // Pipe-friendly: only the CSV of finding IDs to stdout. Logs are stderr.
+    console.log(broken.map((b) => b.findingId).join(","));
+    console.error(`[scan] emitted ${broken.length} finding IDs`);
+    return;
+  }
 
   if (args.json) {
     console.log(JSON.stringify(broken, null, 2));

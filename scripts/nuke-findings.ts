@@ -47,33 +47,59 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 interface Args {
   findings: string[];
+  fromStdin: boolean;
   org: string | null;
   dryRun: boolean;
+  yes: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
-  const out: Args = { findings: [], org: null, dryRun: false };
+  const out: Args = { findings: [], fromStdin: false, org: null, dryRun: false, yes: false };
   for (const a of argv) {
     if (a === "--dry-run") out.dryRun = true;
+    else if (a === "--stdin") out.fromStdin = true;
+    else if (a === "--yes" || a === "-y") out.yes = true;
     else if (a === "--help" || a === "-h") { console.log(USAGE); Deno.exit(0); }
     else if (a.startsWith("--findings=")) {
       out.findings = a.slice(11).split(",").map((s) => s.trim()).filter(Boolean);
     } else if (a.startsWith("--org=")) out.org = a.slice(6);
     else throw new Error(`unknown arg: ${a}`);
   }
-  if (out.findings.length === 0) throw new Error("--findings=fid1,fid2,... is required");
   return out;
+}
+
+async function readStdinFindings(): Promise<string[]> {
+  const buf = new Uint8Array(1024 * 1024);
+  const parts: string[] = [];
+  const decoder = new TextDecoder();
+  while (true) {
+    const n = await Deno.stdin.read(buf);
+    if (n === null) break;
+    parts.push(decoder.decode(buf.subarray(0, n)));
+  }
+  // Accept newline OR comma separators, trim whitespace, dedupe.
+  const ids = parts.join("").split(/[,\n\r\s]+/).map((s) => s.trim()).filter(Boolean);
+  return [...new Set(ids)];
 }
 
 const USAGE = `nuke-findings — purge finding IDs from every typed-store reference
 
 Usage:
+  # Direct CSV
   deno run -A --env --unstable-raw-imports scripts/nuke-findings.ts --findings=fid1,fid2,...
 
+  # Pipe from find-broken-review-audits.ts (the easy way):
+  deno run -A --env --unstable-raw-imports scripts/find-broken-review-audits.ts --ids-only \\
+    | deno run -A --env --unstable-raw-imports scripts/nuke-findings.ts --stdin --dry-run
+
 Options:
-  --findings=<csv>  REQUIRED. Comma-separated list of finding IDs to nuke.
+  --findings=<csv>  Comma-separated list of finding IDs to nuke.
+  --stdin           Read finding IDs from stdin (newline or comma separated).
+                    One of --findings or --stdin is required.
   --org=<orgId>     Org (default: defaultOrgId from env).
   --dry-run         Print what would delete; don't write.
+  --yes / -y        Skip the "press enter to continue" confirmation prompt
+                    (no-op in --dry-run).
 `;
 
 const GLOBAL = "" as OrgId;
@@ -141,11 +167,25 @@ async function purgeType(spec: TypeSpec, dryRun: boolean): Promise<TypeReport> {
 
 async function main() {
   const args = parseArgs(Deno.args.slice());
+  const fromStdin = args.fromStdin ? await readStdinFindings() : [];
+  const merged = [...args.findings, ...fromStdin];
+  if (merged.length === 0) {
+    console.error("nothing to nuke — pass --findings=… or pipe IDs via --stdin");
+    Deno.exit(2);
+  }
   const orgId = (args.org ?? defaultOrgId()) as OrgId;
-  const fids = new Set(args.findings);
+  const fids = new Set(merged);
   console.error(`[nuke] org=${orgId} dryRun=${args.dryRun} findings=${fids.size}`);
   console.error(`[nuke] target finding ids:\n  ${[...fids].join("\n  ")}`);
   console.error("");
+
+  // Real-run safety prompt — interactive only. Skipped under --yes / --dry-run
+  // / when stdin isn't a tty (e.g. piped input).
+  if (!args.dryRun && !args.yes && Deno.stdin.isTerminal?.()) {
+    console.error(`[nuke] About to PERMANENTLY delete ${fids.size} finding(s) from 20 typed-stores. Press Enter to continue, Ctrl-C to abort…`);
+    const buf = new Uint8Array(64);
+    await Deno.stdin.read(buf);
+  }
 
   const specs = buildSpecs(orgId, fids);
   const reports: TypeReport[] = [];

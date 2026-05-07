@@ -336,17 +336,13 @@ async function handleCreateDateLegAudit(req: Request): Promise<Response> {
     console.error(`❌ [AUDIT] enqueueStep FAILED orgId=${orgId} finding=${findingId}:`, e);
   }
 
-  let trackActiveResult: { ok: boolean; error?: string };
-  try {
-    await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: false, startedAt: Date.now() });
-    trackActiveResult = { ok: true };
-  } catch (e) {
-    trackActiveResult = { ok: false, error: (e as Error).message };
-    console.error(`❌ [AUDIT] trackActive FAILED orgId=${orgId} finding=${findingId}:`, e);
-  }
-
+  // Intentionally NOT calling trackActive("queued") here — it inflates the
+  // dashboard "Active" count to include audits that are sitting in QStash
+  // waiting to be delivered (so n8n bulk-firing 700 audits showed 700
+  // "active" even though QStash only processes 8 at a time). step-init
+  // will trackActive when it actually starts processing.
   console.log(`🚀 [AUDIT] Date-leg audit started: job=${jobId} finding=${findingId} rid=${rid} orgId=${orgId}`);
-  return Response.json({ jobId, findingId, status: "queued", enqueue: enqueueResult, trackActive: trackActiveResult });
+  return Response.json({ jobId, findingId, status: "queued", enqueue: enqueueResult });
 }
 
 async function handleCreatePackageAudit(req: Request): Promise<Response> {
@@ -399,17 +395,10 @@ async function handleCreatePackageAudit(req: Request): Promise<Response> {
     console.error(`❌ [AUDIT] enqueueStep FAILED orgId=${orgId} finding=${findingId}:`, e);
   }
 
-  let trackActiveResult: { ok: boolean; error?: string };
-  try {
-    await trackActive(orgId, findingId, "queued", { recordId: rid, isPackage: true, startedAt: Date.now() });
-    trackActiveResult = { ok: true };
-  } catch (e) {
-    trackActiveResult = { ok: false, error: (e as Error).message };
-    console.error(`❌ [AUDIT] trackActive FAILED orgId=${orgId} finding=${findingId}:`, e);
-  }
-
+  // See comment in handleCreateDateLegAudit — no trackActive("queued") on
+  // create; step-init handles tracking when it actually picks up the work.
   console.log(`🚀 [AUDIT] Package audit started: job=${jobId} finding=${findingId} rid=${rid} orgId=${orgId}`);
-  return Response.json({ jobId, findingId, status: "queued", enqueue: enqueueResult, trackActive: trackActiveResult });
+  return Response.json({ jobId, findingId, status: "queued", enqueue: enqueueResult });
 }
 
 // Direct-dispatch: POST /audit/api/appeal — file a judge appeal. Same body-

@@ -4,7 +4,7 @@ import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import * as cfg from "@admin/domain/data/admin-repository/mod.ts";
 import * as stats from "@audit/domain/data/stats-repository/mod.ts";
-import { pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts } from "@core/data/qstash/mod.ts";
+import { pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts, getQueueInfo } from "@core/data/qstash/mod.ts";
 import { publishStep } from "@core/data/qstash/mod.ts";
 import { clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getTokenUsage } from "@audit/domain/data/groq/mod.ts";
@@ -152,6 +152,15 @@ export class AdminConfigController {
     const purged = await purgeAllQueues();
     console.log(`💣 [ADMIN] Purged ${purged} messages from all QStash queues`);
     return { ok: true, message: `purged ${purged} messages` };
+  }
+
+  /** Read QStash's CURRENT queue settings — the source of truth for
+   *  whether our parallelism push actually applied. Returns parallelism +
+   *  messageCount + paused state for each of the three audit queues. */
+  @Get("queue-info") @ReturnedType(MessageResponse)
+  async queueInfo() {
+    const info = await getQueueInfo();
+    return { ok: true, queues: info };
   }
 
   /** FAST bulk-delete of active-tracking + watchdog entries — no per-finding

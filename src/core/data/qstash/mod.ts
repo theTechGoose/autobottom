@@ -272,6 +272,31 @@ export async function applyDefaultQueueParallelism(): Promise<void> {
   await setQstashQueueParallelism(CLEANUP_QUEUE, 8);
 }
 
+/** Read QStash's actual queue settings — the source of truth for whether
+ *  our parallelism push actually landed. Useful for verifying after deploys. */
+export async function getQueueInfo(): Promise<Array<{ queueName: string; parallelism?: number; messageCount?: number; paused?: boolean; raw?: unknown }>> {
+  return withSpan("qstash.getQueueInfo", async () => {
+    if (isLocalMode()) return ALL_QUEUES.map((q) => ({ queueName: q, parallelism: 0, messageCount: 0, paused: false }));
+    const out = await Promise.all(ALL_QUEUES.map(async (q) => {
+      try {
+        const res = await fetch(`${qstashUrl()}/v2/queues/${q}`, { headers: qstashAuth() });
+        if (!res.ok) return { queueName: q, error: `${res.status}` };
+        const data = await res.json();
+        return {
+          queueName: q,
+          parallelism: data.parallelism,
+          messageCount: data.messageCount,
+          paused: data.paused,
+          raw: data,
+        };
+      } catch (err) {
+        return { queueName: q, error: err instanceof Error ? err.message : String(err) };
+      }
+    }));
+    return out;
+  }, {}, "client");
+}
+
 export async function getQueueCounts(): Promise<Record<string, number>> {
   return withSpan("qstash.getQueueCounts", async () => {
     if (isLocalMode()) return Object.fromEntries(ALL_QUEUES.map((q) => [q, 0]));

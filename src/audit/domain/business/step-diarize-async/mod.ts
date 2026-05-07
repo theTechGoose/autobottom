@@ -15,9 +15,7 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
   if (!finding) return json({ error: "finding not found" }, 404);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
-  if (finding.findingStatus !== "finished") {
-    trackActive(orgId, findingId, "diarize-async").catch(() => {});
-  }
+  // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
 
   if (finding.diarizedTranscript) {
     console.log(`[STEP-DIARIZE] ${findingId}: Already diarized, skipping`);

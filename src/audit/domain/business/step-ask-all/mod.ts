@@ -160,7 +160,11 @@ export async function stepAskAll(req: Request): Promise<Response> {
 
   const stepStart = Date.now();
   console.log(`[STEP-ASK-ALL] ${findingId}: 🚀 Starting...`);
-  trackActive(orgId, findingId, "ask-all").catch(() => {});
+  // Tracking is owned by the step dispatcher in main.ts (pre-tracks with rid
+  // on entry, untracks in finally). A fire-and-forget trackActive here
+  // races with that untrack — if Firestore lags, the write lands AFTER the
+  // untrack and resurrects the row, which is what was inflating the
+  // dashboard's "Active" past the parallelism cap.
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);

@@ -130,7 +130,7 @@ export async function stepAskBatch(req: Request): Promise<Response> {
 
   const stepStartMs = Date.now();
   console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex}/${totalBatches} started at ${new Date(stepStartMs).toISOString()} (${questionIndices.length} questions, attempt ${retryCount + 1})`);
-  trackActive(orgId, findingId, `ask-batch-${batchIndex}`).catch(() => {});
+  // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);

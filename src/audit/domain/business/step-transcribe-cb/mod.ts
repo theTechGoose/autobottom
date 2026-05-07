@@ -15,7 +15,7 @@ export async function stepTranscribeCb(req: Request): Promise<Response> {
   const { findingId, orgId } = body;
 
   console.log(`[STEP-TRANSCRIBE-CB] ${findingId}: Starting...`);
-  trackActive(orgId, findingId, "transcribe-cb").catch(() => {});
+  // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);

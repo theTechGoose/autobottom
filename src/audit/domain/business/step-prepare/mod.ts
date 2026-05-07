@@ -19,7 +19,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
   const { findingId, orgId, adminRetry } = body;
 
   console.log(`[STEP-PREPARE] ${findingId}: Starting preparation...`);
-  trackActive(orgId, findingId, "prepare").catch(() => {});
+  // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
 
   try {
     const finding = await getFinding(orgId, findingId);

@@ -19,7 +19,7 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
 
   const pollStart = Date.now();
   console.log(`[STEP-POLL-TRANSCRIPT] ${findingId}: Starting...`);
-  trackActive(orgId, findingId, "poll-transcript").catch(() => {});
+  // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);

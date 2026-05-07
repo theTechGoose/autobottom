@@ -61,6 +61,13 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const [speed, setSpeed] = useState(1.0);
+  // Mirror of `speed` for the audio effect to read without re-running. The
+  // effect MUST NOT take `speed` as a dependency: a re-run wipes the
+  // `currentLoadFid` closure variable, which makes `loadFinding` re-assign
+  // `audio.src` and reset playback to 0:00. (Reported: "speeding up the
+  // audio starts it over from the beginning.") Bumping speed updates both
+  // the ref (read by the effect) and the state (drives the speed badge).
+  const speedRef = useRef(1.0);
   const [combo, setCombo] = useState(0);
   const [session, setSession] = useState(0);
   const [game, setGame] = useState<GameState>({});
@@ -150,7 +157,7 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       if (!fid || fid === currentLoadFid) return;
       currentLoadFid = fid;
       audio!.src = `/audit/recording?id=${encodeURIComponent(fid)}&idx=0`;
-      audio!.playbackRate = speed;
+      audio!.playbackRate = speedRef.current;
       setHasAudio(true);
       loadWaveform(fid);
     }
@@ -188,11 +195,12 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       audio!.currentTime = Math.max(0, Math.min(audio!.duration, (audio!.currentTime || 0) + delta));
     }
     function bumpSpeed(delta: number) {
-      setSpeed((prev) => {
-        const next = Math.max(SPEED_MIN, Math.min(SPEED_MAX, prev + delta));
-        if (audio) audio.playbackRate = next;
-        return next;
-      });
+      const next = Math.max(SPEED_MIN, Math.min(SPEED_MAX, speedRef.current + delta));
+      speedRef.current = next;
+      if (audio) audio.playbackRate = next;
+      // State update is for the speed-badge render only; effect deps must
+      // NOT include `speed` (see speedRef declaration above).
+      setSpeed(next);
     }
 
     function scheduleDecay() {
@@ -318,7 +326,7 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       if (skipDecayTimer != null) clearTimeout(skipDecayTimer);
       if (skipHideTimer != null) clearTimeout(skipHideTimer);
     };
-  }, [initialFindingId, mode, speed]);
+  }, [initialFindingId, mode]);
 
   // Gamification derived
   const level = game.level ?? 1;

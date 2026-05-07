@@ -336,11 +336,16 @@ export async function claimNextItem(
     const buffer: BufferItem[] = [];
     decisions.sort((a, b) => (a.reviewIndex ?? 0) - (b.reviewIndex ?? 0));
     for (const d of decisions) {
+      // Coerce numeric fields with `||` (NOT `??`) so a stored 0 — which
+      // happens when an early decision was recorded against a stale active
+      // buffer — is treated as "missing" and recovered. Without this the
+      // panel renders "0 FAILED" and rehydrate's own `||` checks short-
+      // circuit because they see truthy values arriving.
       const baseItem: ReviewItem = {
         findingId: d.findingId,
         questionIndex: d.questionIndex,
-        reviewIndex: d.reviewIndex ?? 1,
-        totalForFinding: d.totalForFinding ?? decisions.length,
+        reviewIndex: d.reviewIndex || 1,
+        totalForFinding: d.totalForFinding || decisions.length,
         header: d.header ?? "",
         populated: d.populated ?? "",
         thinking: d.thinking ?? "",

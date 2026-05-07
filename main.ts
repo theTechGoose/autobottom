@@ -738,7 +738,12 @@ Deno.serve({ port }, (req, info) => {
             const lookup = getFinding(orgId as OrgId, findingId);
             const timeout = new Promise<null>((r) => setTimeout(() => r(null), 2000));
             const finding = await Promise.race([lookup, timeout]);
-            const r = finding?.rid ?? finding?.recordId;
+            // Findings store the QB record id at finding.record.RecordId
+            // (the QB record object). Older code paths sometimes also wrote
+            // top-level finding.rid / finding.recordId, so check those as
+            // fallbacks before giving up.
+            const r = finding?.record?.RecordId ?? finding?.record?.recordId
+                   ?? finding?.rid ?? finding?.recordId;
             if (typeof r === "string" || typeof r === "number") rid = String(r);
           }
           const { trackActive } = await import("@audit/domain/data/stats-repository/mod.ts");

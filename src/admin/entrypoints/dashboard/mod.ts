@@ -42,31 +42,49 @@ export class DashboardController {
   async dashboardData() {
     const orgId = ORG();
     const now = Date.now();
+
+    // Result cache: serve a fresh-enough fan-out result for free.
     const cached = DashboardController._dashCache.get(orgId);
     if (cached && cached.expiresAt > now) return cached.value;
 
-    console.log(`📊 [DASH] dashboard/data orgId=${orgId}`);
-    // Over-fetch the recently-completed feed and post-filter bypassed offices
-    // so the visible count stays near 25 even when several recents are JAY/etc.
-    const [pipelineStats, reviewStats, recentRaw, bypassCfg, paused] = await Promise.all([
-      getStats(orgId),
-      getReviewStats(orgId),
-      getRecentCompleted(orgId, 100),
-      getOfficeBypassConfig(orgId),
-      isPipelinePaused(orgId),
-    ]);
-    const patterns = bypassCfg.patterns ?? [];
-    const recent = (patterns.length === 0
-      ? recentRaw
-      : recentRaw.filter((r) => !isOfficeBypassed(String((r as Record<string, unknown>).department ?? ""), patterns))
-    ).slice(0, 25);
-    const result = { pipeline: { ...pipelineStats, paused }, review: reviewStats, recentCompleted: recent };
-    DashboardController._dashCache.set(orgId, { value: result, expiresAt: now + 5_000 });
-    return result;
+    // In-flight dedup: when N requests miss the cache simultaneously,
+    // only the FIRST runs the fan-out — the rest await the same promise.
+    // Without this the 4 dashboard panels all polling on the same 10s
+    // tick (plus extra browser tabs) trigger concurrent ~10-FS-call
+    // fan-outs and saturate the isolate.
+    const pending = DashboardController._dashPending.get(orgId);
+    if (pending) return pending;
+
+    const work = (async () => {
+      console.log(`📊 [DASH] dashboard/data orgId=${orgId}`);
+      const [pipelineStats, reviewStats, recentRaw, bypassCfg, paused] = await Promise.all([
+        getStats(orgId),
+        getReviewStats(orgId),
+        getRecentCompleted(orgId, 100),
+        getOfficeBypassConfig(orgId),
+        isPipelinePaused(orgId),
+      ]);
+      const patterns = bypassCfg.patterns ?? [];
+      const recent = (patterns.length === 0
+        ? recentRaw
+        : recentRaw.filter((r) => !isOfficeBypassed(String((r as Record<string, unknown>).department ?? ""), patterns))
+      ).slice(0, 25);
+      const result = { pipeline: { ...pipelineStats, paused }, review: reviewStats, recentCompleted: recent };
+      DashboardController._dashCache.set(orgId, { value: result, expiresAt: Date.now() + 5_000 });
+      return result;
+    })();
+    DashboardController._dashPending.set(orgId, work);
+    try {
+      return await work;
+    } finally {
+      DashboardController._dashPending.delete(orgId);
+    }
   }
-  // 5-second per-isolate memo for dashboardData. Bounded by orgId set
-  // (small in practice — typically 1 entry).
+  // 5-second per-isolate result cache + in-flight promise dedup.
+  // _dashPending coalesces concurrent cache-misses onto a single fan-out;
+  // _dashCache serves the result for 5s after that fan-out lands.
   private static _dashCache = new Map<string, { value: unknown; expiresAt: number }>();
+  private static _dashPending = new Map<string, Promise<unknown>>();
 
   @Get("dashboard/section") @ReturnedType(OkResponse)
   async dashboardSection(@Query("section") section: string) {

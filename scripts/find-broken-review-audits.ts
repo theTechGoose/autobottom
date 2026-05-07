@@ -29,14 +29,16 @@ interface Args {
   org: string | null;
   json: boolean;
   idsOnly: boolean;
+  recordsOnly: boolean;
   concurrency: number;
 }
 
 function parseArgs(argv: string[]): Args {
-  const out: Args = { org: null, json: false, idsOnly: false, concurrency: 20 };
+  const out: Args = { org: null, json: false, idsOnly: false, recordsOnly: false, concurrency: 20 };
   for (const a of argv) {
     if (a === "--json") out.json = true;
     else if (a === "--ids-only") out.idsOnly = true;
+    else if (a === "--records-only") out.recordsOnly = true;
     else if (a === "--help" || a === "-h") {
       console.log(USAGE);
       Deno.exit(0);
@@ -57,7 +59,9 @@ Options:
   --org=<orgId>         Single org (default: defaultOrgId() from env)
   --json                JSON output instead of table (good for piping)
   --ids-only            Print ONLY the comma-separated finding IDs to stdout
-                        (progress logs go to stderr). Pipe-friendly.
+                        (progress logs go to stderr). Use to feed nuke-findings.
+  --records-only        Print ONLY the comma-separated UNIQUE record IDs to
+                        stdout. Use to feed back into Bulk Audit.
   --concurrency=N       Parallel finding lookups (default: 20)
 `;
 
@@ -172,6 +176,13 @@ async function main() {
     // Pipe-friendly: only the CSV of finding IDs to stdout. Logs are stderr.
     console.log(broken.map((b) => b.findingId).join(","));
     console.error(`[scan] emitted ${broken.length} finding IDs`);
+    return;
+  }
+
+  if (args.recordsOnly) {
+    const uniqueRecordIds = [...new Set(broken.map((b) => b.recordId).filter(Boolean) as string[])];
+    console.log(uniqueRecordIds.join(","));
+    console.error(`[scan] emitted ${uniqueRecordIds.length} unique record IDs (from ${broken.length} broken findings)`);
     return;
   }
 

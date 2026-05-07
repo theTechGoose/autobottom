@@ -715,11 +715,36 @@ Deno.serve({ port }, (req, info) => {
       // every audit that's between steps).
       let findingId = "<unknown>";
       let orgId = "";
+      let rid: string | undefined;
       try {
         const peek = await req.clone().json().catch(() => null);
         if (peek && typeof peek.findingId === "string") findingId = peek.findingId;
         if (peek && typeof peek.orgId === "string") orgId = peek.orgId;
+        if (peek && typeof peek.rid === "string") rid = peek.rid;
       } catch { /* logging only — never break dispatch */ }
+
+      // Pre-track WITH rid so the dashboard's QB Record column populates.
+      // We delete the row at end-of-handler (so Active = currently-running
+      // only), which means each handler starts with no row — rid would
+      // otherwise be lost. If rid isn't in the QStash body, fall back to
+      // the finding doc (cached, ~free on warm isolate). Idempotent —
+      // the step's own trackActive call will merge over this with the
+      // same data.
+      if (orgId && findingId !== "<unknown>") {
+        try {
+          if (!rid) {
+            const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+            const finding = await getFinding(orgId as OrgId, findingId);
+            const r = finding?.rid ?? finding?.recordId;
+            if (typeof r === "string" || typeof r === "number") rid = String(r);
+          }
+          const { trackActive } = await import("@audit/domain/data/stats-repository/mod.ts");
+          await trackActive(orgId as OrgId, findingId, stepName, rid ? { rid } : undefined);
+        } catch (preErr) {
+          console.warn(`⚠️ [STEP] pre-track failed for ${stepName}/${findingId}:`, preErr);
+        }
+      }
+
       console.log(`🔧 [STEP] ${stepName} finding=${findingId} invoked via direct dispatch`);
       try {
         return await stepHandler(req);

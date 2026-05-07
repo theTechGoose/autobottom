@@ -25,9 +25,26 @@ const ORG = defaultOrgId;
 @Controller("admin")
 export class DashboardController {
 
+  /** Dashboard summary endpoint — does a 5-way parallel fan-out
+   *  (getStats internally pages 100 recent completed-stat docs, plus
+   *  errors/retries; getRecentCompleted pulls 100 more; review-stats,
+   *  bypass-config, paused-flag) for ~10 Firestore round-trips per call.
+   *
+   *  Multiple admin panels poll their own endpoints every 10s and several
+   *  end up indirectly relying on this same data, so under load the
+   *  isolate ends up running this fan-out many times per second and
+   *  bottlenecking the whole process — to the point that the dashboard
+   *  itself starts 503'ing while the audit pipeline runs fine.
+   *
+   *  Per-isolate 5s memo collapses any burst into a single real fan-out.
+   *  Stale-by-5s is fine for an at-a-glance dashboard. */
   @Get("dashboard/data") @ReturnedType(DashboardDataResponse)
   async dashboardData() {
     const orgId = ORG();
+    const now = Date.now();
+    const cached = DashboardController._dashCache.get(orgId);
+    if (cached && cached.expiresAt > now) return cached.value;
+
     console.log(`📊 [DASH] dashboard/data orgId=${orgId}`);
     // Over-fetch the recently-completed feed and post-filter bypassed offices
     // so the visible count stays near 25 even when several recents are JAY/etc.
@@ -43,8 +60,13 @@ export class DashboardController {
       ? recentRaw
       : recentRaw.filter((r) => !isOfficeBypassed(String((r as Record<string, unknown>).department ?? ""), patterns))
     ).slice(0, 25);
-    return { pipeline: { ...pipelineStats, paused }, review: reviewStats, recentCompleted: recent };
+    const result = { pipeline: { ...pipelineStats, paused }, review: reviewStats, recentCompleted: recent };
+    DashboardController._dashCache.set(orgId, { value: result, expiresAt: now + 5_000 });
+    return result;
   }
+  // 5-second per-isolate memo for dashboardData. Bounded by orgId set
+  // (small in practice — typically 1 entry).
+  private static _dashCache = new Map<string, { value: unknown; expiresAt: number }>();
 
   @Get("dashboard/section") @ReturnedType(OkResponse)
   async dashboardSection(@Query("section") section: string) {

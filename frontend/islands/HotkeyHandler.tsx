@@ -91,6 +91,9 @@ export default function HotkeyHandler({ mode }: HotkeyHandlerProps) {
           dispatch("queue:speed", { delta: -0.5 });
           return;
         case "/":
+        case "\\":
+          // `\` is the documented review-queue search hotkey; `/` is kept as
+          // an alias for muscle memory from earlier prod builds.
           e.preventDefault();
           dispatch("queue:search-open");
           return;

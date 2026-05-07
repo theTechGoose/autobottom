@@ -369,8 +369,9 @@ export default function QueueModals() {
               </div>
               <div class="queue-cheat-section">
                 <div class="queue-cheat-label">Transcript</div>
-                <div><kbd>/</kbd> Search</div>
-                <div><kbd>;</kbd> Next match</div>
+                <div><kbd>\</kbd> or <kbd>/</kbd> Search</div>
+                <div><kbd>Enter</kbd> Play first match</div>
+                <div><kbd>;</kbd> Next match (and play)</div>
                 <div><kbd>H</kbd>/<kbd>J</kbd> Prev column</div>
                 <div><kbd>K</kbd>/<kbd>L</kbd> Next column</div>
               </div>

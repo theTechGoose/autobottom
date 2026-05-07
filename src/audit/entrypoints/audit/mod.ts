@@ -172,19 +172,32 @@ export class AuditController {
 
     const orgId = defaultOrgId() as OrgId;
     const finding = await getFinding(orgId, id) as Record<string, unknown> | null;
-    if (!finding) return new Response(JSON.stringify({ error: "finding not found" }), { status: 404, headers: { "content-type": "application/json" } });
+    if (!finding) {
+      console.warn(`🔇 [RECORDING] 404 finding-not-found: id=${id} org=${orgId}`);
+      return new Response(JSON.stringify({ error: "finding not found", id }), { status: 404, headers: { "content-type": "application/json" } });
+    }
 
     const idx = parseInt(idxStr ?? "0") || 0;
     const keys = finding.s3RecordingKeys as string[] | undefined;
     const recordingPath = keys?.length ? keys[Math.min(idx, keys.length - 1)] : (finding.recordingPath as string | undefined);
-    if (!recordingPath) return new Response(JSON.stringify({ error: "no recording path" }), { status: 404, headers: { "content-type": "application/json" } });
+    if (!recordingPath) {
+      const findingKeys = Object.keys(finding).join(",");
+      console.warn(`🔇 [RECORDING] 404 no-recording-path: id=${id} idx=${idx} keys=[${findingKeys}] s3RecordingKeys=${JSON.stringify(keys ?? null)}`);
+      return new Response(JSON.stringify({ error: "no recording path", id, hint: "finding doc has no recordingPath / s3RecordingKeys — likely from pre-S3 era or a partial migration" }), { status: 404, headers: { "content-type": "application/json" } });
+    }
 
     const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
-    if (!bucket) return new Response(JSON.stringify({ error: "S3 bucket not configured" }), { status: 500, headers: { "content-type": "application/json" } });
+    if (!bucket) {
+      console.error(`🔇 [RECORDING] 500 no-bucket-env: id=${id}`);
+      return new Response(JSON.stringify({ error: "S3 bucket not configured" }), { status: 500, headers: { "content-type": "application/json" } });
+    }
 
     const s3 = new S3Ref(bucket, recordingPath);
     const bytes = await s3.get();
-    if (!bytes) return new Response(JSON.stringify({ error: "recording not found in S3" }), { status: 404, headers: { "content-type": "application/json" } });
+    if (!bytes) {
+      console.warn(`🔇 [RECORDING] 404 s3-miss: id=${id} bucket=${bucket} path=${recordingPath}`);
+      return new Response(JSON.stringify({ error: "recording not found in S3", id, bucket, path: recordingPath }), { status: 404, headers: { "content-type": "application/json" } });
+    }
 
     // Return full file with proper headers for <audio controls>. Range support is
     // nice-to-have; native browsers work fine with a full download for short clips.

@@ -169,9 +169,30 @@ async function enrichItem(
   item: ReviewItem,
   sharedTranscript?: BufferItem["transcript"],
 ): Promise<BufferItem> {
-  const transcript = sharedTranscript !== undefined
+  let transcript = sharedTranscript !== undefined
     ? sharedTranscript
     : await getTranscript(orgId, item.findingId);
+  // Fallback: legacy / unmigrated findings keep the transcript text on the
+  // finding doc itself (rawTranscript / fixedTranscript / diarizedTranscript)
+  // even when the chunked audit-transcript doc is missing. Without this the
+  // panel renders "No transcript available" for every reviewer in those orgs.
+  if (transcript == null) {
+    try {
+      const finding = await getFinding(orgId, item.findingId) as Record<string, unknown> | null;
+      const raw = String(
+        (finding?.rawTranscript as string | undefined)
+          ?? (finding?.fixedTranscript as string | undefined)
+          ?? "",
+      ).trim();
+      const diarized = String((finding?.diarizedTranscript as string | undefined) ?? raw).trim();
+      if (raw || diarized) {
+        transcript = { raw, diarized, utteranceTimes: [] };
+        console.log(`📝 [REVIEW] ${item.findingId}: transcript chunk missing, fell back to finding.rawTranscript (${raw.length}b)`);
+      }
+    } catch (e) {
+      console.warn(`⚠️  [REVIEW] ${item.findingId}: transcript fallback lookup failed`, e);
+    }
+  }
   const counterVal = (await getStored<number>("review-audit-pending", orgId, item.findingId)) ?? 0;
   return { ...item, auditRemaining: counterVal, transcript };
 }

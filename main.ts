@@ -706,11 +706,19 @@ Deno.serve({ port }, (req, info) => {
         console.warn(`⚠️ [STEP] unknown step "${stepName}"`);
         return new Response(`Unknown step: ${stepName}`, { status: 404 });
       }
-      // Peek findingId for log traceability — clone so the real handler still reads the body.
+      // Peek findingId/orgId for tracking + log traceability — clone so the
+      // real handler still reads the body. The dispatcher untracks the
+      // active-tracking row in finally{} so the dashboard's "Active" panel
+      // reflects only currently-running handlers (capped by QStash
+      // parallelism), not "audits anywhere in the pipeline" (which is what
+      // step-internal trackActive calls would otherwise leave behind for
+      // every audit that's between steps).
       let findingId = "<unknown>";
+      let orgId = "";
       try {
         const peek = await req.clone().json().catch(() => null);
         if (peek && typeof peek.findingId === "string") findingId = peek.findingId;
+        if (peek && typeof peek.orgId === "string") orgId = peek.orgId;
       } catch { /* logging only — never break dispatch */ }
       console.log(`🔧 [STEP] ${stepName} finding=${findingId} invoked via direct dispatch`);
       try {
@@ -721,6 +729,18 @@ Deno.serve({ port }, (req, info) => {
           { error: (err as Error).message, step: stepName, findingId },
           { status: 500 },
         );
+      } finally {
+        // Best-effort untrack — never break dispatch on a tracking failure.
+        // Skip when we couldn't peek findingId/orgId (e.g. malformed body) —
+        // there's nothing to untrack in that case anyway.
+        if (orgId && findingId !== "<unknown>") {
+          try {
+            const { untrackHandler } = await import("@audit/domain/data/stats-repository/mod.ts");
+            await untrackHandler(orgId as OrgId, findingId);
+          } catch (untrackErr) {
+            console.warn(`⚠️ [STEP] untrackHandler failed for ${stepName}/${findingId}:`, untrackErr);
+          }
+        }
       }
     }
 

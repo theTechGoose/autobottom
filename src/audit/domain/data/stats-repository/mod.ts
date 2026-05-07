@@ -23,6 +23,15 @@ export async function trackActive(orgId: OrgId, findingId: string, step: string,
   await setStored("watchdog-active", GLOBAL, [findingId], { orgId, findingId, step, ts: Date.now() }, { expireInMs: 2 * 60 * 60 * 1000 });
 }
 
+/** Mark a handler invocation as finished WITHOUT marking the whole audit as
+ *  complete. Removes the active-tracking row so the dashboard's "Active"
+ *  panel reflects only currently-executing handlers (capped by QStash
+ *  parallelism), not "audits anywhere in the pipeline". The audit-level
+ *  lifecycle is tracked separately by trackCompleted/terminateFinding. */
+export async function untrackHandler(orgId: OrgId, findingId: string): Promise<void> {
+  await deleteStored("active-tracking", orgId, findingId);
+}
+
 export async function trackCompleted(orgId: OrgId, findingId: string, meta?: Record<string, unknown>): Promise<void> {
   await deleteStored("active-tracking", orgId, findingId);
   await deleteStored("watchdog-active", GLOBAL, findingId);

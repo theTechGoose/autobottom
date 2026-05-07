@@ -154,6 +154,30 @@ export class AdminConfigController {
     return { ok: true, message: `purged ${purged} messages` };
   }
 
+  /** FAST bulk-delete of active-tracking + watchdog entries — no per-finding
+   *  read/write work, just blast the tracking rows. Use when the dashboard
+   *  is showing stale "queued" entries from crashed step-init runs and the
+   *  regular /admin/terminate-all-active is too slow because it does a
+   *  getFinding + saveFinding for each entry. */
+  @Post("nuke-tracking") @ReturnedType(OkMessageResponse)
+  async nukeTracking() {
+    const orgId = ORG();
+    const { listStoredWithKeys, deleteStored } = await import("@core/data/firestore/mod.ts");
+    const active = await listStoredWithKeys<{ findingId?: string }>("active-tracking", orgId);
+    const watchdog = await listStoredWithKeys<{ findingId?: string }>("watchdog-active", "");
+    let cleared = 0;
+    for (const { key } of active) {
+      await deleteStored("active-tracking", orgId, ...key);
+      cleared++;
+    }
+    for (const { key } of watchdog) {
+      await deleteStored("watchdog-active", "", ...key);
+      cleared++;
+    }
+    console.log(`💣 [ADMIN] Nuked ${cleared} tracking entries (active=${active.length} watchdog=${watchdog.length})`);
+    return { ok: true, message: `nuked ${cleared} entries (${active.length} active + ${watchdog.length} watchdog)` };
+  }
+
   @Post("clear-review-queue") @ReturnedType(ClearedResponse)
   async doClearReviewQueue() { return clearReviewQueue(ORG()); }
   @Post("clear-errors") @ReturnedType(ClearedResponse)

@@ -12,7 +12,8 @@ import { ReturnedType, Description } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
 import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId } from "@audit/domain/data/stats-repository/mod.ts";
 import { getReviewStats, getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
-import { isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
+import { getOfficeBypassConfig, isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
+import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
@@ -28,12 +29,20 @@ export class DashboardController {
   async dashboardData() {
     const orgId = ORG();
     console.log(`📊 [DASH] dashboard/data orgId=${orgId}`);
-    const [pipelineStats, reviewStats, recent, paused] = await Promise.all([
+    // Over-fetch the recently-completed feed and post-filter bypassed offices
+    // so the visible count stays near 25 even when several recents are JAY/etc.
+    const [pipelineStats, reviewStats, recentRaw, bypassCfg, paused] = await Promise.all([
       getStats(orgId),
       getReviewStats(orgId),
-      getRecentCompleted(orgId, 25),
+      getRecentCompleted(orgId, 100),
+      getOfficeBypassConfig(orgId),
       isPipelinePaused(orgId),
     ]);
+    const patterns = bypassCfg.patterns ?? [];
+    const recent = (patterns.length === 0
+      ? recentRaw
+      : recentRaw.filter((r) => !isOfficeBypassed(String((r as Record<string, unknown>).department ?? ""), patterns))
+    ).slice(0, 25);
     return { pipeline: { ...pipelineStats, paused }, review: reviewStats, recentCompleted: recent };
   }
 
@@ -94,8 +103,13 @@ export class DashboardController {
       console.error(`[AUDIT-HISTORY] ❌ stack: ${err instanceof Error && err.stack ? err.stack : "<no stack>"}`);
       throw err;
     }
+    // Hide bypassed offices (e.g. JAY) from the admin Audit History — same
+    // gate already applied to chargeback reports + unreviewed list.
+    const bypassCfg = await getOfficeBypassConfig(orgId);
+    const bypassPatterns = bypassCfg.patterns ?? [];
     type AuditRow = AuditDoneIndexEntry & { ts: number };
     const windowEntries: AuditRow[] = indexEntries
+      .filter((e) => bypassPatterns.length === 0 || !isOfficeBypassed(String(e.department ?? ""), bypassPatterns))
       .map((e) => ({ ...e, ts: e.completedAt }))
       .sort((a, b) => b.ts - a.ts);
 

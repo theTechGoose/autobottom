@@ -10,7 +10,8 @@ import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
-import { getManagerScope } from "@admin/domain/data/admin-repository/mod.ts";
+import { getManagerScope, getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
+import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 
 export interface AuditHistoryRow {
@@ -136,11 +137,18 @@ export async function getAuditHistory(
     }
   }
 
+  // Bypassed offices (e.g. JAY) are hidden from EVERY view — admin and manager.
+  const bypassCfg = await getOfficeBypassConfig(orgId);
+  const bypassPatterns = bypassCfg.patterns ?? [];
+  const afterBypass = bypassPatterns.length === 0
+    ? windowEntries
+    : windowEntries.filter((c) => !isOfficeBypassed(String(c.department ?? ""), bypassPatterns));
+
   // Scope to the manager's department+shift configuration; admin sees all.
-  let scopedEntries = windowEntries;
+  let scopedEntries = afterBypass;
   if (role === "manager") {
     const scope = await getManagerScope(orgId, email);
-    scopedEntries = windowEntries.filter((c) => {
+    scopedEntries = afterBypass.filter((c) => {
       if (scope.departments.length > 0 && !scope.departments.includes(c.department ?? "")) return false;
       if (scope.shifts.length > 0 && !c.isPackage && !scope.shifts.includes(c.shift ?? "")) return false;
       return true;

@@ -22,7 +22,7 @@ Deno.test("isPublicPath — subpaths of public paths are public", () => {
 
 Deno.test("roleRedirect returns correct paths", () => {
   assertEquals(roleRedirect("admin"), "/admin/dashboard");
-  assertEquals(roleRedirect("reviewer"), "/review");
+  assertEquals(roleRedirect("reviewer"), "/review/dashboard");
   assertEquals(roleRedirect("judge"), "/judge");
   assertEquals(roleRedirect("manager"), "/manager");
   assertEquals(roleRedirect("user"), "/agent");

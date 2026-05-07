@@ -51,12 +51,12 @@ Deno.test("login — success sets cookie and 303 redirects", async () => {
   } finally { mock.restore(); }
 });
 
-Deno.test("login — reviewer role redirects to /review", async () => {
+Deno.test("login — reviewer role redirects to /review/dashboard", async () => {
   const mock = mockFetch({ "/login": { body: { ok: true, role: "reviewer", cookie: "session=abc" } } });
   try {
     const ctx = { req: formReq("/api/login", { email: "r@b.com", password: "pass" }), state: {} };
     const res = await (loginHandler as any).POST(ctx);
-    assertEquals(res.headers.get("location"), "/review");
+    assertEquals(res.headers.get("location"), "/review/dashboard");
   } finally { mock.restore(); }
 });
 

@@ -19,7 +19,7 @@ export const ROLE_REDIRECTS: Record<Role, string> = {
   admin: "/admin/dashboard",
   judge: "/judge",
   manager: "/manager",
-  reviewer: "/review",
+  reviewer: "/review/dashboard",
   user: "/agent",
 };
 

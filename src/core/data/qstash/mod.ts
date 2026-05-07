@@ -237,25 +237,49 @@ export async function purgeAllQueues(): Promise<number> {
  *  cosmetic and QStash defaults (typically 1) apply, causing massive
  *  backlogs when n8n bulk-fires hundreds of audits.
  *
- *  Calls POST /v2/queues with { queueName, parallelism } per QStash's
- *  upsert API. Per-queue, so we can tune each step type independently
- *  if needed. Idempotent — same value re-pushed is a no-op on QStash. */
+ *  ⚠️  POST /v2/queues is an UPSERT. If we send {queueName, parallelism}
+ *  alone, QStash resets every other property — most importantly `paused`
+ *  flips back to false, which silently un-pauses a queue an operator just
+ *  paused for safety. We therefore GET the current queue first, copy its
+ *  `paused` state into the upsert body, and re-send it alongside the new
+ *  parallelism. (We've eaten this exact bug in production: saving the
+ *  Pipeline Settings modal while queues were paused un-paused them and
+ *  caused a flood. Do not remove the paused-preservation step.) */
 export async function setQstashQueueParallelism(queueName: string, parallelism: number): Promise<{ ok: boolean; error?: string }> {
   return withSpan("qstash.setQueueParallelism", async (span) => {
     if (isLocalMode()) return { ok: true };
     span.setAttribute("qstash.queue", queueName);
     span.setAttribute("qstash.parallelism", parallelism);
+
+    // Read current paused state so we can preserve it through the upsert.
+    // If the GET fails (queue may not exist yet on a fresh deploy), default
+    // to NOT paused — same behavior as the original create.
+    let currentPaused = false;
+    try {
+      const cur = await fetch(`${qstashUrl()}/v2/queues/${queueName}`, { headers: qstashAuth() });
+      if (cur.ok) {
+        const data = await cur.json();
+        currentPaused = !!data.paused;
+      }
+    } catch { /* fall through with currentPaused=false */ }
+
+    const body = {
+      queueName,
+      parallelism: Math.max(1, Math.floor(parallelism)),
+      paused: currentPaused,
+    };
+
     const res = await fetch(`${qstashUrl()}/v2/queues`, {
       method: "POST",
       headers: { ...qstashAuth(), "content-type": "application/json" },
-      body: JSON.stringify({ queueName, parallelism: Math.max(1, Math.floor(parallelism)) }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       console.error(`[QSTASH] set parallelism ${queueName}=${parallelism} failed: ${res.status} ${text.slice(0, 200)}`);
       return { ok: false, error: `${res.status}: ${text.slice(0, 200)}` };
     }
-    console.log(`✅ [QSTASH] queue ${queueName} parallelism=${parallelism}`);
+    console.log(`✅ [QSTASH] queue ${queueName} parallelism=${parallelism} paused=${currentPaused}`);
     metric("autobottom.qstash.set_parallelism", 1, { queue: queueName });
     return { ok: true };
   }, {}, "client");

@@ -112,7 +112,16 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
 // ── Packages ─────────────────────────────────────────────────────────────────
 
 const PACKAGES_TABLE = "bttffb64u";
-const PK = { RECORD_ID: 3, GENIE_NUMBER: 18, RELATED_OFFICE_ID: 45, OFFICE_NAME: 46, GM_EMAIL: 114, GUEST_NAME: 57, VO_NAME: 52 };
+const PK = {
+  RECORD_ID: 3, GENIE_NUMBER: 18, RELATED_OFFICE_ID: 45, OFFICE_NAME: 46,
+  GM_EMAIL: 114, GUEST_NAME: 57, VO_NAME: 52,
+  // Extended guest + booking fields used by the bad-word alert email's
+  // "Monster Verified AI Detection" template (field IDs sourced from the
+  // QuickBase package table — bttffb64u).
+  EMAIL_ADDRESS: 69, PHONE_NUMBER: 70, ALTERNATE_NUMBER: 91,
+  DATE_OF_BOOKING: 6, RESERVATION_ID: 56, RESPKG_ID: 276,
+  SPOUSE_FULL_NAME: 66,
+};
 const PACKAGE_AUTOYES_FIELDS = [67, 145, 306, 345];
 
 export async function getPackageByRid(rid: string): Promise<Record<string, any> | null> {
@@ -121,7 +130,13 @@ export async function getPackageByRid(rid: string): Promise<Record<string, any> 
     const records = await queryRecords({
       tableId: PACKAGES_TABLE,
       where: `{${PK.RECORD_ID}.EX.'${rid}'}`,
-      select: [PK.RECORD_ID, PK.GENIE_NUMBER, PK.RELATED_OFFICE_ID, PK.OFFICE_NAME, PK.GM_EMAIL, PK.GUEST_NAME, PK.VO_NAME, ...PACKAGE_AUTOYES_FIELDS],
+      select: [
+        PK.RECORD_ID, PK.GENIE_NUMBER, PK.RELATED_OFFICE_ID, PK.OFFICE_NAME,
+        PK.GM_EMAIL, PK.GUEST_NAME, PK.VO_NAME,
+        PK.EMAIL_ADDRESS, PK.PHONE_NUMBER, PK.ALTERNATE_NUMBER,
+        PK.DATE_OF_BOOKING, PK.RESERVATION_ID, PK.RESPKG_ID, PK.SPOUSE_FULL_NAME,
+        ...PACKAGE_AUTOYES_FIELDS,
+      ],
     });
     if (records.length === 0) return null;
     const r = records[0];
@@ -132,7 +147,15 @@ export async function getPackageByRid(rid: string): Promise<Record<string, any> 
       RecordId: r[PK.RECORD_ID]?.value ?? rid, GenieNumber: cleanGenieId(r[PK.GENIE_NUMBER]?.value),
       RelatedOfficeId: r[PK.RELATED_OFFICE_ID]?.value ?? 0, OfficeName: String(r[PK.OFFICE_NAME]?.value ?? ""),
       GmEmail: r[PK.GM_EMAIL]?.value ?? "", GuestName: String(r[PK.GUEST_NAME]?.value ?? ""),
-      VoName: String(r[PK.VO_NAME]?.value ?? ""), ...autoYes,
+      VoName: String(r[PK.VO_NAME]?.value ?? ""),
+      EmailAddress: String(r[PK.EMAIL_ADDRESS]?.value ?? ""),
+      PhoneNumber: String(r[PK.PHONE_NUMBER]?.value ?? ""),
+      AlternateNumber: String(r[PK.ALTERNATE_NUMBER]?.value ?? ""),
+      DateOfBooking: String(r[PK.DATE_OF_BOOKING]?.value ?? ""),
+      ReservationId: String(r[PK.RESERVATION_ID]?.value ?? ""),
+      ResPkgId: String(r[PK.RESPKG_ID]?.value ?? ""),
+      SpouseFullName: String(r[PK.SPOUSE_FULL_NAME]?.value ?? ""),
+      ...autoYes,
     };
   }, {}, "client");
 }

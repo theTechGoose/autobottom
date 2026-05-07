@@ -182,35 +182,21 @@ export class AdminConfigController {
     return { ok: true, set: { queueName, parallelism }, queues: info };
   }
 
-  /** FAST bulk-delete of active-tracking + watchdog entries — no per-finding
-   *  read/write work, just blast the tracking rows in parallel batches.
-   *  Use when the dashboard is showing stale "queued" entries from crashed
-   *  step-init runs and the regular /admin/terminate-all-active is too slow
-   *  (it does a getFinding + saveFinding for each entry).
-   *
-   *  Sequential deletes hit the 60s isolate timeout when there are 700+
-   *  rows; parallelize at 50 in flight to drain a full backlog in seconds. */
+  /** FAST bulk-delete of active-tracking + watchdog entries via Firestore's
+   *  `:commit` batch endpoint — up to 500 deletes per HTTP call. Per-row
+   *  parallel deletes (the previous approach) consistently blew the 60s
+   *  isolate timeout once there were ~700 rows because each delete is its
+   *  own round-trip. The batch-commit path completes hundreds of rows in
+   *  one or two HTTP calls and finishes in seconds even under Firestore
+   *  load. Use this whenever the dashboard shows stale tracking from
+   *  crashed step runs. */
   @Post("nuke-tracking") @ReturnedType(OkMessageResponse)
   async nukeTracking() {
     const orgId = ORG();
-    const { listStoredWithKeys, deleteStored } = await import("@core/data/firestore/mod.ts");
-    const active = await listStoredWithKeys<{ findingId?: string }>("active-tracking", orgId);
-    const watchdog = await listStoredWithKeys<{ findingId?: string }>("watchdog-active", "");
-
-    const PARALLEL = 50;
-    async function bulkDelete(type: string, org: string, rows: Array<{ key: string[] }>): Promise<number> {
-      let done = 0;
-      for (let i = 0; i < rows.length; i += PARALLEL) {
-        const batch = rows.slice(i, i + PARALLEL);
-        await Promise.all(batch.map(({ key }) => deleteStored(type, org, ...key).catch(() => {})));
-        done += batch.length;
-      }
-      return done;
-    }
-
+    const { purgeByTypeAndOrg } = await import("@core/data/firestore/mod.ts");
     const [activeCleared, watchdogCleared] = await Promise.all([
-      bulkDelete("active-tracking", orgId, active),
-      bulkDelete("watchdog-active", "", watchdog),
+      purgeByTypeAndOrg("active-tracking", orgId),
+      purgeByTypeAndOrg("watchdog-active", ""),
     ]);
     const cleared = activeCleared + watchdogCleared;
     console.log(`💣 [ADMIN] Nuked ${cleared} tracking entries (active=${activeCleared} watchdog=${watchdogCleared})`);

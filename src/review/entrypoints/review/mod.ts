@@ -99,8 +99,33 @@ export class ReviewController {
     return { buffer: items ?? [], remaining: 0 };
   }
 
+  // 5s result cache + in-flight promise dedup. The review dashboard polls
+  // this endpoint every 10s, getReviewStats does 3 paginated FS scans
+  // (pending/active/decided), and reviewer pages hit it in parallel.
+  // Without coalescing, every poll re-runs the full scan against
+  // Firestore — the same thundering-herd pattern that took down the
+  // admin dashboard before its cache landed. Same pattern as
+  // DashboardController._dashCache (admin/entrypoints/dashboard/mod.ts).
+  private static _statsCache: { data: Awaited<ReturnType<typeof getReviewStats>>; expiresAt: number } | null = null;
+  private static _statsPending: Promise<Awaited<ReturnType<typeof getReviewStats>>> | null = null;
   @Get("dashboard") @ReturnedType(ReviewStatsResponse) @Description("Review dashboard data")
-  async dashboardData() { return getReviewStats(ORG()); }
+  async dashboardData() {
+    const now = Date.now();
+    const cached = ReviewController._statsCache;
+    if (cached && cached.expiresAt > now) return cached.data;
+    if (ReviewController._statsPending) return ReviewController._statsPending;
+    const pending = (async () => {
+      try {
+        const data = await getReviewStats(ORG());
+        ReviewController._statsCache = { data, expiresAt: Date.now() + 5_000 };
+        return data;
+      } finally {
+        ReviewController._statsPending = null;
+      }
+    })();
+    ReviewController._statsPending = pending;
+    return pending;
+  }
 
   @Get("gamification") @ReturnedType(GamificationSettingsResponse) @Description("Get reviewer gamification override (or empty if none set)")
   async getGamification(@Query("email") email: string) {

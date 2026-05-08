@@ -307,6 +307,38 @@ const FS_RETRY_DELAYS_MS = [200, 600];
 // guarding against the 120s isolate-stall mode that motivated the timeout.
 const FS_ATTEMPT_TIMEOUT_MS = 60_000;
 
+// ── Firestore concurrency semaphore ─────────────────────────────────────────
+// Cap concurrent in-flight Firestore HTTP calls per isolate. Without this,
+// bulk-firing 50–100 audits triggers ~250+ FS ops in parallel (init + step
+// chain × per-step writes), saturates the connection pool to Firestore, and
+// every other FS-dependent path on the isolate (auth middleware, dashboard,
+// review queue, even /login) inherits the 60s abort timeout and cascades
+// into 503/500. Bounding concurrency at the source means the pool can never
+// saturate; calls beyond the cap queue and resolve in FIFO order.
+//
+// 30 is conservative — Firestore tolerates more, but 30 leaves headroom
+// while never letting any single isolate burn its connection pool. Adjust
+// upward only if telemetry shows we're queueing more than ~50ms average.
+const FS_MAX_CONCURRENT = 30;
+let _fsInFlight = 0;
+const _fsWaitQueue: Array<() => void> = [];
+
+function acquireFsSlot(): Promise<void> {
+  if (_fsInFlight < FS_MAX_CONCURRENT) {
+    _fsInFlight++;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    _fsWaitQueue.push(() => { _fsInFlight++; resolve(); });
+  });
+}
+
+function releaseFsSlot(): void {
+  _fsInFlight--;
+  const next = _fsWaitQueue.shift();
+  if (next) next();
+}
+
 interface FsResult { status: number; ok: boolean; text: string }
 
 function isTransientFsError(msg: string): boolean {
@@ -320,35 +352,43 @@ function isTransientFsError(msg: string): boolean {
 }
 
 async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): Promise<FsResult> {
-  const token = await getAccessToken(creds);
-  const url = `https://firestore.googleapis.com/v1/${path}`;
-  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) };
+  // Acquire BEFORE any work so getAccessToken (which can itself fetch) doesn't
+  // race in over the cap. Release in finally so a thrown error or abort still
+  // frees the slot — without this, 60s aborts would permanently lock slots.
+  await acquireFsSlot();
+  try {
+    const token = await getAccessToken(creds);
+    const url = `https://firestore.googleapis.com/v1/${path}`;
+    const headers = { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) };
 
-  let lastErr: unknown;
-  for (let attempt = 0; attempt <= FS_RETRY_DELAYS_MS.length; attempt++) {
-    const ctrl = new AbortController();
-    const timeoutId = setTimeout(() => ctrl.abort(), FS_ATTEMPT_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, { ...init, headers, signal: ctrl.signal });
-      const text = await res.text();
-      clearTimeout(timeoutId);
-      if (res.status >= 500 && res.status < 600 && attempt < FS_RETRY_DELAYS_MS.length) {
-        console.warn(`⚠️ [FS] ${res.status} from Firestore (attempt ${attempt + 1}) — retrying`);
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= FS_RETRY_DELAYS_MS.length; attempt++) {
+      const ctrl = new AbortController();
+      const timeoutId = setTimeout(() => ctrl.abort(), FS_ATTEMPT_TIMEOUT_MS);
+      try {
+        const res = await fetch(url, { ...init, headers, signal: ctrl.signal });
+        const text = await res.text();
+        clearTimeout(timeoutId);
+        if (res.status >= 500 && res.status < 600 && attempt < FS_RETRY_DELAYS_MS.length) {
+          console.warn(`⚠️ [FS] ${res.status} from Firestore (attempt ${attempt + 1}) — retrying`);
+          await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));
+          continue;
+        }
+        return { status: res.status, ok: res.ok, text };
+      } catch (err) {
+        clearTimeout(timeoutId);
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        const transient = isTransientFsError(msg);
+        if (!transient || attempt >= FS_RETRY_DELAYS_MS.length) break;
+        console.warn(`⚠️ [FS] transient fetch error (attempt ${attempt + 1}): ${msg.slice(0, 120)} — retrying`);
         await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));
-        continue;
       }
-      return { status: res.status, ok: res.ok, text };
-    } catch (err) {
-      clearTimeout(timeoutId);
-      lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
-      const transient = isTransientFsError(msg);
-      if (!transient || attempt >= FS_RETRY_DELAYS_MS.length) break;
-      console.warn(`⚠️ [FS] transient fetch error (attempt ${attempt + 1}): ${msg.slice(0, 120)} — retrying`);
-      await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));
     }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    releaseFsSlot();
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 async function restGet(creds: FirestoreCreds, docId: string): Promise<DocBody | null> {

@@ -165,10 +165,23 @@ export async function trackRetry(orgId: OrgId, findingId: string, step: string, 
 export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<Record<string, unknown>[]> {
   const now = Date.now();
   const cutoff = now - DAY_MS;
-  return await listStoredByCompletedAt<Record<string, unknown>>(
+  // Over-fetch and post-filter hidden findings so the dashboard "Recent
+  // Completed" list reflects what the operator can actually act on. Dedup
+  // soft-hide leaves the completed-audit-stat rows in place, so without
+  // this filter duplicates we already pruned still appear.
+  const rows = await listStoredByCompletedAt<Record<string, unknown>>(
     "completed-audit-stat", orgId, cutoff, now,
-    { limit, fieldName: "ts" },
+    { limit: limit * 4, fieldName: "ts" },
   );
+  const hidden = await getHiddenFindingIds(orgId);
+  const out: Record<string, unknown>[] = [];
+  for (const row of rows) {
+    const fid = String(row.findingId ?? "");
+    if (fid && hidden.has(fid)) continue;
+    out.push(row);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 export async function updateCompletedStatScore(orgId: OrgId, findingId: string, score: number): Promise<void> {
@@ -390,21 +403,36 @@ export async function getStats(orgId: OrgId): Promise<{
     });
   }
 
-  const completed = await listStoredByCompletedAt<{ ts?: number }>(
+  // Pull the hidden set once and filter every count surface that
+  // Operations actually looks at. Dedup soft-hide doesn't delete the
+  // tracking rows, so without this the "Completed (24h)" / Errors /
+  // Retries counters all double-count duplicates we already pruned.
+  // `active-tracking` is the live in-pipeline set — by definition not
+  // yet a candidate for dedup, so leave it unfiltered.
+  const hidden = await getHiddenFindingIds(orgId);
+  const isHidden = (v: unknown): boolean => {
+    const fid = String((v as Record<string, unknown> | undefined)?.findingId ?? "");
+    return !!fid && hidden.has(fid);
+  };
+
+  const completedAll = await listStoredByCompletedAt<{ ts?: number; findingId?: string }>(
     "completed-audit-stat", orgId, cutoff, now,
     { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
   );
+  const completed = completedAll.filter((v) => !isHidden(v));
   const completedCount = completed.length;
   const completedTs: number[] = completed.map((v) => Number(v?.ts ?? 0));
 
-  const errors = await listStored<Record<string, unknown>>("error-tracking", orgId);
+  const errorsRaw = await listStored<Record<string, unknown>>("error-tracking", orgId);
+  const errors = errorsRaw.filter((v) => !isHidden(v));
   const errorsTs: number[] = [];
   for (const v of errors) {
     const ts = Number(v?.ts ?? 0);
     if (ts >= cutoff) errorsTs.push(ts);
   }
 
-  const retries = await listStored<Record<string, unknown>>("retry-tracking", orgId);
+  const retriesRaw = await listStored<Record<string, unknown>>("retry-tracking", orgId);
+  const retries = retriesRaw.filter((v) => !isHidden(v));
   const retriesTs: number[] = [];
   for (const v of retries) {
     const ts = Number(v?.ts ?? 0);

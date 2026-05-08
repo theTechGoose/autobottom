@@ -26,7 +26,7 @@ import { startUploadReaudit } from "@audit/domain/business/upload-reaudit/mod.ts
 import { startReauditWithGenies } from "@audit/domain/business/reaudit/mod.ts";
 import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
 import { saveFinding, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
-import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
+import { trackActive, getHiddenFindingIds } from "@audit/domain/data/stats-repository/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
 import { enqueueStep, getSelfUrl, applyDefaultQueueParallelism } from "@core/data/qstash/mod.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
@@ -131,12 +131,17 @@ async function handleAgentDashboard(req: Request): Promise<Response> {
     const key = entry.key as Deno.KvKey;
     if (key.length >= 3 && typeof key[2] === "string") findingIds.add(key[2] as string);
   }
+  // Drop dedup soft-hidden duplicates so the agent's totalAudits / avgScore
+  // / perfectCount / weeklyTrend reflect the post-dedup reality, not the
+  // pre-dedup count that includes copies we already pruned.
+  const hidden = await getHiddenFindingIds(auth.orgId);
   let totalYes = 0, totalQuestions = 0;
   let perfectCount = 0;
   const audits: Array<Record<string, unknown>> = [];
   const scorePoints: Array<{ completedAt: number; score: number }> = [];
 
   for (const findingId of findingIds) {
+    if (hidden.has(findingId)) continue;
     const finding = await getFinding(auth.orgId, findingId);
     if (!finding || finding.findingStatus !== "finished") continue;
     if (finding.owner !== auth.email) continue;

@@ -1036,6 +1036,13 @@ export async function getReviewStats(orgId: OrgId): Promise<{
   let dateLegDecided = 0, packageDecided = 0;
   const pendingFindings = new Set<string>();
 
+  // Filter out findings flagged by the dedup soft-hide path. Dedup writes
+  // an `audit-hidden` doc per loser instead of deleting from review-pending
+  // / review-active / review-decided — so without this filter the dashboard
+  // shows inflated totals (the same numbers that triggered Josh & Ashley
+  // seeing 740 pending while the queue had been deduped).
+  const hidden = await getHiddenFindingIds(orgId);
+
   const bumpPending = (item: ReviewItem) => {
     if (item.recordingIdField === "GenieNumber") packagePending++;
     else dateLegPending++;
@@ -1043,11 +1050,18 @@ export async function getReviewStats(orgId: OrgId): Promise<{
   };
 
   const pending = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
-  for (const { value } of pending) bumpPending(value);
+  for (const { value } of pending) {
+    if (hidden.has(value.findingId)) continue;
+    bumpPending(value);
+  }
   const active = await listStoredWithKeys<ReviewItem>("review-active", orgId);
-  for (const { value } of active) bumpPending(value);
+  for (const { value } of active) {
+    if (hidden.has(value.findingId)) continue;
+    bumpPending(value);
+  }
   const decided = await listStoredWithKeys<ReviewItem>("review-decided", orgId);
   for (const { value } of decided) {
+    if (hidden.has(value.findingId)) continue;
     if (value.recordingIdField === "GenieNumber") packageDecided++;
     else dateLegDecided++;
   }

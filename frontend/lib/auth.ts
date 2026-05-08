@@ -23,7 +23,18 @@ export const ROLE_REDIRECTS: Record<Role, string> = {
   user: "/agent",
 };
 
-export const PUBLIC_PATHS = ["/login", "/register", "/api/login", "/api/register"];
+// Audit report + appeal flow is intentionally public. Recipients of the
+// terminate email click "View Full Report" / "File Appeal" without
+// logging in — these are personal audit results delivered to the agent
+// being audited, not gated content. Treating these as protected meant
+// the email link bounced everyone to /login, blocking the appeal flow
+// entirely. The report URL itself contains the (random, unguessable)
+// findingId as the auth token.
+export const PUBLIC_PATHS = [
+  "/login", "/register", "/api/login", "/api/register",
+  "/audit/report",
+  "/api/audit/appeal", // covers /api/audit/appeal, /api/audit/appeal/different-recording, /api/audit/appeal/upload-recording (via prefix match)
+];
 
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));

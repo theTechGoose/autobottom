@@ -62,6 +62,9 @@ interface AuditCompletePayload {
   finding?: Record<string, any>;
   score?: number;
   reason?: string;
+  reviewedAt?: number;
+  reviewedBy?: string;
+  reviewScore?: number;
 }
 
 /** Build template variables and send the audit-complete email. Mirrors
@@ -78,6 +81,22 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
 
   if (!finding) {
     console.warn(`⚠️ [WEBHOOK:terminate] payload missing finding fid=${findingId} — skipping email`);
+    return;
+  }
+
+  // Guard: refuse to send terminate emails for non-perfect, non-invalid
+  // audits that haven't been reviewed yet. The two pre-review fire paths
+  // (step-finalize: invalid_genie, step-finalize: perfect_score) explicitly
+  // set reason=invalid_genie or reason=perfect_score; review-queue's
+  // post-review fire sets reviewedAt/reviewedBy. Any OTHER fire — i.e.
+  // a terminate webhook called via the manual /admin/webhook/terminate
+  // endpoint, a misconfigured workflow, or any future regression — would
+  // silently leak a pre-review email. Bail out loudly so we surface the
+  // misuse instead of emailing the agent with stale bot-only answers.
+  const isPreReviewSafe = payload.reason === "invalid_genie" || payload.reason === "perfect_score";
+  const isReviewed = !!(payload.reviewedAt || payload.reviewedBy || finding?.reviewedAt);
+  if (!isPreReviewSafe && !isReviewed) {
+    console.warn(`⚠️ [WEBHOOK:terminate] fid=${findingId} not reviewed and not pre-review-safe (reason=${payload.reason ?? "none"}) — refusing to send`);
     return;
   }
 
@@ -99,10 +118,18 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   const crmUrl = recordId && QB_REALM() ? `https://${QB_REALM()}.quickbase.com/db/${qbTableId}?a=dr&rid=${recordId}` : "";
 
   const allQs = Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : [];
-  const yeses = allQs.filter((q: any) => q.answer === "Yes").length;
+  // Permissive yes-detection — matches the audit report's isYes() logic.
+  // Email used to filter strict "Yes" / "No" only, missing answers stored
+  // as "yes" / "no" / "" / null / "Yes." / etc. — so an audit with 7
+  // failed questions could show only 1 in the email if 6 of those answers
+  // weren't the literal string "No". The score (72%) was already computed
+  // from review's permissive logic, so the strict missed-Q list was
+  // internally inconsistent with the score the same email displayed.
+  const isYesAns = (a: unknown) => typeof a === "string" && a.trim().toLowerCase().startsWith("y");
+  const yeses = allQs.filter((q: any) => isYesAns(q.answer)).length;
   const total = allQs.length;
   const scoreVal = payload.score ?? (total > 0 ? Math.round((yeses / total) * 100) : 0);
-  const missedQs = allQs.filter((q: any) => q.answer === "No");
+  const missedQs = allQs.filter((q: any) => !isYesAns(q.answer));
   const scoreColor = scoreVal === 100 ? "#3fb950" : scoreVal >= 80 ? "#58a6ff" : scoreVal >= 60 ? "#d29922" : "#f85149";
   const passedOrFailed = scoreVal === 100 ? "Passed" : "Failed";
   const scoreVerbiage = scoreVal === 100 ? "Perfect score — great call! Review your audit below."

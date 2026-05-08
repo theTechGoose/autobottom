@@ -792,6 +792,85 @@ export async function listStored<T>(type: string, org: string, opts: { limit?: n
   return bodies.map((b) => unwrapPayload<T>(b));
 }
 
+/** Paginated by-type scan. Pages 5000 docs at a time using __name__ as the
+ *  cursor (no custom composite index needed — Firestore always indexes
+ *  __name__). Returns every doc matching (_type, _org), even when the
+ *  total exceeds the per-runQuery response budget. Used by
+ *  listStoredWithKeysAll for bulk maintenance work that must NOT silently
+ *  truncate at a single-shot limit. */
+const LIST_BY_TYPE_PAGE_SIZE = 5_000;
+
+async function restListByTypePaged(creds: FirestoreCreds, type: string, org: string): Promise<DocBody[]> {
+  const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
+  const out: DocBody[] = [];
+  let cursorDocName: string | null = null;
+  let pageNum = 0;
+
+  while (true) {
+    pageNum++;
+    const structuredQuery: Record<string, unknown> = {
+      from: [{ collectionId: creds.collection }],
+      where: {
+        compositeFilter: {
+          op: "AND",
+          filters: [
+            { fieldFilter: { field: { fieldPath: "_type" }, op: "EQUAL", value: { stringValue: type } } },
+            { fieldFilter: { field: { fieldPath: "_org" }, op: "EQUAL", value: { stringValue: org } } },
+          ],
+        },
+      },
+      orderBy: [
+        { field: { fieldPath: "__name__" }, direction: "ASCENDING" },
+      ],
+      limit: LIST_BY_TYPE_PAGE_SIZE,
+    };
+    if (cursorDocName) {
+      structuredQuery.startAt = {
+        values: [{ referenceValue: cursorDocName }],
+        before: false,
+      };
+    }
+    console.log(`🔍 [LIST-PAGED] type=${type} org=${org} page=${pageNum} cursor=${cursorDocName ? cursorDocName.split("/").pop() : "none"}`);
+    const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify({ structuredQuery }) });
+    if (!res.ok) throw new Error(`paged list failed: ${res.status} ${res.text}`);
+    const rows = JSON.parse(res.text) as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
+    let pageRows = 0;
+    let lastDocName: string | null = null;
+    for (const row of rows) {
+      if (!row.document?.fields || !row.document?.name) continue;
+      pageRows++;
+      const obj = objectFromFields(row.document.fields) as DocBody;
+      if (isExpired(obj)) continue;
+      out.push(obj);
+      lastDocName = row.document.name;
+    }
+    console.log(`✅ [LIST-PAGED] type=${type} page=${pageNum} returned ${pageRows} rows (accumulated ${out.length})`);
+    if (pageRows < LIST_BY_TYPE_PAGE_SIZE || !lastDocName) break;
+    cursorDocName = lastDocName;
+  }
+  return out;
+}
+
+/** Like listStoredWithKeys, but paginates internally — returns EVERY doc
+ *  of (_type, _org), no silent truncation. Use for bulk maintenance ops
+ *  (dedup, purge) where leaving orphans isn't acceptable. Heavier per
+ *  call than listStoredWithKeys (multi-page), so do NOT use on the
+ *  request-hot-path; this is meant for background-lane work. */
+export async function listStoredWithKeysAll<T>(
+  type: string,
+  org: string,
+): Promise<Array<{ key: string[]; value: T }>> {
+  const creds = await loadFirestoreCredentials();
+  if (!creds) {
+    // In-mem fallback: just dump everything matching.
+    return inMemListByType(type, org, Number.MAX_SAFE_INTEGER).map((b) => ({
+      key: b._key, value: unwrapPayload<T>(b),
+    }));
+  }
+  const bodies = await restListByTypePaged(creds, type, org);
+  return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
+}
+
 /** List all values matching this type+org, with their key parts. */
 export async function listStoredWithKeys<T>(
   type: string,

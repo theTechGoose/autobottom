@@ -3,7 +3,7 @@
  *  acceptable given the per-judge concurrency profile and idempotent finalize. */
 
 import {
-  getStored, setStored, deleteStored, listStoredWithKeys,
+  getStored, setStored, deleteStored, listStoredWithKeys, listStoredWithKeysAll,
   encodeDocId, commitDeletes,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -640,19 +640,11 @@ async function bulkDeleteFindings(
   const idSet = new Set(findingIds);
   const docIds = new Set<string>();
 
-  // 50k as a single Firestore runQuery is too aggressive — the response
-  // body can't be consumed inside the 60s per-attempt budget for big
-  // types like review-undo-idx, so the call aborts and the whole dedup
-  // fails. 5000 matches the dashboard's COMPLETED_AT_PAGE_SIZE — proven
-  // to consume reliably under the timeout. Tradeoff: orgs with >5k rows
-  // of any single type may leave orphans on a single dedup pass; running
-  // dedup again picks them up. Cursor-based pagination would solve this
-  // but requires composite indexes per type — not worth the migration
-  // for the cost.
-  const SCAN_LIMIT = 5_000;
-
   // Types whose docs are scattered (key[0] === findingId, OR value.findingId
-  // points at the finding). One list scan per type covers the whole batch.
+  // points at the finding). listStoredWithKeysAll paginates internally
+  // (5000-doc pages with __name__ cursor) so even big types complete
+  // without hitting the 60s per-attempt timeout. No silent truncation —
+  // every matching row is examined, no orphans left for re-runs.
   const listTypes = [
     "review-pending", "review-decided", "review-active",
     "judge-pending", "judge-decided", "judge-active",
@@ -662,7 +654,7 @@ async function bulkDeleteFindings(
   for (const type of listTypes) {
     let rows: Array<{ key: string[]; value: unknown }>;
     try {
-      rows = await listStoredWithKeys<unknown>(type, orgId, { limit: SCAN_LIMIT });
+      rows = await listStoredWithKeysAll<unknown>(type, orgId);
     } catch (err) {
       console.error(`[DEDUP] ❌ scan ${type} threw:`, err);
       throw new Error(`bulk dedup scan failed for type=${type}: ${(err as Error).message}`);

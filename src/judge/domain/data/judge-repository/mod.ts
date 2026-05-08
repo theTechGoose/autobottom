@@ -640,11 +640,16 @@ async function bulkDeleteFindings(
   const idSet = new Set(findingIds);
   const docIds = new Set<string>();
 
-  // Default listStoredWithKeys limit is 1000 — way too small for a busy
-  // org. Bump to 50k so a single dedup batch covers the whole dataset
-  // for any of these types. (Firestore doesn't charge for missed-match
-  // rows here; we still scan, but only paid for the read.)
-  const SCAN_LIMIT = 50_000;
+  // 50k as a single Firestore runQuery is too aggressive — the response
+  // body can't be consumed inside the 60s per-attempt budget for big
+  // types like review-undo-idx, so the call aborts and the whole dedup
+  // fails. 5000 matches the dashboard's COMPLETED_AT_PAGE_SIZE — proven
+  // to consume reliably under the timeout. Tradeoff: orgs with >5k rows
+  // of any single type may leave orphans on a single dedup pass; running
+  // dedup again picks them up. Cursor-based pagination would solve this
+  // but requires composite indexes per type — not worth the migration
+  // for the cost.
+  const SCAN_LIMIT = 5_000;
 
   // Types whose docs are scattered (key[0] === findingId, OR value.findingId
   // points at the finding). One list scan per type covers the whole batch.

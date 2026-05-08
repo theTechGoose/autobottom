@@ -723,29 +723,17 @@ Deno.serve({ port }, (req, info) => {
         if (peek && typeof peek.rid === "string") rid = peek.rid;
       } catch { /* logging only — never break dispatch */ }
 
-      // Pre-track WITH rid so the dashboard's QB Record column populates.
-      // We delete the row at end-of-handler (so Active = currently-running
-      // only), which means each handler starts with no row — rid would
-      // otherwise be lost. If rid isn't in the QStash body, try the
-      // finding doc (cached) but bound the lookup to 2s so we don't
-      // inherit the 60s Firestore timeout when the DB is lagging.
-      // Idempotent — the step's own trackActive call will merge over
-      // this with the same data.
+      // Pre-track. We intentionally do NOT do a getFinding lookup here
+      // for rid — that adds an extra Firestore read PER handler
+      // invocation, and under load (e.g. 73 simultaneous bulk audits)
+      // the cumulative FS load saturates the connection pool and
+      // cascades into 60s aborts on every other FS call (auth, page
+      // renders, dashboard reads). If rid isn't in the QStash body,
+      // step-init's own metadata trackActive call (step-init/mod.ts:56)
+      // writes rid for init handlers; other steps fall back to "—" in
+      // the dashboard's QB Record column, which is acceptable.
       if (orgId && findingId !== "<unknown>") {
         try {
-          if (!rid) {
-            const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
-            const lookup = getFinding(orgId as OrgId, findingId);
-            const timeout = new Promise<null>((r) => setTimeout(() => r(null), 2000));
-            const finding = await Promise.race([lookup, timeout]);
-            // Findings store the QB record id at finding.record.RecordId
-            // (the QB record object). Older code paths sometimes also wrote
-            // top-level finding.rid / finding.recordId, so check those as
-            // fallbacks before giving up.
-            const r = finding?.record?.RecordId ?? finding?.record?.recordId
-                   ?? finding?.rid ?? finding?.recordId;
-            if (typeof r === "string" || typeof r === "number") rid = String(r);
-          }
           const { trackActive } = await import("@audit/domain/data/stats-repository/mod.ts");
           await trackActive(orgId as OrgId, findingId, stepName, rid ? { rid } : undefined);
         } catch (preErr) {

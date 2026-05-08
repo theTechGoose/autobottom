@@ -21,6 +21,7 @@ import {
   updateCompletedStatScore,
   deleteChargebackEntry,
   deleteWireDeductionEntry,
+  getHiddenFindingIds,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 
@@ -267,6 +268,7 @@ export async function claimNextItem(
   allowedTypes?: string[],
 ): Promise<{ buffer: BufferItem[]; remaining: number }> {
   const now = Date.now();
+  const hidden = await getHiddenFindingIds(orgId);
 
   // 1. Sweep expired active claims from OTHER reviewers back to pending
   const allActive = await listStoredWithKeys<ReviewItem & { claimedAt: number }>("review-active", orgId);
@@ -333,6 +335,7 @@ export async function claimNextItem(
     myDecidedByFinding.get(fid)!.push(value);
   }
   for (const [fid, decisions] of myDecidedByFinding) {
+    if (hidden.has(fid)) continue;
     // Skip if already finalized
     const done = await getStored<{ reviewedAt?: string }>("review-done", orgId, fid);
     if (done) continue;
@@ -394,6 +397,7 @@ export async function claimNextItem(
   const findingTimestamps = new Map<string, number>();
   const pendingByFinding = new Map<string, Array<{ key: string[]; value: ReviewItem }>>();
   for (const row of allPending) {
+    if (hidden.has(row.value.findingId)) continue;
     if (allowedTypes) {
       const isPackage = row.value.recordingIdField === "GenieNumber";
       const itemType = isPackage ? "package" : "date-leg";

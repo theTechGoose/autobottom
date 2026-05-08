@@ -15,6 +15,88 @@ function padTs(ts: number): string { return String(ts).padStart(15, "0"); }
 // Watchdog-active is org-agnostic (one global namespace). Use empty-string org.
 const GLOBAL = "" as OrgId;
 
+// ── Audit Hidden (soft-hide marker) ──────────────────────────────────────────
+// Per-finding marker that read paths should treat the finding as hidden.
+// Used by dedup instead of physical deletion — one tiny write per finding,
+// reversible via unmarkFindingHidden, and cheap to filter against on reads.
+
+export interface AuditHiddenEntry {
+  findingId: string;
+  hiddenAt: number;
+  hiddenBy: string;
+  reason: "duplicate";
+}
+
+export async function markFindingHidden(
+  orgId: OrgId,
+  findingId: string,
+  hiddenBy: string,
+  reason: "duplicate" = "duplicate",
+): Promise<void> {
+  await setStored("audit-hidden", orgId, [findingId], {
+    findingId, hiddenAt: Date.now(), hiddenBy, reason,
+  });
+}
+
+export async function unmarkFindingHidden(orgId: OrgId, findingId: string): Promise<void> {
+  await deleteStored("audit-hidden", orgId, findingId);
+}
+
+// Per-isolate cache so the Set is loaded once and reused across the many
+// filter sites. 30s TTL — cross-isolate writes propagate within one cache
+// cycle. Background refresh promise NEVER rejects (catch internally) to
+// avoid the unhandled-rejection isolate-crash mode.
+const _hiddenCache = new Map<string, { ids: Set<string>; expiresAt: number }>();
+const _hiddenRefreshing = new Set<string>();
+const HIDDEN_TTL_MS = 30 * 1000;
+
+async function loadHiddenIds(orgId: OrgId): Promise<Set<string>> {
+  const rows = await listStoredWithKeys<{ findingId?: string }>("audit-hidden", orgId);
+  const ids = new Set<string>();
+  for (const { key, value } of rows) {
+    const fid = (typeof key[0] === "string" ? key[0] : undefined) ?? value?.findingId;
+    if (fid) ids.add(String(fid));
+  }
+  return ids;
+}
+
+function refreshHiddenInBackground(orgId: OrgId): void {
+  if (_hiddenRefreshing.has(orgId)) return;
+  _hiddenRefreshing.add(orgId);
+  loadHiddenIds(orgId)
+    .then((ids) => {
+      _hiddenCache.set(orgId, { ids, expiresAt: Date.now() + HIDDEN_TTL_MS });
+    })
+    .catch((err) => {
+      console.warn(`⚠️ [HIDDEN] background refresh failed org=${orgId}: ${(err as Error).message}`);
+    })
+    .finally(() => {
+      _hiddenRefreshing.delete(orgId);
+    });
+}
+
+export async function getHiddenFindingIds(orgId: OrgId): Promise<Set<string>> {
+  const now = Date.now();
+  const cached = _hiddenCache.get(orgId);
+  if (cached && cached.expiresAt > now) {
+    // SWR: serve cached, refresh in background if past 50% TTL
+    if (cached.expiresAt - now < HIDDEN_TTL_MS / 2) refreshHiddenInBackground(orgId);
+    return cached.ids;
+  }
+  // Cold load — block.
+  const ids = await loadHiddenIds(orgId);
+  _hiddenCache.set(orgId, { ids, expiresAt: now + HIDDEN_TTL_MS });
+  return ids;
+}
+
+/** Test-only — clear the per-isolate hidden cache. resetFirestoreCredentials()
+ *  wipes the in-mem store but not this cache; tests that depend on freshness
+ *  call this at the top of each step. */
+export function _resetHiddenCacheForTesting(): void {
+  _hiddenCache.clear();
+  _hiddenRefreshing.clear();
+}
+
 // ── Active Tracking ──────────────────────────────────────────────────────────
 
 export async function trackActive(orgId: OrgId, findingId: string, step: string, meta?: Record<string, unknown>): Promise<void> {
@@ -127,7 +209,10 @@ export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number
     throw err;
   }
   console.log(`[AUDIT-HISTORY] [Q-IDX] got ${entries.length} audit-done-idx rows from Firestore`);
-  return entries;
+  const hidden = await getHiddenFindingIds(orgId);
+  const visible = entries.filter((e) => !hidden.has(e.findingId));
+  console.log(`[AUDIT-HISTORY] [Q-IDX] ${entries.length} rows, ${visible.length} after hidden filter`);
+  return visible;
 }
 
 export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
@@ -139,6 +224,7 @@ export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Prom
   // an existing composite index. Default window: 365 days.
   const now = Date.now();
   const since = now - 365 * DAY_MS;
+  const hidden = await getHiddenFindingIds(orgId);
 
   const idx = await listStoredByCompletedAt<AuditDoneIndexEntry>(
     "audit-done-idx", orgId, since, now,
@@ -146,6 +232,7 @@ export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Prom
   );
   const out: AuditDoneIndexEntry[] = [];
   for (const e of idx) {
+    if (hidden.has(e.findingId)) continue;
     if (e.recordId !== recordId) continue;
     out.push(e);
   }
@@ -174,6 +261,7 @@ export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Prom
     );
     let fallbackCount = 0;
     for (const s of stats) {
+      if (hidden.has(s.findingId)) continue;
       if (s.recordId !== recordId) continue;
       fallbackCount++;
       out.push({
@@ -218,8 +306,9 @@ export async function getChargebackEntry(orgId: OrgId, findingId: string): Promi
 }
 
 export async function getChargebackEntries(orgId: OrgId, since: number, until: number): Promise<ChargebackEntry[]> {
+  const hidden = await getHiddenFindingIds(orgId);
   const all = await listStored<ChargebackEntry>("chargeback-entry", orgId);
-  return all.filter((e) => e.ts >= since && e.ts <= until);
+  return all.filter((e) => e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
 }
 
 // ── Wire Deduction Entries ───────────────────────────────────────────────────
@@ -237,8 +326,9 @@ export async function getWireDeductionEntry(orgId: OrgId, findingId: string): Pr
 }
 
 export async function getWireDeductionEntries(orgId: OrgId, since: number, until: number): Promise<WireDeductionEntry[]> {
+  const hidden = await getHiddenFindingIds(orgId);
   const all = await listStored<WireDeductionEntry>("wire-deduction-entry", orgId);
-  return all.filter((e) => e.ts >= since && e.ts <= until);
+  return all.filter((e) => e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
 }
 
 // ── Stuck Findings (watchdog) ────────────────────────────────────────────────

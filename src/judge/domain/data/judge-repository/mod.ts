@@ -3,8 +3,7 @@
  *  acceptable given the per-judge concurrency profile and idempotent finalize. */
 
 import {
-  getStored, setStored, deleteStored, listStoredWithKeys, listStoredWithKeysAll, listStoredKeysAll,
-  encodeDocId, commitDeletes,
+  getStored, setStored, deleteStored, listStoredWithKeys,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
@@ -20,6 +19,8 @@ import {
   saveChargebackEntry,
   saveWireDeductionEntry,
   queryAuditDoneIndex,
+  markFindingHidden,
+  getHiddenFindingIds,
 } from "@audit/domain/data/stats-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;
@@ -211,11 +212,13 @@ export async function claimNextItem(
   judge: string,
 ): Promise<{ buffer: JudgeBufferItem[]; remaining: number }> {
   const now = Date.now();
+  const hidden = await getHiddenFindingIds(orgId);
 
   async function claimFromPending(count: number): Promise<JudgeItem[]> {
     const claimed: JudgeItem[] = [];
     const rows = await listStoredWithKeys<JudgeItem>("judge-pending", orgId);
     for (const { key, value } of rows) {
+      if (hidden.has(value.findingId)) continue;
       if (value.appealType && SKIP_APPEAL_TYPES.has(value.appealType)) {
         const skipFid = value.findingId;
         const counterVal = (await getStored<number>("judge-audit-pending", orgId, skipFid)) ?? 1;
@@ -294,7 +297,10 @@ export async function claimNextItem(
   await sweepExpiredActiveClaims(orgId, judge);
 
   const activeRows = await listStoredWithKeys<JudgeItem & { claimedAt: number }>("judge-active", orgId);
-  const myActive: JudgeItem[] = activeRows.filter(({ key }) => key[0] === judge).map(({ value }) => value);
+  const myActive: JudgeItem[] = activeRows
+    .filter(({ key }) => key[0] === judge)
+    .map(({ value }) => value)
+    .filter((v) => !hidden.has(v.findingId));
 
   if (myActive.length < BUFFER_SIZE) {
     const more = await claimFromPending(BUFFER_SIZE - myActive.length);
@@ -561,6 +567,11 @@ export async function findDuplicates(
   since: number,
   until: number,
 ): Promise<DedupPlan> {
+  // queryAuditDoneIndex already filters hidden findings; the explicit check
+  // below is defensive (cheap, makes findDuplicates correct standalone) and
+  // ensures re-runs are idempotent — already-flagged findings aren't re-
+  // flagged.
+  const hidden = await getHiddenFindingIds(orgId);
   const indexEntries = await queryAuditDoneIndex(orgId, since, until);
 
   type Entry = { id: string; recordKey: string; ts: number; reviewed: boolean };
@@ -568,6 +579,7 @@ export async function findDuplicates(
   const needFinding: typeof indexEntries = [];
 
   for (const e of indexEntries) {
+    if (hidden.has(e.findingId)) continue;
     if (e.recordId) {
       inRange.push({
         id: e.findingId,
@@ -622,207 +634,40 @@ export async function findDuplicates(
   return { scanned: inRange.length, groups: dupGroups, orphaned: orphaned.length, toDelete };
 }
 
-/** Bulk-delete N findings using single-pass type scans + Firestore :commit
- *  batching. Replaces the old per-finding loop that did 7+ paginated list
- *  scans + 7+ point reads PER finding (≈1500 FS calls for 200 deletes).
- *  This version: ~10 list scans total + a handful of :commit batches.
- *  500× less FS pressure for the same work, and serializable inside the
- *  background lane so it can't starve foreground.
+/** Soft-flag every loser as hidden via the audit-hidden marker.
  *
- *  Idempotent: blind-deletes singleton candidate doc IDs without checking
- *  existence (Firestore `delete` is a no-op when the doc is missing). */
-async function bulkDeleteFindings(
-  orgId: OrgId,
-  losers: Array<{ id: string; ts: number }>,
-  onProgress?: (deleted: number, total: number) => void,
-): Promise<{ deleted: number }> {
-  if (losers.length === 0) return { deleted: 0 };
-  const findingIds = losers.map((l) => l.id);
-  const idSet = new Set(findingIds);
-  const docIds = new Set<string>();
-  // padTs mirrors stats-repository.padTs — used to recompute audit-done-idx
-  // doc keys directly from each candidate's ts, skipping the scan.
-  const padTs = (ts: number) => String(ts).padStart(15, "0");
-
-  // Types whose docs are scattered. Two flavors:
-  //  - keysOnly: types where findingId is in the doc key (so we can
-  //    match on key alone). Use listStoredKeysAll which pulls only doc
-  //    names — critical for audit-finding, whose chunk bodies contain
-  //    full transcripts + Q&A (~50KB each). A 5000-row page WITH bodies
-  //    is hundreds of MB — the response saturates the HTTP/2 stream
-  //    pool to firestore.googleapis.com and stalls every other FS call
-  //    on the isolate (auth, dashboard, review queue), all aborting at
-  //    60s. Keys-only responses stay tiny.
-  //  - withBodies: small queue/stat tables where matching may use
-  //    value.findingId. Bodies are small here, so the body fetch is
-  //    cheap and the value-side fallback covers any keying anomaly.
-  // audit-done-idx is intentionally NOT in this list — its doc key is
-  // [padTs(completedAt), findingId] and the dedup plan already carries
-  // ts per candidate, so we compute the doc IDs directly below without
-  // scanning. This eliminates a multi-page paginated scan that, on busy
-  // orgs, was hanging Firestore on page 3 even with select: __name__.
-  // audit-finding is also intentionally NOT in keysOnlyTypes — even
-  // with select: __name__, paginated cursor scans of ~25k rows
-  // (header + chunks for thousands of findings) hit Firestore's
-  // internal scan deadline on deep pages and abort at 60s. The dedup
-  // plan already names every finding to delete; we read each one's
-  // header directly to discover totalChunks (constant-time per
-  // finding, no scan), then blind-add header + chunk doc IDs. See
-  // the per-finding header-read loop below.
-  const keysOnlyTypes = [
-    "completed-audit-stat",// key=[findingId, ...]; body small, findingId is in key
-    "review-undo-idx",     // key=[ts, findingId]; findingId is in key
-  ];
-  const withBodyTypes = [
-    "review-pending", "review-decided", "review-active",
-    "judge-pending", "judge-decided", "judge-active",
-  ];
-
-  // Scan keys-only types: match by ANY string key part appearing in idSet.
-  // For audit-finding the matching part is key[0]. For audit-done-idx /
-  // review-undo-idx it's key[1]. For completed-audit-stat it's key[0].
-  // Generic "any-part-in-set" handles all of them without per-type logic.
-  for (const type of keysOnlyTypes) {
-    let keyRows: Array<{ key: string[] }>;
-    try {
-      keyRows = await listStoredKeysAll(type, orgId);
-    } catch (err) {
-      console.error(`[DEDUP] ❌ keys-scan ${type} threw:`, err);
-      throw new Error(`bulk dedup scan failed for type=${type}: ${(err as Error).message}`);
-    }
-    let typeMatches = 0;
-    for (const row of keyRows) {
-      const key = Array.isArray(row?.key) ? row.key : null;
-      if (!key) continue;
-      const matched = key.some((p) => typeof p === "string" && idSet.has(p));
-      if (!matched) continue;
-      try {
-        docIds.add(encodeDocId(type, orgId, ...key));
-        typeMatches++;
-      } catch (err) {
-        console.warn(`[DEDUP] ⚠️ encodeDocId failed for type=${type} key=${JSON.stringify(key)}: ${(err as Error).message}`);
-      }
-    }
-    console.log(`[DEDUP] keys-scan type=${type} rows=${keyRows.length} matched=${typeMatches}`);
-  }
-
-  // Scan with-body types: small tables, body fetch is cheap.
-  for (const type of withBodyTypes) {
-    let rows: Array<{ key: string[]; value: unknown }>;
-    try {
-      rows = await listStoredWithKeysAll<unknown>(type, orgId);
-    } catch (err) {
-      console.error(`[DEDUP] ❌ scan ${type} threw:`, err);
-      throw new Error(`bulk dedup scan failed for type=${type}: ${(err as Error).message}`);
-    }
-    let typeMatches = 0;
-    for (const row of rows) {
-      const key = Array.isArray(row?.key) ? row.key : null;
-      if (!key) continue;
-      const k0 = typeof key[0] === "string" ? key[0] : undefined;
-      const value = row?.value;
-      const valueFid = value && typeof value === "object" && typeof (value as { findingId?: unknown }).findingId === "string"
-        ? (value as { findingId: string }).findingId
-        : undefined;
-      const matched = (k0 && idSet.has(k0)) || (valueFid && idSet.has(valueFid));
-      if (matched) {
-        try {
-          docIds.add(encodeDocId(type, orgId, ...key));
-          typeMatches++;
-        } catch (err) {
-          console.warn(`[DEDUP] ⚠️ encodeDocId failed for type=${type} key=${JSON.stringify(key)}: ${(err as Error).message}`);
-        }
-      }
-    }
-    console.log(`[DEDUP] scan type=${type} rows=${rows.length} matched=${typeMatches}`);
-  }
-
-  // audit-done-idx: doc key is [padTs(ts), findingId] and we know both
-  // from the plan — no scan needed. Blind-add the deterministic doc ID;
-  // :commit no-ops if it doesn't exist.
-  for (const loser of losers) {
-    try {
-      docIds.add(encodeDocId("audit-done-idx", orgId, padTs(loser.ts), loser.id));
-    } catch { /* skip malformed */ }
-  }
-
-  // audit-finding: blind-add header + chunk doc IDs deterministically.
-  // Header doc lives at audit-finding__org__findingId; chunks at
-  // audit-finding__org__findingId__chunk_0..chunk_{N-1}. We don't know
-  // N for each finding without reading the header, BUT :commit delete
-  // is idempotent on missing docs — sending extra delete ops for chunk
-  // slots that don't exist is free. Cover up to AUDIT_FINDING_MAX_CHUNKS
-  // = 64 (≈ 44 MB of body data per finding at CHUNK_BYTES=700_000),
-  // which exceeds every real finding we've seen. Anything truly larger
-  // would leave a few chunk orphans — harmless because the header is
-  // gone, so getStoredChunked returns null and the finding is logically
-  // deleted.
-  //
-  // Why blind-add instead of reading the header first: per-finding
-  // header reads were hitting the same 60s Firestore wall as the scan
-  // they replaced, because the connection pool to firestore.googleapis.com
-  // gets into bad states under sustained load and ALL fetches start
-  // timing out simultaneously — even single-doc point reads. By
-  // computing the doc IDs locally we issue zero FS reads in this
-  // section. Failure modes shrink to "the :commit batches themselves
-  // fail", which is the same surface as every other type.
-  const AUDIT_FINDING_MAX_CHUNKS = 64;
-  for (const loser of losers) {
-    try {
-      docIds.add(encodeDocId("audit-finding", orgId, loser.id));
-      for (let n = 0; n < AUDIT_FINDING_MAX_CHUNKS; n++) {
-        docIds.add(encodeDocId("audit-finding", orgId, loser.id, `chunk_${n}`));
-      }
-    } catch (err) {
-      console.warn(`[DEDUP] ⚠️ encodeDocId failed for audit-finding fid=${loser.id}: ${(err as Error).message}`);
-    }
-  }
-  console.log(`[DEDUP] audit-finding blind-add N=${losers.length} (header + up to ${AUDIT_FINDING_MAX_CHUNKS} chunks each)`);
-
-  // Singletons keyed directly by findingId — blind add, :commit ignores
-  // missing docs. Cheaper than a getStored existence check per finding.
-  const singletonTypes = [
-    "review-audit-pending", "review-done", "judge-audit-pending",
-    "manager-queue", "appeal", "appeal-history", "active-tracking",
-    "chargeback-entry", "wire-deduction-entry",
-  ];
-  for (const fid of findingIds) {
-    for (const type of singletonTypes) {
-      try {
-        docIds.add(encodeDocId(type, orgId, fid));
-      } catch { /* skip malformed findingIds */ }
-    }
-  }
-
-  const docList = [...docIds];
-  console.log(`[DEDUP] bulk: ${losers.length} findings → ${docList.length} doc deletes`);
-  try {
-    await commitDeletes(docList);
-  } catch (err) {
-    console.error(`[DEDUP] ❌ commitDeletes failed: ${(err as Error).message}`);
-    throw err;
-  }
-  // onProgress fires once at the end — no per-finding granularity in bulk
-  // mode, since deletes are batched. UI consumers should treat this as a
-  // single big chunk completing.
-  onProgress?.(losers.length, losers.length);
-  return { deleted: losers.length };
-}
-
+ *  Why "flag" instead of "delete": dedup has hit Firestore's 60s wall three
+ *  separate ways (audit-finding scan, audit-done-idx cursor, even single-doc
+ *  header reads under sustained load). The :commit batched-delete approach
+ *  is fundamentally unfit for this data scale on Deno Deploy's flaky HTTP/2
+ *  connection pool. One tiny write per loser, serialized 100ms apart, is
+ *  utterly reliable — worst case 200 findings × 100ms = 20s wall-clock
+ *  with no scans and no batched deletes. Reversible via unmarkFindingHidden.
+ *
+ *  Idempotent: markFindingHidden just overwrites the same doc with a
+ *  newer hiddenAt, so re-runs of a stale plan are harmless. Per-finding
+ *  failures don't abort the loop — operator can re-run dedup. */
 export async function deleteDuplicates(
   orgId: OrgId,
   plan: DedupPlan,
   onProgress?: (deleted: number, total: number, findingId: string) => void,
 ): Promise<{ deleted: number }> {
-  const losers = plan.toDelete.filter((d) => !d.keep).map((d) => ({ id: d.id, ts: d.ts }));
-  const result = await bulkDeleteFindings(orgId, losers, (d, t) => {
-    // Map the bulk progress callback into the per-finding shape the
-    // existing controller signature uses. findingId is a synthetic
-    // "batch" sentinel since deletes are coalesced.
-    onProgress?.(d, t, "batch");
-  });
-  console.log(`[DEDUP] ✅ done org=${orgId} deleted=${result.deleted}/${losers.length}`);
-  return result;
+  const losers = plan.toDelete.filter((d) => !d.keep);
+  let deleted = 0;
+  for (const dup of losers) {
+    try {
+      await markFindingHidden(orgId, dup.id, "dedup");
+      deleted++;
+      onProgress?.(deleted, losers.length, dup.id);
+    } catch (err) {
+      console.warn(`[DEDUP] ⚠️ flag failed for ${dup.id}: ${(err as Error).message}`);
+    }
+    // 100ms gap between writes — slow but utterly reliable, no chance of
+    // hammering Firestore. 200 findings × 100ms = 20s wall-clock.
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  console.log(`[DEDUP] ✅ flagged ${deleted}/${losers.length} duplicates as hidden org=${orgId}`);
+  return { deleted };
 }
 
 export const backfillChargebackEntriesLegacy = backfillChargebackEntries;

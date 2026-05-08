@@ -448,8 +448,18 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
       } catch (err) {
         clearTimeout(timeoutId);
         lastErr = err;
+        // Distinguish "our own watchdog timer fired" from "the underlying
+        // stream aborted unexpectedly". Both surface as AbortError with
+        // "aborted" in the message, which would normally match
+        // isTransientFsError and trigger a retry. But our own timeout
+        // means the query is GENUINELY too slow — retrying just re-fires
+        // the same hung query against Firestore, holding the same slot
+        // for another full FS_ATTEMPT_TIMEOUT_MS. Fail fast in that case;
+        // free the slot, surface the error to the caller. Only retry on
+        // stream-level aborts and other classified-transient errors.
+        const ourTimeout = ctrl.signal.aborted;
         const msg = err instanceof Error ? err.message : String(err);
-        const transient = isTransientFsError(msg);
+        const transient = !ourTimeout && isTransientFsError(msg);
         if (!transient || attempt >= FS_RETRY_DELAYS_MS.length) break;
         console.warn(`⚠️ [FS] transient fetch error (attempt ${attempt + 1}): ${msg.slice(0, 120)} — retrying`);
         await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));

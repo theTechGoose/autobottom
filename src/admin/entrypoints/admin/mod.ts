@@ -316,14 +316,22 @@ export class AdminConfigController {
     const until = parseDateOrMs(b.until, true);
     if (since == null || until == null) return { error: "since and until required (date YYYY-MM-DD or ms)" };
     const { findDuplicatesLegacy, deleteDuplicatesLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
-    return runInBackgroundLane(async () => {
-      const plan = await findDuplicatesLegacy(ORG(), since, until);
-      if (b.execute) {
-        const result = await deleteDuplicatesLegacy(ORG(), plan as any, () => {});
-        return { ok: true, ...result };
-      }
-      return { ok: true, plan, message: "Dry run — send execute: true to apply" };
-    });
+    try {
+      return await runInBackgroundLane(async () => {
+        const plan = await findDuplicatesLegacy(ORG(), since, until);
+        if (b.execute) {
+          const result = await deleteDuplicatesLegacy(ORG(), plan as any, () => {});
+          return { ok: true, ...result };
+        }
+        return { ok: true, plan, message: "Dry run — send execute: true to apply" };
+      });
+    } catch (err) {
+      // Surface the real failure into the JSON response so the
+      // maintenance modal shows it instead of a bare 500. Without this,
+      // dedup errors only appeared as console 500s with no detail.
+      console.error(`[DEDUP] ❌ controller threw:`, err);
+      return { ok: false, error: `dedup failed: ${(err as Error).message}` };
+    }
   }
 
   // -- Purge --

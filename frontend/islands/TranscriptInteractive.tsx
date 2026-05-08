@@ -1,8 +1,16 @@
 /** Island: hydrates the transcript panel with click-to-seek, evidence
- *  highlighting, defense highlighting, text search (open with `/`, cycle
- *  with `;`), and column-scrolling. The SSR'd TranscriptPanel component
- *  lays down `.t-line` + `.t-timestamp` + `[data-ts-ms]` attrs; this island
- *  attaches behavior without reflowing the DOM.
+ *  highlighting, defense highlighting, text search (open with `/` or `\`,
+ *  cycle with `;`), and column-scrolling. The SSR'd TranscriptPanel
+ *  component lays down `.t-line` + `.t-timestamp` + `[data-ts-ms]` attrs;
+ *  this island attaches behavior without reflowing the DOM.
+ *
+ *  Survives HTMX swaps of `#queue-content`. The transcript body and
+ *  search bar both live INSIDE that swap target — every Y/N decision
+ *  swaps them out and replaces them with fresh DOM. Direct addEventListener
+ *  on those elements would die on the first swap (Gotcha #1 in
+ *  frontend/CLAUDE.md). So all event listeners attach at the DOCUMENT
+ *  level and check `target.closest()` to find their elements; that way
+ *  the same handlers serve every swapped-in copy of the transcript.
  *
  *  Mirrors prod main:shared/queue-page.ts transcript interaction block. */
 import { useEffect, useRef } from "preact/hooks";
@@ -17,12 +25,21 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
   const matchCountRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    const bodyEl = document.getElementById("transcript-body") as HTMLDivElement | null;
-    if (!bodyEl) return;
-    const body: HTMLDivElement = bodyEl;
-
     let matches: HTMLElement[] = [];
     let matchIndex = -1;
+
+    function getBody(): HTMLDivElement | null {
+      return document.getElementById("transcript-body") as HTMLDivElement | null;
+    }
+    function getSearchBar(): HTMLDivElement | null {
+      return document.getElementById("transcript-search-bar") as HTMLDivElement | null;
+    }
+    function getSearchInput(): HTMLInputElement | null {
+      return getSearchBar()?.querySelector(".transcript-search-input") as HTMLInputElement | null;
+    }
+    function getMatchCount(): HTMLSpanElement | null {
+      return getSearchBar()?.querySelector(".transcript-search-count") as HTMLSpanElement | null;
+    }
 
     // ── Evidence + defense highlighting ──
     function wordOverlap(line: string, words: string[], min: number): boolean {
@@ -58,6 +75,8 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
     }
 
     function applyHighlights() {
+      const body = getBody();
+      if (!body) return;
       const quotes = [
         ...extractQuotes(defense ?? ""),
         ...extractQuotes(thinking ?? ""),
@@ -79,9 +98,12 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
     }
 
     // ── Click-to-seek on timestamps + anywhere on a line ──
-    function onBodyClick(e: Event) {
+    // Document-level so it survives HTMX swaps of #queue-content.
+    function onDocClick(e: Event) {
       const target = e.target as HTMLElement | null;
       if (!target) return;
+      // Only act on clicks within the current transcript body.
+      if (!target.closest("#transcript-body")) return;
       const stampEl = target.closest<HTMLElement>(".t-timestamp");
       const lineEl = target.closest<HTMLElement>(".t-line");
       const ms = stampEl?.dataset.seekMs ?? lineEl?.dataset.tsMs;
@@ -114,8 +136,10 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
 
     function runSearch(query: string) {
       clearSearchMarks();
-      if (!query || query.length < 2) {
-        if (matchCountRef.current) matchCountRef.current.textContent = "";
+      const matchCount = getMatchCount();
+      const body = getBody();
+      if (!body || !query || query.length < 2) {
+        if (matchCount) matchCount.textContent = "";
         return;
       }
       const q = query.toLowerCase();
@@ -132,8 +156,8 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
         matches[0].classList.add("t-search-active");
         matches[0].scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
-      if (matchCountRef.current) {
-        matchCountRef.current.textContent = matches.length > 0 ? `${matchIndex + 1}/${matches.length}` : "0/0";
+      if (matchCount) {
+        matchCount.textContent = matches.length > 0 ? `${matchIndex + 1}/${matches.length}` : "0/0";
       }
     }
 
@@ -145,37 +169,41 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
       target.classList.add("t-search-active");
       target.scrollIntoView({ block: "nearest", behavior: "smooth" });
       jumpAudioToLine(target);
-      if (matchCountRef.current) {
-        matchCountRef.current.textContent = `${matchIndex + 1}/${matches.length}`;
+      const matchCount = getMatchCount();
+      if (matchCount) {
+        matchCount.textContent = `${matchIndex + 1}/${matches.length}`;
       }
     }
 
-    // Open/close the search bar
+    // Open/close the search bar (re-query each time — DOM may have swapped)
     function openSearch() {
-      const bar = document.getElementById("transcript-search-bar");
+      const bar = getSearchBar();
       if (!bar) return;
       bar.style.display = "flex";
-      setTimeout(() => searchInputRef.current?.focus(), 30);
+      setTimeout(() => getSearchInput()?.focus(), 30);
     }
     function closeSearch() {
-      const bar = document.getElementById("transcript-search-bar");
+      const bar = getSearchBar();
       if (!bar) return;
       bar.style.display = "none";
       clearSearchMarks();
-      if (searchInputRef.current) searchInputRef.current.value = "";
-      if (matchCountRef.current) matchCountRef.current.textContent = "";
+      const input = getSearchInput();
+      if (input) input.value = "";
+      const matchCount = getMatchCount();
+      if (matchCount) matchCount.textContent = "";
     }
 
     // ── Column scrolling (multi-column layout) ──
     function scrollByColumn(dir: -1 | 1) {
+      const body = getBody();
       if (!body) return;
       // Approximate one column = column-width + column-gap (420 + 24 by our CSS).
       const delta = (420 + 24) * dir;
       body.scrollBy({ left: delta, behavior: "smooth" });
     }
 
-    // Event listeners
-    body.addEventListener("click", onBodyClick);
+    // All listeners attach at document level so they survive HTMX swaps.
+    document.addEventListener("click", onDocClick);
     const onOpen = () => openSearch();
     const onNext = () => nextMatch();
     const onScroll = (e: Event) => {
@@ -186,24 +214,28 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
     document.addEventListener("queue:search-next", onNext);
     document.addEventListener("queue:transcript-scroll", onScroll);
 
-    // Input events for the search field
-    const input = searchInputRef.current;
-    const onInput = () => input && runSearch(input.value);
-    const onSearchKey = (e: KeyboardEvent) => {
+    // Search-field input/keydown — also delegated so they survive swaps.
+    function onDocInput(e: Event) {
+      const target = e.target as HTMLElement | null;
+      if (!target?.classList.contains("transcript-search-input")) return;
+      runSearch((target as HTMLInputElement).value);
+    }
+    function onDocKeydown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (!target?.classList.contains("transcript-search-input")) return;
       if (e.key === "Escape") { e.preventDefault(); closeSearch(); return; }
       if (e.key === "Enter") {
         e.preventDefault();
         // First Enter after typing: jump audio to the FIRST match (the one
         // already activated by runSearch). Subsequent Enters cycle to next.
-        const target = matches[matchIndex];
-        if (target) jumpAudioToLine(target);
-        // Blur the input so subsequent keypresses don't keep typing into it.
-        // The search bar stays visible until Esc.
-        input?.blur();
+        const m = matches[matchIndex];
+        if (m) jumpAudioToLine(m);
+        // Blur so subsequent keypresses don't keep typing into the input.
+        (target as HTMLInputElement).blur();
       }
-    };
-    input?.addEventListener("input", onInput);
-    input?.addEventListener("keydown", onSearchKey);
+    }
+    document.addEventListener("input", onDocInput);
+    document.addEventListener("keydown", onDocKeydown);
 
     applyHighlights();
 
@@ -239,13 +271,13 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
     document.addEventListener("htmx:afterSwap", onHtmxSwap);
 
     return () => {
-      body.removeEventListener("click", onBodyClick);
+      document.removeEventListener("click", onDocClick);
       document.removeEventListener("queue:search-open", onOpen);
       document.removeEventListener("queue:search-next", onNext);
       document.removeEventListener("queue:transcript-scroll", onScroll);
       document.removeEventListener("htmx:afterSwap", onHtmxSwap);
-      input?.removeEventListener("input", onInput);
-      input?.removeEventListener("keydown", onSearchKey);
+      document.removeEventListener("input", onDocInput);
+      document.removeEventListener("keydown", onDocKeydown);
       clearSearchMarks();
     };
   }, [defense, thinking]);

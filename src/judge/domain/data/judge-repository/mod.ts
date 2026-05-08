@@ -640,6 +640,12 @@ async function bulkDeleteFindings(
   const idSet = new Set(findingIds);
   const docIds = new Set<string>();
 
+  // Default listStoredWithKeys limit is 1000 — way too small for a busy
+  // org. Bump to 50k so a single dedup batch covers the whole dataset
+  // for any of these types. (Firestore doesn't charge for missed-match
+  // rows here; we still scan, but only paid for the read.)
+  const SCAN_LIMIT = 50_000;
+
   // Types whose docs are scattered (key[0] === findingId, OR value.findingId
   // points at the finding). One list scan per type covers the whole batch.
   const listTypes = [
@@ -649,18 +655,35 @@ async function bulkDeleteFindings(
     "audit-finding", // header + every chunk row (chunks share _type=audit-finding)
   ];
   for (const type of listTypes) {
-    const rows = await listStoredWithKeys<{ findingId?: string }>(type, orgId);
-    for (const { key, value } of rows) {
+    let rows: Array<{ key: string[]; value: unknown }>;
+    try {
+      rows = await listStoredWithKeys<unknown>(type, orgId, { limit: SCAN_LIMIT });
+    } catch (err) {
+      console.error(`[DEDUP] ❌ scan ${type} threw:`, err);
+      throw new Error(`bulk dedup scan failed for type=${type}: ${(err as Error).message}`);
+    }
+    let typeMatches = 0;
+    for (const row of rows) {
+      // Defensive: legacy/migrated docs may be missing _key; skip rather
+      // than throw on key[0] access.
+      const key = Array.isArray(row?.key) ? row.key : null;
+      if (!key) continue;
       const k0 = typeof key[0] === "string" ? key[0] : undefined;
-      const fidFromKey = k0 && idSet.has(k0) ? k0 : undefined;
-      const fidFromValue = value && typeof value === "object" && typeof (value as { findingId?: unknown }).findingId === "string"
+      const value = row?.value;
+      const valueFid = value && typeof value === "object" && typeof (value as { findingId?: unknown }).findingId === "string"
         ? (value as { findingId: string }).findingId
         : undefined;
-      const matched = fidFromKey ?? (fidFromValue && idSet.has(fidFromValue) ? fidFromValue : undefined);
+      const matched = (k0 && idSet.has(k0)) || (valueFid && idSet.has(valueFid));
       if (matched) {
-        docIds.add(encodeDocId(type, orgId, ...key));
+        try {
+          docIds.add(encodeDocId(type, orgId, ...key));
+          typeMatches++;
+        } catch (err) {
+          console.warn(`[DEDUP] ⚠️ encodeDocId failed for type=${type} key=${JSON.stringify(key)}: ${(err as Error).message}`);
+        }
       }
     }
+    console.log(`[DEDUP] scan type=${type} rows=${rows.length} matched=${typeMatches}`);
   }
 
   // Singletons keyed directly by findingId — blind add, :commit ignores
@@ -672,13 +695,20 @@ async function bulkDeleteFindings(
   ];
   for (const fid of findingIds) {
     for (const type of singletonTypes) {
-      docIds.add(encodeDocId(type, orgId, fid));
+      try {
+        docIds.add(encodeDocId(type, orgId, fid));
+      } catch { /* skip malformed findingIds */ }
     }
   }
 
   const docList = [...docIds];
   console.log(`[DEDUP] bulk: ${findingIds.length} findings → ${docList.length} doc deletes`);
-  await commitDeletes(docList);
+  try {
+    await commitDeletes(docList);
+  } catch (err) {
+    console.error(`[DEDUP] ❌ commitDeletes failed: ${(err as Error).message}`);
+    throw err;
+  }
   // onProgress fires once at the end — no per-finding granularity in bulk
   // mode, since deletes are batched. UI consumers should treat this as a
   // single big chunk completing.

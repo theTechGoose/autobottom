@@ -661,8 +661,15 @@ async function bulkDeleteFindings(
   // ts per candidate, so we compute the doc IDs directly below without
   // scanning. This eliminates a multi-page paginated scan that, on busy
   // orgs, was hanging Firestore on page 3 even with select: __name__.
+  // audit-finding is also intentionally NOT in keysOnlyTypes — even
+  // with select: __name__, paginated cursor scans of ~25k rows
+  // (header + chunks for thousands of findings) hit Firestore's
+  // internal scan deadline on deep pages and abort at 60s. The dedup
+  // plan already names every finding to delete; we read each one's
+  // header directly to discover totalChunks (constant-time per
+  // finding, no scan), then blind-add header + chunk doc IDs. See
+  // the per-finding header-read loop below.
   const keysOnlyTypes = [
-    "audit-finding",       // header + chunk rows; bodies HUGE
     "completed-audit-stat",// key=[findingId, ...]; body small, findingId is in key
     "review-undo-idx",     // key=[ts, findingId]; findingId is in key
   ];
@@ -738,6 +745,48 @@ async function bulkDeleteFindings(
       docIds.add(encodeDocId("audit-done-idx", orgId, padTs(loser.ts), loser.id));
     } catch { /* skip malformed */ }
   }
+
+  // audit-finding: per-finding header read in parallel batches. Each
+  // header doc is at audit-finding__org__findingId; if the finding was
+  // chunked (large), header.totalChunks tells us how many chunk docs
+  // exist (audit-finding__org__findingId__chunk_0..chunk_{N-1}). If
+  // header is null (never existed or already deleted), skip — :commit
+  // no-ops on missing IDs anyway.
+  //
+  // Concurrency capped at 5 to stay friendly to the 5-slot background
+  // lane semaphore. 200 findings / 5 ≈ 40 sequential rounds × ~50ms
+  // per round-trip ≈ 2s — fast, predictable, no chance of hitting any
+  // 60s scan timeout because every call is a single-doc point read.
+  const HEADER_READ_CONCURRENCY = 5;
+  const headerReadStart = Date.now();
+  let headerHits = 0;
+  for (let i = 0; i < losers.length; i += HEADER_READ_CONCURRENCY) {
+    const batch = losers.slice(i, i + HEADER_READ_CONCURRENCY);
+    const results = await Promise.all(batch.map((l) =>
+      getStored<{ totalChunks?: number }>("audit-finding", orgId, l.id)
+        .catch((err) => {
+          console.warn(`[DEDUP] ⚠️ header read failed for fid=${l.id}: ${(err as Error).message}`);
+          return null;
+        })
+    ));
+    for (let j = 0; j < batch.length; j++) {
+      const fid = batch[j].id;
+      const header = results[j];
+      if (header == null) continue; // already-deleted / never-existed — skip
+      headerHits++;
+      try {
+        docIds.add(encodeDocId("audit-finding", orgId, fid));
+        const totalChunks = typeof header.totalChunks === "number" ? header.totalChunks : 0;
+        for (let n = 0; n < totalChunks; n++) {
+          docIds.add(encodeDocId("audit-finding", orgId, fid, `chunk_${n}`));
+        }
+      } catch (err) {
+        console.warn(`[DEDUP] ⚠️ encodeDocId failed for audit-finding fid=${fid}: ${(err as Error).message}`);
+      }
+    }
+  }
+  const headerReadMs = Date.now() - headerReadStart;
+  console.log(`[DEDUP] header-reads N=${losers.length} hits=${headerHits} in ${headerReadMs}ms`);
 
   // Singletons keyed directly by findingId — blind add, :commit ignores
   // missing docs. Cheaper than a getStored existence check per finding.

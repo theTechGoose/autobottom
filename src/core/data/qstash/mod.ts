@@ -1,6 +1,19 @@
 /** QStash queue adapter for audit pipeline step orchestration. Ported from lib/queue.ts. */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
+import { getStored, setStored } from "@core/data/firestore/mod.ts";
+
+// Storage type for operator-set parallelism overrides. Keyed by queue name
+// at the GLOBAL org so a single operator config applies regardless of which
+// org context the boot path runs under.
+const PARALLELISM_CONFIG_TYPE = "queue-parallelism-config";
+const PARALLELISM_CONFIG_ORG = "" as const;
+
+interface ParallelismConfig {
+  queueName: string;
+  parallelism: number;
+  updatedAt: number;
+}
 
 const TRANSCRIBE_QUEUE = "audit-transcribe";
 const QUESTIONS_QUEUE = "audit-questions";
@@ -329,19 +342,54 @@ export async function setQstashQueueParallelism(queueName: string, parallelism: 
     }
     console.log(`✅ [QSTASH] queue ${queueName} parallelism=${parallelism} paused=${currentPaused}`);
     metric("autobottom.qstash.set_parallelism", 1, { queue: queueName });
+
+    // Persist the operator's choice so it survives the next boot. Without
+    // this, applyDefaultQueueParallelism would clobber the operator's
+    // emergency throttle on every redeploy. Best-effort — failure to
+    // persist doesn't block the QStash push that already succeeded.
+    try {
+      const cfg: ParallelismConfig = { queueName, parallelism: Math.max(1, Math.floor(parallelism)), updatedAt: Date.now() };
+      await setStored(PARALLELISM_CONFIG_TYPE, PARALLELISM_CONFIG_ORG, [queueName], cfg);
+    } catch (err) {
+      console.warn(`[QSTASH] persist parallelism for ${queueName} failed (non-fatal):`, err);
+    }
+
     return { ok: true };
   }, {}, "client");
 }
 
-/** Apply default parallelism to all three audit queues. Called on boot so
- *  fresh deployments + new QStash queues land at sensible values without
- *  manual configuration. transcribe/cleanup are I/O-heavy → can run higher
- *  concurrency; questions is LLM-heavy and rate-limit-sensitive → kept lower. */
+const DEFAULT_PARALLELISM: Record<string, number> = {
+  [TRANSCRIBE_QUEUE]: 8,
+  [QUESTIONS_QUEUE]: 4,
+  [CLEANUP_QUEUE]: 8,
+};
+
+/** Apply parallelism to all three audit queues on boot. Operator overrides
+ *  set via /admin/set-queue-parallelism are persisted to Firestore and read
+ *  here FIRST — only fall back to hardcoded defaults if no operator value
+ *  exists. Without this, every redeploy wiped the operator's emergency
+ *  throttle (we hit this at 09:01 today: operator dropped transcribe to 3,
+ *  next boot reset it to 8 → next bulk fire melted Firestore again).
+ *
+ *  transcribe/cleanup are I/O-heavy → can run higher concurrency by default;
+ *  questions is LLM-heavy and rate-limit-sensitive → kept lower. */
 export async function applyDefaultQueueParallelism(): Promise<void> {
   if (isLocalMode()) return;
-  await setQstashQueueParallelism(TRANSCRIBE_QUEUE, 8);
-  await setQstashQueueParallelism(QUESTIONS_QUEUE, 4);
-  await setQstashQueueParallelism(CLEANUP_QUEUE, 8);
+  for (const q of ALL_QUEUES) {
+    let parallelism = DEFAULT_PARALLELISM[q];
+    let source: "default" | "persisted" = "default";
+    try {
+      const persisted = await getStored<ParallelismConfig>(PARALLELISM_CONFIG_TYPE, PARALLELISM_CONFIG_ORG, q);
+      if (persisted && Number.isFinite(persisted.parallelism) && persisted.parallelism >= 1) {
+        parallelism = persisted.parallelism;
+        source = "persisted";
+      }
+    } catch (err) {
+      console.warn(`[QSTASH] read persisted parallelism for ${q} failed, using default:`, err);
+    }
+    console.log(`🔧 [QSTASH] boot apply ${q} parallelism=${parallelism} (${source})`);
+    await setQstashQueueParallelism(q, parallelism);
+  }
 }
 
 /** Read QStash's actual queue settings — the source of truth for whether

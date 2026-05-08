@@ -4,6 +4,7 @@
 
 import {
   getStored, setStored, deleteStored, listStoredWithKeys,
+  encodeDocId, commitDeletes,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
@@ -621,22 +622,84 @@ export async function findDuplicates(
   return { scanned: inRange.length, groups: dupGroups, orphaned: orphaned.length, toDelete };
 }
 
+/** Bulk-delete N findings using single-pass type scans + Firestore :commit
+ *  batching. Replaces the old per-finding loop that did 7+ paginated list
+ *  scans + 7+ point reads PER finding (≈1500 FS calls for 200 deletes).
+ *  This version: ~10 list scans total + a handful of :commit batches.
+ *  500× less FS pressure for the same work, and serializable inside the
+ *  background lane so it can't starve foreground.
+ *
+ *  Idempotent: blind-deletes singleton candidate doc IDs without checking
+ *  existence (Firestore `delete` is a no-op when the doc is missing). */
+async function bulkDeleteFindings(
+  orgId: OrgId,
+  findingIds: string[],
+  onProgress?: (deleted: number, total: number) => void,
+): Promise<{ deleted: number }> {
+  if (findingIds.length === 0) return { deleted: 0 };
+  const idSet = new Set(findingIds);
+  const docIds = new Set<string>();
+
+  // Types whose docs are scattered (key[0] === findingId, OR value.findingId
+  // points at the finding). One list scan per type covers the whole batch.
+  const listTypes = [
+    "review-pending", "review-decided", "review-active",
+    "judge-pending", "judge-decided", "judge-active",
+    "review-undo-idx", "audit-done-idx", "completed-audit-stat",
+    "audit-finding", // header + every chunk row (chunks share _type=audit-finding)
+  ];
+  for (const type of listTypes) {
+    const rows = await listStoredWithKeys<{ findingId?: string }>(type, orgId);
+    for (const { key, value } of rows) {
+      const k0 = typeof key[0] === "string" ? key[0] : undefined;
+      const fidFromKey = k0 && idSet.has(k0) ? k0 : undefined;
+      const fidFromValue = value && typeof value === "object" && typeof (value as { findingId?: unknown }).findingId === "string"
+        ? (value as { findingId: string }).findingId
+        : undefined;
+      const matched = fidFromKey ?? (fidFromValue && idSet.has(fidFromValue) ? fidFromValue : undefined);
+      if (matched) {
+        docIds.add(encodeDocId(type, orgId, ...key));
+      }
+    }
+  }
+
+  // Singletons keyed directly by findingId — blind add, :commit ignores
+  // missing docs. Cheaper than a getStored existence check per finding.
+  const singletonTypes = [
+    "review-audit-pending", "review-done", "judge-audit-pending",
+    "manager-queue", "appeal", "appeal-history", "active-tracking",
+    "chargeback-entry", "wire-deduction-entry",
+  ];
+  for (const fid of findingIds) {
+    for (const type of singletonTypes) {
+      docIds.add(encodeDocId(type, orgId, fid));
+    }
+  }
+
+  const docList = [...docIds];
+  console.log(`[DEDUP] bulk: ${findingIds.length} findings → ${docList.length} doc deletes`);
+  await commitDeletes(docList);
+  // onProgress fires once at the end — no per-finding granularity in bulk
+  // mode, since deletes are batched. UI consumers should treat this as a
+  // single big chunk completing.
+  onProgress?.(findingIds.length, findingIds.length);
+  return { deleted: findingIds.length };
+}
+
 export async function deleteDuplicates(
   orgId: OrgId,
   plan: DedupPlan,
   onProgress?: (deleted: number, total: number, findingId: string) => void,
 ): Promise<{ deleted: number }> {
-  const losers = plan.toDelete.filter((d) => !d.keep);
-  let deleted = 0;
-  for (const dup of losers) {
-    await adminDeleteFinding(orgId, dup.id).catch((err) =>
-      console.error(`[DEDUP] ❌ failed to delete ${dup.id}:`, err),
-    );
-    deleted++;
-    onProgress?.(deleted, losers.length, dup.id);
-  }
-  console.log(`[DEDUP] ✅ done org=${orgId} deleted=${deleted}/${losers.length}`);
-  return { deleted };
+  const losers = plan.toDelete.filter((d) => !d.keep).map((d) => d.id);
+  const result = await bulkDeleteFindings(orgId, losers, (d, t) => {
+    // Map the bulk progress callback into the per-finding shape the
+    // existing controller signature uses. findingId is a synthetic
+    // "batch" sentinel since deletes are coalesced.
+    onProgress?.(d, t, "batch");
+  });
+  console.log(`[DEDUP] ✅ done org=${orgId} deleted=${result.deleted}/${losers.length}`);
+  return result;
 }
 
 export const backfillChargebackEntriesLegacy = backfillChargebackEntries;

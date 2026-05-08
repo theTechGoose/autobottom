@@ -319,21 +319,22 @@ const FS_ATTEMPT_TIMEOUT_MS = 60_000;
 // into 503/500. Bounding concurrency at the source means the pool can never
 // saturate; calls beyond the cap queue and resolve in FIFO order.
 //
-// Three-lane sizing — total 30 (was 30 single pool, then 29+1, now split
-// to isolate maintenance work from foreground):
-//   - foreground (default): 24 slots — login, dashboard, audit-step, all
+// Three-lane sizing — total 50 (bumped from 30 once batch-commit
+// patterns landed for maintenance work; the per-isolate ceiling was
+// always conservative, and Deno Deploy spawns more isolates under load
+// for cluster-wide capacity scaling):
+//   - foreground (default): 44 slots — login, dashboard, audit-step, all
 //     user-facing FS work. Anything that DIDN'T explicitly opt into
 //     another lane lands here.
 //   - background: 5 slots, strict cap, never falls back to foreground.
 //     Maintenance ops (dedup, purge, backfill) wrap themselves in
 //     runInBackgroundLane so they cap their own FS pressure and can
-//     never starve real users. Without this, a 201-finding dedup burst
-//     wedged the entire pool for ~7 minutes and login/dashboard 503'd
-//     for the duration.
+//     never starve real users. Background stays at 5 — the point is
+//     bounding maintenance, not scaling it.
 //   - auth: 1 slot, reserved for session reads/writes. Belt-and-
 //     suspenders so logins still work even if foreground is saturated.
 //     Auth lane falls back to foreground if its single slot is busy.
-const FS_FOREGROUND_CAP = 24;
+const FS_FOREGROUND_CAP = 44;
 const FS_BACKGROUND_CAP = 5;
 const FS_AUTH_CAP = 1;
 let _fsForegroundInFlight = 0;
@@ -854,6 +855,39 @@ export async function purgeByTypeAndOrg(type: string, org: string, limit = 50_00
   // Touch collectionPrefix so unused-var lint stays quiet without changing semantics.
   void collectionPrefix;
   return deleted;
+}
+
+/** Bulk-delete a list of doc IDs via Firestore's `:commit` endpoint.
+ *  Up to 500 deletes per HTTP call. `delete` writes are idempotent —
+ *  the call succeeds whether or not the doc exists, so callers can
+ *  blind-emit candidate IDs without checking existence first.
+ *
+ *  Returns the number of doc IDs sent to commit (NOT the number that
+ *  actually existed; Firestore doesn't report that distinction here).
+ *  Used by deleteDuplicates and similar batch maintenance ops to drop
+ *  the FS-call-per-finding cost from N×K to N/500. */
+export async function commitDeletes(docIds: string[]): Promise<number> {
+  if (docIds.length === 0) return 0;
+  const creds = await loadFirestoreCredentials();
+  if (!creds) {
+    let count = 0;
+    for (const id of docIds) {
+      if (_inMem.delete(id)) count++;
+    }
+    return count;
+  }
+  const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
+  const collectionPrefix = `${parent}/${creds.collection}/`;
+  const BATCH = 500;
+  let sent = 0;
+  for (let i = 0; i < docIds.length; i += BATCH) {
+    const slice = docIds.slice(i, i + BATCH);
+    const writes = slice.map((id) => ({ delete: `${collectionPrefix}${id}` }));
+    const res = await fsFetch(creds, `${parent}:commit`, { method: "POST", body: JSON.stringify({ writes }) });
+    if (!res.ok) throw new Error(`commitDeletes failed: ${res.status} ${res.text}`);
+    sent += slice.length;
+  }
+  return sent;
 }
 
 /** Dump every doc belonging to this org — across all types. Returns the

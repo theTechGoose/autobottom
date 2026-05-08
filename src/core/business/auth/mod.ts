@@ -1,6 +1,6 @@
 /** Auth service: orgs, users, sessions, RBAC. Firestore-backed. */
 
-import { getStored, setStored, deleteStored, listStoredWithKeys } from "@core/data/firestore/mod.ts";
+import { getStored, setStored, deleteStored, listStoredWithKeys, runInAuthLane } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 export type { OrgId };
@@ -131,9 +131,11 @@ const SESSION_TTL = 24 * 60 * 60 * 1000;
 
 export async function createSession(auth: AuthContext): Promise<string> {
   const token = crypto.randomUUID();
-  await setStored("session", GLOBAL, [token], {
-    email: auth.email, orgId: auth.orgId, role: auth.role, createdAt: Date.now(),
-  }, { expireInMs: SESSION_TTL });
+  await runInAuthLane(() =>
+    setStored("session", GLOBAL, [token], {
+      email: auth.email, orgId: auth.orgId, role: auth.role, createdAt: Date.now(),
+    }, { expireInMs: SESSION_TTL })
+  );
   return token;
 }
 
@@ -163,7 +165,9 @@ async function refreshSessionInBackground(token: string): Promise<void> {
   if (_sessionRefreshing.has(token)) return;
   _sessionRefreshing.add(token);
   try {
-    const v = await getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token);
+    const v = await runInAuthLane(() =>
+      getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token)
+    );
     if (v) {
       const auth: AuthContext = { email: v.email, orgId: v.orgId, role: v.role };
       _sessionCache.set(token, { auth, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
@@ -198,7 +202,11 @@ export async function getSession(token: string): Promise<AuthContext | null> {
   // the global FS semaphore (firestore/mod.ts) caps total concurrency and
   // the AbortController cap inside fsFetch limits any single attempt to
   // 60s, so worst case is a slow login — not an isolate-wide cascade.
-  const v = await getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token);
+  // runInAuthLane gives this read access to the reserved auth slot so
+  // logins still work when the general pool is wedged by audit-step bursts.
+  const v = await runInAuthLane(() =>
+    getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token)
+  );
   if (!v) return null;
   const auth: AuthContext = { email: v.email, orgId: v.orgId, role: v.role };
   _sessionCache.set(token, { auth, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
@@ -207,7 +215,7 @@ export async function getSession(token: string): Promise<AuthContext | null> {
 
 export async function deleteSession(token: string): Promise<void> {
   _sessionCache.delete(token);
-  await deleteStored("session", GLOBAL, token);
+  await runInAuthLane(() => deleteStored("session", GLOBAL, token));
 }
 
 // ── Request Auth Helpers ─────────────────────────────────────────────────────

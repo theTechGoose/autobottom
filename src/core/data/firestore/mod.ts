@@ -21,6 +21,7 @@
  *  `_value`. The high-level setStored/getStored API hides this detail. */
 
 import { S3Ref } from "@core/data/s3/mod.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const SEP = "__";
 
@@ -316,26 +317,59 @@ const FS_ATTEMPT_TIMEOUT_MS = 60_000;
 // into 503/500. Bounding concurrency at the source means the pool can never
 // saturate; calls beyond the cap queue and resolve in FIFO order.
 //
-// 30 is conservative — Firestore tolerates more, but 30 leaves headroom
-// while never letting any single isolate burn its connection pool. Adjust
-// upward only if telemetry shows we're queueing more than ~50ms average.
-const FS_MAX_CONCURRENT = 30;
-let _fsInFlight = 0;
-const _fsWaitQueue: Array<() => void> = [];
+// Pool sizing: 29 general + 1 reserved exclusively for the "auth" lane.
+// Total stays at 30 (the cap that's been stable in prod). Carving 1 slot
+// out for auth means session/login reads can never starve behind a wedged
+// audit-step burst — even if all 29 general slots are held by 60s-aborting
+// poll-transcript calls, getSession still walks straight into the auth
+// slot. Without this, a residual poll-transcript convoy from a previous
+// bulk batch saturates the pool and the dashboard becomes unreachable.
+const FS_GENERAL_CAP = 29;
+const FS_AUTH_CAP = 1;
+let _fsGeneralInFlight = 0;
+let _fsAuthInFlight = 0;
+const _fsGeneralWaitQueue: Array<() => void> = [];
+const _fsAuthWaitQueue: Array<() => void> = [];
 
-function acquireFsSlot(): Promise<void> {
-  if (_fsInFlight < FS_MAX_CONCURRENT) {
-    _fsInFlight++;
-    return Promise.resolve();
+// Async-context flag for callers that need the auth lane. Threading a
+// "lane" param through getStored→getDoc→restGet→fsFetch would touch every
+// repository signature; AsyncLocalStorage carries the choice down the
+// async chain without changing any API. Auth-side code wraps its FS
+// reads in runInAuthLane(); fsFetch reads the store on entry.
+type FsLane = "default" | "auth";
+const _laneStorage = new AsyncLocalStorage<FsLane>();
+
+export function runInAuthLane<T>(fn: () => Promise<T>): Promise<T> {
+  return _laneStorage.run("auth", fn);
+}
+
+/** Acquire a slot. Returns "auth" if the dedicated auth slot was taken,
+ *  "general" otherwise. The caller must pass the same value back to
+ *  releaseFsSlot so the right pool gets decremented. */
+function acquireFsSlot(lane: FsLane): Promise<"auth" | "general"> {
+  if (lane === "auth" && _fsAuthInFlight < FS_AUTH_CAP) {
+    _fsAuthInFlight++;
+    return Promise.resolve("auth");
   }
-  return new Promise<void>((resolve) => {
-    _fsWaitQueue.push(() => { _fsInFlight++; resolve(); });
+  // General lane (or auth fallback when the reserved slot is busy).
+  if (_fsGeneralInFlight < FS_GENERAL_CAP) {
+    _fsGeneralInFlight++;
+    return Promise.resolve("general");
+  }
+  return new Promise<"general">((resolve) => {
+    _fsGeneralWaitQueue.push(() => { _fsGeneralInFlight++; resolve("general"); });
   });
 }
 
-function releaseFsSlot(): void {
-  _fsInFlight--;
-  const next = _fsWaitQueue.shift();
+function releaseFsSlot(slot: "auth" | "general"): void {
+  if (slot === "auth") {
+    _fsAuthInFlight--;
+    const next = _fsAuthWaitQueue.shift();
+    if (next) next();
+    return;
+  }
+  _fsGeneralInFlight--;
+  const next = _fsGeneralWaitQueue.shift();
   if (next) next();
 }
 
@@ -355,7 +389,8 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
   // Acquire BEFORE any work so getAccessToken (which can itself fetch) doesn't
   // race in over the cap. Release in finally so a thrown error or abort still
   // frees the slot — without this, 60s aborts would permanently lock slots.
-  await acquireFsSlot();
+  const lane = _laneStorage.getStore() ?? "default";
+  const slot = await acquireFsSlot(lane);
   try {
     const token = await getAccessToken(creds);
     const url = `https://firestore.googleapis.com/v1/${path}`;
@@ -387,7 +422,7 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
     }
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   } finally {
-    releaseFsSlot();
+    releaseFsSlot(slot);
   }
 }
 

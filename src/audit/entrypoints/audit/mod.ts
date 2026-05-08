@@ -268,6 +268,9 @@ export class AuditController {
 
     let pending = AuditController._statsPending.get(orgId);
     if (!pending) {
+      // CRITICAL: must never reject — see DashboardController.dashboardData
+      // for the unhandled-rejection-crashes-isolate rationale. Resolve to
+      // null on any failure so background fire-and-forget doesn't crash.
       pending = (async () => {
         try {
           const [stats, queueCounts] = await Promise.all([
@@ -291,7 +294,7 @@ export class AuditController {
           return result;
         } catch (err) {
           console.error(`❌ [STATS] background refresh failed orgId=${orgId}:`, err);
-          throw err;
+          return null;
         } finally {
           AuditController._statsPending.delete(orgId);
         }
@@ -305,10 +308,11 @@ export class AuditController {
       inPipe: 0, active: [], completed24h: 0, errors24h: 0, errors: [],
       retries24h: 0, retries: [], completedTs: [], errorsTs: [], retriesTs: [],
     };
-    return Promise.race([
-      pending.catch(() => placeholder),
-      new Promise((r) => setTimeout(() => r(placeholder), 5_000)),
+    const result = await Promise.race([
+      pending,
+      new Promise<null>((r) => setTimeout(() => r(null), 5_000)),
     ]);
+    return result ?? placeholder;
   }
   // 5s result cache + in-flight promise dedup. Cache value can outlive
   // expiresAt — it's served while a background refresh runs.

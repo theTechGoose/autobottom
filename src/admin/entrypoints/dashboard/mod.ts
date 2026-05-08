@@ -62,6 +62,11 @@ export class DashboardController {
 
     let pending = DashboardController._dashPending.get(orgId);
     if (!pending) {
+      // CRITICAL: this promise must NEVER reject. We store it and let
+      // background callers ignore the result, so an unhandled rejection
+      // here would crash the isolate (→ 500 INTERNAL_SERVER_ERROR on
+      // every request landing on it). Catch all errors inside, log,
+      // and resolve to null instead of throwing.
       pending = (async () => {
         try {
           console.log(`📊 [DASH] dashboard/data orgId=${orgId}`);
@@ -82,7 +87,7 @@ export class DashboardController {
           return result;
         } catch (err) {
           console.error(`❌ [DASH] background refresh failed orgId=${orgId}:`, err);
-          throw err;
+          return null;
         } finally {
           DashboardController._dashPending.delete(orgId);
         }
@@ -99,10 +104,11 @@ export class DashboardController {
       review: { pending: 0, completed: 0, total: 0 },
       recentCompleted: [],
     };
-    return Promise.race([
-      pending.catch(() => placeholder),
-      new Promise((r) => setTimeout(() => r(placeholder), 5_000)),
+    const result = await Promise.race([
+      pending,
+      new Promise<null>((r) => setTimeout(() => r(null), 5_000)),
     ]);
+    return result ?? placeholder;
   }
   // 5s result cache + in-flight promise dedup. With stale-while-
   // revalidate, the cache value can outlive expiresAt — it's served

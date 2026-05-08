@@ -31,9 +31,14 @@ export async function stepInit(req: Request): Promise<Response> {
   const pipelineCfg = await getPipelineConfig(orgId);
   console.log(`[STEP-INIT] ${findingId}: Starting... [parallelism=${pipelineCfg.parallelism}]`);
 
-  console.log(`[STEP-INIT] ${findingId}: trackActive(init) begin`);
-  await trackActive(orgId, findingId, "init");
-  console.log(`[STEP-INIT] ${findingId}: trackActive(init) done`);
+  // First trackActive("init") removed — the step dispatcher in main.ts
+  // already does an awaited pre-track on entry, which writes the same
+  // active-tracking row. Calling trackActive again here was a redundant
+  // get+set per init handler. With cap=8 init concurrent that's 16 wasted
+  // FS ops in flight at peak. The metadata trackActive (line 56-ish below)
+  // remains — it adds rid + recordingIdField + startedAt that the dispatcher
+  // pre-track doesn't have, and is what makes the dashboard's QB Record
+  // column populate.
 
   console.log(`[STEP-INIT] ${findingId}: getFinding begin orgId=${orgId}`);
   const finding = await getFinding(orgId, findingId);

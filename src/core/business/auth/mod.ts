@@ -139,17 +139,65 @@ export async function createSession(auth: AuthContext): Promise<string> {
 
 /** In-memory session cache. Every Fresh request re-runs auth middleware,
  *  which would otherwise hit Firestore on every page/HTMX request. Caching
- *  for 30s drops Firestore session reads ~99% under typical browse load
- *  and stops HTTP/2 connection-pool exhaustion that was 503ing the
- *  dashboard. Logout still works because deleteSession evicts the cache. */
-const SESSION_CACHE_TTL_MS = 30_000;
+ *  drops Firestore session reads ~99% under typical browse load and stops
+ *  HTTP/2 connection-pool exhaustion that was 503ing the dashboard. Logout
+ *  still works because deleteSession evicts the cache.
+ *
+ *  TTL bumped 30s → 5min: under bulk-audit Firestore saturation, a 30s
+ *  expiry means many requests hit the cache-miss path and try to re-read
+ *  the session from FS, where the call times out at 60s and the middleware
+ *  silently bounces the user to /login. Sessions don't change minute to
+ *  minute, so 5min stale is fine.
+ *
+ *  Stale-while-revalidate: when the cached session is past expiry but
+ *  still in the map, return it immediately and kick off a background
+ *  refresh. Only fall through to a synchronous Firestore read on a true
+ *  cold cache. The background refresh's promise NEVER rejects (catch
+ *  internally) — an unhandled rejection here would crash the isolate
+ *  exactly like the dashboard SWR bug at commit 6fc28ee. */
+const SESSION_CACHE_TTL_MS = 5 * 60_000;
 const _sessionCache = new Map<string, { auth: AuthContext; expiresAt: number }>();
+const _sessionRefreshing = new Set<string>();
+
+async function refreshSessionInBackground(token: string): Promise<void> {
+  if (_sessionRefreshing.has(token)) return;
+  _sessionRefreshing.add(token);
+  try {
+    const v = await getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token);
+    if (v) {
+      const auth: AuthContext = { email: v.email, orgId: v.orgId, role: v.role };
+      _sessionCache.set(token, { auth, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
+    } else {
+      // Session no longer exists in Firestore (logout from another isolate, etc).
+      // Drop the stale cache entry so next request goes through the
+      // unauthenticated path.
+      _sessionCache.delete(token);
+    }
+  } catch (err) {
+    // Background refresh MUST NEVER throw — Deno tears down the isolate on
+    // unhandled rejections. We log and leave the existing stale cache in
+    // place; caller is already serving the stale value, no UX impact.
+    console.warn(`[AUTH] background session refresh failed for token=${token.slice(0, 8)}...`, err);
+  } finally {
+    _sessionRefreshing.delete(token);
+  }
+}
 
 export async function getSession(token: string): Promise<AuthContext | null> {
   const cached = _sessionCache.get(token);
-  if (cached && cached.expiresAt > Date.now()) return cached.auth;
-  if (cached) _sessionCache.delete(token);
+  const now = Date.now();
+  if (cached) {
+    if (cached.expiresAt > now) return cached.auth;
+    // Stale but still cached: serve it and refresh in background. This
+    // keeps users logged in even when Firestore is laggy under bulk load.
+    refreshSessionInBackground(token);
+    return cached.auth;
+  }
 
+  // True cold cache: must read FS. This is the path that can block, but
+  // the global FS semaphore (firestore/mod.ts) caps total concurrency and
+  // the AbortController cap inside fsFetch limits any single attempt to
+  // 60s, so worst case is a slow login — not an isolate-wide cascade.
   const v = await getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token);
   if (!v) return null;
   const auth: AuthContext = { email: v.email, orgId: v.orgId, role: v.role };

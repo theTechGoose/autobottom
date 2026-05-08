@@ -375,7 +375,12 @@ export async function getQueueCounts(): Promise<Record<string, number>> {
     const pairs = await Promise.all(ALL_QUEUES.map(async (q) => {
       const res = await fetch(`${qstashUrl()}/v2/queues/${q}`, { headers: qstashAuth() });
       const data = res.ok ? await res.json() : {};
-      return [q, data.messageCount ?? 0] as [string, number];
+      // QStash exposes queued-message count as `lag` on /v2/queues/{name}.
+      // We previously read `messageCount` which doesn't exist on this
+      // endpoint, so the dashboard's "In Pipeline" stat was always 0
+      // even with hundreds of messages queued. Fall back to messageCount
+      // for compatibility in case the API surface ever changes back.
+      return [q, data.lag ?? data.messageCount ?? 0] as [string, number];
     }));
     metric("autobottom.qstash.get_counts", 1);
     return Object.fromEntries(pairs);

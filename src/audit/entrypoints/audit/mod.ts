@@ -257,27 +257,52 @@ export class AuditController {
   @Get("stats") @ReturnedType(PipelineStatsResponse) @Description("Get pipeline stats")
   async getStats() {
     const orgId = defaultOrgId();
+    const now = Date.now();
+
+    // 5s result cache + in-flight promise dedup. Stats panel polls
+    // every 10s, multiple panels and tabs poll concurrently, and this
+    // endpoint fans out into getStats (4 FS reads) plus 3 QStash calls.
+    // Without dedup, parallel polls each run the full fan-out and
+    // saturate the isolate exactly the same way dashboard/data did.
+    const cached = AuditController._statsCache.get(orgId);
+    if (cached && cached.expiresAt > now) return cached.value;
+    const pending = AuditController._statsPending.get(orgId);
+    if (pending) return pending;
+
     // inPipe = QStash queue depth (messages NOT yet delivered to a handler).
     // Previously this was set to stats.active.length, which made "In Pipeline"
     // mirror the Active panel — useless because a queued message never has
     // an active-tracking row until its handler starts. Reading queue counts
     // directly from QStash is the only honest source of "still waiting".
-    const [stats, queueCounts] = await Promise.all([
-      getStats(orgId),
-      getQueueCounts().catch(() => ({} as Record<string, number>)),
-    ]);
-    const inPipe = Object.values(queueCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
-    return {
-      inPipe,
-      active: stats.active,
-      completed24h: stats.completedCount,
-      errors24h: stats.errors.length,
-      errors: stats.errors,
-      retries24h: stats.retries.length,
-      retries: stats.retries,
-      completedTs: stats.completedTs,
-      errorsTs: stats.errorsTs,
-      retriesTs: stats.retriesTs,
-    };
+    const work = (async () => {
+      const [stats, queueCounts] = await Promise.all([
+        getStats(orgId),
+        getQueueCounts().catch(() => ({} as Record<string, number>)),
+      ]);
+      const inPipe = Object.values(queueCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
+      const result = {
+        inPipe,
+        active: stats.active,
+        completed24h: stats.completedCount,
+        errors24h: stats.errors.length,
+        errors: stats.errors,
+        retries24h: stats.retries.length,
+        retries: stats.retries,
+        completedTs: stats.completedTs,
+        errorsTs: stats.errorsTs,
+        retriesTs: stats.retriesTs,
+      };
+      AuditController._statsCache.set(orgId, { value: result, expiresAt: Date.now() + 5_000 });
+      return result;
+    })();
+    AuditController._statsPending.set(orgId, work);
+    try {
+      return await work;
+    } finally {
+      AuditController._statsPending.delete(orgId);
+    }
   }
+  // 5-second per-isolate result cache + in-flight promise dedup.
+  private static _statsCache = new Map<string, { value: unknown; expiresAt: number }>();
+  private static _statsPending = new Map<string, Promise<unknown>>();
 }

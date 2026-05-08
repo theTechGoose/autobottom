@@ -572,10 +572,25 @@ export async function finalizeReviewedAudit(
   const answered: Array<Record<string, unknown>> = Array.isArray(finding.answeredQuestions)
     ? [...finding.answeredQuestions]
     : [];
+
+  // Diagnostic: log what we're about to do. A reviewer flipped 2 questions
+  // (q/1 and q/19) and finalize logged "23/25 yes" — meaning the flips never
+  // landed on the answered array. This logging will tell us next time
+  // whether the indices are out of range, the decision values are wrong,
+  // or the answered array shape is unexpected.
+  const flipDiag: Array<{ qIndex: number; decision: string; prevAnswer: string; nextAnswer: string; inRange: boolean }> = [];
   for (const [qIndex, d] of decisions) {
-    if (qIndex < 0 || qIndex >= answered.length) continue;
-    const prev = answered[qIndex] ?? {};
-    const nextAnswer = d.decision === "flip" ? "Yes" : (prev as { answer?: string }).answer;
+    const prev = (answered[qIndex] ?? {}) as { answer?: string };
+    const inRange = qIndex >= 0 && qIndex < answered.length;
+    const nextAnswer = d.decision === "flip" ? "Yes" : (prev.answer ?? "");
+    flipDiag.push({
+      qIndex,
+      decision: String(d.decision ?? ""),
+      prevAnswer: String(prev.answer ?? ""),
+      nextAnswer,
+      inRange,
+    });
+    if (!inRange) continue;
     answered[qIndex] = {
       ...prev,
       answer: nextAnswer,
@@ -583,6 +598,29 @@ export async function finalizeReviewedAudit(
       reviewedBy: d.reviewer,
       reviewedAt: d.decidedAt,
     };
+  }
+
+  // Verify flips actually landed. If a "flip" decision didn't end up with
+  // answer=="Yes" in the final array, something is wrong (out-of-range
+  // index, mutated mid-loop, etc) — log a CRITICAL warning so we can
+  // diagnose the exact case in prod, AND force the flip by re-applying it
+  // directly. Better to over-apply than leave a known-flipped audit at
+  // the original answer.
+  let forceFixed = 0;
+  for (const diag of flipDiag) {
+    if (diag.decision !== "flip") continue;
+    const cur = (answered[diag.qIndex] ?? {}) as { answer?: string };
+    if (String(cur.answer ?? "").toLowerCase().startsWith("y")) continue;
+    console.error(
+      `🚨 [REVIEW] ${findingId}: flip at q[${diag.qIndex}] did NOT land — prev="${diag.prevAnswer}" inRange=${diag.inRange} answered.length=${answered.length} final="${cur.answer}". Force-applying.`
+    );
+    if (diag.qIndex >= 0 && diag.qIndex < answered.length) {
+      answered[diag.qIndex] = { ...cur, answer: "Yes" };
+      forceFixed++;
+    }
+  }
+  if (flipDiag.length > 0) {
+    console.log(`[REVIEW] ${findingId}: finalize flip-diag answered.length=${answered.length} decisions=${flipDiag.length} forceFixed=${forceFixed} details=${JSON.stringify(flipDiag)}`);
   }
 
   const total = answered.length || 1;

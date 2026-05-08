@@ -871,6 +871,80 @@ export async function listStoredWithKeysAll<T>(
   return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
 }
 
+/** Paginated keys-only scan. Returns the parsed key parts for every
+ *  matching (_type, _org) doc, WITHOUT fetching the doc body. For types
+ *  with large bodies (audit-finding chunks contain transcripts + Q&A,
+ *  ~50KB each), bringing back the body for a 5000-row page produces
+ *  multi-hundred-MB responses that hog the HTTP/2 stream pool to
+ *  Firestore — every other concurrent FS call on the isolate stalls
+ *  waiting for free streams and aborts at 60s. select: __name__ keeps
+ *  responses tiny (~100 bytes per row) so the connection pool stays
+ *  free for foreground work.
+ *
+ *  Decodes the key from the doc name. Doc names encode the key as
+ *  `type__org__keyPart0__keyPart1__...` (see encodeDocId). safePart
+ *  collapses any `__` inside an individual part down to `_`, so a
+ *  simple split on `__` is unambiguous. */
+export async function listStoredKeysAll(type: string, org: string): Promise<Array<{ key: string[] }>> {
+  const creds = await loadFirestoreCredentials();
+  if (!creds) {
+    return inMemListByType(type, org, Number.MAX_SAFE_INTEGER).map((b) => ({ key: b._key }));
+  }
+  const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
+  const out: Array<{ key: string[] }> = [];
+  let cursorDocName: string | null = null;
+  let pageNum = 0;
+  const safeType = type.replace(/__/g, "_").replace(/\//g, "_").replace(/\./g, "_");
+  const safeOrg = org.replace(/__/g, "_").replace(/\//g, "_").replace(/\./g, "_");
+  const docPrefix = `${safeType}${SEP}${safeOrg}${SEP}`;
+
+  while (true) {
+    pageNum++;
+    const structuredQuery: Record<string, unknown> = {
+      from: [{ collectionId: creds.collection }],
+      where: {
+        compositeFilter: {
+          op: "AND",
+          filters: [
+            { fieldFilter: { field: { fieldPath: "_type" }, op: "EQUAL", value: { stringValue: type } } },
+            { fieldFilter: { field: { fieldPath: "_org" }, op: "EQUAL", value: { stringValue: org } } },
+          ],
+        },
+      },
+      orderBy: [{ field: { fieldPath: "__name__" }, direction: "ASCENDING" }],
+      select: { fields: [{ fieldPath: "__name__" }] },
+      limit: LIST_BY_TYPE_PAGE_SIZE,
+    };
+    if (cursorDocName) {
+      structuredQuery.startAt = {
+        values: [{ referenceValue: cursorDocName }],
+        before: false,
+      };
+    }
+    console.log(`🔍 [LIST-KEYS] type=${type} org=${org} page=${pageNum} cursor=${cursorDocName ? cursorDocName.split("/").pop() : "none"}`);
+    const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify({ structuredQuery }) });
+    if (!res.ok) throw new Error(`paged keys list failed: ${res.status} ${res.text}`);
+    const rows = JSON.parse(res.text) as Array<{ document?: { name?: string } }>;
+    let pageRows = 0;
+    let lastDocName: string | null = null;
+    for (const row of rows) {
+      if (!row.document?.name) continue;
+      pageRows++;
+      lastDocName = row.document.name;
+      // Doc name: projects/.../documents/<collection>/<encodedDocId>
+      const encoded = row.document.name.split("/").pop() ?? "";
+      if (!encoded.startsWith(docPrefix)) continue;
+      const keyJoined = encoded.slice(docPrefix.length);
+      const key = keyJoined.length > 0 ? keyJoined.split(SEP) : [];
+      out.push({ key });
+    }
+    console.log(`✅ [LIST-KEYS] type=${type} page=${pageNum} returned ${pageRows} rows (accumulated ${out.length})`);
+    if (pageRows < LIST_BY_TYPE_PAGE_SIZE || !lastDocName) break;
+    cursorDocName = lastDocName;
+  }
+  return out;
+}
+
 /** List all values matching this type+org, with their key parts. */
 export async function listStoredWithKeys<T>(
   type: string,

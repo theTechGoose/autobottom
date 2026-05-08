@@ -3,7 +3,7 @@
  *  acceptable given the per-judge concurrency profile and idempotent finalize. */
 
 import {
-  getStored, setStored, deleteStored, listStoredWithKeys, listStoredWithKeysAll,
+  getStored, setStored, deleteStored, listStoredWithKeys, listStoredWithKeysAll, listStoredKeysAll,
   encodeDocId, commitDeletes,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -640,18 +640,59 @@ async function bulkDeleteFindings(
   const idSet = new Set(findingIds);
   const docIds = new Set<string>();
 
-  // Types whose docs are scattered (key[0] === findingId, OR value.findingId
-  // points at the finding). listStoredWithKeysAll paginates internally
-  // (5000-doc pages with __name__ cursor) so even big types complete
-  // without hitting the 60s per-attempt timeout. No silent truncation —
-  // every matching row is examined, no orphans left for re-runs.
-  const listTypes = [
+  // Types whose docs are scattered. Two flavors:
+  //  - keysOnly: types where findingId is in the doc key (so we can
+  //    match on key alone). Use listStoredKeysAll which pulls only doc
+  //    names — critical for audit-finding, whose chunk bodies contain
+  //    full transcripts + Q&A (~50KB each). A 5000-row page WITH bodies
+  //    is hundreds of MB — the response saturates the HTTP/2 stream
+  //    pool to firestore.googleapis.com and stalls every other FS call
+  //    on the isolate (auth, dashboard, review queue), all aborting at
+  //    60s. Keys-only responses stay tiny.
+  //  - withBodies: small queue/stat tables where matching may use
+  //    value.findingId. Bodies are small here, so the body fetch is
+  //    cheap and the value-side fallback covers any keying anomaly.
+  const keysOnlyTypes = [
+    "audit-finding",       // header + chunk rows; bodies HUGE
+    "audit-done-idx",      // key=[paddedTs, findingId]; body small but findingId is in key
+    "completed-audit-stat",// key=[findingId, ...]; body small, findingId is in key
+    "review-undo-idx",     // key=[ts, findingId]; findingId is in key
+  ];
+  const withBodyTypes = [
     "review-pending", "review-decided", "review-active",
     "judge-pending", "judge-decided", "judge-active",
-    "review-undo-idx", "audit-done-idx", "completed-audit-stat",
-    "audit-finding", // header + every chunk row (chunks share _type=audit-finding)
   ];
-  for (const type of listTypes) {
+
+  // Scan keys-only types: match by ANY string key part appearing in idSet.
+  // For audit-finding the matching part is key[0]. For audit-done-idx /
+  // review-undo-idx it's key[1]. For completed-audit-stat it's key[0].
+  // Generic "any-part-in-set" handles all of them without per-type logic.
+  for (const type of keysOnlyTypes) {
+    let keyRows: Array<{ key: string[] }>;
+    try {
+      keyRows = await listStoredKeysAll(type, orgId);
+    } catch (err) {
+      console.error(`[DEDUP] ❌ keys-scan ${type} threw:`, err);
+      throw new Error(`bulk dedup scan failed for type=${type}: ${(err as Error).message}`);
+    }
+    let typeMatches = 0;
+    for (const row of keyRows) {
+      const key = Array.isArray(row?.key) ? row.key : null;
+      if (!key) continue;
+      const matched = key.some((p) => typeof p === "string" && idSet.has(p));
+      if (!matched) continue;
+      try {
+        docIds.add(encodeDocId(type, orgId, ...key));
+        typeMatches++;
+      } catch (err) {
+        console.warn(`[DEDUP] ⚠️ encodeDocId failed for type=${type} key=${JSON.stringify(key)}: ${(err as Error).message}`);
+      }
+    }
+    console.log(`[DEDUP] keys-scan type=${type} rows=${keyRows.length} matched=${typeMatches}`);
+  }
+
+  // Scan with-body types: small tables, body fetch is cheap.
+  for (const type of withBodyTypes) {
     let rows: Array<{ key: string[]; value: unknown }>;
     try {
       rows = await listStoredWithKeysAll<unknown>(type, orgId);
@@ -661,8 +702,6 @@ async function bulkDeleteFindings(
     }
     let typeMatches = 0;
     for (const row of rows) {
-      // Defensive: legacy/migrated docs may be missing _key; skip rather
-      // than throw on key[0] access.
       const key = Array.isArray(row?.key) ? row.key : null;
       if (!key) continue;
       const k0 = typeof key[0] === "string" ? key[0] : undefined;

@@ -12,6 +12,7 @@ import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { PipelineConfigResponse, ParallelismResponse, WebhookConfigResponse, BadWordConfigResponse, BypassConfigResponse, BonusConfigResponse, DimensionsResponse, PartnerDimensionsResponse, QueueCountsResponse, OkResponse, OkMessageResponse, ClearedResponse, TerminatedResponse, TokenUsageResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
+import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Admin — pipeline config, settings, queue management, backfills")
@@ -273,37 +274,40 @@ export class AdminConfigController {
   }
 
   // -- Backfills --
+  // All backfill / purge / dedup ops run inside runInBackgroundLane so
+  // their FS pressure is capped at 5 slots and can never starve foreground
+  // (login, dashboard, audit-step). See firestore/mod.ts for lane sizing.
   @Post("backfill-review-scores") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillReviewScores(@Body() body: GenericBodyRequest) {
     const { since, until } = body as any;
     if (!since || !until) return { error: "since and until required" };
     const { backfillReviewScores } = await import("@audit/domain/business/admin-backfills/mod.ts");
-    return { ok: true, ...(await backfillReviewScores(ORG(), since, until)) };
+    return runInBackgroundLane(async () => ({ ok: true, ...(await backfillReviewScores(ORG(), since, until)) }));
   }
   @Post("backfill-chargeback-entries") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillChargebackEntries(@Body() body: GenericBodyRequest) {
     const { since, until } = body as any;
     if (!since || !until) return { error: "since and until required" };
     const { backfillChargebackEntriesLegacy: backfill } = await import("@judge/domain/data/judge-repository/mod.ts");
-    return backfill(ORG(), since, until);
+    return runInBackgroundLane(() => backfill(ORG(), since, until));
   }
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillPartnerDimensions(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;
     const { backfillPartnerDimensions } = await import("@audit/domain/business/admin-backfills/mod.ts");
-    return { ok: true, ...(await backfillPartnerDimensions(ORG(), cursor)) };
+    return runInBackgroundLane(async () => ({ ok: true, ...(await backfillPartnerDimensions(ORG(), cursor)) }));
   }
   @Post("backfill-audit-index") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillAuditIndex(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;
     const { backfillAuditDoneIndex } = await import("@audit/domain/business/admin-backfills/mod.ts");
-    return { ok: true, ...(await backfillAuditDoneIndex(ORG(), cursor)) };
+    return runInBackgroundLane(async () => ({ ok: true, ...(await backfillAuditDoneIndex(ORG(), cursor)) }));
   }
   @Post("backfill-stale-scores") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillStaleScores(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;
     const { backfillStaleScores } = await import("@audit/domain/business/admin-backfills/mod.ts");
-    return { ok: true, ...(await backfillStaleScores(ORG(), cursor)) };
+    return runInBackgroundLane(async () => ({ ok: true, ...(await backfillStaleScores(ORG(), cursor)) }));
   }
   @Post("deduplicate-findings") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async deduplicateFindings(@Body() body: GenericBodyRequest) {
@@ -312,12 +316,14 @@ export class AdminConfigController {
     const until = parseDateOrMs(b.until, true);
     if (since == null || until == null) return { error: "since and until required (date YYYY-MM-DD or ms)" };
     const { findDuplicatesLegacy, deleteDuplicatesLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
-    const plan = await findDuplicatesLegacy(ORG(), since, until);
-    if (b.execute) {
-      const result = await deleteDuplicatesLegacy(ORG(), plan as any, () => {});
-      return { ok: true, ...result };
-    }
-    return { ok: true, plan, message: "Dry run — send execute: true to apply" };
+    return runInBackgroundLane(async () => {
+      const plan = await findDuplicatesLegacy(ORG(), since, until);
+      if (b.execute) {
+        const result = await deleteDuplicatesLegacy(ORG(), plan as any, () => {});
+        return { ok: true, ...result };
+      }
+      return { ok: true, plan, message: "Dry run — send execute: true to apply" };
+    });
   }
 
   // -- Purge --
@@ -328,14 +334,14 @@ export class AdminConfigController {
     const before = parseDateOrMs(b.before, true);
     if (before == null) return { error: "before required (date YYYY-MM-DD or ms)" };
     const { purgeOldEntries } = await import("@audit/domain/business/admin-backfills/mod.ts");
-    return { ok: true, ...(await purgeOldEntries(ORG(), since, before)) };
+    return runInBackgroundLane(async () => ({ ok: true, ...(await purgeOldEntries(ORG(), since, before)) }));
   }
   @Post("purge-bypassed-wire-deductions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async purgeBypassedWireDeductions(@Body() body: GenericBodyRequest) {
     const { purgeBypassedWireDeductions } = await import("@audit/domain/business/admin-backfills/mod.ts");
     const bypassCfg = await cfg.getOfficeBypassConfig(ORG());
     const patterns = ((body as any)?.patterns as string[]) ?? bypassCfg.patterns ?? [];
-    return { ok: true, ...(await purgeBypassedWireDeductions(ORG(), patterns)) };
+    return runInBackgroundLane(async () => ({ ok: true, ...(await purgeBypassedWireDeductions(ORG(), patterns)) }));
   }
 
   // -- State management --
@@ -344,9 +350,11 @@ export class AdminConfigController {
   async wipeKv(@Body() body: GenericBodyRequest) {
     const confirm = (body as any)?.confirm as string | undefined;
     const { wipeKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
-    const result = await wipeKv(ORG(), confirm ?? "");
-    if (!result.ok) return { ok: false, message: result.error ?? "refused" };
-    return { ok: true, message: `wiped ${result.deleted} keys` };
+    return runInBackgroundLane(async () => {
+      const result = await wipeKv(ORG(), confirm ?? "");
+      if (!result.ok) return { ok: false, message: result.error ?? "refused" };
+      return { ok: true, message: `wiped ${result.deleted} keys` };
+    });
   }
   @Post("seed") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async seed(@Body() body: GenericBodyRequest) {
@@ -393,9 +401,11 @@ export class AdminConfigController {
     const b = body as { confirm?: string; entries?: unknown[] };
     if (b.confirm !== "YES") return { ok: false, message: "import-state requires { confirm: \"YES\" }" };
     const { importKv } = await import("@audit/domain/business/admin-backfills/mod.ts");
-    const result = await importKv(ORG(), "YES", (b.entries ?? []) as Array<{ type: string; org: string; key: string[]; value: unknown }>);
-    if (!result.ok) return { ok: false, message: result.error ?? "import failed" };
-    return { ok: true, message: `Wrote ${result.written ?? 0} keys, skipped ${result.skipped ?? 0}` };
+    return runInBackgroundLane(async () => {
+      const result = await importKv(ORG(), "YES", (b.entries ?? []) as Array<{ type: string; org: string; key: string[]; value: unknown }>);
+      if (!result.ok) return { ok: false, message: result.error ?? "import failed" };
+      return { ok: true, message: `Wrote ${result.written ?? 0} keys, skipped ${result.skipped ?? 0}` };
+    });
   }
   @Post("pull-state") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async pullState(@Body() body: GenericBodyRequest) {

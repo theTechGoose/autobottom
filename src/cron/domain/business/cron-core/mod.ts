@@ -2,6 +2,7 @@
 import { withSpan, metric, flushOtel } from "@core/data/datadog-otel/mod.ts";
 import { runWatchdog } from "@cron/domain/business/watchdog/mod.ts";
 import { listJobs, tickJob } from "@admin/domain/business/migration/mod.ts";
+import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 
 export function registerCrons(): void {
   Deno.cron("watchdog", "0 * * * *", async () => {
@@ -34,7 +35,7 @@ export function registerCrons(): void {
       if (running.length === 0) return;
       for (const job of running) {
         console.log(`⏰ [CRON:migration-tick] ticking ${job.jobId} (phase=${job.phase})`);
-        await tickJob(job.jobId);
+        await runInBackgroundLane(() => tickJob(job.jobId));
       }
       console.log(`⏰ [CRON:migration-tick] done`);
     } catch (err) {

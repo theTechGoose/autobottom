@@ -300,13 +300,14 @@ function docPath(creds: FirestoreCreds, docId: string): string {
  *  Body consumption happens INSIDE the retry loop so mid-stream body
  *  failures also trigger retry. Per-attempt 20s abort prevents 120s hangs. */
 const FS_RETRY_DELAYS_MS = [200, 600];
-// Per-attempt abort budget. Originally 20s — too aggressive: under normal
-// Firestore load, paginated reads (a 5000-doc page is several MB of body
-// to consume) can legitimately exceed 20s, and every abort cascades into
-// failed middleware auth → redirect to /login → broken audio + breaks
-// queue UX. 60s is plenty for any single fetch + body read while still
-// guarding against the 120s isolate-stall mode that motivated the timeout.
-const FS_ATTEMPT_TIMEOUT_MS = 60_000;
+// Per-attempt abort budget. History: started at 20s (too aggressive for
+// 5000-doc paginated reads), bumped to 60s, but 60s × 3 retries = 180s of
+// wedge per call. When a maintenance burst (dedup, purge) saturates slots,
+// foreground requests piled up behind 180s abort timers and the dashboard
+// became unreachable for minutes. 15s × 3 = 45s worst-case slot hold —
+// still gives a single attempt enough time for a multi-MB paginated read
+// under normal conditions, but convoys clear 4× faster.
+const FS_ATTEMPT_TIMEOUT_MS = 15_000;
 
 // ── Firestore concurrency semaphore ─────────────────────────────────────────
 // Cap concurrent in-flight Firestore HTTP calls per isolate. Without this,
@@ -317,59 +318,91 @@ const FS_ATTEMPT_TIMEOUT_MS = 60_000;
 // into 503/500. Bounding concurrency at the source means the pool can never
 // saturate; calls beyond the cap queue and resolve in FIFO order.
 //
-// Pool sizing: 29 general + 1 reserved exclusively for the "auth" lane.
-// Total stays at 30 (the cap that's been stable in prod). Carving 1 slot
-// out for auth means session/login reads can never starve behind a wedged
-// audit-step burst — even if all 29 general slots are held by 60s-aborting
-// poll-transcript calls, getSession still walks straight into the auth
-// slot. Without this, a residual poll-transcript convoy from a previous
-// bulk batch saturates the pool and the dashboard becomes unreachable.
-const FS_GENERAL_CAP = 29;
+// Three-lane sizing — total 30 (was 30 single pool, then 29+1, now split
+// to isolate maintenance work from foreground):
+//   - foreground (default): 24 slots — login, dashboard, audit-step, all
+//     user-facing FS work. Anything that DIDN'T explicitly opt into
+//     another lane lands here.
+//   - background: 5 slots, strict cap, never falls back to foreground.
+//     Maintenance ops (dedup, purge, backfill) wrap themselves in
+//     runInBackgroundLane so they cap their own FS pressure and can
+//     never starve real users. Without this, a 201-finding dedup burst
+//     wedged the entire pool for ~7 minutes and login/dashboard 503'd
+//     for the duration.
+//   - auth: 1 slot, reserved for session reads/writes. Belt-and-
+//     suspenders so logins still work even if foreground is saturated.
+//     Auth lane falls back to foreground if its single slot is busy.
+const FS_FOREGROUND_CAP = 24;
+const FS_BACKGROUND_CAP = 5;
 const FS_AUTH_CAP = 1;
-let _fsGeneralInFlight = 0;
+let _fsForegroundInFlight = 0;
+let _fsBackgroundInFlight = 0;
 let _fsAuthInFlight = 0;
-const _fsGeneralWaitQueue: Array<() => void> = [];
-const _fsAuthWaitQueue: Array<() => void> = [];
+const _fsForegroundWaitQueue: Array<() => void> = [];
+const _fsBackgroundWaitQueue: Array<() => void> = [];
 
-// Async-context flag for callers that need the auth lane. Threading a
-// "lane" param through getStored→getDoc→restGet→fsFetch would touch every
-// repository signature; AsyncLocalStorage carries the choice down the
-// async chain without changing any API. Auth-side code wraps its FS
-// reads in runInAuthLane(); fsFetch reads the store on entry.
-type FsLane = "default" | "auth";
+// Async-context flag for the lane choice. Threading a "lane" param through
+// getStored→getDoc→restGet→fsFetch would touch every repository signature;
+// AsyncLocalStorage carries the choice down the async chain without
+// changing any API. Callers wrap their work in runInAuthLane /
+// runInBackgroundLane; fsFetch reads the store on entry.
+type FsLane = "default" | "auth" | "background";
 const _laneStorage = new AsyncLocalStorage<FsLane>();
 
 export function runInAuthLane<T>(fn: () => Promise<T>): Promise<T> {
   return _laneStorage.run("auth", fn);
 }
 
-/** Acquire a slot. Returns "auth" if the dedicated auth slot was taken,
- *  "general" otherwise. The caller must pass the same value back to
- *  releaseFsSlot so the right pool gets decremented. */
-function acquireFsSlot(lane: FsLane): Promise<"auth" | "general"> {
+/** Mark a block of FS work as background/maintenance. Background lane has
+ *  a strict 5-slot cap that NEVER falls back to foreground — guarantees
+ *  bulk maintenance can't starve user-facing operations no matter how
+ *  long it runs or how many ops it issues. */
+export function runInBackgroundLane<T>(fn: () => Promise<T>): Promise<T> {
+  return _laneStorage.run("background", fn);
+}
+
+type SlotKind = "foreground" | "background" | "auth";
+
+/** Acquire a slot. The returned kind tells releaseFsSlot which counter to
+ *  decrement — important when the auth lane falls back to foreground. */
+function acquireFsSlot(lane: FsLane): Promise<SlotKind> {
+  if (lane === "background") {
+    if (_fsBackgroundInFlight < FS_BACKGROUND_CAP) {
+      _fsBackgroundInFlight++;
+      return Promise.resolve("background");
+    }
+    // Background NEVER falls back to foreground — that's the whole point.
+    return new Promise<SlotKind>((resolve) => {
+      _fsBackgroundWaitQueue.push(() => { _fsBackgroundInFlight++; resolve("background"); });
+    });
+  }
   if (lane === "auth" && _fsAuthInFlight < FS_AUTH_CAP) {
     _fsAuthInFlight++;
     return Promise.resolve("auth");
   }
-  // General lane (or auth fallback when the reserved slot is busy).
-  if (_fsGeneralInFlight < FS_GENERAL_CAP) {
-    _fsGeneralInFlight++;
-    return Promise.resolve("general");
+  // Foreground (default) or auth fallback.
+  if (_fsForegroundInFlight < FS_FOREGROUND_CAP) {
+    _fsForegroundInFlight++;
+    return Promise.resolve("foreground");
   }
-  return new Promise<"general">((resolve) => {
-    _fsGeneralWaitQueue.push(() => { _fsGeneralInFlight++; resolve("general"); });
+  return new Promise<SlotKind>((resolve) => {
+    _fsForegroundWaitQueue.push(() => { _fsForegroundInFlight++; resolve("foreground"); });
   });
 }
 
-function releaseFsSlot(slot: "auth" | "general"): void {
+function releaseFsSlot(slot: SlotKind): void {
   if (slot === "auth") {
     _fsAuthInFlight--;
-    const next = _fsAuthWaitQueue.shift();
+    return;
+  }
+  if (slot === "background") {
+    _fsBackgroundInFlight--;
+    const next = _fsBackgroundWaitQueue.shift();
     if (next) next();
     return;
   }
-  _fsGeneralInFlight--;
-  const next = _fsGeneralWaitQueue.shift();
+  _fsForegroundInFlight--;
+  const next = _fsForegroundWaitQueue.shift();
   if (next) next();
 }
 

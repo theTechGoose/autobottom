@@ -20,6 +20,7 @@ import {
   type RunOpts, type PersistedJob, type InventoryRow, type Snapshot, type VerifyReport,
   type OrphanReport, type HealthCheckReport,
 } from "@admin/domain/business/migration/mod.ts";
+import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 
 @SwaggerDescription("Migration — KV → Firestore data migration tooling")
 @Controller("admin/migration")
@@ -85,7 +86,7 @@ export class MigrationController {
       await resumeJob(jobId);
     }
     try {
-      const job = await tickJob(jobId);
+      const job = await runInBackgroundLane(() => tickJob(jobId));
       if (!job) return { ok: false, error: `job ${jobId} not found` };
       return { ok: true, job: shallowJob(job) };
     } catch (err) {

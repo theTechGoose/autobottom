@@ -617,7 +617,7 @@ export async function findDuplicates(
     toDelete.push({ id: e.findingId, recordKey: e.findingId, ts: e.completedAt, reviewed: false, keep: false });
   }
 
-  console.log(`[DEDUP] dry-run org=${orgId} scanned=${inRange.length} dupGroups=${dupGroups} toDelete=${toDelete.filter((d) => !d.keep).length} orphaned=${orphaned.length}`);
+  console.log(`[DEDUP] plan org=${orgId} scanned=${inRange.length} dupGroups=${dupGroups} toDelete=${toDelete.filter((d) => !d.keep).length} orphaned=${orphaned.length}`);
   return { scanned: inRange.length, groups: dupGroups, orphaned: orphaned.length, toDelete };
 }
 

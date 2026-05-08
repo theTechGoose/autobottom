@@ -127,6 +127,11 @@ function WirePanel() {
 }
 
 function DedupePanel() {
+  // Posts to /api/admin/dedup-start, which kicks off the job on the
+  // backend, returns a jobId immediately, and swaps in a self-polling
+  // progress fragment that updates #maint-msg every 2s until done. The
+  // dedup itself runs fire-and-forget in the background lane — the HTTP
+  // request no longer hangs for 5-10 minutes with zero feedback.
   return (
     <PanelCard title="Deduplicate Findings" subtitle="Scan a date range for duplicate findings. Dry-run by default — check Execute to actually delete.">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
@@ -138,8 +143,7 @@ function DedupePanel() {
         <button
           class="sf-btn primary"
           style="padding:8px 16px;"
-          hx-post="/api/admin/config-save"
-          hx-vals='{"endpoint":"/admin/deduplicate-findings"}'
+          hx-post="/api/admin/dedup-start"
           hx-include="#dedupe-since,#dedupe-until,[name='execute']"
           hx-target="#maint-msg"
           hx-swap="innerHTML"

@@ -309,29 +309,104 @@ export class AdminConfigController {
     const { backfillStaleScores } = await import("@audit/domain/business/admin-backfills/mod.ts");
     return runInBackgroundLane(async () => ({ ok: true, ...(await backfillStaleScores(ORG(), cursor)) }));
   }
+  // ── Dedup job state (per-isolate, in-memory) ────────────────────────────
+  // Holds in-flight + recently-completed dedup runs so the maintenance
+  // modal can show a progress bar instead of hanging the HTTP request
+  // for the entire 5-10 minute dedup duration. Jobs auto-evict after
+  // 10 minutes; we never accumulate more than a handful at a time.
+  private static _dedupJobs = new Map<string, {
+    phase: "scanning" | "deleting" | "done" | "error";
+    total: number;
+    deleted: number;
+    startedAt: number;
+    finishedAt?: number;
+    error?: string;
+    dryRun: boolean;
+    plan?: { scanned: number; groups: number; orphaned: number };
+  }>();
+
+  private static _evictOldDedupJobs() {
+    const cutoff = Date.now() - 10 * 60_000;
+    for (const [id, job] of AdminConfigController._dedupJobs) {
+      if ((job.finishedAt ?? job.startedAt) < cutoff) {
+        AdminConfigController._dedupJobs.delete(id);
+      }
+    }
+  }
+
+  /** Kick off a dedup job. Returns immediately with a jobId; the actual
+   *  scan + delete runs fire-and-forget in the background lane so the
+   *  HTTP request doesn't sit open for 5-10 minutes. The maintenance
+   *  modal polls /admin/deduplicate-status?jobId=… for progress. */
   @Post("deduplicate-findings") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async deduplicateFindings(@Body() body: GenericBodyRequest) {
     const b = body as any;
     const since = parseDateOrMs(b.since, false);
     const until = parseDateOrMs(b.until, true);
     if (since == null || until == null) return { error: "since and until required (date YYYY-MM-DD or ms)" };
-    const { findDuplicatesLegacy, deleteDuplicatesLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
-    try {
-      return await runInBackgroundLane(async () => {
-        const plan = await findDuplicatesLegacy(ORG(), since, until);
-        if (b.execute) {
-          const result = await deleteDuplicatesLegacy(ORG(), plan as any, () => {});
-          return { ok: true, ...result };
+    AdminConfigController._evictOldDedupJobs();
+    const jobId = `dedup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    AdminConfigController._dedupJobs.set(jobId, {
+      phase: "scanning",
+      total: 0,
+      deleted: 0,
+      startedAt: Date.now(),
+      dryRun: !b.execute,
+    });
+
+    // Fire-and-forget. .catch is mandatory — an unhandled rejection here
+    // would crash the isolate (Deno Deploy semantics, see commit 6fc28ee
+    // for the dashboard SWR variant of this same trap).
+    (async () => {
+      try {
+        const { findDuplicatesLegacy, deleteDuplicatesLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
+        const plan = await runInBackgroundLane(() => findDuplicatesLegacy(ORG(), since, until));
+        const losers = (plan.toDelete as Array<{ keep?: boolean }> ?? []).filter((d) => !d.keep).length;
+        const job = AdminConfigController._dedupJobs.get(jobId);
+        if (job) {
+          job.plan = { scanned: plan.scanned, groups: plan.groups, orphaned: plan.orphaned };
+          job.total = losers;
+          job.phase = b.execute ? "deleting" : "done";
         }
-        return { ok: true, plan, message: "Dry run — send execute: true to apply" };
-      });
-    } catch (err) {
-      // Surface the real failure into the JSON response so the
-      // maintenance modal shows it instead of a bare 500. Without this,
-      // dedup errors only appeared as console 500s with no detail.
-      console.error(`[DEDUP] ❌ controller threw:`, err);
-      return { ok: false, error: `dedup failed: ${(err as Error).message}` };
-    }
+        if (b.execute) {
+          await runInBackgroundLane(() =>
+            deleteDuplicatesLegacy(ORG(), plan as any, (deleted, total) => {
+              const j = AdminConfigController._dedupJobs.get(jobId);
+              if (j) { j.deleted = deleted; j.total = total; }
+            })
+          );
+          const j = AdminConfigController._dedupJobs.get(jobId);
+          if (j) { j.phase = "done"; j.finishedAt = Date.now(); }
+        } else {
+          const j = AdminConfigController._dedupJobs.get(jobId);
+          if (j) { j.finishedAt = Date.now(); }
+        }
+      } catch (err) {
+        console.error(`[DEDUP:${jobId}] ❌ async run threw:`, err);
+        const j = AdminConfigController._dedupJobs.get(jobId);
+        if (j) {
+          j.phase = "error";
+          j.error = (err as Error).message;
+          j.finishedAt = Date.now();
+        }
+      }
+    })().catch((err) => {
+      // Defense-in-depth: the inner try/catch should already catch
+      // everything, but never let an unhandled rejection escape.
+      console.error(`[DEDUP:${jobId}] ❌ outer guard:`, err);
+    });
+
+    return { ok: true, jobId, message: b.execute ? "Dedup started" : "Dry-run started" };
+  }
+
+  /** Poll dedup job state. Called every 2s by the maintenance modal's
+   *  progress fragment until phase = done | error. */
+  @Get("deduplicate-status") @ReturnedType(MessageResponse)
+  deduplicateStatus(@Query("jobId") jobId: string) {
+    if (!jobId) return { ok: false, error: "jobId required" };
+    const job = AdminConfigController._dedupJobs.get(jobId);
+    if (!job) return { ok: false, error: `job ${jobId} not found (may have expired)` };
+    return { ok: true, jobId, ...job };
   }
 
   // -- Purge --

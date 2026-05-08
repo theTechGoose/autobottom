@@ -633,12 +633,16 @@ export async function findDuplicates(
  *  existence (Firestore `delete` is a no-op when the doc is missing). */
 async function bulkDeleteFindings(
   orgId: OrgId,
-  findingIds: string[],
+  losers: Array<{ id: string; ts: number }>,
   onProgress?: (deleted: number, total: number) => void,
 ): Promise<{ deleted: number }> {
-  if (findingIds.length === 0) return { deleted: 0 };
+  if (losers.length === 0) return { deleted: 0 };
+  const findingIds = losers.map((l) => l.id);
   const idSet = new Set(findingIds);
   const docIds = new Set<string>();
+  // padTs mirrors stats-repository.padTs — used to recompute audit-done-idx
+  // doc keys directly from each candidate's ts, skipping the scan.
+  const padTs = (ts: number) => String(ts).padStart(15, "0");
 
   // Types whose docs are scattered. Two flavors:
   //  - keysOnly: types where findingId is in the doc key (so we can
@@ -652,9 +656,13 @@ async function bulkDeleteFindings(
   //  - withBodies: small queue/stat tables where matching may use
   //    value.findingId. Bodies are small here, so the body fetch is
   //    cheap and the value-side fallback covers any keying anomaly.
+  // audit-done-idx is intentionally NOT in this list — its doc key is
+  // [padTs(completedAt), findingId] and the dedup plan already carries
+  // ts per candidate, so we compute the doc IDs directly below without
+  // scanning. This eliminates a multi-page paginated scan that, on busy
+  // orgs, was hanging Firestore on page 3 even with select: __name__.
   const keysOnlyTypes = [
     "audit-finding",       // header + chunk rows; bodies HUGE
-    "audit-done-idx",      // key=[paddedTs, findingId]; body small but findingId is in key
     "completed-audit-stat",// key=[findingId, ...]; body small, findingId is in key
     "review-undo-idx",     // key=[ts, findingId]; findingId is in key
   ];
@@ -722,6 +730,15 @@ async function bulkDeleteFindings(
     console.log(`[DEDUP] scan type=${type} rows=${rows.length} matched=${typeMatches}`);
   }
 
+  // audit-done-idx: doc key is [padTs(ts), findingId] and we know both
+  // from the plan — no scan needed. Blind-add the deterministic doc ID;
+  // :commit no-ops if it doesn't exist.
+  for (const loser of losers) {
+    try {
+      docIds.add(encodeDocId("audit-done-idx", orgId, padTs(loser.ts), loser.id));
+    } catch { /* skip malformed */ }
+  }
+
   // Singletons keyed directly by findingId — blind add, :commit ignores
   // missing docs. Cheaper than a getStored existence check per finding.
   const singletonTypes = [
@@ -738,7 +755,7 @@ async function bulkDeleteFindings(
   }
 
   const docList = [...docIds];
-  console.log(`[DEDUP] bulk: ${findingIds.length} findings → ${docList.length} doc deletes`);
+  console.log(`[DEDUP] bulk: ${losers.length} findings → ${docList.length} doc deletes`);
   try {
     await commitDeletes(docList);
   } catch (err) {
@@ -748,8 +765,8 @@ async function bulkDeleteFindings(
   // onProgress fires once at the end — no per-finding granularity in bulk
   // mode, since deletes are batched. UI consumers should treat this as a
   // single big chunk completing.
-  onProgress?.(findingIds.length, findingIds.length);
-  return { deleted: findingIds.length };
+  onProgress?.(losers.length, losers.length);
+  return { deleted: losers.length };
 }
 
 export async function deleteDuplicates(
@@ -757,7 +774,7 @@ export async function deleteDuplicates(
   plan: DedupPlan,
   onProgress?: (deleted: number, total: number, findingId: string) => void,
 ): Promise<{ deleted: number }> {
-  const losers = plan.toDelete.filter((d) => !d.keep).map((d) => d.id);
+  const losers = plan.toDelete.filter((d) => !d.keep).map((d) => ({ id: d.id, ts: d.ts }));
   const result = await bulkDeleteFindings(orgId, losers, (d, t) => {
     // Map the bulk progress callback into the per-finding shape the
     // existing controller signature uses. findingId is a synthetic

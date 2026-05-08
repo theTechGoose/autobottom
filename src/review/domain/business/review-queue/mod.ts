@@ -573,54 +573,97 @@ export async function finalizeReviewedAudit(
     ? [...finding.answeredQuestions]
     : [];
 
-  // Diagnostic: log what we're about to do. A reviewer flipped 2 questions
-  // (q/1 and q/19) and finalize logged "23/25 yes" — meaning the flips never
-  // landed on the answered array. This logging will tell us next time
-  // whether the indices are out of range, the decision values are wrong,
-  // or the answered array shape is unexpected.
-  const flipDiag: Array<{ qIndex: number; decision: string; prevAnswer: string; nextAnswer: string; inRange: boolean }> = [];
-  for (const [qIndex, d] of decisions) {
-    const prev = (answered[qIndex] ?? {}) as { answer?: string };
-    const inRange = qIndex >= 0 && qIndex < answered.length;
-    const nextAnswer = d.decision === "flip" ? "Yes" : (prev.answer ?? "");
-    flipDiag.push({
-      qIndex,
-      decision: String(d.decision ?? ""),
-      prevAnswer: String(prev.answer ?? ""),
-      nextAnswer,
-      inRange,
-    });
-    if (!inRange) continue;
-    answered[qIndex] = {
-      ...prev,
-      answer: nextAnswer,
-      reviewAction: d.decision,
-      reviewedBy: d.reviewer,
-      reviewedAt: d.decidedAt,
-    };
+  // Match each decision to the right answered-question entry by stable
+  // identity (header + populated text), NOT by positional index. The
+  // questionIndex stored on a ReviewDecision is the position in
+  // answeredQuestions AT QUEUE-TIME — if anything between then and now
+  // shifted the array (re-prepare, re-audit, bonus-flip ordering quirks,
+  // etc), the index is stale and we'd flip the wrong question. The
+  // reviewer's decision record captured the question's header/populated
+  // text when they made the call, so matching on that text guarantees
+  // we apply their flip to the question they actually saw.
+  //
+  // Falls back to positional index if no text match exists. Logs every
+  // case so a divergence is loud in prod.
+  function applyDecisionByIdentity(d: ReviewDecision): { matched: "identity" | "index" | "none"; targetIdx: number } {
+    const decHeader = String(d.header ?? "").trim();
+    const decPopulated = String(d.populated ?? "").trim();
+    if (decHeader || decPopulated) {
+      let identityIdx = -1;
+      for (let i = 0; i < answered.length; i++) {
+        const a = answered[i] as { header?: string; populated?: string } | null | undefined;
+        if (!a) continue;
+        const aHeader = String(a.header ?? "").trim();
+        const aPopulated = String(a.populated ?? "").trim();
+        if (decHeader && aHeader && aHeader === decHeader && (!decPopulated || !aPopulated || aPopulated === decPopulated)) {
+          identityIdx = i;
+          break;
+        }
+        if (!decHeader && decPopulated && aPopulated && aPopulated === decPopulated) {
+          identityIdx = i;
+          break;
+        }
+      }
+      if (identityIdx >= 0) return { matched: "identity", targetIdx: identityIdx };
+    }
+    if (d.questionIndex >= 0 && d.questionIndex < answered.length) {
+      return { matched: "index", targetIdx: d.questionIndex };
+    }
+    return { matched: "none", targetIdx: -1 };
   }
 
-  // Verify flips actually landed. If a "flip" decision didn't end up with
-  // answer=="Yes" in the final array, something is wrong (out-of-range
-  // index, mutated mid-loop, etc) — log a CRITICAL warning so we can
-  // diagnose the exact case in prod, AND force the flip by re-applying it
-  // directly. Better to over-apply than leave a known-flipped audit at
-  // the original answer.
-  let forceFixed = 0;
-  for (const diag of flipDiag) {
-    if (diag.decision !== "flip") continue;
-    const cur = (answered[diag.qIndex] ?? {}) as { answer?: string };
-    if (String(cur.answer ?? "").toLowerCase().startsWith("y")) continue;
-    console.error(
-      `🚨 [REVIEW] ${findingId}: flip at q[${diag.qIndex}] did NOT land — prev="${diag.prevAnswer}" inRange=${diag.inRange} answered.length=${answered.length} final="${cur.answer}". Force-applying.`
-    );
-    if (diag.qIndex >= 0 && diag.qIndex < answered.length) {
-      answered[diag.qIndex] = { ...cur, answer: "Yes" };
-      forceFixed++;
+  const flipDiag: Array<{ qIndex: number; targetIdx: number; matched: string; decision: string; prevAnswer: string; finalAnswer: string }> = [];
+  for (const d of decisions.values()) {
+    const { matched, targetIdx } = applyDecisionByIdentity(d);
+    const prev = (targetIdx >= 0 ? answered[targetIdx] : {}) as { answer?: string };
+    const nextAnswer = d.decision === "flip" ? "Yes" : (prev.answer ?? "");
+    if (targetIdx >= 0) {
+      answered[targetIdx] = {
+        ...prev,
+        answer: nextAnswer,
+        reviewAction: d.decision,
+        reviewedBy: d.reviewer,
+        reviewedAt: d.decidedAt,
+      };
+    }
+    flipDiag.push({
+      qIndex: d.questionIndex,
+      targetIdx,
+      matched,
+      decision: String(d.decision ?? ""),
+      prevAnswer: String(prev.answer ?? ""),
+      finalAnswer: String((answered[targetIdx] as { answer?: string } | undefined)?.answer ?? ""),
+    });
+    if (matched === "none") {
+      console.error(
+        `🚨 [REVIEW] ${findingId}: decision for q[${d.questionIndex}] did NOT match any answered question by identity OR index. header="${d.header}" populated="${(d.populated ?? "").slice(0, 80)}". Decision skipped — finalize will use the original answer.`
+      );
+    } else if (matched === "index") {
+      console.warn(
+        `⚠️ [REVIEW] ${findingId}: decision for q[${d.questionIndex}] fell back to positional index match (header text not found in current answeredQuestions). Decision applied at idx ${targetIdx}.`
+      );
+    } else if (targetIdx !== d.questionIndex) {
+      console.warn(
+        `⚠️ [REVIEW] ${findingId}: decision originally at q[${d.questionIndex}] re-mapped to q[${targetIdx}] by identity match — the question shifted in answeredQuestions since queue-time.`
+      );
     }
   }
+
+  // Final verification: every "flip" decision MUST end up with the
+  // matched answered entry having answer starting with "y". If not, fail
+  // loud and abort the finalize so we don't save the wrong score and
+  // fire the wrong terminate webhook. The reviewer can re-finalize from
+  // the dashboard once we understand the failure.
+  for (const diag of flipDiag) {
+    if (diag.decision !== "flip") continue;
+    if (String(diag.finalAnswer).toLowerCase().startsWith("y")) continue;
+    console.error(
+      `🚨 [REVIEW] ${findingId}: ABORTING finalize — flip for q[${diag.qIndex}] did not land. matched=${diag.matched} targetIdx=${diag.targetIdx} prev="${diag.prevAnswer}" final="${diag.finalAnswer}". Webhook will NOT fire. Reviewer must re-finalize after diagnosis.`
+    );
+    throw new Error(`finalize aborted: flip for q[${diag.qIndex}] failed to apply (matched=${diag.matched})`);
+  }
   if (flipDiag.length > 0) {
-    console.log(`[REVIEW] ${findingId}: finalize flip-diag answered.length=${answered.length} decisions=${flipDiag.length} forceFixed=${forceFixed} details=${JSON.stringify(flipDiag)}`);
+    console.log(`[REVIEW] ${findingId}: finalize flip-diag answered.length=${answered.length} decisions=${flipDiag.length} details=${JSON.stringify(flipDiag)}`);
   }
 
   const total = answered.length || 1;

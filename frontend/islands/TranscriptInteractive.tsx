@@ -1,29 +1,24 @@
 /** Island: hydrates the transcript panel with click-to-seek, evidence
  *  highlighting, defense highlighting, text search (open with `/` or `\`,
  *  cycle with `;`), and column-scrolling. The SSR'd TranscriptPanel
- *  component lays down `.t-line` + `.t-timestamp` + `[data-ts-ms]` attrs;
- *  this island attaches behavior without reflowing the DOM.
+ *  component lays down `.t-line` + `.t-timestamp` + `[data-ts-ms]` attrs
+ *  AND the `#transcript-search-bar` markup; this island attaches behavior
+ *  without rendering its own JSX.
  *
- *  Survives HTMX swaps of `#queue-content`. The transcript body and
- *  search bar both live INSIDE that swap target — every Y/N decision
- *  swaps them out and replaces them with fresh DOM. Direct addEventListener
- *  on those elements would die on the first swap (Gotcha #1 in
- *  frontend/CLAUDE.md). So all event listeners attach at the DOCUMENT
- *  level and check `target.closest()` to find their elements; that way
- *  the same handlers serve every swapped-in copy of the transcript.
+ *  CRITICAL: this island MUST be rendered OUTSIDE `#queue-content`. When
+ *  HTMX swaps that container (every Y/N decision), any island inside it
+ *  unmounts — its useEffect cleanup fires, removing all event listeners,
+ *  and the new HTML's island markup never re-hydrates (Gotcha #1 in
+ *  frontend/CLAUDE.md). Mounting outside the swap target means this
+ *  island stays alive for the page lifetime, and its document-level
+ *  listeners keep working through every swap. The `htmx:afterSwap`
+ *  handler re-reads defense/thinking from the freshly swapped DOM so
+ *  highlights update for the new audit.
  *
  *  Mirrors prod main:shared/queue-page.ts transcript interaction block. */
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect } from "preact/hooks";
 
-interface Props {
-  defense: string | null;
-  thinking: string | null;
-}
-
-export default function TranscriptInteractive({ defense, thinking }: Props) {
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const matchCountRef = useRef<HTMLSpanElement>(null);
-
+export default function TranscriptInteractive() {
   useEffect(() => {
     let matches: HTMLElement[] = [];
     let matchIndex = -1;
@@ -77,11 +72,16 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
     function applyHighlights() {
       const body = getBody();
       if (!body) return;
+      // Read defense + thinking from the freshly rendered VerdictPanel DOM
+      // rather than from props — this island now lives outside #queue-content
+      // and props don't update on HTMX swap. The DOM is the source of truth.
+      const defense = (document.querySelector(".verdict-defense-quote")?.textContent ?? "").trim();
+      const thinking = (document.querySelectorAll(".verdict-accordion-body")[0]?.textContent ?? "").trim();
       const quotes = [
-        ...extractQuotes(defense ?? ""),
-        ...extractQuotes(thinking ?? ""),
+        ...extractQuotes(defense),
+        ...extractQuotes(thinking),
       ];
-      const defWords = (defense ?? "").toLowerCase().split(/\W+/).filter((w) => w.length >= 4);
+      const defWords = defense.toLowerCase().split(/\W+/).filter((w) => w.length >= 4);
 
       const lines = Array.from(body.querySelectorAll<HTMLElement>(".t-line"));
       for (const line of lines) {
@@ -239,39 +239,42 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
 
     applyHighlights();
 
-    // Re-apply highlights after HTMX swaps
+    // Re-apply highlights after HTMX swaps. The island stays mounted across
+    // swaps now (it lives outside #queue-content), so this listener keeps
+    // firing for every Y/N decision.
     const onHtmxSwap = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.target?.id !== "queue-content") return;
-      // Body ref may have been replaced entirely — re-run next tick
+      // DOM was replaced entirely — re-run on next tick when the new body
+      // is in place. clearSearchMarks too, since the old match refs are dead.
       setTimeout(() => {
-        const newBody = document.getElementById("transcript-body");
-        if (!newBody) return;
-        // Highlights need the fresh body; we can't access defense/thinking from here
-        // post-swap (props won't update) — the swap re-renders server-side, but the
-        // island keeps its mounted state. So we read the new verdict DOM for defense.
-        const newDefense = (document.querySelector(".verdict-defense-quote")?.textContent ?? "").trim();
-        const newThinking = (document.querySelectorAll(".verdict-accordion-body")[0]?.textContent ?? "").trim();
-        const quotes = [
-          ...extractQuotes(newDefense),
-          ...extractQuotes(newThinking),
-        ];
-        const defWords = newDefense.toLowerCase().split(/\W+/).filter((w) => w.length >= 4);
-        const lines = Array.from(newBody.querySelectorAll<HTMLElement>(".t-line"));
-        for (const line of lines) {
-          line.classList.remove("t-evidence", "t-highlight");
-          const text = line.querySelector<HTMLElement>(".t-text")?.textContent ?? "";
-          const lowerText = text.toLowerCase();
-          const isEvidence = quotes.some((q) => q && (lowerText.includes(q) || q.includes(lowerText.slice(0, 40))));
-          if (isEvidence) line.classList.add("t-evidence");
-          else if (wordOverlap(text, defWords, 3)) line.classList.add("t-highlight");
-        }
+        clearSearchMarks();
+        applyHighlights();
       }, 0);
     };
     document.addEventListener("htmx:afterSwap", onHtmxSwap);
 
+    // Search-bar button delegation. The buttons are SSR'd inside TranscriptPanel
+    // (which lives inside #queue-content and gets swapped on every decision),
+    // so per-button onClick handlers attached at hydration would die after the
+    // first swap. Document-level click delegation against data-search-action
+    // works for every swapped-in copy.
+    function onSearchBtnClick(e: Event) {
+      const target = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-search-action]");
+      if (!target) return;
+      const action = target.dataset.searchAction;
+      if (action === "next") {
+        document.dispatchEvent(new CustomEvent("queue:search-next"));
+      } else if (action === "close") {
+        const bar = document.getElementById("transcript-search-bar");
+        if (bar) bar.style.display = "none";
+      }
+    }
+    document.addEventListener("click", onSearchBtnClick);
+
     return () => {
       document.removeEventListener("click", onDocClick);
+      document.removeEventListener("click", onSearchBtnClick);
       document.removeEventListener("queue:search-open", onOpen);
       document.removeEventListener("queue:search-next", onNext);
       document.removeEventListener("queue:transcript-scroll", onScroll);
@@ -280,34 +283,10 @@ export default function TranscriptInteractive({ defense, thinking }: Props) {
       document.removeEventListener("keydown", onDocKeydown);
       clearSearchMarks();
     };
-  }, [defense, thinking]);
+  }, []);
 
-  return (
-    <div id="transcript-search-bar" class="transcript-search-bar" style="display:none">
-      <input
-        ref={searchInputRef}
-        type="text"
-        placeholder="Search transcript…"
-        class="transcript-search-input"
-      />
-      <span ref={matchCountRef} class="transcript-search-count" />
-      <button
-        type="button"
-        class="transcript-search-btn"
-        onClick={() => document.dispatchEvent(new CustomEvent("queue:search-next"))}
-      >
-        ;
-      </button>
-      <button
-        type="button"
-        class="transcript-search-btn"
-        onClick={() => {
-          const bar = document.getElementById("transcript-search-bar");
-          if (bar) bar.style.display = "none";
-        }}
-      >
-        ×
-      </button>
-    </div>
-  );
+  // Renders nothing — the search bar markup is SSR'd by TranscriptPanel,
+  // and all behavior is delegated at the document level above. Living
+  // outside #queue-content keeps the island mounted across HTMX swaps.
+  return null;
 }

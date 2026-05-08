@@ -28,6 +28,40 @@ import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 const ACTIVE_TTL = 30 * 60 * 1000;
 const LOCK_TTL = ACTIVE_TTL;
 
+// ── review-pending SWR cache ────────────────────────────────────────────────
+// `claimNextItem` scans every pending row to pick the oldest unlocked
+// audit. With ~300 queued items and 10 concurrent reviewers, every claim
+// (and every retry) ran the full scan, saturating the foreground FS pool
+// and producing the 60s timeout cascades that wedged the queue. A 5s SWR
+// cache + in-flight promise dedup means concurrent claims share a single
+// scan; stale candidates are harmless because the per-question lock
+// (acquireLock) still hits FS in real time and rolls back on conflict.
+// Only `review-pending` is cached — `review-active` and `review-decided`
+// are read-modify-write paths where stale data could let a reviewer
+// re-see a question they just decided.
+const _pendingCache = new Map<string, { value: Array<{ key: string[]; value: ReviewItem }>; expiresAt: number }>();
+const _pendingPending = new Map<string, Promise<Array<{ key: string[]; value: ReviewItem }>>>();
+const PENDING_CACHE_TTL_MS = 5_000;
+
+async function _cachedListPending(orgId: OrgId): Promise<Array<{ key: string[]; value: ReviewItem }>> {
+  const now = Date.now();
+  const cached = _pendingCache.get(orgId);
+  if (cached && cached.expiresAt > now) return cached.value;
+  const existing = _pendingPending.get(orgId);
+  if (existing) return existing;
+  const promise = (async () => {
+    try {
+      const value = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
+      _pendingCache.set(orgId, { value, expiresAt: Date.now() + PENDING_CACHE_TTL_MS });
+      return value;
+    } finally {
+      _pendingPending.delete(orgId);
+    }
+  })();
+  _pendingPending.set(orgId, promise);
+  return promise;
+}
+
 // ── Per-question mutual-exclusion lock ──────────────────────────────────────
 // Two reviewers must NEVER work the same question. Pre-refactor this used
 // Deno KV's atomic().check().set() against a "review-lock" table; the refactor
@@ -393,7 +427,7 @@ export async function claimNextItem(
   //    of an audit is held by another reviewer, we roll back our partial locks
   //    and try the next-oldest audit. This is the multi-reviewer mutual-exclusion
   //    guarantee that pre-refactor used db.atomic().check().set() to provide.
-  const allPending = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
+  const allPending = await _cachedListPending(orgId);
   const findingTimestamps = new Map<string, number>();
   const pendingByFinding = new Map<string, Array<{ key: string[]; value: ReviewItem }>>();
   for (const row of allPending) {

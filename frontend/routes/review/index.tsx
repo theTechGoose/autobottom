@@ -56,6 +56,9 @@ export default define.page(async function ReviewQueue(ctx) {
       <HotkeyHandler mode="review" />
       <SoundEngine />
       <DecideEffects />
+      {/* TranscriptInteractive lives OUTSIDE #queue-content so its mount
+          survives every HTMX swap of the queue panel. See island header. */}
+      <TranscriptInteractive />
       <div class="queue-layout" id="queue-content" data-mode="review" data-allowed-types={typesCsv}>
         <div class="queue-left">
           <VerdictPanel
@@ -72,10 +75,6 @@ export default define.page(async function ReviewQueue(ctx) {
         </div>
         <div class="queue-right">
           <TranscriptPanel transcript={item?.transcript} snippet={item?.snippet} />
-          <TranscriptInteractive
-            defense={item?.defense ?? null}
-            thinking={item?.thinking ?? null}
-          />
         </div>
       </div>
       <BottomBar mode="review" email={user.email} initialFindingId={item?.findingId ?? null} />

@@ -63,22 +63,42 @@ export const handler = define.handlers({
       );
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch (e) {
-      // Soft retry — emit a placeholder that re-triggers itself in 3s.
-      // Reviewers were seeing raw "Error: API 500: …" text dumped into the
-      // panel after every backend hiccup, blocking their next item even
-      // though the backend usually recovered seconds later. Self-polling
-      // until success means the queue resumes automatically.
+      // Bounded backoff retry. Without a cap, every stuck reviewer fires
+      // a fresh claim every 3s into a foreground pool that's already
+      // saturated — the retries themselves keep the wedge alive. Each
+      // retry doubles the delay (3s, 6s, 12s, 24s, 30s) and after 5
+      // attempts we stop polling and require a click. By then either
+      // the system has drained or the reviewer takes over.
       console.warn(`[REVIEW] next-fragment fell through to retry:`, e);
-      const url = new URL(ctx.req.url);
-      const qs = `reviewer=${encodeURIComponent(reviewer)}&types=${encodeURIComponent(typesCsv)}`;
+      const retry = Math.max(0, Number(url.searchParams.get("retry") ?? "0") | 0);
+      const qsBase = `reviewer=${encodeURIComponent(reviewer)}&types=${encodeURIComponent(typesCsv)}`;
+      if (retry >= 5) {
+        const retryUrl = `/api/review/next-fragment?${qsBase}&retry=0`;
+        return new Response(
+          `<div class="queue-left"
+                style="padding:24px;text-align:center;color:var(--text-dim);font-size:12px;">
+             <div style="margin-bottom:12px;">Server is busy. The queue couldn't claim a new audit after several retries.</div>
+             <button hx-get="${retryUrl}"
+                     hx-target="#queue-content"
+                     hx-swap="innerHTML"
+                     style="padding:8px 16px;background:var(--accent);color:#000;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">
+               Retry now
+             </button>
+           </div>
+           <div class="queue-right"></div>`,
+          { headers: { "content-type": "text/html" } },
+        );
+      }
+      const delaySec = Math.min(3 * Math.pow(2, retry), 30);
+      const nextRetry = retry + 1;
       return new Response(
         `<div class="queue-left"
-              hx-get="/api/review/next-fragment?${qs}"
-              hx-trigger="load delay:3s"
+              hx-get="/api/review/next-fragment?${qsBase}&retry=${nextRetry}"
+              hx-trigger="load delay:${delaySec}s"
               hx-target="#queue-content"
               hx-swap="innerHTML"
               style="padding:24px;text-align:center;color:var(--text-dim);font-size:12px;">
-           Loading next… (server is busy, retrying)
+           Loading next… (server is busy, retrying in ${delaySec}s — attempt ${nextRetry}/5)
          </div>
          <div class="queue-right"></div>`,
         { headers: { "content-type": "text/html" } },

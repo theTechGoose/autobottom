@@ -76,6 +76,16 @@ export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
         <span class="transcript-title">Transcript</span>
         <span class="transcript-count">{emitted.length} lines</span>
       </div>
+      {/* Server-rendered search bar. Markup lives here (server output) so
+          every HTMX swap of #queue-content re-emits a fresh copy with
+          stable IDs/classes. The TranscriptInteractive island lives
+          OUTSIDE queue-content and queries this DOM at event time. */}
+      <div id="transcript-search-bar" class="transcript-search-bar" style="display:none">
+        <input type="text" placeholder="Search transcript…" class="transcript-search-input" />
+        <span class="transcript-search-count"></span>
+        <button type="button" class="transcript-search-btn" data-search-action="next">;</button>
+        <button type="button" class="transcript-search-btn" data-search-action="close">×</button>
+      </div>
       <div class="transcript-body transcript-multicol" id="transcript-body" data-utterance-times={JSON.stringify(utteranceTimes)}>
         {emitted.map(({ line, ts }, idx) => {
           const { speaker, content } = parseLine(line);

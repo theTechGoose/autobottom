@@ -204,9 +204,18 @@ export async function getSession(token: string): Promise<AuthContext | null> {
   // 60s, so worst case is a slow login — not an isolate-wide cascade.
   // runInAuthLane gives this read access to the reserved auth slot so
   // logins still work when the general pool is wedged by audit-step bursts.
-  const v = await runInAuthLane(() =>
-    getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token)
-  );
+  // If even the auth-lane retries exhaust (transient FS wedge), return
+  // null instead of throwing — the request gets bounced to /login (the
+  // user re-authenticates) rather than surfacing as a 500.
+  let v: { email: string; orgId: OrgId; role: Role } | null;
+  try {
+    v = await runInAuthLane(() =>
+      getStored<{ email: string; orgId: OrgId; role: Role }>("session", GLOBAL, token)
+    );
+  } catch (err) {
+    console.warn(`[AUTH] cold-cache session read failed for token=${token.slice(0, 8)}... — treating as unauthenticated:`, err);
+    return null;
+  }
   if (!v) return null;
   const auth: AuthContext = { email: v.email, orgId: v.orgId, role: v.role };
   _sessionCache.set(token, { auth, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });

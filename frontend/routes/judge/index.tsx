@@ -31,6 +31,7 @@ export default define.page(async function JudgeQueue(ctx) {
       <HotkeyHandler mode="judge" />
       <SoundEngine />
       <DecideEffects />
+      <TranscriptInteractive />
       <div class="queue-layout" id="queue-content" data-mode="judge">
         <div class="queue-left">
           <VerdictPanel
@@ -45,10 +46,6 @@ export default define.page(async function JudgeQueue(ctx) {
         </div>
         <div class="queue-right">
           <TranscriptPanel transcript={item?.transcript} snippet={item?.snippet} />
-          <TranscriptInteractive
-            defense={item?.defense ?? null}
-            thinking={item?.thinking ?? null}
-          />
         </div>
       </div>
       <BottomBar mode="judge" email={user.email} initialFindingId={item?.findingId ?? null} />

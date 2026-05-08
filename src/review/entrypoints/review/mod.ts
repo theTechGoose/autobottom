@@ -18,16 +18,24 @@ export class ReviewController {
   @Get("next") @ReturnedType(ReviewBufferResponse) @Description("Claim next review items (FIFO oldest audit first)")
   async next(@Query("types") types: string, @Query("reviewer") reviewer: string) {
     if (!reviewer) return { error: "reviewer query param required" };
-    const { claimNextItemLegacy: claimNextItem } = await import("@review/domain/business/review-queue/mod.ts");
-    const allowedTypes = types ? types.split(",").map((t: string) => t.trim()) : undefined;
-    const result = await claimNextItem(ORG(), reviewer, allowedTypes);
-    const fid = result.buffer[0]?.findingId;
-    if (!fid) return { ...result, fullBuffer: [], decisions: {} };
-    const [fullBuffer, decisions] = await Promise.all([
-      getFailedQuestionsForFinding(ORG(), fid),
-      getDecisionsByFinding(ORG(), fid),
-    ]);
-    return { ...result, fullBuffer, decisions };
+    try {
+      const { claimNextItemLegacy: claimNextItem } = await import("@review/domain/business/review-queue/mod.ts");
+      const allowedTypes = types ? types.split(",").map((t: string) => t.trim()) : undefined;
+      const result = await claimNextItem(ORG(), reviewer, allowedTypes);
+      const fid = result.buffer[0]?.findingId;
+      if (!fid) return { ...result, fullBuffer: [], decisions: {} };
+      const [fullBuffer, decisions] = await Promise.all([
+        getFailedQuestionsForFinding(ORG(), fid),
+        getDecisionsByFinding(ORG(), fid),
+      ]);
+      return { ...result, fullBuffer, decisions };
+    } catch (err) {
+      // Soft-fallback shape — frontend's bounded retry consumes this
+      // without surfacing a 500. Without this catch a Firestore wedge
+      // turned into a self-amplifying retry storm in prod.
+      console.warn(`⚠️ [REVIEW] next() failed for ${reviewer} — returning empty buffer:`, err);
+      return { buffer: [], remaining: 0, fullBuffer: [], decisions: {} };
+    }
   }
 
   @Post("decide") @ReturnedType(DecisionResponse) @Description("Confirm or flip a reviewed question") @BodyType(ReviewDecideRequest)
@@ -119,6 +127,18 @@ export class ReviewController {
         const data = await getReviewStats(ORG());
         ReviewController._statsCache = { data, expiresAt: Date.now() + 5_000 };
         return data;
+      } catch (err) {
+        // Under FS wedge, fall back to whatever's cached (even if stale)
+        // so the panel keeps rendering. Without this catch the rejection
+        // bubbles to the HTTP layer as a 500, which the frontend retry
+        // loop then amplifies. Stale data > broken panel.
+        console.warn(`⚠️ [REVIEW] dashboardData failed — serving cached/empty:`, err);
+        if (cached) return cached.data;
+        return {
+          pending: 0, decided: 0, pendingAuditCount: 0,
+          dateLegPending: 0, dateLegDecided: 0,
+          packagePending: 0, packageDecided: 0,
+        };
       } finally {
         ReviewController._statsPending = null;
       }

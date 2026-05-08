@@ -42,47 +42,71 @@ export class DashboardController {
   async dashboardData() {
     const orgId = ORG();
     const now = Date.now();
-
-    // Result cache: serve a fresh-enough fan-out result for free.
     const cached = DashboardController._dashCache.get(orgId);
+
+    // Stale-while-revalidate. Three paths:
+    //   1) Fresh cache → return immediately, no work.
+    //   2) Stale cache → return stale value NOW, kick off background
+    //      refresh that updates the cache when it lands. Concurrent
+    //      requests reuse the same in-flight promise.
+    //   3) No cache (cold start) → race the fan-out against a 5s
+    //      budget. If fan-out wins, return real data. If 5s wins,
+    //      return zeroed placeholder and let the fan-out complete
+    //      in the background — the *next* request gets real data.
+    //
+    // This guarantees dashboard/data NEVER blocks longer than 5s on
+    // Firestore lag, even when audit handlers are saturating FS.
+    // Worst case the dashboard shows ~5s-stale data; previous worst
+    // case was a 60s isolate timeout → 503 → page won't load at all.
     if (cached && cached.expiresAt > now) return cached.value;
 
-    // In-flight dedup: when N requests miss the cache simultaneously,
-    // only the FIRST runs the fan-out — the rest await the same promise.
-    // Without this the 4 dashboard panels all polling on the same 10s
-    // tick (plus extra browser tabs) trigger concurrent ~10-FS-call
-    // fan-outs and saturate the isolate.
-    const pending = DashboardController._dashPending.get(orgId);
-    if (pending) return pending;
-
-    const work = (async () => {
-      console.log(`📊 [DASH] dashboard/data orgId=${orgId}`);
-      const [pipelineStats, reviewStats, recentRaw, bypassCfg, paused] = await Promise.all([
-        getStats(orgId),
-        getReviewStats(orgId),
-        getRecentCompleted(orgId, 100),
-        getOfficeBypassConfig(orgId),
-        isPipelinePaused(orgId),
-      ]);
-      const patterns = bypassCfg.patterns ?? [];
-      const recent = (patterns.length === 0
-        ? recentRaw
-        : recentRaw.filter((r) => !isOfficeBypassed(String((r as Record<string, unknown>).department ?? ""), patterns))
-      ).slice(0, 25);
-      const result = { pipeline: { ...pipelineStats, paused }, review: reviewStats, recentCompleted: recent };
-      DashboardController._dashCache.set(orgId, { value: result, expiresAt: Date.now() + 5_000 });
-      return result;
-    })();
-    DashboardController._dashPending.set(orgId, work);
-    try {
-      return await work;
-    } finally {
-      DashboardController._dashPending.delete(orgId);
+    let pending = DashboardController._dashPending.get(orgId);
+    if (!pending) {
+      pending = (async () => {
+        try {
+          console.log(`📊 [DASH] dashboard/data orgId=${orgId}`);
+          const [pipelineStats, reviewStats, recentRaw, bypassCfg, paused] = await Promise.all([
+            getStats(orgId),
+            getReviewStats(orgId),
+            getRecentCompleted(orgId, 100),
+            getOfficeBypassConfig(orgId),
+            isPipelinePaused(orgId),
+          ]);
+          const patterns = bypassCfg.patterns ?? [];
+          const recent = (patterns.length === 0
+            ? recentRaw
+            : recentRaw.filter((r) => !isOfficeBypassed(String((r as Record<string, unknown>).department ?? ""), patterns))
+          ).slice(0, 25);
+          const result = { pipeline: { ...pipelineStats, paused }, review: reviewStats, recentCompleted: recent };
+          DashboardController._dashCache.set(orgId, { value: result, expiresAt: Date.now() + 5_000 });
+          return result;
+        } catch (err) {
+          console.error(`❌ [DASH] background refresh failed orgId=${orgId}:`, err);
+          throw err;
+        } finally {
+          DashboardController._dashPending.delete(orgId);
+        }
+      })();
+      DashboardController._dashPending.set(orgId, pending);
     }
+
+    // Stale cache available → serve it now, refresh continues in background.
+    if (cached) return cached.value;
+
+    // Cold start → race fan-out against 5s, fall back to empty placeholder.
+    const placeholder = {
+      pipeline: { active: [], completedCount: 0, errors: [], retries: [], completedTs: [], errorsTs: [], retriesTs: [], paused: false },
+      review: { pending: 0, completed: 0, total: 0 },
+      recentCompleted: [],
+    };
+    return Promise.race([
+      pending.catch(() => placeholder),
+      new Promise((r) => setTimeout(() => r(placeholder), 5_000)),
+    ]);
   }
-  // 5-second per-isolate result cache + in-flight promise dedup.
-  // _dashPending coalesces concurrent cache-misses onto a single fan-out;
-  // _dashCache serves the result for 5s after that fan-out lands.
+  // 5s result cache + in-flight promise dedup. With stale-while-
+  // revalidate, the cache value can outlive expiresAt — it's served
+  // while a background refresh runs.
   private static _dashCache = new Map<string, { value: unknown; expiresAt: number }>();
   private static _dashPending = new Map<string, Promise<unknown>>();
 

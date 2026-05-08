@@ -258,51 +258,60 @@ export class AuditController {
   async getStats() {
     const orgId = defaultOrgId();
     const now = Date.now();
-
-    // 5s result cache + in-flight promise dedup. Stats panel polls
-    // every 10s, multiple panels and tabs poll concurrently, and this
-    // endpoint fans out into getStats (4 FS reads) plus 3 QStash calls.
-    // Without dedup, parallel polls each run the full fan-out and
-    // saturate the isolate exactly the same way dashboard/data did.
     const cached = AuditController._statsCache.get(orgId);
-    if (cached && cached.expiresAt > now) return cached.value;
-    const pending = AuditController._statsPending.get(orgId);
-    if (pending) return pending;
 
-    // inPipe = QStash queue depth (messages NOT yet delivered to a handler).
-    // Previously this was set to stats.active.length, which made "In Pipeline"
-    // mirror the Active panel — useless because a queued message never has
-    // an active-tracking row until its handler starts. Reading queue counts
-    // directly from QStash is the only honest source of "still waiting".
-    const work = (async () => {
-      const [stats, queueCounts] = await Promise.all([
-        getStats(orgId),
-        getQueueCounts().catch(() => ({} as Record<string, number>)),
-      ]);
-      const inPipe = Object.values(queueCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
-      const result = {
-        inPipe,
-        active: stats.active,
-        completed24h: stats.completedCount,
-        errors24h: stats.errors.length,
-        errors: stats.errors,
-        retries24h: stats.retries.length,
-        retries: stats.retries,
-        completedTs: stats.completedTs,
-        errorsTs: stats.errorsTs,
-        retriesTs: stats.retriesTs,
-      };
-      AuditController._statsCache.set(orgId, { value: result, expiresAt: Date.now() + 5_000 });
-      return result;
-    })();
-    AuditController._statsPending.set(orgId, work);
-    try {
-      return await work;
-    } finally {
-      AuditController._statsPending.delete(orgId);
+    // Stale-while-revalidate (see DashboardController.dashboardData for
+    // full rationale). Fresh cache → instant; stale cache → return stale,
+    // refresh in background; cold start → 5s budget then placeholder.
+    // Endpoint never blocks more than 5s even with FS saturated.
+    if (cached && cached.expiresAt > now) return cached.value;
+
+    let pending = AuditController._statsPending.get(orgId);
+    if (!pending) {
+      pending = (async () => {
+        try {
+          const [stats, queueCounts] = await Promise.all([
+            getStats(orgId),
+            getQueueCounts().catch(() => ({} as Record<string, number>)),
+          ]);
+          const inPipe = Object.values(queueCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
+          const result = {
+            inPipe,
+            active: stats.active,
+            completed24h: stats.completedCount,
+            errors24h: stats.errors.length,
+            errors: stats.errors,
+            retries24h: stats.retries.length,
+            retries: stats.retries,
+            completedTs: stats.completedTs,
+            errorsTs: stats.errorsTs,
+            retriesTs: stats.retriesTs,
+          };
+          AuditController._statsCache.set(orgId, { value: result, expiresAt: Date.now() + 5_000 });
+          return result;
+        } catch (err) {
+          console.error(`❌ [STATS] background refresh failed orgId=${orgId}:`, err);
+          throw err;
+        } finally {
+          AuditController._statsPending.delete(orgId);
+        }
+      })();
+      AuditController._statsPending.set(orgId, pending);
     }
+
+    if (cached) return cached.value;
+
+    const placeholder = {
+      inPipe: 0, active: [], completed24h: 0, errors24h: 0, errors: [],
+      retries24h: 0, retries: [], completedTs: [], errorsTs: [], retriesTs: [],
+    };
+    return Promise.race([
+      pending.catch(() => placeholder),
+      new Promise((r) => setTimeout(() => r(placeholder), 5_000)),
+    ]);
   }
-  // 5-second per-isolate result cache + in-flight promise dedup.
+  // 5s result cache + in-flight promise dedup. Cache value can outlive
+  // expiresAt — it's served while a background refresh runs.
   private static _statsCache = new Map<string, { value: unknown; expiresAt: number }>();
   private static _statsPending = new Map<string, Promise<unknown>>();
 }

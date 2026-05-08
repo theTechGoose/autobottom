@@ -300,14 +300,15 @@ function docPath(creds: FirestoreCreds, docId: string): string {
  *  Body consumption happens INSIDE the retry loop so mid-stream body
  *  failures also trigger retry. Per-attempt 20s abort prevents 120s hangs. */
 const FS_RETRY_DELAYS_MS = [200, 600];
-// Per-attempt abort budget. History: started at 20s (too aggressive for
-// 5000-doc paginated reads), bumped to 60s, but 60s × 3 retries = 180s of
-// wedge per call. When a maintenance burst (dedup, purge) saturates slots,
-// foreground requests piled up behind 180s abort timers and the dashboard
-// became unreachable for minutes. 15s × 3 = 45s worst-case slot hold —
-// still gives a single attempt enough time for a multi-MB paginated read
-// under normal conditions, but convoys clear 4× faster.
-const FS_ATTEMPT_TIMEOUT_MS = 15_000;
+// Per-attempt abort budget. History: 20s was too aggressive (5000-doc
+// paginated reads + body consumption legit exceed 20s), 15s even worse.
+// 60s is plenty for any single fetch + body read while still guarding
+// against the 120s isolate-stall mode that originally motivated the
+// timeout. The 60s × 3 retries = 180s slot-hold concern that pushed us
+// briefly to 15s is now handled structurally by the lane separation:
+// maintenance can't wedge foreground regardless of how long any single
+// request hangs, so foreground holding a slot for 60s is fine.
+const FS_ATTEMPT_TIMEOUT_MS = 60_000;
 
 // ── Firestore concurrency semaphore ─────────────────────────────────────────
 // Cap concurrent in-flight Firestore HTTP calls per isolate. Without this,

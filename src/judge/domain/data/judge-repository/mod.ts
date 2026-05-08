@@ -746,47 +746,38 @@ async function bulkDeleteFindings(
     } catch { /* skip malformed */ }
   }
 
-  // audit-finding: per-finding header read in parallel batches. Each
-  // header doc is at audit-finding__org__findingId; if the finding was
-  // chunked (large), header.totalChunks tells us how many chunk docs
-  // exist (audit-finding__org__findingId__chunk_0..chunk_{N-1}). If
-  // header is null (never existed or already deleted), skip — :commit
-  // no-ops on missing IDs anyway.
+  // audit-finding: blind-add header + chunk doc IDs deterministically.
+  // Header doc lives at audit-finding__org__findingId; chunks at
+  // audit-finding__org__findingId__chunk_0..chunk_{N-1}. We don't know
+  // N for each finding without reading the header, BUT :commit delete
+  // is idempotent on missing docs — sending extra delete ops for chunk
+  // slots that don't exist is free. Cover up to AUDIT_FINDING_MAX_CHUNKS
+  // = 64 (≈ 44 MB of body data per finding at CHUNK_BYTES=700_000),
+  // which exceeds every real finding we've seen. Anything truly larger
+  // would leave a few chunk orphans — harmless because the header is
+  // gone, so getStoredChunked returns null and the finding is logically
+  // deleted.
   //
-  // Concurrency capped at 5 to stay friendly to the 5-slot background
-  // lane semaphore. 200 findings / 5 ≈ 40 sequential rounds × ~50ms
-  // per round-trip ≈ 2s — fast, predictable, no chance of hitting any
-  // 60s scan timeout because every call is a single-doc point read.
-  const HEADER_READ_CONCURRENCY = 5;
-  const headerReadStart = Date.now();
-  let headerHits = 0;
-  for (let i = 0; i < losers.length; i += HEADER_READ_CONCURRENCY) {
-    const batch = losers.slice(i, i + HEADER_READ_CONCURRENCY);
-    const results = await Promise.all(batch.map((l) =>
-      getStored<{ totalChunks?: number }>("audit-finding", orgId, l.id)
-        .catch((err) => {
-          console.warn(`[DEDUP] ⚠️ header read failed for fid=${l.id}: ${(err as Error).message}`);
-          return null;
-        })
-    ));
-    for (let j = 0; j < batch.length; j++) {
-      const fid = batch[j].id;
-      const header = results[j];
-      if (header == null) continue; // already-deleted / never-existed — skip
-      headerHits++;
-      try {
-        docIds.add(encodeDocId("audit-finding", orgId, fid));
-        const totalChunks = typeof header.totalChunks === "number" ? header.totalChunks : 0;
-        for (let n = 0; n < totalChunks; n++) {
-          docIds.add(encodeDocId("audit-finding", orgId, fid, `chunk_${n}`));
-        }
-      } catch (err) {
-        console.warn(`[DEDUP] ⚠️ encodeDocId failed for audit-finding fid=${fid}: ${(err as Error).message}`);
+  // Why blind-add instead of reading the header first: per-finding
+  // header reads were hitting the same 60s Firestore wall as the scan
+  // they replaced, because the connection pool to firestore.googleapis.com
+  // gets into bad states under sustained load and ALL fetches start
+  // timing out simultaneously — even single-doc point reads. By
+  // computing the doc IDs locally we issue zero FS reads in this
+  // section. Failure modes shrink to "the :commit batches themselves
+  // fail", which is the same surface as every other type.
+  const AUDIT_FINDING_MAX_CHUNKS = 64;
+  for (const loser of losers) {
+    try {
+      docIds.add(encodeDocId("audit-finding", orgId, loser.id));
+      for (let n = 0; n < AUDIT_FINDING_MAX_CHUNKS; n++) {
+        docIds.add(encodeDocId("audit-finding", orgId, loser.id, `chunk_${n}`));
       }
+    } catch (err) {
+      console.warn(`[DEDUP] ⚠️ encodeDocId failed for audit-finding fid=${loser.id}: ${(err as Error).message}`);
     }
   }
-  const headerReadMs = Date.now() - headerReadStart;
-  console.log(`[DEDUP] header-reads N=${losers.length} hits=${headerHits} in ${headerReadMs}ms`);
+  console.log(`[DEDUP] audit-finding blind-add N=${losers.length} (header + up to ${AUDIT_FINDING_MAX_CHUNKS} chunks each)`);
 
   // Singletons keyed directly by findingId — blind add, :commit ignores
   // missing docs. Cheaper than a getStored existence check per finding.

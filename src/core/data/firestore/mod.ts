@@ -300,15 +300,33 @@ function docPath(creds: FirestoreCreds, docId: string): string {
  *  Body consumption happens INSIDE the retry loop so mid-stream body
  *  failures also trigger retry. Per-attempt 20s abort prevents 120s hangs. */
 const FS_RETRY_DELAYS_MS = [200, 600];
-// Per-attempt abort budget. History: 20s was too aggressive (5000-doc
-// paginated reads + body consumption legit exceed 20s), 15s even worse.
-// 60s is plenty for any single fetch + body read while still guarding
-// against the 120s isolate-stall mode that originally motivated the
-// timeout. The 60s × 3 retries = 180s slot-hold concern that pushed us
-// briefly to 15s is now handled structurally by the lane separation:
-// maintenance can't wedge foreground regardless of how long any single
-// request hangs, so foreground holding a slot for 60s is fine.
-const FS_ATTEMPT_TIMEOUT_MS = 60_000;
+// Per-lane fetch behavior. timeoutMs is the per-attempt abort budget;
+// retryOnTimeout controls whether we re-fire on our own watchdog firing.
+//
+//  - foreground: 60s, no retry. Big paginated reads (audit-history
+//    pulls 5000-doc pages whose body consumption legit takes 20-40s
+//    on busy orgs) need this headroom. Retrying on a real-timeout
+//    here would 3× the slot wedge (60s × 3 = 180s) — we proved that's
+//    bad in commit 79cd931.
+//  - auth: 8s, retry on timeout. Auth/session reads are tiny
+//    single-doc fetches; <500ms under any sane Firestore state. When
+//    the connection pool is briefly wedged a single 8s try might
+//    abort, but the wedge usually clears in <30s as Deno cycles the
+//    connection. Retrying transparently means the user's login
+//    completes (worst case 8s × 3 = 24s wall-clock) rather than
+//    bouncing them to an error screen and asking them to retry by
+//    hand.
+//  - background: 15s, no retry. Maintenance work (dedup, purge,
+//    backfills) should fail fast on a hung call so the operator
+//    sees the error in their modal — they have the dedup-progress
+//    UI to interpret it. Retrying a hung scan just compounds the
+//    wedge.
+type LaneConfig = { timeoutMs: number; retryOnTimeout: boolean };
+const FS_LANE_CONFIG: Record<"foreground" | "background" | "auth", LaneConfig> = {
+  foreground: { timeoutMs: 60_000, retryOnTimeout: false },
+  background: { timeoutMs: 15_000, retryOnTimeout: false },
+  auth:       { timeoutMs:  8_000, retryOnTimeout: true  },
+};
 
 // ── Firestore concurrency semaphore ─────────────────────────────────────────
 // Cap concurrent in-flight Firestore HTTP calls per isolate. Without this,
@@ -431,10 +449,17 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
     const url = `https://firestore.googleapis.com/v1/${path}`;
     const headers = { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) };
 
+    // slot maps to one of the three lane keys via SlotKind ("foreground"
+    // | "background" | "auth"). Auth-lane callers may have fallen back
+    // to a foreground slot if the reserved auth slot was busy — in
+    // that case we still want auth's shorter timeout AND retry-on-
+    // timeout behavior, because the call originated as an auth
+    // request. Read the lane flag, not the slot, for config.
+    const laneCfg = FS_LANE_CONFIG[lane === "default" ? "foreground" : lane];
     let lastErr: unknown;
     for (let attempt = 0; attempt <= FS_RETRY_DELAYS_MS.length; attempt++) {
       const ctrl = new AbortController();
-      const timeoutId = setTimeout(() => ctrl.abort(), FS_ATTEMPT_TIMEOUT_MS);
+      const timeoutId = setTimeout(() => ctrl.abort(), laneCfg.timeoutMs);
       try {
         const res = await fetch(url, { ...init, headers, signal: ctrl.signal });
         const text = await res.text();
@@ -450,18 +475,19 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
         lastErr = err;
         // Distinguish "our own watchdog timer fired" from "the underlying
         // stream aborted unexpectedly". Both surface as AbortError with
-        // "aborted" in the message, which would normally match
-        // isTransientFsError and trigger a retry. But our own timeout
-        // means the query is GENUINELY too slow — retrying just re-fires
-        // the same hung query against Firestore, holding the same slot
-        // for another full FS_ATTEMPT_TIMEOUT_MS. Fail fast in that case;
-        // free the slot, surface the error to the caller. Only retry on
-        // stream-level aborts and other classified-transient errors.
+        // "aborted" in the message. For most lanes our own timeout means
+        // the query is genuinely too slow and retrying just re-fires the
+        // same hung query, so we fail fast. The auth lane is the
+        // exception — auth's timeout is short (8s) and the calls are
+        // tiny, so retrying transparently lets a brief connection-pool
+        // wedge resolve without bouncing the user to /login. See
+        // FS_LANE_CONFIG comments for rationale.
         const ourTimeout = ctrl.signal.aborted;
         const msg = err instanceof Error ? err.message : String(err);
-        const transient = !ourTimeout && isTransientFsError(msg);
+        const ourTimeoutRetryable = ourTimeout && laneCfg.retryOnTimeout;
+        const transient = ourTimeoutRetryable || (!ourTimeout && isTransientFsError(msg));
         if (!transient || attempt >= FS_RETRY_DELAYS_MS.length) break;
-        console.warn(`⚠️ [FS] transient fetch error (attempt ${attempt + 1}): ${msg.slice(0, 120)} — retrying`);
+        console.warn(`⚠️ [FS] transient fetch error (attempt ${attempt + 1}, lane=${lane}): ${msg.slice(0, 120)} — retrying`);
         await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));
       }
     }

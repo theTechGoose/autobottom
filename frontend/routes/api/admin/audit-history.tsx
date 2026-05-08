@@ -335,9 +335,18 @@ export const handler = define.handlers({
       const { html } = await fetchAndRenderFragment(filters, ctx.req, { includeOob: true });
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch (e) {
-      const msg = (e as Error).message;
+      // Soft fallback — backend SWR cache failed cold (or the request
+      // was the first ever for this date range). Show a quiet "try
+      // again" panel rather than dumping the AbortError stack into the
+      // UI. The cache typically warms within 30s; a re-submit nearly
+      // always succeeds.
+      console.warn(`[ADMIN-AUDITS] fragment fell through to fallback:`, e);
       return new Response(
-        renderToString(<div class="empty-row" style="padding:40px;color:var(--red);">Failed to load: {msg}</div>),
+        renderToString(
+          <div class="empty-row" style="padding:40px;color:var(--text-dim);text-align:center;">
+            Audit history is temporarily unavailable. Try the filter again in a few seconds.
+          </div>,
+        ),
         { headers: { "content-type": "text/html" } },
       );
     }

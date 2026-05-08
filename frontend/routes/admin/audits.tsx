@@ -100,9 +100,18 @@ export default define.page(async function AdminAuditsPage(ctx) {
     data = result.data;
     mainHtml = result.html;
   } catch (e) {
+    // Soft fallback — backend timed out or hiccupped on Firestore.
+    // Render a refresh-prompt panel rather than the raw error string so
+    // operators don't see a wall of red AbortError text. The 30s SWR
+    // cache on the controller side typically self-heals within seconds;
+    // a manual refresh is nearly always sufficient.
     console.error("[ADMIN/AUDITS] initial load failed:", e);
     data = { items: [], total: 0, pages: 1, page: 1, owners: [], departments: [], shifts: [], reviewers: [] };
-    mainHtml = renderToString(<div class="empty-row" style="padding:40px;color:var(--red);">Failed to load: {(e as Error).message}</div>);
+    mainHtml = renderToString(
+      <div class="empty-row" style="padding:40px;color:var(--text-dim);text-align:center;">
+        Audit history is temporarily unavailable. Refresh the page to retry.
+      </div>
+    );
   }
   const dd = renderAuditHistoryDropdowns(data, filters);
 

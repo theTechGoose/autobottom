@@ -44,6 +44,15 @@ export async function withFragmentCache(
         const html = await renderer();
         _cache.set(key, { html, expiresAt: Date.now() + ttl });
         return html;
+      } catch (e) {
+        // Renderer rejected despite its own try/catch (e.g. apiFetch threw,
+        // Preact render crashed on bad data). Convert to soft fallback so
+        // the IIFE always resolves and `_pending` never holds a rejected
+        // promise. Without this, every concurrent caller awaiting the same
+        // key would receive the rejection and the route would 500. We do
+        // NOT cache the fallback — next request retries fresh.
+        console.warn(`[FRAGMENT-CACHE] ${key} renderer rejected:`, e);
+        return `<div style="color:var(--text-dim);font-size:11px;">refreshing…</div>`;
       } finally {
         _pending.delete(key);
       }

@@ -9,13 +9,21 @@ import { withFragmentCache } from "../../../../lib/fragment-cache.ts";
 
 export const handler = define.handlers({
   async GET(ctx) {
-    const html = await withFragmentCache("dashboard-tokens", async () => {
-      let tokens: TokenData = { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0, calls: 0, by_function: {} };
-      try {
-        tokens = await apiFetch<TokenData>("/admin/token-usage", ctx.req);
-      } catch { /* use defaults */ }
-      return renderToString(<TokenUsagePanel tokens={tokens} />);
-    });
-    return new Response(html, { headers: { "content-type": "text/html" } });
+    try {
+      const html = await withFragmentCache("dashboard-tokens", async () => {
+        let tokens: TokenData = { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0, calls: 0, by_function: {} };
+        try {
+          tokens = await apiFetch<TokenData>("/admin/token-usage", ctx.req);
+        } catch { /* use defaults */ }
+        return renderToString(<TokenUsagePanel tokens={tokens} />);
+      });
+      return new Response(html, { headers: { "content-type": "text/html" } });
+    } catch (e) {
+      console.warn(`[FRAGMENT] dashboard-tokens fell through to fallback:`, e);
+      return new Response(
+        `<div style="color:var(--text-dim);font-size:11px;padding:12px;">refreshing…</div>`,
+        { headers: { "content-type": "text/html" } },
+      );
+    }
   },
 });

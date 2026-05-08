@@ -31,6 +31,7 @@ function progressBar(deleted: number, total: number): string {
 
 export const handler = define.handlers({
   async GET(ctx) {
+   try {
     const jobId = new URL(ctx.req.url).searchParams.get("jobId") ?? "";
     if (!jobId) {
       return new Response(`<div id="maint-progress"><span class="error-text">Missing jobId</span></div>`, {
@@ -41,8 +42,19 @@ export const handler = define.handlers({
     try {
       status = await apiFetch<DedupStatus>(`/admin/deduplicate-status?jobId=${encodeURIComponent(jobId)}`, ctx.req);
     } catch (e) {
+      // Soft fallback: the polling loop is alive, the status fetch just
+      // hiccuped (typically backend FS pressure). Re-emit the polling
+      // fragment so the UI keeps trying instead of going red and
+      // halting. Halt only on definitive backend "job not found" below.
+      const jobIdEnc = encodeURIComponent(jobId);
       return new Response(
-        `<div id="maint-progress"><span class="error-text">Status fetch failed: ${escapeHtml(String(e))}</span></div>`,
+        `<div id="maint-progress"
+              hx-get="/api/admin/dedup-progress?jobId=${jobIdEnc}"
+              hx-trigger="load delay:2s"
+              hx-swap="outerHTML"
+              style="font-size:12px;color:var(--text-dim);">
+          status check failed (${escapeHtml(String(e).slice(0, 80))}) — retrying…
+        </div>`,
         { headers: { "content-type": "text/html" } },
       );
     }
@@ -106,5 +118,22 @@ export const handler = define.handlers({
       </div>`,
       { headers: { "content-type": "text/html" } },
     );
+   } catch (e) {
+    // Outer guard. Anything that escapes inner blocks (URL parsing, weird
+    // request, unexpected throw) shouldn't 500 the dedup poll — emit a
+    // self-polling retry fragment so the UI keeps going.
+    console.warn(`[FRAGMENT] dedup-progress fell through to fallback:`, e);
+    const jobIdEnc = encodeURIComponent(new URL(ctx.req.url).searchParams.get("jobId") ?? "");
+    return new Response(
+      `<div id="maint-progress"
+            hx-get="/api/admin/dedup-progress?jobId=${jobIdEnc}"
+            hx-trigger="load delay:2s"
+            hx-swap="outerHTML"
+            style="font-size:11px;color:var(--text-dim);">
+        progress check failed — retrying…
+      </div>`,
+      { headers: { "content-type": "text/html" } },
+    );
+   }
   },
 });

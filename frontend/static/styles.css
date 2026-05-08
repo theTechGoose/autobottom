@@ -327,6 +327,28 @@ textarea.sf-input { height: 48px; resize: vertical; }
 .sf-input.num { width: 56px; text-align: center; font-weight: 600; }
 .sf { margin-bottom: 12px; }
 
+/* Native date/time pickers ship a calendar icon that's near-black on
+ * Chrome — invisible against our dark backgrounds. Invert the indicator
+ * across all input types that have one (date, datetime-local, month,
+ * week, time). Targets every input on the page rather than just .sf-input
+ * because date inputs show up in plain forms (e.g. Bulk Audit) too. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator,
+input[type="week"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.4);
+  opacity: 0.7;
+  cursor: pointer;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover,
+input[type="month"]::-webkit-calendar-picker-indicator:hover,
+input[type="week"]::-webkit-calendar-picker-indicator:hover,
+input[type="time"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
 /* ===== Modal groups ===== */
 .modal-group { margin-bottom: 16px; padding: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
 .modal-group-title { font-size: 11px; font-weight: 700; color: var(--text-bright); margin-bottom: 10px; }

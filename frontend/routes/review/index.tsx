@@ -16,6 +16,7 @@ import DecideEffects from "../../islands/DecideEffects.tsx";
 interface BufferResponse {
   buffer: ReviewItem[];
   remaining: number;
+  retry?: boolean;
   fullBuffer?: ReviewItem[];
   decisions?: Record<string, "confirm" | "flip">;
 }
@@ -35,13 +36,16 @@ export default define.page(async function ReviewQueue(ctx) {
     // saved preference both mean "no filter".
     if (at.length > 0 && at.length < 2) typesCsv = at.join(",");
   } catch (e) { console.error("Failed to load reviewer config:", e); }
-  let data: BufferResponse = { buffer: [], remaining: 0 };
+  let data: BufferResponse = { buffer: [], remaining: 0, retry: true };
   try {
     data = await apiFetch<BufferResponse>(
       `/review/api/next?reviewer=${encodeURIComponent(user.email)}&types=${encodeURIComponent(typesCsv)}`,
       ctx.req,
     );
-  } catch (e) { console.error("Failed to load review queue:", e); }
+  } catch (e) {
+    console.error("Failed to load review queue:", e);
+    data = { buffer: [], remaining: 0, retry: true };
+  }
   const buffer = data.buffer ?? [];
   const fullBuffer = data.fullBuffer ?? [];
   const decisions = data.decisions ?? {};
@@ -50,6 +54,13 @@ export default define.page(async function ReviewQueue(ctx) {
   const currentIndex = item
     ? Math.max(0, pillBuffer.findIndex((b) => b.questionIndex === item.questionIndex))
     : 0;
+  // If the initial claim came back empty WITH a retry signal, queue the
+  // polling fragment as the initial #queue-content content so reviewers
+  // see "Loading next…" instead of the misleading "All caught up" empty
+  // state. Without this, every transient lock-contention or FS hiccup on
+  // first page load looked like an empty queue with no recovery.
+  const showRetryPlaceholder = !item && !!data.retry;
+  const retryQs = `reviewer=${encodeURIComponent(user.email)}&types=${encodeURIComponent(typesCsv)}&retry=0`;
 
   return (
     <Layout title="Review Queue" section="review" user={user} hideSidebar>
@@ -60,19 +71,32 @@ export default define.page(async function ReviewQueue(ctx) {
           survives every HTMX swap of the queue panel. See island header. */}
       <TranscriptInteractive />
       <div class="queue-layout" id="queue-content" data-mode="review" data-allowed-types={typesCsv}>
-        <div class="queue-left">
-          <VerdictPanel
-            item={item}
-            buffer={pillBuffer}
-            currentIndex={currentIndex}
-            mode="review"
-            remaining={data.remaining}
-            email={user.email}
-            combo={0}
-            decisions={decisions}
-            allowedTypesCsv={typesCsv}
-          />
-        </div>
+        {showRetryPlaceholder ? (
+          <div
+            class="queue-left"
+            hx-get={`/api/review/next-fragment?${retryQs}`}
+            hx-trigger="load delay:1s"
+            hx-target="#queue-content"
+            hx-swap="innerHTML"
+            style="padding:24px;text-align:center;color:var(--text-dim);font-size:12px;"
+          >
+            Loading next…
+          </div>
+        ) : (
+          <div class="queue-left">
+            <VerdictPanel
+              item={item}
+              buffer={pillBuffer}
+              currentIndex={currentIndex}
+              mode="review"
+              remaining={data.remaining}
+              email={user.email}
+              combo={0}
+              decisions={decisions}
+              allowedTypesCsv={typesCsv}
+            />
+          </div>
+        )}
         <div class="queue-right">
           <TranscriptPanel transcript={item?.transcript} snippet={item?.snippet} />
         </div>

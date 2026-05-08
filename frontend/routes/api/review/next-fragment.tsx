@@ -30,11 +30,20 @@ export const handler = define.handlers({
       const next = await apiFetch<{
         buffer: ReviewItem[];
         remaining: number;
+        retry?: boolean;
         fullBuffer?: ReviewItem[];
         decisions?: Record<string, "confirm" | "flip">;
       }>(`/review/api/next?reviewer=${encodeURIComponent(reviewer)}&types=${encodeURIComponent(typesCsv)}`, ctx.req);
       const buffer = next.buffer ?? [];
       const item = buffer[0] ?? null;
+      // Retry signal — backend told us either there's a transient FS
+      // failure OR every candidate audit is currently locked by other
+      // reviewers. DON'T render the "All caught up" state; instead
+      // re-emit the polling fragment with bounded backoff. Throws into
+      // the catch block below where the existing retry-emitter lives.
+      if (!item && next.retry) {
+        throw new Error("retry-signal");
+      }
       const fullBuffer = next.fullBuffer ?? [];
       const decisions = next.decisions ?? {};
       const pillBuffer = fullBuffer.length > 0 ? fullBuffer : buffer;

@@ -30,11 +30,12 @@ export class ReviewController {
       ]);
       return { ...result, fullBuffer, decisions };
     } catch (err) {
-      // Soft-fallback shape — frontend's bounded retry consumes this
-      // without surfacing a 500. Without this catch a Firestore wedge
-      // turned into a self-amplifying retry storm in prod.
-      console.warn(`⚠️ [REVIEW] next() failed for ${reviewer} — returning empty buffer:`, err);
-      return { buffer: [], remaining: 0, fullBuffer: [], decisions: {} };
+      // Soft-fallback with `retry: true` — frontend keeps polling instead
+      // of rendering the "All caught up" empty state. Without retry, an
+      // FS wedge looked like an empty queue and reviewers got stuck on a
+      // dead end with no recovery path.
+      console.warn(`⚠️ [REVIEW] next() failed for ${reviewer} — returning retry signal:`, err);
+      return { buffer: [], remaining: 0, retry: true, fullBuffer: [], decisions: {} };
     }
   }
 

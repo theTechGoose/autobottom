@@ -32,6 +32,7 @@ export default define.page(async function AuditReportPage(ctx) {
       }
     } catch { /* anonymous is fine */ }
   }
+  console.log(`[AUDIT-REPORT] auth resolved: user=${user?.email ?? "anon"} role=${user?.role ?? "none"} isAdmin=${user?.role === "admin"}`);
 
   if (!id) {
     return (

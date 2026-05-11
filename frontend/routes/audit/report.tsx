@@ -82,10 +82,29 @@ export default define.page(async function AuditReportPage(ctx) {
   }
 
   const isAdmin = user?.role === "admin";
+  // Auditor email for the appeal flow. The `auditor` field is purely
+  // informational — it's stored on the appeal record, included in the
+  // appeal-filed webhook email to the judge, and logged for tracing.
+  // It is NOT used for access control. The audit-report page is public
+  // so customers reach it via their audit-complete email link and need
+  // to file appeals without logging in.
+  //
+  // Fallback chain: logged-in user → agent's VoEmail from finding →
+  // finding.owner (if not the literal "api" default) → hardcoded
+  // sentinel. Backend requires non-empty, sentinel keeps that contract.
+  const findingAny = finding as Record<string, unknown>;
+  const findingRecord = (findingAny.record as Record<string, unknown> | undefined) ?? {};
+  const voEmail = String(findingRecord.VoEmail ?? "").trim();
+  const ownerEmail = String(findingAny.owner ?? "").trim();
+  const appealAuditorEmail =
+    (user?.email ?? "") ||
+    voEmail ||
+    (ownerEmail && ownerEmail !== "api" ? ownerEmail : "") ||
+    "appeal-from-public-report@autobottom.local";
 
   return (
     <Layout title={`Report ${id}`} section="admin" user={user} hideSidebar>
-      <AuditReport finding={finding} id={id} auditorEmail={user?.email ?? ""} isAdmin={isAdmin} />
+      <AuditReport finding={finding} id={id} auditorEmail={appealAuditorEmail} isAdmin={isAdmin} />
       <script
         // deno-lint-ignore react-no-danger
         dangerouslySetInnerHTML={{

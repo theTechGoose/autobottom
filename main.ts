@@ -3,6 +3,24 @@
  */
 import "npm:reflect-metadata@0.1.13";
 
+// Global unhandled-rejection handler. Deno Deploy CRASHES the isolate by
+// default when a promise rejects without a .catch — and any cold start
+// after a crash hits Deno Deploy's edge with a 503 while the new isolate
+// boots (~3-5s). Some FS abort errors were escaping our try/catch
+// wrappers (fire-and-forget queueMicrotask deletes, etc.) and
+// crash-looping the isolate every time the connection pool wedged. This
+// listener swallows the rejection, logs it loudly so we can fix the
+// missing catch, and prevents the crash.
+addEventListener("unhandledrejection", (e) => {
+  const reason = e.reason;
+  const msg = reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
+  console.error(`🚨 [UNHANDLED-REJECTION] ${msg}`);
+  if (reason instanceof Error && reason.stack) {
+    console.error(reason.stack);
+  }
+  e.preventDefault();
+});
+
 // Datadog OTel disabled to reduce isolate cold-start cost. The init makes
 // a synchronous network connection to otlp.us5.datadoghq.com on every
 // isolate boot, which on a serverless platform that cold-starts isolates

@@ -127,7 +127,11 @@ export default function AppealModal(props: Props) {
 
   async function submitAppeal() {
     if (!checked.size) { setErr("Select at least one question to appeal."); return; }
-    if (!auditorEmail) { setErr("Not signed in."); return; }
+    // No auditorEmail gate. The audit-report page is public and reachable
+    // via the audit-complete email link — anonymous customers MUST be able
+    // to file appeals. The route handler provides a fallback chain so
+    // auditorEmail is always non-empty by the time we get here. Auditor
+    // field is informational only (appeal record, judge email, logs).
     setErr(null);
     setView("submitting");
     try {

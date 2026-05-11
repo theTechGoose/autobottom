@@ -73,11 +73,20 @@ async function handleMe(req: Request): Promise<Response> {
 async function handleGameState(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
-  const [gs, badges] = await Promise.all([
-    getGameState(auth.orgId, auth.email),
-    getEarnedBadges(auth.orgId, auth.email),
-  ]);
-  return Response.json({ ...gs, badges: badges.map((b) => b.badgeId) });
+  // Soft-fallback: under FS wedge, return a zero-shaped game state rather
+  // than a 5xx. The frontend gamification UI renders fine with zeroes; a
+  // 500 here used to break the entire /agent and /review pages because
+  // they fetch game-state in parallel with the main panel.
+  try {
+    const [gs, badges] = await Promise.all([
+      getGameState(auth.orgId, auth.email),
+      getEarnedBadges(auth.orgId, auth.email),
+    ]);
+    return Response.json({ ...gs, badges: badges.map((b) => b.badgeId) });
+  } catch (err) {
+    console.warn(`⚠️ [GAME-STATE] failed for ${auth.email} — soft fallback:`, err);
+    return Response.json({ xp: 0, level: 1, badges: [] });
+  }
 }
 
 async function handleGetBadges(req: Request): Promise<Response> {
@@ -125,6 +134,22 @@ async function handleManagerAuditHistory(req: Request): Promise<Response> {
 async function handleAgentDashboard(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  // Soft-fallback: any FS abort during the iteration below would otherwise
+  // surface as a 500 on /agent — empty dashboard is acceptable; a 500 is not.
+  try {
+    return await _computeAgentDashboard(auth);
+  } catch (err) {
+    console.warn(`⚠️ [AGENT-DASH] failed for ${auth.email} — soft fallback:`, err);
+    return Response.json({
+      email: auth.email,
+      totalAudits: 0, avgScore: 0, perfectCount: 0,
+      recentAudits: [], weeklyTrend: [],
+      retry: true,
+    });
+  }
+}
+
+async function _computeAgentDashboard(auth: { orgId: OrgId; email: string }): Promise<Response> {
   const db = await getKv();
   const findingIds = new Set<string>();
   for await (const entry of db.list({ prefix: orgKey(auth.orgId, "audit-finding") })) {

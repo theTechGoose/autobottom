@@ -700,6 +700,23 @@ export async function finalizeReviewedAudit(
 
   await updateCompletedStatScore(orgId, findingId, reviewScore);
 
+  // Drain review-decided for this finding. Without this, getReviewStats
+  // counts every decision since the table was created as "decided
+  // in-flight" — the Review Dashboard's Decided/Total Processed/Decision
+  // Rate stays inflated and never reflects the finalize work. Best-effort
+  // per-question delete; score is already saved so a failed cleanup
+  // doesn't justify aborting the finalize.
+  let drained = 0;
+  for (const [qIndex] of decisions) {
+    try {
+      await deleteStored("review-decided", orgId, findingId, qIndex);
+      drained++;
+    } catch (e) {
+      console.warn(`[REVIEW] ${findingId}/${qIndex}: failed to drain review-decided:`, e);
+    }
+  }
+  console.log(`[REVIEW] ${findingId}: drained ${drained}/${decisions.size} review-decided rows`);
+
   console.log(`✅ [REVIEW] ${findingId}: finalized score=${reviewScore}% (${yeses}/${total} yes) reviewer=${reviewer}`);
 
   await fireWebhook(orgId, "terminate", {

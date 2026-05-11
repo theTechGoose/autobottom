@@ -11,6 +11,16 @@ import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
 
+/** Soft-fallback helper: log + return a safe response shape so an FS abort
+ *  never propagates as a 5xx. Used by every FS-touching endpoint in this
+ *  controller. Reviewers were seeing raw "API 500: signal aborted" toasts
+ *  when Firestore briefly wedged — this collapses that into a recoverable
+ *  state the frontend can retry against. */
+function softFail<T>(ctx: string, err: unknown, fallback: T): T {
+  console.warn(`⚠️ [REVIEW] ${ctx} failed — soft fallback:`, err);
+  return fallback;
+}
+
 @SwaggerDescription("Review — human-in-the-loop audit verification")
 @Controller("review/api")
 export class ReviewController {
@@ -44,19 +54,29 @@ export class ReviewController {
     if (!body.findingId || body.questionIndex == null || !body.decision || !body.reviewer) {
       return { error: "findingId, questionIndex, decision, reviewer required" };
     }
-    const result = await recordDecision(ORG(), body.findingId, body.questionIndex, body.decision, body.reviewer);
-    const [fullBuffer, decisions] = await Promise.all([
-      getFailedQuestionsForFinding(ORG(), body.findingId),
-      getDecisionsByFinding(ORG(), body.findingId),
-    ]);
-    return {
-      ok: true,
-      ...result,
-      xpGained: body.decision === "flip" ? 15 : 10,
-      newBadges: [] as string[],
-      fullBuffer,
-      decisions,
-    };
+    try {
+      const result = await recordDecision(ORG(), body.findingId, body.questionIndex, body.decision, body.reviewer);
+      const [fullBuffer, decisions] = await Promise.all([
+        getFailedQuestionsForFinding(ORG(), body.findingId),
+        getDecisionsByFinding(ORG(), body.findingId),
+      ]);
+      ReviewController._bustStatsCache();
+      return {
+        ok: true,
+        ...result,
+        xpGained: body.decision === "flip" ? 15 : 10,
+        newBadges: [] as string[],
+        fullBuffer,
+        decisions,
+      };
+    } catch (err) {
+      return softFail(`decide ${body.findingId}/${body.questionIndex}`, err, {
+        ok: false, retry: true, remaining: 0, auditComplete: false,
+        xpGained: 0, newBadges: [] as string[],
+        fullBuffer: [], decisions: {},
+        error: "Server busy, please retry",
+      });
+    }
   }
 
   @Post("finalize") @ReturnedType(OkResponse) @Description("Finalize a reviewed audit — apply flips, recompute score, fire terminate webhook") @BodyType(GenericBodyRequest)
@@ -65,6 +85,7 @@ export class ReviewController {
     if (!b.findingId || !b.reviewer) return { error: "findingId and reviewer required" };
     try {
       const r = await finalizeReviewedAudit(ORG(), b.findingId, b.reviewer);
+      ReviewController._bustStatsCache();
       return { ok: true, score: r.score, alreadyFinalized: r.alreadyFinalized ?? false };
     } catch (err) {
       console.error(`❌ [REVIEW] finalize failed for ${b.findingId}:`, err);
@@ -75,26 +96,47 @@ export class ReviewController {
   @Post("back") @ReturnedType(ReviewBufferResponse) @Description("Undo last decision") @BodyType(ReviewBackRequest)
   async back(@Body() body: { findingId: string; questionIndex: number; reviewer: string }) {
     if (!body.reviewer) return { error: "reviewer required" };
-    const { undoDecisionLegacy: undoDecision } = await import("@review/domain/business/review-queue/mod.ts");
-    return undoDecision(ORG(), body.reviewer);
+    try {
+      const { undoDecisionLegacy: undoDecision } = await import("@review/domain/business/review-queue/mod.ts");
+      const result = await undoDecision(ORG(), body.reviewer);
+      ReviewController._bustStatsCache();
+      return result;
+    } catch (err) {
+      return softFail(`back ${body.reviewer}`, err, { buffer: [], remaining: 0, retry: true });
+    }
   }
 
   @Get("stats") @ReturnedType(ReviewStatsResponse) @Description("Review queue statistics")
-  async stats() { return getReviewStats(ORG()); }
+  async stats() {
+    // Delegate to dashboardData() so the 10s frontend poll shares the same
+    // 5s cache + try/catch + cache-busting wired into dashboardData. The
+    // poll used to hit getReviewStats raw — no cache, no fallback — which
+    // is why the dashboard numbers stayed stale all weekend even when the
+    // SSR pulled fresh data on initial load.
+    return this.dashboardData();
+  }
 
   @Get("settings") @ReturnedType(ReviewerConfigResponse) @Description("Get reviewer settings")
   async getSettings(@Query("email") email: string) {
     if (!email) return { error: "email required" };
-    return (await getReviewerConfig(ORG(), email)) ?? { allowedTypes: ["date-leg", "package"] };
+    try {
+      return (await getReviewerConfig(ORG(), email)) ?? { allowedTypes: ["date-leg", "package"] };
+    } catch (err) {
+      return softFail(`getSettings ${email}`, err, { allowedTypes: ["date-leg", "package"] });
+    }
   }
 
   @Post("settings") @ReturnedType(OkResponse) @Description("Save reviewer settings") @BodyType(GenericBodyRequest)
   async saveSettings(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.email || !b.config) return { error: "email and config required" };
-    const { saveReviewerConfig } = await import("@admin/domain/data/admin-repository/mod.ts");
-    await saveReviewerConfig(ORG(), b.email, b.config);
-    return { ok: true };
+    try {
+      const { saveReviewerConfig } = await import("@admin/domain/data/admin-repository/mod.ts");
+      await saveReviewerConfig(ORG(), b.email, b.config);
+      return { ok: true };
+    } catch (err) {
+      return softFail(`saveSettings ${b.email}`, err, { ok: false, retry: true, error: "Server busy, please retry" });
+    }
   }
 
   // /review/api/me is dispatched directly from main.ts (AUTH_CONTEXT_HANDLERS)
@@ -103,9 +145,13 @@ export class ReviewController {
   @Get("preview") @ReturnedType(ReviewBufferResponse) @Description("Preview a finding for review")
   async preview(@Query("findingId") findingId: string) {
     if (!findingId) return { error: "findingId required" };
-    const { previewFindingLegacy: previewFinding } = await import("@review/domain/business/review-queue/mod.ts");
-    const items = await previewFinding(ORG(), findingId);
-    return { buffer: items ?? [], remaining: 0 };
+    try {
+      const { previewFindingLegacy: previewFinding } = await import("@review/domain/business/review-queue/mod.ts");
+      const items = await previewFinding(ORG(), findingId);
+      return { buffer: items ?? [], remaining: 0 };
+    } catch (err) {
+      return softFail(`preview ${findingId}`, err, { buffer: [], remaining: 0, retry: true });
+    }
   }
 
   // 5s result cache + in-flight promise dedup. The review dashboard polls
@@ -117,6 +163,13 @@ export class ReviewController {
   // DashboardController._dashCache (admin/entrypoints/dashboard/mod.ts).
   private static _statsCache: { data: Awaited<ReturnType<typeof getReviewStats>>; expiresAt: number } | null = null;
   private static _statsPending: Promise<Awaited<ReturnType<typeof getReviewStats>>> | null = null;
+  /** Drop the 5s stats cache. Called after every state-changing endpoint
+   *  (decide, back, finalize, discard, backfill) so the reviewer sees their
+   *  own work reflected on the next poll rather than waiting up to 5s. */
+  private static _bustStatsCache(): void {
+    ReviewController._statsCache = null;
+    ReviewController._statsPending = null;
+  }
   @Get("dashboard") @ReturnedType(ReviewStatsResponse) @Description("Review dashboard data")
   async dashboardData() {
     const now = Date.now();
@@ -151,21 +204,38 @@ export class ReviewController {
   @Get("gamification") @ReturnedType(GamificationSettingsResponse) @Description("Get reviewer gamification override (or empty if none set)")
   async getGamification(@Query("email") email: string) {
     if (!email) return {};
-    const { getReviewerGamificationOverride } = await import("@gamification/domain/data/gamification-repository/mod.ts");
-    return (await getReviewerGamificationOverride(ORG(), email)) ?? {};
+    try {
+      const { getReviewerGamificationOverride } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+      return (await getReviewerGamificationOverride(ORG(), email)) ?? {};
+    } catch (err) {
+      return softFail(`getGamification ${email}`, err, {});
+    }
   }
 
   @Post("gamification") @ReturnedType(OkResponse) @Description("Save reviewer gamification override") @BodyType(GenericBodyRequest)
   async saveGamification(@Body() body: GenericBodyRequest) {
     const b = body as { email?: string; settings?: Record<string, unknown> };
     if (!b.email) return { error: "email required" };
-    const { saveReviewerGamificationOverride } = await import("@gamification/domain/data/gamification-repository/mod.ts");
-    await saveReviewerGamificationOverride(ORG(), b.email, (b.settings ?? {}) as any);
-    return { ok: true };
+    try {
+      const { saveReviewerGamificationOverride } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+      await saveReviewerGamificationOverride(ORG(), b.email, (b.settings ?? {}) as any);
+      return { ok: true };
+    } catch (err) {
+      return softFail(`saveGamification ${b.email}`, err, { ok: false, retry: true, error: "Server busy, please retry" });
+    }
   }
 
   @Post("backfill") @ReturnedType(OkMessageResponse) @Description("Backfill review queue")
-  async backfill() { const { backfillFromFinishedLegacy: backfillFromFinished } = await import("@review/domain/business/review-queue/mod.ts"); await backfillFromFinished(ORG()); return { ok: true }; }
+  async backfill() {
+    try {
+      const { backfillFromFinishedLegacy: backfillFromFinished } = await import("@review/domain/business/review-queue/mod.ts");
+      await backfillFromFinished(ORG());
+      ReviewController._bustStatsCache();
+      return { ok: true };
+    } catch (err) {
+      return softFail("backfill", err, { ok: false, retry: true, error: "Server busy, please retry" });
+    }
+  }
 
   @Post("discard") @ReturnedType(OkResponse) @Description("Release stranded review claim — moves all decisions for findingId back to pending") @BodyType(GenericBodyRequest)
   async discard(@Body() body: GenericBodyRequest) {
@@ -173,6 +243,7 @@ export class ReviewController {
     if (!b.findingId || !b.reviewer) return { error: "findingId and reviewer required" };
     try {
       const r = await discardReview(ORG(), b.reviewer, b.findingId);
+      ReviewController._bustStatsCache();
       return { ok: true, restored: r.restored };
     } catch (err) {
       console.error(`❌ [REVIEW] discard failed for ${b.findingId}:`, err);

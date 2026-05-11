@@ -52,6 +52,7 @@ import { saveFinding, saveJob } from "@audit/domain/data/audit-repository/mod.ts
 import { trackActive, getHiddenFindingIds } from "@audit/domain/data/stats-repository/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
 import { enqueueStep, getSelfUrl, applyDefaultQueueParallelism } from "@core/data/qstash/mod.ts";
+import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
@@ -796,7 +797,15 @@ Deno.serve({ port }, (req, info) => {
 
       console.log(`🔧 [STEP] ${stepName} finding=${findingId} invoked via direct dispatch`);
       try {
-        return await stepHandler(req);
+        // Audit pipeline runs in the BACKGROUND lane (25-slot cap, own
+        // HTTP/2 connection pool). Without this wrap the pipeline used
+        // the foreground lane and competed directly with reviewer +
+        // login + dashboard requests for both app-level slots AND the
+        // network-level HTTP/2 connections to firestore.googleapis.com.
+        // A burst of audits could 60s-wedge user-facing requests as a
+        // side effect. Now pipeline writes are network-isolated from
+        // user reads — bursts queue against themselves, not users.
+        return await runInBackgroundLane(() => stepHandler(req));
       } catch (err) {
         console.error(`❌ [STEP] ${stepName} finding=${findingId} threw:`, err);
         return Response.json(

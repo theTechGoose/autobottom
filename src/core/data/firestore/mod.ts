@@ -337,24 +337,59 @@ const FS_LANE_CONFIG: Record<"foreground" | "background" | "auth", LaneConfig> =
 // into 503/500. Bounding concurrency at the source means the pool can never
 // saturate; calls beyond the cap queue and resolve in FIFO order.
 //
-// Three-lane sizing — total 50 (bumped from 30 once batch-commit
-// patterns landed for maintenance work; the per-isolate ceiling was
-// always conservative, and Deno Deploy spawns more isolates under load
-// for cluster-wide capacity scaling):
-//   - foreground (default): 44 slots — login, dashboard, audit-step, all
-//     user-facing FS work. Anything that DIDN'T explicitly opt into
-//     another lane lands here.
-//   - background: 5 slots, strict cap, never falls back to foreground.
-//     Maintenance ops (dedup, purge, backfill) wrap themselves in
-//     runInBackgroundLane so they cap their own FS pressure and can
-//     never starve real users. Background stays at 5 — the point is
-//     bounding maintenance, not scaling it.
-//   - auth: 1 slot, reserved for session reads/writes. Belt-and-
-//     suspenders so logins still work even if foreground is saturated.
-//     Auth lane falls back to foreground if its single slot is busy.
-const FS_FOREGROUND_CAP = 44;
-const FS_BACKGROUND_CAP = 5;
-const FS_AUTH_CAP = 1;
+// Three-lane sizing — total 94. Each lane now ALSO has its own
+// Deno.HttpClient with its own TCP connection pool to Firestore (see
+// _foregroundHttpClient / _backgroundHttpClient / _authHttpClient
+// below), so the lanes provide TRUE network-level isolation, not just
+// app-level concurrency caps. A burst on one lane can't saturate the
+// HTTP/2 connections used by another lane.
+//
+//   - foreground (default): 64 slots — login, dashboard, review queue,
+//     admin tools, all user-facing FS work. Anything that DIDN'T
+//     explicitly opt into another lane lands here.
+//   - background: 25 slots — the audit pipeline lives here now (wrapped
+//     at the step dispatcher in main.ts), plus maintenance ops (dedup,
+//     purge, backfill). 25 is enough for ~10 concurrent audits each
+//     doing ~2-3 in-flight FS ops, without flooding the connection pool.
+//   - auth: 5 slots — session reads/writes. Previously 1 with a
+//     fallback-to-foreground design; now that the auth lane has its
+//     own HTTP client there's no benefit to keeping it tiny, and 5
+//     lets multiple concurrent logins/session reads complete in
+//     parallel.
+const FS_FOREGROUND_CAP = 64;
+const FS_BACKGROUND_CAP = 25;
+const FS_AUTH_CAP = 5;
+
+// Per-lane HTTP clients. Each client has its own TCP connection pool to
+// firestore.googleapis.com, so a flood of pipeline writes on the
+// background lane can't queue at the network layer behind foreground
+// reads. App-level lane caps (above) provide concurrency limits; these
+// clients provide network-level isolation. Together they deliver the
+// "isolated lanes" guarantee — saturating one lane can't slow another.
+//
+// HTTP/2 is negotiated by default for HTTPS. Each client maintains its
+// own connections; expect ~1-4 connections per client under load. Total
+// connection count ceiling on Deno Deploy is generous (>>12).
+//
+// Lazy init so unit tests that import this module without exercising
+// fsFetch don't leak HTTP-client resources. Each is created on first
+// real FS call from its lane and reused for the isolate's lifetime.
+let _foregroundHttpClient: Deno.HttpClient | null = null;
+let _backgroundHttpClient: Deno.HttpClient | null = null;
+let _authHttpClient: Deno.HttpClient | null = null;
+
+function getHttpClientForLane(lane: FsLane): Deno.HttpClient {
+  if (lane === "background") {
+    if (!_backgroundHttpClient) _backgroundHttpClient = Deno.createHttpClient({});
+    return _backgroundHttpClient;
+  }
+  if (lane === "auth") {
+    if (!_authHttpClient) _authHttpClient = Deno.createHttpClient({});
+    return _authHttpClient;
+  }
+  if (!_foregroundHttpClient) _foregroundHttpClient = Deno.createHttpClient({});
+  return _foregroundHttpClient;
+}
 let _fsForegroundInFlight = 0;
 let _fsBackgroundInFlight = 0;
 let _fsAuthInFlight = 0;
@@ -470,6 +505,11 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
   // frees the slot — without this, 60s aborts would permanently lock slots.
   const lane = _laneStorage.getStore() ?? "default";
   const slot = await acquireFsSlot(lane);
+  // Per-lane HTTP client. Picked by LANE (not slot) so auth-lane callers
+  // that fell back to a foreground slot still use the auth client's
+  // dedicated connections — preserving the "auth never queues behind
+  // dashboard" guarantee even during fallback.
+  const httpClient = getHttpClientForLane(lane);
   try {
     const token = await getAccessToken(creds);
     const url = `https://firestore.googleapis.com/v1/${path}`;
@@ -487,7 +527,7 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
       const ctrl = new AbortController();
       const timeoutId = setTimeout(() => ctrl.abort(), laneCfg.timeoutMs);
       try {
-        const res = await fetch(url, { ...init, headers, signal: ctrl.signal });
+        const res = await fetch(url, { ...init, headers, signal: ctrl.signal, client: httpClient } as RequestInit & { client: Deno.HttpClient });
         const text = await res.text();
         clearTimeout(timeoutId);
         if (res.status >= 500 && res.status < 600 && attempt < FS_RETRY_DELAYS_MS.length) {

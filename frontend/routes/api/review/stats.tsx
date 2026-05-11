@@ -4,7 +4,7 @@ import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { StatCard } from "../../../components/StatCard.tsx";
 
-interface ReviewStats { pending?: number; decided?: number; pendingAuditCount?: number; }
+interface ReviewStats { pending?: number; decided?: number; pendingAuditCount?: number; stale?: boolean; }
 
 export const handler = define.handlers({
   async GET(ctx) {
@@ -14,9 +14,10 @@ export const handler = define.handlers({
       const decided = stats.decided ?? 0;
       const total = pending + decided;
       const confirmRate = total > 0 ? Math.round((decided / total) * 100) : 0;
+      const pendingSub = `${stats.pendingAuditCount ?? 0} audits${stats.stale ? " (updating…)" : ""}`;
       const html = renderToString(
         <div class="stat-grid">
-          <StatCard label="Queue Pending" value={pending} color="purple" sub={`${stats.pendingAuditCount ?? 0} audits`} />
+          <StatCard label="Queue Pending" value={pending} color="purple" sub={pendingSub} />
           <StatCard label="Decided" value={decided} color="green" />
           <StatCard label="Total Processed" value={total} color="blue" />
           <StatCard label="Decision Rate" value={`${confirmRate}%`} color={confirmRate >= 90 ? "green" : "yellow"} />

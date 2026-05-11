@@ -16,7 +16,20 @@ const ORG = defaultOrgId;
 export class UserController {
 
   @Get("users") @ReturnedType(UserListResponse)
-  async listUsers() { return { users: await listUsers(ORG()) }; }
+  async listUsers() {
+    // Soft-fallback: under FS wedge listUsers() throws AbortError, which
+    // danet surfaces as a 500. The frontend admin/users page + impersonate
+    // modal both call this endpoint; a 500 here broke the entire admin
+    // dashboard because users.tsx is an SSR'd parent route and the page
+    // hander threw all the way up. Returning an empty list with retry:true
+    // keeps the page alive — frontend renders "No users" briefly and the
+    // next poll refetches.
+    try { return { users: await listUsers(ORG()) }; }
+    catch (err) {
+      console.warn(`⚠️ [USERS] listUsers failed — soft fallback:`, err);
+      return { users: [], retry: true };
+    }
+  }
 
   @Post("users") @ReturnedType(OkResponse) @BodyType(CreateUserRequest)
   async addUser(@Body() body: { email: string; password: string; role: string; supervisor?: string }) {

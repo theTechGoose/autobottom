@@ -10,7 +10,7 @@ interface ReviewerSettings { allowedTypes: ("date-leg" | "package")[] }
 
 export default define.page(async function ReviewDashboard(ctx) {
   const user = ctx.state.user!;
-  let stats = { pending: 0, decided: 0, pendingAuditCount: 0 };
+  let stats: { pending: number; decided: number; pendingAuditCount: number; stale?: boolean } = { pending: 0, decided: 0, pendingAuditCount: 0 };
   let settings: ReviewerSettings = { allowedTypes: ["date-leg", "package"] };
   let leaderboard: LeaderboardEntry[] = [];
   try { stats = await apiFetch<typeof stats>("/review/api/dashboard", ctx.req); }
@@ -33,7 +33,7 @@ export default define.page(async function ReviewDashboard(ctx) {
 
       <div id="review-stats" hx-get="/api/review/stats" hx-trigger="every 10s" hx-swap="innerHTML">
         <div class="stat-grid">
-          <StatCard label="Queue Pending" value={stats.pending} color="purple" sub={`${stats.pendingAuditCount} audits`} />
+          <StatCard label="Queue Pending" value={stats.pending} color="purple" sub={`${stats.pendingAuditCount} audits${stats.stale ? " (updating…)" : ""}`} />
           <StatCard label="Decided" value={stats.decided} color="green" />
           <StatCard label="Total Processed" value={total} color="blue" />
           <StatCard label="Decision Rate" value={`${confirmRate}%`} color={confirmRate >= 90 ? "green" : "yellow"} />

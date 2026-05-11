@@ -1313,17 +1313,24 @@ async function _getReviewStatsRaw(orgId: OrgId): Promise<{
     pendingFindings.add(item.findingId);
   };
 
-  const pending = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
+  // Parallel FS scans. Was sequential: each scan is a paginated read; a
+  // wedge in any one used to drag the total past our 25s foreground
+  // watchdog. Parallel via Promise.all means the wall-clock is the slowest
+  // single scan, not the sum. Foreground lane has 64 slots — three in
+  // flight is well under cap even with multiple reviewers polling.
+  const [pending, active, decided] = await Promise.all([
+    listStoredWithKeys<ReviewItem>("review-pending", orgId),
+    listStoredWithKeys<ReviewItem>("review-active", orgId),
+    listStoredWithKeys<ReviewItem>("review-decided", orgId),
+  ]);
   for (const { value } of pending) {
     if (hidden.has(value.findingId)) continue;
     bumpPending(value);
   }
-  const active = await listStoredWithKeys<ReviewItem>("review-active", orgId);
   for (const { value } of active) {
     if (hidden.has(value.findingId)) continue;
     bumpPending(value);
   }
-  const decided = await listStoredWithKeys<ReviewItem>("review-decided", orgId);
   for (const { value } of decided) {
     if (hidden.has(value.findingId)) continue;
     if (value.recordingIdField === "GenieNumber") packageDecided++;

@@ -163,9 +163,17 @@ export class ReviewController {
   // DashboardController._dashCache (admin/entrypoints/dashboard/mod.ts).
   private static _statsCache: { data: Awaited<ReturnType<typeof getReviewStats>>; expiresAt: number } | null = null;
   private static _statsPending: Promise<Awaited<ReturnType<typeof getReviewStats>>> | null = null;
+  // Last successful result, NEVER cleared by _bustStatsCache. When the
+  // refresh-after-bust race aborts under FS wedge, the soft-fallback path
+  // serves this instead of dropping the dashboard to zeros. Stale-by-N-
+  // seconds is invisible; zeros look like a broken panel and confuse
+  // reviewers mid-shift.
+  private static _statsLastGood: Awaited<ReturnType<typeof getReviewStats>> | null = null;
   /** Drop the 5s stats cache. Called after every state-changing endpoint
    *  (decide, back, finalize, discard, backfill) so the reviewer sees their
-   *  own work reflected on the next poll rather than waiting up to 5s. */
+   *  own work reflected on the next poll rather than waiting up to 5s.
+   *  Does NOT clear _statsLastGood — that lives across busts as a safety
+   *  net for the soft-fallback path. */
   private static _bustStatsCache(): void {
     ReviewController._statsCache = null;
     ReviewController._statsPending = null;
@@ -187,19 +195,35 @@ export class ReviewController {
         // finalize/discard/backfill — the cache only ages out
         // naturally for unrelated viewers.
         ReviewController._statsCache = { data, expiresAt: Date.now() + 15_000 };
+        ReviewController._statsLastGood = data;
         return data;
       } catch (err) {
         // Under FS wedge, fall back to whatever's cached (even if stale)
         // so the panel keeps rendering. Without this catch the rejection
         // bubbles to the HTTP layer as a 500, which the frontend retry
         // loop then amplifies. Stale data > broken panel.
+        //
+        // Three-tier fallback:
+        //   1) Current cache (stale-but-fresh-ish, may include reviewer's
+        //      own most recent decide).
+        //   2) _statsLastGood — survives _bustStatsCache calls. This
+        //      handles the worst-case race: reviewer decides → bust →
+        //      poll refetch aborts → would otherwise return zeros.
+        //   3) Zero shape — only on cold start before we've ever seen
+        //      real data.
+        // All three set `stale: true` so the frontend can show a
+        // subtle hint that the number is provisional.
         console.warn(`⚠️ [REVIEW] dashboardData failed — serving cached/empty:`, err);
-        if (cached) return cached.data;
+        if (cached) return { ...cached.data, stale: true } as typeof cached.data;
+        if (ReviewController._statsLastGood) {
+          return { ...ReviewController._statsLastGood, stale: true } as typeof ReviewController._statsLastGood;
+        }
         return {
           pending: 0, decided: 0, pendingAuditCount: 0,
           dateLegPending: 0, dateLegDecided: 0,
           packagePending: 0, packageDecided: 0,
-        };
+          stale: true,
+        } as Awaited<ReturnType<typeof getReviewStats>>;
       } finally {
         ReviewController._statsPending = null;
       }

@@ -43,10 +43,23 @@ export async function fileJudgeAppeal(
   const all = (finding.answeredQuestions ?? []) as Array<Record<string, unknown>>;
   if (!all.length) throw new Error(`no answered questions on finding ${findingId} — Invalid Genie audits can only be re-audited, not appealed`);
 
+  // Mirror frontend's isYes predicate (components/AuditReport.tsx). The
+  // frontend renders any question where !isYes(answer) as appealable.
+  // Previously the backend filtered on `answer.toLowerCase() === "no"` —
+  // strict equality rejected real-world answers like "No ", "No.", "N",
+  // "failed", or empty strings that the frontend cheerfully exposed as
+  // appealable. End-state: user clicks, gets misleading
+  // "no matching failed questions to appeal" error. Symmetric predicate
+  // means whatever the user could check, the backend will queue.
+  const isYes = (a: unknown): boolean => {
+    const s = String(a ?? "").trim().toLowerCase();
+    return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
+  };
+
   const wanted = new Set(input.appealedQuestions);
   const questionsToQueue = all
     .map((q, i) => ({ q, i }))
-    .filter(({ q, i }) => wanted.has(i) && String(q.answer ?? "").toLowerCase() === "no")
+    .filter(({ q, i }) => wanted.has(i) && !isYes(q.answer))
     .map(({ q, i }) => ({
       _origIdx: i,
       header: q.header ?? "",
@@ -56,7 +69,18 @@ export async function fileJudgeAppeal(
       answer: q.answer ?? "No",
     }));
 
-  if (!questionsToQueue.length) throw new Error("no matching failed questions to appeal");
+  if (!questionsToQueue.length) {
+    // Diagnostic: log what the user selected vs what the answers actually
+    // look like. Helps catch future drift between the frontend's
+    // appealable predicate and the backend's matching logic.
+    const selectedDebug = Array.from(wanted).map((i) => ({
+      idx: i,
+      header: all[i]?.header ?? "<out-of-range>",
+      answer: all[i]?.answer ?? "<missing>",
+    }));
+    console.warn(`⚠️ [APPEAL] no matching appealable questions fid=${findingId} selected=${JSON.stringify(selectedDebug)}`);
+    throw new Error("no matching failed questions to appeal");
+  }
 
   await step("populateJudgeQueue", findingId, () => populateJudgeQueue(
     orgId,

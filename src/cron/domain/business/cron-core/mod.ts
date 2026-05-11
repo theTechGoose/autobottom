@@ -1,8 +1,9 @@
 /** Cron job registrations with OTel instrumentation. */
 import { withSpan, metric, flushOtel } from "@core/data/datadog-otel/mod.ts";
 import { runWatchdog } from "@cron/domain/business/watchdog/mod.ts";
-import { listJobs, tickJob } from "@admin/domain/business/migration/mod.ts";
-import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
+// Migration imports preserved for when migration-tick is re-enabled:
+// import { listJobs, tickJob } from "@admin/domain/business/migration/mod.ts";
+// import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 
 export function registerCrons(): void {
   Deno.cron("watchdog", "0 * * * *", async () => {
@@ -14,34 +15,32 @@ export function registerCrons(): void {
     await flushOtel();
   });
 
-  // Server-side driver for migration jobs. Each /status HTTP poll also ticks,
-  // but operators close their tabs and walk away — we cannot rely on browser
-  // polling. This cron guarantees forward progress regardless.
+  // migration-tick disabled. The KV → Firestore migration is complete.
+  // The every-minute cron was the primary cause of periodic 60s connection-
+  // pool wedges that timed out reviewer decide submissions, dashboard
+  // polls, getFinding lookups, and login. Background-lane slot caps don't
+  // protect the underlying HTTP/2 connection pool to firestore.googleapis.com,
+  // so a tick's burst of chunked writes (up to 20 × ~1MB in parallel) was
+  // saturating connections for ~10-30s every 60s. Foreground requests
+  // started during that window queued at the network layer and hit our
+  // 60s abort timer. Uncomment if you need to resume migration work.
   //
-  // Tick once per fire, not 4×. tickJob has a 30s wall-clock budget, so
-  // 4× = up to 120s per fire, which exceeds the 60s cron interval and
-  // backs fires up — Deno Deploy then occasionally skips or delays a fire
-  // long enough to trip the stale watchdog. 1× = ≤30s, fits comfortably.
-  Deno.cron("migration-tick", "* * * * *", async () => {
-    // Log EVERY fire (even if no work to do) so we can confirm the
-    // cron scheduler is actually firing on Deno Deploy. Past attempts
-    // logged nothing when running.length===0 and we couldn't tell if
-    // cron was silent because there was no work, or because it never ran.
-    console.log(`⏰ [CRON:migration-tick] FIRED at ${new Date().toISOString()}`);
-    try {
-      const all = await listJobs();
-      const running = all.filter((j) => j.status === "running");
-      console.log(`⏰ [CRON:migration-tick] found ${all.length} total jobs, ${running.length} running`);
-      if (running.length === 0) return;
-      for (const job of running) {
-        console.log(`⏰ [CRON:migration-tick] ticking ${job.jobId} (phase=${job.phase})`);
-        await runInBackgroundLane(() => tickJob(job.jobId));
-      }
-      console.log(`⏰ [CRON:migration-tick] done`);
-    } catch (err) {
-      console.log(`❌ [CRON:migration-tick] ERROR: ${String(err).slice(0, 300)}`);
-    }
-  });
+  // Deno.cron("migration-tick", "* * * * *", async () => {
+  //   console.log(`⏰ [CRON:migration-tick] FIRED at ${new Date().toISOString()}`);
+  //   try {
+  //     const all = await listJobs();
+  //     const running = all.filter((j) => j.status === "running");
+  //     console.log(`⏰ [CRON:migration-tick] found ${all.length} total jobs, ${running.length} running`);
+  //     if (running.length === 0) return;
+  //     for (const job of running) {
+  //       console.log(`⏰ [CRON:migration-tick] ticking ${job.jobId} (phase=${job.phase})`);
+  //       await runInBackgroundLane(() => tickJob(job.jobId));
+  //     }
+  //     console.log(`⏰ [CRON:migration-tick] done`);
+  //   } catch (err) {
+  //     console.log(`❌ [CRON:migration-tick] ERROR: ${String(err).slice(0, 300)}`);
+  //   }
+  // });
 
-  console.log("⏰ Cron jobs registered: watchdog (hourly), migration-tick (every 1m)");
+  console.log("⏰ Cron jobs registered: watchdog (hourly)");
 }

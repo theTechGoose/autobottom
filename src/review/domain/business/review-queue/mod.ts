@@ -5,7 +5,7 @@
  *  acceptable given typical reviewer concurrency and idempotent finalize. */
 
 import {
-  getStored, setStored, setStoredIfAbsent, deleteStored, listStoredWithKeys,
+  getStored, setStored, setStoredIfAbsent, deleteStored, listStoredWithKeys, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewItem, ReviewDecision } from "@core/dto/types.ts";
@@ -1253,6 +1253,18 @@ export async function backfillFromFinished(orgId: OrgId): Promise<{ queued: numb
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 export async function getReviewStats(orgId: OrgId): Promise<{
+  pending: number;
+  decided: number;
+  pendingAuditCount: number;
+  dateLegPending: number;
+  dateLegDecided: number;
+  packagePending: number;
+  packageDecided: number;
+}> {
+  return withTiming("getReviewStats", () => _getReviewStatsRaw(orgId));
+}
+
+async function _getReviewStatsRaw(orgId: OrgId): Promise<{
   pending: number;
   decided: number;
   pendingAuditCount: number;

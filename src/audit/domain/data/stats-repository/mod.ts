@@ -2,7 +2,7 @@
  *  Firestore-backed via setStored* helpers. */
 
 import {
-  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredByIdPrefix, listStoredByCompletedAt,
+  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredByIdPrefix, listStoredByCompletedAt, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
@@ -163,6 +163,10 @@ export async function trackRetry(orgId: OrgId, findingId: string, step: string, 
 // ── Completed Stats ──────────────────────────────────────────────────────────
 
 export async function getRecentCompleted(orgId: OrgId, limit = 25): Promise<Record<string, unknown>[]> {
+  return withTiming(`getRecentCompleted limit=${limit}`, () => _getRecentCompletedRaw(orgId, limit));
+}
+
+async function _getRecentCompletedRaw(orgId: OrgId, limit: number): Promise<Record<string, unknown>[]> {
   const now = Date.now();
   const cutoff = now - DAY_MS;
   // Over-fetch and post-filter hidden findings so the dashboard "Recent
@@ -209,6 +213,10 @@ export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEnt
 }
 
 export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number): Promise<AuditDoneIndexEntry[]> {
+  return withTiming(`queryAuditDoneIndex from=${from} to=${to}`, () => _queryAuditDoneIndexRaw(orgId, from, to));
+}
+
+async function _queryAuditDoneIndexRaw(orgId: OrgId, from: number, to: number): Promise<AuditDoneIndexEntry[]> {
   console.log(`[AUDIT-HISTORY] [Q-IDX] start orgId=${orgId} from=${from} to=${to}`);
   let entries: AuditDoneIndexEntry[];
   try {
@@ -228,15 +236,45 @@ export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number
   return visible;
 }
 
+// SWR cache for findAuditsByRecordId. Each call previously scanned up to
+// 51k+ audit-done-idx rows over a 365-day window — single-digit seconds
+// minimum, blows 60s under FS lag. Operators tend to repeat the same
+// record-id lookups (debugging a specific guest's audit history), so a
+// 60s SWR cache keyed by `${orgId}:${recordId}` gives near-instant
+// repeat hits and amortizes the scan cost across burst usage.
+const _findByRecordCache = new Map<string, { value: AuditDoneIndexEntry[]; expiresAt: number }>();
+const _findByRecordPending = new Map<string, Promise<AuditDoneIndexEntry[]>>();
+const FIND_BY_RECORD_TTL_MS = 60_000;
+
 export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
-  console.log(`🔍 [FIND-BY-RECORD] orgId=${orgId} recordId=${recordId} starting`);
-  // Page via the (_type, _org, completedAt)-indexed scan instead of a single
-  // 50k-doc listStored — that single-shot read hit our 20s fsFetch abort on
-  // hot orgs ("The signal has been aborted"). listStoredByCompletedAt pages
-  // in 5000-doc chunks, each well under the per-attempt timeout, and uses
-  // an existing composite index. Default window: 365 days.
+  const cacheKey = `${orgId}:${recordId}`;
   const now = Date.now();
-  const since = now - 365 * DAY_MS;
+  const cached = _findByRecordCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.value;
+  const inflight = _findByRecordPending.get(cacheKey);
+  if (inflight) return inflight;
+  const promise = (async () => {
+    try {
+      const result = await withTiming(`findAuditsByRecordId ${recordId}`, () => _findAuditsByRecordIdRaw(orgId, recordId));
+      _findByRecordCache.set(cacheKey, { value: result, expiresAt: Date.now() + FIND_BY_RECORD_TTL_MS });
+      return result;
+    } finally {
+      _findByRecordPending.delete(cacheKey);
+    }
+  })();
+  _findByRecordPending.set(cacheKey, promise);
+  return promise;
+}
+
+async function _findAuditsByRecordIdRaw(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
+  console.log(`🔍 [FIND-BY-RECORD] orgId=${orgId} recordId=${recordId} starting`);
+  // Page via the (_type, _org, completedAt)-indexed scan. Window narrowed
+  // from 365d → 90d: cuts scan size from 51k rows to ~12k on a hot org,
+  // dropping query time from seconds-on-a-good-day to ~hundreds of ms.
+  // Operators looking up records older than 90d should use the audit
+  // history page directly (which takes an explicit date range).
+  const now = Date.now();
+  const since = now - 90 * DAY_MS;
   const hidden = await getHiddenFindingIds(orgId);
 
   const idx = await listStoredByCompletedAt<AuditDoneIndexEntry>(
@@ -362,6 +400,18 @@ export async function getStuckFindings(thresholdMs = 15 * 60 * 1000): Promise<Ar
 // ── Pipeline Stats Aggregation ───────────────────────────────────────────────
 
 export async function getStats(orgId: OrgId): Promise<{
+  active: Record<string, unknown>[];
+  completedCount: number;
+  errors: Record<string, unknown>[];
+  retries: Record<string, unknown>[];
+  completedTs: number[];
+  errorsTs: number[];
+  retriesTs: number[];
+}> {
+  return withTiming("getStats", () => _getStatsRaw(orgId));
+}
+
+async function _getStatsRaw(orgId: OrgId): Promise<{
   active: Record<string, unknown>[];
   completedCount: number;
   errors: Record<string, unknown>[];

@@ -641,6 +641,29 @@ export async function recordDecision(
   // (or until LOCK_TTL fires and we sweep on the next claim attempt).
   await releaseLock(orgId, findingId, questionIndex);
 
+  // Refresh claimedAt on the reviewer's REMAINING active items for this
+  // audit. Without this, the 30-min ACTIVE_TTL measures time-since-claim
+  // rather than time-since-last-activity — a reviewer who takes >30 min
+  // on a complex audit (totally reasonable for date-leg deep dives) gets
+  // their session abandoned mid-review by another reviewer's claim sweep,
+  // and the other reviewer ends up with the SAME audit + question buffer.
+  // Refreshing on every decision means: actively-deciding reviewers
+  // keep their lock indefinitely; only genuinely-idle sessions expire.
+  try {
+    const remainingActive = await listStoredWithKeys<ReviewItem & { claimedAt?: number }>("review-active", orgId);
+    const myRemaining = remainingActive.filter(({ key, value }) =>
+      key[0] === reviewer && value.findingId === findingId
+    );
+    await Promise.all(myRemaining.map(({ key, value }) => {
+      const { claimedAt: _, ...rest } = value;
+      return setStored("review-active", orgId, key, { ...rest, claimedAt: now });
+    }));
+  } catch (err) {
+    // Best-effort — a failure here just means the lock TTL is a bit
+    // stale, the next decision will refresh it. Don't block the user.
+    console.warn(`⚠️ [REVIEW] ${findingId}: failed to refresh claimedAt on remaining active items:`, err);
+  }
+
   const counter = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 1;
   const newCount = Math.max(0, counter - 1);
   await setStored("review-audit-pending", orgId, [findingId], newCount);

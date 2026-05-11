@@ -3,9 +3,14 @@
  */
 import "npm:reflect-metadata@0.1.13";
 
-// Initialize Datadog OTel before anything loads
-import { initOtel } from "@core/data/datadog-otel/mod.ts";
-initOtel();
+// Datadog OTel disabled to reduce isolate cold-start cost. The init makes
+// a synchronous network connection to otlp.us5.datadoghq.com on every
+// isolate boot, which on a serverless platform that cold-starts isolates
+// frequently (we've seen 11 boots in 10 min on this app) was adding
+// latency we couldn't afford. Uncomment if you want OTel back; otherwise
+// keep telemetry via Deno Deploy's built-in metrics + our app logs.
+// import { initOtel } from "@core/data/datadog-otel/mod.ts";
+// initOtel();
 
 import { runWithOrigin } from "@core/data/qstash/mod.ts";
 

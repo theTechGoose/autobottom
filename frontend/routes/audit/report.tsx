@@ -5,13 +5,33 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import { AuditReport } from "../../components/AuditReport.tsx";
+import { authenticate } from "@core/business/auth/mod.ts";
 
 export default define.page(async function AuditReportPage(ctx) {
   const url = new URL(ctx.req.url);
   // Trim — browsers URL-encode leading whitespace as `+`, so "copy/paste from
   // success message with a space" becomes ` LhW-...` which never matches.
   const id = (url.searchParams.get("id") ?? "").trim();
-  const user = ctx.state.user;
+  // Inline opportunistic auth (NOT in middleware). The /audit/report path
+  // is public so customers can view appeal reports anonymously, but if an
+  // admin happens to be logged in we want to render the per-question flip
+  // button. Putting this in the middleware made EVERY public-path hit
+  // (including /login itself) compete for the auth-lane Firestore slot,
+  // which broke login under concurrency. Doing it here scopes the auth
+  // lookup to only this one page.
+  let user = ctx.state.user;
+  if (!user) {
+    try {
+      const auth = await authenticate(ctx.req);
+      if (auth?.email && auth?.role) {
+        user = {
+          email: auth.email,
+          orgId: auth.orgId,
+          role: auth.role as "admin" | "judge" | "manager" | "reviewer" | "user",
+        };
+      }
+    } catch { /* anonymous is fine */ }
+  }
 
   if (!id) {
     return (

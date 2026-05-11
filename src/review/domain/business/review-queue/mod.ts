@@ -96,20 +96,32 @@ export interface BufferItem extends ReviewItem {
 // Trade-off: the prior reviewer's mid-session work is lost. Users accept
 // this — 30 min idle = abandoned. If they need their work preserved they
 // have to finalize within the window.
-async function abandonAuditSession(orgId: OrgId, findingId: string): Promise<void> {
-  const active = await listStoredWithKeys<ReviewItem & { claimedAt?: number }>("review-active", orgId);
-  const decided = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
+//
+// IMPORTANT: caller MUST pre-fetch the active + decided collection scans
+// ONCE (via the sweep in claimNextItem) and pass them in here. The earlier
+// version re-ran two full scans per finding, so a sweep over N expired
+// audits did 2N scans + serial writes, saturating the HTTP/2 connection
+// pool to Firestore for tens of seconds. That FS storm was what was
+// timing out login. Sharing the scans + parallelizing the writes drops
+// per-audit cost to a single batch of parallel ops.
+async function abandonAuditSessionWithData(
+  orgId: OrgId,
+  findingId: string,
+  active: Array<{ key: string[]; value: ReviewItem & { claimedAt?: number } }>,
+  decided: Array<{ key: string[]; value: ReviewDecision }>,
+): Promise<number> {
+  const ops: Array<Promise<unknown>> = [];
   let restored = 0;
 
-  // Move every active question for this finding back to pending and
-  // release its lock. The key shape is [reviewer, findingId, qIndex].
+  // Move every active question for this finding back to pending and release
+  // its lock. Key shape: [reviewer, findingId, qIndex].
   for (const { key, value } of active) {
     if (value.findingId !== findingId) continue;
     const { claimedAt: _, ...rest } = value;
     const baseItem = rest as ReviewItem;
-    await setStored("review-pending", orgId, [findingId, value.questionIndex], baseItem);
-    await deleteStored("review-active", orgId, ...key);
-    await releaseLock(orgId, findingId, value.questionIndex);
+    ops.push(setStored("review-pending", orgId, [findingId, value.questionIndex], baseItem));
+    ops.push(deleteStored("review-active", orgId, ...key));
+    ops.push(releaseLock(orgId, findingId, value.questionIndex));
     restored++;
   }
 
@@ -132,19 +144,34 @@ async function abandonAuditSession(orgId: OrgId, findingId: string): Promise<voi
       ...(value.recordMeta ? { recordMeta: value.recordMeta } : {}),
       ...(value.completedAt != null ? { completedAt: value.completedAt } : {}),
     };
-    await setStored("review-pending", orgId, [findingId, value.questionIndex], baseItem);
-    await deleteStored("review-decided", orgId, ...key);
+    ops.push(setStored("review-pending", orgId, [findingId, value.questionIndex], baseItem));
+    ops.push(deleteStored("review-decided", orgId, ...key));
     restored++;
   }
 
   // Reset the audit-pending counter to the full restored count so the
   // stranded-resume guard in claimNextItem doesn't fire on this audit.
   if (restored > 0) {
-    await setStored("review-audit-pending", orgId, [findingId], restored);
+    ops.push(setStored("review-audit-pending", orgId, [findingId], restored));
   }
 
+  // Fire every write concurrently. Failures get caught per-op and logged —
+  // a single failed write should NOT abort the whole sweep (next claim
+  // will retry from the still-stale state).
+  const results = await Promise.allSettled(ops);
+  const failed = results.filter((r) => r.status === "rejected").length;
+  if (failed > 0) {
+    console.warn(`[REVIEW] abandonAuditSession ${findingId}: ${failed}/${ops.length} ops failed`);
+  }
   console.log(`[REVIEW] abandonAuditSession ${findingId}: restored ${restored} question(s) to pending`);
+  return restored;
 }
+
+/** How many abandoned audits to process per single claimNextItem call.
+ *  Bounds the FS storm — if 50 audits expired (e.g. mass-reviewer-idle),
+ *  we don't try to clean them all in one request. Subsequent claims pick
+ *  up the rest, naturally rate-limiting the cleanup. */
+const ABANDON_BATCH_PER_CLAIM = 3;
 
 // ── Queue population ─────────────────────────────────────────────────────────
 
@@ -341,21 +368,38 @@ export async function claimNextItem(
   //    questions back, we collect every finding with at least one
   //    expired active item and fully reset that audit's state below.
   const allActive = await listStoredWithKeys<ReviewItem & { claimedAt: number }>("review-active", orgId);
-  const findingsToAbandon = new Set<string>();
+  // Collect findings with at least one expired active claim. Sorted by
+  // claimedAt ascending (oldest first) so a per-claim batch always
+  // handles the longest-abandoned audits first.
+  const expiredByAge: Array<{ findingId: string; claimedAt: number }> = [];
+  const expiredSeen = new Set<string>();
   for (const { key, value } of allActive) {
     if (key[0] === reviewer) continue;
     if (value.claimedAt && (now - value.claimedAt) > ACTIVE_TTL) {
-      findingsToAbandon.add(value.findingId);
+      if (expiredSeen.has(value.findingId)) continue;
+      expiredSeen.add(value.findingId);
+      expiredByAge.push({ findingId: value.findingId, claimedAt: value.claimedAt });
     }
   }
-  for (const fid of findingsToAbandon) {
-    await abandonAuditSession(orgId, fid);
+  expiredByAge.sort((a, b) => a.claimedAt - b.claimedAt);
+  const findingsToAbandon = expiredByAge.slice(0, ABANDON_BATCH_PER_CLAIM).map((e) => e.findingId);
+  if (expiredByAge.length > ABANDON_BATCH_PER_CLAIM) {
+    console.log(`[REVIEW] abandon sweep capped: ${expiredByAge.length} expired, processing ${ABANDON_BATCH_PER_CLAIM} this claim`);
   }
-  // Re-read active rows since abandonAuditSession just modified them.
-  // myActive (next block) needs the post-abandon view.
-  const activeAfterSweep = findingsToAbandon.size > 0
-    ? await listStoredWithKeys<ReviewItem & { claimedAt: number }>("review-active", orgId)
-    : allActive;
+
+  // Pre-fetch review-decided ONCE shared across every abandon in this
+  // batch — earlier version re-scanned both collections per finding,
+  // which is what was saturating the connection pool and timing out
+  // login. allActive is already in hand from the sweep above.
+  let activeAfterSweep = allActive;
+  if (findingsToAbandon.length > 0) {
+    const allDecided = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
+    for (const fid of findingsToAbandon) {
+      await abandonAuditSessionWithData(orgId, fid, allActive, allDecided);
+    }
+    // Re-read active rows since abandonAuditSessionWithData modified them.
+    activeAfterSweep = await listStoredWithKeys<ReviewItem & { claimedAt: number }>("review-active", orgId);
+  }
 
   // 2. Collect existing active items for this reviewer
   const myActive: ReviewItem[] = activeAfterSweep

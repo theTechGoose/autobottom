@@ -90,10 +90,16 @@ export async function deleteUser(orgId: OrgId, email: string): Promise<void> {
 }
 
 export async function verifyUser(email: string, password: string): Promise<AuthContext | null> {
-  const indexEntry = await getStored<{ orgId: OrgId }>("email-index", GLOBAL, email);
+  // Run the two single-doc reads in the auth lane so login fails fast
+  // (8s timeout × 3 auto-retries = 24s wall-clock budget) under FS
+  // wedge, rather than slow (foreground lane's 60s no-retry timer).
+  // Login should never be the slowest thing in the system.
+  const indexEntry = await runInAuthLane(() =>
+    getStored<{ orgId: OrgId }>("email-index", GLOBAL, email)
+  );
   if (!indexEntry) return null;
   const { orgId } = indexEntry;
-  const user = await getUser(orgId, email);
+  const user = await runInAuthLane(() => getUser(orgId, email));
   if (!user) return null;
   const hash = await hashPassword(password);
   if (hash !== user.passwordHash) return null;
@@ -357,20 +363,35 @@ export class AuthController {
   @Post("login") @ReturnedType(LoginResponse) @Description("Authenticate and get session token")
   async login(@Body() body: { email: string; password: string }) {
     if (!body.email || !body.password) return { error: "email and password required" };
-    const auth = await verifyUser(body.email, body.password);
-    if (!auth) return { error: "invalid credentials" };
-    const token = await createSession(auth);
-    return { ok: true, token, cookie: sessionCookie(token), email: auth.email, orgId: auth.orgId, role: auth.role };
+    // verifyUser does foreground-lane FS reads (email-index + user docs);
+    // createSession does an auth-lane FS write. Either can throw under FS
+    // wedge, which used to cascade to 500 → frontend "[LOGIN] failed:
+    // undefined" → reviewers stuck on the login page. Catch and return a
+    // retryable error so the form re-enables instead of blackboxing.
+    try {
+      const auth = await verifyUser(body.email, body.password);
+      if (!auth) return { error: "invalid credentials" };
+      const token = await createSession(auth);
+      return { ok: true, token, cookie: sessionCookie(token), email: auth.email, orgId: auth.orgId, role: auth.role };
+    } catch (err) {
+      console.warn(`⚠️ [AUTH] login failed for ${body.email} — soft fallback:`, err);
+      return { ok: false, retry: true, error: "Server busy, please try again" };
+    }
   }
 
   @Post("register") @ReturnedType(RegisterResponse) @Description("Register new org and admin user")
   async register(@Body() body: { email: string; password: string; orgName?: string; orgId?: string }) {
     if (!body.email || !body.password) return { error: "email and password required" };
-    const orgId = body.orgId ?? await createOrg(body.orgName ?? "Default Org", body.email);
-    await createUser(orgId, body.email, body.password, "admin");
-    const auth = { email: body.email, orgId, role: "admin" as const };
-    const token = await createSession(auth);
-    return { ok: true, token, cookie: sessionCookie(token), orgId };
+    try {
+      const orgId = body.orgId ?? await createOrg(body.orgName ?? "Default Org", body.email);
+      await createUser(orgId, body.email, body.password, "admin");
+      const auth = { email: body.email, orgId, role: "admin" as const };
+      const token = await createSession(auth);
+      return { ok: true, token, cookie: sessionCookie(token), orgId };
+    } catch (err) {
+      console.warn(`⚠️ [AUTH] register failed for ${body.email} — soft fallback:`, err);
+      return { ok: false, retry: true, error: "Server busy, please try again" };
+    }
   }
 
   @Post("logout") @ReturnedType(LogoutResponse) @Description("Clear session cookie")

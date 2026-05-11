@@ -323,7 +323,15 @@ const FS_RETRY_DELAYS_MS = [200, 600];
 //    wedge.
 type LaneConfig = { timeoutMs: number; retryOnTimeout: boolean };
 const FS_LANE_CONFIG: Record<"foreground" | "background" | "auth", LaneConfig> = {
-  foreground: { timeoutMs: 60_000, retryOnTimeout: false },
+  // Foreground was 60s. Reviewers were seeing "spins then 503": a brief
+  // pool wedge made the handler wait the full 60s, but Deno Deploy's
+  // edge timeout fires around ~50-60s and serves a 503 BEFORE our
+  // handler returned the soft-fallback. Net result: edge 503 instead
+  // of graceful retry. Dropping to 25s lets us abort early, catch in
+  // the controller, and return retry:true well before the edge gives
+  // up. Normal queries complete in 1-2s — only genuinely-wedged
+  // requests are affected.
+  foreground: { timeoutMs: 25_000, retryOnTimeout: false },
   background: { timeoutMs: 15_000, retryOnTimeout: false },
   auth:       { timeoutMs:  8_000, retryOnTimeout: true  },
 };

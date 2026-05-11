@@ -179,7 +179,14 @@ export class ReviewController {
     const pending = (async () => {
       try {
         const data = await getReviewStats(ORG());
-        ReviewController._statsCache = { data, expiresAt: Date.now() + 5_000 };
+        // 15s TTL (was 5s). Dashboard polls every 10s, so a 5s cache
+        // missed nearly every poll. 15s means 2-3 polls share each
+        // underlying scan, cutting foreground FS load from review-
+        // stats queries by ~3×. Reviewer's own work is reflected
+        // immediately because _bustStatsCache() fires on decide/back/
+        // finalize/discard/backfill — the cache only ages out
+        // naturally for unrelated viewers.
+        ReviewController._statsCache = { data, expiresAt: Date.now() + 15_000 };
         return data;
       } catch (err) {
         // Under FS wedge, fall back to whatever's cached (even if stale)

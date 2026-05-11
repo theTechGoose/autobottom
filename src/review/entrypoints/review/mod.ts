@@ -36,7 +36,7 @@ export class ReviewController {
       if (!fid) return { ...result, fullBuffer: [], decisions: {} };
       const [fullBuffer, decisions] = await Promise.all([
         getFailedQuestionsForFinding(ORG(), fid),
-        getDecisionsByFinding(ORG(), fid),
+        getDecisionsByFinding(ORG(), fid, reviewer),
       ]);
       return { ...result, fullBuffer, decisions };
     } catch (err) {
@@ -58,7 +58,7 @@ export class ReviewController {
       const result = await recordDecision(ORG(), body.findingId, body.questionIndex, body.decision, body.reviewer);
       const [fullBuffer, decisions] = await Promise.all([
         getFailedQuestionsForFinding(ORG(), body.findingId),
-        getDecisionsByFinding(ORG(), body.findingId),
+        getDecisionsByFinding(ORG(), body.findingId, body.reviewer),
       ]);
       ReviewController._bustStatsCache();
       return {

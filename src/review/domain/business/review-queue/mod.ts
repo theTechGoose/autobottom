@@ -84,6 +84,68 @@ export interface BufferItem extends ReviewItem {
   transcript: { raw: string; diarized: string; utteranceTimes?: number[] } | null;
 }
 
+// ── Audit-session abandonment (lock TTL expiry handoff) ─────────────────────
+// When the per-question lock TTL (ACTIVE_TTL, 30 min) passes without the
+// reviewer finalizing, we treat the session as abandoned. The audit gets
+// fully reset: every active + decided question goes back to review-pending,
+// per-question locks are released, the audit-pending counter is restored to
+// the full failed-question count. Whoever claims next sees a clean audit
+// with no leftover decisions from the prior reviewer — no count inflation
+// in the finalize modal, no cross-bleed.
+//
+// Trade-off: the prior reviewer's mid-session work is lost. Users accept
+// this — 30 min idle = abandoned. If they need their work preserved they
+// have to finalize within the window.
+async function abandonAuditSession(orgId: OrgId, findingId: string): Promise<void> {
+  const active = await listStoredWithKeys<ReviewItem & { claimedAt?: number }>("review-active", orgId);
+  const decided = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
+  let restored = 0;
+
+  // Move every active question for this finding back to pending and
+  // release its lock. The key shape is [reviewer, findingId, qIndex].
+  for (const { key, value } of active) {
+    if (value.findingId !== findingId) continue;
+    const { claimedAt: _, ...rest } = value;
+    const baseItem = rest as ReviewItem;
+    await setStored("review-pending", orgId, [findingId, value.questionIndex], baseItem);
+    await deleteStored("review-active", orgId, ...key);
+    await releaseLock(orgId, findingId, value.questionIndex);
+    restored++;
+  }
+
+  // Move every decided question for this finding back to pending (drop the
+  // decision metadata, keep the original question payload).
+  for (const { key, value } of decided) {
+    if (value.findingId !== findingId) continue;
+    const baseItem: ReviewItem = {
+      findingId: value.findingId,
+      questionIndex: value.questionIndex,
+      reviewIndex: value.reviewIndex,
+      totalForFinding: value.totalForFinding,
+      header: value.header ?? "",
+      populated: value.populated ?? "",
+      thinking: value.thinking ?? "",
+      defense: value.defense ?? "",
+      answer: value.answer ?? "No",
+      ...(value.recordingIdField ? { recordingIdField: value.recordingIdField } : {}),
+      ...(value.recordId ? { recordId: value.recordId } : {}),
+      ...(value.recordMeta ? { recordMeta: value.recordMeta } : {}),
+      ...(value.completedAt != null ? { completedAt: value.completedAt } : {}),
+    };
+    await setStored("review-pending", orgId, [findingId, value.questionIndex], baseItem);
+    await deleteStored("review-decided", orgId, ...key);
+    restored++;
+  }
+
+  // Reset the audit-pending counter to the full restored count so the
+  // stranded-resume guard in claimNextItem doesn't fire on this audit.
+  if (restored > 0) {
+    await setStored("review-audit-pending", orgId, [findingId], restored);
+  }
+
+  console.log(`[REVIEW] abandonAuditSession ${findingId}: restored ${restored} question(s) to pending`);
+}
+
 // ── Queue population ─────────────────────────────────────────────────────────
 
 export async function populateReviewQueue(
@@ -270,20 +332,33 @@ export async function claimNextItem(
   const now = Date.now();
   const hidden = await getHiddenFindingIds(orgId);
 
-  // 1. Sweep expired active claims from OTHER reviewers back to pending
+  // 1. Sweep expired active claims from OTHER reviewers — fully reset
+  //    every audit whose lock expired. The lock TTL (30 min) is the
+  //    abandon threshold: once it passes, the original reviewer's
+  //    in-flight session is dead. We don't want the next reviewer to
+  //    inherit partial work or get stale decisions counted against them
+  //    in the finalize modal. So instead of just rolling individual
+  //    questions back, we collect every finding with at least one
+  //    expired active item and fully reset that audit's state below.
   const allActive = await listStoredWithKeys<ReviewItem & { claimedAt: number }>("review-active", orgId);
+  const findingsToAbandon = new Set<string>();
   for (const { key, value } of allActive) {
     if (key[0] === reviewer) continue;
     if (value.claimedAt && (now - value.claimedAt) > ACTIVE_TTL) {
-      const { claimedAt: _, ...baseItem } = value;
-      await setStored("review-pending", orgId, [value.findingId, value.questionIndex], baseItem as ReviewItem);
-      await deleteStored("review-active", orgId, ...key);
-      console.log(`[REVIEW] Reclaimed expired active item ${value.findingId}/${value.questionIndex}`);
+      findingsToAbandon.add(value.findingId);
     }
   }
+  for (const fid of findingsToAbandon) {
+    await abandonAuditSession(orgId, fid);
+  }
+  // Re-read active rows since abandonAuditSession just modified them.
+  // myActive (next block) needs the post-abandon view.
+  const activeAfterSweep = findingsToAbandon.size > 0
+    ? await listStoredWithKeys<ReviewItem & { claimedAt: number }>("review-active", orgId)
+    : allActive;
 
   // 2. Collect existing active items for this reviewer
-  const myActive: ReviewItem[] = allActive
+  const myActive: ReviewItem[] = activeAfterSweep
     .filter(({ key }) => key[0] === reviewer)
     .map(({ value }) => {
       const { claimedAt: _, ...rest } = value;
@@ -1053,11 +1128,23 @@ export async function getFailedQuestionsForFinding(orgId: OrgId, findingId: stri
   }));
 }
 
-export async function getDecisionsByFinding(orgId: OrgId, findingId: string): Promise<Record<string, "confirm" | "flip">> {
+export async function getDecisionsByFinding(
+  orgId: OrgId,
+  findingId: string,
+  reviewer?: string,
+): Promise<Record<string, "confirm" | "flip">> {
+  // When `reviewer` is provided, return only that reviewer's decisions.
+  // The finalize modal counts "X confirmed / Y flipped" come from this map;
+  // without the filter, a stale decision left over from a prior reviewer
+  // shows up in the new reviewer's count (Ashley saw "3 flipped" after
+  // making 1 decision because Josh's earlier decisions on the same audit
+  // were still in review-decided). The abandon-on-lock-expiry path also
+  // wipes those rows, but reviewer filtering is defense-in-depth.
   const all = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
   const out: Record<string, "confirm" | "flip"> = {};
   for (const { key, value } of all) {
     if (key[0] !== findingId) continue;
+    if (reviewer && value?.reviewer !== reviewer) continue;
     if (value?.questionIndex != null && (value.decision === "confirm" || value.decision === "flip")) {
       out[String(value.questionIndex)] = value.decision;
     }

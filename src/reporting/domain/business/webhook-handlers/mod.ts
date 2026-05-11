@@ -200,12 +200,42 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   };
 
   const resolvedTest = cfg?.testEmail || "";
-  const to = resolvedTest || (isPackage ? gmEmail : (voEmail || agentEmail));
+  // Recipient resolution chain. Each step's value must look like an email
+  // (contain @ and no spaces) — without this check, `finding.owner` which
+  // defaults to the literal string "api" used to be passed straight to
+  // Postmark, which 422-rejected with "Illegal email address 'api'". The
+  // audit was finalized correctly, but the terminate email never landed
+  // and the operator got a confusing failure with no clear next step.
+  //
+  // The chain falls back to supervisorEmail when the primary recipient
+  // isn't a real email (data issue: VO has no email in CRM). Supervisor
+  // can then route the audit to the right person. Final fallback is the
+  // agent/owner email, which we still validate before using.
+  const isValidEmail = (s: string): boolean => typeof s === "string" && s.includes("@") && !s.includes(" ");
+  const chain: Array<{ source: string; value: string }> = [
+    { source: "testEmail", value: resolvedTest },
+    ...(isPackage
+      ? [{ source: "gmEmail", value: gmEmail }]
+      : [{ source: "voEmail", value: voEmail }]
+    ),
+    { source: "supervisorEmail", value: supervisorEmail },
+    { source: "owner", value: agentEmail },
+  ];
+  let to = "";
+  let toSource = "none";
+  for (const { source, value } of chain) {
+    if (isValidEmail(value)) { to = value; toSource = source; break; }
+  }
+  const chainStr = chain.map((c) => `${c.source}="${c.value}"`).join(", ");
+  console.log(`📧 [WEBHOOK:terminate] recipient resolution fid=${findingId} chain={${chainStr}} → ${toSource}=${to || "NONE"}`);
   if (!to) {
-    console.warn(`⚠️ [WEBHOOK:terminate] no recipient resolved fid=${findingId} isPackage=${isPackage} — skipping`);
+    console.warn(`⚠️ [WEBHOOK:terminate] no valid recipient resolved fid=${findingId} isPackage=${isPackage} — skipping (no source produced an email-shaped value)`);
     return;
   }
-  const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
+  // CC the supervisor only when they're not already the primary recipient
+  // (e.g. fallback path used supervisorEmail as the to).
+  const supervisorAsCc = supervisorEmail && supervisorEmail !== to && isValidEmail(supervisorEmail);
+  const cc = resolvedTest ? undefined : (supervisorAsCc ? supervisorEmail : undefined);
   const bcc = resolvedTest ? undefined : (cfg?.bcc || undefined);
 
   console.log(`📧 [WEBHOOK:terminate] sending fid=${findingId} to=${to} cc=${cc ?? "none"} bcc=${bcc ?? "none"} score=${scoreVal}%`);

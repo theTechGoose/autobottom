@@ -10,36 +10,60 @@ import * as repo from "@reporting/domain/data/email-repository/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
 
+/** Soft-fallback helper — same pattern as the review/judge controllers.
+ *  Catches FS aborts so a slow runQuery never propagates to the browser
+ *  as a 500. The /admin/email-reports list endpoint was hitting the 60s
+ *  foreground-lane timeout and 500ing the entire admin Email Reports tab. */
+function softFail<T>(ctx: string, err: unknown, fallback: T): T {
+  console.warn(`⚠️ [EMAIL-REPORTS] ${ctx} failed — soft fallback:`, err);
+  return fallback;
+}
+
 @SwaggerDescription("Email Reports — CRUD for scheduled email report configurations")
 @Controller("admin/email-reports")
 export class EmailReportController {
 
   @Get("") @ReturnedType(EmailConfigListResponse)
-  async list() { return { configs: await repo.listEmailReportConfigs(ORG()) }; }
+  async list() {
+    try { return { configs: await repo.listEmailReportConfigs(ORG()) }; }
+    catch (err) { return softFail("list", err, { configs: [] }); }
+  }
 
   @Post("") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async save(@Body() body: GenericBodyRequest) {
-    const config = await repo.saveEmailReportConfig(ORG(), body as any);
-    return { ok: true, config };
+    try {
+      const config = await repo.saveEmailReportConfig(ORG(), body as any);
+      return { ok: true, config };
+    } catch (err) {
+      return softFail("save", err, { ok: false, retry: true, error: "Server busy, please retry" });
+    }
   }
 
   @Post("delete") @ReturnedType(OkResponse) @BodyType(IdRequest)
   async doDelete(@Body() body: { id: string }) {
-    await repo.deleteEmailReportConfig(ORG(), body.id);
-    return { ok: true };
+    try {
+      await repo.deleteEmailReportConfig(ORG(), body.id);
+      return { ok: true };
+    } catch (err) {
+      return softFail(`delete ${body.id}`, err, { ok: false, retry: true, error: "Server busy, please retry" });
+    }
   }
 
   @Post("preview") @ReturnedType(EmailPreviewResponse) @BodyType(GenericBodyRequest)
   async preview(@Body() body: GenericBodyRequest) {
     const configId = (body as any).id ?? (body as any).configId;
     if (!configId) return { error: "id required" };
-    const config = await repo.getEmailReportConfig(ORG(), configId);
-    if (!config) return { error: "config not found" };
-    const { queryReportData, renderSections, renderFullEmail } = await import("@reporting/domain/business/email-report-engine/mod.ts");
-    const sections = await queryReportData(ORG(), config);
-    const html = renderFullEmail(null, renderSections(sections), config.name);
-    await repo.saveEmailReportPreview(ORG(), configId, html);
-    return { html };
+    try {
+      const config = await repo.getEmailReportConfig(ORG(), configId);
+      if (!config) return { error: "config not found" };
+      const { queryReportData, renderSections, renderFullEmail } = await import("@reporting/domain/business/email-report-engine/mod.ts");
+      const sections = await queryReportData(ORG(), config);
+      const html = renderFullEmail(null, renderSections(sections), config.name);
+      await repo.saveEmailReportPreview(ORG(), configId, html);
+      return { html };
+    } catch (err) {
+      return softFail(`preview ${configId}`, err, { html: "", retry: true, error: "Server busy, please retry" });
+    }
   }
 
   @Post("preview-inline") @ReturnedType(EmailPreviewResponse) @BodyType(GenericBodyRequest)
@@ -61,25 +85,37 @@ export class EmailReportController {
       weeklyType: b.weeklyType ?? undefined,
       templateId: b.templateId ?? undefined,
     };
-    const { queryReportData, renderSections, renderFullEmail } = await import("@reporting/domain/business/email-report-engine/mod.ts");
-    const sections = await queryReportData(ORG(), config as any);
-    const html = renderFullEmail(null, renderSections(sections), config.name);
-    return { html };
+    try {
+      const { queryReportData, renderSections, renderFullEmail } = await import("@reporting/domain/business/email-report-engine/mod.ts");
+      const sections = await queryReportData(ORG(), config as any);
+      const html = renderFullEmail(null, renderSections(sections), config.name);
+      return { html };
+    } catch (err) {
+      return softFail("previewInline", err, { html: "", retry: true, error: "Server busy, please retry" });
+    }
   }
 
   @Get("preview-view") @ReturnedType(EmailPreviewResponse)
   async previewView(@Query("configId") configId: string) {
-    const preview = await repo.getEmailReportPreview(ORG(), configId);
-    return preview ?? { html: "" };
+    try {
+      const preview = await repo.getEmailReportPreview(ORG(), configId);
+      return preview ?? { html: "" };
+    } catch (err) {
+      return softFail(`previewView ${configId}`, err, { html: "" });
+    }
   }
 
   @Post("send-now") @ReturnedType(OkResponse) @BodyType(IdRequest)
   async sendNow(@Body() body: { id: string }) {
     if (!body.id) return { error: "id required" };
-    const config = await repo.getEmailReportConfig(ORG(), body.id);
-    if (!config) return { error: "config not found" };
-    const { runReport } = await import("@reporting/domain/business/email-report-engine/mod.ts");
-    await runReport(ORG(), config as any);
-    return { ok: true };
+    try {
+      const config = await repo.getEmailReportConfig(ORG(), body.id);
+      if (!config) return { error: "config not found" };
+      const { runReport } = await import("@reporting/domain/business/email-report-engine/mod.ts");
+      await runReport(ORG(), config as any);
+      return { ok: true };
+    } catch (err) {
+      return softFail(`sendNow ${body.id}`, err, { ok: false, retry: true, error: "Server busy, please retry" });
+    }
   }
 }

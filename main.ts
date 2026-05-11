@@ -777,54 +777,56 @@ Deno.serve({ port }, (req, info) => {
         if (peek && typeof peek.rid === "string") rid = peek.rid;
       } catch { /* logging only — never break dispatch */ }
 
-      // Pre-track. We intentionally do NOT do a getFinding lookup here
-      // for rid — that adds an extra Firestore read PER handler
-      // invocation, and under load (e.g. 73 simultaneous bulk audits)
-      // the cumulative FS load saturates the connection pool and
-      // cascades into 60s aborts on every other FS call (auth, page
-      // renders, dashboard reads). If rid isn't in the QStash body,
-      // step-init's own metadata trackActive call (step-init/mod.ts:56)
-      // writes rid for init handlers; other steps fall back to "—" in
-      // the dashboard's QB Record column, which is acceptable.
-      if (orgId && findingId !== "<unknown>") {
-        try {
-          const { trackActive } = await import("@audit/domain/data/stats-repository/mod.ts");
-          await trackActive(orgId as OrgId, findingId, stepName, rid ? { rid } : undefined);
-        } catch (preErr) {
-          console.warn(`⚠️ [STEP] pre-track failed for ${stepName}/${findingId}:`, preErr);
-        }
-      }
-
       console.log(`🔧 [STEP] ${stepName} finding=${findingId} invoked via direct dispatch`);
-      try {
-        // Audit pipeline runs in the BACKGROUND lane (25-slot cap, own
-        // HTTP/2 connection pool). Without this wrap the pipeline used
-        // the foreground lane and competed directly with reviewer +
-        // login + dashboard requests for both app-level slots AND the
-        // network-level HTTP/2 connections to firestore.googleapis.com.
-        // A burst of audits could 60s-wedge user-facing requests as a
-        // side effect. Now pipeline writes are network-isolated from
-        // user reads — bursts queue against themselves, not users.
-        return await runInBackgroundLane(() => stepHandler(req));
-      } catch (err) {
-        console.error(`❌ [STEP] ${stepName} finding=${findingId} threw:`, err);
-        return Response.json(
-          { error: (err as Error).message, step: stepName, findingId },
-          { status: 500 },
-        );
-      } finally {
-        // Best-effort untrack — never break dispatch on a tracking failure.
-        // Skip when we couldn't peek findingId/orgId (e.g. malformed body) —
-        // there's nothing to untrack in that case anyway.
+      // Run the ENTIRE pipeline dispatch (pre-track, stepHandler,
+      // untrackHandler) inside the background lane. Without this, the
+      // tracking writes ran in the foreground (default) lane and used
+      // the foreground HTTP/2 client — so a transient foreground wedge
+      // would abort pre-track / untrackHandler at 60s even though the
+      // step handler itself ran cleanly in the background lane. Tracking
+      // is an audit-pipeline concern; it belongs in the same lane as
+      // the rest of the pipeline so it shares the background HTTP/2
+      // pool. Pipeline + tracking now fully isolated from user requests.
+      return await runInBackgroundLane(async () => {
+        // Pre-track. We intentionally do NOT do a getFinding lookup here
+        // for rid — that adds an extra Firestore read PER handler
+        // invocation, and under load (e.g. 73 simultaneous bulk audits)
+        // the cumulative FS load saturates the connection pool and
+        // cascades into 60s aborts on every other FS call. If rid isn't
+        // in the QStash body, step-init's own metadata trackActive call
+        // (step-init/mod.ts:56) writes rid for init handlers; other
+        // steps fall back to "—" in the dashboard's QB Record column.
         if (orgId && findingId !== "<unknown>") {
           try {
-            const { untrackHandler } = await import("@audit/domain/data/stats-repository/mod.ts");
-            await untrackHandler(orgId as OrgId, findingId);
-          } catch (untrackErr) {
-            console.warn(`⚠️ [STEP] untrackHandler failed for ${stepName}/${findingId}:`, untrackErr);
+            const { trackActive } = await import("@audit/domain/data/stats-repository/mod.ts");
+            await trackActive(orgId as OrgId, findingId, stepName, rid ? { rid } : undefined);
+          } catch (preErr) {
+            console.warn(`⚠️ [STEP] pre-track failed for ${stepName}/${findingId}:`, preErr);
           }
         }
-      }
+
+        try {
+          return await stepHandler(req);
+        } catch (err) {
+          console.error(`❌ [STEP] ${stepName} finding=${findingId} threw:`, err);
+          return Response.json(
+            { error: (err as Error).message, step: stepName, findingId },
+            { status: 500 },
+          );
+        } finally {
+          // Best-effort untrack — never break dispatch on a tracking failure.
+          // Skip when we couldn't peek findingId/orgId (e.g. malformed body) —
+          // there's nothing to untrack in that case anyway.
+          if (orgId && findingId !== "<unknown>") {
+            try {
+              const { untrackHandler } = await import("@audit/domain/data/stats-repository/mod.ts");
+              await untrackHandler(orgId as OrgId, findingId);
+            } catch (untrackErr) {
+              console.warn(`⚠️ [STEP] untrackHandler failed for ${stepName}/${findingId}:`, untrackErr);
+            }
+          }
+        }
+      });
     }
 
     // Fall-through dispatch — no log here; only the direct-dispatch branches

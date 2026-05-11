@@ -27,9 +27,25 @@ export default define.middleware(async (ctx) => {
     return ctx.next();
   }
 
-  // Public paths pass through
+  // Public paths pass through, but with opportunistic auth: if a session
+  // cookie is present and valid, populate ctx.state.user so public pages
+  // can render role-gated UI for authed visitors. The audit-report page
+  // is the motivating case — admins viewing /audit/report (a customer-
+  // facing URL that ALSO has admin-only flip controls) need user to be
+  // populated to see the flip buttons. Anonymous requests silently
+  // continue with no user — public pages must still work without auth.
   if (isPublicPath(path)) {
     console.log(`[MIDDLEWARE] ${path} — public, pass through`);
+    try {
+      const auth = await authenticate(ctx.req);
+      if (auth?.email && auth?.role) {
+        ctx.state.user = {
+          email: auth.email,
+          orgId: auth.orgId,
+          role: auth.role as "admin" | "judge" | "manager" | "reviewer" | "user",
+        };
+      }
+    } catch { /* anonymous is fine for public paths */ }
     return ctx.next();
   }
 

@@ -289,6 +289,81 @@ export class AdminConfigController {
     return { ok: failed.length === 0, flipped, total: findingIds.length, failed, ...(failed.length ? { retry: true } : {}) };
   }
 
+  /** Debug helper for inspecting suspected migration-orphan audits.
+   *
+   *  Reads ONLY the audit-finding header doc (no chunked read) + a couple
+   *  of cross-references. Designed to NOT wedge: every call is a 1-doc
+   *  getDoc + 1-doc getStored. Lets the admin paste a finding id from the
+   *  bulk-flip table and get an immediate yes/no on whether the audit is
+   *  populated normally or looks like migration debris. */
+  @Get("debug/orphan-inspect") @ReturnedType(MessageResponse)
+  async orphanInspect(@Query("id") id: string) {
+    if (!id) return { error: "id required" };
+    const orgId = ORG();
+    try {
+      const { getDoc, getStored, encodeDocId } = await import("@core/data/firestore/mod.ts");
+      const docId = encodeDocId("audit-finding", orgId, id);
+      const headerDoc = await getDoc(docId) as Record<string, unknown> | null;
+      if (!headerDoc) {
+        return { findingId: id, headerExists: false, verdict: "MISSING (no audit-finding doc)" };
+      }
+
+      const record = headerDoc.record as Record<string, unknown> | undefined;
+      const answeredQuestions = Array.isArray(headerDoc.answeredQuestions) ? headerDoc.answeredQuestions : [];
+      const recordFieldCount = record ? Object.keys(record).length : 0;
+      const hasRecordIdentity = !!(record?.RecordId || record?.VoName || record?.ActivatingOffice);
+      const transcriptInline = typeof headerDoc.rawTranscript === "string" && (headerDoc.rawTranscript as string).length > 0;
+      const transcriptChunked = headerDoc.transcriptChunked === true || (headerDoc as Record<string, unknown>).transcriptChunkCount != null;
+
+      // Migration-casualty heuristics: a properly-completed audit has a
+      // record block with identity, a transcript reference, AND answered
+      // questions. Anything missing two-of-three is highly likely a casualty.
+      const flags: string[] = [];
+      if (!hasRecordIdentity) flags.push("no record identity (RecordId/VoName/ActivatingOffice all missing)");
+      if (!transcriptInline && !transcriptChunked) flags.push("no transcript reference");
+      if (answeredQuestions.length === 0) flags.push("no answered questions");
+      if (recordFieldCount < 3) flags.push(`record has only ${recordFieldCount} fields`);
+      if (!headerDoc.completedAt) flags.push("no completedAt timestamp");
+
+      const verdict = flags.length === 0
+        ? "LOOKS NORMAL"
+        : flags.length >= 2
+          ? "LIKELY MIGRATION CASUALTY"
+          : "PARTIAL — review manually";
+
+      const reviewDone = await getStored("review-done", orgId, id) as Record<string, unknown> | null;
+
+      return {
+        findingId: id,
+        headerExists: true,
+        verdict,
+        flags,
+        findingStatus: headerDoc.findingStatus,
+        completedAt: headerDoc.completedAt,
+        completedAtIso: typeof headerDoc.completedAt === "number" ? new Date(headerDoc.completedAt as number).toISOString() : null,
+        reviewedAt: headerDoc.reviewedAt,
+        reviewScore: headerDoc.reviewScore,
+        owner: headerDoc.owner,
+        recordFieldCount,
+        answeredQuestionsCount: answeredQuestions.length,
+        transcriptInline,
+        transcriptChunked,
+        recordSample: record ? {
+          RecordId: record.RecordId,
+          VoName: record.VoName,
+          ActivatingOffice: record.ActivatingOffice,
+          OfficeName: record.OfficeName,
+          VoEmail: record.VoEmail,
+        } : null,
+        inReviewDone: !!reviewDone,
+        reviewDoneAt: reviewDone ? (reviewDone as { reviewedAt?: string }).reviewedAt : null,
+      };
+    } catch (err) {
+      console.warn(`⚠️ [ORPHAN-INSPECT] ${id} failed:`, err);
+      return { findingId: id, error: "inspect failed", detail: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   // -- Backfills --
   // All backfill / purge / dedup ops run inside runInBackgroundLane so
   // their FS pressure is capped at 5 slots and can never starve foreground

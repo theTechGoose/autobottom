@@ -180,10 +180,23 @@ function BulkFlipPanel() {
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   return (
     <PanelCard title="Bulk Flip" subtitle="Pull unreviewed audits matching your filters and flip all answers to Yes (100% score). This removes them from the review queue.">
+      {/* Loading-state styles for the Pull Unreviewed button. HTMX toggles
+          the `htmx-request` class on the form/button automatically while a
+          request is in flight; we swap the label and visually disable
+          interaction via CSS. hx-disabled-elt also disables the button
+          attribute so a second submit can't queue. */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .pull-btn .pull-loading { display: none; }
+        .pull-btn.htmx-request .pull-label { display: none; }
+        .pull-btn.htmx-request .pull-loading { display: inline; }
+        .pull-btn.htmx-request, .pull-btn:disabled { opacity: 0.7; cursor: wait; }
+      `}} />
       <form
         hx-get="/api/admin/modal/maintenance/flip-pull"
         hx-target="#flip-results"
         hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find button[type='submit']"
       >
         <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:8px;">
           <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" value={weekAgo} /></div>
@@ -204,7 +217,10 @@ function BulkFlipPanel() {
         <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
           <div class="sf"><label class="sf-label">Min %</label><input type="number" name="scoreMin" class="sf-input" value="0" min="0" max="100" style="width:80px;" /></div>
           <div class="sf"><label class="sf-label">Max %</label><input type="number" name="scoreMax" class="sf-input" value="99" min="0" max="100" style="width:80px;" /></div>
-          <button type="submit" class="sf-btn primary" style="padding:8px 16px;">Pull Unreviewed</button>
+          <button type="submit" class="sf-btn primary pull-btn" style="padding:8px 16px;min-width:140px;">
+            <span class="pull-label">Pull Unreviewed</span>
+            <span class="pull-loading">Pulling…</span>
+          </button>
         </div>
       </form>
       <div id="flip-results" style="margin-top:12px;"></div>

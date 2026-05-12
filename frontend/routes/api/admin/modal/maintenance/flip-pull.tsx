@@ -75,6 +75,10 @@ function FlipResultTable({ items, total }: { items: UnreviewedItem[]; total: num
   return (
     <div>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">{total} unreviewed audit(s) found{items.length < total ? ` — showing first ${items.length}` : ""}.</div>
+      {/* Diagnostic panel — when an admin clicks 🔍 on a row, the orphan-
+          inspect fragment lands here. Lives ABOVE the table so it doesn't
+          get scrolled past. Empty by default. */}
+      <div id="orphan-inspect-result" style="margin-bottom:10px;"></div>
       <form hx-post="/api/admin/modal/maintenance/flip-exec" hx-target="#flip-results" hx-swap="innerHTML" hx-confirm="Flip the audits to 100%? This cannot be undone.">
         {/* Hidden field carrying EVERY item's findingId, regardless of whether
             its checkbox is checked. Used by the "Flip All" button — without
@@ -95,6 +99,7 @@ function FlipResultTable({ items, total }: { items: UnreviewedItem[]; total: num
                 <th style="padding:6px 8px;">Team Member</th>
                 <th style="padding:6px 8px;text-align:right;">Score</th>
                 <th style="padding:6px 8px;">Date</th>
+                <th style="padding:6px 8px;width:28px;"></th>
               </tr>
             </thead>
             <tbody>
@@ -111,6 +116,20 @@ function FlipResultTable({ items, total }: { items: UnreviewedItem[]; total: num
                     {i.score != null ? `${i.score}%` : "—"}
                   </td>
                   <td style="padding:5px 8px;font-size:10px;color:var(--text-dim);">{i.ts ? new Date(i.ts).toLocaleDateString() : "—"}</td>
+                  <td style="padding:5px 8px;text-align:center;">
+                    {/* type=button so it doesn't submit the surrounding form.
+                        Replaces #orphan-inspect-result above the table with a
+                        diagnostic panel for this finding. Header-only read on
+                        the backend — won't wedge under FS pressure. */}
+                    <button
+                      type="button"
+                      hx-get={`/api/admin/modal/maintenance/orphan-inspect?id=${i.findingId}`}
+                      hx-target="#orphan-inspect-result"
+                      hx-swap="innerHTML"
+                      title="Inspect — header doc only, safe under FS wedge"
+                      style="background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:2px 6px;border-radius:3px;font-size:11px;cursor:pointer;"
+                    >🔍</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

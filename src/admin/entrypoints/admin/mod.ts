@@ -735,15 +735,40 @@ export class AdminConfigController {
     const enriched = await Promise.all(pendingIds.slice(0, 500).map(async (fid) => {
       const finding = await getFinding(ORG(), fid);
       if (!finding) return null; // shouldn't normally happen — pending without a finding doc is broken state
+      // Defense: invalid_genie (autofail) audits should never reach the
+      // review queue per step-finalize's gating, but if one slips through
+      // we must NOT allow bulk-flip to mark it 100%. Same detection logic
+      // as step-finalize/mod.ts:64 — rawTranscript marker or no-recording
+      // status.
+      const rawTx = (finding as any).rawTranscript as string | undefined;
+      const isInvalidGenie = (rawTx && (rawTx.includes("Invalid Genie") || rawTx.includes("Genie Invalid")))
+        || (finding as any).findingStatus === "no recording";
+      if (isInvalidGenie) return null;
       const sample = pending.get(fid);
       const completedAt = ((finding as any).completedAt as number | undefined)
         ?? (sample?.completedAt as number | undefined)
         ?? 0;
       // Date range filter against the finding's completedAt (authoritative).
       if (completedAt && (completedAt < since || completedAt > until)) return null;
-      const liveScore = typeof (finding as any).reviewScore === "number"
-        ? (finding as any).reviewScore
-        : (typeof (finding as any).score === "number" ? (finding as any).score : 0);
+      // Score derivation: prefer reviewScore (set by review/admin-flip),
+      // else compute from answeredQuestions (the finding doc never stores
+      // a precomputed audit score field — it's always derived from the
+      // Yes/No tally, same way step-finalize/mod.ts and the audit-report
+      // view compute it).
+      let liveScore: number;
+      if (typeof (finding as any).reviewScore === "number") {
+        liveScore = (finding as any).reviewScore;
+      } else {
+        const answered = (finding as any).answeredQuestions as Array<{ answer?: string }> | undefined;
+        if (Array.isArray(answered) && answered.length > 0) {
+          const yeses = answered.filter((q) =>
+            String(q?.answer ?? "").trim().toLowerCase().startsWith("y")
+          ).length;
+          liveScore = Math.round((yeses / answered.length) * 100);
+        } else {
+          liveScore = 0;
+        }
+      }
       if (liveScore < scoreMin || liveScore > scoreMax) return null;
       const rec = (finding as Record<string, unknown>).record as Record<string, unknown> | undefined;
       const isPkg = (finding as any).recordingIdField === "GenieNumber";

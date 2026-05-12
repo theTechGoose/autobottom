@@ -21,6 +21,8 @@ import {
   queryAuditDoneIndex,
   markFindingHidden,
   getHiddenFindingIds,
+  writeAuditDoneIndex,
+  updateCompletedStatScore,
 } from "@audit/domain/data/stats-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;
@@ -146,8 +148,12 @@ async function sweepExpiredActiveClaims(orgId: OrgId, excludeJudge?: string): Pr
 }
 
 // ── Post-completion: aggregate decisions, save corrected score, fire webhook
+// Exported so the audit-done-idx sync contract can be locked by a test. In
+// production this is fired as `.catch(...)` from recordJudgeDecision, so
+// callers can't await it directly — exporting lets tests bypass the queue
+// state machine and assert on the index/finding writes deterministically.
 
-async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): Promise<void> {
+export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): Promise<void> {
   try {
     const finding = await getFinding(orgId, findingId);
     if (!finding) {
@@ -180,6 +186,40 @@ async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): 
 
     if (overturns > 0) {
       await saveFinding(orgId, { ...finding, answeredQuestions: corrected });
+
+      // Keep audit-done-idx + completed-audit-stat in sync with the live
+      // finding. Without these writes, the index keeps the pre-judge score
+      // forever and /admin/unreviewed-audits / audit-history queries surface
+      // stale data even after a judge has overturned questions. Same root
+      // cause that bit us on adminFlipQuestion. Best-effort; the webhook +
+      // user-visible decision succeed regardless.
+      const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
+      const rec = (finding as Record<string, unknown>).record as Record<string, unknown> ?? {};
+      const isPackage = (finding as Record<string, unknown>).recordingIdField === "GenieNumber";
+      const rawVo = String(rec.VoName ?? "");
+      const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+      try {
+        await writeAuditDoneIndex(orgId, {
+          findingId,
+          completedAt,
+          score: finalScore,
+          completed: finalScore === 100,
+          ...(finalScore === 100 ? { doneAt: Date.now(), reason: "reviewed" as const } : {}),
+          recordId: String(rec.RecordId ?? "") || undefined,
+          isPackage,
+          voName: voName || undefined,
+          owner: (finding as Record<string, unknown>).owner as string | undefined,
+          department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
+          shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+        });
+      } catch (err) {
+        console.warn(`⚠️ [JUDGE] ${findingId} writeAuditDoneIndex failed (best-effort):`, err);
+      }
+      try {
+        await updateCompletedStatScore(orgId, findingId, finalScore);
+      } catch (err) {
+        console.warn(`⚠️ [JUDGE] ${findingId} updateCompletedStatScore failed (best-effort):`, err);
+      }
     }
 
     fireWebhook(orgId, "judge", {

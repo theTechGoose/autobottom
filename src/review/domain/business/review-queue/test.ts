@@ -1,8 +1,17 @@
-/** Tests for review queue FIFO ordering and selection logic. */
+/** Tests for review queue FIFO ordering and selection logic +
+ *  audit-done-idx sync contract on admin flips. */
 
-import { assertEquals, assert } from "#assert";
-import { selectOldestFinding } from "./mod.ts";
+import { assertEquals, assert, assertExists } from "#assert";
+import { selectOldestFinding, adminFlipQuestion } from "./mod.ts";
 import type { ReviewItem } from "@core/dto/types.ts";
+import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
+import { saveFinding, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import {
+  writeAuditDoneIndex,
+  queryAuditDoneIndex,
+  _resetHiddenCacheForTesting,
+} from "@audit/domain/data/stats-repository/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 function makeItem(findingId: string, questionIndex: number, completedAt?: number, recordingIdField?: string): { value: ReviewItem } {
   return {
@@ -48,4 +57,119 @@ Deno.test("FIFO — empty returns null", () => {
 Deno.test("FIFO — type filter removes all returns null", () => {
   const items = [makeItem("pkg", 0, 1000, "GenieNumber")];
   assertEquals(selectOldestFinding(items, ["date-leg"]).targetFindingId, null);
+});
+
+// ── adminFlipQuestion — audit-done-idx sync contract ──────────────────────────
+// These tests lock the invariant that EVERY mutation to finding.answeredQuestions
+// must also write a fresh audit-done-idx entry, so the unreviewed-audits +
+// audit-history queries never serve stale scores. User-visible symptom that
+// motivated this contract: Bulk Flip showed 18 audits at 80-90% but their
+// reports rendered as 100% — admins had pencil-flipped questions without the
+// index being updated. If a future change removes the writeAuditDoneIndex call
+// from adminFlipQuestion, these tests fail — fix the code, not the tests.
+
+function resetForTest() {
+  resetFirestoreCredentials();
+  _resetHiddenCacheForTesting();
+}
+
+async function makeFindingFixture(orgId: OrgId, findingId: string, answers: string[]): Promise<number> {
+  const completedAt = Date.now();
+  const answeredQuestions = answers.map((answer, i) => ({
+    header: `Q${i}`,
+    populated: `populated ${i}`,
+    thinking: `thinking ${i}`,
+    defense: `defense ${i}`,
+    answer,
+  }));
+  await saveFinding(orgId, {
+    id: findingId,
+    auditJobId: "job-" + findingId,
+    findingStatus: "finished",
+    recordingId: "rec-" + findingId,
+    recordingIdField: "VoGenie",
+    owner: "test@x.com",
+    record: { RecordId: "r-" + findingId, VoName: "VO 01 - Test Person", ActivatingOffice: "ECG", Shift: "Day" },
+    answeredQuestions,
+    completedAt,
+  } as unknown as Parameters<typeof saveFinding>[1]);
+  return completedAt;
+}
+
+Deno.test("adminFlipQuestion — partial flip writes audit-done-idx with recomputed score (60→80)", async () => {
+  resetForTest();
+  const ORG = ("test-flip-q-partial-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-partial-" + crypto.randomUUID().slice(0, 8);
+  // 5 questions: 3 Yes, 2 No → score 60%
+  const completedAt = await makeFindingFixture(ORG, fid, ["Yes", "Yes", "Yes", "No", "No"]);
+  // Seed the index with the stale pre-flip score (60%) — simulates the
+  // index entry written by stepFinalize at audit-completion time.
+  await writeAuditDoneIndex(ORG, {
+    findingId: fid,
+    completedAt,
+    score: 60,
+    completed: false,
+    isPackage: false,
+    recordId: "r-" + fid,
+  });
+
+  const r = await adminFlipQuestion(ORG, fid, 3); // flip question[3] No→Yes
+  assertEquals(r.success, true);
+  assertEquals(r.score, 80);
+
+  // Finding's answeredQuestions reflects the flip.
+  const refreshed = await getFinding(ORG, fid);
+  assertExists(refreshed);
+  const qs = (refreshed!.answeredQuestions ?? []) as Array<{ answer: string }>;
+  assertEquals(qs[3].answer, "Yes");
+
+  // Index entry rewritten with new score AND completed:false (still 80%).
+  const idx = await queryAuditDoneIndex(ORG, completedAt - 1000, completedAt + 1000);
+  const entry = idx.find((e) => e.findingId === fid);
+  assertExists(entry, "index entry must exist after adminFlipQuestion");
+  assertEquals(entry!.score, 80, "index score must be the post-flip 80, not stale 60");
+  assertEquals(entry!.completed, false, "score < 100 must NOT mark completed");
+});
+
+Deno.test("adminFlipQuestion — flip-to-100 marks completed:true, reason:reviewed", async () => {
+  resetForTest();
+  const ORG = ("test-flip-q-full-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-full-" + crypto.randomUUID().slice(0, 8);
+  // 4 questions: 3 Yes, 1 No → 75%. Flipping the last No → 100%.
+  const completedAt = await makeFindingFixture(ORG, fid, ["Yes", "Yes", "Yes", "No"]);
+  await writeAuditDoneIndex(ORG, {
+    findingId: fid, completedAt, score: 75, completed: false, isPackage: false,
+  });
+
+  const r = await adminFlipQuestion(ORG, fid, 3);
+  assertEquals(r.success, true);
+  assertEquals(r.score, 100);
+
+  const idx = await queryAuditDoneIndex(ORG, completedAt - 1000, completedAt + 1000);
+  const entry = idx.find((e) => e.findingId === fid);
+  assertExists(entry);
+  assertEquals(entry!.score, 100);
+  assertEquals(entry!.completed, true, "score === 100 must mark completed");
+  assertEquals(entry!.reason, "reviewed", "score === 100 must set reason=reviewed");
+});
+
+Deno.test("adminFlipQuestion — reverse flip (Yes→No) drops index score appropriately", async () => {
+  resetForTest();
+  const ORG = ("test-flip-q-reverse-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-rev-" + crypto.randomUUID().slice(0, 8);
+  // 4 questions all Yes → 100%. Flipping one to No → 75%.
+  const completedAt = await makeFindingFixture(ORG, fid, ["Yes", "Yes", "Yes", "Yes"]);
+  await writeAuditDoneIndex(ORG, {
+    findingId: fid, completedAt, score: 100, completed: true, reason: "reviewed",
+    isPackage: false,
+  });
+
+  const r = await adminFlipQuestion(ORG, fid, 0);
+  assertEquals(r.score, 75);
+
+  const idx = await queryAuditDoneIndex(ORG, completedAt - 1000, completedAt + 1000);
+  const entry = idx.find((e) => e.findingId === fid);
+  assertExists(entry);
+  assertEquals(entry!.score, 75, "Yes→No flip must drop index score from 100 to 75");
+  assertEquals(entry!.completed, false, "Yes→No flip must clear completed flag");
 });

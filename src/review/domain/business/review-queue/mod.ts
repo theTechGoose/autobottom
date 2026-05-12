@@ -1135,6 +1135,36 @@ export async function adminFlipQuestion(
   await saveBatchAnswers(orgId, findingId, 0, flipped);
   await updateCompletedStatScore(orgId, findingId, score);
 
+  // Keep audit-done-idx in sync with the live finding. Without this write,
+  // /admin/unreviewed-audits + audit-history queries kept showing the pre-flip
+  // score forever — user-visible bug: bulk-flip listed 18 audits as 80-90%
+  // when the report rendered 100%. Mirrors adminFlipFinding's pattern above.
+  // Only marks "completed: true" when score reaches 100, otherwise leaves the
+  // entry as a non-perfect index row (still surfaceable in unreviewed lists
+  // until either reviewer-finalize or admin-bulk-flip lifts it to 100).
+  const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
+  const rec = (finding as any).record as Record<string, any> ?? {};
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const rawVo = String(rec.VoName ?? "");
+  const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+  try {
+    await writeAuditDoneIndex(orgId, {
+      findingId,
+      completedAt,
+      score,
+      completed: score === 100,
+      ...(score === 100 ? { doneAt: Date.now(), reason: "reviewed" as const } : {}),
+      recordId: String(rec.RecordId ?? "") || undefined,
+      isPackage,
+      voName: voName || undefined,
+      owner: finding.owner as string | undefined,
+      department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
+      shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+    });
+  } catch (err) {
+    console.warn(`⚠️ [ADMIN-FLIP-Q] ${findingId} writeAuditDoneIndex failed (best-effort):`, err);
+  }
+
   console.log(`[ADMIN-FLIP-Q] ${findingId} q[${questionIndex}] ${wasYes ? "Yes→No" : "No→Yes"} → score=${score}%`);
   return { success: true, score, answer: wasYes ? "No" : "Yes" };
 }

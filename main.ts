@@ -56,7 +56,7 @@ import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
-import { buildDispatchErrorResponse } from "@core/business/dispatch-error/mod.ts";
+import { buildDispatchErrorResponse, isDanetAbortBody } from "@core/business/dispatch-error/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 // --- Pipeline step functions: dispatched DIRECTLY by this handler (bypassing
@@ -561,7 +561,46 @@ registerAllWebhookEmailHandlers();
 console.log("📧 [WEBHOOK] registration complete, continuing boot");
 
 // @ts-ignore — router is Hono app with .fetch()
-const backendFetch: (req: Request) => Promise<Response> = danetApp.router.fetch.bind(danetApp.router);
+const rawBackendFetch: (req: Request) => Promise<Response> = danetApp.router.fetch.bind(danetApp.router);
+
+/** Foolproof boundary wrap around danet's router.fetch.
+ *
+ *  Danet has its OWN exception filter that catches uncaught controller
+ *  exceptions BEFORE they reach our outer try/catch, and emits a Response
+ *  with body `{"status":500,"message":"<err.message>"}`. The dispatch-catch
+ *  we added at main.ts is therefore a NO-OP for danet 500s — our exception
+ *  handler can't fire on an exception that never escaped.
+ *
+ *  This wrap inspects the response body AFTER danet finishes. If we see
+ *  danet's auto-generated 500-abort signature, we rewrite it to the same
+ *  retry-friendly shape buildDispatchErrorResponse produces: 200+{retry:true}
+ *  for GETs, 503+{retry:true} for POSTs.
+ *
+ *  Verification by log grep:
+ *    `❌ [BACKEND-CATCH]` — every line here is a 500-abort we intercepted.
+ *    `❌ [API_FETCH] ... → 500: {"status":500,"message":"signal aborted"}`
+ *      — these should drop to ZERO after this wrap deploys. If any remain,
+ *      they came from a path that bypassed our backend dispatch entirely.
+ *
+ *  Per-endpoint try/catch is still preferred for shape-correct fallbacks
+ *  (panel widgets need `{pending: 0}`, not `{retry: true}`). This wrap is
+ *  the universal safety net for everything we missed. */
+async function backendFetch(req: Request): Promise<Response> {
+  const res = await rawBackendFetch(req);
+  if (res.status !== 500) return res;
+  const text = await res.text();
+  if (isDanetAbortBody(text)) {
+    const path = new URL(req.url).pathname;
+    console.error(`❌ [BACKEND-CATCH] ${req.method} ${path} → 500 abort intercepted → retry:true`);
+    const status = req.method === "GET" ? 200 : 503;
+    return Response.json(
+      { retry: true, error: "Server busy, please retry", path, method: req.method },
+      { status },
+    );
+  }
+  // Non-abort 500: re-emit with the consumed body so downstream callers see it.
+  return new Response(text, { status: 500, headers: res.headers });
+}
 
 // --- Frontend: import pre-built Fresh handler from _fresh/server.js ---
 // @ts-ignore — generated file, not type-checked

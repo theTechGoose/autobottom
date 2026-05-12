@@ -84,6 +84,17 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
     return;
   }
 
+  // Suppress emails for admin bulk-flip actions. adminFlipFinding stamps
+  // `noWebhook: true` on the finding doc so external systems (n8n watching
+  // Firestore) that re-fire this webhook for the same finding still get
+  // intercepted here. Distinct from the isReviewed guard below — bulk-flip
+  // DOES set reviewedAt (so it passes that gate), but it's an admin cleanup
+  // action, not a customer-facing review event.
+  if (finding?.noWebhook === true) {
+    console.log(`📧 [WEBHOOK:terminate] fid=${findingId} noWebhook flag set (admin bulk-flip) — suppressing email`);
+    return;
+  }
+
   // Guard: refuse to send terminate emails for non-perfect, non-invalid
   // audits that haven't been reviewed yet. The two pre-review fire paths
   // (step-finalize: invalid_genie, step-finalize: perfect_score) explicitly

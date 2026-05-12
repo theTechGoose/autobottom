@@ -112,8 +112,13 @@ export class MigrationController {
   @Get("jobs") @ReturnedType(MessageResponse)
   @Description("List recent jobs")
   async jobs() {
-    const all = await listJobs();
-    return { ok: true, jobs: all.map(shallowJob) };
+    try {
+      const all = await listJobs();
+      return { ok: true, jobs: all.map(shallowJob) };
+    } catch (err) {
+      console.warn(`⚠️ [MIGRATION-JOBS] failed — soft fallback:`, err);
+      return { ok: false, jobs: [], retry: true };
+    }
   }
 
   @Post("cancel") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)

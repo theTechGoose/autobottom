@@ -1051,6 +1051,14 @@ export async function adminFlipFinding(
   finding.answeredQuestions = corrected;
   (finding as Record<string, unknown>).reviewedAt = new Date().toISOString();
   (finding as Record<string, unknown>).reviewScore = score;
+  // Mark the finding so terminate-webhook emails are suppressed. Bulk-flip
+  // is an admin cleanup action — the customer should not get an
+  // "audit reviewed" email when an admin retroactively flips an old
+  // unreviewed audit to 100%. n8n / Firestore-watching external systems
+  // pick up the reviewedAt change and POST to /webhooks/audit-complete;
+  // this flag rides on the finding doc so sendAuditCompleteEmail can
+  // refuse to send. Contract locked in webhook-handlers/test.ts.
+  (finding as Record<string, unknown>).noWebhook = true;
   await saveFinding(orgId, finding);
   await saveBatchAnswers(orgId, findingId, 0, corrected);
 

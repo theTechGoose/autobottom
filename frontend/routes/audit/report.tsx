@@ -49,10 +49,15 @@ export default define.page(async function AuditReportPage(ctx) {
   // deno-lint-ignore no-explicit-any
   let finding: any = null;
   let errorMsg: string | null = null;
+  // Distinguishes "transient FS abort, user can retry" from "not found".
+  // Backend sets retry:true on the response when getFinding aborted on the
+  // chunked-read path; we render a retry button instead of a hard error.
+  let canRetry = false;
   try {
     const data = await apiFetch<Record<string, unknown>>(`/audit/finding?id=${encodeURIComponent(id)}`, ctx.req);
     if (data && (data as { error?: string }).error) {
       errorMsg = (data as { error: string }).error;
+      canRetry = (data as { retry?: boolean }).retry === true;
     } else {
       finding = data;
     }
@@ -74,8 +79,15 @@ export default define.page(async function AuditReportPage(ctx) {
           <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:16px 20px;color:var(--red);font-size:13px;">
             {errorMsg === "not found"
               ? <>No audit finding with id <code>{id}</code> was found. It may have been deleted, or this report was run on a different deployment.</>
-              : <>Failed to load finding: {errorMsg}</>}
+              : canRetry
+                ? <>Server is busy. The audit data couldn't be read just now — usually a brief Firestore wedge that clears in seconds.</>
+                : <>Failed to load finding: {errorMsg}</>}
           </div>
+          {canRetry && (
+            <div style="margin-top:16px;text-align:center;">
+              <a href={`/audit/report?id=${encodeURIComponent(id)}`} class="sf-btn primary" style="text-decoration:none;display:inline-block;padding:10px 20px;">Retry</a>
+            </div>
+          )}
         </div>
       </Layout>
     );

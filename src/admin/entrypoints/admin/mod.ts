@@ -85,7 +85,13 @@ export class AdminConfigController {
 
   // -- Bad words / bonus / bypass --
   @Get("bad-word-config") @ReturnedType(BadWordConfigResponse)
-  async getBadWordConfig() { return cfg.getBadWordConfig(ORG()); }
+  async getBadWordConfig() {
+    try { return await cfg.getBadWordConfig(ORG()); }
+    catch (err) {
+      console.warn(`⚠️ [BAD-WORD-CONFIG] failed — soft fallback:`, err);
+      return { enabled: false, emails: [], words: [], allOffices: false, officePatterns: [], retry: true };
+    }
+  }
   @Post("bad-word-config") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async saveBadWordConfig(@Body() body: GenericBodyRequest) { await cfg.saveBadWordConfig(ORG(), body as any); return { ok: true }; }
 
@@ -266,11 +272,21 @@ export class AdminConfigController {
     if (!findingIds.length) return { error: "findingIds array required" };
     const { adminFlipFindingLegacy } = await import("@review/domain/business/review-queue/mod.ts");
     let flipped = 0;
+    const failed: string[] = [];
+    // Per-item try/catch so one FS-abort doesn't lose every subsequent
+    // flip in the batch. Partial success is acceptable; the response tells
+    // the caller exactly which ids didn't flip and they can re-bulk-flip
+    // just those (idempotent).
     for (const fid of findingIds) {
-      const r = await adminFlipFindingLegacy(ORG(), fid);
-      if (r.success) flipped++;
+      try {
+        const r = await adminFlipFindingLegacy(ORG(), fid);
+        if (r.success) flipped++; else failed.push(fid);
+      } catch (err) {
+        console.warn(`⚠️ [BULK-FLIP] ${fid} failed:`, err);
+        failed.push(fid);
+      }
     }
-    return { ok: true, flipped, total: findingIds.length };
+    return { ok: failed.length === 0, flipped, total: findingIds.length, failed, ...(failed.length ? { retry: true } : {}) };
   }
 
   // -- Backfills --
@@ -593,6 +609,7 @@ export class AdminConfigController {
     @Query("scoreMin") scoreMinQ: string,
     @Query("scoreMax") scoreMaxQ: string,
   ) {
+   try {
     const now = Date.now();
     const since = parseDateOrMs(sinceQ, false) ?? (now - 7 * 24 * 3600 * 1000);
     const until = parseDateOrMs(untilQ, true) ?? now;
@@ -656,6 +673,14 @@ export class AdminConfigController {
     const departments = [...new Set(items.map((i: any) => i.department).filter(Boolean))].sort();
     const shifts = [...new Set(items.map((i: any) => i.shift).filter(Boolean))].sort();
     return { items, total: unreviewed.length, owners, departments, shifts };
+   } catch (err) {
+     // Soft-fallback: this endpoint is heavy (Promise.all over 3 FS scans
+     // + per-row getFinding fan-out). Any chunk wedge under load aborts
+     // the whole thing. Empty-result shape matches a legitimate no-match
+     // response so the frontend renders gracefully.
+     console.warn(`⚠️ [UNREVIEWED-AUDITS] failed — soft fallback:`, err);
+     return { items: [], total: 0, owners: [], departments: [], shifts: [], retry: true };
+   }
   }
 }
 

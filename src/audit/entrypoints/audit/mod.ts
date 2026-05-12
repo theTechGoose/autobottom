@@ -136,11 +136,36 @@ export class AuditController {
     const orgId = defaultOrgId() as OrgId;
     console.log(`[GET-FINDING] looking up id=${id} orgId=${orgId}`);
     let finding: Record<string, unknown> | null = null;
-    try {
-      finding = await getFinding(orgId, id);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[GET-FINDING] ❌ getFinding threw for id=${id} orgId=${orgId}: ${msg}`);
+    // getFinding does a CHUNKED read (header + record + transcript +
+    // answeredQuestions chunks, often 5-10 FS round-trips). If any single
+    // chunk aborts on the 25s foreground watchdog, the whole call throws —
+    // but the data is fine, the wedge is transient. Retry once on abort
+    // before giving up; this catches the common "audit mid-pipeline + brief
+    // pool wedge" case where the user opens the report page seconds after
+    // triggering an audit. If the retry also aborts, return retry:true so
+    // the frontend can render a Retry button instead of "lookup failed".
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        finding = await getFinding(orgId, id);
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        const isAbort = msg.includes("aborted") || msg.includes("AbortError") || msg.includes("signal");
+        console.warn(`[GET-FINDING] ⚠️ getFinding attempt ${attempt + 1} threw for id=${id}: ${msg}${isAbort ? " (abort — will retry)" : " (non-abort — giving up)"}`);
+        if (!isAbort) break;
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
+      }
+    }
+    if (lastErr) {
+      const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+      const isAbort = msg.includes("aborted") || msg.includes("AbortError") || msg.includes("signal");
+      console.error(`[GET-FINDING] ❌ getFinding final fail for id=${id} orgId=${orgId}: ${msg}`);
+      if (isAbort) {
+        return { error: "Server busy, please retry", retry: true, detail: msg };
+      }
       return { error: "lookup failed", detail: msg };
     }
     if (finding) {

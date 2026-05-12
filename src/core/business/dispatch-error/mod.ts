@@ -45,3 +45,24 @@ export function buildDispatchErrorResponse(err: unknown, ctx: DispatchErrorConte
     { status: 500 },
   );
 }
+
+/** Detect danet's auto-generated 500 body signature for FS aborts.
+ *
+ *  Reality of the dispatch path: danet has its OWN exception filter that
+ *  catches uncaught controller exceptions BEFORE they propagate to our
+ *  outer try/catch. It formats them as `{"status":500,"message":"<msg>"}`
+ *  and returns a normal Response. So our exception-level safety net never
+ *  fires for danet-handled paths. We have to inspect the response body to
+ *  detect these.
+ *
+ *  Returns true when the body matches danet's abort signature so the
+ *  boundary wrap can rewrite the response to `{ retry: true }`. Pure
+ *  function — body must be passed as the already-read string. */
+export function isDanetAbortBody(body: string): boolean {
+  if (!body || body.length > 2000) return false; // danet errors are tiny
+  return (
+    body.includes("signal has been aborted")
+    || body.includes("AbortError")
+    || (body.includes('"status":500') && body.includes("aborted"))
+  );
+}

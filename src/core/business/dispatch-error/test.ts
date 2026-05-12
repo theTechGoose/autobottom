@@ -7,7 +7,7 @@
  *  See plan: /Users/adam/.claude/plans/hiya-please-review-this-gentle-starfish.md */
 
 import { assertEquals } from "jsr:@std/assert";
-import { buildDispatchErrorResponse, isAbortError } from "./mod.ts";
+import { buildDispatchErrorResponse, isAbortError, isDanetAbortBody } from "./mod.ts";
 
 // ── isAbortError ────────────────────────────────────────────────────────────
 
@@ -113,6 +113,38 @@ Deno.test("CONTRACT — 500 response shape is { ok, error, path, method }", asyn
   const res = buildDispatchErrorResponse(new Error("real bug"), { method: "POST", path: "/foo" });
   const body = await res.json();
   assertEquals(Object.keys(body).sort(), ["error", "method", "ok", "path"]);
+});
+
+// ── isDanetAbortBody — response-level boundary wrap ─────────────────────────
+// These lock the second safety net: even when danet's internal exception
+// filter catches a controller exception BEFORE it reaches our outer
+// try/catch, the backendFetch wrap in main.ts inspects the response body
+// to detect danet's auto-generated 500 signature. Without this layer the
+// dispatch-catch alone would be a no-op for the most common 500 path.
+
+Deno.test("isDanetAbortBody — matches danet's auto-generated 500 abort body verbatim", () => {
+  // The exact body shape user pulled from production logs.
+  assertEquals(isDanetAbortBody('{"status":500,"message":"The signal has been aborted"}'), true);
+});
+
+Deno.test("isDanetAbortBody — matches alternate AbortError phrasing", () => {
+  assertEquals(isDanetAbortBody('{"status":500,"message":"AbortError: The operation was aborted"}'), true);
+});
+
+Deno.test("isDanetAbortBody — matches when only the abort substring is present", () => {
+  assertEquals(isDanetAbortBody('{"status":500,"message":"upstream stream aborted while reading"}'), true);
+});
+
+Deno.test("isDanetAbortBody — rejects non-abort 500 bodies", () => {
+  assertEquals(isDanetAbortBody('{"status":500,"message":"permission denied"}'), false);
+  assertEquals(isDanetAbortBody('{"status":500,"message":"not found"}'), false);
+  assertEquals(isDanetAbortBody('{"error":"Server busy, please retry"}'), false);
+});
+
+Deno.test("isDanetAbortBody — rejects empty / huge bodies", () => {
+  assertEquals(isDanetAbortBody(""), false);
+  // Bodies over 2k chars are not danet's tiny error envelopes — bail.
+  assertEquals(isDanetAbortBody("a".repeat(2001) + "aborted"), false);
 });
 
 // ── Regression sentinel — the original symptom that motivated this code ─────

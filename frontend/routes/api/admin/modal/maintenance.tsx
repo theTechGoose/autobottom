@@ -180,6 +180,26 @@ function BulkFlipPanel() {
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   return (
     <PanelCard title="Bulk Flip" subtitle="Pull unreviewed audits matching your filters and flip all answers to Yes (100% score). This removes them from the review queue.">
+      {/* Reconcile sweep — finalizes any pending findings whose live score
+          is already 100. Cleans up drift from pencil-flips that reached
+          100% but never had review-pending / review-active entries
+          drained. No score changes, no answer mutations. Safe to re-run. */}
+      <div style="border:1px solid var(--border);border-radius:6px;padding:10px 12px;background:var(--bg-2);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="font-size:11px;color:var(--text-dim);flex:1;">
+          <strong style="color:var(--text-bright);">Sweep already-100% pending.</strong> One-shot cleanup for audits stuck at 100% with orphan queue entries. No flips, no data changes — just finalizes what was already finalized in spirit.
+        </div>
+        <button
+          class="sf-btn ghost"
+          style="padding:6px 14px;font-size:11px;white-space:nowrap;"
+          hx-post="/api/admin/config-save"
+          hx-vals='{"endpoint":"/admin/reconcile-perfect-pending"}'
+          hx-target="#reconcile-msg"
+          hx-swap="innerHTML"
+          hx-confirm="Sweep all pending findings whose live score is already 100? Finalizes them without changing any scores."
+        >Sweep finalized</button>
+      </div>
+      <div id="reconcile-msg" style="margin-bottom:14px;"></div>
+
       {/* Loading-state styles for the Pull Unreviewed button. HTMX toggles
           the `htmx-request` class on the form/button automatically while a
           request is in flight; we swap the label and visually disable

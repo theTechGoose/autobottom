@@ -1111,6 +1111,117 @@ export async function adminFlipFinding(
   return { success: true, score };
 }
 
+// ── Finalize an already-perfect finding (no flip, just queue cleanup) ───────
+//
+// Drift cleanup helper. When a reviewer pencil-flips questions one-by-one via
+// adminFlipQuestion and the running score reaches 100, the answeredQuestions
+// + reviewScore are correct on the finding but the review-pending /
+// review-active / review-decided entries are NOT drained — adminFlipQuestion
+// updates the finding but never touches the queue. So the dashboard keeps
+// counting those audits as "Pending" forever even though their score is 100.
+//
+// This finalizes WITHOUT mutating answers or score: drain queue entries,
+// write review-done, refresh audit-done-idx + completed-audit-stat. Caller
+// is responsible for verifying the finding's liveScore is actually 100
+// before calling — we don't recompute here because callers already have it.
+export async function finalizePerfectFinding(
+  orgId: OrgId,
+  findingId: string,
+  reviewer: string,
+): Promise<{ cleared: number; alreadyFinalized?: boolean }> {
+  // Idempotency — if review-done already exists, nothing to do.
+  const existingDone = await getStored<{ reviewedAt?: string }>("review-done", orgId, findingId);
+  if (existingDone) {
+    return { cleared: 0, alreadyFinalized: true };
+  }
+
+  const finding = await getFinding(orgId, findingId);
+  if (!finding) return { cleared: 0 };
+
+  let cleared = 0;
+  const pending = await listStoredWithKeys("review-pending", orgId);
+  for (const { key } of pending) {
+    if (key[0] === findingId) { await deleteStored("review-pending", orgId, ...key); cleared++; }
+  }
+  const decided = await listStoredWithKeys("review-decided", orgId);
+  for (const { key } of decided) {
+    if (key[0] === findingId) { await deleteStored("review-decided", orgId, ...key); cleared++; }
+  }
+  const active = await listStoredWithKeys<{ findingId?: string }>("review-active", orgId);
+  for (const { key, value } of active) {
+    if (value?.findingId === findingId) { await deleteStored("review-active", orgId, ...key); cleared++; }
+  }
+  await deleteStored("review-audit-pending", orgId, findingId); cleared++;
+  await releaseLocksForFinding(orgId, findingId);
+
+  const reviewedAt = new Date().toISOString();
+  const reviewScore = typeof (finding as any).reviewScore === "number" ? (finding as any).reviewScore : 100;
+  await setStored("review-done", orgId, [findingId], { reviewedAt, reviewScore, reviewedBy: reviewer });
+
+  const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
+  const rec = (finding as any).record as Record<string, any> ?? {};
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const rawVo = String(rec.VoName ?? "");
+  const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+  try {
+    await writeAuditDoneIndex(orgId, {
+      findingId,
+      completedAt,
+      score: reviewScore,
+      completed: true,
+      doneAt: Date.now(),
+      reason: "reviewed",
+      recordId: String(rec.RecordId ?? "") || undefined,
+      isPackage,
+      voName: voName || undefined,
+      owner: finding.owner as string | undefined,
+      department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
+      shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+    });
+  } catch { /* index write is best-effort */ }
+  await updateCompletedStatScore(orgId, findingId, reviewScore);
+
+  console.log(`[FINALIZE-PERFECT] ✅ ${findingId} → finalized at ${reviewScore}% (${cleared} queue entries removed)`);
+  return { cleared };
+}
+
+// Sweep all currently-pending findings whose live score is already 100 and
+// finalize them. One-shot reconciliation for the drift caused by pencil-
+// flips reaching 100 without auto-finalize.
+export async function reconcilePerfectPending(
+  orgId: OrgId,
+  reviewer: string,
+): Promise<{ scanned: number; swept: number; alreadyFinalized: number; notPerfect: number; missing: number }> {
+  const pending = await getPendingReviewFindings(orgId);
+  let swept = 0, alreadyFinalized = 0, notPerfect = 0, missing = 0;
+  for (const fid of pending.keys()) {
+    const finding = await getFinding(orgId, fid);
+    if (!finding) { missing++; continue; }
+    // Compute live score the same way the admin /unreviewed-audits endpoint
+    // does — reviewScore preferred, else derived from answeredQuestions.
+    let liveScore: number;
+    if (typeof (finding as any).reviewScore === "number") {
+      liveScore = (finding as any).reviewScore;
+    } else {
+      const answered = (finding as any).answeredQuestions as Array<{ answer?: string }> | undefined;
+      if (Array.isArray(answered) && answered.length > 0) {
+        const yeses = answered.filter((q) =>
+          String(q?.answer ?? "").trim().toLowerCase().startsWith("y")
+        ).length;
+        liveScore = Math.round((yeses / answered.length) * 100);
+      } else {
+        liveScore = 0;
+      }
+    }
+    if (liveScore !== 100) { notPerfect++; continue; }
+    const r = await finalizePerfectFinding(orgId, fid, reviewer);
+    if (r.alreadyFinalized) alreadyFinalized++;
+    else swept++;
+  }
+  console.log(`[RECONCILE-PERFECT] scanned=${pending.size} swept=${swept} alreadyFinalized=${alreadyFinalized} notPerfect=${notPerfect} missing=${missing}`);
+  return { scanned: pending.size, swept, alreadyFinalized, notPerfect, missing };
+}
+
 // ── Admin-flip single question — toggle one Yes↔No on a finding ─────────────
 
 export async function adminFlipQuestion(
@@ -1174,6 +1285,19 @@ export async function adminFlipQuestion(
   }
 
   console.log(`[ADMIN-FLIP-Q] ${findingId} q[${questionIndex}] ${wasYes ? "Yes→No" : "No→Yes"} → score=${score}%`);
+
+  // Auto-finalize at 100. Without this the finding sits in review-pending /
+  // review-active forever — pencil-flips don't drain queue state, only the
+  // explicit finalize click does. That was the cause of the "57 pending at
+  // 100%" drift the operator caught.
+  if (score === 100) {
+    try {
+      await finalizePerfectFinding(orgId, findingId, "admin-flip-q");
+    } catch (err) {
+      console.warn(`⚠️ [ADMIN-FLIP-Q] ${findingId} auto-finalize at 100% failed (best-effort):`, err);
+    }
+  }
+
   return { success: true, score, answer: wasYes ? "No" : "Yes" };
 }
 

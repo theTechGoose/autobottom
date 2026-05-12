@@ -687,6 +687,19 @@ export class AdminConfigController {
   @Get("token-usage") @ReturnedType(TokenUsageResponse)
   async tokenUsage(@Query("hours") hours: string) { return getTokenUsage(parseInt(hours || "1")); }
 
+  // -- Reconcile drift: finalize already-100% pending findings --
+  // One-shot cleanup for the pencil-flip drift bug. Pencil-flips raised a
+  // finding's score to 100 but never drained review-pending / review-active,
+  // leaving the audit "pending" forever. This sweeps the current queue and
+  // finalizes any finding whose live score is already 100, without touching
+  // answeredQuestions or the score itself. adminFlipQuestion now auto-
+  // finalizes at 100 so future drift is prevented.
+  @Post("reconcile-perfect-pending") @ReturnedType(MessageResponse)
+  async reconcilePerfectPending() {
+    const { reconcilePerfectPending } = await import("@review/domain/business/review-queue/mod.ts");
+    return reconcilePerfectPending(ORG(), "admin-sweep");
+  }
+
   // -- Unreviewed --
   @Get("unreviewed-audits") @ReturnedType(MessageResponse)
   async getUnreviewedAudits(

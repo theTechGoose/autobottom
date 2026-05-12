@@ -296,13 +296,12 @@ function CleanupPanel() {
 
       <PanelCard
         title="Sweep orphaned 'Recently Completed'"
-        subtitle="Scans completed-audit-stat against each finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete. Can take 30–90s depending on volume."
+        subtitle="Scans every completed-audit-stat row against its finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete. Runs in 25-fid chunks with live progress — handles arbitrarily large queues without timing out."
       >
         <button
           class="sf-btn primary cl-btn"
           style="padding:8px 16px;min-width:160px;"
-          hx-post="/api/admin/config-save"
-          hx-vals='{"endpoint":"/admin/sweep-orphaned-completed"}'
+          hx-post="/api/admin/modal/maintenance/sweep-start"
           hx-target="#cleanup-msg"
           hx-swap="innerHTML"
           hx-disabled-elt="this"
@@ -310,7 +309,7 @@ function CleanupPanel() {
           hx-confirm="Sweep every 'Recently Completed' row whose finding isn't actually finished? Cleans derived state without touching the finding doc."
         >
           <span class="cl-label">Run Sweep</span>
-          <span class="cl-loading">Sweeping…</span>
+          <span class="cl-loading">Starting…</span>
         </button>
       </PanelCard>
       <div id="cleanup-msg"></div>

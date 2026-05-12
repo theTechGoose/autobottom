@@ -714,14 +714,67 @@ export class AdminConfigController {
     return reconcilePerfectPending(ORG(), "admin-sweep");
   }
 
-  // Sweep findings that appear in "Recently Completed" (completed-audit-stat)
-  // but whose finding doc is NOT in a finished state — typically because a
-  // retry put the finding back into populating-questions and the prior run's
-  // derived state was never drained. Calls resetFindingDerivedState on each
-  // orphan: wipes completed-audit-stat, audit-done-idx, review-pending /
-  // active / decided / done, audit-pending counter, locks, chargeback +
-  // wire-deduction rows. The finding doc itself is untouched so the in-flight
-  // re-audit can complete normally.
+  // Chunked sweep — kickoff. Lists every unique findingId in
+  // completed-audit-stat and returns it as a flat array. The frontend
+  // then iterates the list in 25-fid chunks via /sweep-orphaned-process.
+  // This avoids the edge timeout that hit the single-call sweep when
+  // completed-audit-stat grew past ~1k rows.
+  @Post("sweep-orphaned-list-fids") @ReturnedType(MessageResponse)
+  async sweepOrphanedListFids() {
+    const orgId = ORG();
+    const { listStoredWithKeysAll } = await import("@core/data/firestore/mod.ts");
+    const rows = await listStoredWithKeysAll<{ findingId?: string }>("completed-audit-stat", orgId);
+    const seen = new Set<string>();
+    const fids: string[] = [];
+    for (const { value } of rows) {
+      const fid = value?.findingId;
+      if (fid && !seen.has(fid)) { seen.add(fid); fids.push(fid); }
+    }
+    console.log(`📋 [SWEEP-LIST-FIDS] total=${fids.length}`);
+    return { ok: true, fids };
+  }
+
+  // Chunked sweep — per-batch worker. Receives a batch of fids; for each one
+  // bypasses the per-isolate finding cache (so isolates that cached a stale
+  // "finished" value re-read fresh state from Firestore), checks whether
+  // the finding is in a terminal state with answeredQuestions populated,
+  // and drains derived state otherwise. Returns counts so the frontend can
+  // update its progress fragment.
+  @Post("sweep-orphaned-process") @ReturnedType(MessageResponse)
+  async sweepOrphanedProcess(@Body() body: GenericBodyRequest) {
+    const orgId = ORG();
+    const b = body as { fids?: string[] };
+    const fids = Array.isArray(b.fids) ? b.fids : [];
+    if (fids.length === 0) return { ok: true, swept: 0, healthy: 0, missing: 0, drained: [] };
+    const { getFinding, invalidateFindingCache } = await import("@audit/domain/data/audit-repository/mod.ts");
+    const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
+    let swept = 0, healthy = 0, missing = 0;
+    const drained: string[] = [];
+    for (const fid of fids) {
+      invalidateFindingCache(orgId, fid);
+      const finding = await getFinding(orgId, fid);
+      if (!finding) {
+        await resetFindingDerivedState(orgId, fid);
+        missing++; swept++; drained.push(fid);
+        continue;
+      }
+      const status = (finding as { findingStatus?: string }).findingStatus;
+      const answered = (finding as { answeredQuestions?: unknown[] }).answeredQuestions;
+      const hasAnswers = Array.isArray(answered) && answered.length > 0;
+      if (status !== "finished" || !hasAnswers) {
+        await resetFindingDerivedState(orgId, fid);
+        swept++; drained.push(fid);
+      } else {
+        healthy++;
+      }
+    }
+    return { ok: true, swept, healthy, missing, drained };
+  }
+
+  // [DEPRECATED in favor of the chunked sweep-orphaned-list-fids /
+  // sweep-orphaned-process pair above, but retained for any caller that
+  // already wires to it.] Sweep findings that appear in "Recently Completed"
+  // (completed-audit-stat) but whose finding doc is NOT in a finished state.
   @Post("sweep-orphaned-completed") @ReturnedType(MessageResponse)
   async sweepOrphanedCompleted() {
     const orgId = ORG();

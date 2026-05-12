@@ -1,0 +1,24 @@
+
+=== 13 BROKEN REVIEW-QUEUE AUDITS (finding doc missing) ===
+
+RECORD ID    | FINDING ID                  | QUESTIONS | IN
+-------------|-----------------------------|-----------|---------------------------
+468264       | kBffktndyQFXpgV06Ae4C        |        10 | review-decided
+468496       | uNgg1U1wEtajVA4JAXXD6        |         3 | review-decided
+468497       | ta2ftYIctEqEK-8o8haTi        |         1 | review-active
+468499       | vlfj8omKixUpqf6YsqlOu        |         1 | review-active
+468502       | prxDB1KC4O6WfmxGwnnzZ        |         2 | review-pending
+468503       | 3BqWUf0CN0Tz0HmQcsTZ9        |        11 | review-pending
+468504       | Q436Ha13JBhs8eFudRjxi        |         3 | review-pending
+468507       | 4e3zDrxnMwk7gVBO86Y2q        |         2 | review-pending
+468508       | Za-zLQdBAClYeI8nFp6iq        |         1 | review-pending
+468509       | xHppqvlkNrW-SGAjJg613        |         1 | review-pending
+468514       | YhblPizv83Q2XHMfHTMrj        |         1 | review-pending
+468516       | YnO9UnwQVMTlR0wSlh0Ee        |         4 | review-pending
+468522       | H9GOjbEnq6oNqRaa2RVm1        |         1 | review-pending
+
+=== UNIQUE RECORD IDS TO RE-AUDIT (13) ===
+468264,468496,468497,468499,468502,468503,468504,468507,468508,468509,468514,468516,468522
+
+=== FINDING IDS TO NUKE FROM QUEUE (13) ===
+kBffktndyQFXpgV06Ae4C,uNgg1U1wEtajVA4JAXXD6,ta2ftYIctEqEK-8o8haTi,vlfj8omKixUpqf6YsqlOu,prxDB1KC4O6WfmxGwnnzZ,3BqWUf0CN0Tz0HmQcsTZ9,Q436Ha13JBhs8eFudRjxi,4e3zDrxnMwk7gVBO86Y2q,Za-zLQdBAClYeI8nFp6iq,xHppqvlkNrW-SGAjJg613,YhblPizv83Q2XHMfHTMrj,YnO9UnwQVMTlR0wSlh0Ee,H9GOjbEnq6oNqRaa2RVm1

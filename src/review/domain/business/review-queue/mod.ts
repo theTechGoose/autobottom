@@ -1393,6 +1393,22 @@ export async function getReviewedFindingIds(orgId: OrgId): Promise<Set<string>> 
   return ids;
 }
 
+/** Distinct findingIds currently in `review-pending`, with one sample
+ *  ReviewItem per finding (the first one encountered — used for cheap
+ *  metadata like recordId/completedAt without re-fetching the finding doc).
+ *  Drives the admin /unreviewed-audits list. */
+export async function getPendingReviewFindings(
+  orgId: OrgId,
+): Promise<Map<string, ReviewItem>> {
+  const out = new Map<string, ReviewItem>();
+  const rows = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
+  for (const { key, value } of rows) {
+    const fid = String(key[0]);
+    if (!out.has(fid) && value) out.set(fid, value);
+  }
+  return out;
+}
+
 // ── Clear queue ──────────────────────────────────────────────────────────────
 
 export async function clearReviewQueue(orgId: OrgId): Promise<{ cleared: number }> {

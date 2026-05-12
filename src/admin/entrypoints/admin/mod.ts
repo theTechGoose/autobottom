@@ -710,70 +710,64 @@ export class AdminConfigController {
     const scoreMin = scoreMinQ ? parseInt(scoreMinQ, 10) : 0;
     const scoreMax = scoreMaxQ ? parseInt(scoreMaxQ, 10) : 100;
 
-    const { queryAuditDoneIndex } = stats;
-    const { getReviewedFindingIds } = await import("@review/domain/business/review-queue/mod.ts");
+    const { getPendingReviewFindings } = await import("@review/domain/business/review-queue/mod.ts");
     const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
 
-    const [indexEntries, reviewedIds, bypassCfg] = await Promise.all([
-      queryAuditDoneIndex(ORG(), since, until),
-      getReviewedFindingIds(ORG()),
+    // Drive the list from review-pending — that store IS the review queue.
+    // Previously we drove from audit-done-idx and filtered, which fought the
+    // data shape: 22k+ index entries, ~98% noise (orphans, drift, pencil-
+    // flipped-not-finalized 100%-ers), <2% survival into the bulk-flip list.
+    // review-pending is authoritative and bounded by what reviewers actually
+    // need to act on, so the list now reflects the real queue.
+    const [pending, bypassCfg] = await Promise.all([
+      getPendingReviewFindings(ORG()),
       cfg.getOfficeBypassConfig(ORG()),
     ]);
     const bypassPatterns = (bypassCfg.patterns ?? []).map((p: string) => p.toLowerCase());
     const isBypassed = (dept: string) =>
       bypassPatterns.length > 0 && bypassPatterns.some((p: string) => dept.toLowerCase().includes(p));
 
-    // Cheap pre-filter: drop entries we KNOW are out of scope based on index
-    // metadata alone (reviewed marker, bypass office, type/owner/department/
-    // shift facets). Deliberately does NOT filter on e.score — the index
-    // score is a derived cache that drifts when pencil-flips landed before
-    // adminFlipQuestion started writing the index. The authoritative score
-    // lives on the finding doc and is checked in the enrichment loop below.
-    const candidates = indexEntries.filter((e: any) => {
-      if (reviewedIds.has(e.findingId)) return false;
-      if (e.reason === "perfect_score" || e.reason === "invalid_genie") return false;
-      if (isBypassed(e.department ?? "")) return false;
-      if (type === "date-leg" && e.isPackage) return false;
-      if (type === "package" && !e.isPackage) return false;
-      if (owner && (e.voName || e.owner) !== owner) return false;
-      if (department && e.department !== department) return false;
-      if (shift && e.shift !== shift) return false;
-      return true;
-    });
-
-    // Authoritative enrichment: read the finding doc for every candidate
-    // (capped at 500). Score range is checked against the LIVE finding
-    // score (reviewScore preferred, falls back to score, then index), so a
-    // stale index entry can no longer slip a 100%-er into the list.
-    //
-    // NOTE: deliberately NOT filtering on finding.reviewedAt. That field is
-    // stamped by adminFlipQuestion on every pencil-flip, not just on
-    // finalize, so it lights up for in-progress reviews that still need
-    // work. "Fully finalized" is signaled by review-done membership (set
-    // only by finalizeReviewedAudit and adminFlipFinding) and is already
-    // filtered in the pre-filter via reviewedIds.has().
-    const enriched = await Promise.all(candidates.slice(0, 500).map(async (e: any) => {
-      const finding = await getFinding(ORG(), e.findingId);
-      if (!finding) return null; // orphan / migration casualty — drop
+    // Enrich each pending finding with its finding-doc metadata + apply
+    // facet/date/score filters using the LIVE finding data. Capped at 500
+    // for response-size sanity; total reflects raw pending count so the UI
+    // hint "showing first 500 of N" stays meaningful.
+    const pendingIds = [...pending.keys()];
+    const enriched = await Promise.all(pendingIds.slice(0, 500).map(async (fid) => {
+      const finding = await getFinding(ORG(), fid);
+      if (!finding) return null; // shouldn't normally happen — pending without a finding doc is broken state
+      const sample = pending.get(fid);
+      const completedAt = ((finding as any).completedAt as number | undefined)
+        ?? (sample?.completedAt as number | undefined)
+        ?? 0;
+      // Date range filter against the finding's completedAt (authoritative).
+      if (completedAt && (completedAt < since || completedAt > until)) return null;
       const liveScore = typeof (finding as any).reviewScore === "number"
         ? (finding as any).reviewScore
-        : (typeof (finding as any).score === "number" ? (finding as any).score
-          : (typeof e.score === "number" ? e.score : 0));
+        : (typeof (finding as any).score === "number" ? (finding as any).score : 0);
       if (liveScore < scoreMin || liveScore > scoreMax) return null;
       const rec = (finding as Record<string, unknown>).record as Record<string, unknown> | undefined;
       const isPkg = (finding as any).recordingIdField === "GenieNumber";
+      if (type === "date-leg" && isPkg) return null;
+      if (type === "package" && !isPkg) return null;
+      const dept = String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? ""));
+      if (isBypassed(dept)) return null;
       const rawVo = String(rec?.VoName ?? "");
       const vo = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+      const findingOwner = (finding as any).owner as string | undefined;
+      const shiftVal = isPkg ? undefined : (String(rec?.Shift ?? "") || undefined);
+      if (owner && (vo || findingOwner) !== owner) return null;
+      if (department && dept !== department) return null;
+      if (shift && shiftVal !== shift) return null;
       return {
-        findingId: e.findingId,
-        recordId: e.recordId ?? String(rec?.RecordId ?? ""),
-        voName: vo || (e.voName as string | undefined),
-        owner: ((finding as any).owner as string | undefined) ?? (e.owner as string | undefined),
-        department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || (e.department as string | undefined),
-        shift: isPkg ? undefined : (String(rec?.Shift ?? "") || (e.shift as string | undefined)),
+        findingId: fid,
+        recordId: String(rec?.RecordId ?? "") || sample?.recordId || "",
+        voName: vo || undefined,
+        owner: findingOwner,
+        department: dept || undefined,
+        shift: shiftVal,
         score: liveScore,
         isPackage: isPkg,
-        ts: e.completedAt,
+        ts: completedAt || undefined,
       };
     }));
     const items = enriched.filter((x): x is NonNullable<typeof x> => x !== null);
@@ -781,7 +775,7 @@ export class AdminConfigController {
     const owners = [...new Set(items.map((i: any) => i.voName || i.owner).filter(Boolean))].sort();
     const departments = [...new Set(items.map((i: any) => i.department).filter(Boolean))].sort();
     const shifts = [...new Set(items.map((i: any) => i.shift).filter(Boolean))].sort();
-    return { items, total: items.length, owners, departments, shifts };
+    return { items, total: pending.size, owners, departments, shifts };
    } catch (err) {
      // Soft-fallback: this endpoint is heavy (Promise.all over 3 FS scans
      // + per-row getFinding fan-out). Any chunk wedge under load aborts

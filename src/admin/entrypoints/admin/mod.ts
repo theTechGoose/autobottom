@@ -701,6 +701,66 @@ export class AdminConfigController {
   @Get("token-usage") @ReturnedType(TokenUsageResponse)
   async tokenUsage(@Query("hours") hours: string) { return getTokenUsage(parseInt(hours || "1")); }
 
+  // -- Index test harness ---------------------------------------------------
+  // Fires a minimal-scope listStoredByCompletedAt query for the named
+  // (type, fieldName) pair. Used by the Data Maintenance → Index Tests tab
+  // during the index-rollout branch to verify that the Firestore composite
+  // index `(_org, _type, <fieldName>, __name__)` exists before swapping
+  // production callsites to the indexed path. On FAILED_PRECONDITION
+  // (missing index) Firestore returns an error message containing a
+  // https://console.firebase.google.com/... URL — we extract that and
+  // surface it to the operator so they can one-click create the index.
+  //
+  // Limit is intentionally tiny (1 row) so the test stays cheap even on
+  // large stores. We only care whether the index exists, not the data.
+  @Post("index-test") @ReturnedType(MessageResponse)
+  async indexTest(@Query("name") name: string) {
+    const orgId = ORG();
+    const { listStoredByCompletedAt } = await import("@core/data/firestore/mod.ts");
+
+    const TESTS: Record<string, { type: string; fieldName: string }> = {
+      "review-active-claimedAt": { type: "review-active", fieldName: "claimedAt" },
+      "review-pending-completedAt": { type: "review-pending", fieldName: "completedAt" },
+      "review-active-completedAt": { type: "review-active", fieldName: "completedAt" },
+      "completed-audit-stat-ts": { type: "completed-audit-stat", fieldName: "ts" },
+      "chargeback-entry-ts": { type: "chargeback-entry", fieldName: "ts" },
+      "wire-deduction-entry-ts": { type: "wire-deduction-entry", fieldName: "ts" },
+      "audit-finding-startedAt": { type: "audit-finding", fieldName: "startedAt" },
+    };
+
+    const test = TESTS[name];
+    if (!test) return { ok: false, error: `unknown test: ${name}` };
+
+    const t0 = Date.now();
+    try {
+      const rows = await listStoredByCompletedAt<Record<string, unknown>>(
+        test.type,
+        orgId,
+        0,
+        Date.now(),
+        { fieldName: test.fieldName, limit: 1 },
+      );
+      return { ok: true, type: test.type, fieldName: test.fieldName, rows: rows.length, tookMs: Date.now() - t0 };
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      // Firestore returns 'FAILED_PRECONDITION' with a console URL in the
+      // error body when the composite index is missing. The URL is the
+      // load-bearing piece — clicking it lets the operator create the
+      // index in one round-trip.
+      const urlMatch = msg.match(/https:\/\/console\.firebase\.google\.com\/[^\s"'`]+/);
+      const missingIndex = msg.includes("FAILED_PRECONDITION") || msg.includes("requires an index");
+      return {
+        ok: false,
+        type: test.type,
+        fieldName: test.fieldName,
+        tookMs: Date.now() - t0,
+        error: msg,
+        createIndexUrl: urlMatch?.[0],
+        missingIndex,
+      };
+    }
+  }
+
   // -- Reconcile drift: finalize already-100% pending findings --
   // One-shot cleanup for the pencil-flip drift bug. Pencil-flips raised a
   // finding's score to 100 but never drained review-pending / review-active,

@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "migration";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "index-tests" | "migration";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -17,6 +17,7 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "purge", label: "Purge Old Audits", danger: true },
   { key: "flip", label: "Bulk Flip" },
   { key: "cleanup", label: "Cleanup" },
+  { key: "index-tests", label: "Index Tests" },
   { key: "migration", label: "Migration" },
 ];
 
@@ -44,6 +45,7 @@ export const handler = define.handlers({
           {active === "purge" && <PurgePanel />}
           {active === "flip" && <BulkFlipPanel />}
           {active === "cleanup" && <CleanupPanel />}
+          {active === "index-tests" && <IndexTestsPanel />}
           {active === "migration" && <MigrationPanel />}
         </div>
 
@@ -345,6 +347,88 @@ function CleanupPanel() {
         </button>
       </PanelCard>
       <div id="cleanup-msg"></div>
+    </div>
+  );
+}
+
+// ── Index Tests tab ──────────────────────────────────────────────────────────
+//
+// One-off rollout tool. Each card fires a tiny listStoredByCompletedAt query
+// (limit=1) for a (type, fieldName) pair we want to use in production. If the
+// underlying Firestore composite index `(_org, _type, <fieldName>, __name__)`
+// exists, returns ✓ with row count + timing. If missing, Firestore returns
+// FAILED_PRECONDITION with a console URL — we surface that URL so the
+// operator can one-click create the index in the Firebase console.
+//
+// Walk all cards in order during the index-rollout branch deploy. When every
+// card is ✓, swap the production callsites (see plan file) and merge to main.
+// After merge, remove this tab in a follow-up commit.
+const INDEX_TESTS: Array<{ name: string; title: string; usedBy: string }> = [
+  {
+    name: "review-active-claimedAt",
+    title: "review-active by claimedAt",
+    usedBy: "claimNextItem expiry sweep — fires on every reviewer claim (A1, biggest win)",
+  },
+  {
+    name: "review-pending-completedAt",
+    title: "review-pending by completedAt",
+    usedBy: "getPendingReviewFindings — Bulk Flip Pull narrowing (A2)",
+  },
+  {
+    name: "review-active-completedAt",
+    title: "review-active by completedAt",
+    usedBy: "getPendingReviewFindings — Bulk Flip Pull narrowing (A2)",
+  },
+  {
+    name: "completed-audit-stat-ts",
+    title: "completed-audit-stat by ts",
+    usedBy: "backfillReviewScores (B1) + purgeOldAudits (B2) + sweep date window (B3)",
+  },
+  {
+    name: "chargeback-entry-ts",
+    title: "chargeback-entry by ts",
+    usedBy: "purgeOldAudits (B2)",
+  },
+  {
+    name: "wire-deduction-entry-ts",
+    title: "wire-deduction-entry by ts",
+    usedBy: "purgeOldAudits (B2)",
+  },
+  {
+    name: "audit-finding-startedAt",
+    title: "audit-finding by startedAt",
+    usedBy: "Re-trigger empty-paste path — already shipped on main; included here as a known-working baseline",
+  },
+];
+
+function IndexTestsPanel() {
+  return (
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div style="font-size:11px;color:var(--text-dim);padding:8px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);">
+        <strong style="color:var(--text-bright);">One-off rollout tool.</strong> Each card fires a 1-row Firestore field-filter query for a (type, fieldName) we want to use in production. Green ✓ = index exists. Yellow ⚠️ with a URL = index missing — click the URL, Confirm in Firebase console, wait for index build (minutes-to-hours), re-click Run. When every card is ✓, the production swaps in the plan file are safe to land.
+      </div>
+      {INDEX_TESTS.map((t) => <IndexTestCard {...t} />)}
+    </div>
+  );
+}
+
+function IndexTestCard({ name, title, usedBy }: { name: string; title: string; usedBy: string }) {
+  return (
+    <div style="border:1px solid var(--border);border-radius:4px;padding:10px 12px;background:var(--bg);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px;">
+        <div style="flex:1;">
+          <div style="font-size:12px;font-weight:600;color:var(--text-bright);font-family:var(--mono);">{title}</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:2px;">{usedBy}</div>
+        </div>
+        <button
+          class="sf-btn ghost"
+          style="padding:6px 14px;font-size:11px;white-space:nowrap;"
+          hx-post={`/api/admin/modal/maintenance/index-test?name=${name}`}
+          hx-target={`#index-test-${name}`}
+          hx-swap="innerHTML"
+        >Run</button>
+      </div>
+      <div id={`index-test-${name}`}></div>
     </div>
   );
 }

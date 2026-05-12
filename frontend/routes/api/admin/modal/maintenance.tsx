@@ -296,7 +296,7 @@ function CleanupPanel() {
 
       <PanelCard
         title="Re-trigger drained audits by date"
-        subtitle="Three phases. (1) Paste the fid list (typically copied from the Sweep result's 'Show drained finding IDs' disclosure) and pick a date range. (2) Scan: per-fid getFinding, keeps only those whose status ≠ 'finished' AND startedAt is in range. (3) Confirm + Re-trigger: chunked publishStep('init', …) per match. Same findingId; runs transcribe → prepare → ask-all → finalize fresh. QStash queue parallelism throttles the load."
+        subtitle="Two ways to scan. (a) Leave the textarea EMPTY and pick a date range — enumerates every audit-finding doc cheaply (keys-only Firestore scan) and chunk-checks each per-fid for status ≠ 'finished' AND startedAt in range. (b) Paste a specific fid list and pick a date range — same filter, but limited to your list. Either path lands in a confirmation card; nothing fires until you click Re-trigger."
       >
         <form
           hx-post="/api/admin/modal/maintenance/retrigger-scan"
@@ -305,20 +305,19 @@ function CleanupPanel() {
           hx-disabled-elt="find button[type='submit']"
           hx-indicator="find button[type='submit']"
         >
-          <div class="sf" style="margin-bottom:10px;">
-            <label class="sf-label">Finding IDs (one per line — or comma/space separated)</label>
-            <textarea
-              name="fids"
-              class="sf-input"
-              rows={6}
-              style="font-family:var(--mono);font-size:11px;resize:vertical;"
-              placeholder="lTBHVQh9hTVdWAWr6t1Qn&#10;NLbvBCPh-6cnm9RSB2ZLo&#10;..."
-              required
-            />
-          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
             <div class="sf"><label class="sf-label">Started since</label><input type="date" name="since" class="sf-input" value={new Date().toISOString().slice(0, 10)} /></div>
             <div class="sf"><label class="sf-label">Started until</label><input type="date" name="until" class="sf-input" value={new Date().toISOString().slice(0, 10)} /></div>
+          </div>
+          <div class="sf" style="margin-bottom:10px;">
+            <label class="sf-label">Finding IDs — OPTIONAL (one per line, or comma/space separated). Leave empty to scan every audit-finding doc.</label>
+            <textarea
+              name="fids"
+              class="sf-input"
+              rows={5}
+              style="font-family:var(--mono);font-size:11px;resize:vertical;"
+              placeholder="Optional. Paste from the Sweep result's 'Show drained finding IDs' to limit the scan to those — or leave empty to scan all."
+            />
           </div>
           <button type="submit" class="sf-btn primary cl-btn" style="padding:8px 16px;min-width:160px;">
             <span class="cl-label">Scan candidates</span>

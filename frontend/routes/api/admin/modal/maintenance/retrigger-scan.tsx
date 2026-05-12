@@ -7,10 +7,13 @@
  *  matches (status !== "finished" AND startedAt in window). */
 
 import { define } from "../../../../../lib/define.ts";
+import { apiPost } from "../../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 import { createRetriggerJob } from "../../../../../lib/retrigger-job-store.ts";
 import { RetriggerProgress } from "../../../../../components/RetriggerProgress.tsx";
+
+interface ListResp { ok?: boolean; fids?: string[]; error?: string }
 
 function parseSince(input: string): number {
   if (!input) {
@@ -42,17 +45,31 @@ export const handler = define.handlers({
     const sinceStr = form.get("since")?.toString() ?? "";
     const untilStr = form.get("until")?.toString() ?? "";
 
-    const fids = fidsRaw
+    let fids = fidsRaw
       .split(/[\s,]+/)
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
 
+    // Empty paste → enumerate every audit-finding fid via a keys-only
+    // Firestore scan (lightweight; doesn't pull chunked bodies). The
+    // per-fid date+status filter then happens chunk-by-chunk in the
+    // scan-tick loop, so even a 50k-finding org doesn't wedge.
     if (fids.length === 0) {
-      return html(
-        <div class="error-text" style="font-size:11px;padding:10px;border:1px solid var(--red);border-radius:6px;">
-          Paste at least one finding ID. (Tip: open the Sweep result's "Show drained finding IDs" details, copy the list, paste here.)
-        </div>,
-      );
+      let listR: ListResp;
+      try {
+        listR = await apiPost<ListResp>("/admin/list-all-finding-ids", ctx.req, {});
+      } catch (e) {
+        return html(<div class="error-text" style="font-size:11px;">Failed to list audit-finding ids: {String(e)}</div>);
+      }
+      if (listR.error) return html(<div class="error-text" style="font-size:11px;">{listR.error}</div>);
+      fids = listR.fids ?? [];
+      if (fids.length === 0) {
+        return html(
+          <div style="font-size:12px;color:var(--green);padding:10px;border:1px solid var(--green);border-radius:6px;">
+            No audit-finding docs exist. Nothing to scan.
+          </div>,
+        );
+      }
     }
 
     const sinceMs = parseSince(sinceStr);

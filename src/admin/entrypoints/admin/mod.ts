@@ -771,6 +771,29 @@ export class AdminConfigController {
     return { ok: true, swept, healthy, missing, drained };
   }
 
+  // Lightweight list of every unique findingId in audit-finding. Uses the
+  // keys-only Firestore scan (listStoredKeysAll) so we don't pull chunked
+  // bodies — that's the path that wedged the earlier broad scan. Returns
+  // just the unique first-key-parts (chunks of the same finding dedupe
+  // on the way out). The retrigger flow uses this when the operator
+  // didn't paste a specific list.
+  @Post("list-all-finding-ids") @ReturnedType(MessageResponse)
+  async listAllFindingIds() {
+    const orgId = ORG();
+    const { listStoredKeysAll } = await import("@core/data/firestore/mod.ts");
+    const rows = await listStoredKeysAll("audit-finding", orgId);
+    const seen = new Set<string>();
+    const fids: string[] = [];
+    for (const { key } of rows) {
+      const fid = String(key[0] ?? "");
+      if (!fid || seen.has(fid)) continue;
+      seen.add(fid);
+      fids.push(fid);
+    }
+    console.log(`📋 [LIST-FINDING-IDS] unique=${fids.length} totalKeys=${rows.length}`);
+    return { ok: true, fids };
+  }
+
   // Per-fid date+status check for the Re-trigger flow. Takes a batch of
   // fids (typically 25 at a time from the frontend tick loop) plus a
   // [sinceMs, untilMs] window. For each fid, does a single chunked

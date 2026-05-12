@@ -199,7 +199,22 @@ export async function populateReviewQueue(
 
   const noAnswers = answeredQuestions
     .map((q, i) => ({ ...q, index: i }))
-    .filter((q) => q.answer === "No");
+    .filter((q) => q.answer === "No")
+    // Drop phantom entries with no header AND no populated text. These come
+    // from compound `+:` question expansion or upstream prep bugs that leave
+    // a blank slot in answeredQuestions. Queuing them produces a review-item
+    // with no readable question text — reviewer can hit Flip/Confirm but
+    // finalize's identity match has nothing to match against, so the audit
+    // gets permanently stuck. Better to skip them at queue time.
+    .filter((q) => {
+      const hasHeader = String(q.header ?? "").trim().length > 0;
+      const hasPopulated = String(q.populated ?? "").trim().length > 0;
+      if (!hasHeader && !hasPopulated) {
+        console.warn(`⚠️ [POPULATE-REVIEW-QUEUE] ${findingId}: skipping phantom answered[${q.index}] — empty header AND populated`);
+        return false;
+      }
+      return true;
+    });
 
   if (noAnswers.length === 0) return;
 

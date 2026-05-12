@@ -725,10 +725,14 @@ export class AdminConfigController {
   @Post("sweep-orphaned-completed") @ReturnedType(MessageResponse)
   async sweepOrphanedCompleted() {
     const orgId = ORG();
-    const { listStoredWithKeys } = await import("@core/data/firestore/mod.ts");
+    const { listStoredWithKeysAll } = await import("@core/data/firestore/mod.ts");
     const { getFinding, invalidateFindingCache } = await import("@audit/domain/data/audit-repository/mod.ts");
     const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
-    const rows = await listStoredWithKeys<{ findingId?: string }>("completed-audit-stat", orgId);
+    // Use the paginated *All variant — listStoredWithKeys caps at 1000 rows.
+    // Without this, completed-audit-stat rows past page 1 would be invisible
+    // to the sweep. That cap was why NLbvBCPh-6cnm9RSB2ZLo stayed stuck even
+    // after the first sweep reported swept=7.
+    const rows = await listStoredWithKeysAll<{ findingId?: string }>("completed-audit-stat", orgId);
     const seen = new Set<string>();
     let scanned = 0, swept = 0, healthy = 0, missing = 0;
     for (const { value } of rows) {

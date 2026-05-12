@@ -21,6 +21,15 @@ function formatResult(result: unknown): string {
   }
   const lines: string[] = [];
   if (typeof r.deleted === "number") lines.push(`<strong>Deleted:</strong> ${r.deleted}`);
+  // Sweep / reconcile shapes: surface the count fields directly so the
+  // operator sees a clean summary instead of a JSON blob. Each endpoint
+  // returns its own combination; we render whichever keys are present.
+  if (typeof r.scanned === "number") lines.push(`<strong>Scanned:</strong> ${r.scanned}`);
+  if (typeof r.swept === "number") lines.push(`<strong>Swept (drained):</strong> ${r.swept}`);
+  if (typeof r.healthy === "number") lines.push(`<strong>Healthy (left alone):</strong> ${r.healthy}`);
+  if (typeof r.missing === "number") lines.push(`<strong>Missing findings:</strong> ${r.missing}`);
+  if (typeof r.alreadyFinalized === "number") lines.push(`<strong>Already finalized:</strong> ${r.alreadyFinalized}`);
+  if (typeof r.notPerfect === "number") lines.push(`<strong>Not perfect:</strong> ${r.notPerfect}`);
   if (r.plan && typeof r.plan === "object") {
     const p = r.plan as Record<string, unknown>;
     if (typeof p.scanned === "number") lines.push(`<strong>Scanned:</strong> ${p.scanned}`);

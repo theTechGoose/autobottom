@@ -258,6 +258,17 @@ function BulkFlipPanel() {
 function CleanupPanel() {
   return (
     <div style="display:flex;flex-direction:column;gap:12px;">
+      {/* Reuse the htmx-request loading-state pattern from the Pull Unreviewed
+          button. HTMX adds .htmx-request to the indicator element while a
+          request is in flight; we toggle .cl-label / .cl-loading via CSS so
+          the operator sees "Sweeping…" instead of a frozen button. */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .cl-btn .cl-loading { display: none; }
+        .cl-btn.htmx-request .cl-label { display: none; }
+        .cl-btn.htmx-request .cl-loading { display: inline; }
+        .cl-btn.htmx-request, .cl-btn:disabled { opacity: 0.7; cursor: wait; }
+      `}} />
+
       <PanelCard
         title="Reset finding by ID"
         subtitle="Drain ALL derived state for a single finding (completed-audit-stat, audit-done-idx, review-pending/active/decided/done, chargeback + wire-deduction rows) and re-publish step-init so the same findingId re-enters the audit pipeline from the start. Use this when the auto-sweep misses an orphan or when you need to force a specific audit to re-run cleanly."
@@ -267,6 +278,8 @@ function CleanupPanel() {
           hx-target="#cleanup-msg"
           hx-swap="innerHTML"
           hx-confirm="Drain derived state for this finding and re-publish step-init?"
+          hx-disabled-elt="find button[type='submit']"
+          hx-indicator="find button[type='submit']"
           style="display:flex;gap:8px;align-items:flex-end;"
         >
           <input type="hidden" name="endpoint" value="/admin/reset-finding" />
@@ -274,23 +287,31 @@ function CleanupPanel() {
             <label class="sf-label">Finding ID</label>
             <input type="text" name="findingId" class="sf-input" placeholder="e.g. lTBHVQh9hTVdWAWr6t1Qn" required />
           </div>
-          <button type="submit" class="sf-btn primary" style="padding:8px 16px;">Reset + Re-run</button>
+          <button type="submit" class="sf-btn primary cl-btn" style="padding:8px 16px;min-width:160px;">
+            <span class="cl-label">Reset + Re-run</span>
+            <span class="cl-loading">Resetting…</span>
+          </button>
         </form>
       </PanelCard>
 
       <PanelCard
         title="Sweep orphaned 'Recently Completed'"
-        subtitle="Scans completed-audit-stat against each finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete."
+        subtitle="Scans completed-audit-stat against each finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete. Can take 30–90s depending on volume."
       >
         <button
-          class="sf-btn primary"
-          style="padding:8px 16px;"
+          class="sf-btn primary cl-btn"
+          style="padding:8px 16px;min-width:160px;"
           hx-post="/api/admin/config-save"
           hx-vals='{"endpoint":"/admin/sweep-orphaned-completed"}'
           hx-target="#cleanup-msg"
           hx-swap="innerHTML"
+          hx-disabled-elt="this"
+          hx-indicator="this"
           hx-confirm="Sweep every 'Recently Completed' row whose finding isn't actually finished? Cleans derived state without touching the finding doc."
-        >Run Sweep</button>
+        >
+          <span class="cl-label">Run Sweep</span>
+          <span class="cl-loading">Sweeping…</span>
+        </button>
       </PanelCard>
       <div id="cleanup-msg"></div>
     </div>

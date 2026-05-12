@@ -212,8 +212,74 @@ export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEnt
   await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], entry);
 }
 
+// SWR cache for queryAuditDoneIndex. Each cold call scans audit-done-idx
+// for the (from,to) window — a paginated FS read that wedges 25s under
+// HTTP/2 pool contention. Without this cache, every caller paid the full
+// scan every time: audit-history dashboard polls every 5s, bulk-flip
+// pulls, and any future caller. With this cache, ONE caller pays the
+// scan and the rest hit memory until TTL expires. Stale-while-revalidate
+// means even after TTL expiry the user sees stale data instantly while a
+// background refresh runs — wedge-resilient.
+//
+// Previously this cache lived in DashboardController._cachedQueryAuditDoneIndex
+// but was private + only used by /admin/audits/data, so /admin/unreviewed-audits
+// (bulk-flip) bypassed it and paid the full scan every time. Moving the
+// cache to the repository function means every caller benefits transparently.
+//
+// Key: orgId + (from,to). TTL: 30s. Concurrent identical calls share one
+// in-flight promise via _qIdxPending — prevents thundering herd.
+const _qIdxCache = new Map<string, { value: AuditDoneIndexEntry[]; expiresAt: number }>();
+const _qIdxPending = new Map<string, Promise<AuditDoneIndexEntry[]>>();
+const Q_IDX_TTL_MS = 30_000;
+
+/** Test-only: clear the cache. Without this tests that share an isolate
+ *  would observe values populated by a prior test, breaking test isolation. */
+export function _resetQueryAuditDoneIndexCacheForTests(): void {
+  _qIdxCache.clear();
+  _qIdxPending.clear();
+}
+
 export async function queryAuditDoneIndex(orgId: OrgId, from: number, to: number): Promise<AuditDoneIndexEntry[]> {
-  return withTiming(`queryAuditDoneIndex from=${from} to=${to}`, () => _queryAuditDoneIndexRaw(orgId, from, to));
+  const key = `${orgId}:${from}:${to}`;
+  const now = Date.now();
+  const cached = _qIdxCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    console.log(`🟢 [Q-IDX-CACHE] hit key=${key} (${cached.value.length} rows)`);
+    return cached.value;
+  }
+
+  // In-flight dedup: if a scan is already running for this key, await it
+  // instead of starting a second one.
+  let pending = _qIdxPending.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const cold = !cached;
+      console.log(`${cold ? "🔴" : "🟡"} [Q-IDX-CACHE] ${cold ? "miss" : "stale"} key=${key} ${cold ? "running scan" : "serving stale + refresh-in-bg"}`);
+      try {
+        const result = await withTiming(`queryAuditDoneIndex from=${from} to=${to}`, () => _queryAuditDoneIndexRaw(orgId, from, to));
+        _qIdxCache.set(key, { value: result, expiresAt: Date.now() + Q_IDX_TTL_MS });
+        return result;
+      } catch (err) {
+        // If we have any cached value (even stale-by-hours), serve it instead
+        // of throwing. Wedge-resilience: bulk-flip + audit-history keep
+        // working through a transient FS outage as long as ONE successful
+        // scan landed previously this isolate.
+        if (cached) {
+          console.warn(`⚠️ [Q-IDX-CACHE] scan failed, serving stale cache key=${key}:`, err);
+          return cached.value;
+        }
+        throw err;
+      } finally {
+        _qIdxPending.delete(key);
+      }
+    })();
+    _qIdxPending.set(key, pending);
+  }
+
+  // Stale-while-revalidate: have a stale entry → serve it NOW, let the
+  // background refresh complete. Next call within TTL hits the new value.
+  if (cached) return cached.value;
+  return pending;
 }
 
 async function _queryAuditDoneIndexRaw(orgId: OrgId, from: number, to: number): Promise<AuditDoneIndexEntry[]> {

@@ -1,14 +1,21 @@
 /** Verifies the SWR cache wrapper around queryAuditDoneIndex used by
  *  /admin/audits/data. Forces in-mem mode so no real Firestore is
- *  involved. The cache lives as a private static on
- *  DashboardController, so we exercise it indirectly through the
- *  public auditsData() method. */
+ *  involved.
+ *
+ *  The cache moved from DashboardController to the repository function
+ *  itself (src/audit/domain/data/stats-repository/mod.ts:queryAuditDoneIndex),
+ *  so /admin/audits/data, /admin/unreviewed-audits (bulk-flip), and any
+ *  future caller share it. These tests exercise the cache via the
+ *  controller's public auditsData() method and verify behavior — they
+ *  don't peek at internal cache state (which would couple the test to
+ *  implementation details and break the next time the cache layer moves). */
 
-import { assert, assertEquals, assertExists } from "#assert";
+import { assertEquals, assertExists } from "#assert";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import {
   writeAuditDoneIndex,
   _resetHiddenCacheForTesting,
+  _resetQueryAuditDoneIndexCacheForTests,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 import { DashboardController } from "./mod.ts";
@@ -21,12 +28,11 @@ const ORG = defaultOrgId();
 function reset() {
   resetFirestoreCredentials();
   _resetHiddenCacheForTesting();
-  // Clear the controller's static caches between tests so each test
-  // starts cold. Casting to access private statics — fine for tests.
+  _resetQueryAuditDoneIndexCacheForTests();
+  // Clear the controller's remaining static caches (dash, not idx — that
+  // moved to the repo). Casting to access private statics — fine for tests.
   // deno-lint-ignore no-explicit-any
   const C = DashboardController as any;
-  C._auditIdxCache?.clear?.();
-  C._auditIdxPending?.clear?.();
   C._dashCache?.clear?.();
   C._dashPending?.clear?.();
 }
@@ -43,7 +49,7 @@ async function seedEntries(orgId: string, n: number, baseTs: number) {
   }
 }
 
-Deno.test("audit-history cache — cold call populates the cache", async () => {
+Deno.test("audit-history cache — cold call returns seeded entries", async () => {
   reset();
   const ts = 1_700_000_000_000;
   await seedEntries(ORG, 3, ts);
@@ -54,38 +60,33 @@ Deno.test("audit-history cache — cold call populates the cache", async () => {
   ) as { items: unknown[]; total: number };
   assertExists(result.items);
   assertEquals(result.total, 3);
-
-  // deno-lint-ignore no-explicit-any
-  const C = DashboardController as any;
-  const cacheKey = `${ORG}:${ts - 1}:${ts + 1000}`;
-  const cached = C._auditIdxCache.get(cacheKey);
-  assertExists(cached, "expected cache populated after cold call");
-  assertEquals(cached.value.length, 3);
 });
 
-Deno.test("audit-history cache — warm call within 30s reuses cache", async () => {
+Deno.test("audit-history cache — warm call within 30s reuses cache (behavioral)", async () => {
   reset();
   const ts = 1_700_000_000_000;
   await seedEntries(ORG, 3, ts);
 
   const ctrl = new DashboardController();
-  // Warm
+  // Warm the cache with one call.
   await ctrl.auditsData(
     String(ts - 1), String(ts + 1000), "all", "", "", "", "", "", "0", "100", "1", "50", "",
   );
-  // Drop the in-mem store entries — if the second call re-fetches from
-  // FS it'll see zero entries; if it correctly serves from cache it'll
-  // still see 3.
+  // Drop the in-mem FS store entries — if the second call re-fetches from
+  // FS it'll see zero entries; if it correctly serves from the repo cache
+  // it'll still see 3.
   resetFirestoreCredentials();
   _resetHiddenCacheForTesting();
+  // Deliberately DO NOT call _resetQueryAuditDoneIndexCacheForTests here
+  // — that's the cache we're verifying.
 
   const result = await ctrl.auditsData(
     String(ts - 1), String(ts + 1000), "all", "", "", "", "", "", "0", "100", "1", "50", "",
   ) as { items: unknown[]; total: number };
-  assertEquals(result.total, 3, "second call within 30s must serve cached value");
+  assertEquals(result.total, 3, "second call within 30s must serve cached value, not refetch");
 });
 
-Deno.test("audit-history cache — different date range gets a separate cache slot", async () => {
+Deno.test("audit-history cache — different date ranges return their own results", async () => {
   reset();
   const ts = 1_700_000_000_000;
   await seedEntries(ORG, 5, ts);
@@ -97,13 +98,9 @@ Deno.test("audit-history cache — different date range gets a separate cache sl
   ) as { items: unknown[]; total: number };
   assertEquals(r1.total, 5);
 
-  // Range 2 covers only first 3
+  // Range 2 covers only first 3 — different cache slot, must not return r1's value
   const r2 = await ctrl.auditsData(
     String(ts - 1), String(ts + 2), "all", "", "", "", "", "", "0", "100", "1", "50", "",
   ) as { items: unknown[]; total: number };
-  assertEquals(r2.total, 3);
-
-  // deno-lint-ignore no-explicit-any
-  const C = DashboardController as any;
-  assert(C._auditIdxCache.size >= 2, "expected at least 2 distinct cache entries");
+  assertEquals(r2.total, 3, "different (from,to) range must have its own cache slot");
 });

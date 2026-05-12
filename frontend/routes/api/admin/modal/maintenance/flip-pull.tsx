@@ -21,6 +21,10 @@ interface UnreviewedResp {
   items?: UnreviewedItem[];
   total?: number;
   error?: string;
+  // Set by the backend's soft-fallback when an FS abort hit the underlying
+  // queryAuditDoneIndex scan. Distinguishes "no matching audits" (legit
+  // empty) from "scan wedged, we have no idea what the real result is".
+  retry?: boolean;
 }
 
 export const handler = define.handlers({
@@ -39,6 +43,27 @@ export const handler = define.handlers({
     }
     if (r.error) return html(<div class="error-text">{r.error}</div>);
     const items = r.items ?? [];
+    // CRITICAL: distinguish "backend wedged → empty fallback" from "no matches".
+    // Before this branch existed, a 25s Firestore abort would surface the
+    // soft-fallback `{items: [], retry: true}` and we'd render "No matches"
+    // — making bulk-flip silently lie to admins while pending review > 0.
+    if (r.retry && items.length === 0) {
+      const qs = url.search.slice(1); // preserves the user's filter params
+      return html(
+        <div style="font-size:12px;color:var(--yellow);padding:14px 16px;text-align:center;border:1px solid rgba(229,192,123,0.3);background:rgba(229,192,123,0.05);border-radius:6px;">
+          <div style="margin-bottom:10px;font-weight:600;">Server is busy.</div>
+          <div style="margin-bottom:12px;color:var(--text-dim);font-size:11px;">The unreviewed-audits scan timed out — usually a brief Firestore wedge that clears in seconds.</div>
+          <button
+            hx-get={`/api/admin/modal/maintenance/flip-pull?${qs}`}
+            hx-target="#flip-results"
+            hx-swap="innerHTML"
+            style="padding:6px 16px;font-size:11px;background:var(--accent);color:#000;border:none;border-radius:4px;cursor:pointer;font-weight:600;"
+          >
+            Retry now
+          </button>
+        </div>
+      );
+    }
     if (items.length === 0) {
       return html(<div style="font-size:11px;color:var(--text-dim);padding:8px;">No unreviewed audits match the filters.</div>);
     }

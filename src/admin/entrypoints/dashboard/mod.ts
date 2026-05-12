@@ -117,58 +117,11 @@ export class DashboardController {
   private static _dashCache = new Map<string, { value: unknown; expiresAt: number }>();
   private static _dashPending = new Map<string, Promise<unknown>>();
 
-  // 30s SWR cache for audit-history's queryAuditDoneIndex result. The
-  // raw index pull is the slow part (5000-doc paginated read on busy
-  // orgs), and it had been hanging at 60s when Firestore wedges,
-  // taking the entire /admin/audits page down. Same shape as
-  // _dashCache. Background refresh promise NEVER rejects.
-  private static _auditIdxCache = new Map<string, { value: AuditDoneIndexEntry[]; expiresAt: number }>();
-  private static _auditIdxPending = new Map<string, Promise<AuditDoneIndexEntry[] | null>>();
-
-  /** Stale-while-revalidate wrapper around queryAuditDoneIndex. Three
-   *  paths, mirror of dashboardData:
-   *    1) Fresh cache (< 30s old) → return immediately.
-   *    2) Stale cache → return stale value, kick off background refresh.
-   *    3) No cache → start the fetch, await it, populate cache.
-   *
-   *  The background refresh promise must NEVER reject — Deno tears down
-   *  the isolate on unhandled rejections (commit 6fc28ee). Catch all
-   *  errors inside, log, and resolve to null. */
-  private static async _cachedQueryAuditDoneIndex(
-    orgId: string, since: number, until: number,
-  ): Promise<AuditDoneIndexEntry[]> {
-    const key = `${orgId}:${since}:${until}`;
-    const now = Date.now();
-    const cached = DashboardController._auditIdxCache.get(key);
-
-    if (cached && cached.expiresAt > now) return cached.value;
-
-    let pending = DashboardController._auditIdxPending.get(key);
-    if (!pending) {
-      pending = (async () => {
-        try {
-          const entries = await queryAuditDoneIndex(orgId as OrgId, since, until);
-          DashboardController._auditIdxCache.set(key, { value: entries, expiresAt: Date.now() + 30_000 });
-          return entries;
-        } catch (err) {
-          console.error(`❌ [AUDIT-HISTORY] background queryAuditDoneIndex failed key=${key}:`, err);
-          return null;
-        } finally {
-          DashboardController._auditIdxPending.delete(key);
-        }
-      })();
-      DashboardController._auditIdxPending.set(key, pending);
-    }
-
-    if (cached) return cached.value; // stale-serve while pending refreshes
-
-    const fresh = await pending;
-    if (fresh) return fresh;
-    // True cold cache + the fetch failed: surface a clear error to the
-    // controller's outer catch, which will return a soft fallback to the
-    // page route instead of a bare 500.
-    throw new Error("audit-history: cold cache + queryAuditDoneIndex failed");
-  }
+  // NOTE: the SWR cache for queryAuditDoneIndex used to live here
+  // (DashboardController._cachedQueryAuditDoneIndex). It moved to the
+  // repository function itself so /admin/audits/data, /admin/unreviewed-audits
+  // (bulk-flip), and any future caller share the cache. See
+  // src/audit/domain/data/stats-repository/mod.ts:queryAuditDoneIndex.
 
   @Get("dashboard/section") @ReturnedType(OkResponse)
   async dashboardSection(@Query("section") section: string) {
@@ -210,8 +163,10 @@ export class DashboardController {
     let indexEntries: AuditDoneIndexEntry[];
     let reviewedIds: Set<string>;
     try {
-      indexEntries = await DashboardController._cachedQueryAuditDoneIndex(orgId, s, u);
-      console.log(`[AUDIT-HISTORY] queryAuditDoneIndex (cached) returned ${indexEntries.length} entries`);
+      // queryAuditDoneIndex now owns its own SWR cache (was previously
+      // wrapped by _cachedQueryAuditDoneIndex on this controller).
+      indexEntries = await queryAuditDoneIndex(orgId, s, u);
+      console.log(`[AUDIT-HISTORY] queryAuditDoneIndex returned ${indexEntries.length} entries`);
     } catch (err) {
       console.error(`[AUDIT-HISTORY] ❌ queryAuditDoneIndex threw: ${err instanceof Error ? err.message : String(err)}`);
       console.error(`[AUDIT-HISTORY] ❌ stack: ${err instanceof Error && err.stack ? err.stack : "<no stack>"}`);

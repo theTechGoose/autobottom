@@ -1393,19 +1393,20 @@ export async function getReviewedFindingIds(orgId: OrgId): Promise<Set<string>> 
   return ids;
 }
 
-/** Distinct findingIds currently in the review queue (across pending,
- *  active, and decided stores), with one sample ReviewItem per finding
- *  for cheap metadata access. Mirrors the union used by getReviewStats so
- *  the admin /unreviewed-audits list count matches the dashboard's pending
- *  count. Applies the same audit-hidden (dedup soft-hide) filter. */
+/** Distinct findingIds currently in the review queue. Unions
+ *  `review-pending` (waiting) and `review-active` (claimed by a reviewer)
+ *  — the same union getReviewStats uses for pendingAuditCount. Deliberately
+ *  EXCLUDES `review-decided` (questions decided but audit not yet
+ *  finalized); those entries can be months old and would balloon the count
+ *  with historical noise. Applies the audit-hidden (dedup soft-hide)
+ *  filter. */
 export async function getPendingReviewFindings(
   orgId: OrgId,
 ): Promise<Map<string, ReviewItem>> {
   const out = new Map<string, ReviewItem>();
-  const [pending, active, decided, hidden] = await Promise.all([
+  const [pending, active, hidden] = await Promise.all([
     listStoredWithKeys<ReviewItem>("review-pending", orgId),
     listStoredWithKeys<ReviewItem>("review-active", orgId),
-    listStoredWithKeys<ReviewItem>("review-decided", orgId),
     getHiddenFindingIds(orgId),
   ]);
   const ingest = (rows: { key: unknown[]; value: ReviewItem }[]) => {
@@ -1417,7 +1418,6 @@ export async function getPendingReviewFindings(
   };
   ingest(pending);
   ingest(active);
-  ingest(decided);
   return out;
 }
 

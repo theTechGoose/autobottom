@@ -1393,19 +1393,31 @@ export async function getReviewedFindingIds(orgId: OrgId): Promise<Set<string>> 
   return ids;
 }
 
-/** Distinct findingIds currently in `review-pending`, with one sample
- *  ReviewItem per finding (the first one encountered — used for cheap
- *  metadata like recordId/completedAt without re-fetching the finding doc).
- *  Drives the admin /unreviewed-audits list. */
+/** Distinct findingIds currently in the review queue (across pending,
+ *  active, and decided stores), with one sample ReviewItem per finding
+ *  for cheap metadata access. Mirrors the union used by getReviewStats so
+ *  the admin /unreviewed-audits list count matches the dashboard's pending
+ *  count. Applies the same audit-hidden (dedup soft-hide) filter. */
 export async function getPendingReviewFindings(
   orgId: OrgId,
 ): Promise<Map<string, ReviewItem>> {
   const out = new Map<string, ReviewItem>();
-  const rows = await listStoredWithKeys<ReviewItem>("review-pending", orgId);
-  for (const { key, value } of rows) {
-    const fid = String(key[0]);
-    if (!out.has(fid) && value) out.set(fid, value);
-  }
+  const [pending, active, decided, hidden] = await Promise.all([
+    listStoredWithKeys<ReviewItem>("review-pending", orgId),
+    listStoredWithKeys<ReviewItem>("review-active", orgId),
+    listStoredWithKeys<ReviewItem>("review-decided", orgId),
+    getHiddenFindingIds(orgId),
+  ]);
+  const ingest = (rows: { key: unknown[]; value: ReviewItem }[]) => {
+    for (const { key, value } of rows) {
+      const fid = String(key[0]);
+      if (!value || hidden.has(fid)) continue;
+      if (!out.has(fid)) out.set(fid, value);
+    }
+  };
+  ingest(pending);
+  ingest(active);
+  ingest(decided);
   return out;
 }
 

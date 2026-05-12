@@ -742,15 +742,19 @@ export class AdminConfigController {
     });
 
     // Authoritative enrichment: read the finding doc for every candidate
-    // (capped at 500). The finding is the source of truth for both
-    // reviewedAt and reviewScore — if it says reviewed, it's reviewed,
-    // regardless of whether review-done has a marker. Score range is
-    // checked against the LIVE finding score, so a stale index entry can
-    // no longer slip a "100%" audit into the unreviewed list.
+    // (capped at 500). Score range is checked against the LIVE finding
+    // score (reviewScore preferred, falls back to score, then index), so a
+    // stale index entry can no longer slip a 100%-er into the list.
+    //
+    // NOTE: deliberately NOT filtering on finding.reviewedAt. That field is
+    // stamped by adminFlipQuestion on every pencil-flip, not just on
+    // finalize, so it lights up for in-progress reviews that still need
+    // work. "Fully finalized" is signaled by review-done membership (set
+    // only by finalizeReviewedAudit and adminFlipFinding) and is already
+    // filtered in the pre-filter via reviewedIds.has().
     const enriched = await Promise.all(candidates.slice(0, 500).map(async (e: any) => {
       const finding = await getFinding(ORG(), e.findingId);
       if (!finding) return null; // orphan / migration casualty — drop
-      if ((finding as any).reviewedAt) return null; // already reviewed
       const liveScore = typeof (finding as any).reviewScore === "number"
         ? (finding as any).reviewScore
         : (typeof (finding as any).score === "number" ? (finding as any).score

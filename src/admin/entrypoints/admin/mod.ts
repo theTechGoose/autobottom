@@ -270,22 +270,37 @@ export class AdminConfigController {
     const b = body as any;
     const findingIds: string[] = b.findingIds ?? [];
     if (!findingIds.length) return { error: "findingIds array required" };
-    const { adminFlipFindingLegacy } = await import("@review/domain/business/review-queue/mod.ts");
-    let flipped = 0;
-    const failed: string[] = [];
-    // Per-item try/catch so one FS-abort doesn't lose every subsequent
-    // flip in the batch. Partial success is acceptable; the response tells
-    // the caller exactly which ids didn't flip and they can re-bulk-flip
-    // just those (idempotent).
-    for (const fid of findingIds) {
-      try {
-        const r = await adminFlipFindingLegacy(ORG(), fid);
-        if (r.success) flipped++; else failed.push(fid);
-      } catch (err) {
-        console.warn(`⚠️ [BULK-FLIP] ${fid} failed:`, err);
-        failed.push(fid);
-      }
+    // Hard cap at 50 per request. Sequential bulk-flip with 500 IDs took
+    // ~4 minutes and 503'd at the edge timeout. The frontend now chunks
+    // into batches of 50 and sends sequential POSTs via the flip-start
+    // /flip-tick worker pattern; rejecting >50 here is defense in depth
+    // against any caller (including a misbehaving client) that bypasses
+    // chunking.
+    const MAX_PER_CALL = 50;
+    if (findingIds.length > MAX_PER_CALL) {
+      return { error: `batch too large (max ${MAX_PER_CALL}, got ${findingIds.length})`, retry: false };
     }
+    const { adminFlipFindingLegacy } = await import("@review/domain/business/review-queue/mod.ts");
+
+    // Parallelize within the batch — 10 in flight. 50 sequential × ~500ms
+    // = 25s (right at edge timeout). Parallel-10: ~2-3s per batch.
+    const PARALLEL = 10;
+    const results: Array<{ id: string; ok: boolean }> = [];
+    for (let i = 0; i < findingIds.length; i += PARALLEL) {
+      const chunk = findingIds.slice(i, i + PARALLEL);
+      const r = await Promise.all(chunk.map(async (fid) => {
+        try {
+          const res = await adminFlipFindingLegacy(ORG(), fid);
+          return { id: fid, ok: res.success };
+        } catch (err) {
+          console.warn(`⚠️ [BULK-FLIP] ${fid} failed:`, err);
+          return { id: fid, ok: false };
+        }
+      }));
+      results.push(...r);
+    }
+    const flipped = results.filter((r) => r.ok).length;
+    const failed = results.filter((r) => !r.ok).map((r) => r.id);
     return { ok: failed.length === 0, flipped, total: findingIds.length, failed, ...(failed.length ? { retry: true } : {}) };
   }
 

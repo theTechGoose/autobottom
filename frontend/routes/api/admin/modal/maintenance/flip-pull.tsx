@@ -79,12 +79,17 @@ function FlipResultTable({ items, total }: { items: UnreviewedItem[]; total: num
           inspect fragment lands here. Lives ABOVE the table so it doesn't
           get scrolled past. Empty by default. */}
       <div id="orphan-inspect-result" style="margin-bottom:10px;"></div>
-      <form hx-post="/api/admin/modal/maintenance/flip-exec" hx-target="#flip-results" hx-swap="innerHTML" hx-confirm="Flip the audits to 100%? This cannot be undone.">
+      <form hx-post="/api/admin/modal/maintenance/flip-start" hx-target="#flip-results" hx-swap="innerHTML" hx-confirm="Flip the audits to 100%? This cannot be undone.">
         {/* Hidden field carrying EVERY item's findingId, regardless of whether
             its checkbox is checked. Used by the "Flip All" button — without
             these, only the checked rows submit `findingId` values, so Flip All
             sent an empty array and the backend rejected with
-            "findingIds array required". */}
+            "findingIds array required".
+            POSTs to /flip-start instead of /flip-exec — kickoff/tick pattern
+            replaces the single-shot 503-prone bulk POST. The kickoff response
+            swaps the action buttons for a live progress bar that auto-ticks
+            until done, then fires a `flip-complete` event that re-runs the
+            outer Pull Unreviewed form to refresh the table. */}
         {items.map((i) => (
           <input type="hidden" name="allFindingId" value={i.findingId} />
         ))}

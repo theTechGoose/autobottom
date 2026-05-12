@@ -197,6 +197,11 @@ function BulkFlipPanel() {
         hx-swap="innerHTML"
         hx-disabled-elt="find button[type='submit']"
         hx-indicator="find button[type='submit']"
+        // submit = normal Pull Unreviewed button click
+        // flip-complete from:body = re-fire after a chunked-flip run finishes
+        //   so the table refreshes to show whatever's left. The flip-tick
+        //   endpoint sends `HX-Trigger: flip-complete` on its final response.
+        hx-trigger="submit, flip-complete from:body"
       >
         <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:8px;">
           <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" value={weekAgo} /></div>

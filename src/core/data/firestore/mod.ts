@@ -382,20 +382,38 @@ const FS_AUTH_CAP = 5;
 // Lazy init so unit tests that import this module without exercising
 // fsFetch don't leak HTTP-client resources. Each is created on first
 // real FS call from its lane and reused for the isolate's lifetime.
+//
+// Force HTTP/1.1 — HTTP/2 multiplexes streams over one TCP connection, so
+// when one stream stalls (Google frontend hiccup, Deno h2 client quirk),
+// every other in-flight stream on that connection wedges with it. That's
+// the 25s [FS-PROFILE] abort pattern we've been fighting all session.
+// HTTP/1.1 has no multiplexing — each request gets its own TCP slot from
+// the pool, one slow request can't drag others down. Higher per-request
+// connection overhead, but lane caps + keep-alive keep that bounded.
+const HTTP1_ONLY_OPTS: Deno.CreateHttpClientOptions = { http1: true, http2: false };
 let _foregroundHttpClient: Deno.HttpClient | null = null;
 let _backgroundHttpClient: Deno.HttpClient | null = null;
 let _authHttpClient: Deno.HttpClient | null = null;
 
 function getHttpClientForLane(lane: FsLane): Deno.HttpClient {
   if (lane === "background") {
-    if (!_backgroundHttpClient) _backgroundHttpClient = Deno.createHttpClient({});
+    if (!_backgroundHttpClient) {
+      _backgroundHttpClient = Deno.createHttpClient(HTTP1_ONLY_OPTS);
+      console.log(`🔧 [FS-HTTP] lane=background client created (HTTP/1.1 only)`);
+    }
     return _backgroundHttpClient;
   }
   if (lane === "auth") {
-    if (!_authHttpClient) _authHttpClient = Deno.createHttpClient({});
+    if (!_authHttpClient) {
+      _authHttpClient = Deno.createHttpClient(HTTP1_ONLY_OPTS);
+      console.log(`🔧 [FS-HTTP] lane=auth client created (HTTP/1.1 only)`);
+    }
     return _authHttpClient;
   }
-  if (!_foregroundHttpClient) _foregroundHttpClient = Deno.createHttpClient({});
+  if (!_foregroundHttpClient) {
+    _foregroundHttpClient = Deno.createHttpClient(HTTP1_ONLY_OPTS);
+    console.log(`🔧 [FS-HTTP] lane=foreground client created (HTTP/1.1 only)`);
+  }
   return _foregroundHttpClient;
 }
 let _fsForegroundInFlight = 0;

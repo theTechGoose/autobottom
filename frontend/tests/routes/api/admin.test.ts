@@ -1,13 +1,18 @@
 import { assertEquals } from "@std/assert";
 import { mockFetch, createCtx } from "../../helpers/mock-fetch.ts";
+import { _resetFragmentCacheForTests } from "../../../lib/fragment-cache.ts";
 
 import { handler as statsHandler } from "../../../routes/api/admin/stats.tsx";
 import { handler as queueActionHandler } from "../../../routes/api/admin/queue-action.ts";
 import { handler as retryHandler } from "../../../routes/api/admin/retry.ts";
 
 // === STATS ===
+// stats.tsx wraps its render in withFragmentCache, whose module-scope cache
+// persists across tests in the same isolate. Reset before each stats test
+// so test order doesn't determine pass/fail.
 
 Deno.test("stats — returns stat-grid HTML on success", async () => {
+  _resetFragmentCacheForTests();
   const mock = mockFetch({
     "/admin/dashboard/data": { body: { pipeline: { inPipe: 5, completed24h: 20, errors24h: 1, retries24h: 3, active: [{ findingId: "a" }], errors: [{ findingId: "b" }] }, review: { pending: 10, decided: 50, pendingAuditCount: 4 } } },
   });
@@ -22,6 +27,7 @@ Deno.test("stats — returns stat-grid HTML on success", async () => {
 });
 
 Deno.test("stats — returns fallback on error", async () => {
+  _resetFragmentCacheForTests();
   const mock = mockFetch({ "/admin/dashboard/data": { status: 500, body: {} } });
   try {
     const ctx = createCtx("/api/admin/stats", { cookie: "session=abc" });

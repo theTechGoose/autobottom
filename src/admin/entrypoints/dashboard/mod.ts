@@ -377,15 +377,30 @@ export class DashboardController {
   @Get("delete-finding") @ReturnedType(OkMessageResponse)
   async deleteFinding(@Query("findingId") findingId: string) {
     if (!findingId) return { error: "findingId required" };
-    const { adminDeleteFindingLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
-    await adminDeleteFindingLegacy(ORG(), findingId);
-    return { ok: true, findingId };
+    try {
+      const { adminDeleteFindingLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
+      await adminDeleteFindingLegacy(ORG(), findingId);
+      return { ok: true, findingId };
+    } catch (err) {
+      console.warn(`⚠️ [DELETE-FINDING] ${findingId} failed — soft fallback:`, err);
+      return { ok: false, retry: true, findingId, error: "Server busy, please retry" };
+    }
   }
 
   @Get("audits-by-record") @ReturnedType(AuditsDataResponse)
   async auditsByRecord(@Query("recordId") recordId: string) {
     if (!recordId) return { error: "recordId required" };
-    return { audits: await findAuditsByRecordId(ORG(), recordId) };
+    // Soft-fallback: returns empty list instead of 500. The frontend
+    // [find-by-record.tsx] renders this as "no audits found", which is the
+    // same shape as a legitimate empty result — graceful degradation.
+    // Dispatch-catch in main.ts would also catch this, but the empty-list
+    // shape is friendlier than a generic { retry: true } body for this UI.
+    try {
+      return { audits: await findAuditsByRecordId(ORG(), recordId) };
+    } catch (err) {
+      console.warn(`⚠️ [AUDITS-BY-RECORD] ${recordId} failed — soft fallback:`, err);
+      return { audits: [], retry: true };
+    }
   }
 
   /** Debug: confirms the "step dispatch moved to main.ts" fix shipped. If the

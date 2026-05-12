@@ -56,6 +56,7 @@ import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
+import { buildDispatchErrorResponse } from "@core/business/dispatch-error/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 // --- Pipeline step functions: dispatched DIRECTLY by this handler (bypassing
@@ -116,8 +117,16 @@ async function handleGameState(req: Request): Promise<Response> {
 async function handleGetBadges(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
-  const badges = await getEarnedBadges(auth.orgId, auth.email);
-  return Response.json({ badges });
+  // Soft-fallback: badges fetch is polled from the gamification UI on
+  // dashboards; a 500 here used to break the surrounding stat grid via
+  // the parallel Promise.all in the page handler. Mirror handleGameState.
+  try {
+    const badges = await getEarnedBadges(auth.orgId, auth.email);
+    return Response.json({ badges });
+  } catch (err) {
+    console.warn(`⚠️ [BADGES] failed for ${auth.email} — soft fallback:`, err);
+    return Response.json({ badges: [], retry: true });
+  }
 }
 
 async function handleManagerAuditHistory(req: Request): Promise<Response> {
@@ -839,11 +848,18 @@ Deno.serve({ port }, (req, info) => {
       // Backend-style requests (`/audit/*`, `/admin/*`, etc.) should never
       // return HTML — keep responses JSON so the modal can show the real
       // error instead of Fresh's _500.tsx page.
+      //
+      // FOOLPROOF SAFETY NET: buildDispatchErrorResponse() detects FS abort
+      // errors and converts them to a structured retry response instead of a
+      // raw 500. Reviewers were seeing `500 {"message":"signal aborted"}`
+      // bubble up from endpoints we hadn't explicitly wrapped (e.g.
+      // /admin/audits-by-record, /manager/api/*). Per-endpoint try/catch with
+      // shape-correct fallback is still preferred for user-blocking GETs,
+      // but this branch guarantees no raw abort reaches the client
+      // regardless of which controller throws. Contract is unit-tested in
+      // tests/dispatch-catch.test.ts.
       console.error(`❌ [DISPATCH-CATCH] ${req.method} ${path} threw:`, err);
-      return Response.json(
-        { ok: false, error: (err as Error).message ?? String(err), path, method: req.method },
-        { status: 500 },
-      );
+      return buildDispatchErrorResponse(err, { method: req.method, path });
     }
   });
 });

@@ -27,6 +27,16 @@ const _pending = new Map<string, Promise<string>>();
 
 const DEFAULT_TTL_MS = 5_000;
 
+/** Test-only: clear the module-scope cache + pending maps. Needed because
+ *  tests sharing the same isolate would otherwise see entries that a prior
+ *  test populated, which breaks test isolation (e.g. test A's success path
+ *  poisons test B's expected-error-fallback path). Call from beforeEach /
+ *  setUp in any test file that exercises withFragmentCache(). */
+export function _resetFragmentCacheForTests(): void {
+  _cache.clear();
+  _pending.clear();
+}
+
 export async function withFragmentCache(
   key: string,
   renderer: () => Promise<string>,

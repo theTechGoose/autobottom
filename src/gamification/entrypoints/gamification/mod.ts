@@ -39,8 +39,17 @@ export class GamificationPageController {
 
   @Get("leaderboard") @ReturnedType(MessageResponse)
   async leaderboard() {
-    const { getLeaderboard } = await import("@gamification/domain/business/leaderboard/mod.ts");
-    return { entries: await getLeaderboard(ORG(), 10) };
+    // Soft-fallback: review/judge/manager dashboards all call this in
+    // parallel with their main panel fetch. A 500 here used to leak
+    // through the parallel Promise.all and break the entire page render.
+    // Empty leaderboard is acceptable; broken dashboard is not.
+    try {
+      const { getLeaderboard } = await import("@gamification/domain/business/leaderboard/mod.ts");
+      return { entries: await getLeaderboard(ORG(), 10) };
+    } catch (err) {
+      console.warn(`⚠️ [GAMIFICATION] leaderboard failed — soft fallback:`, err);
+      return { entries: [], retry: true };
+    }
   }
 
   @Get("settings") @ReturnedType(GamificationSettingsResponse)

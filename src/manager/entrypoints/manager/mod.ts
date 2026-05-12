@@ -14,12 +14,23 @@ import { getAuditHistory } from "@manager/domain/business/audit-history/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
 
+/** Soft-fallback helper for FS aborts on user-facing GETs. Mirrors the
+ *  pattern used by ReviewController.softFail — keeps the manager dashboard
+ *  rendering with empty/zeroed shapes instead of surfacing a raw 500. */
+function softFail<T>(ctx: string, err: unknown, fallback: T): T {
+  console.warn(`⚠️ [MANAGER] ${ctx} failed — soft fallback:`, err);
+  return fallback;
+}
+
 @SwaggerDescription("Manager — failure remediation and team management")
 @Controller("manager/api")
 export class ManagerController {
 
   @Get("queue") @ReturnedType(ManagerQueueResponse) @Description("List manager queue items")
-  async queueList() { return { items: await getManagerQueue(ORG()) }; }
+  async queueList() {
+    try { return { items: await getManagerQueue(ORG()) }; }
+    catch (err) { return softFail("queueList", err, { items: [], retry: true }); }
+  }
 
   @Get("finding") @ReturnedType(FindingResponse) @Description("Get finding detail")
   async finding(@Query("findingId") findingId: string) {
@@ -35,14 +46,20 @@ export class ManagerController {
   }
 
   @Get("stats") @ReturnedType(ManagerStatsResponse) @Description("Manager queue statistics")
-  async stats() { return getManagerStats(ORG()); }
+  async stats() {
+    try { return await getManagerStats(ORG()); }
+    catch (err) { return softFail("stats", err, { pending: 0, decided: 0, total: 0, retry: true }); }
+  }
 
   // /manager/api/me and /manager/api/game-state are dispatched directly from
   // main.ts (AUTH_CONTEXT_HANDLERS) — they need the session cookie and danet's
   // @Req doesn't work via router.fetch. Same pattern as /admin/api/me.
 
   @Get("agents") @ReturnedType(AgentListResponse) @Description("List team agents")
-  async listAgents() { return { agents: await listUsers(ORG(), "user") }; }
+  async listAgents() {
+    try { return { agents: await listUsers(ORG(), "user") }; }
+    catch (err) { return softFail("listAgents", err, { agents: [], retry: true }); }
+  }
 
   @Post("agents") @ReturnedType(OkResponse) @BodyType(CreateAgentRequest)
   async createAgent(@Body() body: { email: string; password: string; supervisor?: string }) {

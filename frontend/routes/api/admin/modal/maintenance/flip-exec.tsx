@@ -9,15 +9,17 @@ interface FlipResp { ok?: boolean; flipped?: number; total?: number; error?: str
 export const handler = define.handlers({
   async POST(ctx) {
     const form = await ctx.req.formData();
-    const ids = form.getAll("findingId").map((v) => String(v)).filter(Boolean);
+    const checkedIds = form.getAll("findingId").map((v) => String(v)).filter(Boolean);
+    // Hidden fields emitted by flip-pull.tsx for every row in the table —
+    // used by "Flip All" so we don't depend on every checkbox being checked.
+    const allIds = form.getAll("allFindingId").map((v) => String(v)).filter(Boolean);
     const mode = form.get("mode")?.toString() ?? "selected";
-    if (mode === "selected" && ids.length === 0) {
-      return html(<div class="error-text" style="font-size:11px;">No rows selected.</div>);
+    // "all" → use the hidden full-list; "selected" → use only the checked rows.
+    const ids = mode === "all" ? allIds : checkedIds;
+    if (ids.length === 0) {
+      const msg = mode === "all" ? "No audits in the result table to flip." : "No rows selected.";
+      return html(<div class="error-text" style="font-size:11px;">{msg}</div>);
     }
-    // For "all" mode, the form already includes every checkbox-able row's id
-    // — but only the checked ones submit "findingId". To get all, we'd need
-    // hidden fields. For now "all" requires the user to manually select all
-    // rows; if mode === "all" but no ids, ask them to select.
     let r: FlipResp;
     try {
       r = await apiPost<FlipResp>("/admin/bulk-flip", ctx.req, { findingIds: ids });

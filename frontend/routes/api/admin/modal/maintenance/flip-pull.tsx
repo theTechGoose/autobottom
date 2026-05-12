@@ -50,7 +50,15 @@ function FlipResultTable({ items, total }: { items: UnreviewedItem[]; total: num
   return (
     <div>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">{total} unreviewed audit(s) found{items.length < total ? ` — showing first ${items.length}` : ""}.</div>
-      <form hx-post="/api/admin/modal/maintenance/flip-exec" hx-target="#flip-results" hx-swap="innerHTML" hx-confirm="Flip the checked audits to 100%? This cannot be undone.">
+      <form hx-post="/api/admin/modal/maintenance/flip-exec" hx-target="#flip-results" hx-swap="innerHTML" hx-confirm="Flip the audits to 100%? This cannot be undone.">
+        {/* Hidden field carrying EVERY item's findingId, regardless of whether
+            its checkbox is checked. Used by the "Flip All" button — without
+            these, only the checked rows submit `findingId` values, so Flip All
+            sent an empty array and the backend rejected with
+            "findingIds array required". */}
+        {items.map((i) => (
+          <input type="hidden" name="allFindingId" value={i.findingId} />
+        ))}
         <div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
           <table style="width:100%;border-collapse:collapse;font-size:11px;">
             <thead>

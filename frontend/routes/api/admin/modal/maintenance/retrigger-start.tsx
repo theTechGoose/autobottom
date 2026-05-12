@@ -1,8 +1,7 @@
-/** Chunked Cleanup re-trigger — phase 2: confirm + start ticking.
+/** Chunked Cleanup re-trigger — phase 2 confirmation handler.
  *
- *  Transitions a pending job to running and returns the first tickable
- *  RetriggerProgress fragment. The fragment self-triggers /retrigger-tick
- *  which chews 25 fids per batch until the job is empty. */
+ *  Transitions a pending job to running (copies matches → remaining)
+ *  and returns the first tickable RetriggerProgress fragment. */
 
 import { define } from "../../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
@@ -28,14 +27,19 @@ export const handler = define.handlers({
     return html(
       <RetriggerProgress
         jobId={jobId}
-        phase="running"
-        total={job.total}
+        phase={job.phase}
+        total={job.allFids.length}
+        scanned={job.allFids.length}
+        matched={job.matches.length}
+        rejectedFinished={job.rejectedFinished}
+        rejectedOutOfRange={job.rejectedOutOfRange}
+        rejectedMissing={job.rejectedMissing}
         requeued={0}
         failed={[]}
         remaining={job.remaining.length}
         elapsedMs={0}
-        since=""
-        until=""
+        since={new Date(job.sinceMs).toISOString().slice(0, 10)}
+        until={new Date(job.untilMs).toISOString().slice(0, 10)}
       />,
     );
   },

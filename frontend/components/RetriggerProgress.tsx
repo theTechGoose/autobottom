@@ -1,18 +1,24 @@
 /** Progress fragment for the chunked Cleanup → Re-trigger flow.
  *
- *  Three render modes:
- *  - phase="pending": scan complete, show count + "Re-trigger N audits"
- *    confirmation button. No auto-tick; waits for the operator.
- *  - phase="running": actively ticking. Re-renders with updated count
- *    every batch; self-triggers /retrigger-tick on a 200ms delay.
- *  - phase="done": terminal. Shows the requeued + failed totals. */
+ *  Four phases:
+ *  - "scanning": ticking through pasted fids, per-fid date+status check.
+ *                Self-triggers /retrigger-scan-tick.
+ *  - "pending":  scan done. Renders count + Re-trigger / Cancel buttons.
+ *                No auto-tick; waits for operator confirmation.
+ *  - "running":  publishing step-init per match. Self-triggers /retrigger-tick.
+ *  - "done":     terminal. */
 
 import type { VNode } from "preact";
 
 export function RetriggerProgress(props: {
   jobId: string;
-  phase: "pending" | "running" | "done";
+  phase: "scanning" | "pending" | "running" | "done";
   total: number;
+  scanned: number;
+  matched: number;
+  rejectedFinished: number;
+  rejectedOutOfRange: number;
+  rejectedMissing: number;
   requeued: number;
   failed: string[];
   remaining: number;
@@ -20,10 +26,39 @@ export function RetriggerProgress(props: {
   since: string;
   until: string;
 }): VNode {
-  const { jobId, phase, total, requeued, failed, remaining, elapsedMs, since, until } = props;
-  const processed = total - remaining;
-  const pct = total === 0 ? 0 : Math.round((processed / total) * 100);
+  const {
+    jobId, phase, total,
+    scanned, matched, rejectedFinished, rejectedOutOfRange, rejectedMissing,
+    requeued, failed, remaining, elapsedMs, since, until,
+  } = props;
   const elapsedSec = Math.round(elapsedMs / 1000);
+
+  if (phase === "scanning") {
+    const pct = total === 0 ? 0 : Math.round((scanned / total) * 100);
+    return (
+      <div
+        hx-post={`/api/admin/modal/maintenance/retrigger-scan-tick?jobId=${jobId}`}
+        hx-target="#cleanup-msg"
+        hx-swap="innerHTML"
+        hx-trigger="load delay:200ms"
+        style="padding:14px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg);"
+      >
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text-bright);text-transform:uppercase;letter-spacing:0.5px;">Scanning candidates…</div>
+          <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);">{scanned} / {total} ({pct}%) · {elapsedSec}s</div>
+        </div>
+        <div style="height:6px;background:var(--bg-raised);border-radius:3px;overflow:hidden;margin-bottom:10px;">
+          <div style={`height:100%;width:${pct}%;background:var(--accent);transition:width 200ms linear;`}></div>
+        </div>
+        <div style="font-size:11px;color:var(--text-dim);display:flex;gap:14px;flex-wrap:wrap;">
+          <span><span style="color:var(--green);">●</span> Matched: <strong style="color:var(--text-bright);">{matched}</strong></span>
+          <span><span style="color:var(--text-dim);">●</span> Finished (skip): <strong>{rejectedFinished}</strong></span>
+          <span><span style="color:var(--text-dim);">●</span> Out of range: <strong>{rejectedOutOfRange}</strong></span>
+          <span><span style="color:var(--text-dim);">●</span> Missing: <strong>{rejectedMissing}</strong></span>
+        </div>
+      </div>
+    );
+  }
 
   if (phase === "pending") {
     return (
@@ -32,13 +67,15 @@ export function RetriggerProgress(props: {
           Scan complete — confirm to re-trigger
         </div>
         <div style="font-size:12px;color:var(--text-bright);margin-bottom:4px;">
-          <strong>{total}</strong> drained audit(s) found with startedAt between {since} and {until}.
+          <strong>{matched}</strong> of {total} pasted fid(s) match: status ≠ "finished" AND startedAt between {since} and {until}.
+        </div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px;display:flex;gap:14px;flex-wrap:wrap;">
+          <span>Already finished (skipped): {rejectedFinished}</span>
+          <span>Outside date range: {rejectedOutOfRange}</span>
+          <span>Missing finding doc: {rejectedMissing}</span>
         </div>
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px;">
-          Clicking the button below re-publishes step-init for each. QStash queue parallelism
-          throttles the resulting load — audits flow through transcribe → prepare → ask-all
-          → finalize at the same rate as normal traffic. The finding doc, transcript, and
-          audit-job are reused; same findingId.
+          Clicking the button below re-publishes step-init for each match. QStash queue parallelism throttles the resulting load. Same findingId, runs through transcribe → prepare → ask-all → finalize fresh.
         </div>
         <div style="display:flex;gap:8px;">
           <button
@@ -47,8 +84,9 @@ export function RetriggerProgress(props: {
             hx-post={`/api/admin/modal/maintenance/retrigger-start?jobId=${jobId}`}
             hx-target="#cleanup-msg"
             hx-swap="innerHTML"
-            hx-confirm={`Re-trigger ${total} audit(s) via step-init? Cannot be cancelled once started.`}
-          >Re-trigger {total} audit{total === 1 ? "" : "s"}</button>
+            hx-confirm={`Re-trigger ${matched} audit(s) via step-init?`}
+            disabled={matched === 0}
+          >Re-trigger {matched} audit{matched === 1 ? "" : "s"}</button>
           <button
             type="button"
             class="sf-btn ghost"
@@ -62,7 +100,10 @@ export function RetriggerProgress(props: {
     );
   }
 
+  // running / done
   const done = phase === "done";
+  const processed = matched - remaining;
+  const pct = matched === 0 ? 100 : Math.round((processed / matched) * 100);
   return (
     <div
       {...(done
@@ -80,14 +121,12 @@ export function RetriggerProgress(props: {
           {done ? "Re-trigger complete" : "Re-triggering…"}
         </div>
         <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);">
-          {processed} / {total} ({pct}%) · {elapsedSec}s
+          {processed} / {matched} ({pct}%) · {elapsedSec}s
         </div>
       </div>
-
       <div style="height:6px;background:var(--bg-raised);border-radius:3px;overflow:hidden;margin-bottom:10px;">
         <div style={`height:100%;width:${pct}%;background:${done ? "var(--green)" : "var(--accent)"};transition:width 200ms linear;`}></div>
       </div>
-
       <div style="font-size:11px;color:var(--text-dim);display:flex;gap:14px;flex-wrap:wrap;">
         <span><span style="color:var(--green);">●</span> Re-queued: <strong style="color:var(--text-bright);">{requeued}</strong></span>
         {failed.length > 0 && (
@@ -97,7 +136,6 @@ export function RetriggerProgress(props: {
           <span><span style="color:var(--text-dim);">●</span> Remaining: <strong style="color:var(--text-bright);">{remaining}</strong></span>
         )}
       </div>
-
       {done && failed.length > 0 && (
         <details style="margin-top:10px;font-size:11px;">
           <summary style="cursor:pointer;color:var(--red);">Show {failed.length} failed finding ID(s)</summary>

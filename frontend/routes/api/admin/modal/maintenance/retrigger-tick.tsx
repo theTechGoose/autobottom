@@ -1,9 +1,9 @@
-/** Chunked Cleanup re-trigger — per-batch worker.
+/** Chunked Cleanup re-trigger — per-batch worker (running phase).
  *
- *  Pops the next 25 fids off the running job, POSTs them to backend
- *  /admin/retrigger-fids-batch (which calls publishStep("init", ...) for
- *  each), updates the requeued/failed counters, and re-renders the
- *  RetriggerProgress fragment. Self-triggers until empty. */
+ *  Pops the next 25 fids off job.remaining, posts to backend
+ *  /admin/retrigger-fids-batch which calls publishStep("init", ...) per
+ *  fid, updates counters, re-renders RetriggerProgress. Self-triggers
+ *  until empty. */
 
 import { define } from "../../../../../lib/define.ts";
 import { apiPost } from "../../../../../lib/api.ts";
@@ -25,7 +25,7 @@ export const handler = define.handlers({
       return new Response(
         renderToString(
           <div class="error-text" style="font-size:11px;padding:10px;border:1px solid var(--red);border-radius:6px;">
-            Re-trigger job not found (likely an isolate restart). Some fids may have already been re-queued. Re-scan to see what's left.
+            Re-trigger job not found (likely an isolate restart). Some fids may already be re-queued. Re-scan to see what's left.
           </div>,
         ),
         { headers: { "content-type": "text/html" } },
@@ -53,17 +53,22 @@ export const handler = define.handlers({
       <RetriggerProgress
         jobId={jobId}
         phase={job.phase}
-        total={job.total}
+        total={job.allFids.length}
+        scanned={job.allFids.length}
+        matched={job.matches.length}
+        rejectedFinished={job.rejectedFinished}
+        rejectedOutOfRange={job.rejectedOutOfRange}
+        rejectedMissing={job.rejectedMissing}
         requeued={job.requeued}
         failed={job.failed}
         remaining={job.remaining.length}
         elapsedMs={elapsedMs}
-        since=""
-        until=""
+        since={new Date(job.sinceMs).toISOString().slice(0, 10)}
+        until={new Date(job.untilMs).toISOString().slice(0, 10)}
       />,
     );
     if (done) {
-      console.log(`✅ [RETRIGGER-TICK] jobId=${jobId} DONE total=${job.total} requeued=${job.requeued} failed=${job.failed.length} elapsed=${Math.round(elapsedMs / 1000)}s`);
+      console.log(`✅ [RETRIGGER-TICK] jobId=${jobId} DONE matched=${job.matches.length} requeued=${job.requeued} failed=${job.failed.length} elapsed=${Math.round(elapsedMs / 1000)}s`);
       deleteRetriggerJob(jobId);
     }
     return new Response(fragment, { headers: { "content-type": "text/html" } });

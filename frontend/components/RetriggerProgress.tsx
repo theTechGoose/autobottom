@@ -16,6 +16,7 @@ export function RetriggerProgress(props: {
   total: number;
   scanned: number;
   matched: number;
+  matchedFids: string[];
   rejectedFinished: number;
   rejectedOutOfRange: number;
   rejectedMissing: number;
@@ -28,7 +29,7 @@ export function RetriggerProgress(props: {
 }): VNode {
   const {
     jobId, phase, total,
-    scanned, matched, rejectedFinished, rejectedOutOfRange, rejectedMissing,
+    scanned, matched, matchedFids, rejectedFinished, rejectedOutOfRange, rejectedMissing,
     requeued, failed, remaining, elapsedMs, since, until,
   } = props;
   const elapsedSec = Math.round(elapsedMs / 1000);
@@ -56,6 +57,14 @@ export function RetriggerProgress(props: {
           <span><span style="color:var(--text-dim);">●</span> Out of range: <strong>{rejectedOutOfRange}</strong></span>
           <span><span style="color:var(--text-dim);">●</span> Missing: <strong>{rejectedMissing}</strong></span>
         </div>
+        {matchedFids.length > 0 && (
+          <details style="margin-top:10px;font-size:11px;">
+            <summary style="cursor:pointer;color:var(--text-bright);">Show {matchedFids.length} matched finding ID{matchedFids.length === 1 ? "" : "s"} so far</summary>
+            <pre style="margin-top:6px;padding:8px;background:var(--bg-raised);border-radius:4px;font-size:10px;max-height:200px;overflow:auto;color:var(--text-dim);">
+              {matchedFids.join("\n")}
+            </pre>
+          </details>
+        )}
       </div>
     );
   }
@@ -77,6 +86,14 @@ export function RetriggerProgress(props: {
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px;">
           Clicking the button below re-publishes step-init for each match. QStash queue parallelism throttles the resulting load. Same findingId, runs through transcribe → prepare → ask-all → finalize fresh.
         </div>
+        {matchedFids.length > 0 && (
+          <details style="margin-bottom:12px;font-size:11px;" open>
+            <summary style="cursor:pointer;color:var(--text-bright);">Show {matchedFids.length} matched finding ID{matchedFids.length === 1 ? "" : "s"} (click summary to collapse)</summary>
+            <pre style="margin-top:6px;padding:8px;background:var(--bg-raised);border-radius:4px;font-size:10px;max-height:240px;overflow:auto;color:var(--text-dim);">
+              {matchedFids.join("\n")}
+            </pre>
+          </details>
+        )}
         <div style="display:flex;gap:8px;">
           <button
             class="sf-btn primary"

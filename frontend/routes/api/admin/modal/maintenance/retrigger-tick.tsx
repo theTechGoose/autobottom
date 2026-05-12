@@ -56,6 +56,7 @@ export const handler = define.handlers({
         total={job.allFids.length}
         scanned={job.allFids.length}
         matched={job.matches.length}
+        matchedFids={job.matches}
         rejectedFinished={job.rejectedFinished}
         rejectedOutOfRange={job.rejectedOutOfRange}
         rejectedMissing={job.rejectedMissing}

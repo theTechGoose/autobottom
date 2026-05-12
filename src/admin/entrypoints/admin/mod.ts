@@ -723,7 +723,13 @@ export class AdminConfigController {
     const isBypassed = (dept: string) =>
       bypassPatterns.length > 0 && bypassPatterns.some((p: string) => dept.toLowerCase().includes(p));
 
-    const unreviewed = indexEntries.filter((e: any) => {
+    // Cheap pre-filter: drop entries we KNOW are out of scope based on index
+    // metadata alone (reviewed marker, bypass office, type/owner/department/
+    // shift facets). Deliberately does NOT filter on e.score — the index
+    // score is a derived cache that drifts when pencil-flips landed before
+    // adminFlipQuestion started writing the index. The authoritative score
+    // lives on the finding doc and is checked in the enrichment loop below.
+    const candidates = indexEntries.filter((e: any) => {
       if (reviewedIds.has(e.findingId)) return false;
       if (e.reason === "perfect_score" || e.reason === "invalid_genie") return false;
       if (isBypassed(e.department ?? "")) return false;
@@ -732,16 +738,24 @@ export class AdminConfigController {
       if (owner && (e.voName || e.owner) !== owner) return false;
       if (department && e.department !== department) return false;
       if (shift && e.shift !== shift) return false;
-      if (e.score != null && (e.score < scoreMin || e.score > scoreMax)) return false;
       return true;
     });
 
-    const items = await Promise.all(unreviewed.slice(0, 500).map(async (e: any) => {
-      if (e.voName !== undefined || e.owner !== undefined) {
-        return { findingId: e.findingId, recordId: e.recordId, voName: e.voName, owner: e.owner, department: e.department, shift: e.shift, score: e.score, isPackage: e.isPackage, ts: e.completedAt };
-      }
+    // Authoritative enrichment: read the finding doc for every candidate
+    // (capped at 500). The finding is the source of truth for both
+    // reviewedAt and reviewScore — if it says reviewed, it's reviewed,
+    // regardless of whether review-done has a marker. Score range is
+    // checked against the LIVE finding score, so a stale index entry can
+    // no longer slip a "100%" audit into the unreviewed list.
+    const enriched = await Promise.all(candidates.slice(0, 500).map(async (e: any) => {
       const finding = await getFinding(ORG(), e.findingId);
-      if (!finding) return { findingId: e.findingId, recordId: e.recordId, score: e.score, ts: e.completedAt };
+      if (!finding) return null; // orphan / migration casualty — drop
+      if ((finding as any).reviewedAt) return null; // already reviewed
+      const liveScore = typeof (finding as any).reviewScore === "number"
+        ? (finding as any).reviewScore
+        : (typeof (finding as any).score === "number" ? (finding as any).score
+          : (typeof e.score === "number" ? e.score : 0));
+      if (liveScore < scoreMin || liveScore > scoreMax) return null;
       const rec = (finding as Record<string, unknown>).record as Record<string, unknown> | undefined;
       const isPkg = (finding as any).recordingIdField === "GenieNumber";
       const rawVo = String(rec?.VoName ?? "");
@@ -749,20 +763,21 @@ export class AdminConfigController {
       return {
         findingId: e.findingId,
         recordId: e.recordId ?? String(rec?.RecordId ?? ""),
-        voName: vo || undefined,
-        owner: (finding as any).owner as string | undefined,
-        department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined,
-        shift: isPkg ? undefined : String(rec?.Shift ?? "") || undefined,
-        score: e.score,
+        voName: vo || (e.voName as string | undefined),
+        owner: ((finding as any).owner as string | undefined) ?? (e.owner as string | undefined),
+        department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || (e.department as string | undefined),
+        shift: isPkg ? undefined : (String(rec?.Shift ?? "") || (e.shift as string | undefined)),
+        score: liveScore,
         isPackage: isPkg,
         ts: e.completedAt,
       };
     }));
+    const items = enriched.filter((x): x is NonNullable<typeof x> => x !== null);
 
     const owners = [...new Set(items.map((i: any) => i.voName || i.owner).filter(Boolean))].sort();
     const departments = [...new Set(items.map((i: any) => i.department).filter(Boolean))].sort();
     const shifts = [...new Set(items.map((i: any) => i.shift).filter(Boolean))].sort();
-    return { items, total: unreviewed.length, owners, departments, shifts };
+    return { items, total: items.length, owners, departments, shifts };
    } catch (err) {
      // Soft-fallback: this endpoint is heavy (Promise.all over 3 FS scans
      // + per-row getFinding fan-out). Any chunk wedge under load aborts

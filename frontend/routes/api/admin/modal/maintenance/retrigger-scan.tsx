@@ -50,14 +50,21 @@ export const handler = define.handlers({
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
 
-    // Empty paste → enumerate every audit-finding fid via a keys-only
-    // Firestore scan (lightweight; doesn't pull chunked bodies). The
-    // per-fid date+status filter then happens chunk-by-chunk in the
-    // scan-tick loop, so even a 50k-finding org doesn't wedge.
+    const sinceMs = parseSince(sinceStr);
+    const untilMs = parseUntil(untilStr);
+
+    // Empty paste → ask the backend for the fid list, passing the date
+    // range so it can do a server-side Firestore field-filter query on
+    // audit-finding.startedAt. That's O(matches) instead of O(all
+    // findings) — the difference between "instant" and "20-minute scan".
+    // The subsequent scan-tick loop still per-fid double-checks status
+    // and startedAt (so chunked findings without the filter-friendly
+    // field still get filtered correctly when included via the paste
+    // path).
     if (fids.length === 0) {
       let listR: ListResp;
       try {
-        listR = await apiPost<ListResp>("/admin/list-all-finding-ids", ctx.req, {});
+        listR = await apiPost<ListResp>("/admin/list-all-finding-ids", ctx.req, { sinceMs, untilMs });
       } catch (e) {
         return html(<div class="error-text" style="font-size:11px;">Failed to list audit-finding ids: {String(e)}</div>);
       }
@@ -66,14 +73,11 @@ export const handler = define.handlers({
       if (fids.length === 0) {
         return html(
           <div style="font-size:12px;color:var(--green);padding:10px;border:1px solid var(--green);border-radius:6px;">
-            No audit-finding docs exist. Nothing to scan.
+            No audit-finding docs found with startedAt between {new Date(sinceMs).toISOString().slice(0, 10)} and {new Date(untilMs).toISOString().slice(0, 10)}. Nothing to scan.
           </div>,
         );
       }
     }
-
-    const sinceMs = parseSince(sinceStr);
-    const untilMs = parseUntil(untilStr);
 
     const { jobId } = createRetriggerJob(fids, sinceMs, untilMs);
     console.log(`🚀 [RETRIGGER-SCAN] jobId=${jobId} pasted=${fids.length} sinceMs=${sinceMs} untilMs=${untilMs}`);

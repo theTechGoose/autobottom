@@ -771,15 +771,49 @@ export class AdminConfigController {
     return { ok: true, swept, healthy, missing, drained };
   }
 
-  // Lightweight list of every unique findingId in audit-finding. Uses the
-  // keys-only Firestore scan (listStoredKeysAll) so we don't pull chunked
-  // bodies — that's the path that wedged the earlier broad scan. Returns
-  // just the unique first-key-parts (chunks of the same finding dedupe
-  // on the way out). The retrigger flow uses this when the operator
-  // didn't paste a specific list.
+  // List unique findingIds. Two modes:
+  //  (a) If sinceMs/untilMs provided → uses listStoredByCompletedAt against
+  //      audit-finding with fieldName="startedAt", which translates to a
+  //      server-side Firestore field-filter query. Returns ONLY the docs
+  //      whose startedAt falls in range — no broad scan, no chunked body
+  //      pulls. This is the path the Re-trigger flow takes when the
+  //      operator leaves the textarea empty and just picks today/today.
+  //  (b) No dates → falls back to listStoredKeysAll (keys-only) for the
+  //      full enumeration. Kept for any caller that legitimately wants
+  //      every fid (currently unused but cheap to keep).
+  // Note: the field filter only matches docs whose body has startedAt as
+  // a top-level field. Un-chunked audit-finding docs (the common case;
+  // most findings are < 700KB) qualify. Chunked findings whose header is
+  // {totalChunks, totalBytes} would be missed — that's a known gap and
+  // why the textarea-paste path still exists for one-offs.
   @Post("list-all-finding-ids") @ReturnedType(MessageResponse)
-  async listAllFindingIds() {
+  async listAllFindingIds(@Body() body: GenericBodyRequest) {
     const orgId = ORG();
+    const b = body as { sinceMs?: number; untilMs?: number };
+    const sinceMs = Number(b?.sinceMs ?? 0);
+    const untilMs = Number(b?.untilMs ?? 0);
+    if (sinceMs > 0 && untilMs > 0 && untilMs >= sinceMs) {
+      const { listStoredByCompletedAt } = await import("@core/data/firestore/mod.ts");
+      const docs = await listStoredByCompletedAt<Record<string, unknown>>(
+        "audit-finding",
+        orgId,
+        sinceMs,
+        untilMs,
+        { fieldName: "startedAt", limit: 10_000 },
+      );
+      const seen = new Set<string>();
+      const fids: string[] = [];
+      for (const doc of docs) {
+        if (!doc) continue;
+        const fid = String((doc as { id?: string }).id ?? "");
+        if (!fid || seen.has(fid)) continue;
+        seen.add(fid);
+        fids.push(fid);
+      }
+      console.log(`📋 [LIST-FINDING-IDS] mode=startedAt-range sinceMs=${sinceMs} untilMs=${untilMs} returned=${fids.length}`);
+      return { ok: true, fids };
+    }
+
     const { listStoredKeysAll } = await import("@core/data/firestore/mod.ts");
     const rows = await listStoredKeysAll("audit-finding", orgId);
     const seen = new Set<string>();
@@ -790,7 +824,7 @@ export class AdminConfigController {
       seen.add(fid);
       fids.push(fid);
     }
-    console.log(`📋 [LIST-FINDING-IDS] unique=${fids.length} totalKeys=${rows.length}`);
+    console.log(`📋 [LIST-FINDING-IDS] mode=all-keys returned=${fids.length} totalKeys=${rows.length}`);
     return { ok: true, fids };
   }
 

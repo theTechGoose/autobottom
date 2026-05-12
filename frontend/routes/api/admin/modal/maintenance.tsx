@@ -296,7 +296,7 @@ function CleanupPanel() {
 
       <PanelCard
         title="Re-trigger drained audits by date"
-        subtitle="Two ways to scan. (a) Leave the textarea EMPTY and pick a date range — enumerates every audit-finding doc cheaply (keys-only Firestore scan) and chunk-checks each per-fid for status ≠ 'finished' AND startedAt in range. (b) Paste a specific fid list and pick a date range — same filter, but limited to your list. Either path lands in a confirmation card; nothing fires until you click Re-trigger."
+        subtitle="Two ways to scan. (a) Leave the textarea EMPTY and pick a date range — Firestore field-filter query on audit-finding.startedAt returns only docs in that window (server-side index, fast). (b) Paste a specific fid list and pick a date range — same per-fid status + startedAt check, limited to your list (use this to retry chunked findings the field filter would miss). Either path lands in a confirmation card; nothing fires until you click Re-trigger."
       >
         <form
           hx-post="/api/admin/modal/maintenance/retrigger-scan"

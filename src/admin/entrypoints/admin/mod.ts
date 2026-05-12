@@ -726,7 +726,7 @@ export class AdminConfigController {
   async sweepOrphanedCompleted() {
     const orgId = ORG();
     const { listStoredWithKeys } = await import("@core/data/firestore/mod.ts");
-    const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+    const { getFinding, invalidateFindingCache } = await import("@audit/domain/data/audit-repository/mod.ts");
     const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
     const rows = await listStoredWithKeys<{ findingId?: string }>("completed-audit-stat", orgId);
     const seen = new Set<string>();
@@ -736,6 +736,11 @@ export class AdminConfigController {
       if (!fid || seen.has(fid)) continue;
       seen.add(fid);
       scanned++;
+      // Bypass the per-isolate getFinding cache — when a finding was reset
+      // to populating-questions by another isolate, this isolate may still
+      // have a cached "finished" value and would mis-classify the orphan
+      // as healthy. Invalidating forces a fresh Firestore read.
+      invalidateFindingCache(orgId, fid);
       const finding = await getFinding(orgId, fid);
       if (!finding) {
         await resetFindingDerivedState(orgId, fid);

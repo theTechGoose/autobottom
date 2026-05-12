@@ -259,6 +259,26 @@ function CleanupPanel() {
   return (
     <div style="display:flex;flex-direction:column;gap:12px;">
       <PanelCard
+        title="Reset finding by ID"
+        subtitle="Drain ALL derived state for a single finding (completed-audit-stat, audit-done-idx, review-pending/active/decided/done, chargeback + wire-deduction rows) and re-publish step-init so the same findingId re-enters the audit pipeline from the start. Use this when the auto-sweep misses an orphan or when you need to force a specific audit to re-run cleanly."
+      >
+        <form
+          hx-post="/api/admin/config-save"
+          hx-target="#cleanup-msg"
+          hx-swap="innerHTML"
+          hx-confirm="Drain derived state for this finding and re-publish step-init?"
+          style="display:flex;gap:8px;align-items:flex-end;"
+        >
+          <input type="hidden" name="endpoint" value="/admin/reset-finding" />
+          <div class="sf" style="flex:1;">
+            <label class="sf-label">Finding ID</label>
+            <input type="text" name="findingId" class="sf-input" placeholder="e.g. lTBHVQh9hTVdWAWr6t1Qn" required />
+          </div>
+          <button type="submit" class="sf-btn primary" style="padding:8px 16px;">Reset + Re-run</button>
+        </form>
+      </PanelCard>
+
+      <PanelCard
         title="Sweep orphaned 'Recently Completed'"
         subtitle="Scans completed-audit-stat against each finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete."
       >

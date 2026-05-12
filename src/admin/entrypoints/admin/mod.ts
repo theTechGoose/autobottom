@@ -216,14 +216,26 @@ export class AdminConfigController {
   async clearErrors() { const count = await stats.clearErrors(ORG()); return { ok: true, cleared: count }; }
 
   // -- Pipeline operations --
+  // Both retry-finding entry points drain the prior run's derived state
+  // (review-queue rows, audit-done-idx, completed-audit-stat, chargeback /
+  // wire entries) BEFORE re-publishing the step. Without this drain, retrying
+  // a finding that already finalized once left orphans: the dashboard kept
+  // showing it in "Recently Completed" (stale completed-audit-stat row) and
+  // the review queue kept un-decided rows pointing at a finding whose
+  // answeredQuestions had been wiped by step-prepare. Drain-then-re-publish
+  // guarantees the next run rebuilds derived state from clean inputs.
   @Post("retry-finding") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async retryFinding(@Body() body: { findingId: string; step?: string }) {
     const step = body.step ?? "init";
+    const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
+    await resetFindingDerivedState(ORG(), body.findingId);
     await publishStep(step, { findingId: body.findingId, orgId: ORG() });
     return { ok: true, step };
   }
   @Get("retry-finding") @ReturnedType(OkResponse)
   async retryFindingGet(@Query("findingId") findingId: string, @Query("step") step: string) {
+    const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
+    await resetFindingDerivedState(ORG(), findingId);
     await publishStep(step || "init", { findingId, orgId: ORG() });
     return { ok: true };
   }
@@ -247,6 +259,8 @@ export class AdminConfigController {
   async resetFinding(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.findingId) return { error: "findingId required" };
+    const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
+    await resetFindingDerivedState(ORG(), b.findingId);
     const { publishStep: pub } = await import("@core/data/qstash/mod.ts");
     await pub("init", { findingId: b.findingId, orgId: ORG() });
     return { ok: true, message: "Finding re-queued for re-audit" };
@@ -698,6 +712,48 @@ export class AdminConfigController {
   async reconcilePerfectPending() {
     const { reconcilePerfectPending } = await import("@review/domain/business/review-queue/mod.ts");
     return reconcilePerfectPending(ORG(), "admin-sweep");
+  }
+
+  // Sweep findings that appear in "Recently Completed" (completed-audit-stat)
+  // but whose finding doc is NOT in a finished state — typically because a
+  // retry put the finding back into populating-questions and the prior run's
+  // derived state was never drained. Calls resetFindingDerivedState on each
+  // orphan: wipes completed-audit-stat, audit-done-idx, review-pending /
+  // active / decided / done, audit-pending counter, locks, chargeback +
+  // wire-deduction rows. The finding doc itself is untouched so the in-flight
+  // re-audit can complete normally.
+  @Post("sweep-orphaned-completed") @ReturnedType(MessageResponse)
+  async sweepOrphanedCompleted() {
+    const orgId = ORG();
+    const { listStoredWithKeys } = await import("@core/data/firestore/mod.ts");
+    const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+    const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
+    const rows = await listStoredWithKeys<{ findingId?: string }>("completed-audit-stat", orgId);
+    const seen = new Set<string>();
+    let scanned = 0, swept = 0, healthy = 0, missing = 0;
+    for (const { value } of rows) {
+      const fid = value?.findingId;
+      if (!fid || seen.has(fid)) continue;
+      seen.add(fid);
+      scanned++;
+      const finding = await getFinding(orgId, fid);
+      if (!finding) {
+        await resetFindingDerivedState(orgId, fid);
+        missing++; swept++;
+        continue;
+      }
+      const status = (finding as { findingStatus?: string }).findingStatus;
+      const answered = (finding as { answeredQuestions?: unknown[] }).answeredQuestions;
+      const hasAnswers = Array.isArray(answered) && answered.length > 0;
+      if (status !== "finished" || !hasAnswers) {
+        await resetFindingDerivedState(orgId, fid);
+        swept++;
+      } else {
+        healthy++;
+      }
+    }
+    console.log(`🧹 [SWEEP-ORPHANED] scanned=${scanned} swept=${swept} healthy=${healthy} missing=${missing}`);
+    return { ok: true, scanned, swept, healthy, missing };
   }
 
   // -- Unreviewed --

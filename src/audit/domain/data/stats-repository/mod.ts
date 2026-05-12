@@ -117,6 +117,16 @@ export async function untrackHandler(orgId: OrgId, findingId: string): Promise<v
 export async function trackCompleted(orgId: OrgId, findingId: string, meta?: Record<string, unknown>): Promise<void> {
   await deleteStored("active-tracking", orgId, findingId);
   await deleteStored("watchdog-active", GLOBAL, findingId);
+  // Refuse to record a completed-stat row if the finding isn't actually
+  // finished — defense against trackCompleted being called from a path that
+  // wrote the row before step-finalize set the terminal status. The dashboard
+  // "Recently Completed" panel reads completed-audit-stat, and a stale row
+  // here is the exact symptom that surfaced the retry-doesn't-drain bug.
+  const finding = await getFinding(orgId, findingId);
+  if (finding && finding.findingStatus !== "finished") {
+    console.warn(`⚠️ [TRACK-COMPLETED] ${findingId}: skipped — findingStatus=${finding.findingStatus} (expected "finished")`);
+    return;
+  }
   await setStored("completed-audit-stat", orgId, [`${Date.now()}-${findingId}`], { findingId, ts: Date.now(), ...(meta ?? {}) });
 }
 
@@ -189,6 +199,14 @@ async function _getRecentCompletedRaw(orgId: OrgId, limit: number): Promise<Reco
 }
 
 export async function updateCompletedStatScore(orgId: OrgId, findingId: string, score: number): Promise<void> {
+  // Guard against writing while the finding is mid-rebuild. If a retry put
+  // the finding back into populating-questions, we don't want to "update"
+  // a completed-audit-stat row that's about to be regenerated from scratch.
+  const finding = await getFinding(orgId, findingId);
+  if (finding && finding.findingStatus !== "finished") {
+    console.warn(`⚠️ [UPDATE-STAT-SCORE] ${findingId}: skipped — findingStatus=${finding.findingStatus} (expected "finished")`);
+    return;
+  }
   const rows = await listStoredWithKeys<Record<string, unknown>>("completed-audit-stat", orgId);
   for (const { key, value } of rows) {
     if (value.findingId === findingId) {
@@ -209,6 +227,15 @@ export async function deleteCompletedStat(orgId: OrgId, findingId: string): Prom
 // ── Audit Done Index ─────────────────────────────────────────────────────────
 
 export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEntry): Promise<void> {
+  // Same guard as updateCompletedStatScore: if the finding isn't actually
+  // finished right now, refuse the index write. Catches future callers that
+  // forget to gate on status and prevents stale "Recently Completed" rows
+  // for findings that are mid-rebuild.
+  const finding = await getFinding(orgId, entry.findingId);
+  if (finding && finding.findingStatus !== "finished") {
+    console.warn(`⚠️ [WRITE-DONE-IDX] ${entry.findingId}: skipped — findingStatus=${finding.findingStatus} (expected "finished")`);
+    return;
+  }
   await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], entry);
 }
 
@@ -406,6 +433,22 @@ async function _findAuditsByRecordIdRaw(orgId: OrgId, recordId: string): Promise
 
 export async function deleteAuditDoneIndexEntry(orgId: OrgId, findingId: string, completedAt: number): Promise<void> {
   await deleteStored("audit-done-idx", orgId, padTs(completedAt), findingId);
+}
+
+/** Delete every audit-done-idx entry for a findingId without needing its
+ *  completedAt. Scans the index — O(N) — so prefer the keyed variant when
+ *  the caller already has the timestamp. Used by the retry-drain path
+ *  where we don't trust the previous run's timestamp. */
+export async function deleteAuditDoneIdxByFindingId(orgId: OrgId, findingId: string): Promise<number> {
+  const rows = await listStoredWithKeys<AuditDoneIndexEntry>("audit-done-idx", orgId);
+  let removed = 0;
+  for (const { key, value } of rows) {
+    if (value?.findingId === findingId) {
+      await deleteStored("audit-done-idx", orgId, ...key);
+      removed++;
+    }
+  }
+  return removed;
 }
 
 // ── Chargeback Entries ───────────────────────────────────────────────────────

@@ -21,6 +21,8 @@ import {
   updateCompletedStatScore,
   deleteChargebackEntry,
   deleteWireDeductionEntry,
+  deleteCompletedStat,
+  deleteAuditDoneIdxByFindingId,
   getHiddenFindingIds,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
@@ -184,6 +186,17 @@ export async function populateReviewQueue(
   recordMeta?: ReviewItem["recordMeta"],
   completedAt?: number,
 ): Promise<void> {
+  // Refuse to queue if the finding is not in a terminal state. Without this
+  // guard, a re-prepare race (status flipped back to populating-questions
+  // mid-finalize) could leave review-pending rows pointing at a finding
+  // whose answeredQuestions get wiped a moment later — reviewers then see
+  // questions that don't exist on the finding doc, and finalize aborts.
+  const liveFinding = await getFinding(orgId, findingId);
+  if (liveFinding && liveFinding.findingStatus !== "finished") {
+    console.warn(`⚠️ [POPULATE-REVIEW-QUEUE] ${findingId}: skipped — finding.findingStatus=${liveFinding.findingStatus} (expected "finished")`);
+    return;
+  }
+
   const noAnswers = answeredQuestions
     .map((q, i) => ({ ...q, index: i }))
     .filter((q) => q.answer === "No");
@@ -1183,6 +1196,48 @@ export async function finalizePerfectFinding(
 
   console.log(`[FINALIZE-PERFECT] ✅ ${findingId} → finalized at ${reviewScore}% (${cleared} queue entries removed)`);
   return { cleared };
+}
+
+/** Drain every review-store row for a finding: pending, decided, active,
+ *  audit-pending counter, locks, and the review-done sentinel. Used by retry
+ *  paths and the orphan sweep — anywhere we need to wipe review state because
+ *  the upstream finding is being re-prepared from scratch. */
+export async function drainReviewStoresForFinding(orgId: OrgId, findingId: string): Promise<number> {
+  let cleared = 0;
+  const pending = await listStoredWithKeys("review-pending", orgId);
+  for (const { key } of pending) {
+    if (key[0] === findingId) { await deleteStored("review-pending", orgId, ...key); cleared++; }
+  }
+  const decided = await listStoredWithKeys("review-decided", orgId);
+  for (const { key } of decided) {
+    if (key[0] === findingId) { await deleteStored("review-decided", orgId, ...key); cleared++; }
+  }
+  const active = await listStoredWithKeys<{ findingId?: string }>("review-active", orgId);
+  for (const { key, value } of active) {
+    if (value?.findingId === findingId) { await deleteStored("review-active", orgId, ...key); cleared++; }
+  }
+  await deleteStored("review-audit-pending", orgId, findingId); cleared++;
+  await deleteStored("review-done", orgId, findingId); cleared++;
+  await releaseLocksForFinding(orgId, findingId);
+  return cleared;
+}
+
+/** Wipe every derived/cached/index store for a finding so the next pipeline
+ *  pass starts from a clean slate. Used by retry-finding + reset-finding
+ *  before re-publishing the prepare step. Does NOT touch audit-finding /
+ *  audit-transcript / audit-job — those are the inputs the re-run rebuilds
+ *  *from*. Idempotent. */
+export async function resetFindingDerivedState(
+  orgId: OrgId,
+  findingId: string,
+): Promise<{ reviewCleared: number; doneIdxRemoved: number }> {
+  const reviewCleared = await drainReviewStoresForFinding(orgId, findingId);
+  const doneIdxRemoved = await deleteAuditDoneIdxByFindingId(orgId, findingId);
+  await deleteCompletedStat(orgId, findingId);
+  await deleteChargebackEntry(orgId, findingId).catch(() => {});
+  await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
+  console.log(`🧹 [RESET-DERIVED] ${findingId}: review=${reviewCleared} done-idx=${doneIdxRemoved} completed-stat+chargeback+wire cleared`);
+  return { reviewCleared, doneIdxRemoved };
 }
 
 // Sweep all currently-pending findings whose live score is already 100 and

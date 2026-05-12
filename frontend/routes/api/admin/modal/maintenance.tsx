@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "migration";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "migration";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -16,6 +16,7 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "dedupe", label: "Deduplicate" },
   { key: "purge", label: "Purge Old Audits", danger: true },
   { key: "flip", label: "Bulk Flip" },
+  { key: "cleanup", label: "Cleanup" },
   { key: "migration", label: "Migration" },
 ];
 
@@ -42,6 +43,7 @@ export const handler = define.handlers({
           {active === "dedupe" && <DedupePanel />}
           {active === "purge" && <PurgePanel />}
           {active === "flip" && <BulkFlipPanel />}
+          {active === "cleanup" && <CleanupPanel />}
           {active === "migration" && <MigrationPanel />}
         </div>
 
@@ -250,6 +252,28 @@ function BulkFlipPanel() {
       </form>
       <div id="flip-results" style="margin-top:12px;"></div>
     </PanelCard>
+  );
+}
+
+function CleanupPanel() {
+  return (
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <PanelCard
+        title="Sweep orphaned 'Recently Completed'"
+        subtitle="Scans completed-audit-stat against each finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete."
+      >
+        <button
+          class="sf-btn primary"
+          style="padding:8px 16px;"
+          hx-post="/api/admin/config-save"
+          hx-vals='{"endpoint":"/admin/sweep-orphaned-completed"}'
+          hx-target="#cleanup-msg"
+          hx-swap="innerHTML"
+          hx-confirm="Sweep every 'Recently Completed' row whose finding isn't actually finished? Cleans derived state without touching the finding doc."
+        >Run Sweep</button>
+      </PanelCard>
+      <div id="cleanup-msg"></div>
+    </div>
   );
 }
 

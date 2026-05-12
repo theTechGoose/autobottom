@@ -295,6 +295,28 @@ function CleanupPanel() {
       </PanelCard>
 
       <PanelCard
+        title="Re-trigger drained audits by date"
+        subtitle="Two-phase. (1) Scan: walks audit-finding docs, returns count of fids in your date range whose status is NOT 'finished' (i.e. orphans the sweep already drained, or anything stuck mid-pipeline). (2) Re-trigger: chunked publishStep('init', …) per fid — same findingId, runs through transcribe → prepare → ask-all → finalize fresh. QStash queue parallelism throttles the load. Use this AFTER the sweep to bring back the audits whose results you still care about."
+      >
+        <form
+          hx-post="/api/admin/modal/maintenance/retrigger-scan"
+          hx-target="#cleanup-msg"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']"
+          hx-indicator="find button[type='submit']"
+        >
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div class="sf"><label class="sf-label">Started since</label><input type="date" name="since" class="sf-input" value={new Date().toISOString().slice(0, 10)} /></div>
+            <div class="sf"><label class="sf-label">Started until</label><input type="date" name="until" class="sf-input" value={new Date().toISOString().slice(0, 10)} /></div>
+          </div>
+          <button type="submit" class="sf-btn primary cl-btn" style="padding:8px 16px;min-width:160px;">
+            <span class="cl-label">Scan candidates</span>
+            <span class="cl-loading">Scanning…</span>
+          </button>
+        </form>
+      </PanelCard>
+
+      <PanelCard
         title="Sweep orphaned 'Recently Completed'"
         subtitle="Scans every completed-audit-stat row against its finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete. Runs in 25-fid chunks with live progress — handles arbitrarily large queues without timing out."
       >

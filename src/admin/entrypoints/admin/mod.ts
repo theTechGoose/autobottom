@@ -771,6 +771,62 @@ export class AdminConfigController {
     return { ok: true, swept, healthy, missing, drained };
   }
 
+  // Scan audit-finding docs for "drained orphan within timestamp range"
+  // candidates: status !== "finished" AND startedAt is between sinceMs and
+  // untilMs. This is the two-phase counterpart to the sweep — sweep deletes
+  // derived state; re-trigger re-publishes step-init for the subset whose
+  // bookings are recent enough that operators still care about the result.
+  // Returns just the fid list so the frontend can show a count, get user
+  // confirmation, and then chunk-process the re-triggers.
+  @Post("scan-retrigger-candidates") @ReturnedType(MessageResponse)
+  async scanRetriggerCandidates(@Body() body: GenericBodyRequest) {
+    const orgId = ORG();
+    const b = body as { sinceMs?: number; untilMs?: number };
+    const since = Number(b.sinceMs ?? 0);
+    const until = Number(b.untilMs ?? Date.now());
+    const { listStoredWithKeysAll } = await import("@core/data/firestore/mod.ts");
+    const docs = await listStoredWithKeysAll<Record<string, unknown>>("audit-finding", orgId);
+    const matches: string[] = [];
+    let scanned = 0;
+    for (const { key, value } of docs) {
+      scanned++;
+      if (!value) continue;
+      const fid = String(key[0] ?? (value as { id?: string }).id ?? "");
+      if (!fid) continue;
+      const status = (value as { findingStatus?: string }).findingStatus;
+      if (status === "finished") continue;
+      const startedAt = Number((value as { startedAt?: number }).startedAt ?? 0);
+      if (startedAt < since || startedAt > until) continue;
+      matches.push(fid);
+    }
+    console.log(`📋 [SCAN-RETRIGGER] scanned=${scanned} matches=${matches.length} sinceMs=${since} untilMs=${until}`);
+    return { ok: true, scanned, fids: matches };
+  }
+
+  // Re-trigger a batch of fids by re-publishing step-init. Caller is
+  // expected to have already swept these (so completed-audit-stat /
+  // audit-done-idx / review-* are clean). QStash queue parallelism caps
+  // (audit-transcribe=8, audit-questions=4) throttle the resulting load
+  // naturally — we just enqueue; workers pull at their configured rate.
+  @Post("retrigger-fids-batch") @ReturnedType(MessageResponse)
+  async retriggerFidsBatch(@Body() body: GenericBodyRequest) {
+    const orgId = ORG();
+    const b = body as { fids?: string[] };
+    const fids = Array.isArray(b.fids) ? b.fids : [];
+    let requeued = 0;
+    const failed: string[] = [];
+    for (const fid of fids) {
+      try {
+        await publishStep("init", { findingId: fid, orgId });
+        requeued++;
+      } catch (err) {
+        console.warn(`⚠️ [RETRIGGER] ${fid} publishStep failed:`, err);
+        failed.push(fid);
+      }
+    }
+    return { ok: true, requeued, failed };
+  }
+
   // [DEPRECATED in favor of the chunked sweep-orphaned-list-fids /
   // sweep-orphaned-process pair above, but retained for any caller that
   // already wires to it.] Sweep findings that appear in "Recently Completed"

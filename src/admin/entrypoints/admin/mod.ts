@@ -800,7 +800,13 @@ export class AdminConfigController {
     const owners = [...new Set(items.map((i: any) => i.voName || i.owner).filter(Boolean))].sort();
     const departments = [...new Set(items.map((i: any) => i.department).filter(Boolean))].sort();
     const shifts = [...new Set(items.map((i: any) => i.shift).filter(Boolean))].sort();
-    return { items, total: pending.size, owners, departments, shifts };
+    // Total reflects post-filter count so the UI's "N found" matches what
+    // the user actually sees. The pre-filter pending count is logged so
+    // operators can spot when filters are aggressive.
+    if (items.length < pending.size) {
+      console.log(`📊 [UNREVIEWED] ${items.length} match of ${pending.size} pending (${pending.size - items.length} dropped by date/score/invalid-genie/facet filters)`);
+    }
+    return { items, total: items.length, owners, departments, shifts };
    } catch (err) {
      // Soft-fallback: this endpoint is heavy (Promise.all over 3 FS scans
      // + per-row getFinding fan-out). Any chunk wedge under load aborts

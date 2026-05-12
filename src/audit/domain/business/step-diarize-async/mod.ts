@@ -32,8 +32,25 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
 
   try {
     const diarized = await diarize(raw);
-    finding.diarizedTranscript = diarized;
-    await saveFinding(orgId, finding);
+    // CRITICAL: re-fetch the finding right before save. This step runs IN
+    // PARALLEL with prepare → ask-all → finalize on the critical path.
+    // Diarization can take seconds-to-minutes; meanwhile the critical path
+    // may have flipped findingStatus from "asking-questions" → "finished"
+    // and written answeredQuestions. Saving the stale snapshot we captured
+    // before diarize() would regress those updates: status would flip back
+    // to "asking-questions", answeredQuestions would be wiped, and the
+    // audit would appear orphan in Recently Completed while review-queue
+    // rows reference indices that no longer exist. That is the exact bug
+    // that left lTBHV… and NLbvBCPh… stuck for joshk + ashleyk.
+    // Only mutate diarizedTranscript on the fresh read so concurrent
+    // writers on other fields don't lose their work.
+    const fresh = await getFinding(orgId, findingId);
+    if (fresh) {
+      fresh.diarizedTranscript = diarized;
+      await saveFinding(orgId, fresh);
+    } else {
+      console.warn(`⚠️ [STEP-DIARIZE] ${findingId}: finding disappeared between snapshot + diarize result — skipping save`);
+    }
     await saveTranscript(orgId, findingId, raw, diarized);
     console.log(`[STEP-DIARIZE] ${findingId}: Diarization complete`);
   } catch (err) {

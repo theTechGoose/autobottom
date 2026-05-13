@@ -761,6 +761,103 @@ export class AdminConfigController {
     }
   }
 
+  // Count-comparison companion to /admin/index-test. Same (type, fieldName)
+  // tests, but runs BOTH the indexed query and a brute-force scan on the
+  // same window, then reports:
+  //   - indexedCount: rows the field-filter query returned
+  //   - legacyInWindow: rows the brute-force scan found that ARE in window
+  //                     (per the in-JS filter)
+  //   - legacyMissingField: rows in the store that don't have <fieldName>
+  //                         at all (these would be silently excluded by the
+  //                         indexed query — the smoking gun for legacy data)
+  //   - delta: legacyInWindow - indexedCount (should be 0 if no exclusions)
+  //
+  // Window is fixed at 30 days for the smoke comparison; that's wide enough
+  // to surface field-coverage gaps without scanning the whole history. The
+  // brute-force step uses listStoredWithKeysAll, which pulls full bodies —
+  // intentionally slow on big stores, but tolerable for an on-demand
+  // one-off button. Skipped for audit-finding (chunked store; full body
+  // pull is the exact wedge we built the index to avoid).
+  @Post("index-test-compare") @ReturnedType(MessageResponse)
+  async indexTestCompare(@Query("name") name: string) {
+    const orgId = ORG();
+    const { listStoredByCompletedAt, listStoredWithKeysAll } = await import("@core/data/firestore/mod.ts");
+
+    const TESTS: Record<string, { type: string; fieldName: string; chunked?: boolean }> = {
+      "review-active-claimedAt": { type: "review-active", fieldName: "claimedAt" },
+      "review-pending-completedAt": { type: "review-pending", fieldName: "completedAt" },
+      "review-active-completedAt": { type: "review-active", fieldName: "completedAt" },
+      "completed-audit-stat-ts": { type: "completed-audit-stat", fieldName: "ts" },
+      "chargeback-entry-ts": { type: "chargeback-entry", fieldName: "ts" },
+      "wire-deduction-entry-ts": { type: "wire-deduction-entry", fieldName: "ts" },
+      "audit-finding-startedAt": { type: "audit-finding", fieldName: "startedAt", chunked: true },
+    };
+
+    const test = TESTS[name];
+    if (!test) return { ok: false, error: `unknown test: ${name}` };
+
+    if (test.chunked) {
+      return {
+        ok: false,
+        type: test.type,
+        fieldName: test.fieldName,
+        skipped: true,
+        skipReason: "Chunked store — brute-force scan would wedge on full body pulls. The indexed path is the only viable read; chunked-finding gap is tracked separately.",
+      };
+    }
+
+    const untilMs = Date.now();
+    const sinceMs = untilMs - 30 * 24 * 60 * 60 * 1000;
+
+    const t0 = Date.now();
+    let indexedCount = 0;
+    let indexedError: string | undefined;
+    try {
+      const indexed = await listStoredByCompletedAt<Record<string, unknown>>(
+        test.type, orgId, sinceMs, untilMs,
+        { fieldName: test.fieldName, limit: 10_000 },
+      );
+      indexedCount = indexed.length;
+    } catch (err) {
+      indexedError = String((err as Error)?.message ?? err);
+    }
+
+    const t1 = Date.now();
+    const allRows = await listStoredWithKeysAll<Record<string, unknown>>(test.type, orgId);
+    let legacyInWindow = 0;
+    let legacyMissingField = 0;
+    const missingSample: string[] = [];
+    for (const { key, value } of allRows) {
+      if (!value) continue;
+      const fieldVal = (value as Record<string, unknown>)[test.fieldName];
+      if (typeof fieldVal !== "number") {
+        legacyMissingField++;
+        if (missingSample.length < 5) missingSample.push(String(key[0] ?? ""));
+        continue;
+      }
+      if (fieldVal >= sinceMs && fieldVal <= untilMs) legacyInWindow++;
+    }
+    const t2 = Date.now();
+
+    return {
+      ok: true,
+      type: test.type,
+      fieldName: test.fieldName,
+      windowSinceMs: sinceMs,
+      windowUntilMs: untilMs,
+      indexedCount,
+      indexedError,
+      indexedTookMs: t1 - t0,
+      legacyTotalScanned: allRows.length,
+      legacyInWindow,
+      legacyMissingField,
+      missingSample,
+      delta: legacyInWindow - indexedCount,
+      legacyTookMs: t2 - t1,
+      tookMs: t2 - t0,
+    };
+  }
+
   // -- Reconcile drift: finalize already-100% pending findings --
   // One-shot cleanup for the pencil-flip drift bug. Pencil-flips raised a
   // finding's score to 100 but never drained review-pending / review-active,

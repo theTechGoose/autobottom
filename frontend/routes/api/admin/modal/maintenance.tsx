@@ -405,7 +405,10 @@ function IndexTestsPanel() {
   return (
     <div style="display:flex;flex-direction:column;gap:10px;">
       <div style="font-size:11px;color:var(--text-dim);padding:8px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);">
-        <strong style="color:var(--text-bright);">One-off rollout tool.</strong> Each card fires a 1-row Firestore field-filter query for a (type, fieldName) we want to use in production. Green ✓ = index exists. Yellow ⚠️ with a URL = index missing — click the URL, Confirm in Firebase console, wait for index build (minutes-to-hours), re-click Run. When every card is ✓, the production swaps in the plan file are safe to land.
+        <strong style="color:var(--text-bright);">One-off rollout tool.</strong> Two buttons per card:
+        <div style="margin-top:4px;"><strong style="color:var(--text-bright);">Run</strong> — 1-row probe. Green ✓ = composite index exists. Yellow ⚠️ with a URL = index missing; click it, Confirm in Firebase console, wait for index build (minutes-to-hours), re-click.</div>
+        <div style="margin-top:4px;"><strong style="color:var(--text-bright);">Compare</strong> — runs the indexed query AND a brute-force scan on the same 30-day window. Delta = 0 + missing-field = 0 confirms the production swap is behavior-equivalent. Delta &gt; 0 OR missing-field &gt; 0 means docs would be silently excluded — backfill or fallback needed before swapping that callsite.</div>
+        <div style="margin-top:4px;">When every card is ✓ Run AND ✓ Compare (or skipped for known reasons), the production swaps in the plan file are safe to land.</div>
       </div>
       {INDEX_TESTS.map((t) => <IndexTestCard {...t} />)}
     </div>
@@ -420,13 +423,25 @@ function IndexTestCard({ name, title, usedBy }: { name: string; title: string; u
           <div style="font-size:12px;font-weight:600;color:var(--text-bright);font-family:var(--mono);">{title}</div>
           <div style="font-size:11px;color:var(--text-dim);margin-top:2px;">{usedBy}</div>
         </div>
-        <button
-          class="sf-btn ghost"
-          style="padding:6px 14px;font-size:11px;white-space:nowrap;"
-          hx-post={`/api/admin/modal/maintenance/index-test?name=${name}`}
-          hx-target={`#index-test-${name}`}
-          hx-swap="innerHTML"
-        >Run</button>
+        <div style="display:flex;gap:6px;">
+          <button
+            class="sf-btn ghost"
+            style="padding:6px 14px;font-size:11px;white-space:nowrap;"
+            hx-post={`/api/admin/modal/maintenance/index-test?name=${name}`}
+            hx-target={`#index-test-${name}`}
+            hx-swap="innerHTML"
+            title="1-row probe: does the composite index exist?"
+          >Run</button>
+          <button
+            class="sf-btn ghost"
+            style="padding:6px 14px;font-size:11px;white-space:nowrap;"
+            hx-post={`/api/admin/modal/maintenance/index-test-compare?name=${name}`}
+            hx-target={`#index-test-${name}`}
+            hx-swap="innerHTML"
+            hx-confirm="Comparing indexed vs brute-force scan on a 30-day window. Brute-force pulls full bodies — slow on large stores. Continue?"
+            title="Compare: indexed count vs brute-force scan. Surfaces silent-exclusion gaps before landing a swap."
+          >Compare</button>
+        </div>
       </div>
       <div id={`index-test-${name}`}></div>
     </div>

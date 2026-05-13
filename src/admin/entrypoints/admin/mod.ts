@@ -701,6 +701,163 @@ export class AdminConfigController {
   @Get("token-usage") @ReturnedType(TokenUsageResponse)
   async tokenUsage(@Query("hours") hours: string) { return getTokenUsage(parseInt(hours || "1")); }
 
+  // -- Index test harness ---------------------------------------------------
+  // Fires a minimal-scope listStoredByCompletedAt query for the named
+  // (type, fieldName) pair. Used by the Data Maintenance → Index Tests tab
+  // during the index-rollout branch to verify that the Firestore composite
+  // index `(_org, _type, <fieldName>, __name__)` exists before swapping
+  // production callsites to the indexed path. On FAILED_PRECONDITION
+  // (missing index) Firestore returns an error message containing a
+  // https://console.firebase.google.com/... URL — we extract that and
+  // surface it to the operator so they can one-click create the index.
+  //
+  // Limit is intentionally tiny (1 row) so the test stays cheap even on
+  // large stores. We only care whether the index exists, not the data.
+  @Post("index-test") @ReturnedType(MessageResponse)
+  async indexTest(@Query("name") name: string) {
+    const orgId = ORG();
+    const { listStoredByCompletedAt } = await import("@core/data/firestore/mod.ts");
+
+    const TESTS: Record<string, { type: string; fieldName: string }> = {
+      "review-active-claimedAt": { type: "review-active", fieldName: "claimedAt" },
+      "review-pending-completedAt": { type: "review-pending", fieldName: "completedAt" },
+      "review-active-completedAt": { type: "review-active", fieldName: "completedAt" },
+      "completed-audit-stat-ts": { type: "completed-audit-stat", fieldName: "ts" },
+      "chargeback-entry-ts": { type: "chargeback-entry", fieldName: "ts" },
+      "wire-deduction-entry-ts": { type: "wire-deduction-entry", fieldName: "ts" },
+      "audit-finding-startedAt": { type: "audit-finding", fieldName: "startedAt" },
+    };
+
+    const test = TESTS[name];
+    if (!test) return { ok: false, error: `unknown test: ${name}` };
+
+    const t0 = Date.now();
+    try {
+      const rows = await listStoredByCompletedAt<Record<string, unknown>>(
+        test.type,
+        orgId,
+        0,
+        Date.now(),
+        { fieldName: test.fieldName, limit: 1 },
+      );
+      return { ok: true, type: test.type, fieldName: test.fieldName, rows: rows.length, tookMs: Date.now() - t0 };
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      // Firestore returns 'FAILED_PRECONDITION' with a console URL in the
+      // error body when the composite index is missing. The URL is the
+      // load-bearing piece — clicking it lets the operator create the
+      // index in one round-trip.
+      const urlMatch = msg.match(/https:\/\/console\.firebase\.google\.com\/[^\s"'`]+/);
+      const missingIndex = msg.includes("FAILED_PRECONDITION") || msg.includes("requires an index");
+      return {
+        ok: false,
+        type: test.type,
+        fieldName: test.fieldName,
+        tookMs: Date.now() - t0,
+        error: msg,
+        createIndexUrl: urlMatch?.[0],
+        missingIndex,
+      };
+    }
+  }
+
+  // Count-comparison companion to /admin/index-test. Same (type, fieldName)
+  // tests, but runs BOTH the indexed query and a brute-force scan on the
+  // same window, then reports:
+  //   - indexedCount: rows the field-filter query returned
+  //   - legacyInWindow: rows the brute-force scan found that ARE in window
+  //                     (per the in-JS filter)
+  //   - legacyMissingField: rows in the store that don't have <fieldName>
+  //                         at all (these would be silently excluded by the
+  //                         indexed query — the smoking gun for legacy data)
+  //   - delta: legacyInWindow - indexedCount (should be 0 if no exclusions)
+  //
+  // Window is fixed at 30 days for the smoke comparison; that's wide enough
+  // to surface field-coverage gaps without scanning the whole history. The
+  // brute-force step uses listStoredWithKeysAll, which pulls full bodies —
+  // intentionally slow on big stores, but tolerable for an on-demand
+  // one-off button. Skipped for audit-finding (chunked store; full body
+  // pull is the exact wedge we built the index to avoid).
+  @Post("index-test-compare") @ReturnedType(MessageResponse)
+  async indexTestCompare(@Query("name") name: string) {
+    const orgId = ORG();
+    const { listStoredByCompletedAt, listStoredWithKeysAll } = await import("@core/data/firestore/mod.ts");
+
+    const TESTS: Record<string, { type: string; fieldName: string; chunked?: boolean }> = {
+      "review-active-claimedAt": { type: "review-active", fieldName: "claimedAt" },
+      "review-pending-completedAt": { type: "review-pending", fieldName: "completedAt" },
+      "review-active-completedAt": { type: "review-active", fieldName: "completedAt" },
+      "completed-audit-stat-ts": { type: "completed-audit-stat", fieldName: "ts" },
+      "chargeback-entry-ts": { type: "chargeback-entry", fieldName: "ts" },
+      "wire-deduction-entry-ts": { type: "wire-deduction-entry", fieldName: "ts" },
+      "audit-finding-startedAt": { type: "audit-finding", fieldName: "startedAt", chunked: true },
+    };
+
+    const test = TESTS[name];
+    if (!test) return { ok: false, error: `unknown test: ${name}` };
+
+    if (test.chunked) {
+      return {
+        ok: false,
+        type: test.type,
+        fieldName: test.fieldName,
+        skipped: true,
+        skipReason: "Chunked store — brute-force scan would wedge on full body pulls. The indexed path is the only viable read; chunked-finding gap is tracked separately.",
+      };
+    }
+
+    const untilMs = Date.now();
+    const sinceMs = untilMs - 30 * 24 * 60 * 60 * 1000;
+
+    const t0 = Date.now();
+    let indexedCount = 0;
+    let indexedError: string | undefined;
+    try {
+      const indexed = await listStoredByCompletedAt<Record<string, unknown>>(
+        test.type, orgId, sinceMs, untilMs,
+        { fieldName: test.fieldName, limit: 10_000 },
+      );
+      indexedCount = indexed.length;
+    } catch (err) {
+      indexedError = String((err as Error)?.message ?? err);
+    }
+
+    const t1 = Date.now();
+    const allRows = await listStoredWithKeysAll<Record<string, unknown>>(test.type, orgId);
+    let legacyInWindow = 0;
+    let legacyMissingField = 0;
+    const missingSample: string[] = [];
+    for (const { key, value } of allRows) {
+      if (!value) continue;
+      const fieldVal = (value as Record<string, unknown>)[test.fieldName];
+      if (typeof fieldVal !== "number") {
+        legacyMissingField++;
+        if (missingSample.length < 5) missingSample.push(String(key[0] ?? ""));
+        continue;
+      }
+      if (fieldVal >= sinceMs && fieldVal <= untilMs) legacyInWindow++;
+    }
+    const t2 = Date.now();
+
+    return {
+      ok: true,
+      type: test.type,
+      fieldName: test.fieldName,
+      windowSinceMs: sinceMs,
+      windowUntilMs: untilMs,
+      indexedCount,
+      indexedError,
+      indexedTookMs: t1 - t0,
+      legacyTotalScanned: allRows.length,
+      legacyInWindow,
+      legacyMissingField,
+      missingSample,
+      delta: legacyInWindow - indexedCount,
+      legacyTookMs: t2 - t1,
+      tookMs: t2 - t0,
+    };
+  }
+
   // -- Reconcile drift: finalize already-100% pending findings --
   // One-shot cleanup for the pencil-flip drift bug. Pencil-flips raised a
   // finding's score to 100 but never drained review-pending / review-active,
@@ -720,17 +877,37 @@ export class AdminConfigController {
   // This avoids the edge timeout that hit the single-call sweep when
   // completed-audit-stat grew past ~1k rows.
   @Post("sweep-orphaned-list-fids") @ReturnedType(MessageResponse)
-  async sweepOrphanedListFids() {
+  async sweepOrphanedListFids(@Body() body: GenericBodyRequest) {
     const orgId = ORG();
-    const { listStoredWithKeysAll } = await import("@core/data/firestore/mod.ts");
-    const rows = await listStoredWithKeysAll<{ findingId?: string }>("completed-audit-stat", orgId);
+    const b = body as { sinceMs?: number; untilMs?: number };
+    const sinceMs = Number(b?.sinceMs ?? 0);
+    const untilMs = Number(b?.untilMs ?? 0);
+    const useIndex = sinceMs > 0 && untilMs > 0 && untilMs >= sinceMs;
     const seen = new Set<string>();
     const fids: string[] = [];
-    for (const { value } of rows) {
-      const fid = value?.findingId;
-      if (fid && !seen.has(fid)) { seen.add(fid); fids.push(fid); }
+    if (useIndex) {
+      // Server-side ts-range filter on completed-audit-stat. Useful for
+      // "sweep today" / "sweep this week" workflows — no full-store walk.
+      // Compare verified equivalence on the 30-day window (9526/9526).
+      const { listStoredByCompletedAt } = await import("@core/data/firestore/mod.ts");
+      const rows = await listStoredByCompletedAt<{ findingId?: string }>(
+        "completed-audit-stat", orgId, sinceMs, untilMs,
+        { fieldName: "ts", limit: 100_000 },
+      );
+      for (const v of rows) {
+        const fid = v?.findingId;
+        if (fid && !seen.has(fid)) { seen.add(fid); fids.push(fid); }
+      }
+      console.log(`📋 [SWEEP-LIST-FIDS] mode=ts-range sinceMs=${sinceMs} untilMs=${untilMs} total=${fids.length}`);
+    } else {
+      const { listStoredWithKeysAll } = await import("@core/data/firestore/mod.ts");
+      const rows = await listStoredWithKeysAll<{ findingId?: string }>("completed-audit-stat", orgId);
+      for (const { value } of rows) {
+        const fid = value?.findingId;
+        if (fid && !seen.has(fid)) { seen.add(fid); fids.push(fid); }
+      }
+      console.log(`📋 [SWEEP-LIST-FIDS] mode=all total=${fids.length}`);
     }
-    console.log(`📋 [SWEEP-LIST-FIDS] total=${fids.length}`);
     return { ok: true, fids };
   }
 
@@ -965,7 +1142,14 @@ export class AdminConfigController {
     // review-pending is authoritative and bounded by what reviewers actually
     // need to act on, so the list now reflects the real queue.
     const [pending, bypassCfg] = await Promise.all([
-      getPendingReviewFindings(ORG()),
+      // Server-side date filter on review-pending/active.completedAt —
+      // returns only items whose completedAt is in the requested window
+      // instead of the full queue. The downstream per-fid getFinding
+      // loop still re-checks completedAt against the finding doc as
+      // belt-and-suspenders (finding.completedAt is the authoritative
+      // value; the queue entry's completedAt is a copy made at queue
+      // time).
+      getPendingReviewFindings(ORG(), { sinceMs: since, untilMs: until }),
       cfg.getOfficeBypassConfig(ORG()),
     ]);
     const bypassPatterns = (bypassCfg.patterns ?? []).map((p: string) => p.toLowerCase());

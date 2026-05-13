@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "migration";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "index-tests" | "migration";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -17,6 +17,7 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "purge", label: "Purge Old Audits", danger: true },
   { key: "flip", label: "Bulk Flip" },
   { key: "cleanup", label: "Cleanup" },
+  { key: "index-tests", label: "Index Tests" },
   { key: "migration", label: "Migration" },
 ];
 
@@ -44,6 +45,7 @@ export const handler = define.handlers({
           {active === "purge" && <PurgePanel />}
           {active === "flip" && <BulkFlipPanel />}
           {active === "cleanup" && <CleanupPanel />}
+          {active === "index-tests" && <IndexTestsPanel />}
           {active === "migration" && <MigrationPanel />}
         </div>
 
@@ -328,23 +330,128 @@ function CleanupPanel() {
 
       <PanelCard
         title="Sweep orphaned 'Recently Completed'"
-        subtitle="Scans every completed-audit-stat row against its finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete. Runs in 25-fid chunks with live progress — handles arbitrarily large queues without timing out."
+        subtitle="Scans completed-audit-stat rows against each finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete. Scoped by date when you provide a window (uses the server-side ts index — near-instant); leave both blank to scan every stat row (slow on large stores)."
       >
-        <button
-          class="sf-btn primary cl-btn"
-          style="padding:8px 16px;min-width:160px;"
+        <form
           hx-post="/api/admin/modal/maintenance/sweep-start"
           hx-target="#cleanup-msg"
           hx-swap="innerHTML"
-          hx-disabled-elt="this"
-          hx-indicator="this"
-          hx-confirm="Sweep every 'Recently Completed' row whose finding isn't actually finished? Cleans derived state without touching the finding doc."
+          hx-disabled-elt="find button[type='submit']"
+          hx-indicator="find button[type='submit']"
+          hx-confirm="Sweep 'Recently Completed' rows whose finding isn't actually finished? Cleans derived state without touching the finding doc."
         >
-          <span class="cl-label">Run Sweep</span>
-          <span class="cl-loading">Starting…</span>
-        </button>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div class="sf"><label class="sf-label">ts since (optional)</label><input type="date" name="since" class="sf-input" /></div>
+            <div class="sf"><label class="sf-label">ts until (optional)</label><input type="date" name="until" class="sf-input" /></div>
+          </div>
+          <button
+            type="submit"
+            class="sf-btn primary cl-btn"
+            style="padding:8px 16px;min-width:160px;"
+          >
+            <span class="cl-label">Run Sweep</span>
+            <span class="cl-loading">Starting…</span>
+          </button>
+        </form>
       </PanelCard>
       <div id="cleanup-msg"></div>
+    </div>
+  );
+}
+
+// ── Index Tests tab ──────────────────────────────────────────────────────────
+//
+// One-off rollout tool. Each card fires a tiny listStoredByCompletedAt query
+// (limit=1) for a (type, fieldName) pair we want to use in production. If the
+// underlying Firestore composite index `(_org, _type, <fieldName>, __name__)`
+// exists, returns ✓ with row count + timing. If missing, Firestore returns
+// FAILED_PRECONDITION with a console URL — we surface that URL so the
+// operator can one-click create the index in the Firebase console.
+//
+// Walk all cards in order during the index-rollout branch deploy. When every
+// card is ✓, swap the production callsites (see plan file) and merge to main.
+// After merge, remove this tab in a follow-up commit.
+const INDEX_TESTS: Array<{ name: string; title: string; usedBy: string }> = [
+  {
+    name: "review-active-claimedAt",
+    title: "review-active by claimedAt",
+    usedBy: "claimNextItem expiry sweep — fires on every reviewer claim (A1, biggest win)",
+  },
+  {
+    name: "review-pending-completedAt",
+    title: "review-pending by completedAt",
+    usedBy: "getPendingReviewFindings — Bulk Flip Pull narrowing (A2)",
+  },
+  {
+    name: "review-active-completedAt",
+    title: "review-active by completedAt",
+    usedBy: "getPendingReviewFindings — Bulk Flip Pull narrowing (A2)",
+  },
+  {
+    name: "completed-audit-stat-ts",
+    title: "completed-audit-stat by ts",
+    usedBy: "backfillReviewScores (B1) + purgeOldAudits (B2) + sweep date window (B3)",
+  },
+  {
+    name: "chargeback-entry-ts",
+    title: "chargeback-entry by ts",
+    usedBy: "purgeOldAudits (B2)",
+  },
+  {
+    name: "wire-deduction-entry-ts",
+    title: "wire-deduction-entry by ts",
+    usedBy: "purgeOldAudits (B2)",
+  },
+  {
+    name: "audit-finding-startedAt",
+    title: "audit-finding by startedAt",
+    usedBy: "Re-trigger empty-paste path — already shipped on main; included here as a known-working baseline",
+  },
+];
+
+function IndexTestsPanel() {
+  return (
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div style="font-size:11px;color:var(--text-dim);padding:8px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);">
+        <strong style="color:var(--text-bright);">One-off rollout tool.</strong> Two buttons per card:
+        <div style="margin-top:4px;"><strong style="color:var(--text-bright);">Run</strong> — 1-row probe. Green ✓ = composite index exists. Yellow ⚠️ with a URL = index missing; click it, Confirm in Firebase console, wait for index build (minutes-to-hours), re-click.</div>
+        <div style="margin-top:4px;"><strong style="color:var(--text-bright);">Compare</strong> — runs the indexed query AND a brute-force scan on the same 30-day window. Delta = 0 + missing-field = 0 confirms the production swap is behavior-equivalent. Delta &gt; 0 OR missing-field &gt; 0 means docs would be silently excluded — backfill or fallback needed before swapping that callsite.</div>
+        <div style="margin-top:4px;">When every card is ✓ Run AND ✓ Compare (or skipped for known reasons), the production swaps in the plan file are safe to land.</div>
+      </div>
+      {INDEX_TESTS.map((t) => <IndexTestCard {...t} />)}
+    </div>
+  );
+}
+
+function IndexTestCard({ name, title, usedBy }: { name: string; title: string; usedBy: string }) {
+  return (
+    <div style="border:1px solid var(--border);border-radius:4px;padding:10px 12px;background:var(--bg);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px;">
+        <div style="flex:1;">
+          <div style="font-size:12px;font-weight:600;color:var(--text-bright);font-family:var(--mono);">{title}</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:2px;">{usedBy}</div>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button
+            class="sf-btn ghost"
+            style="padding:6px 14px;font-size:11px;white-space:nowrap;"
+            hx-post={`/api/admin/modal/maintenance/index-test?name=${name}`}
+            hx-target={`#index-test-${name}`}
+            hx-swap="innerHTML"
+            title="1-row probe: does the composite index exist?"
+          >Run</button>
+          <button
+            class="sf-btn ghost"
+            style="padding:6px 14px;font-size:11px;white-space:nowrap;"
+            hx-post={`/api/admin/modal/maintenance/index-test-compare?name=${name}`}
+            hx-target={`#index-test-${name}`}
+            hx-swap="innerHTML"
+            hx-confirm="Comparing indexed vs brute-force scan on a 30-day window. Brute-force pulls full bodies — slow on large stores. Continue?"
+            title="Compare: indexed count vs brute-force scan. Surfaces silent-exclusion gaps before landing a swap."
+          >Compare</button>
+        </div>
+      </div>
+      <div id={`index-test-${name}`}></div>
     </div>
   );
 }

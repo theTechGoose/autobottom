@@ -1201,6 +1201,26 @@ export async function listAllStoredByOrg(
  *
  *  fieldName defaults to "completedAt" for backwards compat. For
  *  completed-audit-stat use fieldName="ts". */
+/** Shared field-filter scan core. Wrapped by the two public variants
+ *  below — one that returns values-only (the common case), one that
+ *  preserves keys (used when the caller needs to filter by a key part
+ *  e.g. review-active's reviewer-email prefix). Single Firestore call
+ *  + decode loop; the wrappers just pick which shape to project. */
+async function _listStoredByFieldRaw(
+  type: string,
+  org: string,
+  from: number,
+  to: number,
+  opts: { limit?: number; fieldName?: string } = {},
+): Promise<DocBody[]> {
+  const limit = opts.limit ?? 5000;
+  const fieldName = opts.fieldName ?? "completedAt";
+  const creds = await loadFirestoreCredentials();
+  return creds
+    ? await restListByCompletedAt(creds, type, org, from, to, limit, fieldName)
+    : inMemListByCompletedAt(type, org, from, to, limit, fieldName);
+}
+
 export async function listStoredByCompletedAt<T>(
   type: string,
   org: string,
@@ -1208,13 +1228,21 @@ export async function listStoredByCompletedAt<T>(
   to: number,
   opts: { limit?: number; fieldName?: string } = {},
 ): Promise<T[]> {
-  const limit = opts.limit ?? 5000;
-  const fieldName = opts.fieldName ?? "completedAt";
-  const creds = await loadFirestoreCredentials();
-  const bodies = creds
-    ? await restListByCompletedAt(creds, type, org, from, to, limit, fieldName)
-    : inMemListByCompletedAt(type, org, from, to, limit, fieldName);
+  const bodies = await _listStoredByFieldRaw(type, org, from, to, opts);
   return bodies.map((b) => unwrapPayload<T>(b));
+}
+
+/** Same field-filter scan as listStoredByCompletedAt, but returns each
+ *  result paired with its key parts. */
+export async function listStoredByCompletedAtWithKeys<T>(
+  type: string,
+  org: string,
+  from: number,
+  to: number,
+  opts: { limit?: number; fieldName?: string } = {},
+): Promise<Array<{ key: string[]; value: T }>> {
+  const bodies = await _listStoredByFieldRaw(type, org, from, to, opts);
+  return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
 }
 
 /** List values whose doc ID begins with the given prefix.

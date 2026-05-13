@@ -16,11 +16,32 @@ import { SweepProgress } from "../../../../../components/SweepProgress.tsx";
 
 interface ListResp { ok?: boolean; fids?: string[]; error?: string }
 
+function parseSince(input: string): number {
+  if (!input) return 0;
+  const t = Date.parse(input);
+  if (!Number.isFinite(t)) return 0;
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function parseUntil(input: string): number {
+  if (!input) return 0;
+  const t = Date.parse(input);
+  if (!Number.isFinite(t)) return 0;
+  const d = new Date(t);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+
 export const handler = define.handlers({
   async POST(ctx) {
+    const form = await ctx.req.formData().catch(() => null);
+    const sinceMs = form ? parseSince(form.get("since")?.toString() ?? "") : 0;
+    const untilMs = form ? parseUntil(form.get("until")?.toString() ?? "") : 0;
     let r: ListResp;
     try {
-      r = await apiPost<ListResp>("/admin/sweep-orphaned-list-fids", ctx.req, {});
+      r = await apiPost<ListResp>("/admin/sweep-orphaned-list-fids", ctx.req, { sinceMs, untilMs });
     } catch (e) {
       return html(<div class="error-text" style="font-size:11px;">Failed to list fids: {String(e)}</div>);
     }

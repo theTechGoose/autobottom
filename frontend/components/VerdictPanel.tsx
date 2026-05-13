@@ -241,7 +241,10 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
         </details>
       )}
 
-      {/* Failed Questions pill list (review only, audit has more than one item) */}
+      {/* Failed Questions pill list (review only, audit has more than one item).
+       *  Each pill is a clickable button that switches the verdict panel to
+       *  that question via /api/review/jump. Re-deciding an already-decided
+       *  question overwrites the prior review-decided record — prod parity. */}
       {isReview && buffer.length > 1 && (() => {
         const decMap = decisions ?? {};
         const decidedCount = Object.keys(decMap).length;
@@ -259,14 +262,25 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
                     : dec === "flip"
                       ? "failed-q-dot flipped"
                       : "failed-q-dot";
+                const jumpHref = `/api/review/jump?findingId=${encodeURIComponent(bi.findingId)}&questionIndex=${encodeURIComponent(String(bi.questionIndex))}&reviewer=${encodeURIComponent(email)}&types=${encodeURIComponent(allowedTypesCsv ?? "")}`;
                 return (
                   <li
                     key={`${bi.findingId}-${bi.questionIndex}`}
                     class={`failed-q-pill ${isCurrent ? "current" : ""}`}
                   >
-                    <span class="failed-q-num">{idx + 1}</span>
-                    <span class={dotClass} />
-                    <span class="failed-q-name">{truncate(bi.header, 40)}</span>
+                    <button
+                      type="button"
+                      class="failed-q-pill-btn"
+                      hx-get={jumpHref}
+                      hx-target="#queue-content"
+                      hx-swap="innerHTML"
+                      disabled={isCurrent}
+                      title={isCurrent ? "Currently viewing" : `Switch to: ${bi.header}`}
+                    >
+                      <span class="failed-q-num">{idx + 1}</span>
+                      <span class={dotClass} />
+                      <span class="failed-q-name">{truncate(bi.header, 40)}</span>
+                    </button>
                   </li>
                 );
               })}

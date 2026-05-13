@@ -5,7 +5,7 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { ReviewBufferResponse, DecisionResponse, ReviewStatsResponse, OkResponse, OkMessageResponse, ReviewerConfigResponse, MessageResponse, GamificationSettingsResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, ReviewDecideRequest, ReviewBackRequest } from "@core/dto/requests.ts";
-import { recordDecision, finalizeReviewedAudit, getReviewStats, getReviewedFindingIds, clearReviewQueue, getFailedQuestionsForFinding, getDecisionsByFinding, discardReview } from "@review/domain/business/review-queue/mod.ts";
+import { recordDecision, finalizeReviewedAudit, getReviewStats, getReviewedFindingIds, clearReviewQueue, getFailedQuestionsForFinding, getDecisionsByFinding, discardReview, jumpToQuestion } from "@review/domain/business/review-queue/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
@@ -103,6 +103,26 @@ export class ReviewController {
       return result;
     } catch (err) {
       return softFail(`back ${body.reviewer}`, err, { buffer: [], remaining: 0, retry: true });
+    }
+  }
+
+  @Get("jump") @ReturnedType(ReviewBufferResponse) @Description("Switch to a specific failed question on the current audit")
+  async jump(
+    @Query("findingId") findingId: string,
+    @Query("questionIndex") questionIndex: string,
+    @Query("reviewer") reviewer: string,
+  ) {
+    if (!findingId || !reviewer || questionIndex == null) {
+      return { error: "findingId, questionIndex, reviewer required" };
+    }
+    try {
+      const qi = parseInt(questionIndex, 10);
+      const result = await jumpToQuestion(ORG(), reviewer, findingId, qi);
+      return result;
+    } catch (err) {
+      return softFail(`jump ${findingId}/${questionIndex}`, err, {
+        buffer: [], remaining: 0, retry: true, fullBuffer: [], decisions: {},
+      });
     }
   }
 

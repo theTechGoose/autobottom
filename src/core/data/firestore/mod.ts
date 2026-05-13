@@ -1257,6 +1257,20 @@ export async function listStoredByIdPrefix<T>(
   return rows.map(({ id, body }) => ({ id, key: body._key, value: unwrapPayload<T>(body) }));
 }
 
+/** List values scoped to a (type, org, ...keyParts) tuple via doc-ID prefix.
+ *  Sugar over `listStoredByIdPrefix` for the common case where you want every
+ *  doc whose key starts with a known set of components — e.g. every
+ *  `review-decided` row for a specific findingId without scanning the org.
+ *  The trailing separator guard prevents `findingId="abc"` from matching
+ *  `findingId="abc-2"`. */
+export async function listStoredByKeyPrefix<T>(
+  type: string, org: string, ...keyParts: (string | number)[]
+): Promise<Array<{ key: (string | number)[]; value: T }>> {
+  const prefix = encodeDocId(type, org, ...keyParts) + SEP;
+  const rows = await listStoredByIdPrefix<T>(prefix, { limit: 1000 });
+  return rows.map(({ key, value }) => ({ key, value }));
+}
+
 // ── Chunked storage (for payloads that may exceed 1MB Firestore doc limit) ──
 
 const CHUNK_BYTES = 700_000;

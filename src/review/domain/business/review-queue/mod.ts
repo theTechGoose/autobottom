@@ -5,7 +5,7 @@
  *  acceptable given typical reviewer concurrency and idempotent finalize. */
 
 import {
-  getStored, setStored, setStoredIfAbsent, deleteStored, listStoredWithKeys, listStoredByCompletedAt, listStoredByCompletedAtWithKeys, withTiming,
+  getStored, setStored, setStoredIfAbsent, deleteStored, listStoredWithKeys, listStoredByCompletedAt, listStoredByCompletedAtWithKeys, listStoredByKeyPrefix, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewItem, ReviewDecision } from "@core/dto/types.ts";
@@ -715,11 +715,13 @@ export async function finalizeReviewedAudit(
     return { ok: true, score: existingDone.reviewScore ?? 0, alreadyFinalized: true };
   }
 
-  // Collect all decisions for this finding
-  const allDecided = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
+  // Collect all decisions for this finding. Doc IDs encode
+  // `review-decided__<org>__<findingId>__<qIndex>`, so a key-prefix scan
+  // pulls just this audit's rows instead of the org-wide brute-force scan
+  // (which used to dominate finalize latency on busy queues).
+  const allDecided = await listStoredByKeyPrefix<ReviewDecision>("review-decided", orgId, findingId);
   const decisions = new Map<number, ReviewDecision>();
-  for (const { key, value } of allDecided) {
-    if (key[0] !== findingId) continue;
+  for (const { value } of allDecided) {
     if (value?.questionIndex != null) decisions.set(value.questionIndex, value);
   }
   if (decisions.size === 0) {
@@ -875,27 +877,39 @@ export async function finalizeReviewedAudit(
   // in-flight" — the Review Dashboard's Decided/Total Processed/Decision
   // Rate stays inflated and never reflects the finalize work. Best-effort
   // per-question delete; score is already saved so a failed cleanup
-  // doesn't justify aborting the finalize.
-  let drained = 0;
-  for (const [qIndex] of decisions) {
-    try {
-      await deleteStored("review-decided", orgId, findingId, qIndex);
-      drained++;
-    } catch (e) {
-      console.warn(`[REVIEW] ${findingId}/${qIndex}: failed to drain review-decided:`, e);
-    }
-  }
+  // doesn't justify aborting the finalize. Parallelized — a 10-question
+  // audit previously did 10 serial round-trips here.
+  const drainResults = await Promise.all(
+    [...decisions.keys()].map(async (qIndex) => {
+      try {
+        await deleteStored("review-decided", orgId, findingId, qIndex);
+        return true;
+      } catch (e) {
+        console.warn(`[REVIEW] ${findingId}/${qIndex}: failed to drain review-decided:`, e);
+        return false;
+      }
+    }),
+  );
+  const drained = drainResults.filter(Boolean).length;
   console.log(`[REVIEW] ${findingId}: drained ${drained}/${decisions.size} review-decided rows`);
 
   console.log(`✅ [REVIEW] ${findingId}: finalized score=${reviewScore}% (${yeses}/${total} yes) reviewer=${reviewer}`);
 
-  await fireWebhook(orgId, "terminate", {
+  // Fire the terminate webhook async — don't block the reviewer's response
+  // on an external HTTP round-trip. The reviewer's work is durable
+  // (review-done is saved, audit-done-idx is written, drain is complete)
+  // before this point, so a webhook failure is recoverable via retry but
+  // shouldn't slow down the UI. Failures are logged loud so they're
+  // findable in production logs.
+  void fireWebhook(orgId, "terminate", {
     findingId,
     finding: correctedFinding,
     correctedAnswers: answered,
     reviewedAt,
     reviewedBy: reviewer,
     reviewScore,
+  }).catch((err) => {
+    console.error(`❌ [REVIEW] ${findingId}: terminate webhook failed (deferred):`, err);
   });
 
   return { ok: true, score: reviewScore };
@@ -1439,16 +1453,66 @@ export async function getDecisionsByFinding(
   // making 1 decision because Josh's earlier decisions on the same audit
   // were still in review-decided). The abandon-on-lock-expiry path also
   // wipes those rows, but reviewer filtering is defense-in-depth.
-  const all = await listStoredWithKeys<ReviewDecision>("review-decided", orgId);
+  //
+  // Scoped to this finding via key-prefix scan (doc IDs encode
+  // `review-decided__<org>__<findingId>__<qIndex>`) — every reviewer
+  // action fires this helper, so the org-wide scan it used to do was a
+  // dominant cost on busy queues.
+  const all = await listStoredByKeyPrefix<ReviewDecision>("review-decided", orgId, findingId);
   const out: Record<string, "confirm" | "flip"> = {};
-  for (const { key, value } of all) {
-    if (key[0] !== findingId) continue;
+  for (const { value } of all) {
     if (reviewer && value?.reviewer !== reviewer) continue;
     if (value?.questionIndex != null && (value.decision === "confirm" || value.decision === "flip")) {
       out[String(value.questionIndex)] = value.decision;
     }
   }
   return out;
+}
+
+// ── Jump to a specific question within an already-claimed audit ─────────────
+// Restores the prod-parity ability to click between failed questions on the
+// review queue side panel. Pre-refactor reviewers could revisit a decided
+// question and flip their answer; this wires that behavior back up.
+//
+// Restores a review-active row for the target question (so recordDecision
+// finds the full ReviewItem and writes a useful review-decided record) and
+// returns the buffer/fullBuffer/decisions shape the queue fragment expects.
+// Idempotent: a no-op when the row already exists.
+
+export async function jumpToQuestion(
+  orgId: OrgId,
+  reviewer: string,
+  findingId: string,
+  questionIndex: number,
+): Promise<{
+  buffer: BufferItem[];
+  remaining: number;
+  fullBuffer: BufferItem[];
+  decisions: Record<string, "confirm" | "flip">;
+} | { error: string }> {
+  const fullBuffer = await getFailedQuestionsForFinding(orgId, findingId);
+  const target = fullBuffer.find((b) => b.questionIndex === questionIndex);
+  if (!target) return { error: `question ${questionIndex} not found on finding ${findingId}` };
+
+  // Make sure the reviewer has a review-active row for this question so a
+  // subsequent /decide picks up the full ReviewItem (header/populated/etc.)
+  // — otherwise recordDecision falls back to an empty stub and finalize's
+  // identity-match path can't line the decision up with answeredQuestions.
+  const existingActive = await getStored<ReviewItem & { claimedAt?: number }>(
+    "review-active", orgId, reviewer, findingId, questionIndex,
+  );
+  if (!existingActive) {
+    const { transcript: _t, auditRemaining: _r, ...itemForActive } = target;
+    await setStored(
+      "review-active", orgId,
+      [reviewer, findingId, questionIndex],
+      { ...itemForActive, claimedAt: Date.now() },
+    );
+  }
+
+  const decisions = await getDecisionsByFinding(orgId, findingId, reviewer);
+  const remaining = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 0;
+  return { buffer: [target], remaining, fullBuffer, decisions };
 }
 
 // ── Backfill review queue from finished findings ────────────────────────────

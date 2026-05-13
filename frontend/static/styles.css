@@ -644,7 +644,10 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .failed-q-dot.flipped { background: #3fb950; }
 .failed-q-dot.current { background: #8b5cf6; box-shadow: 0 0 6px rgba(139, 92, 246, 0.5); }
 .failed-q-pill.current .failed-q-dot { background: #8b5cf6; box-shadow: 0 0 6px rgba(139, 92, 246, 0.5); }
-.failed-q-name { color: var(--text); flex: 1; }
+.failed-q-name { color: var(--text); flex: 1; text-align: left; }
+.failed-q-pill-btn { display: flex; align-items: center; gap: 8px; width: 100%; padding: 0; margin: 0; background: transparent; border: none; color: inherit; font: inherit; cursor: pointer; }
+.failed-q-pill-btn:disabled { cursor: default; }
+.failed-q-pill:not(.current):hover { background: rgba(139,92,246,0.06); border-color: rgba(139,92,246,0.18); }
 
 /* Meta row — prod #meta-row with top divider above it */
 .verdict-meta-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding-top: 16px; border-top: 1px solid #1a1f2b; }

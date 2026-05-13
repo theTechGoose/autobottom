@@ -858,6 +858,36 @@ export async function finalizeReviewedAudit(
   // we'd leave a stranded lock that blocks future claims.
   await releaseLocksForFinding(orgId, findingId);
 
+  // Drop any lingering review-active rows for this reviewer + finding.
+  // claimNextItem's resume-stranded-audit branch (line ~461) hands an audit
+  // BACK to a reviewer who still has active rows — fine for legitimate
+  // browser-close mid-review, disastrous after a premature finalize where
+  // some questions never got decided. Without this cleanup the reviewer
+  // keeps getting served the same finalized audit on every /review visit
+  // and every subsequent finalize correctly errors with "already finalized,
+  // skipping" — exactly Ashley's report on h01QKxPfGbBYCjwB_P7Xm.
+  //
+  // Scoped to (reviewer, findingId) via key-prefix: review-active key shape
+  // is [reviewer, findingId, questionIndex], so the prefix is well-defined
+  // and the scan is constant-time per audit instead of org-wide.
+  try {
+    const activeForReviewerFinding = await listStoredByKeyPrefix<ReviewItem>(
+      "review-active", orgId, reviewer, findingId,
+    );
+    await Promise.all(
+      activeForReviewerFinding.map(({ key }) =>
+        deleteStored("review-active", orgId, ...key).catch((e) => {
+          console.warn(`[REVIEW] ${findingId}: failed to drain review-active ${JSON.stringify(key)}:`, e);
+        })
+      ),
+    );
+  } catch (e) {
+    // Best-effort — finalize has already done the durable work above. A
+    // lingering active row just means a redundant stranded-resume hand-
+    // back which the idempotency guard will block as "already finalized".
+    console.warn(`[REVIEW] ${findingId}: review-active sweep failed (non-fatal):`, e);
+  }
+
   await writeAuditDoneIndex(orgId, {
     findingId,
     completedAt: reviewedAt,
@@ -1500,9 +1530,18 @@ export async function jumpToQuestion(
   // BOTH read from item.recordMeta. Without this step a pill-click empties
   // those fields and the reviewer loses guest/record context.
   const rehydrated = await rehydrateItemFromFinding(orgId, baseTarget);
+
+  // Wire auditRemaining to the REAL audit-pending counter, NOT the default
+  // 0 from getFailedQuestionsForFinding. The verdict panel uses this to
+  // decide isLastForAudit (auditRemaining <= 1) — when 0, every jumped
+  // question masquerades as the audit's final question and clicking Y/N
+  // pops the type-YES finalize modal. That triggered Ashley's premature
+  // finalize on h01QKxPfGbBYCjwB_P7Xm (3 decisions of 7 → finalized at
+  // 84% before the rest were even seen).
+  const remainingForFinding = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 0;
   const target: BufferItem = {
     ...rehydrated,
-    auditRemaining: baseTarget.auditRemaining,
+    auditRemaining: remainingForFinding,
     transcript: baseTarget.transcript,
   };
 
@@ -1523,8 +1562,7 @@ export async function jumpToQuestion(
   }
 
   const decisions = await getDecisionsByFinding(orgId, findingId, reviewer);
-  const remaining = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 0;
-  return { buffer: [target], remaining, fullBuffer, decisions };
+  return { buffer: [target], remaining: remainingForFinding, fullBuffer, decisions };
 }
 
 // ── Backfill review queue from finished findings ────────────────────────────

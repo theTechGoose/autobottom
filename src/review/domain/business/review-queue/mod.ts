@@ -5,7 +5,7 @@
  *  acceptable given typical reviewer concurrency and idempotent finalize. */
 
 import {
-  getStored, setStored, setStoredIfAbsent, deleteStored, listStoredWithKeys, withTiming,
+  getStored, setStored, setStoredIfAbsent, deleteStored, listStoredWithKeys, listStoredByCompletedAt, listStoredByCompletedAtWithKeys, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewItem, ReviewDecision } from "@core/dto/types.ts";
@@ -1596,11 +1596,27 @@ export async function getReviewedFindingIds(orgId: OrgId): Promise<Set<string>> 
  *  filter. */
 export async function getPendingReviewFindings(
   orgId: OrgId,
+  opts: { sinceMs?: number; untilMs?: number } = {},
 ): Promise<Map<string, ReviewItem>> {
   const out = new Map<string, ReviewItem>();
-  const [pending, active, hidden] = await Promise.all([
-    listStoredWithKeys<ReviewItem>("review-pending", orgId),
-    listStoredWithKeys<ReviewItem>("review-active", orgId),
+  const useIndex = typeof opts.sinceMs === "number" && typeof opts.untilMs === "number" && opts.untilMs >= opts.sinceMs;
+  // Indexed path: server-side range filter on completedAt against both
+  // review stores. Verified equivalent to the brute-force scan on prod
+  // via the Index Tests Compare card (review-pending 522/522, review-
+  // active 21/21, zero missing-field). The brute-force path stays as
+  // the unfiltered default for callers that genuinely want every queue
+  // entry regardless of date (e.g. reconcilePerfectPending).
+  const fetchRows = useIndex
+    ? () => Promise.all([
+      listStoredByCompletedAtWithKeys<ReviewItem>("review-pending", orgId, opts.sinceMs!, opts.untilMs!, { fieldName: "completedAt", limit: 10_000 }),
+      listStoredByCompletedAtWithKeys<ReviewItem>("review-active", orgId, opts.sinceMs!, opts.untilMs!, { fieldName: "completedAt", limit: 10_000 }),
+    ])
+    : () => Promise.all([
+      listStoredWithKeys<ReviewItem>("review-pending", orgId),
+      listStoredWithKeys<ReviewItem>("review-active", orgId),
+    ]);
+  const [[pending, active], hidden] = await Promise.all([
+    fetchRows(),
     getHiddenFindingIds(orgId),
   ]);
   const ingest = (rows: { key: unknown[]; value: ReviewItem }[]) => {

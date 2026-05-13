@@ -877,17 +877,37 @@ export class AdminConfigController {
   // This avoids the edge timeout that hit the single-call sweep when
   // completed-audit-stat grew past ~1k rows.
   @Post("sweep-orphaned-list-fids") @ReturnedType(MessageResponse)
-  async sweepOrphanedListFids() {
+  async sweepOrphanedListFids(@Body() body: GenericBodyRequest) {
     const orgId = ORG();
-    const { listStoredWithKeysAll } = await import("@core/data/firestore/mod.ts");
-    const rows = await listStoredWithKeysAll<{ findingId?: string }>("completed-audit-stat", orgId);
+    const b = body as { sinceMs?: number; untilMs?: number };
+    const sinceMs = Number(b?.sinceMs ?? 0);
+    const untilMs = Number(b?.untilMs ?? 0);
+    const useIndex = sinceMs > 0 && untilMs > 0 && untilMs >= sinceMs;
     const seen = new Set<string>();
     const fids: string[] = [];
-    for (const { value } of rows) {
-      const fid = value?.findingId;
-      if (fid && !seen.has(fid)) { seen.add(fid); fids.push(fid); }
+    if (useIndex) {
+      // Server-side ts-range filter on completed-audit-stat. Useful for
+      // "sweep today" / "sweep this week" workflows — no full-store walk.
+      // Compare verified equivalence on the 30-day window (9526/9526).
+      const { listStoredByCompletedAt } = await import("@core/data/firestore/mod.ts");
+      const rows = await listStoredByCompletedAt<{ findingId?: string }>(
+        "completed-audit-stat", orgId, sinceMs, untilMs,
+        { fieldName: "ts", limit: 100_000 },
+      );
+      for (const v of rows) {
+        const fid = v?.findingId;
+        if (fid && !seen.has(fid)) { seen.add(fid); fids.push(fid); }
+      }
+      console.log(`📋 [SWEEP-LIST-FIDS] mode=ts-range sinceMs=${sinceMs} untilMs=${untilMs} total=${fids.length}`);
+    } else {
+      const { listStoredWithKeysAll } = await import("@core/data/firestore/mod.ts");
+      const rows = await listStoredWithKeysAll<{ findingId?: string }>("completed-audit-stat", orgId);
+      for (const { value } of rows) {
+        const fid = value?.findingId;
+        if (fid && !seen.has(fid)) { seen.add(fid); fids.push(fid); }
+      }
+      console.log(`📋 [SWEEP-LIST-FIDS] mode=all total=${fids.length}`);
     }
-    console.log(`📋 [SWEEP-LIST-FIDS] total=${fids.length}`);
     return { ok: true, fids };
   }
 
@@ -1122,7 +1142,14 @@ export class AdminConfigController {
     // review-pending is authoritative and bounded by what reviewers actually
     // need to act on, so the list now reflects the real queue.
     const [pending, bypassCfg] = await Promise.all([
-      getPendingReviewFindings(ORG()),
+      // Server-side date filter on review-pending/active.completedAt —
+      // returns only items whose completedAt is in the requested window
+      // instead of the full queue. The downstream per-fid getFinding
+      // loop still re-checks completedAt against the finding doc as
+      // belt-and-suspenders (finding.completedAt is the authoritative
+      // value; the queue entry's completedAt is a copy made at queue
+      // time).
+      getPendingReviewFindings(ORG(), { sinceMs: since, untilMs: until }),
       cfg.getOfficeBypassConfig(ORG()),
     ]);
     const bypassPatterns = (bypassCfg.patterns ?? []).map((p: string) => p.toLowerCase());

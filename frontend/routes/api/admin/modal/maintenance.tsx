@@ -330,21 +330,29 @@ function CleanupPanel() {
 
       <PanelCard
         title="Sweep orphaned 'Recently Completed'"
-        subtitle="Scans every completed-audit-stat row against its finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete. Runs in 25-fid chunks with live progress — handles arbitrarily large queues without timing out."
+        subtitle="Scans completed-audit-stat rows against each finding doc. Any row whose finding is missing OR not in 'finished' status OR has empty answeredQuestions is drained: completed-audit-stat, audit-done-idx, review-pending/active/decided/done, audit-pending counter, locks, chargeback + wire-deduction rows. The finding doc itself is untouched so any in-flight re-audit can still complete. Scoped by date when you provide a window (uses the server-side ts index — near-instant); leave both blank to scan every stat row (slow on large stores)."
       >
-        <button
-          class="sf-btn primary cl-btn"
-          style="padding:8px 16px;min-width:160px;"
+        <form
           hx-post="/api/admin/modal/maintenance/sweep-start"
           hx-target="#cleanup-msg"
           hx-swap="innerHTML"
-          hx-disabled-elt="this"
-          hx-indicator="this"
-          hx-confirm="Sweep every 'Recently Completed' row whose finding isn't actually finished? Cleans derived state without touching the finding doc."
+          hx-disabled-elt="find button[type='submit']"
+          hx-indicator="find button[type='submit']"
+          hx-confirm="Sweep 'Recently Completed' rows whose finding isn't actually finished? Cleans derived state without touching the finding doc."
         >
-          <span class="cl-label">Run Sweep</span>
-          <span class="cl-loading">Starting…</span>
-        </button>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div class="sf"><label class="sf-label">ts since (optional)</label><input type="date" name="since" class="sf-input" /></div>
+            <div class="sf"><label class="sf-label">ts until (optional)</label><input type="date" name="until" class="sf-input" /></div>
+          </div>
+          <button
+            type="submit"
+            class="sf-btn primary cl-btn"
+            style="padding:8px 16px;min-width:160px;"
+          >
+            <span class="cl-label">Run Sweep</span>
+            <span class="cl-loading">Starting…</span>
+          </button>
+        </form>
       </PanelCard>
       <div id="cleanup-msg"></div>
     </div>

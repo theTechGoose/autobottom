@@ -3,7 +3,7 @@
 
 import {
   getStored, setStored, deleteStored,
-  listStored, listStoredWithKeys, listAllStoredByOrg,
+  listStored, listStoredWithKeys, listStoredByCompletedAtWithKeys, listAllStoredByOrg,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, WireDeductionEntry, ChargebackEntry } from "@core/dto/types.ts";
@@ -24,10 +24,14 @@ export async function backfillReviewScores(
   until: number,
 ): Promise<{ scanned: number; updated: number }> {
   let scanned = 0, updated = 0;
-  const rows = await listStoredWithKeys<Record<string, unknown>>("completed-audit-stat", orgId);
+  // Server-side range filter on ts — returns only rows in the requested
+  // window. Was listStoredWithKeys (capped at 1000 rows, silently
+  // truncating large windows). Compare verified equivalence: 9526/9526
+  // on a 30-day window with zero missing-field.
+  const rows = await listStoredByCompletedAtWithKeys<Record<string, unknown>>(
+    "completed-audit-stat", orgId, since, until, { fieldName: "ts", limit: 50_000 },
+  );
   for (const { key, value: v } of rows) {
-    const ts = (v.ts as number) ?? 0;
-    if (ts < since || ts > until) continue;
     scanned++;
     const findingId = v.findingId as string | undefined;
     if (!findingId) continue;
@@ -200,34 +204,31 @@ export async function purgeOldEntries(
   since: number,
   before: number,
 ): Promise<{ completed: number; chargebacks: number; wire: number }> {
-  let completedDeleted = 0, cbDeleted = 0, wireDeleted = 0;
-
-  const completed = await listStoredWithKeys<{ ts?: number }>("completed-audit-stat", orgId);
-  for (const { key, value } of completed) {
-    const ts = value?.ts ?? 0;
-    if (ts >= since && ts <= before) {
-      await deleteStored("completed-audit-stat", orgId, ...key);
-      completedDeleted++;
+  // Server-side ts-range filter against each of the three stores.
+  // Compare verified equivalence per store: 9526/9526 completed-audit-stat,
+  // 5294/5294 chargeback-entry, 391/391 wire-deduction-entry; all with
+  // zero missing-field. Removes the silent 1000-row truncation that
+  // hit the brute-force scan on big purge windows.
+  const purgeOne = async <T extends { ts?: number }>(type: string): Promise<number> => {
+    let deleted = 0;
+    const rows = await listStoredByCompletedAtWithKeys<T>(type, orgId, since, before, {
+      fieldName: "ts",
+      limit: 100_000,
+    });
+    for (const { key } of rows) {
+      await deleteStored(type, orgId, ...key);
+      deleted++;
     }
-  }
+    return deleted;
+  };
 
-  const cbRows = await listStoredWithKeys<ChargebackEntry>("chargeback-entry", orgId);
-  for (const { key, value } of cbRows) {
-    if (value.ts >= since && value.ts <= before) {
-      await deleteStored("chargeback-entry", orgId, ...key);
-      cbDeleted++;
-    }
-  }
+  const [completed, chargebacks, wire] = await Promise.all([
+    purgeOne<{ ts?: number }>("completed-audit-stat"),
+    purgeOne<ChargebackEntry>("chargeback-entry"),
+    purgeOne<WireDeductionEntry>("wire-deduction-entry"),
+  ]);
 
-  const wireRows = await listStoredWithKeys<WireDeductionEntry>("wire-deduction-entry", orgId);
-  for (const { key, value } of wireRows) {
-    if (value.ts >= since && value.ts <= before) {
-      await deleteStored("wire-deduction-entry", orgId, ...key);
-      wireDeleted++;
-    }
-  }
-
-  return { completed: completedDeleted, chargebacks: cbDeleted, wire: wireDeleted };
+  return { completed, chargebacks, wire };
 }
 
 // ── Purge bypassed offices' wire deductions ──────────────────────────────────

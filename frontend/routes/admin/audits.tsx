@@ -117,6 +117,13 @@ export default define.page(async function AdminAuditsPage(ctx) {
 
   return (
     <Layout title="Audit History" section="admin" user={user} pathname={url.pathname} hideSidebar>
+      {/* Flatpickr — CDN-loaded date picker replacing the native input. Dark
+          theme + our own overrides below match the page chrome. Inputs keep
+          the same Y-m-d value format so the existing Go/Clear/window JS is
+          untouched. */}
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css" />
+      <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
       <style>{`
         /* === Audit History page — prod-parity layout === */
         .audits-topbar { display:flex; align-items:center; gap:16px; padding:0 24px; height:52px; background:var(--bg-raised); border-bottom:1px solid var(--border); flex-shrink:0; }
@@ -129,8 +136,20 @@ export default define.page(async function AdminAuditsPage(ctx) {
         .audits-filters > label { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-muted); display:flex; flex-direction:column; gap:3px; margin:0; }
         .audits-filters select, .audits-filters input[type=number] { background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:11px; padding:5px 8px; font-family:'SF Mono','Fira Code',monospace; }
         .audits-filters select:focus, .audits-filters input:focus { outline:none; border-color:var(--blue); }
-        .audits-filters input[type="date"] { background:var(--bg-raised); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:11px; padding:3px 8px; height:26px; color-scheme:dark; }
-        .audits-filters input[type="date"]::-webkit-calendar-picker-indicator { filter:invert(1) brightness(1.3); cursor:pointer; }
+        .audits-filters input[type="date"],
+        .audits-filters input.flatpickr-input,
+        .audits-filters input.flatpickr-alt-input,
+        .audits-filters input.form-control.input { background:var(--bg-raised) !important; border:1px solid var(--border) !important; border-radius:6px !important; color:var(--text) !important; font-size:11px !important; padding:3px 10px !important; height:26px !important; min-width:120px !important; cursor:text; font-family:'SF Mono','Fira Code',monospace; }
+        .audits-filters input[type="date"]:focus, .audits-filters input.flatpickr-input:focus, .audits-filters input.flatpickr-alt-input:focus, .audits-filters input.flatpickr-input.active, .audits-filters input.flatpickr-alt-input.active { border-color:var(--blue) !important; outline:none !important; }
+        /* Flatpickr theme overrides — match the page's dark surface tones. */
+        .flatpickr-calendar { background:var(--bg-raised) !important; border:1px solid var(--border) !important; box-shadow:0 6px 16px rgba(0,0,0,0.5) !important; font-family:inherit !important; }
+        .flatpickr-months .flatpickr-month, .flatpickr-weekday, .flatpickr-current-month input.cur-year, .flatpickr-current-month .cur-month { color:var(--text-bright) !important; }
+        .flatpickr-day { color:var(--text); border-radius:5px; }
+        .flatpickr-day:hover { background:var(--bg-surface); }
+        .flatpickr-day.selected, .flatpickr-day.selected:hover, .flatpickr-day.startRange, .flatpickr-day.endRange { background:var(--blue) !important; border-color:var(--blue) !important; color:#fff !important; }
+        .flatpickr-day.today { border-color:var(--blue) !important; }
+        .flatpickr-day.flatpickr-disabled, .flatpickr-day.prevMonthDay, .flatpickr-day.nextMonthDay { color:var(--text-muted) !important; }
+        .flatpickr-prev-month svg, .flatpickr-next-month svg { fill:var(--text-bright) !important; }
 
         .window-btns { display:flex; gap:4px; align-items:center; }
         .window-btn { padding:4px 10px; border-radius:5px; font-size:10px; font-weight:600; cursor:pointer; border:1px solid var(--border); background:var(--bg); color:var(--text-muted); transition:all 0.15s; }
@@ -237,9 +256,32 @@ export default define.page(async function AdminAuditsPage(ctx) {
               >{w.label}</button>
             ))}
             <span style="color:var(--text-dim);font-size:10px;margin:0 4px;align-self:center;">or</span>
-            <input type="date" id="f-date-start" />
+            <input type="text" id="f-date-start" placeholder="MM/DD/YYYY" />
             <span style="color:var(--text-dim);align-self:center;">–</span>
-            <input type="date" id="f-date-end" />
+            <input type="text" id="f-date-end" placeholder="MM/DD/YYYY" />
+            {/* Init both inputs as flatpickr pickers once the script + DOM
+                are ready.
+                - dateFormat Y-m-d: the value stored on the (now-hidden)
+                  original input. The Go-button JS at line 76 parses
+                  `s+'T00:00:00'` so we have to keep that format.
+                - altInput + altFormat m/d/Y: flatpickr renders a sibling
+                  visible input showing the American-friendly format that
+                  users actually type.
+                - allowInput: true — type directly OR click the calendar. */}
+            <script dangerouslySetInnerHTML={{ __html: `
+              (function init(){
+                if(!window.flatpickr){ setTimeout(init, 50); return; }
+                var opts = {
+                  dateFormat: "Y-m-d",
+                  altInput: true,
+                  altFormat: "m/d/Y",
+                  allowInput: true,
+                  maxDate: "today",
+                };
+                flatpickr("#f-date-start", opts);
+                flatpickr("#f-date-end",   opts);
+              })();
+            `}} />
             <button type="button" class="ah-btn ah-btn-primary" style="padding:3px 10px;font-size:11px;height:26px;" {...{ "hx-on:click": goBtnJs }}>Go</button>
             <button type="button" id="f-date-clear" class="ah-btn ah-btn-ghost" style="padding:3px 8px;font-size:11px;height:26px;display:none;" {...{ "hx-on:click": clearBtnJs }}>✕ Clear</button>
           </div>

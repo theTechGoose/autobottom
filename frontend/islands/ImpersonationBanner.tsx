@@ -10,7 +10,14 @@ import { useEffect, useState } from "preact/hooks";
 
 interface UserRow { email: string; role: string }
 
-export const EXCLUDED_PREFIXES = ["/admin", "/audit", "/login", "/register"];
+// Pages that admins reach legitimately as admins (not via impersonation).
+// Question Lab routes at /question-lab/** are full-page admin tools that
+// don't sit under /admin (they have their own top-level path), so without
+// listing them here the banner incorrectly pops up the moment an admin
+// opens the Question Lab list, config builder, or question editor.
+// /manager is similar — managers ARE administrators of their team, and an
+// admin landing there is doing admin work, not impersonating a reviewer.
+export const EXCLUDED_PREFIXES = ["/admin", "/audit", "/login", "/register", "/question-lab", "/manager"];
 
 /** Pure helper — true if the impersonation banner should probe for admin
  *  identity on this page. False on admin pages, audit-detail pages (no

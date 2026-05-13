@@ -202,20 +202,25 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
 function renderPagination(data: AdminAuditData): VNode | null {
   if (data.pages <= 1) return null;
   const refresh = `htmx.ajax('GET','/api/admin/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'})`;
+  // Use the {...{ "hx-on:click": ... }} spread form (not hx-on--click) — Preact
+  // strips/garbles the double-dash alias on JSX in this codebase, leaving the
+  // buttons inert. Same workaround as the filter strip in audits.tsx.
+  const prevJs = `(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.max(1,Number(p.value)-1));${refresh};})()`;
+  const nextJs = `(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.min(${data.pages},Number(p.value)+1));${refresh};})()`;
   return (
     <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:14px;">
       <button
         type="button"
         class="ah-btn ah-btn-ghost"
         disabled={data.page <= 1}
-        hx-on--click={`(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.max(1,Number(p.value)-1));${refresh};})()`}
+        {...{ "hx-on:click": prevJs }}
       >&larr; Prev</button>
       <span style="font-size:12px;color:var(--text-muted);">Page {data.page} of {data.pages}</span>
       <button
         type="button"
         class="ah-btn ah-btn-ghost"
         disabled={data.page >= data.pages}
-        hx-on--click={`(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.min(${data.pages},Number(p.value)+1));${refresh};})()`}
+        {...{ "hx-on:click": nextJs }}
       >Next &rarr;</button>
     </div>
   );

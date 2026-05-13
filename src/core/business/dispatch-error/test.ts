@@ -6,7 +6,7 @@
  *  foolproof safety net has regressed — fix the code, not the test.
  *  See plan: /Users/adam/.claude/plans/hiya-please-review-this-gentle-starfish.md */
 
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "#assert";
 import { buildDispatchErrorResponse, isAbortError, isDanetAbortBody } from "./mod.ts";
 
 // ── isAbortError ────────────────────────────────────────────────────────────

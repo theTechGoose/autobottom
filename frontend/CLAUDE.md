@@ -243,7 +243,7 @@ When you add a new admin tool with rich interactivity, default to a full page (r
 - `CsvImportWizard.tsx` — 5-step QLab CSV import (upload → map → preview → run → done)
 - `EmailReportEditor.tsx` — full Email Reports editor (rule builder + sections + preview iframe). **Mounted on a page route, never a modal swap** (see Gotcha #1).
 - `HotkeyHandler.tsx` — keyboard shortcuts for review/judge queue pages
-- `ImpersonationBanner.tsx` — golden "ADMIN VIEW" bar; auto-shows for admin on non-admin pages
+- `ImpersonationBanner.tsx` — golden "ADMIN VIEW" bar; auto-shows for admin on non-admin pages. `EXCLUDED_PREFIXES` suppresses it on admin-tool pages: `/admin`, `/audit`, `/login`, `/register`, `/question-lab`, `/manager`. (Managers ARE administrators of their team — admins on `/manager` are doing admin work, not impersonating.) Explicit `?as=<email>` overrides the exclusion.
 - `ModalController.tsx` — opens/closes admin modals on `data-modal` clicks; emits `modal-open` event for HTMX `hx-trigger="modal-open"`
 - `PipelineActivityChart.tsx` — canvas chart on the admin dashboard
 - `SoundEngine.tsx` — Web Audio API for gamification sounds

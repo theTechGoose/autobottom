@@ -1,9 +1,47 @@
-/** Smoke tests for judge repository. */
-import { assertEquals, assert } from "#assert";
-import { populateJudgeQueue, recordJudgeDecision, getJudgeStats, getAppeal, dismissFindingFromJudgeQueue } from "./mod.ts";
+/** Smoke + unit tests for the judge repository:
+ *  - basic queue populate / decide / dismiss
+ *  - dedup soft-hide path (markFindingHidden / deleteDuplicates)
+ *  - postJudgedAudit's audit-done-idx sync contract
+ *
+ *  The dedup + postJudgedAudit sections force in-mem Firestore mode via
+ *  resetFirestoreCredentials() so no real Firestore is involved. */
+
+import { assert, assertEquals, assertExists } from "#assert";
+import {
+  populateJudgeQueue,
+  recordJudgeDecision,
+  getJudgeStats,
+  dismissFindingFromJudgeQueue,
+  findDuplicates,
+  deleteDuplicates,
+  postJudgedAudit,
+  type DedupPlan,
+} from "./mod.ts";
+import {
+  resetFirestoreCredentials,
+  setStored,
+  getStored,
+} from "@core/data/firestore/mod.ts";
+import { saveFinding, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import {
+  writeAuditDoneIndex,
+  queryAuditDoneIndex,
+  markFindingHidden,
+  getHiddenFindingIds,
+  _resetHiddenCacheForTesting,
+  type AuditHiddenEntry,
+} from "@audit/domain/data/stats-repository/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
 const ORG = "test-org-" + crypto.randomUUID().slice(0, 8);
+
+function reset() {
+  resetFirestoreCredentials();
+  _resetHiddenCacheForTesting();
+}
+
+// ─── basic queue flow ──────────────────────────────────────────────────────
 
 Deno.test({ name: "judge queue — populate and stats", ...kvOpts, fn: async () => {
   const questions = [
@@ -28,3 +66,260 @@ Deno.test({ name: "judge — dismiss removes from queue", ...kvOpts, fn: async (
   const { dismissed } = await dismissFindingFromJudgeQueue(ORG, "f-judge-dismiss");
   assert(dismissed > 0);
 }});
+
+// ─── dedup soft-hide path ──────────────────────────────────────────────────
+
+const DEDUP_ORG = "test-org" as OrgId;
+
+Deno.test("dedup — markFindingHidden writes the audit-hidden doc", async () => {
+  reset();
+  await markFindingHidden(DEDUP_ORG, "fid-1", "dedup");
+  const v = await getStored<AuditHiddenEntry>("audit-hidden", DEDUP_ORG, "fid-1");
+  assertExists(v);
+  assertEquals(v?.findingId, "fid-1");
+  assertEquals(v?.reason, "duplicate");
+  assertEquals(v?.hiddenBy, "dedup");
+  assert(typeof v?.hiddenAt === "number" && v.hiddenAt > 0);
+});
+
+Deno.test("dedup — getHiddenFindingIds returns the right Set", async () => {
+  reset();
+  await markFindingHidden(DEDUP_ORG, "fid-a", "dedup");
+  await markFindingHidden(DEDUP_ORG, "fid-b", "dedup");
+  const ids = await getHiddenFindingIds(DEDUP_ORG);
+  assert(ids.has("fid-a"));
+  assert(ids.has("fid-b"));
+});
+
+Deno.test("dedup — deleteDuplicates flags every loser with audit-hidden", async () => {
+  reset();
+  const ts = 1_700_000_000_000;
+  const plan: DedupPlan = {
+    scanned: 3, groups: 1, orphaned: 0,
+    toDelete: [
+      { id: "fid-keep", recordKey: "rk", ts, reviewed: true, keep: true },
+      { id: "fid-loser-1", recordKey: "rk", ts, reviewed: false, keep: false },
+      { id: "fid-loser-2", recordKey: "rk", ts, reviewed: false, keep: false },
+    ],
+  };
+  const result = await deleteDuplicates(DEDUP_ORG, plan);
+  assertEquals(result.deleted, 2);
+
+  // Losers flagged
+  assertExists(await getStored("audit-hidden", DEDUP_ORG, "fid-loser-1"));
+  assertExists(await getStored("audit-hidden", DEDUP_ORG, "fid-loser-2"));
+  // Keeper NOT flagged
+  assertEquals(await getStored("audit-hidden", DEDUP_ORG, "fid-keep"), null);
+});
+
+Deno.test("dedup — deleteDuplicates is idempotent (call twice, no errors)", async () => {
+  reset();
+  const ts = 1_700_000_000_000;
+  const plan: DedupPlan = {
+    scanned: 1, groups: 1, orphaned: 0,
+    toDelete: [{ id: "fid-idem", recordKey: "rk", ts, reviewed: false, keep: false }],
+  };
+  await deleteDuplicates(DEDUP_ORG, plan);
+  await deleteDuplicates(DEDUP_ORG, plan); // must not throw
+  const v = await getStored<AuditHiddenEntry>("audit-hidden", DEDUP_ORG, "fid-idem");
+  assertExists(v);
+});
+
+Deno.test("dedup — flagged findings stay in audit-finding (no physical delete)", async () => {
+  reset();
+  const findingId = "fid-stays";
+  const ts = 1_700_000_000_000;
+  await setStored("audit-finding", DEDUP_ORG, [findingId], { id: findingId, body: "still here" });
+
+  const plan: DedupPlan = {
+    scanned: 1, groups: 1, orphaned: 0,
+    toDelete: [{ id: findingId, recordKey: "rk", ts, reviewed: false, keep: false }],
+  };
+  await deleteDuplicates(DEDUP_ORG, plan);
+
+  const stillThere = await getStored<{ id: string; body: string }>("audit-finding", DEDUP_ORG, findingId);
+  assertExists(stillThere);
+  assertEquals(stillThere?.body, "still here");
+});
+
+Deno.test("dedup — queryAuditDoneIndex hides flagged findings", async () => {
+  reset();
+  const tsA = 1_700_000_000_000;
+  const tsB = 1_700_000_001_000;
+  await writeAuditDoneIndex(DEDUP_ORG, {
+    findingId: "fid-visible", completedAt: tsA, completed: true, score: 90, recordId: "r1",
+  });
+  await writeAuditDoneIndex(DEDUP_ORG, {
+    findingId: "fid-hidden", completedAt: tsB, completed: true, score: 80, recordId: "r2",
+  });
+  await markFindingHidden(DEDUP_ORG, "fid-hidden", "dedup");
+
+  const got = await queryAuditDoneIndex(DEDUP_ORG, tsA - 1, tsB + 1);
+  const ids = got.map((e) => e.findingId).sort();
+  assertEquals(ids, ["fid-visible"]);
+});
+
+Deno.test("dedup — findDuplicates is idempotent after deleteDuplicates", async () => {
+  reset();
+  const recordId = "rec-shared";
+  const tsA = 1_700_000_000_000;
+  const tsB = 1_700_000_500_000;
+
+  await writeAuditDoneIndex(DEDUP_ORG, {
+    findingId: "fid-A", completedAt: tsA, completed: true, score: 90, recordId, reason: "reviewed",
+  });
+  await writeAuditDoneIndex(DEDUP_ORG, {
+    findingId: "fid-B", completedAt: tsB, completed: true, score: 80, recordId, reason: "perfect_score",
+  });
+
+  const plan1 = await findDuplicates(DEDUP_ORG, tsA - 1, tsB + 1);
+  assertEquals(plan1.groups, 1);
+  const losers = plan1.toDelete.filter((d) => !d.keep);
+  assertEquals(losers.length, 1);
+
+  await deleteDuplicates(DEDUP_ORG, plan1);
+  // Bust cache so the second run sees the freshly-flagged hidden ID.
+  _resetHiddenCacheForTesting();
+
+  const plan2 = await findDuplicates(DEDUP_ORG, tsA - 1, tsB + 1);
+  // Loser is hidden; only the keeper remains in scope, so no dup group.
+  assertEquals(plan2.groups, 0);
+  assertEquals(plan2.toDelete.length, 0);
+});
+
+// ─── postJudgedAudit — audit-done-idx sync contract ────────────────────────
+// postJudgedAudit must write a fresh audit-done-idx entry whenever judges
+// have overturned at least one question. If a future change removes the
+// writeAuditDoneIndex call from postJudgedAudit, these tests fail — fix the
+// code, not the tests.
+
+async function makeFindingWith4Nos(orgId: OrgId, findingId: string): Promise<number> {
+  const completedAt = Date.now();
+  const answeredQuestions = [0, 1, 2, 3].map((i) => ({
+    header: `Q${i}`,
+    populated: `populated ${i}`,
+    thinking: `thinking ${i}`,
+    defense: `defense ${i}`,
+    answer: "No",
+  }));
+  await saveFinding(orgId, {
+    id: findingId,
+    auditJobId: "job-" + findingId,
+    findingStatus: "finished",
+    recordingId: "rec-" + findingId,
+    recordingIdField: "VoGenie",
+    owner: "test@x.com",
+    record: { RecordId: "r-" + findingId, VoName: "VO 02 - Judge Test", ActivatingOffice: "EPG", Shift: "Night" },
+    answeredQuestions,
+    completedAt,
+  } as unknown as Parameters<typeof saveFinding>[1]);
+  return completedAt;
+}
+
+async function seedJudgeDecisions(
+  orgId: OrgId,
+  findingId: string,
+  decisions: Array<{ questionIndex: number; decision: "uphold" | "overturn" }>,
+): Promise<void> {
+  for (const d of decisions) {
+    await setStored("judge-decided", orgId, [findingId, d.questionIndex], {
+      findingId,
+      questionIndex: d.questionIndex,
+      header: `Q${d.questionIndex}`,
+      populated: `populated ${d.questionIndex}`,
+      thinking: "thinking",
+      defense: "defense",
+      answer: "No",
+      decision: d.decision,
+      judge: "judge@x.com",
+      decidedAt: Date.now(),
+    });
+  }
+}
+
+Deno.test("postJudgedAudit — full overturn rewrites index to 100% completed", async () => {
+  reset();
+  const ORG = ("test-judge-full-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-full-" + crypto.randomUUID().slice(0, 8);
+  const completedAt = await makeFindingWith4Nos(ORG, fid);
+  // Stale index seeded with pre-judge score (0% — all Nos).
+  await writeAuditDoneIndex(ORG, {
+    findingId: fid, completedAt, score: 0, completed: false, isPackage: false,
+  });
+  // Judge overturns ALL 4.
+  await seedJudgeDecisions(ORG, fid, [
+    { questionIndex: 0, decision: "overturn" },
+    { questionIndex: 1, decision: "overturn" },
+    { questionIndex: 2, decision: "overturn" },
+    { questionIndex: 3, decision: "overturn" },
+  ]);
+
+  await postJudgedAudit(ORG, fid, "judge@x.com");
+
+  // Finding's answeredQuestions reflects the overturns.
+  const refreshed = await getFinding(ORG, fid);
+  assertExists(refreshed);
+  const qs = (refreshed!.answeredQuestions ?? []) as Array<{ answer: string }>;
+  qs.forEach((q, i) => assertEquals(q.answer, "Yes", `q[${i}] should be overturned to Yes`));
+
+  // Index entry now reflects post-judge state.
+  const idx = await queryAuditDoneIndex(ORG, completedAt - 1000, completedAt + 1000);
+  const entry = idx.find((e) => e.findingId === fid);
+  assertExists(entry, "index entry must exist after postJudgedAudit");
+  assertEquals(entry!.score, 100, "index score must be 100 after all-overturn");
+  assertEquals(entry!.completed, true, "score === 100 must mark completed");
+  assertEquals(entry!.reason, "reviewed");
+});
+
+Deno.test("postJudgedAudit — partial overturn rewrites index with intermediate score", async () => {
+  reset();
+  const ORG = ("test-judge-partial-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-part-" + crypto.randomUUID().slice(0, 8);
+  const completedAt = await makeFindingWith4Nos(ORG, fid);
+  await writeAuditDoneIndex(ORG, {
+    findingId: fid, completedAt, score: 0, completed: false, isPackage: false,
+  });
+  // Judge overturns 2 of 4 → 50%.
+  await seedJudgeDecisions(ORG, fid, [
+    { questionIndex: 0, decision: "overturn" },
+    { questionIndex: 1, decision: "overturn" },
+    { questionIndex: 2, decision: "uphold" },
+    { questionIndex: 3, decision: "uphold" },
+  ]);
+
+  await postJudgedAudit(ORG, fid, "judge@x.com");
+
+  const idx = await queryAuditDoneIndex(ORG, completedAt - 1000, completedAt + 1000);
+  const entry = idx.find((e) => e.findingId === fid);
+  assertExists(entry);
+  assertEquals(entry!.score, 50, "index score must reflect partial overturn (2/4 = 50%)");
+  assertEquals(entry!.completed, false, "score < 100 must NOT mark completed");
+});
+
+Deno.test("postJudgedAudit — all-uphold leaves index unchanged (no write)", async () => {
+  reset();
+  const ORG = ("test-judge-uphold-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-up-" + crypto.randomUUID().slice(0, 8);
+  const completedAt = await makeFindingWith4Nos(ORG, fid);
+  // Seed index with a distinctive marker score so we can detect non-rewrite.
+  await writeAuditDoneIndex(ORG, {
+    findingId: fid, completedAt, score: 0, completed: false, isPackage: false,
+    voName: "PRE-EXISTING-MARKER",
+  });
+  // Judge upholds everything → no overturns, no finding modification, no index write.
+  await seedJudgeDecisions(ORG, fid, [
+    { questionIndex: 0, decision: "uphold" },
+    { questionIndex: 1, decision: "uphold" },
+    { questionIndex: 2, decision: "uphold" },
+    { questionIndex: 3, decision: "uphold" },
+  ]);
+
+  await postJudgedAudit(ORG, fid, "judge@x.com");
+
+  // Index entry untouched — postJudgedAudit only writes when overturns > 0.
+  const idx = await queryAuditDoneIndex(ORG, completedAt - 1000, completedAt + 1000);
+  const entry = idx.find((e) => e.findingId === fid);
+  assertExists(entry);
+  assertEquals(entry!.voName, "PRE-EXISTING-MARKER", "all-uphold path must not rewrite index");
+  assert(entry!.score === 0, "score must remain at seeded 0 (no overturns means no score change)");
+});

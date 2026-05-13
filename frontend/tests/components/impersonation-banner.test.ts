@@ -15,18 +15,29 @@ Deno.test("ImpersonationBanner — should NOT probe on /admin/*", () => {
   assertEquals(shouldProbeForBanner("/admin/users", ""), false);
 });
 
+Deno.test("ImpersonationBanner — should NOT probe on /question-lab/* (admin tool, not impersonation target)", () => {
+  assertEquals(shouldProbeForBanner("/question-lab", ""), false);
+  assertEquals(shouldProbeForBanner("/question-lab/config/abc123", ""), false);
+  assertEquals(shouldProbeForBanner("/question-lab/question/xyz789", ""), false);
+});
+
+Deno.test("ImpersonationBanner — should NOT probe on /manager/* (admin tool — managers ARE administrators, not impersonation targets)", () => {
+  assertEquals(shouldProbeForBanner("/manager", ""), false);
+  assertEquals(shouldProbeForBanner("/manager/dashboard", ""), false);
+  assertEquals(shouldProbeForBanner("/manager/team", ""), false);
+});
+
 Deno.test("ImpersonationBanner — should NOT probe on /login, /register, /", () => {
   assertEquals(shouldProbeForBanner("/login", ""), false);
   assertEquals(shouldProbeForBanner("/register", ""), false);
   assertEquals(shouldProbeForBanner("/", ""), false);
 });
 
-Deno.test("ImpersonationBanner — SHOULD probe on /review, /judge, /manager, /agent (legitimate impersonation targets)", () => {
+Deno.test("ImpersonationBanner — SHOULD probe on /review, /judge, /agent (legitimate impersonation targets)", () => {
   assertEquals(shouldProbeForBanner("/review", ""), true);
   assertEquals(shouldProbeForBanner("/review/dashboard", ""), true);
   assertEquals(shouldProbeForBanner("/judge", ""), true);
   assertEquals(shouldProbeForBanner("/judge/dashboard", ""), true);
-  assertEquals(shouldProbeForBanner("/manager", ""), true);
   assertEquals(shouldProbeForBanner("/agent", ""), true);
 });
 

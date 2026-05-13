@@ -731,7 +731,7 @@ Deno.serve({ port }, (req, info) => {
     }
 
     // /admin/kv-export, /admin/kv-inventory, /admin/kv-batch-list — direct
-    // dispatch (KV_EXPORT_SECRET-gated, used by scripts/migrate-fill.ts).
+    // dispatch (KV_EXPORT_SECRET-gated, used by fixtures/scripts/migrate-fill.ts).
     // Same @Req-broken-via-router.fetch workaround as /admin/api/me.
     if (path === "/admin/kv-export") {
       console.log(`[ROUTER] ${req.method} ${path} → direct kv-export handler`);

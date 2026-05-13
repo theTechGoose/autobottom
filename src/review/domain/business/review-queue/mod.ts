@@ -1491,8 +1491,20 @@ export async function jumpToQuestion(
   decisions: Record<string, "confirm" | "flip">;
 } | { error: string }> {
   const fullBuffer = await getFailedQuestionsForFinding(orgId, findingId);
-  const target = fullBuffer.find((b) => b.questionIndex === questionIndex);
-  if (!target) return { error: `question ${questionIndex} not found on finding ${findingId}` };
+  const baseTarget = fullBuffer.find((b) => b.questionIndex === questionIndex);
+  if (!baseTarget) return { error: `question ${questionIndex} not found on finding ${findingId}` };
+
+  // Rehydrate recordMeta + recordingIdField from the finding doc.
+  // getFailedQuestionsForFinding builds bare items (no recordMeta), but the
+  // verdict panel's Guest/TM/Record header AND the Record Details accordion
+  // BOTH read from item.recordMeta. Without this step a pill-click empties
+  // those fields and the reviewer loses guest/record context.
+  const rehydrated = await rehydrateItemFromFinding(orgId, baseTarget);
+  const target: BufferItem = {
+    ...rehydrated,
+    auditRemaining: baseTarget.auditRemaining,
+    transcript: baseTarget.transcript,
+  };
 
   // Make sure the reviewer has a review-active row for this question so a
   // subsequent /decide picks up the full ReviewItem (header/populated/etc.)

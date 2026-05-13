@@ -32,10 +32,17 @@ export const handler = define.handlers({
 
       let buffer: ReviewItem[] = [];
       let remaining = decideResult.remaining;
-      // Full failed-questions list + decisions — keeps the pill list intact across
-      // decisions so each question shows a status dot instead of disappearing.
-      const fullBuffer: ReviewItem[] = decideResult.fullBuffer ?? [];
-      const decisions: Record<string, "confirm" | "flip"> = decideResult.decisions ?? {};
+      // Full failed-questions list + decisions for the JUST-DECIDED audit.
+      // These are correct for the audit-complete branch (the type-YES modal
+      // counts the priors from this set). If we fall through to a /next call
+      // and the next call returns a DIFFERENT audit (current one rotated out
+      // either because we just exhausted it or because claimNextItem picked
+      // a different finding), we overwrite both with the new audit's data
+      // below — otherwise the pill list shows the prior audit's questions
+      // while the verdict panel shows the new audit's question (Ashley's
+      // "the question at the top doesn't match the side" report).
+      let fullBuffer: ReviewItem[] = decideResult.fullBuffer ?? [];
+      let decisions: Record<string, "confirm" | "flip"> = decideResult.decisions ?? {};
 
       let typesCsv = "";
       if (reviewer) {
@@ -49,12 +56,27 @@ export const handler = define.handlers({
       }
 
       if (!decideResult.auditComplete) {
-        // Normal path — load the next question's fragment.
-        const next = await apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
+        // Normal path — load the next question's fragment. /review/api/next
+        // ALSO returns fullBuffer + decisions for whatever finding it claimed;
+        // we MUST use those when the claim returned a different finding,
+        // otherwise the pill list and the verdict panel head desync.
+        const next = await apiFetch<{
+          buffer: ReviewItem[];
+          remaining: number;
+          fullBuffer?: ReviewItem[];
+          decisions?: Record<string, "confirm" | "flip">;
+        }>(
           `/review/api/next?reviewer=${encodeURIComponent(reviewer)}&types=${encodeURIComponent(typesCsv)}`, ctx.req,
         );
         buffer = next.buffer ?? [];
         remaining = next.remaining;
+        const nextFid = buffer[0]?.findingId;
+        if (nextFid && nextFid !== findingId) {
+          // Audit rotated under us — replace pill/decisions with the new
+          // audit's data so the panel + sidebar stay in sync.
+          fullBuffer = next.fullBuffer ?? [];
+          decisions = next.decisions ?? {};
+        }
       }
       // Audit-complete path: leave buffer empty. The marker fires the modal;
       // QueueModals re-fetches next via /api/review/next-fragment after YES.

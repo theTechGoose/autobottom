@@ -269,14 +269,20 @@ export class AdminConfigController {
   async flipAnswer(@Body() body: GenericBodyRequest) {
     const b = body as any;
     if (!b.findingId) return { error: "findingId required" };
+    // `flippedBy` is the admin's email, threaded through from the frontend
+    // (which reads ctx.state.user.email). Stamps onto review-done.reviewedBy
+    // + per-question reviewedBy so the judge view shows who flipped the
+    // audit when an agent later appeals it. Falls back to "admin" if not
+    // supplied (older clients / direct curl).
+    const flippedBy = (typeof b.flippedBy === "string" && b.flippedBy.trim()) ? String(b.flippedBy).trim() : "admin";
     // If questionIndex provided, flip that single question; otherwise flip all No→Yes (legacy).
     if (typeof b.questionIndex === "number" && Number.isInteger(b.questionIndex)) {
       const { adminFlipQuestion } = await import("@review/domain/business/review-queue/mod.ts");
-      const result = await adminFlipQuestion(ORG(), b.findingId, b.questionIndex);
+      const result = await adminFlipQuestion(ORG(), b.findingId, b.questionIndex, flippedBy);
       return { ok: result.success, score: result.score, answer: result.answer };
     }
     const { adminFlipFindingLegacy } = await import("@review/domain/business/review-queue/mod.ts");
-    const result = await adminFlipFindingLegacy(ORG(), b.findingId);
+    const result = await adminFlipFindingLegacy(ORG(), b.findingId, flippedBy);
     return { ok: result.success, score: result.score };
   }
   @Post("bulk-flip") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
@@ -294,6 +300,8 @@ export class AdminConfigController {
     if (findingIds.length > MAX_PER_CALL) {
       return { error: `batch too large (max ${MAX_PER_CALL}, got ${findingIds.length})`, retry: false };
     }
+    // `flippedBy` — see flip-answer comment above. Same pattern.
+    const flippedBy = (typeof b.flippedBy === "string" && b.flippedBy.trim()) ? String(b.flippedBy).trim() : "admin";
     const { adminFlipFindingLegacy } = await import("@review/domain/business/review-queue/mod.ts");
 
     // Parallelize within the batch — 10 in flight. 50 sequential × ~500ms
@@ -304,7 +312,7 @@ export class AdminConfigController {
       const chunk = findingIds.slice(i, i + PARALLEL);
       const r = await Promise.all(chunk.map(async (fid) => {
         try {
-          const res = await adminFlipFindingLegacy(ORG(), fid);
+          const res = await adminFlipFindingLegacy(ORG(), fid, flippedBy);
           return { id: fid, ok: res.success };
         } catch (err) {
           console.warn(`⚠️ [BULK-FLIP] ${fid} failed:`, err);

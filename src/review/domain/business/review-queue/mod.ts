@@ -1109,14 +1109,22 @@ export async function discardReview(
 export async function adminFlipFinding(
   orgId: OrgId,
   findingId: string,
+  flippedBy: string = "admin",
 ): Promise<{ success: boolean; score: number }> {
   const finding = await getFinding(orgId, findingId);
   if (!finding) return { success: false, score: 0 };
 
   const allAnswers = await getAllAnswersForFinding(orgId, findingId);
   const answers = allAnswers.length > 0 ? allAnswers : (finding.answeredQuestions ?? []);
+  // Stamp `reviewedBy` AND `reviewAction` on every flipped question.
+  // Previously only `reviewAction: "admin-flip"` was set, which left the
+  // judge view with no reviewer name to display when agents later appealed
+  // bulk-flipped audits — see judge enrich's fallback path.
+  const flippedAt = Date.now();
   const corrected = answers.map((a: any) =>
-    a.answer === "No" ? { ...a, answer: "Yes", reviewAction: "admin-flip" } : a,
+    a.answer === "No"
+      ? { ...a, answer: "Yes", reviewAction: "admin-flip", reviewedBy: flippedBy, reviewedAt: flippedAt }
+      : a,
   );
   const score = 100;
 
@@ -1151,7 +1159,11 @@ export async function adminFlipFinding(
   await deleteStored("review-audit-pending", orgId, findingId); cleared++;
   await releaseLocksForFinding(orgId, findingId);
 
-  await setStored("review-done", orgId, [findingId], { reviewedAt: new Date().toISOString() });
+  await setStored("review-done", orgId, [findingId], {
+    reviewedAt: new Date().toISOString(),
+    reviewScore: score,
+    reviewedBy: flippedBy,
+  });
 
   const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
   const rec = (finding as any).record as Record<string, any> ?? {};
@@ -1342,6 +1354,7 @@ export async function adminFlipQuestion(
   orgId: OrgId,
   findingId: string,
   questionIndex: number,
+  flippedBy: string = "admin",
 ): Promise<{ success: boolean; score: number; answer?: string }> {
   const finding = await getFinding(orgId, findingId);
   if (!finding) return { success: false, score: 0 };
@@ -1351,9 +1364,10 @@ export async function adminFlipQuestion(
 
   const current = String((answers[questionIndex] as any).answer ?? "").trim().toLowerCase();
   const wasYes = current.startsWith("yes") || current === "true" || current === "y" || current === "1";
+  const flippedAt = Date.now();
   const flipped = answers.map((a: any, i: number) =>
     i === questionIndex
-      ? { ...a, answer: wasYes ? "No" : "Yes", reviewAction: "admin-flip" }
+      ? { ...a, answer: wasYes ? "No" : "Yes", reviewAction: "admin-flip", reviewedBy: flippedBy, reviewedAt: flippedAt }
       : a,
   );
   const yesCount = flipped.filter((a: any) =>
@@ -1406,7 +1420,9 @@ export async function adminFlipQuestion(
   // 100%" drift the operator caught.
   if (score === 100) {
     try {
-      await finalizePerfectFinding(orgId, findingId, "admin-flip-q");
+      // Pass the admin's email through so review-done.reviewedBy is a real
+      // identifier instead of the legacy sentinel "admin-flip-q".
+      await finalizePerfectFinding(orgId, findingId, flippedBy);
     } catch (err) {
       console.warn(`⚠️ [ADMIN-FLIP-Q] ${findingId} auto-finalize at 100% failed (best-effort):`, err);
     }

@@ -20,9 +20,12 @@ export const handler = define.handlers({
       const msg = mode === "all" ? "No audits in the result table to flip." : "No rows selected.";
       return html(<div class="error-text" style="font-size:11px;">{msg}</div>);
     }
+    // flippedBy = the admin's email so the judge view can show who flipped
+    // these audits when agents later appeal them.
+    const flippedBy = ctx.state.user?.email ?? "admin";
     let r: FlipResp;
     try {
-      r = await apiPost<FlipResp>("/admin/bulk-flip", ctx.req, { findingIds: ids });
+      r = await apiPost<FlipResp>("/admin/bulk-flip", ctx.req, { findingIds: ids, flippedBy });
     } catch (e) {
       return html(<div class="error-text" style="font-size:11px;">Flip failed: {String(e)}</div>);
     }

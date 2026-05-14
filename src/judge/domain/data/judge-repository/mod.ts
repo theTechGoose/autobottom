@@ -294,14 +294,18 @@ export async function claimNextItem(
       if (f.appealType && !item.appealType) enrichedAppealType = f.appealType;
       if (f.appealComment) appealComment = f.appealComment;
     }
-    // Reviewer who scored this audit. Primary source is review-done's
-    // top-level `reviewedBy` (written by finalizeReviewedAudit — covers
-    // every audit that completed review, including ones where the judge
-    // is now appealing a question the reviewer didn't personally flip).
-    // Fallback: the per-question `reviewedBy` stamp on answeredQuestions,
-    // which only finalize lands on questions whose decisions were
-    // applied — so it's incomplete when an appeal targets a non-flipped
-    // question and was missing entirely on Ashley's REDO-appeal view.
+    // Reviewer who scored this audit, in fallback order:
+    //   1. review-done.reviewedBy — written by finalizeReviewedAudit AND
+    //      by adminFlipFinding / finalizePerfectFinding (post-2026-05-14).
+    //   2. The first answeredQuestions[i].reviewedBy — finalize stamps this
+    //      on decided questions; the new admin-flip path also stamps it on
+    //      flipped questions. Covers cases where review-done was written
+    //      without reviewedBy (legacy bulk-flips from before the stamp).
+    //   3. "Admin (bulk-flip)" sentinel when any question carries
+    //      `reviewAction: "admin-flip"` but no `reviewedBy` is available —
+    //      forward-compatible label for already-admin-flipped audits that
+    //      pre-date the email stamp. Avoids a backfill while still showing
+    //      Josh + Ashley *something* informative on the judge panel.
     let reviewedBy: string | undefined;
     try {
       const done = await getStored<{ reviewedBy?: string }>("review-done", orgId, item.findingId);
@@ -309,10 +313,12 @@ export async function claimNextItem(
     } catch (e) {
       console.warn(`⚠️ [JUDGE] ${item.findingId}: review-done lookup failed (non-fatal):`, e);
     }
-    if (!reviewedBy) {
-      reviewedBy = (finding?.answeredQuestions as any[] | undefined)?.find(
-        (q: any) => q.reviewedBy,
-      )?.reviewedBy as string | undefined;
+    const answeredArr = finding?.answeredQuestions as any[] | undefined;
+    if (!reviewedBy && answeredArr) {
+      reviewedBy = answeredArr.find((q: any) => q?.reviewedBy)?.reviewedBy as string | undefined;
+    }
+    if (!reviewedBy && answeredArr && answeredArr.some((q: any) => q?.reviewAction === "admin-flip")) {
+      reviewedBy = "Admin (bulk-flip)";
     }
     let recordId: string | undefined;
     let recordMeta: JudgeBufferItem["recordMeta"] | undefined;

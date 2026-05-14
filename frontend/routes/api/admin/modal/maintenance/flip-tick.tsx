@@ -48,12 +48,14 @@ export const handler = define.handlers({
       );
     }
 
-    // Pop next batch and process it.
+    // Pop next batch and process it. flippedBy = the admin's email so the
+    // judge view can show who flipped these audits when agents appeal them.
+    const flippedBy = ctx.state.user?.email ?? "admin";
     const batch = job.remaining.splice(0, BATCH_SIZE);
     if (batch.length > 0) {
       let r: FlipResp;
       try {
-        r = await apiPost<FlipResp>("/admin/bulk-flip", ctx.req, { findingIds: batch });
+        r = await apiPost<FlipResp>("/admin/bulk-flip", ctx.req, { findingIds: batch, flippedBy });
       } catch (err) {
         console.warn(`⚠️ [FLIP-TICK] jobId=${jobId} batch failed:`, err);
         r = { ok: false, failed: batch };

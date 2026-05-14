@@ -135,7 +135,7 @@ window.flipQuestion = function(idx) {
   fetch('/admin/flip-answer', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ findingId: ${JSON.stringify(id)}, questionIndex: idx }),
+    body: JSON.stringify({ findingId: ${JSON.stringify(id)}, questionIndex: idx, flippedBy: ${JSON.stringify(user?.email ?? "admin")} }),
     credentials: 'include',
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.ok) { window.location.reload(); }

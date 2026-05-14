@@ -707,7 +707,7 @@ export async function finalizeReviewedAudit(
   orgId: OrgId,
   findingId: string,
   reviewer: string,
-): Promise<{ ok: true; score: number; alreadyFinalized?: boolean }> {
+): Promise<{ ok: true; score: number; alreadyFinalized?: boolean; skippedFlips?: number }> {
   // Idempotency guard
   const existingDone = await getStored<{ reviewScore?: number }>("review-done", orgId, findingId);
   if (existingDone) {
@@ -821,21 +821,43 @@ export async function finalizeReviewedAudit(
     }
   }
 
-  // Final verification: every "flip" decision MUST end up with the
-  // matched answered entry having answer starting with "y". If not, fail
-  // loud and abort the finalize so we don't save the wrong score and
-  // fire the wrong terminate webhook. The reviewer can re-finalize from
-  // the dashboard once we understand the failure.
+  // Per-flip drop count. We used to ABORT the entire finalize when ANY
+  // flip didn't land — that protected the score but left reviewers
+  // stranded forever (Ashley + Josh both got stuck on audits where the
+  // finding's answeredQuestions had been re-prepared between when the
+  // decision was recorded and when finalize ran, making identity AND
+  // positional-index matches both fail).
+  //
+  // Tradeoff: skip unmatched flips with loud logging and proceed with
+  // the matched-only score. The skipped flip "would have" added to the
+  // Yes count; not applying it makes the resulting score conservative
+  // (closer to the bot's original verdict) rather than wrong-high. Admins
+  // can flip individual questions afterwards via /audit/report if needed.
+  // Heavy diagnostic stays so we can root-cause the underlying drift.
+  let skippedFlips = 0;
   for (const diag of flipDiag) {
     if (diag.decision !== "flip") continue;
     if (String(diag.finalAnswer).toLowerCase().startsWith("y")) continue;
+    skippedFlips++;
     console.error(
-      `🚨 [REVIEW] ${findingId}: ABORTING finalize — flip for q[${diag.qIndex}] did not land. matched=${diag.matched} targetIdx=${diag.targetIdx} prev="${diag.prevAnswer}" final="${diag.finalAnswer}". Webhook will NOT fire. Reviewer must re-finalize after diagnosis.`
+      `🚨 [REVIEW] ${findingId}: flip for q[${diag.qIndex}] could not be applied — SKIPPED (finalize will proceed). matched=${diag.matched} targetIdx=${diag.targetIdx} prev="${diag.prevAnswer}" final="${diag.finalAnswer}".`
     );
-    throw new Error(`finalize aborted: flip for q[${diag.qIndex}] failed to apply (matched=${diag.matched})`);
+  }
+  if (skippedFlips > 0) {
+    // Dump answered-array shape + first/last few headers so we can tell
+    // at a glance whether the finding lost its answeredQuestions (length
+    // collapsed to 0/1) vs a populated-text drift on intact entries.
+    const sample = (start: number, end: number) =>
+      answered.slice(start, end).map((a, i) => ({
+        idx: start + i,
+        header: String((a as { header?: string })?.header ?? "").slice(0, 60),
+      }));
+    console.error(
+      `🚨 [REVIEW] ${findingId}: ${skippedFlips}/${flipDiag.length} flip(s) skipped. answered.length=${answered.length} firstHeaders=${JSON.stringify(sample(0, 3))} lastHeaders=${JSON.stringify(sample(Math.max(0, answered.length - 3), answered.length))} unmatchedDecisions=${JSON.stringify(flipDiag.filter((d) => d.matched === "none"))}`
+    );
   }
   if (flipDiag.length > 0) {
-    console.log(`[REVIEW] ${findingId}: finalize flip-diag answered.length=${answered.length} decisions=${flipDiag.length} details=${JSON.stringify(flipDiag)}`);
+    console.log(`[REVIEW] ${findingId}: finalize flip-diag answered.length=${answered.length} decisions=${flipDiag.length} skipped=${skippedFlips} details=${JSON.stringify(flipDiag)}`);
   }
 
   const total = answered.length || 1;
@@ -942,7 +964,7 @@ export async function finalizeReviewedAudit(
     console.error(`❌ [REVIEW] ${findingId}: terminate webhook failed (deferred):`, err);
   });
 
-  return { ok: true, score: reviewScore };
+  return { ok: true, score: reviewScore, ...(skippedFlips > 0 ? { skippedFlips } : {}) };
 }
 
 // ── Undo Decision ───────────────────────────────────────────────────────────
@@ -1464,9 +1486,20 @@ export async function getFailedQuestionsForFinding(orgId: OrgId, findingId: stri
   const finding = await getFinding(orgId, findingId);
   if (!finding || !finding.answeredQuestions?.length) return [];
   const transcript = await getTranscript(orgId, findingId);
+  // Match populateReviewQueue's phantom filter (empty header AND empty
+  // populated). Without this, jump-to-question can target a phantom No-
+  // answered slot whose decision would land in review-decided with empty
+  // header — finalize's identity match then has nothing to work with and
+  // the audit gets stuck. populateReviewQueue already drops these for the
+  // initial claim flow; we add it here so the pill list is consistent.
   const noAnswers = (finding.answeredQuestions as any[])
     .map((q: any, i: number) => ({ ...q, index: i }))
-    .filter((q: any) => q.answer === "No");
+    .filter((q: any) => q.answer === "No")
+    .filter((q: any) => {
+      const hasHeader = String(q.header ?? "").trim().length > 0;
+      const hasPopulated = String(q.populated ?? "").trim().length > 0;
+      return hasHeader || hasPopulated;
+    });
   const recRaw = (finding.record ?? {}) as Record<string, unknown>;
   const recordingIdField = recRaw.GenieNumber != null ? "GenieNumber" : undefined;
   const recordId = String(recRaw.RecordId ?? recRaw.RelatedDestinationId ?? recRaw.GenieNumber ?? "");

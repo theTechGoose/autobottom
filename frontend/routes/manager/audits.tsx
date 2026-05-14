@@ -51,7 +51,15 @@ export default define.page(async function ManagerAuditsPage(ctx) {
 
       {/* Filter form — every input refetches the table via HTMX. The form is
           the source of truth for params; `hx-include="closest form"` on each
-          input makes sure ALL filter values get sent on every change. */}
+          input makes sure ALL filter values get sent on every change.
+          NOTE: every `hx-on:*` handler is written with JSX spread syntax
+          ({...{"hx-on:click": ...}}) — Preact strips/garbles the double-dash
+          `hx-on--click` alias when written as a normal JSX prop in this
+          codebase (same workaround used on /admin/audits). Click handlers
+          here also refresh via htmx.ajax() rather than htmx.trigger(form,
+          'change') — the form's hx-trigger filters by `from:select` /
+          `from:input`, so a change event dispatched on the form itself
+          doesn't match and the request silently never fires. */}
       <form
         id="audit-history-filters"
         class="card"
@@ -64,25 +72,29 @@ export default define.page(async function ManagerAuditsPage(ctx) {
       >
         <div class="form-group" style="margin-bottom:0;">
           <label>Since</label>
-          <input type="datetime-local" name="since-display" id="ah-since-display"
+          <input
+            type="datetime-local" name="since-display" id="ah-since-display"
             value={new Date(Number(since)).toISOString().slice(0, 16)}
-            hx-on--change={`document.getElementById('ah-since').value = new Date(this.value).getTime();`} />
+            {...{ "hx-on:change": `document.getElementById('ah-since').value = new Date(this.value).getTime();` }}
+          />
           <input type="hidden" name="since" id="ah-since" value={since} />
         </div>
         <div class="form-group" style="margin-bottom:0;">
           <label>Until</label>
-          <input type="datetime-local" name="until-display" id="ah-until-display"
+          <input
+            type="datetime-local" name="until-display" id="ah-until-display"
             value={new Date(Number(until)).toISOString().slice(0, 16)}
-            hx-on--change={`document.getElementById('ah-until').value = new Date(this.value).getTime();`} />
+            {...{ "hx-on:change": `document.getElementById('ah-until').value = new Date(this.value).getTime();` }}
+          />
           <input type="hidden" name="until" id="ah-until" value={until} />
         </div>
         <div class="form-group" style="margin-bottom:0;">
           <label>Quick</label>
           <div style="display:flex;gap:4px;">
-            <button type="button" class="btn btn-ghost btn-sm" hx-on--click={`(()=>{const d=new Date();d.setHours(0,0,0,0);document.getElementById('ah-since').value=d.getTime();document.getElementById('ah-until').value=Date.now();document.getElementById('ah-since-display').value=new Date(d).toISOString().slice(0,16);document.getElementById('ah-until-display').value=new Date().toISOString().slice(0,16);htmx.trigger('#audit-history-filters','change');})()`}>Today</button>
-            <button type="button" class="btn btn-ghost btn-sm" hx-on--click={`(()=>{const u=Date.now();const s=u-7*86400000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('ah-since-display').value=new Date(s).toISOString().slice(0,16);document.getElementById('ah-until-display').value=new Date(u).toISOString().slice(0,16);htmx.trigger('#audit-history-filters','change');})()`}>7D</button>
-            <button type="button" class="btn btn-ghost btn-sm" hx-on--click={`(()=>{const u=Date.now();const s=u-30*86400000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('ah-since-display').value=new Date(s).toISOString().slice(0,16);document.getElementById('ah-until-display').value=new Date(u).toISOString().slice(0,16);htmx.trigger('#audit-history-filters','change');})()`}>30D</button>
-            <button type="button" class="btn btn-ghost btn-sm" hx-on--click={`(()=>{document.getElementById('ah-since').value='0';document.getElementById('ah-until').value=Date.now();htmx.trigger('#audit-history-filters','change');})()`}>All</button>
+            <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": `(()=>{const d=new Date();d.setHours(0,0,0,0);document.getElementById('ah-since').value=d.getTime();document.getElementById('ah-until').value=Date.now();document.getElementById('ah-since-display').value=new Date(d).toISOString().slice(0,16);document.getElementById('ah-until-display').value=new Date().toISOString().slice(0,16);htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'});})()` }}>Today</button>
+            <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": `(()=>{const u=Date.now();const s=u-7*86400000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('ah-since-display').value=new Date(s).toISOString().slice(0,16);document.getElementById('ah-until-display').value=new Date(u).toISOString().slice(0,16);htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'});})()` }}>7D</button>
+            <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": `(()=>{const u=Date.now();const s=u-30*86400000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('ah-since-display').value=new Date(s).toISOString().slice(0,16);document.getElementById('ah-until-display').value=new Date(u).toISOString().slice(0,16);htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'});})()` }}>30D</button>
+            <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": `(()=>{document.getElementById('ah-since').value='0';document.getElementById('ah-until').value=Date.now();htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'});})()` }}>All</button>
           </div>
         </div>
         <div class="form-group" style="margin-bottom:0;">

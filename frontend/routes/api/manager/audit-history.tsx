@@ -52,13 +52,13 @@ function reviewedBadge(item: AuditHistoryItem) {
   if (item.reason === "perfect_score") return <span class="pill pill-green">Auto</span>;
   if (item.reason === "invalid_genie") return <span class="pill pill-blue">Invalid Genie</span>;
   if (item.reviewed) return <span class="pill pill-green">Reviewed</span>;
-  return <span style="color:var(--text-dim);font-size:11px;">\u2014</span>;
+  return <span style="color:var(--text-dim);font-size:11px;">—</span>;
 }
 
 function appealBadge(item: AuditHistoryItem) {
   if (item.appealStatus === "pending") return <span class="pill pill-yellow">Pending</span>;
   if (item.appealStatus === "complete") return <span class="pill pill-blue">Complete</span>;
-  return <span style="color:var(--text-dim);font-size:11px;">\u2014</span>;
+  return <span style="color:var(--text-dim);font-size:11px;">—</span>;
 }
 
 /** Render the table + stats + pagination. Used both for SSR (page initial
@@ -103,7 +103,7 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
               <tr key={item.findingId}>
                 <td>
                   <a class="mono" style="color:var(--accent);text-decoration:none;" href={`/audit/report?id=${encodeURIComponent(item.findingId)}`}>
-                    {item.findingId.slice(0, 10)}\u2026
+                    {item.findingId.slice(0, 10)}…
                   </a>
                 </td>
                 <td>{ownerLabel(item)}</td>
@@ -118,23 +118,30 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
           </tbody>
         </table>
       </div>
-      {pages > 1 && (
-        <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:14px;">
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            disabled={page <= 1}
-            hx-on--click={`(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.max(1,Number(p.value)-1));htmx.trigger('#audit-history-filters','change');})()`}
-          >&larr; Prev</button>
-          <span style="font-size:12px;color:var(--text-muted);">Page {page} of {pages}</span>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            disabled={page >= pages}
-            hx-on--click={`(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.min(${pages},Number(p.value)+1));htmx.trigger('#audit-history-filters','change');})()`}
-          >Next &rarr;</button>
-        </div>
-      )}
+      {pages > 1 && (() => {
+        // Same Preact hx-on--click strip workaround + htmx.ajax-vs-trigger
+        // gotcha as /admin/audits and the form buttons above.
+        const refresh = `htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'})`;
+        const prevJs = `(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.max(1,Number(p.value)-1));${refresh};})()`;
+        const nextJs = `(()=>{const p=document.getElementById('ah-page');if(!p)return;p.value=String(Math.min(${pages},Number(p.value)+1));${refresh};})()`;
+        return (
+          <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:14px;">
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              disabled={page <= 1}
+              {...{ "hx-on:click": prevJs }}
+            >&larr; Prev</button>
+            <span style="font-size:12px;color:var(--text-muted);">Page {page} of {pages}</span>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              disabled={page >= pages}
+              {...{ "hx-on:click": nextJs }}
+            >Next &rarr;</button>
+          </div>
+        );
+      })()}
     </div>
   );
 }

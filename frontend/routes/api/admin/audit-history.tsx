@@ -174,12 +174,12 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
                 <td>
                   {logsBase
                     ? <a href={`${logsBase}${encodeURIComponent(fid)}&start=now%2Fy&end=now`} target="_blank" class="mono" style="color:var(--blue);text-decoration:none;font-size:11px;">logs</a>
-                    : <span style="color:var(--text-dim);">\u2014</span>}
+                    : <span style="color:var(--text-dim);">—</span>}
                 </td>
                 <td>
                   {c.recordId
                     ? <a href={`${c.isPackage ? QB_PKG_URL : QB_DATE_URL}${encodeURIComponent(c.recordId)}`} target="_blank" class="mono" style="color:var(--blue);text-decoration:none;font-size:11px;">{c.recordId}</a>
-                    : <span style="color:var(--text-dim);">\u2014</span>}
+                    : <span style="color:var(--text-dim);">—</span>}
                 </td>
                 <td>{typeBadge(c.isPackage)}</td>
                 <td><span class="mono" style="font-size:10px;">{ownerLabel(c)}</span></td>

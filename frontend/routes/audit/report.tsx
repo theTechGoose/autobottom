@@ -142,6 +142,50 @@ window.flipQuestion = function(idx) {
     else { alert(d.error || 'Failed to flip'); if (btn) { btn.disabled = false; btn.textContent = '✏'; } }
   }).catch(function() { if (btn) { btn.disabled = false; btn.textContent = '✏'; } });
 };
+window.adminRerunGenies = function() {
+  var idsEl = document.getElementById('rpt-rerun-ids');
+  var commentEl = document.getElementById('rpt-rerun-comment');
+  var btn = document.getElementById('rpt-rerun-btn');
+  var out = document.getElementById('rpt-rerun-output');
+  if (!idsEl || !out) return;
+  // Accept comma OR newline-separated input.
+  var raw = String(idsEl.value || '').split(/[\\s,]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+  if (raw.length === 0) {
+    out.style.display = 'block';
+    out.textContent = 'Enter at least one genie ID.';
+    return;
+  }
+  var bad = raw.filter(function(s) { return !/^\\d+$/.test(s); });
+  if (bad.length) {
+    out.style.display = 'block';
+    out.textContent = 'Invalid genie ID(s): ' + bad.join(', ') + ' — must be digits only.';
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  out.style.display = 'block';
+  out.textContent = 'Submitting ' + raw.length + ' genie ID(s)…';
+  fetch('/api/audit/appeal/different-recording', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      findingId: ${JSON.stringify(id)},
+      recordingIds: raw,
+      comment: String(commentEl ? commentEl.value : '') || 'admin re-run',
+      agentEmail: ${JSON.stringify(user?.email ?? "admin")}
+    }),
+    credentials: 'include',
+  }).then(function(r) {
+    return r.text().then(function(text) {
+      var pretty;
+      try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { pretty = text; }
+      out.textContent = 'HTTP ' + r.status + ' ' + r.statusText + '\\n\\n' + pretty;
+    });
+  }).catch(function(err) {
+    out.textContent = 'fetch failed: ' + (err && err.message ? err.message : String(err));
+  }).finally(function() {
+    if (btn) { btn.disabled = false; btn.textContent = 'Re-run'; }
+  });
+};
         `,
         }}
       />

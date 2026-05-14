@@ -335,6 +335,56 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
           <div style="text-align:center;padding:32px 20px;color:var(--text-dim);">No questions answered yet</div>
         )}
       </div>
+
+      {/* ===== Admin: Re-run with different genie(s) =====
+       *   Gated behind isAdmin (server-rendered). Hits the existing
+       *   /audit/api/appeal/different-recording endpoint and dumps the raw
+       *   response inline so any error from startReauditWithGenies is
+       *   visible to the admin instead of being swallowed by the agent
+       *   AppealModal UX. */}
+      {isAdmin && (
+        <div class="rpt-section" style="border:1px dashed var(--border);border-radius:8px;padding:16px;margin-top:16px;">
+          <div class="rpt-section-title" style="display:flex;align-items:center;gap:8px;">
+            <span>Admin: Re-run audit with different genie(s)</span>
+            <span style="font-size:10px;color:var(--text-dim);font-weight:400;letter-spacing:1px;">ADMIN ONLY</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">
+            Paste one or more genie IDs (digits only). Same endpoint the agent appeal modal uses; the verbatim server response is shown below so backend errors aren't hidden.
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+            <div style="flex:1;min-width:280px;">
+              <label style="display:block;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Genie IDs (comma or newline-separated)</label>
+              <textarea
+                id="rpt-rerun-ids"
+                rows={2}
+                placeholder="e.g. 470605, 470606"
+                style="width:100%;font-family:var(--mono);font-size:12px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"
+              />
+            </div>
+            <div style="flex:1;min-width:240px;">
+              <label style="display:block;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Comment (optional)</label>
+              <input
+                type="text"
+                id="rpt-rerun-comment"
+                placeholder="why you're re-running"
+                style="width:100%;font-size:12px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"
+              />
+            </div>
+            <button
+              type="button"
+              id="rpt-rerun-btn"
+              class="btn btn-primary btn-sm"
+              {...{ onclick: `event.preventDefault();window.adminRerunGenies();` }}
+            >
+              Re-run
+            </button>
+          </div>
+          <pre
+            id="rpt-rerun-output"
+            style="margin-top:12px;font-size:11px;font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;color:var(--text);white-space:pre-wrap;display:none;"
+          ></pre>
+        </div>
+      )}
     </div>
   );
 }

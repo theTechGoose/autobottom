@@ -294,9 +294,26 @@ export async function claimNextItem(
       if (f.appealType && !item.appealType) enrichedAppealType = f.appealType;
       if (f.appealComment) appealComment = f.appealComment;
     }
-    const reviewedBy = (finding?.answeredQuestions as any[] | undefined)?.find(
-      (q: any) => q.reviewedBy,
-    )?.reviewedBy as string | undefined;
+    // Reviewer who scored this audit. Primary source is review-done's
+    // top-level `reviewedBy` (written by finalizeReviewedAudit — covers
+    // every audit that completed review, including ones where the judge
+    // is now appealing a question the reviewer didn't personally flip).
+    // Fallback: the per-question `reviewedBy` stamp on answeredQuestions,
+    // which only finalize lands on questions whose decisions were
+    // applied — so it's incomplete when an appeal targets a non-flipped
+    // question and was missing entirely on Ashley's REDO-appeal view.
+    let reviewedBy: string | undefined;
+    try {
+      const done = await getStored<{ reviewedBy?: string }>("review-done", orgId, item.findingId);
+      if (done?.reviewedBy) reviewedBy = done.reviewedBy;
+    } catch (e) {
+      console.warn(`⚠️ [JUDGE] ${item.findingId}: review-done lookup failed (non-fatal):`, e);
+    }
+    if (!reviewedBy) {
+      reviewedBy = (finding?.answeredQuestions as any[] | undefined)?.find(
+        (q: any) => q.reviewedBy,
+      )?.reviewedBy as string | undefined;
+    }
     let recordId: string | undefined;
     let recordMeta: JudgeBufferItem["recordMeta"] | undefined;
     if (finding) {

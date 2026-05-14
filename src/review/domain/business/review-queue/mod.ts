@@ -741,9 +741,56 @@ export async function finalizeReviewedAudit(
     return { ok: true, score: 0, alreadyFinalized: false };
   }
 
+  // HARD PRE-FLIGHT — refuse to finalize if the audit is mid-pipeline.
+  // Without this guard, an audit that was queued from an earlier "finished"
+  // run but has since been re-prepared (status flipped back to
+  // populating-questions / transcribing / etc.) will finalize against an
+  // empty answeredQuestions array, write review-done at score=0, and
+  // fire the terminate webhook → wrong-result email to the agent (the
+  // _gCdfZrviiR7X2C0-xxy0 incident on 2026-05-14). NO webhook, NO
+  // review-done write.
+  //
+  // We ALSO drain the stale review queue rows for this finding so the
+  // reviewer isn't trapped in a stranded-resume loop on the obsolete
+  // claim. step-finalize will re-populate the queue from scratch when
+  // the new pipeline run completes.
+  const liveStatus = String((finding as { findingStatus?: string }).findingStatus ?? "");
+  if (liveStatus !== "finished") {
+    console.error(
+      `❌ [REVIEW] ${findingId}: REFUSING to finalize — finding.findingStatus="${liveStatus}" (expected "finished"). Audit is mid-pipeline; finalize would write a phantom score and fire an incorrect terminate webhook. Dropping stale review queue rows for this finding so the reviewer isn't stranded.`,
+    );
+    try {
+      // Best-effort cleanup — same pattern adminFlipFinding uses.
+      const drainPending = await listStoredWithKeys<{ findingId?: string }>("review-pending", orgId);
+      const drainDecided = await listStoredWithKeys<{ findingId?: string }>("review-decided", orgId);
+      const drainActive = await listStoredWithKeys<{ findingId?: string }>("review-active", orgId);
+      await Promise.all([
+        ...drainPending.filter((r) => r.key[0] === findingId).map((r) => deleteStored("review-pending", orgId, ...r.key)),
+        ...drainDecided.filter((r) => r.key[0] === findingId).map((r) => deleteStored("review-decided", orgId, ...r.key)),
+        ...drainActive.filter((r) => r.value?.findingId === findingId).map((r) => deleteStored("review-active", orgId, ...r.key)),
+        deleteStored("review-audit-pending", orgId, findingId).catch(() => {}),
+      ]);
+      await releaseLocksForFinding(orgId, findingId);
+    } catch (e) {
+      console.warn(`[REVIEW] ${findingId}: drain on refusal failed (non-fatal):`, e);
+    }
+    throw new Error(`audit not yet complete — finding.findingStatus="${liveStatus}". Stale review state has been cleared; the audit will return to the queue when the pipeline finishes.`);
+  }
+
   const answered: Array<Record<string, unknown>> = Array.isArray(finding.answeredQuestions)
     ? [...finding.answeredQuestions]
     : [];
+
+  // Second pre-flight — answeredQuestions intact? An empty array means
+  // the finding is missing its question state even though status reads
+  // "finished" (chunked-read race, prep-corruption, etc.). Same blast
+  // radius as the status check: refuse, do NOT write or webhook.
+  if (answered.length === 0) {
+    console.error(
+      `❌ [REVIEW] ${findingId}: REFUSING to finalize — answered.length=0 despite findingStatus="finished". Will not write review-done or fire terminate webhook against an empty answered array.`,
+    );
+    throw new Error(`audit has no answered questions — refusing to finalize and email a phantom score.`);
+  }
 
   // Match each decision to the right answered-question entry by stable
   // identity (header + populated text), NOT by positional index. The

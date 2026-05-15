@@ -13,6 +13,13 @@ export default define.page(function LoginPage() {
       </head>
       <body class="auth-body">
         <div class="auth-card">
+          <img
+            src="/logo.png"
+            alt="Auto-Bot"
+            class="auth-logo-img"
+            width={128}
+            height={128}
+          />
           <div class="auth-logo">Auto-Bot</div>
           <p class="auth-sub">Sign in to your account</p>
           <form method="POST" action="/api/login">

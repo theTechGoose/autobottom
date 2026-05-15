@@ -1183,8 +1183,18 @@ export async function adminFlipFinding(
   const finding = await getFinding(orgId, findingId);
   if (!finding) return { success: false, score: 0 };
 
-  const allAnswers = await getAllAnswersForFinding(orgId, findingId);
-  const answers = allAnswers.length > 0 ? allAnswers : (finding.answeredQuestions ?? []);
+  // PREFER finding.answeredQuestions over batch-answers. batch-answers
+  // is the raw output of the original step-ask-batch LLM run and is
+  // NEVER updated when reviewer-queue finalize flips an answer; reading
+  // from it first would silently revert every prior review flip the
+  // moment we save. (MJ's duHcim5XQTTcXCXfeGWSM 2026-05-15: clicked
+  // pencil on days/nights, citizenship reverted to "No" because the
+  // reviewer's earlier flip on citizenship lived only in
+  // finding.answeredQuestions and got overwritten by batch-answers.)
+  // Falls back to batch-answers only if the finding doc lacks the
+  // array entirely (legacy / corrupted state).
+  const fromFinding = Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : [];
+  const answers = fromFinding.length > 0 ? fromFinding : await getAllAnswersForFinding(orgId, findingId);
   // Stamp `reviewedBy` AND `reviewAction` on every flipped question.
   // Previously only `reviewAction: "admin-flip"` was set, which left the
   // judge view with no reviewer name to display when agents later appealed
@@ -1427,8 +1437,11 @@ export async function adminFlipQuestion(
 ): Promise<{ success: boolean; score: number; answer?: string }> {
   const finding = await getFinding(orgId, findingId);
   if (!finding) return { success: false, score: 0 };
-  const allAnswers = await getAllAnswersForFinding(orgId, findingId);
-  const answers = allAnswers.length > 0 ? allAnswers : (finding.answeredQuestions ?? []);
+  // Same read-preference fix as adminFlipFinding — finding.answeredQuestions
+  // is the live source of truth post-review; batch-answers is stale.
+  // See the long comment in adminFlipFinding for the incident this prevents.
+  const fromFinding = Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : [];
+  const answers = fromFinding.length > 0 ? fromFinding : await getAllAnswersForFinding(orgId, findingId);
   if (questionIndex < 0 || questionIndex >= answers.length) return { success: false, score: 0 };
 
   const current = String((answers[questionIndex] as any).answer ?? "").trim().toLowerCase();

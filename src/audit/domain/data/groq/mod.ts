@@ -93,7 +93,38 @@ export function makeUserPrompt(question: string, transcript: string): string {
 
 export interface LlmAnswer { answer: string; thinking: string; defense: string; }
 
-async function askQuestionInner(question: string, transcript: string, modelIndex = 0, temperature = 0.8): Promise<LlmAnswer> {
+/** Parse Groq's "Please try again in NNNms / NNs" hint from the 429 body
+ *  so we can sleep exactly the right amount before retrying. Falls back to
+ *  500ms if the hint isn't there (rare; usually present on TPM 429s). */
+function parseGroqRetryMs(msg: string): number {
+  const msMatch = msg.match(/try again in\s+([\d.]+)\s*ms/i);
+  if (msMatch) return Math.min(5000, Math.ceil(parseFloat(msMatch[1])) + 50);
+  const sMatch = msg.match(/try again in\s+([\d.]+)\s*s\b/i);
+  if (sMatch) return Math.min(15_000, Math.ceil(parseFloat(sMatch[1]) * 1000) + 50);
+  return 500;
+}
+
+function isRateLimitError(msg: string): boolean {
+  return msg.includes("429") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity");
+}
+
+function isModelDeadError(msg: string): boolean {
+  return msg.includes("503") || msg.includes("404") || msg.includes("model_not_found")
+    || msg.includes("json_validate_failed");
+}
+
+/** Per-question rate-limit retry budget. TPM 429s are usually <250ms windows;
+ *  three retries with the suggested delay (+ exponential bump if the hint is
+ *  missing) is plenty to ride them out without thrashing. */
+const MAX_RATE_LIMIT_RETRIES = 3;
+
+async function askQuestionInner(
+  question: string,
+  transcript: string,
+  modelIndex = 0,
+  temperature = 0.8,
+  rateLimitRetries = 0,
+): Promise<LlmAnswer> {
   const model: GroqModel = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
   const userPrompt = makeUserPrompt(question, transcript);
@@ -116,13 +147,28 @@ async function askQuestionInner(question: string, transcript: string, modelIndex
     clearTimeout(timerId!);
     const msg = String(e?.message ?? e);
     const isTimeout = msg.includes("timed out") || msg.includes("aborted") || msg.includes("AbortError");
+    const isRateLimit = isRateLimitError(msg);
+    const isModelDead = isTimeout || isModelDeadError(msg);
+
+    // INTRA-MODEL retry for TPM 429s. Groq's own response says "try again in
+    // Nms" — when we get that, retry the SAME model after that delay instead
+    // of skipping to the next one. Prevents this incident on
+    // yP_77CRE0kNRiuTRvMqM2 q[12]: TPM cap hit at 298687/300000, retry would
+    // have succeeded after 152.4ms but we instead returned answer="Error"
+    // with the raw 429 JSON as the question's reasoning text.
+    if (isRateLimit && !isModelDead && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
+      const waitMs = parseGroqRetryMs(msg);
+      console.warn(`[LLM-RATE-LIMIT] ${model} retry ${rateLimitRetries + 1}/${MAX_RATE_LIMIT_RETRIES} after ${waitMs}ms — TPM throttle, will not fall back yet`);
+      await new Promise((r) => setTimeout(r, waitMs));
+      return askQuestionInner(question, transcript, modelIndex, temperature, rateLimitRetries + 1);
+    }
+
     if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${model} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
-    const isRateLimit = isTimeout || msg.includes("429") || msg.includes("503") || msg.includes("404") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity") || msg.includes("json_validate_failed") || msg.includes("model_not_found");
     const nextIndex = modelIndex + 1;
-    if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
+    if ((isRateLimit || isModelDead) && nextIndex < FALLBACK_MODELS.length) {
       console.warn(`[LLM-FALLBACK] ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
       await new Promise((r) => setTimeout(r, 1000));
-      return askQuestionInner(question, transcript, nextIndex, temperature);
+      return askQuestionInner(question, transcript, nextIndex, temperature, 0);
     }
     throw e;
   }
@@ -153,7 +199,7 @@ export async function summarize(texts: string[]): Promise<string> {
   }, {}, "client");
 }
 
-async function groqCallWithRetry(params: Parameters<ReturnType<typeof getClient>["chat"]["completions"]["create"]>[0], trackLabel: string, modelIndex = 0): Promise<string> {
+async function groqCallWithRetry(params: Parameters<ReturnType<typeof getClient>["chat"]["completions"]["create"]>[0], trackLabel: string, modelIndex = 0, rateLimitRetries = 0): Promise<string> {
   const model = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
   const client = getClient();
   let timerId: ReturnType<typeof setTimeout>;
@@ -167,13 +213,23 @@ async function groqCallWithRetry(params: Parameters<ReturnType<typeof getClient>
     clearTimeout(timerId!);
     const msg = String(e?.message ?? e);
     const isTimeout = msg.includes("timed out") || msg.includes("aborted") || msg.includes("AbortError");
+    const isRateLimit = isRateLimitError(msg);
+    const isModelDead = isTimeout || isModelDeadError(msg);
+
+    // Same intra-model retry as askQuestionInner — see comment there.
+    if (isRateLimit && !isModelDead && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
+      const waitMs = parseGroqRetryMs(msg);
+      console.warn(`[LLM-RATE-LIMIT] ${trackLabel}/${model} retry ${rateLimitRetries + 1}/${MAX_RATE_LIMIT_RETRIES} after ${waitMs}ms`);
+      await new Promise((r) => setTimeout(r, waitMs));
+      return groqCallWithRetry(params, trackLabel, modelIndex, rateLimitRetries + 1);
+    }
+
     if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${trackLabel}/${model} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
-    const isRateLimit = isTimeout || msg.includes("429") || msg.includes("503") || msg.includes("404") || msg.includes("rate_limit_exceeded") || msg.includes("over capacity") || msg.includes("model_not_found");
     const nextIndex = modelIndex + 1;
-    if (isRateLimit && nextIndex < FALLBACK_MODELS.length) {
+    if ((isRateLimit || isModelDead) && nextIndex < FALLBACK_MODELS.length) {
       console.warn(`[LLM-FALLBACK] ${trackLabel}: ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
       await new Promise((r) => setTimeout(r, 1000));
-      return groqCallWithRetry(params, trackLabel, nextIndex);
+      return groqCallWithRetry(params, trackLabel, nextIndex, 0);
     }
     throw e;
   }

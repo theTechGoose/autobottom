@@ -70,6 +70,14 @@ function isYes(a: string | undefined): boolean {
   return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
 }
 
+/** "Error" answer is what step-ask-all writes when every Groq fallback model
+ *  exhausted retries (rate-limit, timeout, etc.). It is NOT a verdict — the
+ *  bot literally couldn't grade the question. Surface it as ERROR in the UI
+ *  so reviewers / agents don't read a non-verdict as Non-Compliant. */
+function isErrorAnswer(a: string | undefined): boolean {
+  return String(a ?? "").trim().toLowerCase() === "error";
+}
+
 function scoreColor(pct: number): string {
   return pct >= 80 ? "var(--green)" : "var(--red)";
 }
@@ -284,13 +292,19 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
         <div class="rpt-section-title">Questions ({total})</div>
         {total > 0 ? (
           questions.map((q, i) => {
-            const yes = isYes(q.answer);
+            const errored = isErrorAnswer(q.answer);
+            const yes = !errored && isYes(q.answer);
+            const stateClass = errored ? "error" : (yes ? "pass" : "fail");
+            const verdictClass = errored ? "error" : (yes ? "yes" : "no");
+            const verdictLabel = errored ? "Error" : (yes ? "Yes" : "No");
+            const verdictText = errored ? "Bot Error — Could Not Grade" : (yes ? "Compliant" : "Non-Compliant");
+            const verdictIcon = errored ? "⚠" : (yes ? "✓" : "✗");
             return (
-              <details key={i} class={`rpt-q ${yes ? "pass" : "fail"}`} id={`rpt-q-${i}`}>
+              <details key={i} class={`rpt-q ${stateClass}`} id={`rpt-q-${i}`}>
                 <summary>
                   <span class="rpt-q-num">{i + 1}</span>
                   <span class="rpt-q-title">{q.header ?? "Untitled question"}</span>
-                  <span class={`rpt-q-verdict ${yes ? "yes" : "no"}`} id={`rpt-q-answer-${i}`}>{yes ? "Yes" : "No"}</span>
+                  <span class={`rpt-q-verdict ${verdictClass}`} id={`rpt-q-answer-${i}`}>{verdictLabel}</span>
                   {isAdmin && (
                     <button
                       type="button"
@@ -302,9 +316,9 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
                   )}
                 </summary>
                 <div class="rpt-q-body">
-                  <div class={`rpt-q-pill ${yes ? "yes" : "no"}`}>
-                    <span style="font-size:14px;">{yes ? "✓" : "✗"}</span>
-                    <span>Verdict: <strong>{yes ? "Compliant" : "Non-Compliant"}</strong></span>
+                  <div class={`rpt-q-pill ${verdictClass}`}>
+                    <span style="font-size:14px;">{verdictIcon}</span>
+                    <span>Verdict: <strong>{verdictText}</strong></span>
                   </div>
                   {q.snippet && (
                     <div class="rpt-q-block">

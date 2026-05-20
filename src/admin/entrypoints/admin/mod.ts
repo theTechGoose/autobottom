@@ -285,6 +285,134 @@ export class AdminConfigController {
     const result = await adminFlipFindingLegacy(ORG(), b.findingId, flippedBy);
     return { ok: result.success, score: result.score };
   }
+  /** Count unique audited records across both Firestore (audit-done-idx)
+   *  and legacy KV (audit-finding). Deduped by recordId — re-audits of the
+   *  same record collapse to one. Split by package vs date-leg.
+   *
+   *  Source choice:
+   *  - Firestore: audit-done-idx has recordId + isPackage as top-level
+   *    fields; listStoredByCompletedAt uses the existing composite index
+   *    on completedAt so a date range filter is fast (subsecond for a
+   *    day, 5-15s for a year). No new index required.
+   *  - KV: legacy findings predate audit-done-idx, so we walk
+   *    `[orgId, "audit-finding", findingId, "0"]` chunk-0 docs and pull
+   *    out record.RecordId + recordingIdField. Slower because each
+   *    finding requires a body read; bounded by KV's typical drain
+   *    state post-migration. Skippable via ?skipKv=true.
+   *
+   *  Both walks are wrapped in try/catch so a partial wedge in one store
+   *  doesn't fail the whole report. Returns whatever counts were
+   *  collectable plus per-source error fields if anything blew up. */
+  @Get("audit-counts") @ReturnedType(MessageResponse)
+  async auditCounts(
+    @Query("since") since: string,
+    @Query("until") until: string,
+    @Query("skipKv") skipKv: string,
+  ) {
+    const orgId = ORG();
+    const sinceMs = parseInt(since ?? "", 10);
+    const untilMs = parseInt(until ?? "", 10);
+    const from = Number.isFinite(sinceMs) && sinceMs > 0 ? sinceMs : 0;
+    const to = Number.isFinite(untilMs) && untilMs > 0 ? untilMs : Date.now();
+    const wantKv = skipKv !== "true" && skipKv !== "1";
+    const tStart = Date.now();
+    const fsResult: { packagesUnique: number; dateLegsUnique: number; recordsUnique: number; rowsScanned: number; error?: string; tookMs?: number } = {
+      packagesUnique: 0, dateLegsUnique: 0, recordsUnique: 0, rowsScanned: 0,
+    };
+    const kvResult: { packagesUnique: number; dateLegsUnique: number; recordsUnique: number; rowsScanned: number; error?: string; tookMs?: number } = {
+      packagesUnique: 0, dateLegsUnique: 0, recordsUnique: 0, rowsScanned: 0,
+    };
+    const combinedPackages = new Set<string>();
+    const combinedDateLegs = new Set<string>();
+
+    // ── Firestore via audit-done-idx ──
+    try {
+      const fsT0 = Date.now();
+      const { listStoredByCompletedAt } = await import("@core/data/firestore/mod.ts");
+      const entries = await listStoredByCompletedAt<{
+        recordId?: string; isPackage?: boolean; findingId?: string;
+      }>("audit-done-idx", orgId, from, to, { limit: 500_000 });
+      const fsPackages = new Set<string>();
+      const fsDateLegs = new Set<string>();
+      for (const e of entries) {
+        const rid = String(e.recordId ?? "").trim();
+        if (!rid) continue;
+        if (e.isPackage) { fsPackages.add(rid); combinedPackages.add(rid); }
+        else { fsDateLegs.add(rid); combinedDateLegs.add(rid); }
+      }
+      fsResult.packagesUnique = fsPackages.size;
+      fsResult.dateLegsUnique = fsDateLegs.size;
+      fsResult.recordsUnique = fsPackages.size + fsDateLegs.size;
+      fsResult.rowsScanned = entries.length;
+      fsResult.tookMs = Date.now() - fsT0;
+    } catch (err) {
+      fsResult.error = (err as Error).message ?? String(err);
+      console.error(`❌ [AUDIT-COUNTS] firestore walk failed:`, err);
+    }
+
+    // ── KV legacy via audit-finding ──
+    if (wantKv) {
+      try {
+        const kvT0 = Date.now();
+        const { getKv, orgKey } = await import("@core/data/deno-kv/mod.ts");
+        const db = await getKv();
+        const kvPackages = new Set<string>();
+        const kvDateLegs = new Set<string>();
+        let rows = 0;
+        const seenFindingIds = new Set<string>();
+        // Iterate every audit-finding key. The doc body lives at chunk-0
+        // (legacy chunked layout: [..., "audit-finding", fid, "0"]). One
+        // findingId can produce several rows in this scan (header + chunks);
+        // we dedupe by findingId before reading the body, and skip findings
+        // we've already counted.
+        for await (const entry of db.list({ prefix: orgKey(orgId, "audit-finding") })) {
+          rows++;
+          const key = entry.key as Deno.KvKey;
+          if (key.length < 3) continue;
+          const fid = typeof key[2] === "string" ? key[2] as string : "";
+          if (!fid || seenFindingIds.has(fid)) continue;
+          seenFindingIds.add(fid);
+          // Read the chunk-0 body to extract record.RecordId + recordingIdField.
+          // If the legacy KV layout used a different chunk shape, the values
+          // are simply missing and we skip this finding.
+          const body = (entry.value as Record<string, unknown> | undefined) ?? undefined;
+          if (!body) continue;
+          const completedAt = Number((body as { completedAt?: number }).completedAt ?? 0);
+          if (from > 0 && completedAt && completedAt < from) continue;
+          if (to < Date.now() && completedAt && completedAt > to) continue;
+          const record = (body as { record?: Record<string, unknown> }).record ?? {};
+          const recRid = record.RecordId ?? record.GenieNumber ?? record.RelatedDestinationId;
+          if (recRid == null || String(recRid).trim() === "") continue;
+          const rid = String(recRid).trim();
+          const isPackage = (body as { recordingIdField?: string }).recordingIdField === "GenieNumber";
+          if (isPackage) { kvPackages.add(rid); combinedPackages.add(rid); }
+          else { kvDateLegs.add(rid); combinedDateLegs.add(rid); }
+        }
+        kvResult.packagesUnique = kvPackages.size;
+        kvResult.dateLegsUnique = kvDateLegs.size;
+        kvResult.recordsUnique = kvPackages.size + kvDateLegs.size;
+        kvResult.rowsScanned = rows;
+        kvResult.tookMs = Date.now() - kvT0;
+      } catch (err) {
+        kvResult.error = (err as Error).message ?? String(err);
+        console.error(`❌ [AUDIT-COUNTS] kv walk failed:`, err);
+      }
+    }
+
+    return {
+      ok: true,
+      range: { sinceMs: from, untilMs: to, allTime: from === 0 && to >= Date.now() - 1000 },
+      firestore: fsResult,
+      kv: wantKv ? kvResult : { skipped: true },
+      combined: {
+        packagesUnique: combinedPackages.size,
+        dateLegsUnique: combinedDateLegs.size,
+        recordsUnique: combinedPackages.size + combinedDateLegs.size,
+      },
+      totalTookMs: Date.now() - tStart,
+    };
+  }
+
   @Post("bulk-flip") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async bulkFlip(@Body() body: GenericBodyRequest) {
     const b = body as any;

@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "index-tests" | "migration";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "index-tests" | "migration";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -17,6 +17,7 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "purge", label: "Purge Old Audits", danger: true },
   { key: "flip", label: "Bulk Flip" },
   { key: "cleanup", label: "Cleanup" },
+  { key: "counts", label: "Audit Counts" },
   { key: "index-tests", label: "Index Tests" },
   { key: "migration", label: "Migration" },
 ];
@@ -45,6 +46,7 @@ export const handler = define.handlers({
           {active === "purge" && <PurgePanel />}
           {active === "flip" && <BulkFlipPanel />}
           {active === "cleanup" && <CleanupPanel />}
+          {active === "counts" && <AuditCountsPanel />}
           {active === "index-tests" && <IndexTestsPanel />}
           {active === "migration" && <MigrationPanel />}
         </div>
@@ -356,6 +358,56 @@ function CleanupPanel() {
       </PanelCard>
       <div id="cleanup-msg"></div>
     </div>
+  );
+}
+
+// ── Audit Counts tab ─────────────────────────────────────────────────────────
+//
+// Counts unique audited records across Firestore (audit-done-idx) AND legacy
+// KV (audit-finding), deduped by recordId, split by package vs date-leg. Date
+// range is optional — leave both blank to scan all time. Each source is
+// independently try/catch'd server-side so a wedge in one doesn't kill the
+// report. Tradeoff: the all-time path can take 10-30s on busy orgs because
+// it has to enumerate every audit-done-idx entry (and every KV finding if
+// the include-KV box is checked). The operator just waits — no chunking.
+
+function AuditCountsPanel() {
+  return (
+    <PanelCard
+      title="Audit Counts"
+      subtitle="Unique audited records (deduped by recordId) split into packages and date-legs. Leave dates blank to scan all time. Firestore source: audit-done-idx (fast, indexed). KV source: legacy audit-finding bodies (slower; uncheck to skip)."
+    >
+      {/* Same htmx-request loading-state pattern other slow buttons use,
+       *  scoped under .ac-* so it doesn't collide with other panels. */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .ac-btn .ac-loading { display: none; }
+        .ac-btn.htmx-request .ac-label { display: none; }
+        .ac-btn.htmx-request .ac-loading { display: inline; }
+        .ac-btn.htmx-request, .ac-btn:disabled { opacity: 0.7; cursor: wait; }
+      `}} />
+      <form
+        hx-post="/api/admin/modal/maintenance/audit-counts"
+        hx-target="#audit-counts-result"
+        hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find button[type='submit']"
+      >
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+          <div class="sf"><label class="sf-label">From (optional)</label><input type="date" name="since" class="sf-input" /></div>
+          <div class="sf"><label class="sf-label">To (optional)</label><input type="date" name="until" class="sf-input" /></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);">
+            <input type="checkbox" name="skipKv" value="true" /> Skip KV walk (Firestore only — faster)
+          </label>
+        </div>
+        <button type="submit" class="sf-btn primary ac-btn" style="padding:8px 16px;min-width:160px;">
+          <span class="ac-label">Count audits</span>
+          <span class="ac-loading">Counting… (may take 10–30s)</span>
+        </button>
+      </form>
+      <div id="audit-counts-result" style="margin-top:12px;"></div>
+    </PanelCard>
   );
 }
 

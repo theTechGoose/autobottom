@@ -28,9 +28,17 @@ export default define.page(async function JudgeDashboard(ctx) {
         </div>
       </div>
 
-      <StatRangeBar target="#judge-dash-block" endpoint="/api/judge/dashboard-range" active="week" />
-      <div id="judge-dash-block" hx-get="/api/judge/dashboard-range?range=week" hx-trigger="load" hx-swap="outerHTML">
-        <div class="panel" style="margin-top:18px;color:var(--text-dim);font-size:13px;">Loading personal stats + leaderboard…</div>
+      {/* Personal stats — independent range filter */}
+      <StatRangeBar target="#judge-my-stats-block" endpoint="/api/judge/dashboard-range" active="week" />
+      <div id="judge-my-stats-block" hx-get="/api/judge/dashboard-range?range=week" hx-trigger="load" hx-swap="outerHTML">
+        <div class="panel" style="margin-top:18px;color:var(--text-dim);font-size:13px;">Loading personal stats…</div>
+      </div>
+
+      {/* Reviewer leaderboard — separate range filter so the judge can scope
+          each panel independently (e.g. own stats this week, leaderboard 90d) */}
+      <StatRangeBar target="#judge-leaderboard-block" endpoint="/api/judge/leaderboard-range" active="week" />
+      <div id="judge-leaderboard-block" hx-get="/api/judge/leaderboard-range?range=week" hx-trigger="load" hx-swap="outerHTML">
+        <div class="panel" style="margin-top:18px;color:var(--text-dim);font-size:13px;">Loading reviewer leaderboard…</div>
       </div>
 
       <div class="charts" style="margin-top:18px;">

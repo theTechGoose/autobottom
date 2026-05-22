@@ -32,21 +32,28 @@ export const handler = define.handlers({
     let users: { email: string; role: string }[] = [];
     try { const d = await apiFetch<{ users: typeof users }>("/admin/users", ctx.req); users = d.users ?? []; } catch {}
 
-    // Show info if email is provided as query param (selected via HTMX)
     const url = new URL(ctx.req.url);
-    const selectedEmail = url.searchParams.get("selected");
+    // User-select picker re-fetches the modal with ?email=<chosen> so the
+    // destination dropdown can default to the user's role-home page.
+    const selectedEmail = url.searchParams.get("email");
     const selectedUser = selectedEmail ? users.find(u => u.email === selectedEmail) : null;
-    // Destination from query param (set by the second select via HTMX) — if
-    // missing, fall back to the role's home page so the operator gets a
-    // sensible default the moment they pick a user.
-    const destFromQuery = url.searchParams.get("dest") ?? "";
-    const destination = destFromQuery
-      || (selectedUser ? (ROLE_DESTINATIONS[selectedUser.role] ?? "/agent") : "");
+    const defaultDest = selectedUser ? (ROLE_DESTINATIONS[selectedUser.role] ?? "/agent") : "";
 
+    // The Go button is a plain form submit to a server-side redirect route
+    // (frontend/routes/admin/impersonate-go.tsx) — this reads the live
+    // form values at submit time instead of relying on an HTMX swap to
+    // update an anchor's pre-baked href. Previous design lost the chosen
+    // destination on race-y dropdown changes.
     const html = renderToString(
       <div>
         <div class="modal-sub">Navigate to that user's portal as if you are them. All API calls will use their identity.</div>
-        <form id="imp-form" style="margin-bottom:16px;">
+        <form
+          method="get"
+          action="/admin/impersonate-go"
+          target="_blank"
+          rel="noopener"
+          style="margin-bottom:0;"
+        >
           <div class="sf" style="margin-bottom:12px;">
             <label class="sf-label" style="margin-bottom:6px;display:block;">Select User</label>
             <select
@@ -56,8 +63,8 @@ export const handler = define.handlers({
               hx-get="/api/admin/modal/impersonate"
               hx-target="#impersonate-modal-content"
               hx-swap="innerHTML"
-              hx-include="closest form"
-              name="selected"
+              hx-include="this"
+              name="email"
               hx-trigger="change"
             >
               <option value="">-- choose a user --</option>
@@ -72,41 +79,27 @@ export const handler = define.handlers({
               <select
                 class="sf-input"
                 style="width:100%;font-size:13px;"
-                hx-get="/api/admin/modal/impersonate"
-                hx-target="#impersonate-modal-content"
-                hx-swap="innerHTML"
-                hx-include="closest form"
                 name="dest"
-                hx-trigger="change"
               >
                 {DESTINATION_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value} selected={opt.value === destination}>
+                  <option key={opt.value} value={opt.value} selected={opt.value === defaultDest}>
                     {opt.label} ({opt.value})
                   </option>
                 ))}
               </select>
             </div>
           )}
-        </form>
-        {selectedUser && (
-          <div style="padding:10px 12px;border-radius:8px;background:var(--bg);border:1px solid var(--border);margin-bottom:16px;font-size:12px;color:var(--text-dim);">
-            <span class={`pill pill-${ROLE_COLORS[selectedUser.role] ?? "blue"}`} style="margin-right:8px;">{selectedUser.role}</span>
-            <span>→ {destination}</span>
+          {selectedUser && (
+            <div style="padding:10px 12px;border-radius:8px;background:var(--bg);border:1px solid var(--border);margin-bottom:16px;font-size:12px;color:var(--text-dim);">
+              <span class={`pill pill-${ROLE_COLORS[selectedUser.role] ?? "blue"}`} style="margin-right:8px;">{selectedUser.role}</span>
+              <span>→ open the selected page as {selectedUser.email}</span>
+            </div>
+          )}
+          <div class="modal-actions" style="margin-top:0;">
+            <button type="button" class="sf-btn secondary" data-close-modal="impersonate-modal">Cancel</button>
+            <button type="submit" class="sf-btn primary" disabled={!selectedUser}>Go →</button>
           </div>
-        )}
-        <div class="modal-actions" style="margin-top:0;">
-          <button class="sf-btn secondary" data-close-modal="impersonate-modal">Cancel</button>
-          {selectedUser
-            ? <a
-                href={`${destination || "/agent"}?as=${encodeURIComponent(selectedUser.email)}`}
-                class="sf-btn primary"
-                style="text-decoration:none;"
-                target="_blank"
-                rel="noopener"
-              >Go →</a>
-            : <button class="sf-btn primary" disabled>Go →</button>
-          }
-        </div>
+        </form>
       </div>
     );
     return new Response(html, { headers: { "content-type": "text/html" } });

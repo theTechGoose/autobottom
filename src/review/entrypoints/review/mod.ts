@@ -6,6 +6,7 @@ import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { ReviewBufferResponse, DecisionResponse, ReviewStatsResponse, OkResponse, OkMessageResponse, ReviewerConfigResponse, MessageResponse, GamificationSettingsResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, ReviewDecideRequest, ReviewBackRequest } from "@core/dto/requests.ts";
 import { recordDecision, finalizeReviewedAudit, getReviewStats, getReviewedFindingIds, clearReviewQueue, getFailedQuestionsForFinding, getDecisionsByFinding, discardReview, jumpToQuestion } from "@review/domain/business/review-queue/mod.ts";
+import { getMyReviewerStats } from "@review/domain/business/review-stats/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
@@ -250,6 +251,21 @@ export class ReviewController {
     })();
     ReviewController._statsPending = pending;
     return pending;
+  }
+
+  @Get("my-stats") @ReturnedType(OkResponse) @Description("Per-reviewer week/month/all-time + streak")
+  async myStats(@Query("email") email: string) {
+    if (!email) return { error: "email required" };
+    try {
+      return await getMyReviewerStats(ORG(), email);
+    } catch (err) {
+      return softFail(`my-stats ${email}`, err, {
+        week: { reviewed: 0, avgScore: 0, lastReviewedAt: null },
+        month: { reviewed: 0, avgScore: 0, lastReviewedAt: null },
+        allTime: { reviewed: 0, avgScore: 0, lastReviewedAt: null },
+        currentStreak: 0, longestStreak: 0, daysActive: 0, stale: true,
+      });
+    }
   }
 
   @Get("gamification") @ReturnedType(GamificationSettingsResponse) @Description("Get reviewer gamification override (or empty if none set)")

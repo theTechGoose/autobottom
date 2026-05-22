@@ -9,6 +9,7 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
 import { getFinding, getTranscript, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
+import { incrFlipToPass, configKeyForFinding } from "@audit/domain/data/question-stats-repository/mod.ts";
 import {
   deleteChargebackEntry,
   deleteWireDeductionEntry,
@@ -186,6 +187,19 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
 
     if (overturns > 0) {
       await saveFinding(orgId, { ...finding, answeredQuestions: corrected });
+
+      // Per-question counter — each overturn is a No→Yes flip. Fire-and-
+      // forget so a counter write failure doesn't strand the judge result.
+      const cfgKeyJ = configKeyForFinding(finding as Record<string, any>);
+      const overturnNow = Date.now();
+      for (const d of decisions) {
+        if (d.decision !== "overturn") continue;
+        const header = String(d.header ?? "");
+        if (!header) continue;
+        incrFlipToPass(orgId, cfgKeyJ, header, findingId, overturnNow).catch((err) =>
+          console.warn(`[JUDGE] ${findingId}: ⚠️ flipToPass counter incr failed for "${header}":`, err),
+        );
+      }
 
       // Keep audit-done-idx + completed-audit-stat in sync with the live
       // finding. Without these writes, the index keeps the pre-judge score

@@ -1,4 +1,71 @@
-import { assertEquals } from "#assert";
-import { computeReviewRate } from "./mod.ts";
+/** Streak math is the only piece worth pinning — it's the one bit of
+ *  derivation that has off-by-one risk (consecutive days vs. gaps, walking
+ *  from today vs. yesterday). The dashboard read path itself is exercised
+ *  by integration tests; what we need to lock here is "given a known set
+ *  of audit-done dates, do we count the streak right". */
+import { assert, assertEquals } from "#assert";
+import { computeReviewRate, getMyReviewerStats, getReviewerLeaderboard } from "./mod.ts";
+import { _resetQueryAuditDoneIndexCacheForTests, writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
+import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
+
 Deno.test("review rate — decisions per hour", () => { assertEquals(computeReviewRate(60, 2), 30); });
 Deno.test("review rate — zero hours returns 0", () => { assertEquals(computeReviewRate(10, 0), 0); });
+
+const MS_DAY = 86_400_000;
+
+function uniqueOrg(tag: string): OrgId {
+  return (`test-rs-${tag}-${crypto.randomUUID().slice(0, 8)}`) as unknown as OrgId;
+}
+
+async function seedReviewed(orgId: OrgId, email: string, offsetsDays: number[]): Promise<void> {
+  const todayStart = Math.floor(Date.now() / MS_DAY) * MS_DAY;
+  for (let i = 0; i < offsetsDays.length; i++) {
+    const fid = `fid-${i}-${crypto.randomUUID().slice(0, 6)}`;
+    const completedAt = todayStart - offsetsDays[i] * MS_DAY + 60_000;
+    await saveFinding(orgId, { id: fid, findingStatus: "finished", record: {} });
+    await writeAuditDoneIndex(orgId, {
+      findingId: fid, completedAt, completed: true, score: 100, reviewedBy: email,
+    });
+  }
+}
+
+Deno.test("getMyReviewerStats — 3-day current streak ending today", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("streak3");
+  const email = "alice@example.com";
+  await seedReviewed(orgId, email, [0, 1, 2]); // today, yesterday, day-before
+  const s = await getMyReviewerStats(orgId, email);
+  assertEquals(s.currentStreak, 3);
+  assertEquals(s.longestStreak, 3);
+  assertEquals(s.daysActive, 3);
+  assertEquals(s.allTime.reviewed, 3);
+});
+
+Deno.test("getMyReviewerStats — broken streak (gap kills current, longest survives)", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("broken");
+  const email = "bob@example.com";
+  // 4-day run ending 5 days ago, then nothing — current is 0.
+  await seedReviewed(orgId, email, [5, 6, 7, 8]);
+  const s = await getMyReviewerStats(orgId, email);
+  assertEquals(s.currentStreak, 0);
+  assertEquals(s.longestStreak, 4);
+});
+
+Deno.test("getReviewerLeaderboard — groups by reviewedBy, sorts by volume", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("ldb");
+  await seedReviewed(orgId, "alice@example.com", [0, 1, 2, 3]);
+  await seedReviewed(orgId, "bob@example.com", [0, 1]);
+  const rows = await getReviewerLeaderboard(orgId);
+  assertEquals(rows.length, 2);
+  assertEquals(rows[0].email, "alice@example.com");
+  assertEquals(rows[0].reviewed, 4);
+  assertEquals(rows[1].email, "bob@example.com");
+  assert(rows[0].reviewed > rows[1].reviewed, "sorted descending by volume");
+});

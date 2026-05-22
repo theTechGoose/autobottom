@@ -551,7 +551,18 @@ const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>>
 };
 
 const danetApp = new DanetApplication();
-await danetApp.init(AppModule);
+// Silence danet's per-route "[Router] Registering [GET] /xxx" cold-start
+// spam. Danet's Logger respects NO_LOG (jsr:@danet/core/src/logger.ts) —
+// set it just around init, restore after, so any later danet warn/error
+// channels (we don't currently rely on them; we never call .listen()) are
+// not muted permanently.
+const prevNoLog = Deno.env.get("NO_LOG") ?? "";
+Deno.env.set("NO_LOG", "1");
+try {
+  await danetApp.init(AppModule);
+} finally {
+  Deno.env.set("NO_LOG", prevNoLog);
+}
 
 // Register in-process webhook email handlers. fireWebhook("terminate", ...) in
 // stepFinalize routes through here to actually send the audit-complete email.

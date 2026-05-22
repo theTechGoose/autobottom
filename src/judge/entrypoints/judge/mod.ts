@@ -6,6 +6,8 @@ import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import { JudgeStatsResponse, ReviewBufferResponse, DecisionResponse, OkResponse, OkMessageResponse, ReviewerListResponse, ReviewerConfigResponse, DismissResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, JudgeDecideRequest, DeleteEmailRequest, ReviewerConfigRequest, FindingIdRequest } from "@core/dto/requests.ts";
 import { recordJudgeDecision, getJudgeStats, getAppeal, dismissFindingFromJudgeQueue, clearJudgeQueue, deleteAppeal } from "@judge/domain/data/judge-repository/mod.ts";
+import { getReviewerLeaderboard } from "@review/domain/business/review-stats/mod.ts";
+import { getMyJudgeStats } from "@judge/domain/business/judge-analytics/mod.ts";
 import { getReviewerConfig, saveReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { listUsers } from "@core/business/auth/mod.ts";
 
@@ -156,6 +158,31 @@ export class JudgeController {
     try { return await getJudgeStats(ORG()); }
     catch (err) {
       return softFail("dashboardData", err, { pending: 0, decided: 0, pendingAuditCount: 0 } as any);
+    }
+  }
+
+  @Get("leaderboard") @ReturnedType(OkResponse) @Description("Per-reviewer rollup over the trailing 365d")
+  async leaderboard() {
+    try {
+      const rows = await getReviewerLeaderboard(ORG());
+      return { rows };
+    } catch (err) {
+      return softFail("leaderboard", err, { rows: [], stale: true });
+    }
+  }
+
+  @Get("my-stats") @ReturnedType(OkResponse) @Description("Per-judge week/month/all-time stats")
+  async myStats(@Query("email") email: string) {
+    if (!email) return { error: "email required" };
+    try {
+      return await getMyJudgeStats(ORG(), email);
+    } catch (err) {
+      return softFail(`my-stats ${email}`, err, {
+        week: { decided: 0, overturned: 0, upheld: 0, overturnRate: 0, lastDecidedAt: null },
+        month: { decided: 0, overturned: 0, upheld: 0, overturnRate: 0, lastDecidedAt: null },
+        allTime: { decided: 0, overturned: 0, upheld: 0, overturnRate: 0, lastDecidedAt: null },
+        decisions: 0, stale: true,
+      });
     }
   }
 

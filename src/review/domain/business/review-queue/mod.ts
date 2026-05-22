@@ -26,6 +26,7 @@ import {
   getHiddenFindingIds,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
+import { incrFlipToPass, incrFlipToFail, configKeyForFinding } from "@audit/domain/data/question-stats-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;
 const LOCK_TTL = ACTIVE_TTL;
@@ -832,9 +833,10 @@ export async function finalizeReviewedAudit(
   }
 
   const flipDiag: Array<{ qIndex: number; targetIdx: number; matched: string; decision: string; prevAnswer: string; finalAnswer: string }> = [];
+  const cfgKey = configKeyForFinding(finding as Record<string, any>);
   for (const d of decisions.values()) {
     const { matched, targetIdx } = applyDecisionByIdentity(d);
-    const prev = (targetIdx >= 0 ? answered[targetIdx] : {}) as { answer?: string };
+    const prev = (targetIdx >= 0 ? answered[targetIdx] : {}) as { answer?: string; header?: string };
     const nextAnswer = d.decision === "flip" ? "Yes" : (prev.answer ?? "");
     if (targetIdx >= 0) {
       answered[targetIdx] = {
@@ -844,6 +846,17 @@ export async function finalizeReviewedAudit(
         reviewedBy: d.reviewer,
         reviewedAt: d.decidedAt,
       };
+      // Per-question counter — reviewer flipped a previously-failed question
+      // to pass. Decrement the fail count + bump flippedToPass. Wrapped so
+      // a counter write failure doesn't strand the finalize.
+      if (d.decision === "flip" && String(prev.answer ?? "").toLowerCase().startsWith("n")) {
+        const header = String(prev.header ?? d.header ?? "");
+        if (header) {
+          incrFlipToPass(orgId, cfgKey, header, findingId, d.decidedAt).catch((err) =>
+            console.warn(`[REVIEW] ${findingId}: ⚠️ flipToPass counter incr failed for "${header}":`, err),
+          );
+        }
+      }
     }
     flipDiag.push({
       qIndex: d.questionIndex,
@@ -1200,12 +1213,24 @@ export async function adminFlipFinding(
   // judge view with no reviewer name to display when agents later appealed
   // bulk-flipped audits — see judge enrich's fallback path.
   const flippedAt = Date.now();
-  const corrected = answers.map((a: any) =>
-    a.answer === "No"
-      ? { ...a, answer: "Yes", reviewAction: "admin-flip", reviewedBy: flippedBy, reviewedAt: flippedAt }
-      : a,
-  );
+  const flippedHeaders: string[] = [];
+  const corrected = answers.map((a: any) => {
+    if (a.answer === "No") {
+      if (a.header) flippedHeaders.push(String(a.header));
+      return { ...a, answer: "Yes", reviewAction: "admin-flip", reviewedBy: flippedBy, reviewedAt: flippedAt };
+    }
+    return a;
+  });
   const score = 100;
+  // Per-question counters — every No→Yes in a bulk flip counts as a
+  // flippedToPass. Fire-and-forget so a counter write failure can't strand
+  // the admin action.
+  const cfgKeyBulk = configKeyForFinding(finding as Record<string, any>);
+  for (const header of flippedHeaders) {
+    incrFlipToPass(orgId, cfgKeyBulk, header, findingId, flippedAt).catch((err) =>
+      console.warn(`[ADMIN-FLIP] ${findingId}: ⚠️ flipToPass counter incr failed for "${header}":`, err),
+    );
+  }
 
   finding.answeredQuestions = corrected;
   (finding as Record<string, unknown>).reviewedAt = new Date().toISOString();
@@ -1452,6 +1477,18 @@ export async function adminFlipQuestion(
       ? { ...a, answer: wasYes ? "No" : "Yes", reviewAction: "admin-flip", reviewedBy: flippedBy, reviewedAt: flippedAt }
       : a,
   );
+  // Per-question counter — single-question pencil flip. Yes→No bumps the
+  // failed count + flippedToFail; No→Yes decrements failed + bumps
+  // flippedToPass. Header is read off the in-memory question. Fire-and-
+  // forget; counter write failure doesn't block the flip.
+  const flipHeader = String((answers[questionIndex] as any).header ?? "");
+  if (flipHeader) {
+    const cfgKeyQ = configKeyForFinding(finding as Record<string, any>);
+    const fn = wasYes ? incrFlipToFail : incrFlipToPass;
+    fn(orgId, cfgKeyQ, flipHeader, findingId, flippedAt).catch((err) =>
+      console.warn(`[ADMIN-FLIP-Q] ${findingId}: ⚠️ flip counter incr failed for "${flipHeader}":`, err),
+    );
+  }
   const yesCount = flipped.filter((a: any) =>
     String(a.answer ?? "").trim().toLowerCase().startsWith("yes"),
   ).length;

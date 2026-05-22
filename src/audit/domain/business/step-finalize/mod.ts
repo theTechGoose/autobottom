@@ -2,6 +2,7 @@
 import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
 import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, saveWireDeductionEntry } from "@audit/domain/data/stats-repository/mod.ts";
 import { getOfficeBypassConfig, getBonusPointsConfig } from "@admin/domain/data/admin-repository/mod.ts";
+import { incrFailed as incrQuestionFailed, configKeyForFinding } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { updatePartnerDimensions } from "@admin/domain/data/admin-repository/mod.ts";
 import { getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "@gamification/domain/data/gamification-repository/mod.ts";
 import { getGameState, saveGameState } from "@gamification/domain/data/gamification-repository/mod.ts";
@@ -213,6 +214,25 @@ export async function stepFinalize(req: Request): Promise<Response> {
     console.log(`[STEP-FINALIZE] ${findingId}: 📇 audit-done-idx written — completed=${isAutoComplete} reason=${reason ?? "pending-review"}`);
   } catch (err) {
     console.error(`[STEP-FINALIZE] ${findingId}: ❌ audit-done-idx write failed:`, err);
+  }
+
+  // Per-question failure counters — lets the admin "Question Failures" report
+  // answer "how many audits failed Q12 in May" in bounded reads instead of
+  // walking every finding's answeredQuestions. Bonus-flipped questions were
+  // already mutated to "Yes" above so they naturally don't count. We only
+  // count negatives here; reviewer/admin/judge flips later adjust the count.
+  // Failures are wrapped per-question so one bad write doesn't lose the rest.
+  if (qs?.length) {
+    const cfgKey = configKeyForFinding(finding as Record<string, any>);
+    for (const q of qs) {
+      if (q.answer !== "No") continue;
+      if (!q.header) continue;
+      try {
+        await incrQuestionFailed(orgId, cfgKey, q.header, findingId, completedAt);
+      } catch (err) {
+        console.warn(`[STEP-FINALIZE] ${findingId}: ⚠️ question-fail counter incr failed for "${q.header}":`, err);
+      }
+    }
   }
 
   // Write chargeback/omission report entry for internal (date leg) findings.

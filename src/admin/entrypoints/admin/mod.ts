@@ -413,6 +413,113 @@ export class AdminConfigController {
     };
   }
 
+  /** Per-question failure report. Reads pre-aggregated counter docs written
+   *  by step-finalize + reviewer/admin/judge flip handlers (see
+   *  @audit/domain/data/question-stats-repository/mod.ts). Bounded reads:
+   *  one collection scan over the small `question-fail-stat` collection,
+   *  filtered server-side by yyyymm window. NO per-finding loads. */
+  @Get("question-failures") @ReturnedType(MessageResponse)
+  async questionFailures(
+    @Query("from") fromMonth: string,
+    @Query("to") toMonth: string,
+    @Query("configKey") configKey: string,
+  ) {
+    const t0 = Date.now();
+    try {
+      const { readQuestionFailRange } = await import("@audit/domain/data/question-stats-repository/mod.ts");
+      const filter = configKey ? { configKey } : undefined;
+      // Default to current month if from/to omitted. yyyymm format = YYYYMM.
+      const nowD = new Date();
+      const defMonth = `${nowD.getUTCFullYear()}${String(nowD.getUTCMonth() + 1).padStart(2, "0")}`;
+      const from = (fromMonth && /^\d{6}$/.test(fromMonth)) ? fromMonth : defMonth;
+      const to = (toMonth && /^\d{6}$/.test(toMonth)) ? toMonth : defMonth;
+      const rows = await readQuestionFailRange(ORG(), from, to, filter);
+      return { ok: true, range: { from, to }, rows, tookMs: Date.now() - t0 };
+    } catch (err) {
+      console.error(`❌ [QUESTION-FAILURES] read failed:`, err);
+      return { ok: false, error: (err as Error).message ?? String(err), tookMs: Date.now() - t0 };
+    }
+  }
+
+  /** Backfill the per-question counters from historical audit-done-idx +
+   *  findings. Idempotent: deletes the counter buckets covering the chosen
+   *  date range first, then walks audit-done-idx in that range, loads each
+   *  finding, and re-increments. Re-running the same range yields the same
+   *  totals.
+   *
+   *  Cost: O(audits-in-range) Firestore reads. For a 7-day window in a
+   *  busy org this is ~few hundred reads. Long ranges should be split. */
+  @Post("question-failures-backfill") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
+  async questionFailuresBackfill(@Body() body: GenericBodyRequest) {
+    const t0 = Date.now();
+    const b = body as { sinceMs?: number; untilMs?: number };
+    const from = Number(b.sinceMs ?? 0);
+    const to = Number(b.untilMs ?? Date.now());
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+      return { ok: false, error: "sinceMs and untilMs (ms epoch) required, to > from" };
+    }
+    try {
+      const orgId = ORG();
+      const { listStoredByCompletedAt } = await import("@core/data/firestore/mod.ts");
+      const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+      const {
+        deleteBucketsForMonths, incrFailed, configKeyForFinding, yyyymm,
+      } = await import("@audit/domain/data/question-stats-repository/mod.ts");
+
+      // Walk audit-done-idx range. Pull the months covered so we can wipe
+      // those buckets cleanly before rebuilding.
+      const entries = await listStoredByCompletedAt<{ findingId?: string; completedAt?: number }>(
+        "audit-done-idx",
+        orgId,
+        from,
+        to,
+        { limit: 500_000 },
+      );
+      const months = new Set<string>();
+      for (const e of entries) {
+        if (e.completedAt) months.add(yyyymm(e.completedAt));
+      }
+      const wiped = await deleteBucketsForMonths(orgId, [...months]);
+
+      let processed = 0;
+      let failsCounted = 0;
+      let errors = 0;
+      for (const e of entries) {
+        if (!e.findingId || !e.completedAt) continue;
+        try {
+          const finding = await getFinding(orgId, e.findingId);
+          if (!finding) continue;
+          const qs = (finding as Record<string, any>).answeredQuestions as any[] | undefined;
+          if (!qs?.length) continue;
+          const cfgKey = configKeyForFinding(finding as Record<string, any>);
+          for (const q of qs) {
+            if (q.answer !== "No") continue;
+            if (!q.header) continue;
+            await incrFailed(orgId, cfgKey, q.header, e.findingId, e.completedAt);
+            failsCounted++;
+          }
+          processed++;
+        } catch (err) {
+          errors++;
+          console.warn(`⚠️ [QF-BACKFILL] finding ${e.findingId} failed:`, err);
+        }
+      }
+      return {
+        ok: true,
+        range: { sinceMs: from, untilMs: to },
+        monthsTouched: [...months].sort(),
+        bucketsWiped: wiped,
+        auditsProcessed: processed,
+        failsCounted,
+        errors,
+        tookMs: Date.now() - t0,
+      };
+    } catch (err) {
+      console.error(`❌ [QF-BACKFILL] aborted:`, err);
+      return { ok: false, error: (err as Error).message ?? String(err), tookMs: Date.now() - t0 };
+    }
+  }
+
   @Post("bulk-flip") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async bulkFlip(@Body() body: GenericBodyRequest) {
     const b = body as any;

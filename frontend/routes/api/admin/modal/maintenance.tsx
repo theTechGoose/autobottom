@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "index-tests" | "migration";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "index-tests" | "migration";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -18,6 +18,7 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "flip", label: "Bulk Flip" },
   { key: "cleanup", label: "Cleanup" },
   { key: "counts", label: "Audit Counts" },
+  { key: "qfailures", label: "Question Failures" },
   { key: "index-tests", label: "Index Tests" },
   { key: "migration", label: "Migration" },
 ];
@@ -47,6 +48,7 @@ export const handler = define.handlers({
           {active === "flip" && <BulkFlipPanel />}
           {active === "cleanup" && <CleanupPanel />}
           {active === "counts" && <AuditCountsPanel />}
+          {active === "qfailures" && <QuestionFailuresPanel />}
           {active === "index-tests" && <IndexTestsPanel />}
           {active === "migration" && <MigrationPanel />}
         </div>
@@ -407,6 +409,81 @@ function AuditCountsPanel() {
         </button>
       </form>
       <div id="audit-counts-result" style="margin-top:12px;"></div>
+    </PanelCard>
+  );
+}
+
+// ── Question Failures tab ────────────────────────────────────────────────────
+//
+// Per-question failure rollup, sourced from the `question-fail-stat` counter
+// docs that step-finalize + every flip handler keep updated. Reads N month
+// buckets (1 per config × question × month in the range) — bounded, no
+// per-finding scans. Backfill button below rebuilds the counters from
+// audit-done-idx + answeredQuestions for historical data.
+
+function QuestionFailuresPanel() {
+  return (
+    <PanelCard
+      title="Question Failures"
+      subtitle="Per-question failure counts with flip-to-pass / flip-to-fail tracking. Defaults to the current month. Backfill below to rebuild counters from historical findings (idempotent — safe to re-run)."
+    >
+      <style dangerouslySetInnerHTML={{ __html: `
+        .qf-btn .qf-loading { display: none; }
+        .qf-btn.htmx-request .qf-label { display: none; }
+        .qf-btn.htmx-request .qf-loading { display: inline; }
+        .qf-btn.htmx-request, .qf-btn:disabled { opacity: 0.7; cursor: wait; }
+      `}} />
+      <form
+        hx-post="/api/admin/modal/maintenance/question-failures"
+        hx-target="#qfail-result"
+        hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find button[type='submit']"
+      >
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">
+          <div class="sf"><label class="sf-label">From month (YYYYMM)</label><input type="text" name="from" class="sf-input" placeholder="e.g. 202604" pattern="\d{6}" /></div>
+          <div class="sf"><label class="sf-label">To month (YYYYMM)</label><input type="text" name="to" class="sf-input" placeholder="e.g. 202605" pattern="\d{6}" /></div>
+          <div class="sf"><label class="sf-label">Config filter (optional)</label><input type="text" name="configKey" class="sf-input" placeholder="ql:Premium / qb:DEST-9" /></div>
+        </div>
+        <button type="submit" class="sf-btn primary qf-btn" style="padding:8px 16px;min-width:160px;">
+          <span class="qf-label">Run report</span>
+          <span class="qf-loading">Reading buckets…</span>
+        </button>
+      </form>
+      <div id="qfail-result" style="margin-top:12px;"></div>
+
+      <div style="margin-top:24px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:700;color:var(--text-bright);margin-bottom:4px;">Backfill from history</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">
+          Walks audit-done-idx over the chosen date range, loads each finding, and rebuilds the
+          counter buckets covering those months. Wipes + rewrites — running the same range
+          twice produces the same totals. Use a tighter range first; long windows can take minutes.
+        </div>
+        <style dangerouslySetInnerHTML={{ __html: `
+          .qfb-btn .qfb-loading { display: none; }
+          .qfb-btn.htmx-request .qfb-label { display: none; }
+          .qfb-btn.htmx-request .qfb-loading { display: inline; }
+          .qfb-btn.htmx-request, .qfb-btn:disabled { opacity: 0.7; cursor: wait; }
+        `}} />
+        <form
+          hx-post="/api/admin/modal/maintenance/question-failures-backfill"
+          hx-target="#qfail-backfill-result"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']"
+          hx-indicator="find button[type='submit']"
+          hx-confirm="Wipe + rebuild question-fail counters for the chosen date range?"
+        >
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div class="sf"><label class="sf-label">From date</label><input type="date" name="since" class="sf-input" required /></div>
+            <div class="sf"><label class="sf-label">To date</label><input type="date" name="until" class="sf-input" required /></div>
+          </div>
+          <button type="submit" class="sf-btn qfb-btn" style="padding:8px 16px;min-width:200px;background:var(--yellow);color:#000;">
+            <span class="qfb-label">Rebuild counters for range</span>
+            <span class="qfb-loading">Backfilling… (long ranges = minutes)</span>
+          </button>
+        </form>
+        <div id="qfail-backfill-result" style="margin-top:12px;"></div>
+      </div>
     </PanelCard>
   );
 }

@@ -290,6 +290,7 @@ function QuestionsCard({ config, questions }: { config: QLConfig; questions: QLQ
             hx-post="/api/qlab/questions/create"
             hx-target="body"
             hx-push-url={`/question-lab/config/${config.id}`}
+            hx-disabled-elt="find button[type=submit]"
             style="width:520px;"
           >
             <input type="hidden" name="configId" value={config.id} />
@@ -301,7 +302,10 @@ function QuestionsCard({ config, questions }: { config: QLConfig; questions: QLQ
               <label style="display:block;font-size:10px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px;">Question Text</label>
               <textarea class="sf-input" name="text" required rows={3} style="width:100%;font-size:12px;font-family:var(--mono);"></textarea>
             </div>
-            <button type="submit" class="sf-btn primary" style="font-size:11px;">Add</button>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <button type="submit" class="sf-btn primary" style="font-size:11px;">Add</button>
+              <span class="htmx-indicator" style="font-size:11px;color:var(--text-dim);">⏳ saving…</span>
+            </div>
           </form>
         </details>
       </div>

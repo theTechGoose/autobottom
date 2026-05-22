@@ -214,9 +214,25 @@ export interface EmailReportConfig {
   weeklyShift?: string;
   weeklyOffice?: string;
   templateId?: string;
-  schedule?: { cron: string };
+  /** Cron expression + IANA timezone. The matcher (cron-presets/mod.ts) projects
+   *  Date.now() into `tz` via Intl and matches wall-clock fields — so a "Daily
+   *  8am" schedule fires at 8am local time year-round, no DST drift. */
+  schedule?: { cron: string; tz: string };
   /** Toggle exposed by the modal — when false the cron job skips this config. */
   enabled?: boolean;
+}
+
+/** Per-config run state written by the email-reports cron tick. Lives in a
+ *  SEPARATE Firestore doc (`email-report-status` keyed by configId) so the
+ *  editor's saves can't clobber it and the cron's writes can't overwrite
+ *  operator edits. */
+export interface EmailReportStatus {
+  configId: string;
+  lastRunAt: number;
+  lastRunStatus: "ok" | string;     // string = error message
+  lastRunDurationMs: number;
+  lastSentMessageId?: string;       // Postmark id; double-send prevention
+  lastTickKey?: string;             // yyyymmddhhmm of the last successful tick
 }
 
 export interface ReportSection {

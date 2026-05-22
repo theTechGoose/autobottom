@@ -396,24 +396,40 @@ function toBase64Utf8(s: string): string {
 
 // ── Run report ────────────────────────────────────────────────────────────────
 
-export async function runReport(orgId: OrgId, config: EmailReportConfig): Promise<void> {
+/** Output of `prepareReport` — everything needed to actually send the email,
+ *  fully resolved (data queried, HTML rendered, attachment built). Split out
+ *  so the cron tick can wrap the (potentially long) query+render in a
+ *  timeout but let the final sendEmail run to completion without a race.
+ *  Mid-`sendEmail` timeouts otherwise double-send: customer gets the email
+ *  AND lastRunStatus shows error AND next tick retries. */
+export interface PreparedReport {
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  htmlBody: string;
+  attachments?: Array<{ name: string; content: string; contentType: string }>;
+  totalRows: number;
+}
+
+/** Query + render only — safe to wrap in a timeout. */
+export async function prepareReport(orgId: OrgId, config: EmailReportConfig): Promise<PreparedReport | null> {
   const label = `[EMAIL-REPORT] org=${orgId} report="${config.name}" id=${config.id}`;
 
   if (!config.recipients?.length) {
     console.warn(`${label} — skipped: no recipients`);
-    return;
+    return null;
   }
 
-  console.log(`${label} — [1/4] querying data...`);
+  console.log(`${label} — [1/3] querying data...`);
   const sections = await queryReportData(orgId, config);
   const totalRows = sections.reduce((sum, s) => sum + s.rows.length, 0);
-  console.log(`${label} — [2/4] ${sections.length} section(s), ${totalRows} row(s)`);
+  console.log(`${label} — [2/3] ${sections.length} section(s), ${totalRows} row(s)`);
 
   const template = config.templateId
     ? await getEmailTemplate(orgId, config.templateId)
     : null;
 
-  // Build weekly summary block if applicable
   let summaryHtml: string | undefined;
   if (config.weeklyType) {
     const { from, to } = resolveDateRange(config.dateRange);
@@ -425,13 +441,10 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
     summaryHtml = renderWeeklySummary(summaryData);
   }
 
-  const allRecipients = config.recipients;
-
-  console.log(`${label} — [3/4] rendering HTML...`);
+  console.log(`${label} — [3/3] rendering HTML...`);
   const sectionsHtml = renderSections(sections);
   const htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml, config.name, summaryHtml);
 
-  console.log(`${label} — [4/4] sending to ${allRecipients.length} recipient(s)...`);
   let subject = config.name;
   if (config.weeklyType) {
     const { from, to } = resolveDateRange(config.dateRange);
@@ -450,15 +463,38 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
     }]
     : undefined;
 
-  await sendEmail({
-    to: allRecipients,
+  return {
+    to: config.recipients,
     ...(config.cc?.length ? { cc: config.cc } : {}),
     ...(config.bcc?.length ? { bcc: config.bcc } : {}),
     subject,
     htmlBody,
     ...(attachments ? { attachments } : {}),
-  });
+    totalRows,
+  };
+}
 
+/** Sends a prepared report — fire only once the Promise.race timeout window
+ *  has closed. Returns the Postmark messageId so callers can stamp it on the
+ *  status doc for retry-safety. */
+export async function sendPreparedReport(prepared: PreparedReport): Promise<{ messageId?: string }> {
+  const result = await sendEmail({
+    to: prepared.to,
+    ...(prepared.cc ? { cc: prepared.cc } : {}),
+    ...(prepared.bcc ? { bcc: prepared.bcc } : {}),
+    subject: prepared.subject,
+    htmlBody: prepared.htmlBody,
+    ...(prepared.attachments ? { attachments: prepared.attachments } : {}),
+  });
+  return { messageId: (result as { messageId?: string } | undefined)?.messageId };
+}
+
+export async function runReport(orgId: OrgId, config: EmailReportConfig): Promise<void> {
+  const label = `[EMAIL-REPORT] org=${orgId} report="${config.name}" id=${config.id}`;
+  const prepared = await prepareReport(orgId, config);
+  if (!prepared) return;
+  console.log(`${label} — sending to ${prepared.to.length} recipient(s)...`);
+  await sendPreparedReport(prepared);
   console.log(`${label} — ✅ sent successfully`);
 }
 /** Report renderer — converts SectionResult[] into email-ready HTML.

@@ -373,8 +373,17 @@ const DEFAULT_PARALLELISM: Record<string, number> = {
  *
  *  transcribe/cleanup are I/O-heavy → can run higher concurrency by default;
  *  questions is LLM-heavy and rate-limit-sensitive → kept lower. */
-export async function applyDefaultQueueParallelism(): Promise<void> {
-  if (isLocalMode()) return;
+export interface ApplyDefaultsResult {
+  queueName: string;
+  parallelism: number;
+  source: "default" | "persisted";
+  ok: boolean;
+  error?: string;
+}
+
+export async function applyDefaultQueueParallelism(): Promise<ApplyDefaultsResult[]> {
+  if (isLocalMode()) return ALL_QUEUES.map((q) => ({ queueName: q, parallelism: DEFAULT_PARALLELISM[q], source: "default", ok: true }));
+  const results: ApplyDefaultsResult[] = [];
   for (const q of ALL_QUEUES) {
     let parallelism = DEFAULT_PARALLELISM[q];
     let source: "default" | "persisted" = "default";
@@ -388,8 +397,14 @@ export async function applyDefaultQueueParallelism(): Promise<void> {
       console.warn(`[QSTASH] read persisted parallelism for ${q} failed, using default:`, err);
     }
     console.log(`🔧 [QSTASH] boot apply ${q} parallelism=${parallelism} (${source})`);
-    await setQstashQueueParallelism(q, parallelism);
+    try {
+      await setQstashQueueParallelism(q, parallelism);
+      results.push({ queueName: q, parallelism, source, ok: true });
+    } catch (err) {
+      results.push({ queueName: q, parallelism, source, ok: false, error: (err as Error).message ?? String(err) });
+    }
   }
+  return results;
 }
 
 /** Read QStash's actual queue settings — the source of truth for whether

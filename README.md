@@ -388,7 +388,6 @@ Persistent AI memory lives at `~/.claude/projects/-Users-adam-Programming-autobo
 | "Second recording uploaded but won't play" appeal bug | Reported but no concrete finding ID yet. Held until a repro example lands; defensive logging at the audio-URL construction point is a quick next step. |
 | Scheduled email reports | CRUD wired, but cron firing isn't (only `watchdog` cron registered). |
 | Weekly Builder | Page is "coming in Phase 2" placeholder. |
-| Per-QStash-queue parallelism | `/admin/queues` POST persists intent to Firestore but doesn't update QStash queue config live. |
 | Atomic counter race | `decrementBatchCounter` / `purchaseStoreItem` / question-fail counter R-M-W all use read-modify-write. Acceptable for current concurrency; swap to Firestore field-transform `increment` if we see drift. |
 | `judge-decided` indexing | `getMyJudgeStats` does a full per-org scan of `judge-decided` and filters in-memory by `decidedAt`. The 60s SWR cache absorbs most of the cost. If it bites at scale, add a `(_org, _type, decidedAt, __name__)` composite index and switch to `listStoredByCompletedAt`. |
 

@@ -118,4 +118,72 @@ export class EmailReportController {
       return softFail(`sendNow ${body.id}`, err, { ok: false, retry: true, error: "Server busy, please retry" });
     }
   }
+
+  /** Last-run status for a single config — backs the editor's status badge.
+   *  Lives in a separate Firestore doc (`email-report-status`) written only
+   *  by the cron tick, so the editor can read it without racing operator
+   *  saves of the parent config. Returns `null` shape if never run. */
+  @Get("status") @ReturnedType(MessageResponse)
+  async status(@Query("configId") configId: string) {
+    if (!configId) return { error: "configId required" };
+    try {
+      const { getStored } = await import("@core/data/firestore/mod.ts");
+      const s = await getStored<Record<string, unknown>>("email-report-status", ORG(), configId);
+      return s ?? {};
+    } catch (err) {
+      return softFail(`status ${configId}`, err, {});
+    }
+  }
+
+  /** Kill-switch read — the cron tick reads this with a 60s in-isolate cache.
+   *  Returns { enabled: true } if the flag is missing (safe default). */
+  @Get("killswitch") @ReturnedType(MessageResponse)
+  async killswitchGet() {
+    try {
+      const { getStored } = await import("@core/data/firestore/mod.ts");
+      const flag = await getStored<{ enabled?: boolean }>("system-flag", "" as any, "email-reports-enabled");
+      return { enabled: flag?.enabled !== false };
+    } catch (err) {
+      return softFail("killswitch get", err, { enabled: true });
+    }
+  }
+
+  /** Kill-switch flip — operator sets `enabled` true/false. The new value
+   *  propagates to every isolate within ≤60s (the cron tick's cache TTL). */
+  @Post("killswitch") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
+  async killswitchSet(@Body() body: GenericBodyRequest) {
+    const b = (body ?? {}) as { enabled?: boolean };
+    const enabled = b.enabled === true;
+    try {
+      const { setStored } = await import("@core/data/firestore/mod.ts");
+      await setStored("system-flag", "" as any, ["email-reports-enabled"], { enabled });
+      // Invalidate the local isolate's cache so the same operator's next
+      // read reflects the change without waiting for TTL expiry.
+      const { _resetKillSwitchCacheForTests } = await import("@reporting/domain/business/email-reports-tick/mod.ts");
+      _resetKillSwitchCacheForTests();
+      console.log(`🛑 [EMAIL-REPORT] killswitch set enabled=${enabled} by admin`);
+      return { ok: true, enabled };
+    } catch (err) {
+      return softFail("killswitch set", err, { ok: false, error: "Server busy, please retry" });
+    }
+  }
+
+  /** Bulk status lookup — returns { [configId]: EmailReportStatus } for every
+   *  status doc belonging to this org. Used by the list view to render
+   *  per-row "last ran" pills without N round-trips. */
+  @Get("all-status") @ReturnedType(MessageResponse)
+  async allStatus() {
+    try {
+      const { listStoredWithKeys } = await import("@core/data/firestore/mod.ts");
+      const rows = await listStoredWithKeys<Record<string, unknown>>("email-report-status", ORG());
+      const out: Record<string, Record<string, unknown>> = {};
+      for (const { value } of rows) {
+        const cid = value?.configId as string | undefined;
+        if (cid) out[cid] = value;
+      }
+      return { statuses: out };
+    } catch (err) {
+      return softFail("allStatus", err, { statuses: {} });
+    }
+  }
 }

@@ -1,6 +1,7 @@
 /** Cron job registrations with OTel instrumentation. */
 import { withSpan, metric, flushOtel } from "@core/data/datadog-otel/mod.ts";
 import { runWatchdog } from "@cron/domain/business/watchdog/mod.ts";
+import { runEmailReportsTick } from "@reporting/domain/business/email-reports-tick/mod.ts";
 // Migration imports preserved for when migration-tick is re-enabled:
 // import { listJobs, tickJob } from "@admin/domain/business/migration/mod.ts";
 // import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
@@ -11,6 +12,32 @@ export function registerCrons(): void {
       const { recovered } = await runWatchdog();
       span.setAttribute("cron.recovered", recovered);
       metric("autobottom.cron.watchdog", 1, { recovered: String(recovered) });
+    }, {}, "internal");
+    await flushOtel();
+  });
+
+  // Email Reports — every minute. Internally guarded by:
+  //  • kill-switch flag (`system-flag:email-reports-enabled`) cached 60s
+  //  • background lane (never competes with foreground requests)
+  //  • atomic claim per (configId, minute) — multi-isolate safe
+  //  • 90s timeout on prepareReport; sendEmail runs free to avoid mid-send
+  //    double-send races
+  // Migration-tick precedent (see commented block below) is exactly why each
+  // of those rails exists.
+  Deno.cron("email-reports", "* * * * *", async () => {
+    await withSpan("cron.email-reports", async (span) => {
+      try {
+        const result = await runEmailReportsTick();
+        span.setAttribute("cron.ran", result.ran);
+        span.setAttribute("cron.skipped", result.skipped);
+        span.setAttribute("cron.failed", result.failed);
+        metric("autobottom.cron.email_reports", 1, {
+          ran: String(result.ran),
+          failed: String(result.failed),
+        });
+      } catch (err) {
+        console.error("❌ [CRON:email-reports] tick threw:", err);
+      }
     }, {}, "internal");
     await flushOtel();
   });
@@ -42,5 +69,5 @@ export function registerCrons(): void {
   //   }
   // });
 
-  console.log("⏰ Cron jobs registered: watchdog (hourly)");
+  console.log("⏰ Cron jobs registered: watchdog (hourly), email-reports (every minute)");
 }

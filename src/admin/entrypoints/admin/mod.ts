@@ -126,15 +126,6 @@ export class AdminConfigController {
   // -- Queue management --
   @Get("queues") @ReturnedType(QueueCountsResponse)
   async getQueues() { return getQueueCounts(); }
-  @Post("queues") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
-  async setQueue(@Body() body: GenericBodyRequest) {
-    const b = body as { queueName?: string; parallelism?: number };
-    if (!b.queueName) return { error: "queueName required" };
-    const { getStored, setStored } = await import("@core/data/firestore/mod.ts");
-    const existing = (await getStored<Record<string, unknown>>("queue-config", ORG(), b.queueName)) ?? {};
-    await setStored("queue-config", ORG(), [b.queueName], { ...existing, ...(b.parallelism != null ? { parallelism: b.parallelism } : {}) });
-    return { ok: true, queueName: b.queueName };
-  }
 
   @Post("pause-queues") @ReturnedType(OkResponse)
   async pauseQueues() {
@@ -187,6 +178,26 @@ export class AdminConfigController {
     if (!result.ok) return { ok: false, error: result.error };
     const info = await getQueueInfo();
     return { ok: true, set: { queueName, parallelism }, queues: info };
+  }
+
+  /** Re-sync every queue to its Firestore-persisted parallelism (or hard-coded
+   *  default if no persisted value). Useful after manual changes in the QStash
+   *  dashboard left the live caps diverged from what the operator set in the
+   *  Pipeline modal. Same code path boot uses — exposed so ops can hit it
+   *  without a redeploy. */
+  @Post("apply-default-parallelism") @ReturnedType(MessageResponse)
+  async applyDefaultParallelism() {
+    const t0 = Date.now();
+    try {
+      const { applyDefaultQueueParallelism } = await import("@core/data/qstash/mod.ts");
+      const results = await applyDefaultQueueParallelism();
+      const failed = results.filter((r) => !r.ok).length;
+      console.log(`🔧 [QSTASH] apply-default-parallelism done failed=${failed}/${results.length} tookMs=${Date.now() - t0}`);
+      return { ok: failed === 0, results, tookMs: Date.now() - t0 };
+    } catch (err) {
+      console.error("❌ [QSTASH] apply-default-parallelism failed:", err);
+      return { ok: false, error: (err as Error).message ?? String(err), tookMs: Date.now() - t0 };
+    }
   }
 
   /** FAST bulk-delete of active-tracking + watchdog entries via Firestore's

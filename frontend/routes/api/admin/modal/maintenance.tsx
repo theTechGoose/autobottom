@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "index-tests" | "migration";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -19,6 +19,7 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "cleanup", label: "Cleanup" },
   { key: "counts", label: "Audit Counts" },
   { key: "qfailures", label: "Question Failures" },
+  { key: "parallelism", label: "Parallelism" },
   { key: "index-tests", label: "Index Tests" },
   { key: "migration", label: "Migration" },
 ];
@@ -49,6 +50,7 @@ export const handler = define.handlers({
           {active === "cleanup" && <CleanupPanel />}
           {active === "counts" && <AuditCountsPanel />}
           {active === "qfailures" && <QuestionFailuresPanel />}
+          {active === "parallelism" && <ParallelismPanel />}
           {active === "index-tests" && <IndexTestsPanel />}
           {active === "migration" && <MigrationPanel />}
         </div>
@@ -409,6 +411,43 @@ function AuditCountsPanel() {
         </button>
       </form>
       <div id="audit-counts-result" style="margin-top:12px;"></div>
+    </PanelCard>
+  );
+}
+
+// ── Parallelism tab ──────────────────────────────────────────────────────────
+//
+// Re-applies each QStash queue's Firestore-persisted parallelism (or hard-coded
+// default if no persisted value). Same code path the boot sequence uses —
+// useful when ops manually changed parallelism in the QStash dashboard and
+// want to re-sync to what's saved in our config without a redeploy.
+
+function ParallelismPanel() {
+  return (
+    <PanelCard
+      title="Apply Persisted Parallelism"
+      subtitle="Re-pushes each queue's saved parallelism (or default fallback) to QStash. Use after manual changes in the QStash dashboard left the live caps diverged from what's set in the Pipeline modal."
+    >
+      <style dangerouslySetInnerHTML={{ __html: `
+        .pp-btn .pp-loading { display: none; }
+        .pp-btn.htmx-request .pp-label { display: none; }
+        .pp-btn.htmx-request .pp-loading { display: inline; }
+        .pp-btn.htmx-request, .pp-btn:disabled { opacity: 0.7; cursor: wait; }
+      `}} />
+      <form
+        hx-post="/api/admin/modal/maintenance/apply-parallelism"
+        hx-target="#apply-parallelism-result"
+        hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find button[type='submit']"
+        hx-confirm="Re-sync all QStash queues to their persisted defaults?"
+      >
+        <button type="submit" class="sf-btn primary pp-btn" style="padding:8px 16px;min-width:200px;">
+          <span class="pp-label">Apply persisted defaults</span>
+          <span class="pp-loading">Applying…</span>
+        </button>
+      </form>
+      <div id="apply-parallelism-result" style="margin-top:12px;"></div>
     </PanelCard>
   );
 }

@@ -42,7 +42,10 @@ interface ReportConfig {
   onlyCompleted?: boolean;
   failedOnly?: boolean;
   templateId?: string;
-  schedule?: { cron: string };
+  /** Cron + IANA timezone. The cron tick projects Date.now() into `tz` and
+   *  matches wall-clock fields, so a "Daily 8am" schedule fires at 8am EST
+   *  year-round (no DST drift). UI v1 hardcodes tz to America/New_York. */
+  schedule?: { cron: string; tz: string };
   enabled?: boolean;
   /** Marks this config as a weekly-builder entry. Set when editing
    *  via the in-modal Weekly editor. */
@@ -128,9 +131,12 @@ function emptyWeeklyConfig(): ReportConfig {
 
 // ── Top-level island ──────────────────────────────────────────────────────────
 
+interface ScheduleStatus { lastRunAt?: number; lastRunStatus?: string; lastRunDurationMs?: number }
+
 export default function EmailReportEditor() {
   const [mode, setMode] = useState<"list" | "edit" | "weekly">("list");
   const [configs, setConfigs] = useState<ReportConfig[]>([]);
+  const [statuses, setStatuses] = useState<Record<string, ScheduleStatus>>({});
   const [editing, setEditing] = useState<ReportConfig>(emptyConfig());
   const [isNew, setIsNew] = useState(true);
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
@@ -141,14 +147,16 @@ export default function EmailReportEditor() {
   useEffect(() => { void load(); }, []);
   async function load() {
     try {
-      const [cfgRes, tplRes] = await Promise.all([
+      const [cfgRes, tplRes, statRes] = await Promise.all([
         fetch("/admin/email-reports").then((r) => r.json()),
         fetch("/admin/email-templates").then((r) => r.json()),
+        fetch("/admin/email-reports/all-status").then((r) => r.json()).catch(() => ({ statuses: {} })),
       ]);
       const list = Array.isArray(cfgRes) ? cfgRes : (cfgRes.configs ?? []);
       setConfigs(list);
       const tpls = Array.isArray(tplRes) ? tplRes : (tplRes.templates ?? []);
       setTemplates(tpls.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })));
+      setStatuses((statRes && statRes.statuses) ? statRes.statuses : {});
     } catch (e) { setMsg({ kind: "err", text: `Load failed: ${(e as Error).message}` }); }
   }
 
@@ -228,6 +236,7 @@ export default function EmailReportEditor() {
       {mode === "list" && (
         <ListView
           configs={configs}
+          statuses={statuses}
           onNew={startNew}
           onNewWeekly={startNewWeekly}
           onEdit={startEdit}
@@ -268,9 +277,31 @@ export default function EmailReportEditor() {
 
 // ── List view ─────────────────────────────────────────────────────────────────
 
+function humanizeCron(cron: string | undefined): string {
+  if (!cron) return "—";
+  const s = parseCronToShape(cron);
+  switch (s.preset) {
+    case "Daily": return `Daily @ ${s.timeOfDay} EST`;
+    case "Weekly": return `${WEEKDAY_LABELS[s.dayOfWeek ?? 1] ?? "Monday"} @ ${s.timeOfDay} EST`;
+    case "Monthly": return `Day ${s.dayOfMonth} @ ${s.timeOfDay} EST`;
+    case "Custom": return `Custom: ${cron}`;
+    default: return cron;
+  }
+}
+
+function timeAgo(ms: number | undefined): string {
+  if (!ms) return "never";
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
 export function ListView(
-  { configs, onNew, onNewWeekly, onEdit }: {
+  { configs, statuses, onNew, onNewWeekly, onEdit }: {
     configs: ReportConfig[];
+    statuses: Record<string, ScheduleStatus>;
     onNew: () => void;
     onNewWeekly: () => void;
     onEdit: (c: ReportConfig) => void;
@@ -290,38 +321,56 @@ export function ListView(
         <button class="sf-btn primary" style="font-size:11px;" type="button" onClick={onNew}>+ New Report</button>
       </div>
       <table class="data-table">
-        <thead><tr><th>Name</th><th>Recipients</th><th>Schedule</th><th>Sections</th><th>Status</th></tr></thead>
+        <thead><tr><th>Name</th><th>Recipients</th><th>Schedule</th><th>Last Run</th><th>Sections</th><th>Status</th></tr></thead>
         <tbody>
           {regular.length === 0 && weekly.length === 0
-            ? <tr class="empty-row"><td colSpan={5}>No email reports configured</td></tr>
+            ? <tr class="empty-row"><td colSpan={6}>No email reports configured</td></tr>
             : (
               <>
-                {regular.map((c) => (
+                {regular.map((c) => {
+                  const st = c.id ? statuses[c.id] : undefined;
+                  const lastOk = st?.lastRunStatus === "ok";
+                  return (
                   <tr key={c.id ?? c.name} style="cursor:pointer;" onClick={() => onEdit(c)}>
                     <td style="font-weight:600;color:var(--text-bright);">{c.name || "Untitled"}</td>
                     <td class="mono" style="font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{c.recipients?.join(", ") || "—"}</td>
-                    <td style="font-family:var(--mono);font-size:11px;">{c.schedule?.cron ?? "—"}</td>
+                    <td style="font-size:11px;">{humanizeCron(c.schedule?.cron)}</td>
+                    <td style="font-size:11px;">
+                      {st?.lastRunAt
+                        ? <span style={`color:${lastOk ? "var(--green)" : "var(--red)"};`}>{lastOk ? "✓" : "✗"} {timeAgo(st.lastRunAt)}</span>
+                        : <span style="color:var(--text-dim);">never</span>}
+                    </td>
                     <td style="font-size:11px;color:var(--text-dim);">{c.reportSections?.length ?? 0}</td>
                     <td><span class={`pill pill-${c.enabled !== false && !c.disabled ? "green" : "red"}`}>{c.enabled !== false && !c.disabled ? "Active" : "Off"}</span></td>
                   </tr>
-                ))}
+                  );
+                })}
                 {weekly.length > 0 && (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={6}
                       style="background:var(--bg);padding:8px 14px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;color:var(--text-dim);border-top:1px solid var(--border);border-bottom:1px solid var(--border);"
                     >Weekly Reports</td>
                   </tr>
                 )}
-                {weekly.map((c) => (
+                {weekly.map((c) => {
+                  const st = c.id ? statuses[c.id] : undefined;
+                  const lastOk = st?.lastRunStatus === "ok";
+                  return (
                   <tr key={c.id ?? c.name} style="cursor:pointer;" onClick={() => onEdit(c)}>
                     <td style="font-weight:600;color:var(--text-bright);">{c.name || "Untitled"}</td>
                     <td class="mono" style="font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{c.recipients?.join(", ") || "—"}</td>
-                    <td style="font-family:var(--mono);font-size:11px;">{c.sendTimeEst ? `${c.sendTimeEst} EST nightly` : "weekly"}</td>
+                    <td style="font-size:11px;">{c.schedule?.cron ? humanizeCron(c.schedule.cron) : (c.sendTimeEst ? `${c.sendTimeEst} EST nightly` : "weekly")}</td>
+                    <td style="font-size:11px;">
+                      {st?.lastRunAt
+                        ? <span style={`color:${lastOk ? "var(--green)" : "var(--red)"};`}>{lastOk ? "✓" : "✗"} {timeAgo(st.lastRunAt)}</span>
+                        : <span style="color:var(--text-dim);">never</span>}
+                    </td>
                     <td style="font-size:11px;color:var(--text-dim);">{c.reportSections?.length ?? 0}</td>
                     <td><span class={`pill pill-${c.enabled !== false && !c.disabled ? "green" : "red"}`}>{c.enabled !== false && !c.disabled ? "Active" : "Off"}</span></td>
                   </tr>
-                ))}
+                  );
+                })}
               </>
             )}
         </tbody>
@@ -497,8 +546,9 @@ export function EditView(props: {
 
       {/* Schedule */}
       <ScheduleField
-        cron={c.schedule?.cron ?? ""}
-        onChange={(cron) => set("schedule", cron ? { cron } : undefined)}
+        schedule={c.schedule}
+        configId={c.id}
+        onChange={(s) => set("schedule", s)}
       />
 
       {/* Template */}
@@ -562,37 +612,186 @@ export function EditView(props: {
 
 // ── Schedule field (cron) ─────────────────────────────────────────────────────
 
-function ScheduleField({ cron, onChange }: { cron: string; onChange: (v: string) => void }) {
-  const [enabled, setEnabled] = useState(!!cron);
-  // Keep parent in sync if user toggles off.
-  useEffect(() => { if (!enabled && cron) onChange(""); /* eslint-disable-next-line */ }, [enabled]);
+// Preset shape — mirrored from src/reporting/domain/business/cron-presets/mod.ts.
+// Kept inline because the island bundles client-side; the backend module has
+// the canonical impl + the full test suite.
+type SchedulePreset = "Disabled" | "Daily" | "Weekly" | "Monthly" | "Custom";
+
+interface PresetShape { preset: SchedulePreset; dayOfWeek?: number; dayOfMonth?: number; timeOfDay: string }
+
+const DEFAULT_TZ = "America/New_York";
+const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function pad2(n: number) { return n.toString().padStart(2, "0"); }
+
+function presetShapeToCron(s: PresetShape): { cron: string; tz: string } | null {
+  if (s.preset === "Disabled" || s.preset === "Custom") return null;
+  const [hhRaw, mmRaw] = (s.timeOfDay || "09:00").split(":");
+  const hh = Math.max(0, Math.min(23, parseInt(hhRaw, 10) || 0));
+  const mm = Math.max(0, Math.min(59, parseInt(mmRaw, 10) || 0));
+  switch (s.preset) {
+    case "Daily": return { cron: `${mm} ${hh} * * *`, tz: DEFAULT_TZ };
+    case "Weekly": return { cron: `${mm} ${hh} * * ${s.dayOfWeek ?? 1}`, tz: DEFAULT_TZ };
+    case "Monthly": return { cron: `${mm} ${hh} ${s.dayOfMonth ?? 1} * *`, tz: DEFAULT_TZ };
+  }
+  return null;
+}
+
+function parseCronToShape(cron: string | undefined): PresetShape {
+  if (!cron) return { preset: "Disabled", timeOfDay: "09:00" };
+  const fields = cron.trim().split(/\s+/);
+  if (fields.length !== 5) return { preset: "Custom", timeOfDay: "09:00" };
+  const [minF, hourF, domF, monF, dowF] = fields;
+  const min = Number(minF), hour = Number(hourF);
+  if (!Number.isFinite(min) || !Number.isFinite(hour)) return { preset: "Custom", timeOfDay: "09:00" };
+  if (monF !== "*") return { preset: "Custom", timeOfDay: "09:00" };
+  const timeOfDay = `${pad2(hour)}:${pad2(min)}`;
+  if (domF === "*" && dowF === "*") return { preset: "Daily", timeOfDay };
+  if (domF === "*") {
+    const dow = Number(dowF);
+    if (Number.isFinite(dow)) return { preset: "Weekly", dayOfWeek: dow, timeOfDay };
+  }
+  if (dowF === "*") {
+    const dom = Number(domF);
+    if (Number.isFinite(dom) && dom >= 1 && dom <= 28) return { preset: "Monthly", dayOfMonth: dom, timeOfDay };
+  }
+  return { preset: "Custom", timeOfDay };
+}
+
+function ScheduleField({ schedule, configId, onChange }: {
+  schedule: { cron: string; tz: string } | undefined;
+  configId: string | undefined;
+  onChange: (v: { cron: string; tz: string } | undefined) => void;
+}) {
+  const initial = parseCronToShape(schedule?.cron);
+  const [shape, setShape] = useState<PresetShape>(initial);
+  const [customCron, setCustomCron] = useState<string>(schedule?.cron ?? "");
+  const [status, setStatus] = useState<{ lastRunAt?: number; lastRunStatus?: string } | null>(null);
+
+  // Re-sync when an outside change (load existing config) updates `schedule`.
+  useEffect(() => {
+    setShape(parseCronToShape(schedule?.cron));
+    setCustomCron(schedule?.cron ?? "");
+  }, [schedule?.cron]);
+
+  // Fetch the most recent run status for the badge.
+  useEffect(() => {
+    if (!configId) { setStatus(null); return; }
+    fetch(`/api/admin/email-reports/status?configId=${encodeURIComponent(configId)}`, { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => setStatus(d ?? null))
+      .catch(() => setStatus(null));
+  }, [configId]);
+
+  function commit(next: PresetShape, rawCustom?: string) {
+    setShape(next);
+    if (next.preset === "Disabled") { onChange(undefined); return; }
+    if (next.preset === "Custom") {
+      const c = (rawCustom ?? customCron).trim();
+      onChange(c ? { cron: c, tz: DEFAULT_TZ } : undefined);
+      return;
+    }
+    const emitted = presetShapeToCron(next);
+    onChange(emitted ?? undefined);
+  }
+
+  const isWeekly = shape.preset === "Weekly";
+  const isMonthly = shape.preset === "Monthly";
+  const isCustom = shape.preset === "Custom";
+  const isOn = shape.preset !== "Disabled";
+
   return (
     <div style="margin-bottom:12px;">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px;">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => setEnabled((e.target as HTMLInputElement).checked)}
-          style="accent-color:var(--blue);"
-        />
-        <span class="sf-label" style="margin-bottom:0;cursor:pointer;">Enable Schedule</span>
-      </label>
-      {enabled && (
-        <div style="border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:8px;padding:12px 14px;background:rgba(88,166,255,0.04);">
-          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--blue);margin-bottom:8px;">Schedule</div>
-          <input
-            class="sf-input"
-            type="text"
-            value={cron}
-            placeholder="0 8 * * 1"
-            onInput={(e) => onChange((e.target as HTMLInputElement).value)}
-            style="font-family:var(--mono);"
-          />
-          <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">
-            e.g. <code>0 8 * * 1</code> = Every Monday 8 AM UTC. Five fields: minute, hour, day-of-month, month, day-of-week.
-          </div>
+      <div style="border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:8px;padding:12px 14px;background:rgba(88,166,255,0.04);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--blue);">Schedule</div>
+          {status?.lastRunAt && (
+            <div style={`font-size:10px;color:${status.lastRunStatus === "ok" ? "var(--green)" : "var(--red)"};`}>
+              {status.lastRunStatus === "ok" ? "✓" : "✗"} last ran {new Date(status.lastRunAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+              {status.lastRunStatus !== "ok" && <span style="color:var(--text-dim);"> · {String(status.lastRunStatus).slice(0, 80)}</span>}
+            </div>
+          )}
         </div>
-      )}
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:end;">
+          <div class="sf">
+            <label class="sf-label">Cadence</label>
+            <select
+              class="sf-input"
+              value={shape.preset}
+              onChange={(e) => commit({ ...shape, preset: (e.target as HTMLSelectElement).value as SchedulePreset })}
+            >
+              <option value="Disabled">Disabled</option>
+              <option value="Daily">Daily</option>
+              <option value="Weekly">Weekly</option>
+              <option value="Monthly">Monthly</option>
+              <option value="Custom">Custom cron</option>
+            </select>
+          </div>
+          {isWeekly && (
+            <div class="sf">
+              <label class="sf-label">Day of week</label>
+              <select
+                class="sf-input"
+                value={String(shape.dayOfWeek ?? 1)}
+                onChange={(e) => commit({ ...shape, dayOfWeek: Number((e.target as HTMLSelectElement).value) })}
+              >
+                {WEEKDAY_LABELS.map((label, i) => <option key={i} value={String(i)}>{label}</option>)}
+              </select>
+            </div>
+          )}
+          {isMonthly && (
+            <div class="sf">
+              <label class="sf-label">Day of month</label>
+              <select
+                class="sf-input"
+                value={String(shape.dayOfMonth ?? 1)}
+                onChange={(e) => commit({ ...shape, dayOfMonth: Number((e.target as HTMLSelectElement).value) })}
+              >
+                {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => <option key={d} value={String(d)}>{d}</option>)}
+              </select>
+            </div>
+          )}
+          {isOn && !isCustom && (
+            <div class="sf">
+              <label class="sf-label">Time (EST)</label>
+              <input
+                class="sf-input"
+                type="time"
+                value={shape.timeOfDay}
+                onInput={(e) => commit({ ...shape, timeOfDay: (e.target as HTMLInputElement).value || "09:00" })}
+              />
+            </div>
+          )}
+        </div>
+
+        {isCustom && (
+          <div class="sf" style="margin-top:8px;">
+            <label class="sf-label">Custom cron expression</label>
+            <input
+              class="sf-input"
+              type="text"
+              value={customCron}
+              placeholder="0 8 * * 1-5"
+              onInput={(e) => {
+                const v = (e.target as HTMLInputElement).value;
+                setCustomCron(v);
+                commit({ ...shape, preset: "Custom" }, v);
+              }}
+              style="font-family:var(--mono);"
+            />
+            <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">
+              5 fields, evaluated in America/New_York. Supports `*`, ranges (`1-5`), lists (`1,3,5`), and steps (`*/15`). Reference: <a href="https://crontab.guru" target="_blank" rel="noopener" style="color:var(--blue);">crontab.guru</a>.
+            </div>
+          </div>
+        )}
+
+        {isOn && (
+          <div style="font-size:10px;color:var(--text-dim);margin-top:8px;">
+            Times are interpreted in <strong>America/New_York</strong>. DST-safe — a "Daily 8am" schedule fires at 8am local year-round.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

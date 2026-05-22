@@ -107,8 +107,13 @@ export async function stepTranscribe(req: Request): Promise<Response> {
     finding.assemblyAiTranscriptId = transcriptId;
     (finding as Record<string, any>).assemblyAiSubmittedAt = Date.now();
     await saveFinding(orgId, finding);
-    // Return immediately — poll-transcript handles waiting and result processing
-    await enqueueStep("poll-transcript", { findingId, orgId }, POLL_DELAY_SECONDS);
+    // Return immediately — poll-transcript handles waiting and result processing.
+    // CRITICAL: pass `transcriptId` IN THE QSTASH PAYLOAD so poll-transcript
+    // doesn't depend on the saveFinding write being visible to a fresh
+    // isolate 15s later. Race-survivor for the "No transcript ID on finding"
+    // path that booked mqlfcCsh3sP1zH_6vpeT6 as an invalid-genie chargeback
+    // despite a healthy 1.6MB recording — see plan file for full timeline.
+    await enqueueStep("poll-transcript", { findingId, orgId, transcriptId }, POLL_DELAY_SECONDS);
     console.log(`[STEP-TRANSCRIBE] ${findingId}: 🚀 Submitted ${transcriptId}, polling in ${POLL_DELAY_SECONDS}s${submitOpts ? ` (snip ${submitOpts.audioStartFrom ?? "-"}→${submitOpts.audioEndAt ?? "-"}ms)` : ""}`);
     return json({ ok: true, transcriptId });
   } catch (err) {

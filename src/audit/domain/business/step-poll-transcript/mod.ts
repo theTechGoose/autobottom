@@ -15,7 +15,13 @@ const POLL_DELAY_SECONDS = 15;
 
 export async function stepPollTranscript(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId } = body;
+  // `transcriptId` is now carried in the QStash payload by step-transcribe
+  // (the in-memory value at submit time) so polling doesn't depend on the
+  // saveFinding write surviving the 15s cross-isolate gap. Fall back to
+  // the finding doc only for in-flight messages enqueued before this
+  // payload-shape change deployed. See plan file for the
+  // mqlfcCsh3sP1zH_6vpeT6 incident this prevents.
+  const { findingId, orgId, transcriptId: payloadTranscriptId } = body;
 
   const pollStart = Date.now();
   console.log(`[STEP-POLL-TRANSCRIPT] ${findingId}: Starting...`);
@@ -25,9 +31,11 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
   if (!finding) return json({ error: "finding not found" }, 404);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
-  const transcriptId = finding.assemblyAiTranscriptId;
+  const transcriptId = payloadTranscriptId ?? finding.assemblyAiTranscriptId;
   if (!transcriptId) {
-    console.error(`[STEP-POLL-TRANSCRIPT] ${findingId}: ❌ No transcript ID on finding`);
+    console.error(
+      `[STEP-POLL-TRANSCRIPT] ${findingId}: ❌ No transcriptId in payload AND not on finding (payloadHad=${!!payloadTranscriptId} findingHad=${!!finding.assemblyAiTranscriptId})`,
+    );
     finding.rawTranscript = "Genie Invalid";
     finding.findingStatus = "finished";
     await saveFinding(orgId, finding);
@@ -45,14 +53,16 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
     transcript = await pollTranscriptOnce(transcriptId);
   } catch (err) {
     console.warn(`[STEP-POLL-TRANSCRIPT] ${findingId}: ⚠️ Poll request failed${elapsedTag}, retrying in ${POLL_DELAY_SECONDS}s:`, err);
-    await enqueueStep("poll-transcript", { findingId, orgId }, POLL_DELAY_SECONDS);
+    // Propagate transcriptId so the retry doesn't lose it.
+    await enqueueStep("poll-transcript", { findingId, orgId, transcriptId }, POLL_DELAY_SECONDS);
     return json({ ok: true, retrying: true });
   }
 
   // Still processing — come back later
   if (transcript.status === "queued" || transcript.status === "processing") {
     console.log(`[STEP-POLL-TRANSCRIPT] ${findingId}: 🔍 status=${transcript.status}${elapsedTag}, re-polling in ${POLL_DELAY_SECONDS}s`);
-    await enqueueStep("poll-transcript", { findingId, orgId }, POLL_DELAY_SECONDS);
+    // Propagate transcriptId so the re-poll doesn't lose it.
+    await enqueueStep("poll-transcript", { findingId, orgId, transcriptId }, POLL_DELAY_SECONDS);
     return json({ ok: true, polling: true, status: transcript.status });
   }
 

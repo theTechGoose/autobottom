@@ -253,17 +253,24 @@ export class ReviewController {
     return pending;
   }
 
-  @Get("my-stats") @ReturnedType(OkResponse) @Description("Per-reviewer week/month/all-time + streak")
-  async myStats(@Query("email") email: string) {
+  @Get("my-stats") @ReturnedType(OkResponse) @Description("Per-reviewer stats over an optional date range")
+  async myStats(@Query("email") email: string, @Query("from") from: string, @Query("to") to: string) {
     if (!email) return { error: "email required" };
+    // Empty/invalid query strings → omit and let the helper fall back to its
+    // 365d default. We accept ms-since-epoch from the frontend's range bar.
+    const fromMs = from ? Number(from) : undefined;
+    const toMs = to ? Number(to) : undefined;
+    const opts = (Number.isFinite(fromMs) || Number.isFinite(toMs))
+      ? { from: Number.isFinite(fromMs) ? fromMs : undefined, to: Number.isFinite(toMs) ? toMs : undefined }
+      : undefined;
     try {
-      return await getMyReviewerStats(ORG(), email);
+      return await getMyReviewerStats(ORG(), email, opts);
     } catch (err) {
       return softFail(`my-stats ${email}`, err, {
-        week: { reviewed: 0, avgScore: 0, lastReviewedAt: null },
-        month: { reviewed: 0, avgScore: 0, lastReviewedAt: null },
-        allTime: { reviewed: 0, avgScore: 0, lastReviewedAt: null },
-        currentStreak: 0, longestStreak: 0, daysActive: 0, stale: true,
+        range: { from: 0, to: Date.now() },
+        reviewed: 0, avgScore: 0, daysActive: 0, lastInRangeAt: null,
+        currentStreak: 0, longestStreak: 0, lastReviewedAt: null,
+        stale: true,
       });
     }
   }

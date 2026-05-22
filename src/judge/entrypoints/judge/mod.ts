@@ -161,27 +161,36 @@ export class JudgeController {
     }
   }
 
-  @Get("leaderboard") @ReturnedType(OkResponse) @Description("Per-reviewer rollup over the trailing 365d")
-  async leaderboard() {
+  @Get("leaderboard") @ReturnedType(OkResponse) @Description("Per-reviewer rollup over an optional date range (defaults to trailing 365d)")
+  async leaderboard(@Query("from") from: string, @Query("to") to: string) {
+    const fromMs = from ? Number(from) : undefined;
+    const toMs = to ? Number(to) : undefined;
+    const opts = (Number.isFinite(fromMs) || Number.isFinite(toMs))
+      ? { from: Number.isFinite(fromMs) ? fromMs : undefined, to: Number.isFinite(toMs) ? toMs : undefined }
+      : undefined;
     try {
-      const rows = await getReviewerLeaderboard(ORG());
+      const rows = await getReviewerLeaderboard(ORG(), opts);
       return { rows };
     } catch (err) {
       return softFail("leaderboard", err, { rows: [], stale: true });
     }
   }
 
-  @Get("my-stats") @ReturnedType(OkResponse) @Description("Per-judge week/month/all-time stats")
-  async myStats(@Query("email") email: string) {
+  @Get("my-stats") @ReturnedType(OkResponse) @Description("Per-judge stats over an optional date range")
+  async myStats(@Query("email") email: string, @Query("from") from: string, @Query("to") to: string) {
     if (!email) return { error: "email required" };
+    const fromMs = from ? Number(from) : undefined;
+    const toMs = to ? Number(to) : undefined;
+    const opts = (Number.isFinite(fromMs) || Number.isFinite(toMs))
+      ? { from: Number.isFinite(fromMs) ? fromMs : undefined, to: Number.isFinite(toMs) ? toMs : undefined }
+      : undefined;
     try {
-      return await getMyJudgeStats(ORG(), email);
+      return await getMyJudgeStats(ORG(), email, opts);
     } catch (err) {
       return softFail(`my-stats ${email}`, err, {
-        week: { decided: 0, overturned: 0, upheld: 0, overturnRate: 0, lastDecidedAt: null },
-        month: { decided: 0, overturned: 0, upheld: 0, overturnRate: 0, lastDecidedAt: null },
-        allTime: { decided: 0, overturned: 0, upheld: 0, overturnRate: 0, lastDecidedAt: null },
-        decisions: 0, stale: true,
+        range: { from: 0, to: Date.now() },
+        decided: 0, overturned: 0, upheld: 0, overturnRate: 0,
+        lastInRangeAt: null, lastDecidedAt: null, stale: true,
       });
     }
   }

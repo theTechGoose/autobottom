@@ -1,27 +1,19 @@
-/** Review dashboard — stats, queue status, leaderboard placeholder. */
+/** Review dashboard — queue counters + range-driven personal stats. */
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { StatCard } from "../../components/StatCard.tsx";
 import { DonutChart } from "../../components/DonutChart.tsx";
 import { LeaderboardCard, type LeaderboardEntry } from "../../components/LeaderboardCard.tsx";
+import { StatRangeBar } from "../../components/StatRangeBar.tsx";
 import { apiFetch } from "../../lib/api.ts";
 
 interface ReviewerSettings { allowedTypes: ("date-leg" | "package")[] }
-
-interface ReviewerBucket { reviewed: number; avgScore: number; lastReviewedAt: number | null }
-interface MyStats {
-  week: ReviewerBucket; month: ReviewerBucket; allTime: ReviewerBucket;
-  currentStreak: number; longestStreak: number; daysActive: number; stale?: boolean;
-}
-
-const EMPTY_BUCKET: ReviewerBucket = { reviewed: 0, avgScore: 0, lastReviewedAt: null };
 
 export default define.page(async function ReviewDashboard(ctx) {
   const user = ctx.state.user!;
   let stats: { pending: number; decided: number; pendingAuditCount: number; stale?: boolean } = { pending: 0, decided: 0, pendingAuditCount: 0 };
   let settings: ReviewerSettings = { allowedTypes: ["date-leg", "package"] };
   let leaderboard: LeaderboardEntry[] = [];
-  let my: MyStats = { week: EMPTY_BUCKET, month: EMPTY_BUCKET, allTime: EMPTY_BUCKET, currentStreak: 0, longestStreak: 0, daysActive: 0 };
   try { stats = await apiFetch<typeof stats>("/review/api/dashboard", ctx.req); }
   catch (e) { console.error("Review dashboard error:", e); }
   try {
@@ -30,9 +22,6 @@ export default define.page(async function ReviewDashboard(ctx) {
   } catch (e) { console.error("Reviewer settings error:", e); }
   try { leaderboard = (await apiFetch<{ entries?: LeaderboardEntry[] }>("/gamification/api/leaderboard", ctx.req)).entries ?? []; }
   catch (e) { console.error("Leaderboard error:", e); }
-  try {
-    my = await apiFetch<MyStats>(`/review/api/my-stats?email=${encodeURIComponent(user.email)}`, ctx.req);
-  } catch (e) { console.error("My reviewer stats error:", e); }
 
   const total = stats.pending + stats.decided;
   const confirmRate = total > 0 ? Math.round((stats.decided / total) * 100) : 0;
@@ -52,21 +41,12 @@ export default define.page(async function ReviewDashboard(ctx) {
         </div>
       </div>
 
-      <div class="panel" style="margin-top:18px;">
-        <div class="panel-title" style="display:flex;align-items:center;gap:12px;">
-          <span>My Stats</span>
-          <span class="pill" style="background:#8b5cf6;color:#fff;font-size:11px;">🔥 {my.currentStreak}-day streak</span>
-          <span style="color:var(--text-muted);font-size:11px;font-weight:400;">longest {my.longestStreak} · {my.daysActive} active days (last 365d)</span>
-        </div>
-        <div class="stat-grid" style="margin-top:10px;">
-          <StatCard label="This Week" value={my.week.reviewed} color="purple" sub={my.week.reviewed ? `avg ${my.week.avgScore}%` : "—"} />
-          <StatCard label="This Month" value={my.month.reviewed} color="blue" sub={my.month.reviewed ? `avg ${my.month.avgScore}%` : "—"} />
-          <StatCard label="All Time" value={my.allTime.reviewed} color="green" sub={my.allTime.reviewed ? `avg ${my.allTime.avgScore}%` : "—"} />
-          <StatCard label="Last Reviewed" value={my.allTime.lastReviewedAt ? new Date(my.allTime.lastReviewedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"} color="yellow" sub={my.allTime.lastReviewedAt ? new Date(my.allTime.lastReviewedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : ""} />
-        </div>
+      <StatRangeBar target="#review-dash-block" endpoint="/api/review/dashboard-range" active="week" />
+      <div id="review-dash-block" hx-get="/api/review/dashboard-range?range=week" hx-trigger="load" hx-swap="outerHTML">
+        <div class="panel" style="margin-top:18px;color:var(--text-dim);font-size:13px;">Loading personal stats…</div>
       </div>
 
-      <div class="charts">
+      <div class="charts" style="margin-top:18px;">
         <LeaderboardCard entries={leaderboard} accent="#8b5cf6" />
         <DonutChart
           title="Queue Progress"

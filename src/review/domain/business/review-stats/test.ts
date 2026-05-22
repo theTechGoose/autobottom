@@ -31,7 +31,7 @@ async function seedReviewed(orgId: OrgId, email: string, offsetsDays: number[]):
   }
 }
 
-Deno.test("getMyReviewerStats — 3-day current streak ending today", async () => {
+Deno.test("getMyReviewerStats — 3-day current streak ending today (default range)", async () => {
   resetFirestoreCredentials();
   _resetQueryAuditDoneIndexCacheForTests();
   const orgId = uniqueOrg("streak3");
@@ -41,7 +41,7 @@ Deno.test("getMyReviewerStats — 3-day current streak ending today", async () =
   assertEquals(s.currentStreak, 3);
   assertEquals(s.longestStreak, 3);
   assertEquals(s.daysActive, 3);
-  assertEquals(s.allTime.reviewed, 3);
+  assertEquals(s.reviewed, 3);
 });
 
 Deno.test("getMyReviewerStats — broken streak (gap kills current, longest survives)", async () => {
@@ -56,6 +56,24 @@ Deno.test("getMyReviewerStats — broken streak (gap kills current, longest surv
   assertEquals(s.longestStreak, 4);
 });
 
+Deno.test("getMyReviewerStats — custom range narrows the bucket; streaks stay today-relative", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("range");
+  const email = "carol@example.com";
+  // Seed across today + last 14 days. Streak = today only (since gaps).
+  await seedReviewed(orgId, email, [0, 5, 10]);
+  // Custom range covering only 7-12 days ago should bucket just one row.
+  const now = Date.now();
+  const s = await getMyReviewerStats(orgId, email, {
+    from: now - 12 * MS_DAY,
+    to: now - 7 * MS_DAY,
+  });
+  assertEquals(s.reviewed, 1); // only the day-10 row falls inside
+  // Streak is today-relative — today is seeded so currentStreak ≥ 1
+  assert(s.currentStreak >= 1, "current streak counts today regardless of range");
+});
+
 Deno.test("getReviewerLeaderboard — groups by reviewedBy, sorts by volume", async () => {
   resetFirestoreCredentials();
   _resetQueryAuditDoneIndexCacheForTests();
@@ -68,4 +86,19 @@ Deno.test("getReviewerLeaderboard — groups by reviewedBy, sorts by volume", as
   assertEquals(rows[0].reviewed, 4);
   assertEquals(rows[1].email, "bob@example.com");
   assert(rows[0].reviewed > rows[1].reviewed, "sorted descending by volume");
+});
+
+Deno.test("getReviewerLeaderboard — respects custom range", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("ldb-range");
+  await seedReviewed(orgId, "alice@example.com", [0, 1, 10, 11]);
+  // Window: only the recent two days.
+  const now = Date.now();
+  const rows = await getReviewerLeaderboard(orgId, {
+    from: now - 3 * MS_DAY,
+    to: now,
+  });
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].reviewed, 2);
 });

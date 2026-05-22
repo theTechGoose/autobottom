@@ -17,11 +17,19 @@ export interface JudgeBucket {
 }
 
 export interface JudgeStats {
-  week: JudgeBucket;
-  month: JudgeBucket;
-  allTime: JudgeBucket;
-  decisions: number; // total all-time, same as allTime.decided for convenience
+  range: { from: number; to: number };
+  /** Stats for the chosen range. */
+  decided: number;
+  overturned: number;
+  upheld: number;
+  overturnRate: number;
+  /** Most recent decidedAt that falls in the range. */
+  lastInRangeAt: number | null;
+  /** Always-absolute most-recent — independent of selected range. */
+  lastDecidedAt: number | null;
 }
+
+export interface JudgeRangeOpts { from?: number; to?: number }
 
 interface JudgeDecidedRow {
   judge: string;
@@ -95,12 +103,30 @@ function bucket(rows: JudgeDecidedRow[], from: number, to: number): JudgeBucket 
   };
 }
 
-export async function getMyJudgeStats(orgId: OrgId, email: string): Promise<JudgeStats> {
+function resolveRange(opts?: JudgeRangeOpts): { from: number; to: number } {
+  const now = Date.now();
+  return { from: opts?.from ?? 0, to: opts?.to ?? now };
+}
+
+export async function getMyJudgeStats(orgId: OrgId, email: string, opts?: JudgeRangeOpts): Promise<JudgeStats> {
   const all = await fetchJudgeRows(orgId);
   const mine = all.filter((r) => r.judge === email);
-  const now = Date.now();
-  const week = bucket(mine, now - 7 * MS_DAY, now);
-  const month = bucket(mine, now - 30 * MS_DAY, now);
-  const allTime = bucket(mine, 0, now);
-  return { week, month, allTime, decisions: allTime.decided };
+  const range = resolveRange(opts);
+  const b = bucket(mine, range.from, range.to);
+  // lastDecidedAt is the absolute most-recent decision regardless of range
+  // — the dashboard "last decided" card needs to read "did this judge work
+  // today?" not "did they decide anything in the selected slice?".
+  const lastDecidedAt = mine.reduce<number | null>(
+    (acc, r) => (r.decidedAt > (acc ?? 0) ? r.decidedAt : acc),
+    null,
+  );
+  return {
+    range,
+    decided: b.decided,
+    overturned: b.overturned,
+    upheld: b.upheld,
+    overturnRate: b.overturnRate,
+    lastInRangeAt: b.lastDecidedAt,
+    lastDecidedAt,
+  };
 }

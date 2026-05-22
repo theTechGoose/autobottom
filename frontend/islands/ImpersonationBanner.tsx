@@ -34,6 +34,7 @@ export function shouldProbeForBanner(path: string, asEmail: string): boolean {
 export default function ImpersonationBanner() {
   const [show, setShow] = useState(false);
   const [asEmail, setAsEmail] = useState<string>("");
+  const [realEmail, setRealEmail] = useState<string>("");
   const [users, setUsers] = useState<UserRow[]>([]);
 
   useEffect(() => {
@@ -49,9 +50,10 @@ export default function ImpersonationBanner() {
     // state swap — so this always returns the admin's actual identity.
     fetch("/admin/api/me", { credentials: "include" })
       .then((r) => r.ok ? r.json() : null)
-      .then((me: { role?: string } | null) => {
+      .then((me: { role?: string; email?: string } | null) => {
         if (!me || me.role !== "admin") return;
         setShow(true);
+        if (me.email) setRealEmail(me.email);
         return fetch("/admin/users", { credentials: "include" })
           .then((r) => r.ok ? r.json() : { users: [] })
           .then((d: { users?: UserRow[] }) => setUsers(d.users ?? []))
@@ -70,8 +72,12 @@ export default function ImpersonationBanner() {
     window.location.href = next.toString();
   };
 
-  // Filter out admins — can't impersonate yourself usefully.
-  const reviewers = users.filter((u) => u.role !== "admin");
+  // Include EVERY user except the real logged-in admin — switching to
+  // yourself is a no-op. Other admins are valid impersonation targets
+  // (e.g. seeing another admin's manager-scope filtered view).
+  const targets = users.filter((u) => u.email !== realEmail);
+  // Sort role-first then alphabetically so the dropdown groups visually.
+  targets.sort((a, b) => (a.role + a.email).localeCompare(b.role + b.email));
 
   return (
     <div class="admin-impersonation-bar">
@@ -79,8 +85,10 @@ export default function ImpersonationBanner() {
         <span class="aib-label">Admin View</span>
         <span>Viewing as:</span>
         <select class="aib-select" onChange={onChange} value={asEmail}>
-          <option value="">— select reviewer —</option>
-          {reviewers.map((u) => <option key={u.email} value={u.email}>{u.email}</option>)}
+          <option value="">— select user —</option>
+          {targets.map((u) => (
+            <option key={u.email} value={u.email}>({u.role}) {u.email}</option>
+          ))}
         </select>
       </div>
       <a class="aib-exit" href="/admin/dashboard">Exit Impersonation</a>

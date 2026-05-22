@@ -15,12 +15,19 @@ export interface ReviewerBucket {
 }
 
 export interface ReviewerStats {
-  week: ReviewerBucket;
-  month: ReviewerBucket;
-  allTime: ReviewerBucket;
+  range: { from: number; to: number };
+  /** Stats for the chosen range. */
+  reviewed: number;
+  avgScore: number;
+  daysActive: number;
+  /** Most recent reviewedAt that falls inside the range. */
+  lastInRangeAt: number | null;
+  /** Streaks + lastReviewedAt are always today-relative regardless of
+   *  selected range — they're "are you working right now" indicators
+   *  that lose meaning when scoped to an arbitrary range. */
   currentStreak: number;
   longestStreak: number;
-  daysActive: number;
+  lastReviewedAt: number | null;
 }
 
 export interface LeaderboardRow {
@@ -29,6 +36,8 @@ export interface LeaderboardRow {
   avgScore: number;
   lastReviewedAt: number | null;
 }
+
+export interface RangeOpts { from?: number; to?: number }
 
 interface MinimalRow { completedAt: number; score: number }
 
@@ -96,29 +105,64 @@ function rangeForToday(): { from: number; to: number } {
   return { from: todayStart - 365 * MS_DAY, to: todayStart + MS_DAY - 1 };
 }
 
-export async function getMyReviewerStats(orgId: OrgId, email: string): Promise<ReviewerStats> {
-  const { from, to } = rangeForToday();
-  const all = await queryAuditDoneIndex(orgId, from, to);
-  const mine: MinimalRow[] = [];
-  for (const r of all) {
-    if (r.reviewedBy === email) mine.push({ completedAt: r.completedAt, score: r.score });
-  }
-  const now = Date.now();
-  const week = bucketRows(mine, now - 7 * MS_DAY, now);
-  const month = bucketRows(mine, now - 30 * MS_DAY, now);
-  const allTime = bucketRows(mine, from, to);
-  const days = new Set(mine.map((r) => dayKey(r.completedAt)));
-  const { currentStreak, longestStreak } = computeStreaks(days);
-  return { week, month, allTime, currentStreak, longestStreak, daysActive: days.size };
+/** Resolve {from?, to?} into a fully-bounded range. Missing both → 365d
+ *  trailing window (backwards-compat with the previous fixed behavior).
+ *  Missing one → fill the other with a sensible default. */
+function resolveRange(opts?: RangeOpts): { from: number; to: number } {
+  if (opts?.from != null && opts?.to != null) return { from: opts.from, to: opts.to };
+  const fallback = rangeForToday();
+  return {
+    from: opts?.from ?? fallback.from,
+    to: opts?.to ?? fallback.to,
+  };
 }
 
-export async function getReviewerLeaderboard(orgId: OrgId): Promise<LeaderboardRow[]> {
-  const { from, to } = rangeForToday();
+export async function getMyReviewerStats(orgId: OrgId, email: string, opts?: RangeOpts): Promise<ReviewerStats> {
+  const range = resolveRange(opts);
+  // For streaks we need the trailing-today window even when the operator
+  // picked a custom range — current streak loses meaning if computed
+  // against an arbitrary slice. Pull both scans; the second is cache-warm
+  // on dashboards that default to today's window.
+  const today = rangeForToday();
+  const scanFrom = Math.min(range.from, today.from);
+  const scanTo = Math.max(range.to, today.to);
+  const all = await queryAuditDoneIndex(orgId, scanFrom, scanTo);
+  const mine: MinimalRow[] = [];
+  const minePost: MinimalRow[] = []; // rows used for streak/lastReviewedAt (today-window)
+  for (const r of all) {
+    if (r.reviewedBy !== email) continue;
+    const row = { completedAt: r.completedAt, score: r.score };
+    if (r.completedAt >= range.from && r.completedAt <= range.to) mine.push(row);
+    if (r.completedAt >= today.from && r.completedAt <= today.to) minePost.push(row);
+  }
+  const bucket = bucketRows(mine, range.from, range.to);
+  const daysInRange = new Set(mine.map((r) => dayKey(r.completedAt)));
+  const daysTrailing = new Set(minePost.map((r) => dayKey(r.completedAt)));
+  const { currentStreak, longestStreak } = computeStreaks(daysTrailing);
+  const lastReviewedAt = minePost.reduce<number | null>(
+    (acc, r) => (r.completedAt > (acc ?? 0) ? r.completedAt : acc),
+    null,
+  );
+  return {
+    range,
+    reviewed: bucket.reviewed,
+    avgScore: bucket.avgScore,
+    daysActive: daysInRange.size,
+    lastInRangeAt: bucket.lastReviewedAt,
+    currentStreak,
+    longestStreak,
+    lastReviewedAt,
+  };
+}
+
+export async function getReviewerLeaderboard(orgId: OrgId, opts?: RangeOpts): Promise<LeaderboardRow[]> {
+  const { from, to } = resolveRange(opts);
   const all = await queryAuditDoneIndex(orgId, from, to);
   const by = new Map<string, { reviewed: number; sum: number; last: number }>();
   for (const r of all) {
     const who = r.reviewedBy;
     if (!who) continue;
+    if (r.completedAt < from || r.completedAt > to) continue;
     const entry = by.get(who) ?? { reviewed: 0, sum: 0, last: 0 };
     entry.reviewed++;
     entry.sum += r.score;

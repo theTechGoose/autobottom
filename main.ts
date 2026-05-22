@@ -552,16 +552,36 @@ const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>>
 
 const danetApp = new DanetApplication();
 // Silence danet's per-route "[Router] Registering [GET] /xxx" cold-start
-// spam. Danet's Logger respects NO_LOG (jsr:@danet/core/src/logger.ts) —
-// set it just around init, restore after, so any later danet warn/error
-// channels (we don't currently rely on them; we never call .listen()) are
-// not muted permanently.
-const prevNoLog = Deno.env.get("NO_LOG") ?? "";
-Deno.env.set("NO_LOG", "1");
+// spam. We tried Deno.env.set("NO_LOG","1") (danet Logger's escape hatch) —
+// it works locally but Deno Deploy appears to ignore runtime env writes
+// for this read, so the lines kept appearing in prod after the first
+// attempt. Console-intercept instead: wrap console.log + console.error
+// during init() and drop lines that match the danet Logger's exact format
+// (`<HTTP-date GMT> [<Namespace>] <text>`) AND mention router/injector
+// chatter we never look at. Other warn/error paths still flow through.
+// Try/finally guarantees restoration even if init throws.
+const _origLog = console.log;
+const _origErr = console.error;
+const _origWarn = console.warn;
+// Match by substring on the joined args so ANSI color escape prefixes
+// (\x1b[37m, etc. — danet's Logger wraps every line in `white(date)
+// yellow([Namespace]) green(text)`) don't slip past a strict ^anchor regex.
+// `[Router]` and `[Injector]` are danet's namespaces, never used by our
+// own logs, so the false-positive risk is zero.
+function isDanetBootNoise(args: unknown[]): boolean {
+  if (!args.length) return false;
+  const joined = args.map((a) => typeof a === "string" ? a : "").join(" ");
+  return joined.includes("[Router]") || joined.includes("[Injector]");
+}
+console.log = (...args: unknown[]) => { if (!isDanetBootNoise(args)) _origLog(...args); };
+console.error = (...args: unknown[]) => { if (!isDanetBootNoise(args)) _origErr(...args); };
+console.warn = (...args: unknown[]) => { if (!isDanetBootNoise(args)) _origWarn(...args); };
 try {
   await danetApp.init(AppModule);
 } finally {
-  Deno.env.set("NO_LOG", prevNoLog);
+  console.log = _origLog;
+  console.error = _origErr;
+  console.warn = _origWarn;
 }
 
 // Register in-process webhook email handlers. fireWebhook("terminate", ...) in

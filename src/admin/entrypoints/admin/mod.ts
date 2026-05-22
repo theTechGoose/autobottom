@@ -444,11 +444,19 @@ export class AdminConfigController {
   /** Backfill the per-question counters from historical audit-done-idx +
    *  findings. Idempotent: deletes the counter buckets covering the chosen
    *  date range first, then walks audit-done-idx in that range, loads each
-   *  finding, and re-increments. Re-running the same range yields the same
-   *  totals.
+   *  finding, accumulates per-question fail counts in-memory, and writes
+   *  one counter doc per (configKey, questionKey, month) at the end.
    *
-   *  Cost: O(audits-in-range) Firestore reads. For a 7-day window in a
-   *  busy org this is ~few hundred reads. Long ranges should be split. */
+   *  Why in-memory accumulation: the naive R-M-W per failed question hit
+   *  Deno Deploy's request timeout on anything >1-week range — each
+   *  finding triggered N getStored+setStored round trips and 13 days of
+   *  audits is ~8k findings × ~3 fails = ~24k round trips. The in-memory
+   *  accumulation collapses that to one read per finding + one write per
+   *  unique (config, question, month) bucket, plus a concurrency pool on
+   *  the per-finding reads. flippedToPass / flippedToFail stay at 0 from
+   *  backfill — historical flip events aren't replayed (we don't have
+   *  per-event audit trails); the live counters get those fields
+   *  incremented going forward via the review/admin/judge flip handlers. */
   @Post("question-failures-backfill") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
   async questionFailuresBackfill(@Body() body: GenericBodyRequest) {
     const t0 = Date.now();
@@ -460,10 +468,10 @@ export class AdminConfigController {
     }
     try {
       const orgId = ORG();
-      const { listStoredByCompletedAt } = await import("@core/data/firestore/mod.ts");
+      const { listStoredByCompletedAt, setStored } = await import("@core/data/firestore/mod.ts");
       const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
       const {
-        deleteBucketsForMonths, incrFailed, configKeyForFinding, yyyymm,
+        deleteBucketsForMonths, normalizeQuestionKey, configKeyForFinding, yyyymm,
       } = await import("@audit/domain/data/question-stats-repository/mod.ts");
 
       // Walk audit-done-idx range. Pull the months covered so we can wipe
@@ -479,36 +487,110 @@ export class AdminConfigController {
       for (const e of entries) {
         if (e.completedAt) months.add(yyyymm(e.completedAt));
       }
+      console.log(`[QF-BACKFILL] entries=${entries.length} months=${[...months].sort().join(",")}`);
       const wiped = await deleteBucketsForMonths(orgId, [...months]);
 
+      interface Bucket {
+        configKey: string;
+        questionKey: string;
+        headerSample: string;
+        yyyymm: string;
+        failed: number;
+        sampleFindingIds: string[];
+        lastFailedAt: number;
+      }
+      const accum = new Map<string, Bucket>();
       let processed = 0;
       let failsCounted = 0;
       let errors = 0;
-      for (const e of entries) {
-        if (!e.findingId || !e.completedAt) continue;
+
+      // Per-finding work: 1 read each. Run in a sliding window of N
+      // concurrent reads so total wall-clock = (entries/CONCURRENCY) × per-read.
+      // 20 is well under Firestore's per-org rate limit headroom and lands
+      // a 13-day window comfortably inside Deno Deploy's request timeout.
+      const CONCURRENCY = 20;
+      const SAMPLE_RING_SIZE = 10;
+      const processOne = async (e: { findingId?: string; completedAt?: number }) => {
+        if (!e.findingId || !e.completedAt) return;
         try {
           const finding = await getFinding(orgId, e.findingId);
-          if (!finding) continue;
+          if (!finding) return;
           const qs = (finding as Record<string, any>).answeredQuestions as any[] | undefined;
-          if (!qs?.length) continue;
+          if (!qs?.length) return;
           const cfgKey = configKeyForFinding(finding as Record<string, any>);
+          const month = yyyymm(e.completedAt);
           for (const q of qs) {
             if (q.answer !== "No") continue;
             if (!q.header) continue;
-            await incrFailed(orgId, cfgKey, q.header, e.findingId, e.completedAt);
+            const qKey = normalizeQuestionKey(q.header);
+            const k = `${cfgKey}::${qKey}::${month}`;
+            let bucket = accum.get(k);
+            if (!bucket) {
+              bucket = {
+                configKey: cfgKey, questionKey: qKey, headerSample: q.header,
+                yyyymm: month, failed: 0, sampleFindingIds: [], lastFailedAt: 0,
+              };
+              accum.set(k, bucket);
+            }
+            bucket.failed++;
+            if (q.header && bucket.headerSample !== q.header) bucket.headerSample = q.header;
+            if (!bucket.sampleFindingIds.includes(e.findingId)) {
+              bucket.sampleFindingIds.push(e.findingId);
+              if (bucket.sampleFindingIds.length > SAMPLE_RING_SIZE) {
+                bucket.sampleFindingIds = bucket.sampleFindingIds.slice(-SAMPLE_RING_SIZE);
+              }
+            }
+            if (e.completedAt > bucket.lastFailedAt) bucket.lastFailedAt = e.completedAt;
             failsCounted++;
           }
           processed++;
+          if (processed % 500 === 0) {
+            console.log(`[QF-BACKFILL] processed ${processed}/${entries.length} (${Date.now() - t0}ms)`);
+          }
         } catch (err) {
           errors++;
           console.warn(`⚠️ [QF-BACKFILL] finding ${e.findingId} failed:`, err);
         }
+      };
+      for (let i = 0; i < entries.length; i += CONCURRENCY) {
+        await Promise.all(entries.slice(i, i + CONCURRENCY).map(processOne));
       }
+
+      // Batch-write the accumulated buckets. Because we wiped these
+      // (configKey, questionKey, month) keys above, a straight setStored
+      // is correct — no R-M-W needed. Same concurrency pool.
+      const buckets = [...accum.values()];
+      let bucketsWritten = 0;
+      const writeOne = async (b: Bucket) => {
+        try {
+          await setStored("question-fail-stat", orgId, [b.configKey, b.questionKey, b.yyyymm], {
+            configKey: b.configKey,
+            questionKey: b.questionKey,
+            headerSample: b.headerSample,
+            yyyymm: b.yyyymm,
+            failed: b.failed,
+            flippedToPass: 0,
+            flippedToFail: 0,
+            sampleFindingIds: b.sampleFindingIds,
+            lastFailedAt: b.lastFailedAt,
+          });
+          bucketsWritten++;
+        } catch (err) {
+          errors++;
+          console.warn(`⚠️ [QF-BACKFILL] bucket write failed key=${b.configKey}::${b.questionKey}::${b.yyyymm}:`, err);
+        }
+      };
+      for (let i = 0; i < buckets.length; i += CONCURRENCY) {
+        await Promise.all(buckets.slice(i, i + CONCURRENCY).map(writeOne));
+      }
+
+      console.log(`[QF-BACKFILL] ✅ done processed=${processed} failsCounted=${failsCounted} bucketsWritten=${bucketsWritten} errors=${errors} tookMs=${Date.now() - t0}`);
       return {
         ok: true,
         range: { sinceMs: from, untilMs: to },
         monthsTouched: [...months].sort(),
         bucketsWiped: wiped,
+        bucketsWritten,
         auditsProcessed: processed,
         failsCounted,
         errors,

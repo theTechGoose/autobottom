@@ -1092,6 +1092,7 @@ export class AdminConfigController {
       "chargeback-entry-ts": { type: "chargeback-entry", fieldName: "ts" },
       "wire-deduction-entry-ts": { type: "wire-deduction-entry", fieldName: "ts" },
       "audit-finding-startedAt": { type: "audit-finding", fieldName: "startedAt" },
+      "judge-decided-decidedAt": { type: "judge-decided", fieldName: "decidedAt" },
     };
 
     const test = TESTS[name];
@@ -1157,6 +1158,7 @@ export class AdminConfigController {
       "chargeback-entry-ts": { type: "chargeback-entry", fieldName: "ts" },
       "wire-deduction-entry-ts": { type: "wire-deduction-entry", fieldName: "ts" },
       "audit-finding-startedAt": { type: "audit-finding", fieldName: "startedAt", chunked: true },
+      "judge-decided-decidedAt": { type: "judge-decided", fieldName: "decidedAt" },
     };
 
     const test = TESTS[name];

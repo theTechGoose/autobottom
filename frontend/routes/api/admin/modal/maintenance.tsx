@@ -566,6 +566,11 @@ const INDEX_TESTS: Array<{ name: string; title: string; usedBy: string }> = [
     title: "audit-finding by startedAt",
     usedBy: "Re-trigger empty-paste path — already shipped on main; included here as a known-working baseline",
   },
+  {
+    name: "judge-decided-decidedAt",
+    title: "judge-decided by decidedAt",
+    usedBy: "getMyJudgeStats — judge dashboard personal stats range filter (eliminates per-org full scan)",
+  },
 ];
 
 function IndexTestsPanel() {

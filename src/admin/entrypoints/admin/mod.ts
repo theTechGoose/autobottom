@@ -441,22 +441,43 @@ export class AdminConfigController {
     }
   }
 
+  /** Reset all question-fail counter state (stat buckets + per-finding marks)
+   *  for this org. Use after a buggy backfill state needs a clean slate;
+   *  operator re-runs their backfill chunks afterward. Bounded by the
+   *  collection sizes, which are typically a few thousand docs each. */
+  @Post("question-failures-reset") @ReturnedType(MessageResponse)
+  async questionFailuresReset() {
+    const t0 = Date.now();
+    try {
+      const { resetAllQuestionStats } = await import("@audit/domain/data/question-stats-repository/mod.ts");
+      const { stats, marks } = await resetAllQuestionStats(ORG());
+      console.log(`[QF-RESET] wiped stats=${stats} marks=${marks} tookMs=${Date.now() - t0}`);
+      return { ok: true, statsDeleted: stats, marksDeleted: marks, tookMs: Date.now() - t0 };
+    } catch (err) {
+      console.error(`❌ [QF-RESET] aborted:`, err);
+      return { ok: false, error: (err as Error).message ?? String(err), tookMs: Date.now() - t0 };
+    }
+  }
+
   /** Backfill the per-question counters from historical audit-done-idx +
-   *  findings. Idempotent: deletes the counter buckets covering the chosen
-   *  date range first, then walks audit-done-idx in that range, loads each
-   *  finding, accumulates per-question fail counts in-memory, and writes
-   *  one counter doc per (configKey, questionKey, month) at the end.
+   *  findings. Composable across chunks via per-finding dedup marks:
+   *  each finding is counted exactly once across all backfill runs, so
+   *  adjacent date ranges (e.g. Mar 1-13, Mar 13-20, Mar 20-27) compose
+   *  correctly instead of wiping each other.
    *
-   *  Why in-memory accumulation: the naive R-M-W per failed question hit
-   *  Deno Deploy's request timeout on anything >1-week range — each
-   *  finding triggered N getStored+setStored round trips and 13 days of
-   *  audits is ~8k findings × ~3 fails = ~24k round trips. The in-memory
-   *  accumulation collapses that to one read per finding + one write per
-   *  unique (config, question, month) bucket, plus a concurrency pool on
-   *  the per-finding reads. flippedToPass / flippedToFail stay at 0 from
-   *  backfill — historical flip events aren't replayed (we don't have
-   *  per-event audit trails); the live counters get those fields
-   *  incremented going forward via the review/admin/judge flip handlers. */
+   *  Flow:
+   *    1. Walk audit-done-idx for the range.
+   *    2. For each entry, skip findings that already have a "counted" mark.
+   *    3. For the rest, load the finding, accumulate per-question fail
+   *       counts + sample finding IDs in-memory.
+   *    4. After accumulation, R-M-W each affected (configKey, questionKey,
+   *       month) bucket — read existing + add the chunk's deltas + write.
+   *    5. Drop counted marks so re-running the same chunk no-ops.
+   *
+   *  flippedToPass / flippedToFail stay at 0 from backfill; live counters
+   *  get those fields incremented going forward via the review/admin/judge
+   *  flip handlers. To wipe state and start over, hit /admin/question-
+   *  failures-reset first. */
   @Post("question-failures-backfill") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
   async questionFailuresBackfill(@Body() body: GenericBodyRequest) {
     const t0 = Date.now();
@@ -468,14 +489,12 @@ export class AdminConfigController {
     }
     try {
       const orgId = ORG();
-      const { listStoredByCompletedAt, setStored } = await import("@core/data/firestore/mod.ts");
+      const { listStoredByCompletedAt, getStored, setStored } = await import("@core/data/firestore/mod.ts");
       const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
       const {
-        deleteBucketsForMonths, normalizeQuestionKey, configKeyForFinding, yyyymm,
+        normalizeQuestionKey, configKeyForFinding, yyyymm, hasBeenCounted, markCounted,
       } = await import("@audit/domain/data/question-stats-repository/mod.ts");
 
-      // Walk audit-done-idx range. Pull the months covered so we can wipe
-      // those buckets cleanly before rebuilding.
       const entries = await listStoredByCompletedAt<{ findingId?: string; completedAt?: number }>(
         "audit-done-idx",
         orgId,
@@ -483,12 +502,7 @@ export class AdminConfigController {
         to,
         { limit: 500_000 },
       );
-      const months = new Set<string>();
-      for (const e of entries) {
-        if (e.completedAt) months.add(yyyymm(e.completedAt));
-      }
-      console.log(`[QF-BACKFILL] entries=${entries.length} months=${[...months].sort().join(",")}`);
-      const wiped = await deleteBucketsForMonths(orgId, [...months]);
+      console.log(`[QF-BACKFILL] entries=${entries.length} range=[${new Date(from).toISOString()}, ${new Date(to).toISOString()}]`);
 
       interface Bucket {
         configKey: string;
@@ -501,18 +515,23 @@ export class AdminConfigController {
       }
       const accum = new Map<string, Bucket>();
       let processed = 0;
+      let skipped = 0;
       let failsCounted = 0;
       let errors = 0;
+      const markedFindings: Array<{ id: string; when: number }> = [];
 
-      // Per-finding work: 1 read each. Run in a sliding window of N
-      // concurrent reads so total wall-clock = (entries/CONCURRENCY) × per-read.
-      // 20 is well under Firestore's per-org rate limit headroom and lands
-      // a 13-day window comfortably inside Deno Deploy's request timeout.
+      // Per-finding work: 1 mark-check read + 1 finding read each (skipped
+      // findings short-circuit after the mark-check). Sliding window of 20
+      // keeps total wall-clock under Deno Deploy's request budget.
       const CONCURRENCY = 20;
       const SAMPLE_RING_SIZE = 10;
       const processOne = async (e: { findingId?: string; completedAt?: number }) => {
         if (!e.findingId || !e.completedAt) return;
         try {
+          // Dedup: this finding's contributions are already in the buckets
+          // (from a previous backfill chunk OR from live finalize). Skip
+          // entirely so adjacent chunks compose without double-counting.
+          if (await hasBeenCounted(orgId, e.findingId)) { skipped++; return; }
           const finding = await getFinding(orgId, e.findingId);
           if (!finding) return;
           const qs = (finding as Record<string, any>).answeredQuestions as any[] | undefined;
@@ -543,9 +562,10 @@ export class AdminConfigController {
             if (e.completedAt > bucket.lastFailedAt) bucket.lastFailedAt = e.completedAt;
             failsCounted++;
           }
+          markedFindings.push({ id: e.findingId, when: e.completedAt });
           processed++;
           if (processed % 500 === 0) {
-            console.log(`[QF-BACKFILL] processed ${processed}/${entries.length} (${Date.now() - t0}ms)`);
+            console.log(`[QF-BACKFILL] processed ${processed} skipped ${skipped} (${Date.now() - t0}ms)`);
           }
         } catch (err) {
           errors++;
@@ -556,24 +576,34 @@ export class AdminConfigController {
         await Promise.all(entries.slice(i, i + CONCURRENCY).map(processOne));
       }
 
-      // Batch-write the accumulated buckets. Because we wiped these
-      // (configKey, questionKey, month) keys above, a straight setStored
-      // is correct — no R-M-W needed. Same concurrency pool.
+      // R-M-W each accumulated bucket — read existing counter, add the
+      // chunk's deltas, write back. This is what lets adjacent ranges
+      // compose: chunk 2's deltas land on top of chunk 1's counts instead
+      // of wiping them. Same concurrency pool.
       const buckets = [...accum.values()];
       let bucketsWritten = 0;
       const writeOne = async (b: Bucket) => {
         try {
-          await setStored("question-fail-stat", orgId, [b.configKey, b.questionKey, b.yyyymm], {
+          const existing = await getStored<{
+            configKey: string; questionKey: string; headerSample: string; yyyymm: string;
+            failed: number; flippedToPass: number; flippedToFail: number;
+            sampleFindingIds: string[]; lastFailedAt?: number;
+          }>("question-fail-stat", orgId, b.configKey, b.questionKey, b.yyyymm);
+          // Merge: add chunk deltas onto existing, union sample IDs.
+          const merged = {
             configKey: b.configKey,
             questionKey: b.questionKey,
-            headerSample: b.headerSample,
+            headerSample: b.headerSample || existing?.headerSample || b.questionKey,
             yyyymm: b.yyyymm,
-            failed: b.failed,
-            flippedToPass: 0,
-            flippedToFail: 0,
-            sampleFindingIds: b.sampleFindingIds,
-            lastFailedAt: b.lastFailedAt,
-          });
+            failed: (existing?.failed ?? 0) + b.failed,
+            flippedToPass: existing?.flippedToPass ?? 0,
+            flippedToFail: existing?.flippedToFail ?? 0,
+            sampleFindingIds: [...(existing?.sampleFindingIds ?? []), ...b.sampleFindingIds]
+              .filter((id, idx, arr) => arr.indexOf(id) === idx)
+              .slice(-SAMPLE_RING_SIZE),
+            lastFailedAt: Math.max(existing?.lastFailedAt ?? 0, b.lastFailedAt),
+          };
+          await setStored("question-fail-stat", orgId, [b.configKey, b.questionKey, b.yyyymm], merged);
           bucketsWritten++;
         } catch (err) {
           errors++;
@@ -584,15 +614,26 @@ export class AdminConfigController {
         await Promise.all(buckets.slice(i, i + CONCURRENCY).map(writeOne));
       }
 
-      console.log(`[QF-BACKFILL] ✅ done processed=${processed} failsCounted=${failsCounted} bucketsWritten=${bucketsWritten} errors=${errors} tookMs=${Date.now() - t0}`);
+      // Drop dedup marks AFTER bucket writes so a mid-run failure leaves the
+      // chunk re-runnable (no half-counted state stuck behind missing marks).
+      let marksWritten = 0;
+      const markOne = async (m: { id: string; when: number }) => {
+        try { await markCounted(orgId, m.id, m.when); marksWritten++; }
+        catch (err) { errors++; console.warn(`⚠️ [QF-BACKFILL] mark failed fid=${m.id}:`, err); }
+      };
+      for (let i = 0; i < markedFindings.length; i += CONCURRENCY) {
+        await Promise.all(markedFindings.slice(i, i + CONCURRENCY).map(markOne));
+      }
+
+      console.log(`[QF-BACKFILL] ✅ done processed=${processed} skipped=${skipped} failsCounted=${failsCounted} bucketsWritten=${bucketsWritten} marks=${marksWritten} errors=${errors} tookMs=${Date.now() - t0}`);
       return {
         ok: true,
         range: { sinceMs: from, untilMs: to },
-        monthsTouched: [...months].sort(),
-        bucketsWiped: wiped,
-        bucketsWritten,
         auditsProcessed: processed,
+        auditsSkippedAlreadyCounted: skipped,
         failsCounted,
+        bucketsWritten,
+        marksWritten,
         errors,
         tookMs: Date.now() - t0,
       };

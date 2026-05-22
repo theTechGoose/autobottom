@@ -6,6 +6,7 @@ import { assert, assertEquals } from "#assert";
 import {
   incrFailed, incrFlipToPass, incrFlipToFail,
   readQuestionFailRange, normalizeQuestionKey, configKeyForFinding, yyyymm,
+  hasBeenCounted, markCounted, unmarkCounted, resetAllQuestionStats,
 } from "./mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -73,6 +74,28 @@ Deno.test({
     assertEquals(rows[0].failed, 1);
     assertEquals(rows[0].flippedToFail, 1);
     assert(rows[0].sampleFindingIds.includes("fid-pf"));
+  },
+});
+
+Deno.test({
+  name: "dedup marks — mark/has/unmark/reset round-trip",
+  ...kvOpts,
+  fn: async () => {
+    resetFirestoreCredentials();
+    const orgId = uniqueOrg();
+    const fid = "fid-dedup-1";
+    assertEquals(await hasBeenCounted(orgId, fid), false);
+    await markCounted(orgId, fid, Date.now());
+    assertEquals(await hasBeenCounted(orgId, fid), true);
+    await unmarkCounted(orgId, fid);
+    assertEquals(await hasBeenCounted(orgId, fid), false);
+    // Reset wipes both stats and marks.
+    await incrFailed(orgId, "ql:X", "Q1", "fid-a", Date.now());
+    await markCounted(orgId, "fid-a", Date.now());
+    const { stats, marks } = await resetAllQuestionStats(orgId);
+    assert(stats >= 1, "should have wiped at least one stat bucket");
+    assert(marks >= 1, "should have wiped at least one mark");
+    assertEquals(await hasBeenCounted(orgId, "fid-a"), false);
   },
 });
 

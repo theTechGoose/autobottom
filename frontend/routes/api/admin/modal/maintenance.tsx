@@ -471,18 +471,48 @@ function QuestionFailuresPanel() {
           hx-swap="innerHTML"
           hx-disabled-elt="find button[type='submit']"
           hx-indicator="find button[type='submit']"
-          hx-confirm="Wipe + rebuild question-fail counters for the chosen date range?"
+          hx-confirm="Add to question-fail counters for the chosen date range? (Already-counted findings will be skipped — safe to re-run.)"
         >
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
             <div class="sf"><label class="sf-label">From date</label><input type="date" name="since" class="sf-input" required /></div>
             <div class="sf"><label class="sf-label">To date</label><input type="date" name="until" class="sf-input" required /></div>
           </div>
           <button type="submit" class="sf-btn qfb-btn" style="padding:8px 16px;min-width:200px;background:var(--yellow);color:#000;">
-            <span class="qfb-label">Rebuild counters for range</span>
+            <span class="qfb-label">Add range to counters</span>
             <span class="qfb-loading">Backfilling… (long ranges = minutes)</span>
           </button>
         </form>
         <div id="qfail-backfill-result" style="margin-top:12px;"></div>
+
+        <div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--border);">
+          <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:4px;">⚠ Reset all counters</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">
+            Wipes every question-fail-stat bucket AND every per-finding counted-mark for this org.
+            Use this if prior backfill runs left totals wrong and you want to redo them from scratch.
+            After resetting, re-run your backfill chunks. Live audits finalizing after this point
+            populate counters again automatically.
+          </div>
+          <style dangerouslySetInnerHTML={{ __html: `
+            .qfr-btn .qfr-loading { display: none; }
+            .qfr-btn.htmx-request .qfr-label { display: none; }
+            .qfr-btn.htmx-request .qfr-loading { display: inline; }
+            .qfr-btn.htmx-request, .qfr-btn:disabled { opacity: 0.7; cursor: wait; }
+          `}} />
+          <form
+            hx-post="/api/admin/modal/maintenance/question-failures-reset"
+            hx-target="#qfail-reset-result"
+            hx-swap="innerHTML"
+            hx-disabled-elt="find button[type='submit']"
+            hx-indicator="find button[type='submit']"
+            hx-confirm="Delete ALL question-fail counter state for this org? Cannot be undone — you'll need to re-run all backfill chunks."
+          >
+            <button type="submit" class="sf-btn danger qfr-btn" style="padding:8px 16px;min-width:200px;">
+              <span class="qfr-label">Reset all counters</span>
+              <span class="qfr-loading">Wiping…</span>
+            </button>
+          </form>
+          <div id="qfail-reset-result" style="margin-top:12px;"></div>
+        </div>
       </div>
     </PanelCard>
   );

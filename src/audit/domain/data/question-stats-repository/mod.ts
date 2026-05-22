@@ -201,12 +201,63 @@ export async function readQuestionFailRange(
   return rows;
 }
 
+// ── Per-finding dedup marks ──────────────────────────────────────────────────
+//
+// Backfill is run in chunks (the admin clicks one date range at a time). The
+// original implementation wiped the whole month's buckets at the start of each
+// chunk and rebuilt from the chunk's findings — which silently destroyed any
+// prior chunks' work when adjacent ranges fell in the same month. The fix:
+// instead of wiping, track per-finding "this has been counted" marks and
+// skip findings that already have one. Adjacent (or even overlapping) chunks
+// compose correctly because the second chunk no-ops on findings the first
+// already processed. Re-running the same chunk also no-ops — idempotent.
+//
+// One tiny doc per finding, written by both backfill and live step-finalize.
+// Deleted by decrementForFinding so a re-audited finding can be re-counted
+// by a subsequent backfill if its new finding ID also ages into the range.
+
+export interface QuestionFailCounted { countedAt: number }
+
+export async function hasBeenCounted(orgId: OrgId, findingId: string): Promise<boolean> {
+  return (await getStored<QuestionFailCounted>("question-fail-counted", orgId, findingId)) !== null;
+}
+
+export async function markCounted(orgId: OrgId, findingId: string, when: number): Promise<void> {
+  await setStored("question-fail-counted", orgId, [findingId], { countedAt: when });
+}
+
+export async function unmarkCounted(orgId: OrgId, findingId: string): Promise<void> {
+  await deleteStored("question-fail-counted", orgId, findingId);
+}
+
+/** Hard reset: wipe ALL question-fail-stat buckets AND ALL counted marks for
+ *  this org. Use after a buggy backfill state leaves numbers wrong — operator
+ *  re-runs their backfill chunks from scratch afterward. Bounded by the
+ *  collection sizes (typically small). Returns counts deleted. */
+export async function resetAllQuestionStats(orgId: OrgId): Promise<{ stats: number; marks: number }> {
+  let stats = 0;
+  let marks = 0;
+  const statRows = await listStoredWithKeys<QuestionFailStat>("question-fail-stat", orgId);
+  for (const { key } of statRows) {
+    await deleteStored("question-fail-stat", orgId, ...key);
+    stats++;
+  }
+  const markRows = await listStoredWithKeys<QuestionFailCounted>("question-fail-counted", orgId);
+  for (const { key } of markRows) {
+    await deleteStored("question-fail-counted", orgId, ...key);
+    marks++;
+  }
+  return { stats, marks };
+}
+
 /** Reverse a finding's prior contribution to the failure counters. Called
  *  when a finding is voided (re-audit, admin delete) so its counted "No"
  *  answers stop inflating the report. Symmetric to the incrFailed calls
  *  step-finalize made — decrement `failed`, drop the findingId from each
  *  bucket's sampleFindingIds ring. Floors at 0 to guard against double
- *  cleanup. Best-effort per question; missing bucket is treated as a no-op. */
+ *  cleanup. Best-effort per question; missing bucket is treated as a no-op.
+ *  Also clears the per-finding mark so the finding is eligible to be
+ *  counted again if a future backfill scans over its ID. */
 export async function decrementForFinding(
   orgId: OrgId,
   finding: Record<string, unknown>,
@@ -230,6 +281,12 @@ export async function decrementForFinding(
     await persist(orgId, cur);
     decremented += 1;
   }
+  // Clear the dedup mark so this findingId is eligible to be counted again
+  // by a future backfill if it re-enters scope (e.g., admin re-audits and
+  // the new audit's finalize re-marks the new findingId — different ID,
+  // independent mark; but if for some reason the same ID gets re-processed,
+  // we want it to count fresh, not silently skip).
+  await unmarkCounted(orgId, findingId).catch(() => { /* best-effort */ });
   return { decremented };
 }
 

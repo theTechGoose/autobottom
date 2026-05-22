@@ -2,7 +2,7 @@
 import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
 import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, saveWireDeductionEntry } from "@audit/domain/data/stats-repository/mod.ts";
 import { getOfficeBypassConfig, getBonusPointsConfig } from "@admin/domain/data/admin-repository/mod.ts";
-import { incrFailed as incrQuestionFailed, configKeyForFinding } from "@audit/domain/data/question-stats-repository/mod.ts";
+import { incrFailed as incrQuestionFailed, configKeyForFinding, markCounted as markQuestionFailCounted } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { updatePartnerDimensions } from "@admin/domain/data/admin-repository/mod.ts";
 import { getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "@gamification/domain/data/gamification-repository/mod.ts";
 import { getGameState, saveGameState } from "@gamification/domain/data/gamification-repository/mod.ts";
@@ -233,6 +233,11 @@ export async function stepFinalize(req: Request): Promise<Response> {
         console.warn(`[STEP-FINALIZE] ${findingId}: ⚠️ question-fail counter incr failed for "${q.header}":`, err);
       }
     }
+    // Drop a dedup mark so future backfill chunks know this finding's "No"
+    // contributions are already counted — prevents double-counting if a
+    // backfill date range later sweeps through this finding's completedAt.
+    markQuestionFailCounted(orgId, findingId, completedAt).catch((err) =>
+      console.warn(`[STEP-FINALIZE] ${findingId}: ⚠️ question-fail counted mark failed:`, err));
   }
 
   // Write chargeback/omission report entry for internal (date leg) findings.

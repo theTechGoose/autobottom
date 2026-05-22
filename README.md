@@ -144,6 +144,9 @@ test-by-rid / package-by-rid / appeal/different-recording / appeal/upload-record
 - Score 100 OR Invalid Genie → fire `terminate` webhook (audit-complete email)
 - Score < 100 + reviewable → populate `review-pending` queue, audit shows up in `/review`
 - Recording re-audit (`appealType` set) → routes the same way, just with `appealSourceFindingId` linking back
+- For every failed question, increment `question-fail-stat` counters + drop a `question-fail-counted` dedup mark so the Question Failures report stays accurate (see *Question Failure reporting* below)
+
+**Race-survival rule, learned the hard way (`mqlfcCsh3sP1zH_6vpeT6` incident):** any state a later QStash callback needs MUST be carried in the QStash payload. The original "step-poll-transcript reads `assemblyAiTranscriptId` back from the finding doc" cost us a chargeback when Firestore replication dropped the field across the 15s isolate gap. Fix lives at [step-transcribe/mod.ts](src/audit/domain/business/step-transcribe/mod.ts) (`enqueueStep("poll-transcript", { findingId, orgId, transcriptId })`) with the regression test in [step-poll-transcript/test.ts](src/audit/domain/business/step-poll-transcript/test.ts). Apply the same payload-carry pattern to any future step that depends on a value that was written within the previous step.
 
 ---
 
@@ -184,6 +187,8 @@ All durable state lives in a single Firestore collection (default `autobottom`) 
 | `audit-dimensions` / `partner-dimensions` / `manager-scope` / `reviewer-config` | Org config | |
 | `gamification-settings` / `sound-pack` / `store-item` / `earned-badge` / `badge-stats` / `game-state` | Gamification | |
 | `qlab-config` / `qlab-question` / `qlab-test` / `qlab-test-run` / `qlab-internal-assignments` / `qlab-partner-assignments` | Question Lab | |
+| `question-fail-stat` | Per-question failure rollup, keyed `(configKey, questionKey, yyyymm)` | R-M-W in finalize + flip paths |
+| `question-fail-counted` | Per-finding dedup mark, keyed `(findingId)` | Cleared by re-audit / decrement |
 | `app-event` / `broadcast-event` / `prefab-subscriptions` | Events / SSE | 24h TTL on events |
 | `message` / `unread-count` | Chat | |
 | `org` / `org-by-slug` / `email-index` / `session` | Auth (org="" GLOBAL) | Sessions 24h TTL |
@@ -220,6 +225,8 @@ Recipient resolution rule (used by every handler): `isPackage ? gmEmail : (voEma
 - Roles: `admin` | `judge` | `manager` | `reviewer` | `user`.
 - `defaultOrgId()` from `@core/business/auth/mod.ts` reads `DEFAULT_ORG_ID` / `CHARGEBACKS_ORG_ID` env. Single-org mode for now; multi-org hooks exist but aren't routed.
 - `?as=<email>` in URL impersonates that user (admin only). Middleware swaps `ctx.state.user` and stashes the real admin email in `ctx.state.impersonatedBy`.
+- **`ImpersonationBanner`** ([frontend/islands/ImpersonationBanner.tsx](frontend/islands/ImpersonationBanner.tsx)) lists every user (including other admins) except the logged-in admin themself. Each option is prefixed with role: `(judge) joshk@…`. Sorted role-first so the list groups visually.
+- **Impersonate User modal** ([frontend/routes/api/admin/modal/impersonate.tsx](frontend/routes/api/admin/modal/impersonate.tsx)) wraps the user/destination selects in a plain `<form method="get" action="/admin/impersonate-go" target="_blank">`. The "Open at" dropdown lets the operator land on any role-home or work-queue page; default is the target's role-home. Form-submit reads the LIVE dropdown values at click time (no HTMX swap-and-update-href race). The redirect lives at [frontend/routes/admin/impersonate-go.tsx](frontend/routes/admin/impersonate-go.tsx) — whitelist-gated destination → 302 to `${dest}?as=${email}`. Path is registered in `FRONTEND_EXACT_PAGES` in `main.ts` so the unified dispatcher sends it to Fresh, not danet.
 - **Super Admin** is gated to `ai@monsterrg.com` only — checked in `frontend/routes/_middleware.ts` for `/super-admin` and in `Sidebar.tsx` for the Dev Tools / Super Admin sidebar entries.
 
 ---
@@ -270,6 +277,33 @@ KV-backed `pipeline-paused` flag mirrors the QStash queue pause state. Toggle bu
 ### Super Admin
 - `/super-admin` page — list orgs, create, seed, wipe (typed `WIPE`), delete (typed `DELETE`).
 - All endpoints under `/admin/super-admin/*` in `AdminConfigController`. Gated at the Fresh middleware layer by email check.
+
+### Reviewer + judge dashboards with range filters
+Personal-stats panels on `/review/dashboard` and `/judge/dashboard` are driven by a shared **`StatRangeBar`** component ([frontend/components/StatRangeBar.tsx](frontend/components/StatRangeBar.tsx)): preset buttons (This Week / This Month / Last 90d / All Time) + custom from→to date inputs + Apply. Each bar targets one HTMX swappable panel via `hx-get`.
+
+- Reviewer dashboard: single bar → `/api/review/dashboard-range` ([fragment](frontend/routes/api/review/dashboard-range.tsx)) → fills `#review-dash-block` with the user's reviewed-count / avg-score / days-active for the chosen window. Streak badge + "Last Reviewed" stay today-relative (not range-scoped) because "did this person work today?" loses meaning under an arbitrary slice.
+- Judge dashboard: **two independent bars** — one for My Appeal Decisions (`/api/judge/dashboard-range` → `#judge-my-stats-block`), one for the Reviewer Leaderboard (`/api/judge/leaderboard-range` → `#judge-leaderboard-block`). Operator can scope each panel separately.
+- Backend helpers (`getMyReviewerStats`, `getReviewerLeaderboard`, `getMyJudgeStats`) accept optional `{from, to}` ms args; missing → trailing-365d default. New `?from=&to=` query params on `/review/api/my-stats`, `/judge/api/my-stats`, `/judge/api/leaderboard`.
+- Underlying scans reuse the existing `queryAuditDoneIndex` SWR cache (30s) for review-side; `judge-decided` gets its own 60s SWR in [judge-analytics/mod.ts](src/judge/domain/business/judge-analytics/mod.ts).
+
+### Question Failure reporting
+Per-question failure rollup driven by the `question-fail-stat` counter docs. Counters get incremented at four sites:
+- `step-finalize` → for every `answer === "No"` ([step-finalize/mod.ts](src/audit/domain/business/step-finalize/mod.ts))
+- `finalizeReviewedAudit` → flip-to-pass on a reviewed question ([review-queue/mod.ts](src/review/domain/business/review-queue/mod.ts))
+- `adminFlipFinding` / `adminFlipQuestion` → bulk + single pencil flips (both directions)
+- judge overturn → flip-to-pass per overturned decision ([judge-repository/mod.ts](src/judge/domain/data/judge-repository/mod.ts))
+
+Re-audit / admin delete calls `decrementForFinding` ([question-stats-repository/mod.ts](src/audit/domain/data/question-stats-repository/mod.ts)) to drop the voided finding's contributions and unmark its dedup record.
+
+**Admin UI** is the **Question Failures** tab in the Data Maintenance modal ([frontend/routes/api/admin/modal/maintenance.tsx](frontend/routes/api/admin/modal/maintenance.tsx)):
+- **Run report** — date-range + optional `configKey` filter → table of `Question | Config | Failed | Flipped→Pass | Flipped→Fail | Last Failed`.
+- **Backfill from history** — wipes counters by month, walks `audit-done-idx` over the chosen range, loads each finding (20-wide concurrency pool to stay inside Deno Deploy's ~60s request budget), accumulates per-question deltas in-memory, and writes one R-M-W per (configKey, questionKey, month) bucket. Each processed finding gets a `question-fail-counted` mark so **adjacent or overlapping chunks compose correctly** instead of wiping each other (the previous wipe-by-month design was broken — fixed in `af1a016`). Backfill is bounded to ~3000 entries / chunk; for busy orgs do ~1-week ranges.
+- **Reset all counters** — wipes both `question-fail-stat` AND `question-fail-counted` for the org. Use after a buggy backfill state, then re-run chunks from scratch. Bounded by collection sizes, typically a few thousand docs.
+
+### Re-audit UX
+[reaudit/mod.ts](src/audit/domain/business/reaudit/mod.ts) creates a new finding with a fresh ID, stamps the OLD finding with `reAuditedAt` + `reAuditedTo: newFindingId`, runs `cleanupFindingFromIndices` (drops chargebackEntry / audit-done-idx / completedStat / queue entries), and calls `decrementForFinding` so the void shows up in the Question Failures report too.
+
+Frontend: the "Re-Audited" pill on a stale report links to `/audit/report?id=<reAuditedTo>` ([AppealModal.tsx](frontend/islands/AppealModal.tsx)). Admin "Re-run with genies" auto-navigates to the new finding's report on success ([report.tsx](frontend/routes/audit/report.tsx)) — same UX as the agent appeal flow's "View New Report" button, just auto-followed.
 
 ---
 
@@ -335,14 +369,27 @@ Persistent AI memory lives at `~/.claude/projects/-Users-adam-Programming-autobo
 
 ---
 
+## Deno Deploy gotchas (load-bearing — read before changing related code)
+
+- **`Deno.env.set()` is a no-op for subsequent reads on Deno Deploy.** Setting `NO_LOG=1` around `danetApp.init()` worked locally but didn't silence the `[Router] Registering …` boot spam in prod. Fix at [main.ts:553](main.ts#L553) is a console-wrap that runs only for the duration of `init()` and filters lines containing `[Router]` / `[Injector]`. **Don't try to flip runtime env vars on Deploy — they're effectively read-only.**
+- **Request wall-clock budget is ~60s.** Any synchronous endpoint that does meaningful per-record work (e.g. Question Failure backfill) needs to be chunked. We use a 20-wide concurrency pool + in-memory accumulation + one-shot writes at the end (see [src/admin/entrypoints/admin/mod.ts](src/admin/entrypoints/admin/mod.ts) `questionFailuresBackfill`).
+- **`/admin/*` is routed to danet by default.** New Fresh routes under `/admin/` (e.g. `/admin/impersonate-go`) must be added to `FRONTEND_EXACT_PAGES` in [main.ts](main.ts) or the dispatcher 404s them via danet.
+- **`Deno.env.set` quirk applies to other env vars too** — if a behavior depends on env at *callsite read time*, set it via the Deploy dashboard not from code.
+- **Pre-deploy command must flip per branch** — `main` needs `deno task build` OFF; `refactor/danet-backend` (if revived) needs it ON. Stored in memory.
+
+---
+
+---
+
 ## Where things still need work
 
 | Area | What's left |
 |---|---|
-| Cutover | Run `tools/migrate-to-firestore.ts` against prod KV, verify dashboards render off Firestore, then merge `refactor/danet-backend` → `main`. Old KV stays untouched as backup. |
+| "Second recording uploaded but won't play" appeal bug | Reported but no concrete finding ID yet. Held until a repro example lands; defensive logging at the audio-URL construction point is a quick next step. |
 | Scheduled email reports | CRUD wired, but cron firing isn't (only `watchdog` cron registered). |
 | Weekly Builder | Page is "coming in Phase 2" placeholder. |
 | Per-QStash-queue parallelism | `/admin/queues` POST persists intent to Firestore but doesn't update QStash queue config live. |
-| Atomic counter race | `decrementBatchCounter` and `purchaseStoreItem` use simple read-modify-write under Firestore. Acceptable for our concurrency; swap to Firestore field-transform `increment` if we see drift. |
+| Atomic counter race | `decrementBatchCounter` / `purchaseStoreItem` / question-fail counter R-M-W all use read-modify-write. Acceptable for current concurrency; swap to Firestore field-transform `increment` if we see drift. |
+| `judge-decided` indexing | `getMyJudgeStats` does a full per-org scan of `judge-decided` and filters in-memory by `decidedAt`. The 60s SWR cache absorbs most of the cost. If it bites at scale, add a `(_org, _type, decidedAt, __name__)` composite index and switch to `listStoredByCompletedAt`. |
 
 When working on any of these, read the relevant `main:` prod file first and prefer minimal-but-functional Fresh ports over 1:1 inline-HTML ports.

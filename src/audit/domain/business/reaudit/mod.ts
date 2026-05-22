@@ -17,6 +17,7 @@ import { getFinding, saveFinding, getJob, saveJob } from "@audit/domain/data/aud
 import { enqueueStep } from "@core/data/qstash/mod.ts";
 import { cleanupFindingFromIndices } from "@judge/domain/data/judge-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
+import { decrementForFinding as decrementQuestionFailCounters } from "@audit/domain/data/question-stats-repository/mod.ts";
 
 export interface ReauditInput {
   recordingIds: string[];
@@ -67,13 +68,27 @@ export async function startReauditWithGenies(
   const appealType: "different-recording" | "additional-recording" =
     originalId && normalized.includes(originalId) ? "additional-recording" : "different-recording";
 
-  // Soft-delete old finding: mark reAuditedAt and scrub it from every queue/
-  // index so the UI stops showing it. Chunks stay so the report page still
-  // renders for anyone following a stale link.
+  // Generate the new finding ID up-front so the old finding doc can carry a
+  // `reAuditedTo` pointer. Stale-link UX: anyone landing on the old report
+  // gets a one-click jump to the live re-audit, instead of a dead "Re-Audited"
+  // pill that goes nowhere.
+  const newFindingId = nanoid();
+
+  // Soft-delete old finding: mark reAuditedAt + reAuditedTo and scrub it from
+  // every queue/index so the UI stops showing it. Chunks stay so the report
+  // page still renders for anyone following a stale link.
   (old as Record<string, unknown>).reAuditedAt = Date.now();
-  await step("saveFinding(old, reAuditedAt)", findingId, () => saveFinding(orgId, old));
+  (old as Record<string, unknown>).reAuditedTo = newFindingId;
+  await step("saveFinding(old, reAuditedAt/To)", findingId, () => saveFinding(orgId, old));
   cleanupFindingFromIndices(orgId, findingId).catch((err) =>
     console.error(`[REAUDIT] ❌ cleanup old fid=${findingId} failed:`, err));
+  // Reverse the old finding's contribution to the per-question failure
+  // counters. The chargeback/audit-done-idx entries are deleted above so the
+  // failure is treated as never-having-happened — the question-fail-stat
+  // counters need the same treatment or the "Question Failures" report
+  // overcounts. Best-effort; failure doesn't block the re-audit.
+  decrementQuestionFailCounters(orgId, old as Record<string, unknown>).catch((err) =>
+    console.error(`[REAUDIT] ❌ question-fail counter decrement fid=${findingId} failed:`, err));
 
   // Spin up a fresh job so the new audit appears independent in admin views.
   const oldJobId = old.auditJobId as string | undefined;
@@ -98,7 +113,6 @@ export async function startReauditWithGenies(
     }
   }
 
-  const newFindingId = nanoid();
   const newFinding: Record<string, unknown> = {
     id: newFindingId,
     auditJobId: newJobId,

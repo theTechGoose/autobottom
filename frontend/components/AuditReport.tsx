@@ -35,6 +35,9 @@ interface Finding {
   appealedAt?: number;
   /** Set by reaudit flow — surface as "Re-Audited" disabled button. */
   reAuditedAt?: number;
+  /** Set by reaudit flow — points to the new finding that superseded this
+   *  one. Used to turn the "Re-Audited" pill into a one-click jump link. */
+  reAuditedTo?: string;
   /** Multi-recording audits: per-track S3 keys (length = recording count). */
   s3RecordingKeys?: string[];
   /** Multi-recording audits: per-track recording IDs (genie IDs). */
@@ -226,6 +229,7 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
             originalGenieId={String(meta.recordingId ?? "")}
             appealedAt={finding.appealedAt}
             reAuditedAt={finding.reAuditedAt}
+            reAuditedTo={finding.reAuditedTo}
             failedQuestions={questions
               .map((q, i) => ({ index: i, header: q.header ?? "Untitled question", answer: q.answer ?? "" }))
               .filter((q) => !isYes(q.answer))}

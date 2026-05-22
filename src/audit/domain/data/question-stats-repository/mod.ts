@@ -201,6 +201,38 @@ export async function readQuestionFailRange(
   return rows;
 }
 
+/** Reverse a finding's prior contribution to the failure counters. Called
+ *  when a finding is voided (re-audit, admin delete) so its counted "No"
+ *  answers stop inflating the report. Symmetric to the incrFailed calls
+ *  step-finalize made — decrement `failed`, drop the findingId from each
+ *  bucket's sampleFindingIds ring. Floors at 0 to guard against double
+ *  cleanup. Best-effort per question; missing bucket is treated as a no-op. */
+export async function decrementForFinding(
+  orgId: OrgId,
+  finding: Record<string, unknown>,
+): Promise<{ decremented: number }> {
+  const qs = finding.answeredQuestions as Array<Record<string, unknown>> | undefined;
+  const findingId = String(finding.id ?? "");
+  const completedAt = Number(finding.completedAt ?? 0);
+  if (!qs?.length || !findingId || !completedAt) return { decremented: 0 };
+  const cfgKey = configKeyForFinding(finding);
+  const month = yyyymm(completedAt);
+  let decremented = 0;
+  for (const q of qs) {
+    if (q.answer !== "No") continue;
+    const header = String(q.header ?? "");
+    if (!header) continue;
+    const qKey = normalizeQuestionKey(header);
+    const cur = await getStored<QuestionFailStat>("question-fail-stat", orgId, cfgKey, qKey, month);
+    if (!cur) continue;
+    if (cur.failed > 0) cur.failed -= 1;
+    cur.sampleFindingIds = cur.sampleFindingIds.filter((id) => id !== findingId);
+    await persist(orgId, cur);
+    decremented += 1;
+  }
+  return { decremented };
+}
+
 /** Backfill: wipe + rebuild counter docs for the month buckets touched by a
  *  range of audit-done-idx entries. Idempotent — re-running over the same
  *  range yields the same totals. Called from an admin Maintenance button. */

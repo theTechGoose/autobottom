@@ -176,9 +176,18 @@ window.adminRerunGenies = function() {
     credentials: 'include',
   }).then(function(r) {
     return r.text().then(function(text) {
-      var pretty;
-      try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { pretty = text; }
+      var pretty, parsed;
+      try { parsed = JSON.parse(text); pretty = JSON.stringify(parsed, null, 2); }
+      catch (_) { parsed = null; pretty = text; }
       out.textContent = 'HTTP ' + r.status + ' ' + r.statusText + '\\n\\n' + pretty;
+      // Auto-navigate to the new audit's live report on success. Mirrors the
+      // agent appeal flow's "View New Report" button, but auto-followed so
+      // the admin doesn't have to dig the new finding ID out of the response.
+      var target = parsed && (parsed.reportUrl || (parsed.newFindingId ? '/audit/report?id=' + parsed.newFindingId : null));
+      if (r.ok && target) {
+        out.textContent += '\\n\\nRedirecting to live audit…';
+        setTimeout(function() { window.location.href = target; }, 600);
+      }
     });
   }).catch(function(err) {
     out.textContent = 'fetch failed: ' + (err && err.message ? err.message : String(err));

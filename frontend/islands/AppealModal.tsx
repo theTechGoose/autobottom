@@ -23,6 +23,10 @@ interface Props {
   /** Set when this finding has been re-audited (different / additional /
    *  upload recording) — disables the trigger button with "Re-Audited" label. */
   reAuditedAt?: number;
+  /** New finding ID that superseded this one. When present, the disabled
+   *  "Re-Audited" pill becomes a link to the new audit's report so anyone
+   *  landing on a stale report URL can jump to the live one in a click. */
+  reAuditedTo?: string;
 }
 
 type View =
@@ -44,7 +48,7 @@ function fmtTime(sec: number): string {
 }
 
 export default function AppealModal(props: Props) {
-  const { findingId, auditorEmail, failedQuestions, originalGenieId = "", appealedAt, reAuditedAt } = props;
+  const { findingId, auditorEmail, failedQuestions, originalGenieId = "", appealedAt, reAuditedAt, reAuditedTo } = props;
   // Local lock — set after a successful submit so the button updates without
   // needing a page refresh. Server-side appealedAt/reAuditedAt cover the
   // post-refresh case.
@@ -290,7 +294,16 @@ export default function AppealModal(props: Props) {
   return (
     <>
       <div style="margin:14px 0 6px;text-align:center;">
-        {lockedLabel ? (
+        {lockedLabel === "Re-Audited" && reAuditedTo ? (
+          // Stale-report shortcut: anyone landing on a re-audited finding gets
+          // a one-click jump to the live new audit instead of a dead pill.
+          <a
+            href={`/audit/report?id=${reAuditedTo}`}
+            class="appeal-btn filed"
+            style="text-decoration:none;display:inline-block;"
+            title="View the re-audit that superseded this one"
+          >{lockedLabel} → View new audit</a>
+        ) : lockedLabel ? (
           <button type="button" class="appeal-btn filed" disabled>{lockedLabel}</button>
         ) : (
           <button type="button" class="appeal-btn" onClick={openChoice}>File Appeal</button>

@@ -144,6 +144,7 @@ export default define.page(async function AdminDashboard(ctx) {
         // (with the ChargebacksToolbar island) is rendered inline below so Fresh
         // hydrates the island. HTMX-injected islands don't hydrate (Gotcha #1).
         { id: "maintenance-modal", title: "Data Maintenance", sub: "Purge, backfill, deduplicate, and clean up data", endpoint: "/api/admin/modal/maintenance", className: "maint-modal", noHeader: true },
+        { id: "reports-modal", title: "Reports", sub: "Run reports and preview scheduled emails", endpoint: "/api/admin/modal/reports", className: "maint-modal", noHeader: true },
         { id: "bad-words-modal", title: "Bad Words", sub: "Configure profanity scanning for transcripts", endpoint: "/api/admin/modal/bad-words", className: "bw-modal", noHeader: true },
         { id: "offices-modal", title: "Offices", sub: "Manage known offices and bypass patterns", endpoint: "/api/admin/modal/offices", noHeader: true },
         { id: "pipeline-modal", title: "Pipeline Settings", sub: "Control concurrency and failure recovery", endpoint: "/api/admin/modal/pipeline", className: "pipeline-modal", noHeader: true },

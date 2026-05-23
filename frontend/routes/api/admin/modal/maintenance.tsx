@@ -463,35 +463,14 @@ function ParallelismPanel() {
 function QuestionFailuresPanel() {
   return (
     <PanelCard
-      title="Question Failures"
-      subtitle="Per-question failure counts with flip-to-pass / flip-to-fail tracking. Defaults to the current month. Backfill below to rebuild counters from historical findings (idempotent — safe to re-run)."
+      title="Question Failures — Maintenance"
+      subtitle="Backfill the per-question failure counters from historical findings, or wipe + start over. To VIEW the failure rollup, open the Reports modal (sidebar → Reports → Question Failures)."
     >
-      <style dangerouslySetInnerHTML={{ __html: `
-        .qf-btn .qf-loading { display: none; }
-        .qf-btn.htmx-request .qf-label { display: none; }
-        .qf-btn.htmx-request .qf-loading { display: inline; }
-        .qf-btn.htmx-request, .qf-btn:disabled { opacity: 0.7; cursor: wait; }
-      `}} />
-      <form
-        hx-post="/api/admin/modal/maintenance/question-failures"
-        hx-target="#qfail-result"
-        hx-swap="innerHTML"
-        hx-disabled-elt="find button[type='submit']"
-        hx-indicator="find button[type='submit']"
-      >
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">
-          <div class="sf"><label class="sf-label">From month (YYYYMM)</label><input type="text" name="from" class="sf-input" placeholder="e.g. 202604" pattern="\d{6}" /></div>
-          <div class="sf"><label class="sf-label">To month (YYYYMM)</label><input type="text" name="to" class="sf-input" placeholder="e.g. 202605" pattern="\d{6}" /></div>
-          <div class="sf"><label class="sf-label">Config filter (optional)</label><input type="text" name="configKey" class="sf-input" placeholder="ql:Premium / qb:DEST-9" /></div>
-        </div>
-        <button type="submit" class="sf-btn primary qf-btn" style="padding:8px 16px;min-width:160px;">
-          <span class="qf-label">Run report</span>
-          <span class="qf-loading">Reading buckets…</span>
-        </button>
-      </form>
-      <div id="qfail-result" style="margin-top:12px;"></div>
+      <div style="margin-bottom:10px;font-size:11px;color:var(--text-dim);padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);">
+        Looking for the report itself? It lives in <strong style="color:var(--text-bright);">Reports → Question Failures</strong>. This tab is for the ops actions (backfill + reset) only.
+      </div>
 
-      <div style="margin-top:24px;padding-top:14px;border-top:1px solid var(--border);">
+      <div style="margin-top:8px;">
         <div style="font-size:13px;font-weight:700;color:var(--text-bright);margin-bottom:4px;">Backfill from history</div>
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">
           Walks audit-done-idx over the chosen date range, loads each finding, and rebuilds the

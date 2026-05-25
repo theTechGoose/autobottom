@@ -924,6 +924,29 @@ export class AdminConfigController {
     return runInBackgroundLane(async () => ({ ok: true, ...(await purgeBypassedWireDeductions(ORG(), patterns)) }));
   }
 
+  /** Wipe per-user gamification progression for selected roles.
+   *  Body: { roles: ("user"|"reviewer"|"judge"|"manager")[], fromMs?, toMs?, dryRun? }
+   *  Omit both fromMs and toMs for a full reset. Window mode deletes only
+   *  earned-badges in window; zeroes state for users active in window.
+   *  See @admin/domain/business/reset-xp/mod.ts for full semantics. */
+  @Post("reset-xp") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
+  async resetXp(@Body() body: GenericBodyRequest) {
+    const b = (body ?? {}) as { roles?: string[]; fromMs?: number; toMs?: number; dryRun?: boolean };
+    const validRoles = new Set(["user", "reviewer", "judge", "manager"]);
+    const roles = (b.roles ?? []).filter((r) => validRoles.has(r)) as Array<"user" | "reviewer" | "judge" | "manager">;
+    if (!roles.length) return { ok: false, error: "select at least one role" };
+    const { resetXp } = await import("@admin/domain/business/reset-xp/mod.ts");
+    return runInBackgroundLane(async () => {
+      const report = await resetXp({
+        orgId: ORG(), roles,
+        fromMs: typeof b.fromMs === "number" ? b.fromMs : undefined,
+        toMs: typeof b.toMs === "number" ? b.toMs : undefined,
+        dryRun: !!b.dryRun,
+      });
+      return { ok: true, report };
+    });
+  }
+
   // -- State management --
   // DESTRUCTIVE — requires body { confirm: "YES" } to proceed.
   @Post("wipe-kv") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)

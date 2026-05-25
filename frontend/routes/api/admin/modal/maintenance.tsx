@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -22,6 +22,7 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "parallelism", label: "Parallelism" },
   { key: "index-tests", label: "Index Tests" },
   { key: "migration", label: "Migration" },
+  { key: "reset-xp", label: "Reset XP", danger: true },
 ];
 
 export const handler = define.handlers({
@@ -53,6 +54,7 @@ export const handler = define.handlers({
           {active === "parallelism" && <ParallelismPanel />}
           {active === "index-tests" && <IndexTestsPanel />}
           {active === "migration" && <MigrationPanel />}
+          {active === "reset-xp" && <ResetXpPanel />}
         </div>
 
         <div id="maint-msg" style="margin-top:12px;"></div>
@@ -743,6 +745,78 @@ function MigrationPanel() {
           </div>
         </form>
         <div id="mig-verify" style="margin-top:8px;"></div>
+      </PanelCard>
+    </div>
+  );
+}
+
+// ── Reset XP tab ────────────────────────────────────────────────────────────
+//
+// Launch-prep tool: wipe per-user gamification progression (earned-badges,
+// game-state, badge-stats) for selected user roles, with an optional
+// date-window filter. See @admin/domain/business/reset-xp/mod.ts for full
+// semantics; in short, omit dates for a full reset, or supply from/to for
+// "wipe whatever was earned during this window."
+//
+// Dry-run first by default. Live wipe requires typed confirmation via
+// hx-prompt to prevent reflex clicks.
+
+function ResetXpPanel() {
+  return (
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <PanelCard
+        danger
+        title="Reset XP"
+        subtitle="Wipe per-user gamification progression (XP, level, streak, earned badges, badge-stats) for selected roles. Use this before launching gamification to clear dev-era XP from real accounts. Date filter is optional; leave blank for a full reset of the selected roles."
+      >
+        <form
+          id="reset-xp-form"
+          hx-post="/api/admin/modal/maintenance/reset-xp"
+          hx-target="#reset-xp-result"
+          hx-swap="innerHTML"
+        >
+          <div style="margin-bottom:12px;">
+            <div class="sf-label" style="margin-bottom:6px;">Roles to wipe</div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text);">
+              <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" name="role" value="user" checked /> Agent (user)</label>
+              <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" name="role" value="reviewer" checked /> Reviewer</label>
+              <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" name="role" value="judge" checked /> Judge</label>
+              <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" name="role" value="manager" checked /> Manager</label>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+            <div class="sf">
+              <label class="sf-label">From (optional)</label>
+              <input type="date" name="from" class="sf-input" />
+            </div>
+            <div class="sf">
+              <label class="sf-label">To (optional, exclusive)</label>
+              <input type="date" name="to" class="sf-input" />
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button
+              type="submit"
+              class="sf-btn ghost"
+              style="padding:8px 16px;"
+              name="dryRun"
+              value="1"
+            >Dry Run</button>
+            <button
+              type="submit"
+              class="sf-btn danger"
+              style="padding:8px 16px;"
+              name="dryRun"
+              value="0"
+              hx-prompt="Type WIPE XP to confirm"
+              hx-confirm="This will permanently wipe gamification data for the selected roles. Continue?"
+            >Wipe XP (Live)</button>
+            <span style="font-size:11px;color:var(--text-dim);">Dry Run never writes. Live wipe is irreversible.</span>
+          </div>
+        </form>
+        <div id="reset-xp-result" style="margin-top:14px;"></div>
       </PanelCard>
     </div>
   );

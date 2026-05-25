@@ -80,6 +80,7 @@ const ADMIN_SECTIONS: SbSection[] = [
       { label: "Pipeline", icon: Icon.settings, color: "var(--yellow-bg)", iconColor: "var(--yellow)", modalId: "pipeline-modal" },
       { label: "Bonus Points", icon: Icon.trophy, color: "var(--purple-bg)", iconColor: "var(--purple)", modalId: "bonus-points-modal" },
       { label: "Gamification", icon: Icon.trophy, color: "var(--green-bg)", iconColor: "var(--green)", href: "/gamification" },
+      { label: "Gamification Admin", icon: Icon.users, color: "var(--purple-bg)", iconColor: "var(--purple)", modalId: "gamification-admin-modal" },
       { label: "Badge Editor", icon: Icon.shoppingBag, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/admin/badge-editor" },
     ],
   },

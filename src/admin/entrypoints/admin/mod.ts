@@ -924,6 +924,204 @@ export class AdminConfigController {
     return runInBackgroundLane(async () => ({ ok: true, ...(await purgeBypassedWireDeductions(ORG(), patterns)) }));
   }
 
+  /** Aggregate users + game-state + earned-badge counts for the
+   *  Gamification Admin modal's Users tab. Admin-only; bounded by org
+   *  size; cached 10s in-isolate to share across the modal's 30s
+   *  HTMX refresh ticks and back-button reopens. */
+  @Get("gamification/users-list") @ReturnedType(MessageResponse)
+  async gamificationUsersList() {
+    const orgId = ORG();
+    const cached = AdminConfigController._gamUsersCache.get(orgId);
+    const now = Date.now();
+    if (cached && cached.expiresAt > now) return { ok: true, users: cached.value, cached: true };
+
+    try {
+      const { listUsers } = await import("@core/business/auth/mod.ts");
+      const { listGameStates, getEarnedBadges } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+
+      // Three sources joined in memory by email.
+      const [users, states] = await Promise.all([
+        listUsers(orgId),
+        listGameStates(orgId),
+      ]);
+      const stateByEmail = new Map(states.map((s) => [s.email, s.state as unknown as Record<string, unknown>]));
+
+      const includedRoles = new Set(["user", "reviewer", "judge", "manager"]);
+      const filtered = users.filter((u) => includedRoles.has(u.role));
+
+      // earned-badge count: per-user list, parallelized. Bounded by user count.
+      const badgeCounts = await Promise.all(
+        filtered.map(async (u) => ({ email: u.email, n: (await getEarnedBadges(orgId, u.email)).length })),
+      );
+      const countByEmail = new Map(badgeCounts.map((b) => [b.email, b.n]));
+
+      const rows = filtered.map((u) => {
+        const s = stateByEmail.get(u.email) ?? {};
+        return {
+          email: u.email,
+          role: u.role,
+          totalXp: Number(s.totalXp ?? 0),
+          level: Number(s.level ?? 0),
+          dayStreak: Number(s.dayStreak ?? 0),
+          earnedBadgeCount: countByEmail.get(u.email) ?? 0,
+          equippedTitle: (s.equippedTitle as string | null | undefined) ?? null,
+          equippedNameColor: (s.equippedNameColor as string | null | undefined) ?? null,
+          equippedFrame: (s.equippedFrame as string | null | undefined) ?? null,
+          equippedFlair: (s.equippedFlair as string | null | undefined) ?? null,
+        };
+      }).sort((a, b) => {
+        if (b.totalXp !== a.totalXp) return b.totalXp - a.totalXp;
+        if (b.level !== a.level) return b.level - a.level;
+        return a.email.localeCompare(b.email);
+      });
+
+      AdminConfigController._gamUsersCache.set(orgId, { value: rows, expiresAt: now + 10_000 });
+      return { ok: true, users: rows };
+    } catch (err) {
+      console.warn(`⚠️ [GAM-ADMIN] users-list failed — soft fallback:`, err);
+      return { ok: false, error: (err as Error).message ?? String(err), users: [] };
+    }
+  }
+
+  // 10s in-isolate cache. Same shape as _hiddenCache / _gameStateCache.
+  private static _gamUsersCache = new Map<string, { value: unknown[]; expiresAt: number }>();
+
+  /** Additive XP grant for a single user. Calls the same awardXp helper
+   *  the natural earning flow uses, so level thresholds + dayStreak +
+   *  tokenBalance all update consistently. Optionally broadcasts the
+   *  resulting level_up prefab event so the recipient sees the toast. */
+  @Post("gamification/grant-xp") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
+  async gamificationGrantXp(@Body() body: GenericBodyRequest) {
+    const b = (body ?? {}) as { email?: string; amount?: number; broadcast?: boolean; reason?: string };
+    const email = String(b.email ?? "").trim();
+    const amount = typeof b.amount === "number" ? Math.floor(b.amount) : NaN;
+    if (!email) return { ok: false, error: "email required" };
+    if (!Number.isFinite(amount) || amount < 1 || amount > 5000) {
+      return { ok: false, error: "amount must be an integer 1-5000" };
+    }
+    const broadcast = b.broadcast !== false;
+    const orgId = ORG();
+
+    const { listUsers } = await import("@core/business/auth/mod.ts");
+    const users = await listUsers(orgId);
+    const target = users.find((u) => u.email === email);
+    if (!target) return { ok: false, error: `user not found: ${email}` };
+    if (!["user", "reviewer", "judge", "manager"].includes(target.role)) {
+      return { ok: false, error: `role ${target.role} not eligible for XP grants` };
+    }
+
+    return runInBackgroundLane(async () => {
+      const { awardXp, getGameState } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+      const role = target.role === "user" ? "agent" : target.role as "reviewer" | "judge" | "manager";
+      const award = await awardXp(orgId, email, amount, role);
+
+      AdminConfigController._gamUsersCache.clear();  // table refresh next render
+
+      if (broadcast && award.leveledUp) {
+        const { checkAndEmitPrefab } = await import("@events/domain/data/events-repository/mod.ts");
+        const state = await getGameState(orgId, email) as unknown as { animBindings?: Record<string, string> };
+        const animId = state.animBindings?.["level_up"] ?? null;
+        const displayName = email.split("@")[0];
+        await checkAndEmitPrefab(
+          orgId, "level_up", email,
+          `${displayName} reached level ${award.state.level}!`, animId,
+        ).catch((err) => console.warn(`[GAM-ADMIN] level_up emit failed:`, err));
+      }
+
+      console.log(
+        `🎯 [GAM-ADMIN] grant-xp email=${email} amount=${amount} ` +
+        `newTotalXp=${award.state.totalXp} newLevel=${award.state.level}${award.leveledUp ? "↑" : ""} ` +
+        `reason=${b.reason ?? "(none)"}`,
+      );
+
+      return {
+        ok: true, email, amount,
+        newTotalXp: award.state.totalXp,
+        newLevel: award.state.level,
+        leveledUp: award.leveledUp,
+      };
+    });
+  }
+
+  /** Force-award a specific badge from BADGE_CATALOG to a user. The
+   *  atomic setStoredIfAbsent guard makes duplicate awards a no-op
+   *  (returns alreadyEarned:true). Also grants the badge's xpReward
+   *  via awardXp so admin grants behave identically to natural earns. */
+  @Post("gamification/award-badge") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
+  async gamificationAwardBadge(@Body() body: GenericBodyRequest) {
+    const b = (body ?? {}) as { email?: string; badgeId?: string; broadcast?: boolean };
+    const email = String(b.email ?? "").trim();
+    const badgeId = String(b.badgeId ?? "").trim();
+    if (!email) return { ok: false, error: "email required" };
+    if (!badgeId) return { ok: false, error: "badgeId required" };
+    const broadcast = b.broadcast !== false;
+    const orgId = ORG();
+
+    const { BADGE_CATALOG } = await import("@gamification/domain/business/badge-system/mod.ts");
+    const badge = BADGE_CATALOG.find((bd) => bd.id === badgeId);
+    if (!badge) return { ok: false, error: `unknown badgeId: ${badgeId}` };
+
+    const { listUsers } = await import("@core/business/auth/mod.ts");
+    const users = await listUsers(orgId);
+    const target = users.find((u) => u.email === email);
+    if (!target) return { ok: false, error: `user not found: ${email}` };
+
+    // Role-mismatch is a soft warning, not a hard fail — admin might be
+    // intentionally cross-role granting (rare but valid). Logged.
+    const userRoleForBadge = target.role === "user" ? "agent" : target.role;
+    if (badge.role !== userRoleForBadge) {
+      console.warn(
+        `⚠️ [GAM-ADMIN] cross-role award: badge.role=${badge.role} userRole=${userRoleForBadge} email=${email} badgeId=${badgeId}`,
+      );
+    }
+
+    return runInBackgroundLane(async () => {
+      const { awardBadge, awardXp, getGameState } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+      const fresh = await awardBadge(orgId, email, badge as never);
+
+      if (!fresh) {
+        return { ok: true, email, badgeId, alreadyEarned: true };
+      }
+
+      // Grant the badge's XP reward so admin awards match natural earns.
+      const role = target.role === "user" ? "agent" : target.role as "reviewer" | "judge" | "manager";
+      const award = await awardXp(orgId, email, badge.xpReward, role);
+      AdminConfigController._gamUsersCache.clear();
+
+      if (broadcast) {
+        const { checkAndEmitPrefab } = await import("@events/domain/data/events-repository/mod.ts");
+        const state = await getGameState(orgId, email) as unknown as { animBindings?: Record<string, string> };
+        const animId = state.animBindings?.["badge_earned"] ?? null;
+        const displayName = email.split("@")[0];
+        await checkAndEmitPrefab(
+          orgId, "badge_earned", email,
+          `${displayName} earned ${badge.name}!`, animId,
+        ).catch((err) => console.warn(`[GAM-ADMIN] badge_earned emit failed:`, err));
+        if (award.leveledUp) {
+          const lvlAnim = state.animBindings?.["level_up"] ?? null;
+          await checkAndEmitPrefab(
+            orgId, "level_up", email,
+            `${displayName} reached level ${award.state.level}!`, lvlAnim,
+          ).catch((err) => console.warn(`[GAM-ADMIN] level_up emit failed:`, err));
+        }
+      }
+
+      console.log(
+        `🏅 [GAM-ADMIN] award-badge email=${email} badgeId=${badgeId} ` +
+        `xpReward=${badge.xpReward} newTotalXp=${award.state.totalXp}${award.leveledUp ? " ↑" : ""}`,
+      );
+
+      return {
+        ok: true, email, badgeId,
+        badgeName: badge.name,
+        xpAwarded: badge.xpReward,
+        newTotalXp: award.state.totalXp,
+        newLevel: award.state.level,
+        leveledUp: award.leveledUp,
+      };
+    });
+  }
+
   /** Wipe per-user gamification progression for selected roles.
    *  Body: { roles: ("user"|"reviewer"|"judge"|"manager")[], fromMs?, toMs?, dryRun? }
    *  Omit both fromMs and toMs for a full reset. Window mode deletes only

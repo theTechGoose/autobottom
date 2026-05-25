@@ -183,6 +183,9 @@ All durable state lives in a single Firestore collection (default `autobottom`) 
 | `chargeback-entry` / `wire-deduction-entry` | Money tracking | |
 | `webhook-config` | Per-webhook admin settings | Key = kind |
 | `email-report-config` / `email-template` / `email-report-preview` | Email reports | |
+| `email-report-status` | Per-config cron run state (lastRunAt / lastRunStatus / lastSentMessageId / lastTickKey) | Written by cron tick only |
+| `email-report-claim` | Atomic claim key `(configId, yyyymmddhhmm)` for cron dedup | 90s TTL |
+| `system-flag` (org="") | Global feature flags (currently: `email-reports-enabled` kill-switch) | Toggle via Dev Tools |
 | `pipeline-config` / `pipeline-paused` / `bad-word-config` / `office-bypass-config` / `bonus-points-config` | Admin singletons | |
 | `audit-dimensions` / `partner-dimensions` / `manager-scope` / `reviewer-config` | Org config | |
 | `gamification-settings` / `sound-pack` / `store-item` / `earned-badge` / `badge-stats` / `game-state` | Gamification | |
@@ -295,15 +298,40 @@ Per-question failure rollup driven by the `question-fail-stat` counter docs. Cou
 
 Re-audit / admin delete calls `decrementForFinding` ([question-stats-repository/mod.ts](src/audit/domain/data/question-stats-repository/mod.ts)) to drop the voided finding's contributions and unmark its dedup record.
 
-**Admin UI** is the **Question Failures** tab in the Data Maintenance modal ([frontend/routes/api/admin/modal/maintenance.tsx](frontend/routes/api/admin/modal/maintenance.tsx)):
-- **Run report** — date-range + optional `configKey` filter → table of `Question | Config | Failed | Flipped→Pass | Flipped→Fail | Last Failed`.
-- **Backfill from history** — wipes counters by month, walks `audit-done-idx` over the chosen range, loads each finding (20-wide concurrency pool to stay inside Deno Deploy's ~60s request budget), accumulates per-question deltas in-memory, and writes one R-M-W per (configKey, questionKey, month) bucket. Each processed finding gets a `question-fail-counted` mark so **adjacent or overlapping chunks compose correctly** instead of wiping each other (the previous wipe-by-month design was broken — fixed in `af1a016`). Backfill is bounded to ~3000 entries / chunk; for busy orgs do ~1-week ranges.
-- **Reset all counters** — wipes both `question-fail-stat` AND `question-fail-counted` for the org. Use after a buggy backfill state, then re-run chunks from scratch. Bounded by collection sizes, typically a few thousand docs.
+**Admin UI splits across two modals — by intent:**
+- **Reports modal** ([frontend/routes/api/admin/modal/reports.tsx](frontend/routes/api/admin/modal/reports.tsx)) — the **READ** side. Sidebar entry "Reports" → **Question Failures** tab. Preset bar (This Month / Last Month / Last 3 / Last 6 / All Time / Custom). Sortable table of `Question | Config | Failed | Flipped→Pass | Flipped→Fail | Last Failed`; each row exposes its `sampleFindingIds` as a click-to-expand sub-row of clickable `/audit/report` links. Defaults to current month on open. **Sub-monthly granularity (24h/7d) intentionally NOT shipped** — counter data is bucketed monthly; per-day buckets would be a ~30 LOC follow-up.
+- **Data Maintenance modal** > **Question Failures** tab — the **OPS** side. Only Backfill + Reset live here. "Run report" was removed (lives in Reports now).
+  - **Backfill from history** — walks `audit-done-idx` over a date range, loads each finding (20-wide concurrency pool to fit Deno Deploy's ~60s budget), accumulates per-question deltas in-memory, writes one R-M-W per (configKey, questionKey, month). Each processed finding gets a `question-fail-counted` mark so **adjacent or overlapping chunks compose correctly** instead of wiping each other (was a bug; fixed in `af1a016`). Bounded to ~3000 entries / chunk; for busy orgs do ~1-week ranges.
+  - **Reset all counters** — wipes both `question-fail-stat` AND `question-fail-counted` for the org. Use when state is corrupt and you want to redo from scratch.
 
 ### Re-audit UX
 [reaudit/mod.ts](src/audit/domain/business/reaudit/mod.ts) creates a new finding with a fresh ID, stamps the OLD finding with `reAuditedAt` + `reAuditedTo: newFindingId`, runs `cleanupFindingFromIndices` (drops chargebackEntry / audit-done-idx / completedStat / queue entries), and calls `decrementForFinding` so the void shows up in the Question Failures report too.
 
 Frontend: the "Re-Audited" pill on a stale report links to `/audit/report?id=<reAuditedTo>` ([AppealModal.tsx](frontend/islands/AppealModal.tsx)). Admin "Re-run with genies" auto-navigates to the new finding's report on success ([report.tsx](frontend/routes/audit/report.tsx)) — same UX as the agent appeal flow's "View New Report" button, just auto-followed.
+
+### Scheduled Email Reports
+Every-minute `Deno.cron("email-reports", "* * * * *", …)` ([cron-core/mod.ts](src/cron/domain/business/cron-core/mod.ts)) walks every org's `email-report-config` docs, evaluates each enabled schedule's cron against the current wall-clock instant in the config's IANA tz (default `America/New_York`), and fires `prepareReport` + `sendPreparedReport` for each match.
+
+**DST-safe matcher** — [cron-presets/mod.ts](src/reporting/domain/business/cron-presets/mod.ts) uses `Intl.DateTimeFormat` to project `Date.now()` into the schedule's tz; a "Daily 8am" config fires at 8am local year-round. Permissive grammar: ranges (`1-5`), lists (`1,3,5`), steps (`*/15`), `7≡0` Sunday alias, POSIX OR for dom×dow. 14 unit tests pin the math.
+
+**Safety rails stacked in the tick** ([email-reports-tick/mod.ts](src/reporting/domain/business/email-reports-tick/mod.ts)):
+1. **Kill-switch** — `getStored("system-flag", "" as OrgId, "email-reports-enabled")`, cached 60s in-isolate. Flip via Dev Tools panel; takes effect within ≤60s without redeploy.
+2. **Background lane** — entire tick wrapped in `runInBackgroundLane`. Per-minute scan never competes with user-facing FS work (the migration-tick precedent at [cron-core/mod.ts:19-43](src/cron/domain/business/cron-core/mod.ts#L19-L43) is exactly why this rail exists).
+3. **Atomic claim** — `setStoredIfAbsent("email-report-claim", orgId, [configId, yyyymmddhhmm], …, { expireInMs: 90_000 })`. Multi-isolate dedup.
+4. **Split timeout** — `Promise.race(90s)` wraps `prepareReport` (query + render) ONLY. `sendPreparedReport` runs free so mid-`sendEmail` race can't double-send.
+5. **Per-config error isolation** — one bad config never blocks the rest; status writeback on failure with truncated error message.
+6. **Same-tick double-send guard** — checks `email-report-status.lastTickKey` before sending; bails if already ran for this exact minute.
+
+**Editor UI** ([EmailReportEditor.tsx](frontend/islands/EmailReportEditor.tsx)) — cadence dropdown (Disabled/Daily/Weekly/Monthly/Custom), day-of-week / day-of-month / time-of-day pickers, raw cron for Custom. Last-run badge fetches `/admin/email-reports/status?configId=X`. List view shows humanized schedule + last-run timeago + status pill per row.
+
+**Manual run from the Reports modal** ([reports.tsx](frontend/routes/api/admin/modal/reports.tsx)) — every config has [Preview] (renders the HTML in an iframe with `srcdoc` inside the modal) and [Send Live Now] (confirm + POST to existing `/admin/email-reports/send-now`).
+
+`EmailReportStatus` doc (separate from `EmailReportConfig`, keyed by `configId`) — eliminates editor↔cron writeback race; cron writes status, editor never touches it.
+
+### QStash parallelism
+- Pipeline modal Save button already pushes parallelism to QStash live via `setQstashQueueParallelism` ([qstash/mod.ts:309-359](src/core/data/qstash/mod.ts#L309-L359)).
+- **Data Maintenance → Parallelism** tab has "Apply persisted defaults" button — fires `applyDefaultQueueParallelism()` which returns per-queue results; renders status (`✓` / `✗` per queue). Useful when ops manually changed parallelism in the QStash dashboard and want to re-sync.
+- Orphaned `/admin/queues` POST (wrote to dead `queue-config` type) was deleted in commit `d5dfcd9`.
 
 ---
 
@@ -386,9 +414,9 @@ Persistent AI memory lives at `~/.claude/projects/-Users-adam-Programming-autobo
 | Area | What's left |
 |---|---|
 | "Second recording uploaded but won't play" appeal bug | Reported but no concrete finding ID yet. Held until a repro example lands; defensive logging at the audio-URL construction point is a quick next step. |
-| Scheduled email reports | CRUD wired, but cron firing isn't (only `watchdog` cron registered). |
 | Weekly Builder | Page is "coming in Phase 2" placeholder. |
 | Atomic counter race | `decrementBatchCounter` / `purchaseStoreItem` / question-fail counter R-M-W all use read-modify-write. Acceptable for current concurrency; swap to Firestore field-transform `increment` if we see drift. |
-| `judge-decided` indexing | `getMyJudgeStats` does a full per-org scan of `judge-decided` and filters in-memory by `decidedAt`. The 60s SWR cache absorbs most of the cost. If it bites at scale, add a `(_org, _type, decidedAt, __name__)` composite index and switch to `listStoredByCompletedAt`. |
+| `judge-decided` indexing — **Phase 2** | Phase 1 shipped (Index Tests card at `judge-decided-decidedAt`). Once the operator confirms the composite `(_org, _type, decidedAt, __name__)` is built and Run+Compare go green, swap `getMyJudgeStats` from `listStoredWithKeys` to `listStoredByCompletedAt` with range-keyed SWR cache + optional FAILED_PRECONDITION fallback. ~30 LOC. |
+| Question Failures sub-monthly granularity | v1 ships month-aligned only (counter data bucketed monthly). If the operator wants real 24h/7d windows in the Reports modal, add a per-day `question-fail-stat-day` bucket alongside the monthly one — `incrFailed` writes both; report path picks the right one based on chosen range. ~30 LOC. |
 
 When working on any of these, read the relevant `main:` prod file first and prefer minimal-but-functional Fresh ports over 1:1 inline-HTML ports.

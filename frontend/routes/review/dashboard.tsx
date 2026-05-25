@@ -4,8 +4,14 @@ import { Layout } from "../../components/Layout.tsx";
 import { StatCard } from "../../components/StatCard.tsx";
 import { DonutChart } from "../../components/DonutChart.tsx";
 import { LeaderboardCard, type LeaderboardEntry } from "../../components/LeaderboardCard.tsx";
+import { GameStateRow } from "../../components/GameStateRow.tsx";
 import { StatRangeBar } from "../../components/StatRangeBar.tsx";
 import { apiFetch } from "../../lib/api.ts";
+
+interface MyStateResp {
+  gameState?: { totalXp?: number; level?: number; dayStreak?: number } | null;
+  earnedBadgeCount?: number;
+}
 
 interface ReviewerSettings { allowedTypes: ("date-leg" | "package")[] }
 
@@ -22,6 +28,9 @@ export default define.page(async function ReviewDashboard(ctx) {
   } catch (e) { console.error("Reviewer settings error:", e); }
   try { leaderboard = (await apiFetch<{ entries?: LeaderboardEntry[] }>("/gamification/api/leaderboard", ctx.req)).entries ?? []; }
   catch (e) { console.error("Leaderboard error:", e); }
+  let myState: MyStateResp = {};
+  try { myState = await apiFetch<MyStateResp>(`/gamification/api/my-state?email=${encodeURIComponent(user.email)}`, ctx.req); }
+  catch (e) { console.error("My-state error:", e); }
 
   const total = stats.pending + stats.decided;
   const confirmRate = total > 0 ? Math.round((stats.decided / total) * 100) : 0;
@@ -29,8 +38,17 @@ export default define.page(async function ReviewDashboard(ctx) {
   const allowPackage = settings.allowedTypes.includes("package");
 
   return (
-    <Layout title="Review Dashboard" section="review" user={user} pathname={new URL(ctx.req.url).pathname}>
+    <Layout title="Review Dashboard" section="review" user={user} gameState={ctx.state.gameState} pathname={new URL(ctx.req.url).pathname}>
       <div class="page-header"><h1>Review Dashboard</h1><p class="page-sub">Your review performance and queue status</p></div>
+
+      <GameStateRow
+        role="reviewer"
+        totalXp={myState.gameState?.totalXp ?? 0}
+        level={myState.gameState?.level ?? 0}
+        dayStreak={myState.gameState?.dayStreak ?? 0}
+        earnedBadgeCount={myState.earnedBadgeCount ?? 0}
+        accent="#8b5cf6"
+      />
 
       <div id="review-stats" hx-get="/api/review/stats" hx-trigger="every 10s" hx-swap="innerHTML">
         <div class="stat-grid">

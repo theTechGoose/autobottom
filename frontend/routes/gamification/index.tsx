@@ -12,7 +12,7 @@ export default define.page(function GamificationPage(ctx) {
     return new Response(null, { status: 302, headers: { location: "/admin/dashboard" } });
   }
   return (
-    <Layout title="Gamification" section="admin" user={user} pathname="/gamification">
+    <Layout title="Gamification" section="admin" user={user} gameState={ctx.state.gameState} pathname="/gamification">
       <div style="max-width:960px;margin:0 auto;padding:20px 24px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
           <div>

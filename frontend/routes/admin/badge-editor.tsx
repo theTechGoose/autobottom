@@ -51,7 +51,7 @@ export default define.page(async function BadgeEditorPage(ctx) {
   }
 
   return (
-    <Layout title="Badge Editor" section="admin" user={user} pathname={url.pathname}>
+    <Layout title="Badge Editor" section="admin" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
       <div class="ql-topbar">
         <div class="ql-topbar-title">
           <span class="ql-topbar-icon" aria-hidden="true">🛍️</span>

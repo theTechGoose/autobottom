@@ -4,21 +4,39 @@ import { Layout } from "../../components/Layout.tsx";
 import { StatCard } from "../../components/StatCard.tsx";
 import { DonutChart } from "../../components/DonutChart.tsx";
 import { LeaderboardCard, type LeaderboardEntry } from "../../components/LeaderboardCard.tsx";
+import { GameStateRow } from "../../components/GameStateRow.tsx";
 import { StatRangeBar } from "../../components/StatRangeBar.tsx";
 import { apiFetch } from "../../lib/api.ts";
+
+interface MyStateResp {
+  gameState?: { totalXp?: number; level?: number; dayStreak?: number } | null;
+  earnedBadgeCount?: number;
+}
 
 export default define.page(async function JudgeDashboard(ctx) {
   const user = ctx.state.user!;
   let stats = { pending: 0, decided: 0 };
   let leaderboard: LeaderboardEntry[] = [];
+  let myState: MyStateResp = {};
   try { stats = await apiFetch<typeof stats>("/judge/api/dashboard", ctx.req); }
   catch (e) { console.error("Judge dashboard error:", e); }
   try { leaderboard = (await apiFetch<{ entries?: LeaderboardEntry[] }>("/gamification/api/leaderboard", ctx.req)).entries ?? []; }
   catch (e) { console.error("Leaderboard error:", e); }
+  try { myState = await apiFetch<MyStateResp>(`/gamification/api/my-state?email=${encodeURIComponent(user.email)}`, ctx.req); }
+  catch (e) { console.error("My-state error:", e); }
 
   return (
-    <Layout title="Judge Dashboard" section="judge" user={user} pathname={new URL(ctx.req.url).pathname}>
+    <Layout title="Judge Dashboard" section="judge" user={user} gameState={ctx.state.gameState} pathname={new URL(ctx.req.url).pathname}>
       <div class="page-header"><h1>Judge Dashboard</h1><p class="page-sub">Appeal stats and judge performance</p></div>
+
+      <GameStateRow
+        role="judge"
+        totalXp={myState.gameState?.totalXp ?? 0}
+        level={myState.gameState?.level ?? 0}
+        dayStreak={myState.gameState?.dayStreak ?? 0}
+        earnedBadgeCount={myState.earnedBadgeCount ?? 0}
+        accent="#14b8a6"
+      />
 
       <div id="judge-stats" hx-get="/api/judge/stats" hx-trigger="every 10s" hx-swap="innerHTML">
         <div class="stat-grid">

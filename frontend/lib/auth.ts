@@ -8,11 +8,26 @@ export interface User {
   role: Role;
 }
 
+export interface GameStateLite {
+  totalXp?: number;
+  level?: number;
+  dayStreak?: number;
+  equippedTitle?: string | null;
+  equippedNameColor?: string | null;
+  equippedFrame?: string | null;
+  equippedFlair?: string | null;
+}
+
 export interface State {
   user?: User;
   /** When set, the real logged-in admin's email. ctx.state.user has been
    *  swapped to the impersonated user for rendering. */
   impersonatedBy?: string;
+  /** Prefetched (cached) game-state for the current user. Populated by the
+   *  middleware on page renders so the Sidebar/Layout can render equipped
+   *  cosmetics without an extra fetch per page. Undefined on /api/ paths
+   *  (sidebar isn't rendered there) and when the prefetch fails. */
+  gameState?: GameStateLite;
 }
 
 export const ROLE_REDIRECTS: Record<Role, string> = {

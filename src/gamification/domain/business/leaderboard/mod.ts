@@ -18,10 +18,19 @@ export interface LeaderboardEntry {
   totalXp: number;
   level: number;
   dayStreak: number;
+  /** Optional equipped store-item IDs — frontend resolves via STORE_CATALOG.
+   *  Always emitted (may be null) so consumers can render without branching
+   *  on shape. */
+  equippedTitle: string | null;
+  equippedNameColor: string | null;
+  equippedFrame: string | null;
+  equippedFlair: string | null;
 }
 
 /** Top N by totalXp (descending). Ties broken by level then alphabetic.
- *  Only role="user" (agent) accounts are eligible. */
+ *  Only role="user" (agent) accounts are eligible.
+ *  Equipped cosmetics are surfaced per entry so leaderboard rows can render
+ *  titles, colored names, frames, and flair without an extra round trip. */
 export async function getLeaderboard(orgId: OrgId, limit = 10): Promise<LeaderboardEntry[]> {
   const [all, agents] = await Promise.all([
     listGameStates(orgId),
@@ -29,12 +38,19 @@ export async function getLeaderboard(orgId: OrgId, limit = 10): Promise<Leaderbo
   ]);
   const agentEmails = new Set(agents.map((u) => u.email.toLowerCase()));
   const sorted = all
-    .map(({ email, state }) => ({
-      email,
-      totalXp: Number(state?.totalXp ?? 0),
-      level: Number(state?.level ?? 1),
-      dayStreak: Number(state?.dayStreak ?? 0),
-    }))
+    .map(({ email, state }) => {
+      const s = state as unknown as Record<string, unknown> | null | undefined;
+      return {
+        email,
+        totalXp: Number(s?.totalXp ?? 0),
+        level: Number(s?.level ?? 1),
+        dayStreak: Number(s?.dayStreak ?? 0),
+        equippedTitle: (s?.equippedTitle as string | null | undefined) ?? null,
+        equippedNameColor: (s?.equippedNameColor as string | null | undefined) ?? null,
+        equippedFrame: (s?.equippedFrame as string | null | undefined) ?? null,
+        equippedFlair: (s?.equippedFlair as string | null | undefined) ?? null,
+      };
+    })
     .filter((e) => e.totalXp > 0 && agentEmails.has(e.email.toLowerCase()))
     .sort((a, b) => {
       if (b.totalXp !== a.totalXp) return b.totalXp - a.totalXp;

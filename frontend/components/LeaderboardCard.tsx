@@ -1,6 +1,13 @@
 /** Shared leaderboard widget — top-N XP earners.
  *  Used on judge / review / agent dashboards. SSR-fetched at page load;
- *  HTMX `every 60s` swap target wraps it for live refresh. */
+ *  HTMX `every 60s` swap target wraps it for live refresh.
+ *
+ *  Each entry can carry equipped cosmetics from the user's game-state — the
+ *  backend leaderboard module resolves them so the row renders the
+ *  equipped name color + flair + frame without an extra round-trip. */
+
+import { EquippedName } from "./EquippedName.tsx";
+import { resolveCosmetics } from "../lib/cosmetics.ts";
 
 export interface LeaderboardEntry {
   rank: number;
@@ -8,6 +15,10 @@ export interface LeaderboardEntry {
   totalXp: number;
   level: number;
   dayStreak: number;
+  equippedTitle?: string | null;
+  equippedNameColor?: string | null;
+  equippedFrame?: string | null;
+  equippedFlair?: string | null;
 }
 
 const MEDAL = ["🥇", "🥈", "🥉"];
@@ -23,19 +34,24 @@ export function LeaderboardCard({ entries, accent = "var(--blue)" }: { entries: 
         <div style="text-align:center;color:var(--text-dim);font-size:12px;padding:20px 0;">No XP earned yet.</div>
       ) : (
         <div style="display:flex;flex-direction:column;gap:6px;">
-          {entries.map((e) => (
-            <div
-              key={e.email}
-              style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;background:var(--bg);"
-            >
-              <span style={`font-family:var(--mono);font-size:11px;width:24px;text-align:center;color:${e.rank <= 3 ? accent : "var(--text-dim)"};`}>
-                {e.rank <= 3 ? MEDAL[e.rank - 1] : `#${e.rank}`}
-              </span>
-              <span style="flex:1;font-size:12px;color:var(--text-bright);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{e.email}</span>
-              <span style={`font-family:var(--mono);font-size:11px;color:${accent};font-weight:600;`}>{e.totalXp.toLocaleString()}<span style="color:var(--text-dim);font-weight:400;"> xp</span></span>
-              <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);min-width:36px;text-align:right;">L{e.level}</span>
-            </div>
-          ))}
+          {entries.map((e) => {
+            const cos = resolveCosmetics(e);
+            return (
+              <div
+                key={e.email}
+                style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;background:var(--bg);"
+              >
+                <span style={`font-family:var(--mono);font-size:11px;width:24px;text-align:center;color:${e.rank <= 3 ? accent : "var(--text-dim)"};`}>
+                  {e.rank <= 3 ? MEDAL[e.rank - 1] : `#${e.rank}`}
+                </span>
+                <span style={`flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${cos.frameStyle}border-radius:3px;padding:1px 4px;`}>
+                  <EquippedName email={e.email} cosmetics={cos} weight={500} />
+                </span>
+                <span style={`font-family:var(--mono);font-size:11px;color:${accent};font-weight:600;`}>{e.totalXp.toLocaleString()}<span style="color:var(--text-dim);font-weight:400;"> xp</span></span>
+                <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);min-width:36px;text-align:right;">L{e.level}</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

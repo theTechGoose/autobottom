@@ -5,6 +5,7 @@ import {
   getStored, setStored, deleteStored, listStoredWithKeys,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { publishToUser, publishToOrg } from "@events/domain/business/event-bus/mod.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -15,11 +16,11 @@ export interface BroadcastEvent { id: string; type: string; triggerEmail: string
 
 export async function emitEvent(orgId: OrgId, targetEmail: string, type: EventType, payload: Record<string, unknown>): Promise<void> {
   const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-  await setStored(
-    "app-event", orgId, [targetEmail, id],
-    { id, type, payload, createdAt: Date.now() },
-    { expireInMs: DAY_MS },
-  );
+  const event = { id, type, payload, createdAt: Date.now() };
+  await setStored("app-event", orgId, [targetEmail, id], event, { expireInMs: DAY_MS });
+  // Real-time fanout — any SSE subscriber for this user picks it up
+  // immediately. Polling clients catch it on the next /api/events tick.
+  publishToUser(orgId, targetEmail, type, event);
 }
 
 export async function getEvents(orgId: OrgId, email: string, since = 0): Promise<AppEvent[]> {
@@ -46,11 +47,12 @@ export async function savePrefabSubscriptions(orgId: OrgId, subs: Record<string,
 
 export async function emitBroadcastEvent(orgId: OrgId, prefabType: string, triggerEmail: string, message: string, animationId: string | null): Promise<void> {
   const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-  await setStored(
-    "broadcast-event", orgId, [id],
-    { id, type: prefabType, triggerEmail, displayName: triggerEmail.split("@")[0], message, animationId, ts: Date.now() },
-    { expireInMs: DAY_MS },
-  );
+  const event: BroadcastEvent = {
+    id, type: prefabType, triggerEmail,
+    displayName: triggerEmail.split("@")[0], message, animationId, ts: Date.now(),
+  };
+  await setStored("broadcast-event", orgId, [id], event, { expireInMs: DAY_MS });
+  publishToOrg(orgId, prefabType, event);
 }
 
 export async function getBroadcastEvents(orgId: OrgId, since = 0): Promise<BroadcastEvent[]> {
@@ -58,8 +60,11 @@ export async function getBroadcastEvents(orgId: OrgId, since = 0): Promise<Broad
   return rows.map(({ value }) => value).filter((v) => v.ts > since);
 }
 
-export async function checkAndEmitPrefab(orgId: OrgId, prefabType: string, email: string, message: string): Promise<void> {
+export async function checkAndEmitPrefab(
+  orgId: OrgId, prefabType: string, email: string, message: string,
+  animationId: string | null = null,
+): Promise<void> {
   const subs = await getPrefabSubscriptions(orgId);
   if (!subs[prefabType]) return;
-  await emitBroadcastEvent(orgId, prefabType, email, message, null);
+  await emitBroadcastEvent(orgId, prefabType, email, message, animationId);
 }

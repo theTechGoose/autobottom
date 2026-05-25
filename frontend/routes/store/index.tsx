@@ -20,7 +20,7 @@ export default define.page(async function StorePage(ctx) {
   };
 
   return (
-    <Layout title="Store" section="admin" user={user} pathname={url.pathname}>
+    <Layout title="Store" section="admin" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
       <div class="page-header">
         <h1>Store</h1>
         <p class="page-sub">Spend your earned tokens on cosmetics and badges</p>

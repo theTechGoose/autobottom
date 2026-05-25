@@ -14,6 +14,7 @@
     "@std/assert": "jsr:@std/assert",
     "preact-render-to-string": "npm:preact-render-to-string@^6.5.0",
     "@core/": "../src/core/",
+    "@gamification/": "../src/gamification/",
     "@mrg-keystone/danet": "jsr:@mrg-keystone/danet@^1.0.2",
     "@danet/core": "jsr:@danet/core@2",
     "@danet/swagger": "jsr:@danet/swagger@2",

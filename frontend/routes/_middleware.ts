@@ -1,9 +1,33 @@
 /** Auth middleware — resolves user from session cookie via direct in-process authenticate().
  *  Does NOT make HTTP self-requests — Deno Deploy isolates can't fetch their own localhost. */
 import { define } from "../lib/define.ts";
-import { isPublicPath, roleRedirect } from "../lib/auth.ts";
+import { isPublicPath, roleRedirect, type GameStateLite } from "../lib/auth.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
 import { listUsers } from "@core/business/auth/mod.ts";
+
+/** Per-isolate game-state cache. 30s TTL keeps the per-page-load Firestore
+ *  cost ~free for the same user clicking around. Cross-isolate writes are
+ *  picked up at the next eviction; staleness window is bounded. Same SWR
+ *  pattern as `_hiddenCache` in src/audit/.../stats-repository. */
+const GAME_STATE_TTL_MS = 30_000;
+interface CacheEntry { state: GameStateLite; expiresAt: number }
+const _gameStateCache = new Map<string, CacheEntry>();
+
+async function getCachedGameState(orgId: string, email: string): Promise<GameStateLite | undefined> {
+  const cacheKey = `${orgId}:${email}`;
+  const now = Date.now();
+  const cached = _gameStateCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.state;
+  try {
+    const { getGameState } = await import("@gamification/domain/data/gamification-repository/mod.ts");
+    const fresh = await getGameState(orgId, email) as unknown as GameStateLite;
+    _gameStateCache.set(cacheKey, { state: fresh, expiresAt: now + GAME_STATE_TTL_MS });
+    return fresh;
+  } catch (err) {
+    console.warn(`[MIDDLEWARE] gameState prefetch failed for ${email}:`, err);
+    return undefined;
+  }
+}
 
 /** Build a redirect that's safe for both browser navigation and HTMX swaps.
  *  Without this, an HTMX widget XHR receiving a 302 to /login follows the
@@ -98,6 +122,15 @@ export default define.middleware(async (ctx) => {
     const realRole = ctx.state.impersonatedBy ? "admin" : ctx.state.user.role;
     if (isAdminPath && realRole !== "admin") {
       return authRedirect(ctx.req, roleRedirect(ctx.state.user.role));
+    }
+
+    // Prefetch game-state for page renders so Sidebar can show equipped
+    // cosmetics without an extra round-trip. Skip /api/* (no sidebar) and
+    // /login/* (no user yet). Cache hits keep this near-free; misses pay
+    // one direct-key Firestore read.
+    const isApiPath = path.startsWith("/api/");
+    if (!isApiPath) {
+      ctx.state.gameState = await getCachedGameState(ctx.state.user.orgId, ctx.state.user.email);
     }
 
     return ctx.next();

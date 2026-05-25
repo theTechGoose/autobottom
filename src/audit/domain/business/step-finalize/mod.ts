@@ -4,9 +4,7 @@ import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditD
 import { getOfficeBypassConfig, getBonusPointsConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFailed as incrQuestionFailed, configKeyForFinding, markCounted as markQuestionFailCounted } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { updatePartnerDimensions } from "@admin/domain/data/admin-repository/mod.ts";
-import { getBadgeStats, updateBadgeStats, getEarnedBadges, awardBadge, awardXp } from "@gamification/domain/data/gamification-repository/mod.ts";
-import { getGameState, saveGameState } from "@gamification/domain/data/gamification-repository/mod.ts";
-import { emitEvent, checkAndEmitPrefab } from "@events/domain/data/events-repository/mod.ts";
+import { emitEvent } from "@events/domain/data/events-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { enqueueCleanup } from "@core/data/qstash/mod.ts";
 
@@ -15,7 +13,6 @@ import { answerQuestion } from "@core/dto/types.ts";
 import type { IAnsweredQuestion } from "@core/dto/types.ts";
 import { populateReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { populateJudgeQueue, getAppeal, saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
-import { checkBadges } from "@gamification/domain/business/badge-system/mod.ts";
 
 import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
 
@@ -356,76 +353,21 @@ export async function stepFinalize(req: Request): Promise<Response> {
     }).catch((err) => console.error(`[STEP-FINALIZE] ${findingId}: emitEvent failed:`, err));
   }
 
-  // Award agent XP + check badges
+  // Agent gamification — delegated to the shared lane. The lane runs in
+  // runInBackgroundLane so this never blocks the finalize response; XP +
+  // badge checks + prefab broadcasts (sale_completed, perfect_score,
+  // streak_milestone, badge_earned, level_up) all happen in there. Per-user
+  // animBindings are honored by the lane when emitting prefab events.
   if (finding.owner && finding.answeredQuestions?.length) {
-    try {
-      const qs = finding.answeredQuestions as any[];
-      const totalQ = qs.length;
-      const passedQ = qs.filter((q: any) => q.answer === "Yes").length;
-      const score = totalQ > 0 ? Math.round((passedQ / totalQ) * 100) : 0;
-
-      // XP formula: floor(score * 0.3) + bonuses
-      let xp = Math.floor(score * 0.3);
-      if (score === 100) xp += 50;       // perfect bonus
-      else if (score >= 90) xp += 20;    // high bonus
-
-      // Update badge stats
-      const stats = await getBadgeStats(orgId, finding.owner);
-      stats.totalAudits++;
-      if (score === 100) stats.perfectScoreCount++;
-
-      // Running average score
-      const prevTotal = stats.avgScore * stats.auditsForAvg;
-      stats.auditsForAvg++;
-      stats.avgScore = Math.round((prevTotal + score) / stats.auditsForAvg * 100) / 100;
-
-      // Update streak
-      const today = new Date().toISOString().slice(0, 10);
-      if (stats.lastActiveDate !== today) {
-        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-        stats.dayStreak = stats.lastActiveDate === yesterday ? stats.dayStreak + 1 : 1;
-        stats.lastActiveDate = today;
-      }
-
-      await updateBadgeStats(orgId, finding.owner, stats);
-
-      const earned = await getEarnedBadges(orgId, finding.owner);
-      const earnedSet = new Set(earned.map((b) => b.badgeId));
-      const newBadges = checkBadges("agent", stats as any, earnedSet);
-
-      let badgeXp = 0;
-      for (const badge of newBadges) {
-        await awardBadge(orgId, finding.owner, badge as any);
-        badgeXp += badge.xpReward;
-      }
-
-      const awardResult = await awardXp(orgId, finding.owner, xp + badgeXp, "agent");
-      if (newBadges.length) {
-        console.log(`[STEP-FINALIZE] ${findingId}: Agent ${finding.owner} earned ${newBadges.length} badge(s)`);
-        for (const badge of newBadges) {
-          checkAndEmitPrefab(orgId, "badge_earned", finding.owner, `${finding.owner.split("@")[0]} earned ${badge.name}!`)
-            .catch(() => {});
-        }
-      }
-
-      // Broadcast: sale_completed
-      checkAndEmitPrefab(orgId, "sale_completed", finding.owner, `${finding.owner.split("@")[0]} completed an audit!`)
-        .catch(() => {});
-
-      // Broadcast: perfect_score
-      if (score === 100) {
-        checkAndEmitPrefab(orgId, "perfect_score", finding.owner, `${finding.owner.split("@")[0]} got a perfect score!`)
-          .catch(() => {});
-      }
-
-      // Broadcast: streak milestones
-      if (awardResult.state.dayStreak === 7 || awardResult.state.dayStreak === 14 || awardResult.state.dayStreak === 30) {
-        checkAndEmitPrefab(orgId, "streak_milestone", finding.owner, `${finding.owner.split("@")[0]} hit a ${awardResult.state.dayStreak}-day streak!`)
-          .catch(() => {});
-      }
-    } catch (err) {
-      console.error(`[STEP-FINALIZE] ${findingId}: Agent XP/badge error:`, err);
-    }
+    const qs = finding.answeredQuestions as any[];
+    const totalQ = qs.length;
+    const passedQ = qs.filter((q: any) => q.answer === "Yes").length;
+    const score = totalQ > 0 ? Math.round((passedQ / totalQ) * 100) : 0;
+    void import("@gamification/domain/business/gamification-lane/mod.ts")
+      .then(({ awardForCompletion }) =>
+        awardForCompletion({ orgId, email: finding.owner, role: "agent", score })
+      )
+      .catch((err) => console.error(`[STEP-FINALIZE] ${findingId}: gamification lane import failed:`, err));
   }
 
   // Post to webhook + external Deno KV concurrently

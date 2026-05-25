@@ -50,6 +50,17 @@ export async function submitRemediation(orgId: OrgId, findingId: string, notes: 
     console.error(`[MANAGER] ${findingId}: webhook prep failed:`, err);
   }
 
+  // Manager gamification — fire-and-forget. Latency = arrival → submit;
+  // sub-24h triggers the same-day XP bonus + 24h badge counters.
+  void import("@gamification/domain/business/gamification-lane/mod.ts")
+    .then(({ awardForCompletion }) =>
+      awardForCompletion({
+        orgId, email: username, role: "manager",
+        remediationLatencyMs: existing.addedAt ? Math.max(0, remediatedAt - existing.addedAt) : undefined,
+      })
+    )
+    .catch((err) => console.error(`[MANAGER] ${findingId}: gamification lane import failed:`, err));
+
   return { ok: true };
 }
 

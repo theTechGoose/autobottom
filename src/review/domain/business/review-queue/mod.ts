@@ -1024,6 +1024,19 @@ export async function finalizeReviewedAudit(
     console.error(`❌ [REVIEW] ${findingId}: terminate webhook failed (deferred):`, err);
   });
 
+  // Reviewer gamification — fire-and-forget. Lane handles its own errors
+  // and Firestore I/O via runInBackgroundLane so this never blocks the
+  // reviewer's response. questionsReviewed = decisions evaluated this
+  // finalize, used as a per-question XP multiplier.
+  void import("@gamification/domain/business/gamification-lane/mod.ts")
+    .then(({ awardForCompletion }) =>
+      awardForCompletion({
+        orgId, email: reviewer, role: "reviewer",
+        questionsReviewed: decisions.size,
+      })
+    )
+    .catch((err) => console.error(`[REVIEW] ${findingId}: gamification lane import failed:`, err));
+
   return { ok: true, score: reviewScore, ...(skippedFlips > 0 ? { skippedFlips } : {}) };
 }
 

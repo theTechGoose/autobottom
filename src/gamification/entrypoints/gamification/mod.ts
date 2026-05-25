@@ -1,6 +1,6 @@
 /** Gamification controller — wired to real gamification repository. */
 import "npm:reflect-metadata@0.1.13";
-import { Controller, Get, Post, Body } from "@danet/core";
+import { Controller, Get, Post, Body, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, BodyType } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, QLConfigListResponse, QLConfigResponse, QLQuestionResponse, QLQuestionNamesResponse, BulkUpdateResponse, QLAssignmentsResponse, SoundPackListResponse, GamificationSettingsResponse, StoreItemListResponse, PurchaseResponse, BadgeListResponse, UnreadCountResponse, ConversationListResponse, UserListResponse, MessageSentResponse, EventsResponse, WeeklyDataResponse } from "@core/dto/responses.ts";
@@ -49,6 +49,27 @@ export class GamificationPageController {
     } catch (err) {
       console.warn(`⚠️ [GAMIFICATION] leaderboard failed — soft fallback:`, err);
       return { entries: [], retry: true };
+    }
+  }
+
+  /** Per-user game-state + earned-badge count. Powers GameStateRow on
+   *  every role dashboard. Cheap: 1 game-state read + 1 earned-badge list. */
+  @Get("my-state") @ReturnedType(MessageResponse)
+  async myState(@Query("email") email: string) {
+    if (!email) return { error: "email required" };
+    try {
+      const [state, badges] = await Promise.all([
+        gam.getGameState(ORG(), email),
+        gam.getEarnedBadges(ORG(), email),
+      ]);
+      return {
+        gameState: state,
+        earnedBadgeCount: badges.length,
+        earnedBadges: badges,
+      };
+    } catch (err) {
+      console.warn(`⚠️ [GAMIFICATION] my-state failed for ${email} — soft fallback:`, err);
+      return { gameState: null, earnedBadgeCount: 0, earnedBadges: [], retry: true };
     }
   }
 

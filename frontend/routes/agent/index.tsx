@@ -3,8 +3,14 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { StatCard } from "../../components/StatCard.tsx";
 import { LeaderboardCard, type LeaderboardEntry } from "../../components/LeaderboardCard.tsx";
+import { GameStateRow } from "../../components/GameStateRow.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import { timeAgo } from "../../lib/format.ts";
+
+interface MyStateResp {
+  gameState?: { totalXp?: number; level?: number; dayStreak?: number } | null;
+  earnedBadgeCount?: number;
+}
 
 interface WeeklyTrendDay { date: string; avgScore: number; count: number; }
 interface AgentDashboard {
@@ -20,20 +26,32 @@ export default define.page(async function AgentDashboard(ctx) {
 
   let data: AgentDashboard = {};
   let leaderboard: LeaderboardEntry[] = [];
+  let myState: MyStateResp = {};
   try {
     const raw = await apiFetch<{ message: string } & AgentDashboard>("/agent/api/dashboard", ctx.req);
     data = raw;
   } catch (e) { console.error("Agent dashboard error:", e); }
   try { leaderboard = (await apiFetch<{ entries?: LeaderboardEntry[] }>("/gamification/api/leaderboard", ctx.req)).entries ?? []; }
   catch (e) { console.error("Leaderboard error:", e); }
+  try { myState = await apiFetch<MyStateResp>(`/gamification/api/my-state?email=${encodeURIComponent(user.email)}`, ctx.req); }
+  catch (e) { console.error("My-state error:", e); }
 
   const audits = data.recentAudits ?? [];
   const weeklyTrend = data.weeklyTrend ?? [];
   const trendHasData = weeklyTrend.some((d) => d.count > 0);
 
   return (
-    <Layout title="My Dashboard" section="agent" user={user}>
+    <Layout title="My Dashboard" section="agent" user={user} gameState={ctx.state.gameState}>
       <div class="page-header"><h1>My Dashboard</h1><p class="page-sub">Your personal audit performance</p></div>
+
+      <GameStateRow
+        role="user"
+        totalXp={myState.gameState?.totalXp ?? 0}
+        level={myState.gameState?.level ?? 0}
+        dayStreak={myState.gameState?.dayStreak ?? 0}
+        earnedBadgeCount={myState.earnedBadgeCount ?? 0}
+        accent="#f97316"
+      />
 
       <div id="agent-stats" hx-get="/api/agent/stats" hx-trigger="every 10s" hx-swap="innerHTML">
         <div class="stat-grid">

@@ -1,6 +1,7 @@
 /** 280px fixed sidebar — production-matching layout with SVG icons, modal triggers, flyout. */
-import type { User, Role } from "../lib/auth.ts";
+import type { User, Role, GameStateLite } from "../lib/auth.ts";
 import { Icon } from "./Icons.tsx";
+import { resolveCosmetics } from "../lib/cosmetics.ts";
 import type { ComponentChildren } from "preact";
 
 interface SidebarProps {
@@ -8,6 +9,8 @@ interface SidebarProps {
   section: string;
   /** Current pathname — used for precise active-state. Falls back to includes(section). */
   pathname?: string;
+  /** Prefetched game-state used to render equipped cosmetics on the avatar. */
+  gameState?: GameStateLite;
 }
 
 // Sidebar item: either a link (href) or a modal trigger (data-modal)
@@ -152,7 +155,7 @@ const SECTION_ROLE_MAP: Record<string, Role> = {
   agent: "user",
 };
 
-export function Sidebar({ user, section, pathname }: SidebarProps) {
+export function Sidebar({ user, section, pathname, gameState }: SidebarProps) {
   let viewRole: Role = SECTION_ROLE_MAP[section] ?? user.role;
   // Defense in depth: non-admin must never render admin nav even if section="admin"
   if (viewRole === "admin" && user.role !== "admin") viewRole = user.role;
@@ -161,6 +164,7 @@ export function Sidebar({ user, section, pathname }: SidebarProps) {
   const isSuperAdmin = isAdmin && user.email === SUPER_ADMIN_EMAIL;
   const sections = isSuperAdmin ? [...baseSections, SUPER_ADMIN_EXTRAS] : baseSections;
   const initials = user.email.slice(0, 2).toUpperCase();
+  const cos = resolveCosmetics(gameState);
 
   return (
     <aside class="sidebar">
@@ -207,10 +211,18 @@ export function Sidebar({ user, section, pathname }: SidebarProps) {
 
       <div class="sb-footer">
         <div class="sb-user">
-          <div class="sb-avatar">{initials}</div>
-          <div>
-            <div class="sb-email">{user.email}</div>
-            <div class="sb-role">{user.role}</div>
+          <div class="sb-avatar" style={cos.frameStyle}>{initials}</div>
+          <div style="min-width:0;">
+            <div class="sb-email" style={cos.nameColor !== "currentColor" ? `color:${cos.nameColor};` : ""}>
+              {user.email}{cos.flair && <span style="margin-left:4px;">{cos.flair}</span>}
+            </div>
+            <div class="sb-role">{cos.title ?? user.role}</div>
+            {gameState && (gameState.totalXp ?? 0) > 0 && (
+              <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-top:2px;">
+                L{gameState.level ?? 0} · {(gameState.totalXp ?? 0).toLocaleString()} xp
+                {(gameState.dayStreak ?? 0) > 0 && <span> · 🔥 {gameState.dayStreak}</span>}
+              </div>
+            )}
           </div>
         </div>
         <div class="sb-settings" style="padding:6px 14px 14px;">

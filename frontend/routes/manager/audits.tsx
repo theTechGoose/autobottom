@@ -5,8 +5,14 @@
  *  `routes/api/manager/audit-history.tsx` returns the table fragment. */
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
+import { GameStateRow } from "../../components/GameStateRow.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import { renderAuditHistoryTable, type AuditHistoryData } from "../api/manager/audit-history.tsx";
+
+interface MyStateResp {
+  gameState?: { totalXp?: number; level?: number; dayStreak?: number } | null;
+  earnedBadgeCount?: number;
+}
 
 function startOfTodayMs(): number {
   const d = new Date();
@@ -39,8 +45,12 @@ export default define.page(async function ManagerAuditsPage(ctx) {
     data = { items: [], total: 0, pages: 1, page: 1, owners: [], shifts: [], departments: [] };
   }
 
+  let myState: MyStateResp = {};
+  try { myState = await apiFetch<MyStateResp>(`/gamification/api/my-state?email=${encodeURIComponent(user.email)}`, ctx.req); }
+  catch (e) { console.error("My-state error:", e); }
+
   return (
-    <Layout title="Audit History" section="manager" user={user} pathname={url.pathname}>
+    <Layout title="Audit History" section="manager" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
         <div>
           <h1>Audit History</h1>
@@ -48,6 +58,16 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         </div>
         <a href="/manager" class="btn btn-ghost btn-sm">&larr; Manager</a>
       </div>
+
+      <GameStateRow
+        role="manager"
+        totalXp={myState.gameState?.totalXp ?? 0}
+        level={myState.gameState?.level ?? 0}
+        dayStreak={myState.gameState?.dayStreak ?? 0}
+        earnedBadgeCount={myState.earnedBadgeCount ?? 0}
+        accent="#bc8cff"
+      />
+
 
       {/* Filter form — every input refetches the table via HTMX. The form is
           the source of truth for params; `hx-include="closest form"` on each

@@ -20,7 +20,7 @@ export default define.page(async function AdminUsers(ctx) {
   const roleColors: Record<string, string> = { admin: "blue", judge: "purple", manager: "yellow", reviewer: "green", user: "cyan" };
 
   return (
-    <Layout title="Users" section="admin" user={user} pathname={url.pathname}>
+    <Layout title="Users" section="admin" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
         <div>
           <h1>User Management</h1>

@@ -126,6 +126,17 @@ export async function recordJudgeDecision(
     postJudgedAudit(orgId, findingId, judge).catch((err) =>
       console.error(`[JUDGE] ${findingId}: postJudgedAudit failed:`, err));
   }
+
+  // Judge gamification — fire-and-forget. Same pattern as reviewer/manager
+  // (runInBackgroundLane wrapper inside the lane). XP fires per decision
+  // (flat 20 base, no per-question multiplier), with overturned/uphold
+  // tracked in the role-specific stats for the existing 9 judge badges.
+  void import("@gamification/domain/business/gamification-lane/mod.ts")
+    .then(({ awardForCompletion }) =>
+      awardForCompletion({ orgId, email: judge, role: "judge", overturned: decision === "overturn" })
+    )
+    .catch((err) => console.error(`[JUDGE] ${findingId}: gamification lane import failed:`, err));
+
   return { remaining: newCount };
 }
 

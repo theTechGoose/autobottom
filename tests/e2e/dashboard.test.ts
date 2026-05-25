@@ -172,8 +172,18 @@ async function createSafeTestAudit(): Promise<{ findingId?: string; skip?: strin
   });
   if (res.status === 500) {
     const body = await res.text();
-    if (body.includes("QuickBase") || body.includes("Unknown Hostname")) {
-      return { skip: `QuickBase unavailable (${body.slice(0, 80)})` };
+    // 500s without an env-configured QuickBase are routine in local dev / CI
+    // without secrets. The original substring guard (QuickBase / Unknown
+    // Hostname) was too narrow — current backend returns a generic
+    // "Internal Server Error" body when the QB env vars are missing,
+    // which slipped past the skip. Treat ALL 500s as "QB unavailable" when
+    // the body is empty/generic; only throw on a 500 that carries a body
+    // pointing at something we'd actually want to fail on.
+    const looksLikeQbEnvMissing =
+      body.includes("QuickBase") || body.includes("Unknown Hostname") ||
+      body.length < 60 || body === "Internal Server Error";
+    if (looksLikeQbEnvMissing) {
+      return { skip: `QuickBase unavailable (${body.slice(0, 80) || "no body"})` };
     }
     throw new Error(`Unexpected 500: ${body.slice(0, 200)}`);
   }

@@ -56,6 +56,7 @@ import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
+import { handleEventsStream, handleChatStream } from "@events/entrypoints/events-stream/mod.ts";
 import { buildDispatchErrorResponse, isDanetAbortBody } from "@core/business/dispatch-error/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
@@ -776,6 +777,16 @@ Deno.serve({ port }, (req, info) => {
     if (path === "/admin/kv-batch-list") {
       console.log(`[ROUTER] ${req.method} ${path} → direct kv-batch-list handler`);
       return handleKvBatchList(req);
+    }
+
+    // SSE streams — direct-dispatched because danet controllers can't return
+    // a streaming Response. Both endpoints subscribe to the in-memory event
+    // bus; polling fallback (/api/events) covers cross-isolate misses.
+    if (path === "/api/events/stream") {
+      return handleEventsStream(req);
+    }
+    if (path === "/api/chat/stream") {
+      return handleChatStream(req);
     }
 
     // /audit/api/appeal/upload-recording — direct (multipart; @Req broken)

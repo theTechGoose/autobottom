@@ -4,6 +4,8 @@ import {
   getStored, setStored, listStoredWithKeys,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { publishToUser } from "@events/domain/business/event-bus/mod.ts";
+import { emitEvent } from "@events/domain/data/events-repository/mod.ts";
 
 export interface Message { id: string; from: string; to: string; body: string; ts: number; read: boolean; }
 
@@ -15,7 +17,19 @@ export async function sendMessage(orgId: OrgId, from: string, to: string, body: 
   await setStored("message", orgId, [to, from, id], msg);
   // Increment unread count for recipient (read-modify-write; race acceptable)
   const current = (await getStored<number>("unread-count", orgId, to)) ?? 0;
-  await setStored("unread-count", orgId, [to], current + 1);
+  const newCount = current + 1;
+  await setStored("unread-count", orgId, [to], newCount);
+
+  // Real-time fanout — chat SSE clients re-fetch their thread fragment on
+  // `new-message`. Polling clients catch the same data on next refresh.
+  publishToUser(orgId, to, "new-message", { message: msg });
+  publishToUser(orgId, to, "unread-changed", { count: newCount });
+
+  // app-event for the cross-page bell badge + toast. emitEvent writes to
+  // Firestore (24h TTL) AND publishes via event-bus.
+  emitEvent(orgId, to, "message-received", { from, preview: body.slice(0, 60) })
+    .catch((err) => console.error(`[CHAT] message-received emit failed:`, err));
+
   return msg;
 }
 

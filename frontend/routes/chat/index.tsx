@@ -3,6 +3,7 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import ChatInput from "../../islands/ChatInput.tsx";
+import ChatStreamListener from "../../islands/ChatStreamListener.tsx";
 
 interface Conversation { peer: string; lastMessage?: string; lastTs?: number; unread?: number; }
 interface Message { id: string; from: string; to: string; body: string; ts: number; }
@@ -26,7 +27,7 @@ export default define.page(async function ChatPage(ctx) {
   } catch (e) { console.error("Chat data error:", e); }
 
   return (
-    <Layout title="Chat" section="chat" user={user}>
+    <Layout title="Chat" section="chat" user={user} gameState={ctx.state.gameState}>
       <div class="chat-layout">
         {/* Conversation list */}
         <div class="chat-sidebar">
@@ -69,11 +70,17 @@ export default define.page(async function ChatPage(ctx) {
               <div class="chat-thread-header">
                 <span class="chat-thread-peer">{activePeer}</span>
               </div>
+              {/* SSE-driven refresh: ChatStreamListener fires
+                  `new-chat-message` on body whenever a new message arrives
+                  for this user; the thread hx-trigger picks it up and
+                  re-fetches the fragment. `every 10s` is a polling
+                  fallback for cross-isolate misses + SSE connection drops. */}
+              <ChatStreamListener email={user.email} />
               <div
                 id="chat-messages"
                 class="chat-messages"
                 hx-get={`/api/chat/thread?email=${encodeURIComponent(user.email)}&peer=${encodeURIComponent(activePeer)}`}
-                hx-trigger="load, every 5s"
+                hx-trigger="load, new-chat-message from:body, every 10s"
                 hx-swap="innerHTML"
               >
                 <div class="chat-loading">Loading messages...</div>

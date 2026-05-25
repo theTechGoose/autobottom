@@ -161,10 +161,10 @@ export function DashboardTables({ recent, active, errors, logsBase, paused }: Pr
           <a href="/admin/audits" target="_blank" class="tbl-link" style="font-size:10px;">View All &rarr;</a>
         </div>
         <table class="data-table">
-          <thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead>
+          <thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Actions</th></tr></thead>
           <tbody>
             {recent.length === 0 ? (
-              <tr class="empty-row"><td colSpan={7}>No completed audits</td></tr>
+              <tr class="empty-row"><td colSpan={8}>No completed audits</td></tr>
             ) : recent.map((c) => {
               const fid = c.findingId || "\u2014";
               const reportHref = `/audit/report?id=${encodeURIComponent(fid)}`;
@@ -185,6 +185,22 @@ export function DashboardTables({ recent, active, errors, logsBase, paused }: Pr
                   <td class="time-ago">{c.startedAt ? timeAgo(c.startedAt) : "\u2014"}</td>
                   <td class="time-ago">{finishedTs ? timeAgo(finishedTs) : "\u2014"}</td>
                   <td class="mono" style="color:var(--yellow);">{dur != null ? fmtDur(dur) : "\u2014"}</td>
+                  <td>
+                    {/* Re-run uses /admin/reset-finding which drains derived
+                        state (review-pending/active/decided, audit-done-idx,
+                        completed-stat, chargeback, wire-deduction) and
+                        re-publishes step-init AGAINST THE SAME findingId.
+                        Finding doc itself (record, owner, dates) is
+                        preserved — only the audit run resets. */}
+                    <button class="sf-btn"
+                            hx-post="/api/admin/config-save"
+                            hx-vals={`{"endpoint":"/admin/reset-finding","findingId":"${fid}"}`}
+                            hx-target="#queue-action-status"
+                            hx-swap="innerHTML"
+                            hx-confirm={`Re-run audit ${fid}? Same finding ID, fresh pipeline run.`}
+                            hx-on--after-request="setTimeout(() => { const el = document.getElementById('queue-action-status'); if (el) el.innerHTML = ''; }, 3000); if (event.detail.successful) htmx.trigger('#dashboard-tables', 'refresh');"
+                            style="font-size:10px;padding:3px 8px;">Re-run</button>
+                  </td>
                 </tr>
               );
             })}

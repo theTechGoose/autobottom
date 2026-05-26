@@ -361,21 +361,27 @@ export class AdminConfigController {
       console.error(`❌ [AUDIT-COUNTS] firestore walk failed:`, err);
     }
 
-    // ── KV legacy via audit-finding ──
-    // Prod legacy stores findings under the TypedStore prefix
-    // ["__audit-finding__", orgId, findingId, chunkN]. Walking
-    // [orgId, "audit-finding"] (the orgKey convention) returns 0 — that's
-    // a different namespace prod never used. See migration/mod.ts:98-106
-    // for the canonical TypedStore key shape documentation.
+    // ── KV legacy via completed-audit-stat ──
+    // The audit-finding bodies in legacy KV are stored as JSON string slices
+    // across N chunks (lib/storage/chunked-kv.ts in pre-cutover prod). That
+    // means iterating __audit-finding__ produces ~3-5 ~30KB rows per finding
+    // whose values are partial JSON strings — too slow to walk at production
+    // scale (45s timed out at 4k rows / 26k findings) and chunk-0 alone won't
+    // JSON.parse for any finding whose serialized body exceeds 30KB (most
+    // post-completion findings, since the transcript is embedded).
+    //
+    // completed-audit-stat is the right index: one small, unchunked entry
+    // per finding with { findingId, ts, recordId, isPackage, startedAt, ... }
+    // top-level. Same data Firestore's audit-done-idx mirrors. Per
+    // KNOWN_TYPED_STORE_PREFIXES it's a TypedStore (`__completed-audit-stat__`)
+    // and is NOT in CHUNKED_ONLY_TYPED_STORE_PREFIXES — so each entry is a
+    // direct object, not chunked slices.
     //
     // 503-prevention rails:
     //  - HARD row cap (300k) so a runaway scan never blocks the request.
-    //  - Time budget (45s) so we leave headroom under Deno Deploy's 60s
-    //    request budget and surface partial counts instead of timing out.
-    //  - We only DECODE bodies for chunk-0 entries (the head body lives
-    //    there per the legacy chunked layout). Higher chunks are counted
-    //    in `rowsScanned` but skipped without value materialization, so
-    //    transcript chunks don't blow up isolate memory.
+    //  - Time budget (45s) leaves 15s headroom under Deno Deploy's 60s budget.
+    //  - try/catch converts any thrown error into kvResult.error — no path
+    //    can bubble a 503 out of this endpoint.
     if (wantKv) {
       const KV_ROW_CAP = 300_000;
       const KV_TIME_BUDGET_MS = 45_000;
@@ -388,29 +394,21 @@ export class AdminConfigController {
         let rows = 0;
         let capped = false;
         let timedOut = false;
-        for await (const entry of db.list({ prefix: ["__audit-finding__", orgId] })) {
+        for await (const entry of db.list({ prefix: ["__completed-audit-stat__", orgId] })) {
           rows++;
           if (rows >= KV_ROW_CAP) { capped = true; break; }
           if (Date.now() - kvT0 > KV_TIME_BUDGET_MS) { timedOut = true; break; }
-          const key = entry.key as Deno.KvKey;
-          // Expected shape: ["__audit-finding__", orgId, findingId, chunkN].
-          if (key.length < 4) continue;
-          // Only the chunk-0 entry has the head body. Skip higher chunks
-          // and the `_n` meta entry — they have no record/RecordId field.
-          const tail = key[key.length - 1];
-          const isChunkZero = tail === 0 || tail === "0";
-          if (!isChunkZero) continue;
-          const body = (entry.value as Record<string, unknown> | undefined) ?? undefined;
+          // Expected shape: ["__completed-audit-stat__", orgId, findingId].
+          const body = entry.value as {
+            recordId?: string; isPackage?: boolean; ts?: number; startedAt?: number;
+          } | null;
           if (!body) continue;
-          const completedAt = Number((body as { completedAt?: number }).completedAt ?? 0);
-          if (from > 0 && completedAt && completedAt < from) continue;
-          if (to < Date.now() && completedAt && completedAt > to) continue;
-          const record = (body as { record?: Record<string, unknown> }).record ?? {};
-          const recRid = record.RecordId ?? record.GenieNumber ?? record.RelatedDestinationId;
-          if (recRid == null || String(recRid).trim() === "") continue;
-          const rid = String(recRid).trim();
-          const isPackage = (body as { recordingIdField?: string }).recordingIdField === "GenieNumber";
-          if (isPackage) { kvPackages.add(rid); combinedPackages.add(rid); }
+          const ts = Number(body.ts ?? body.startedAt ?? 0);
+          if (from > 0 && ts && ts < from) continue;
+          if (to < Date.now() && ts && ts > to) continue;
+          const rid = String(body.recordId ?? "").trim();
+          if (!rid) continue;
+          if (body.isPackage) { kvPackages.add(rid); combinedPackages.add(rid); }
           else { kvDateLegs.add(rid); combinedDateLegs.add(rid); }
         }
         kvResult.packagesUnique = kvPackages.size;

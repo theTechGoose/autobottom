@@ -20,11 +20,40 @@ function startOfTodayMs(): number {
   return d.getTime();
 }
 
+/** Coerce a query-string ms timestamp into a finite number, falling back
+ *  to `dflt` for null, empty, NaN, or non-numeric values. Without this,
+ *  a bad `?since=` (typo, JS handler that wrote "NaN" into the hidden
+ *  input, etc.) propagates into `new Date(NaN).toISOString()` which
+ *  THROWS RangeError → 500 on the next page load. */
+function safeMs(v: string | null, dflt: number): number {
+  if (v == null || v === "") return dflt;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : dflt;
+}
+
+/** Format a ms timestamp as a `YYYY-MM-DDTHH:MM` string in LOCAL time —
+ *  what `<input type="datetime-local">` expects. The previous code used
+ *  `new Date(ms).toISOString().slice(0,16)` which returns UTC and shifts
+ *  the displayed time by the user's offset (~5h in EST). */
+function toLocalInputValue(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default define.page(async function ManagerAuditsPage(ctx) {
   const user = ctx.state.user!;
   const url = new URL(ctx.req.url);
-  const since = url.searchParams.get("since") ?? String(startOfTodayMs());
-  const until = url.searchParams.get("until") ?? String(Date.now());
+  // All query params get defensive parsing — a bad ?since= (NaN, "undefined",
+  // empty string, etc.) would otherwise propagate into `new Date(NaN)` and
+  // 500 the whole page. Clear is a plain `<a href="/manager/audits">` so
+  // *normally* lands here with no params, but stray params from a browser
+  // history nav, a malformed link, or a JS-set hidden-input race can all
+  // produce non-numeric values.
+  const sinceMs = safeMs(url.searchParams.get("since"), startOfTodayMs());
+  const untilMs = safeMs(url.searchParams.get("until"), Date.now());
+  const since = String(sinceMs);
+  const until = String(untilMs);
   const owner = url.searchParams.get("owner") ?? "";
   const department = url.searchParams.get("department") ?? "";
   const shift = url.searchParams.get("shift") ?? "";
@@ -86,7 +115,7 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         style="margin-bottom:16px;padding:14px 18px;display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;"
         hx-get="/api/manager/audit-history"
         hx-target="#audit-history-table"
-        hx-trigger="change from:select, change delay:300ms from:input"
+        hx-trigger="change delay:200ms"
         hx-swap="innerHTML"
         hx-include="closest form"
       >
@@ -94,8 +123,8 @@ export default define.page(async function ManagerAuditsPage(ctx) {
           <label>Since</label>
           <input
             type="datetime-local" name="since-display" id="ah-since-display"
-            value={new Date(Number(since)).toISOString().slice(0, 16)}
-            {...{ "hx-on:change": `document.getElementById('ah-since').value = new Date(this.value).getTime();` }}
+            value={toLocalInputValue(sinceMs)}
+            {...{ "hx-on:change": `(()=>{const t=new Date(this.value).getTime();document.getElementById('ah-since').value=Number.isFinite(t)?t:'0';})()` }}
           />
           <input type="hidden" name="since" id="ah-since" value={since} />
         </div>
@@ -103,8 +132,8 @@ export default define.page(async function ManagerAuditsPage(ctx) {
           <label>Until</label>
           <input
             type="datetime-local" name="until-display" id="ah-until-display"
-            value={new Date(Number(until)).toISOString().slice(0, 16)}
-            {...{ "hx-on:change": `document.getElementById('ah-until').value = new Date(this.value).getTime();` }}
+            value={toLocalInputValue(untilMs)}
+            {...{ "hx-on:change": `(()=>{const t=new Date(this.value).getTime();document.getElementById('ah-until').value=Number.isFinite(t)?t:String(Date.now());})()` }}
           />
           <input type="hidden" name="until" id="ah-until" value={until} />
         </div>

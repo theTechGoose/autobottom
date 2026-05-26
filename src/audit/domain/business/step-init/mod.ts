@@ -149,7 +149,21 @@ export async function stepInit(req: Request): Promise<Response> {
     await saveFinding(orgId, finding);
 
     console.log(`[STEP-INIT] ${findingId}: Multi-genie: ${keys.length} recordings saved`);
-    await enqueueStep("transcribe", { findingId, orgId });
+    // CRITICAL: carry recording fields in the QStash payload. step-transcribe
+    // in a fresh isolate isn't guaranteed to see this saveFinding write within
+    // the QStash hop. step-transcribe writes findingStatus="transcribing"
+    // immediately on entry, which has overwritten the persisted doc with a
+    // stale-read snapshot missing s3RecordingKeys/s3RecordingKey/recordingPath —
+    // cascading into the "no s3 key" Invalid-Genie skip on audits whose genie
+    // downloaded successfully (see LI6JHRl9-N6uvuRoA8ykO incident). Mirror of
+    // the step-poll-transcript → step-transcribe-cb payload-carry pattern.
+    await enqueueStep("transcribe", {
+      findingId,
+      orgId,
+      s3RecordingKeys: keys,
+      s3RecordingKey: keys[0],
+      recordingPath: finding.recordingPath,
+    });
     return json({ ok: true, s3Keys: keys });
   }
 
@@ -215,7 +229,15 @@ export async function stepInit(req: Request): Promise<Response> {
     console.warn(`[STEP-INIT] ${findingId}: AssemblyAI pre-upload failed (transcribe will retry):`, err);
   }
 
-  // Enqueue transcription
-  await enqueueStep("transcribe", { findingId, orgId });
+  // Enqueue transcription — carry recording fields so step-transcribe doesn't
+  // depend on this isolate's saveFinding write being visible across the
+  // QStash hop. See multi-genie path comment above for context.
+  await enqueueStep("transcribe", {
+    findingId,
+    orgId,
+    s3RecordingKey: finding.s3RecordingKey,
+    recordingPath: finding.recordingPath,
+    assemblyAiUploadUrl: finding.assemblyAiUploadUrl,
+  });
   return json({ ok: true, s3Key });
 }

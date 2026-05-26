@@ -17,14 +17,36 @@ const POLL_DELAY_SECONDS = 15;
 
 export async function stepTranscribe(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId } = body;
+  // Recording fields are carried in the QStash payload by step-init so
+  // step-transcribe doesn't depend on a cross-isolate Firestore read of
+  // s3RecordingKey/s3RecordingKeys/recordingPath/assemblyAiUploadUrl.
+  // Without this, a stale read here cascaded into the "no s3 key"
+  // Invalid-Genie skip even on audits where the genie download succeeded
+  // (see LI6JHRl9-N6uvuRoA8ykO incident).
+  const {
+    findingId,
+    orgId,
+    s3RecordingKeys: payloadKeys,
+    s3RecordingKey: payloadKey,
+    recordingPath: payloadPath,
+    assemblyAiUploadUrl: payloadUploadUrl,
+  } = body;
 
-  console.log(`[STEP-TRANSCRIBE] ${findingId}: Starting...`);
+  console.log(`[STEP-TRANSCRIBE] ${findingId}: Starting... payloadKeysLength=${Array.isArray(payloadKeys) ? payloadKeys.length : 0} payloadKey=${typeof payloadKey === "string" && payloadKey ? "yes" : "no"}`);
   // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
+
+  // Re-hydrate from payload — guards against the chunked-write/cross-isolate
+  // race where step-init's saveFinding hasn't propagated yet. Without this,
+  // the next saveFinding below would overwrite the persisted doc with a
+  // stale snapshot missing the recording fields.
+  if (Array.isArray(payloadKeys) && payloadKeys.length > 0) finding.s3RecordingKeys = payloadKeys;
+  if (typeof payloadKey === "string" && payloadKey) finding.s3RecordingKey = payloadKey;
+  if (typeof payloadPath === "string" && payloadPath) finding.recordingPath = payloadPath;
+  if (typeof payloadUploadUrl === "string" && payloadUploadUrl) finding.assemblyAiUploadUrl = payloadUploadUrl;
 
   if (finding.rawTranscript) {
     console.log(`[STEP-TRANSCRIBE] ${findingId}: Already has transcript, skipping`);

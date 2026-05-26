@@ -10,7 +10,7 @@ import { Controller, Get, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
-import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId } from "@audit/domain/data/stats-repository/mod.ts";
+import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId, writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { getReviewStats, getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig, isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
 import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
@@ -214,8 +214,16 @@ export class DashboardController {
       // Reaudit + dashboard Re-run drain the audit-done-idx entry, so a row
       // present here with score==null is also "not yet retried." Perfect for
       // operator bulk-retry workflow.
+      //
+      // "invalid-genie" → reason === "invalid_genie" (finalize path that
+      //   fired when the recording couldn't be downloaded). These typically
+      //   have score==0, NOT null — hence the dedicated branch.
+      // "no-score-or-invalid-genie" → catches both above. Operator's
+      //   "show me every broken audit" filter.
       if (scoreState === "no-score" && c.score != null) return false;
       if (scoreState === "has-score" && c.score == null) return false;
+      if (scoreState === "invalid-genie" && c.reason !== "invalid_genie") return false;
+      if (scoreState === "no-score-or-invalid-genie" && c.score != null && c.reason !== "invalid_genie") return false;
       return true;
     });
 
@@ -240,30 +248,63 @@ export class DashboardController {
     // Hydrate missing extended fields from finding doc — page items only.
     // Old audit-done-idx entries lacked voName/owner/department/shift; the
     // current writer fills them in but historical data needs the lookup.
+    //
+    // Also hydrates `recordingId` (genie #) — never written by the pipeline
+    // historically. After hydrate, we fire-and-forget a writeAuditDoneIndex
+    // for any row we newly enriched so the index is self-healing: next read
+    // finds the recordingId already present, no finding fetch needed.
     async function hydrateMissing(rows: AuditRow[]): Promise<AuditRow[]> {
-      const needs = rows.filter((r) => r.voName === undefined && r.owner === undefined);
+      const needs = rows.filter((r) =>
+        (r.voName === undefined && r.owner === undefined) || !r.recordingId
+      );
       if (needs.length === 0) return rows;
-      const findings = await Promise.all(needs.map((r) => getFinding(orgId, r.findingId)));
+      const findings = await Promise.all(needs.map((r) => getFinding(orgId, r.findingId).catch(() => null)));
       const findingMap = new Map<string, Record<string, unknown>>();
-      findings.forEach((f, i) => { if (f) findingMap.set(needs[i].findingId, f); });
-      return rows.map((r) => {
-        if (r.voName !== undefined || r.owner !== undefined) return r;
+      findings.forEach((f, i) => { if (f) findingMap.set(needs[i].findingId, f as Record<string, unknown>); });
+      const backfill: AuditDoneIndexEntry[] = [];
+      const hydrated = rows.map((r) => {
         const f = findingMap.get(r.findingId);
         if (!f) return r;
         const rec = f.record as Record<string, unknown> | undefined;
         const isPkg = f.recordingIdField === "GenieNumber";
         const rawVo = String(rec?.VoName ?? "");
         const vo = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
-        return {
+        const recordingId = String((f as Record<string, unknown>).recordingId ?? "").trim() || undefined;
+        const next: AuditRow = {
           ...r,
-          isPackage: isPkg,
-          voName: vo || undefined,
-          owner: f.owner as string | undefined,
-          department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined,
-          shift: isPkg ? undefined : (String(rec?.Shift ?? "") || undefined),
-          startedAt: f.startedAt as number | undefined,
+          isPackage: r.isPackage ?? isPkg,
+          voName: r.voName ?? (vo || undefined),
+          owner: r.owner ?? (f.owner as string | undefined),
+          department: r.department ?? (String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined),
+          shift: r.shift ?? (isPkg ? undefined : (String(rec?.Shift ?? "") || undefined)),
+          startedAt: r.startedAt ?? (f.startedAt as number | undefined),
+          recordingId: r.recordingId ?? recordingId,
         };
+        // Queue write-back only if we actually added recordingId (the most
+        // common gap). Old rows with voName/owner already present but no
+        // recordingId still get backfilled this way.
+        if (!r.recordingId && next.recordingId) {
+          // Strip the AuditRow-only `ts` field before persisting.
+          // deno-lint-ignore no-explicit-any
+          const { ts: _ts, ...entry } = next as any;
+          backfill.push(entry as AuditDoneIndexEntry);
+        }
+        return next;
       });
+      if (backfill.length > 0) {
+        // Fire-and-forget. Each writeAuditDoneIndex is one small Firestore
+        // write; failures are non-fatal (next hydrate will retry the same
+        // entry). Wrapped in Promise.allSettled so one bad write doesn't
+        // abort the rest.
+        Promise.allSettled(backfill.map((e) => writeAuditDoneIndex(orgId, e)))
+          .then((results) => {
+            const failed = results.filter((r) => r.status === "rejected").length;
+            if (failed > 0) console.warn(`[AUDIT-HISTORY] ⚠️ ${failed}/${backfill.length} index back-fills failed`);
+            else console.log(`[AUDIT-HISTORY] 🔧 back-filled recordingId on ${backfill.length} audit-done-idx entries`);
+          })
+          .catch(() => {});
+      }
+      return hydrated;
     }
 
     if (format === "csv") {
@@ -296,8 +337,13 @@ export class DashboardController {
 
     const total = filtered.length;
     const pages = Math.max(1, Math.ceil(total / lim));
-    const pageItems = filtered.slice((pg - 1) * lim, pg * lim);
-    console.log(`[AUDIT-HISTORY] hydrating ${pageItems.length} page rows...`);
+    // Clamp the requested page so a stale ?page=N (left over from a wider
+    // window that had more pages) never returns an empty slice + non-zero
+    // total. Without this, switching from 7d→3d while on page 2 produced
+    // "27 audits in window" + "No audits match the current filters."
+    const effectivePg = Math.min(Math.max(1, pg), pages);
+    const pageItems = filtered.slice((effectivePg - 1) * lim, effectivePg * lim);
+    console.log(`[AUDIT-HISTORY] hydrating ${pageItems.length} page rows (effectivePg=${effectivePg}/${pages})...`);
     let hydratedPage: AuditRow[];
     try {
       hydratedPage = await hydrateMissing(pageItems);
@@ -323,8 +369,8 @@ export class DashboardController {
         appealStatus: appeals[i] ? appeals[i]!.status : null,
       }));
 
-      console.log(`[AUDIT-HISTORY] ✅ DONE total=${total}/${windowEntries.length} page=${pg}/${pages} type=${t} owner=${owner || "all"} dept=${department || "all"}`);
-      return { items, total, pages, page: pg, owners, departments, shifts, reviewers };
+      console.log(`[AUDIT-HISTORY] ✅ DONE total=${total}/${windowEntries.length} page=${effectivePg}/${pages} type=${t} owner=${owner || "all"} dept=${department || "all"}`);
+      return { items, total, pages, page: effectivePg, owners, departments, shifts, reviewers };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error && err.stack ? err.stack : "<no stack>";

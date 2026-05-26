@@ -17,6 +17,7 @@ export interface AdminAuditItem {
   completedAt?: number;
   score: number;
   recordId?: string;
+  recordingId?: string;   // genie # — hydrated + backfilled by the audit-history controller
   isPackage?: boolean;
   voName?: string;
   owner?: string;
@@ -149,6 +150,7 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
             <th>Finding ID</th>
             <th>Logs</th>
             <th>QB Record</th>
+            <th>Genie</th>
             <th>Type</th>
             <th>Team Member</th>
             <th>Auditor</th>
@@ -181,6 +183,11 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
                 <td>
                   {c.recordId
                     ? <a href={`${c.isPackage ? QB_PKG_URL : QB_DATE_URL}${encodeURIComponent(c.recordId)}`} target="_blank" class="mono" style="color:var(--blue);text-decoration:none;font-size:11px;">{c.recordId}</a>
+                    : <span style="color:var(--text-dim);">—</span>}
+                </td>
+                <td>
+                  {c.recordingId
+                    ? <span class="mono" style={`font-size:11px;color:${c.reason === "invalid_genie" ? "var(--red)" : "var(--text)"};`} title={c.reason === "invalid_genie" ? "Recording could not be downloaded from the genie API for this contract #" : ""}>{c.recordingId}</span>
                     : <span style="color:var(--text-dim);">—</span>}
                 </td>
                 <td>{typeBadge(c.isPackage)}</td>

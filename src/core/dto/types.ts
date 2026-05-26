@@ -42,6 +42,7 @@ export interface AuditDoneIndexEntry {
   reason?: "perfect_score" | "invalid_genie" | "reviewed";
   score: number;
   recordId?: string;
+  recordingId?: string;   // genie # — backfilled on hydrate from the finding doc
   isPackage?: boolean;
   voName?: string;
   owner?: string;

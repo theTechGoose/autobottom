@@ -67,18 +67,26 @@ const WINDOWS: Array<{ h: number; label: string }> = [
  *  serializes the form's values exactly like a native submit. */
 const REFRESH_JS = `htmx.ajax('GET','/api/admin/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'})`;
 
+/** Reset paginator to page 1. Needed before every filter-driven refresh —
+ *  the hidden #ah-page input retains its value across filter changes, so a
+ *  click on page 2 followed by a window shrink (e.g. 7d → 3d) would slice
+ *  off the end of a now-smaller result set and render "X audits in window /
+ *  No audits match the current filters." Backend also clamps server-side,
+ *  but resetting here avoids the round-trip + keeps the URL clean. */
+const RESET_PAGE_JS = `document.getElementById('ah-page').value='1';`;
+
 /** JS snippet for window-button click — sets hidden since/until, hides ✕ Clear, refreshes. */
 function windowBtnJs(hours: number): string {
-  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
+  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('f-date-clear').style.display='none';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 }
 
 /** JS for custom-date Go button. Reveals ✕ Clear so user can return to 24h. */
 const goBtnJs =
-  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';${REFRESH_JS};})()`;
+  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 
 /** JS for ✕ Clear (visible only after a custom range) — return to 24h default. */
 const clearBtnJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 
 /** JS for Reset button — clears all filters back to defaults and 24h. */
 const resetJs =
@@ -244,6 +252,7 @@ export default define.page(async function AdminAuditsPage(ctx) {
         hx-target="#audit-history-table"
         hx-trigger="change from:select, change delay:300ms from:input[type=number], submit"
         hx-swap="innerHTML"
+        {...{ "hx-on:change": RESET_PAGE_JS }}
       >
         <label>Date Range
           <div class="window-btns">
@@ -337,6 +346,8 @@ export default define.page(async function AdminAuditsPage(ctx) {
             <option value="" selected={filters.scoreState === ""}>All</option>
             <option value="has-score" selected={filters.scoreState === "has-score"}>Has score</option>
             <option value="no-score" selected={filters.scoreState === "no-score"}>No score (—)</option>
+            <option value="invalid-genie" selected={filters.scoreState === "invalid-genie"}>Invalid Genie</option>
+            <option value="no-score-or-invalid-genie" selected={filters.scoreState === "no-score-or-invalid-genie"}>No score OR Invalid Genie</option>
           </select>
         </label>
 

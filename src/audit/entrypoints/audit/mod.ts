@@ -10,7 +10,7 @@ import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
-import { saveFinding, saveJob, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { saveFinding, saveJob, getFinding, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
 import { enqueueStep, getSelfUrl, getQueueCounts } from "@core/data/qstash/mod.ts";
 import { S3Ref } from "@core/data/s3/mod.ts";
@@ -169,6 +169,25 @@ export class AuditController {
       return { error: "lookup failed", detail: msg };
     }
     if (finding) {
+      // Transcript text lives in two places: on the finding doc (working
+      // copy for pipeline steps) and in the separate `audit-transcript`
+      // chunked doc (canonical persistent record, written by step-transcribe-cb
+      // + step-diarize-async). If either transcript field on the finding
+      // is missing — chunked-read race, downstream save with a stale value,
+      // or a skip-to-finalize that left the field empty — fall back to the
+      // canonical doc so the report page always renders the call text.
+      if (!finding.rawTranscript || !finding.diarizedTranscript) {
+        try {
+          const t = await getTranscript(orgId, id);
+          if (t) {
+            (finding as Record<string, unknown>).rawTranscript ??= t.raw;
+            (finding as Record<string, unknown>).diarizedTranscript ??= t.diarized;
+            (finding as Record<string, unknown>).utteranceTimes ??= t.utteranceTimes;
+          }
+        } catch (err) {
+          console.warn(`[GET-FINDING] ⚠️ getTranscript fallback failed for id=${id}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       console.log(`[GET-FINDING] ✅ found id=${id} orgId=${orgId}`);
       return finding;
     }

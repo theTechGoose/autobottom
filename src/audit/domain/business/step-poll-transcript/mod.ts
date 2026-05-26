@@ -13,6 +13,17 @@ function json(data: unknown, status = 200) {
 
 const POLL_DELAY_SECONDS = 15;
 
+const TRANSCRIBE_CB_PAYLOAD_MAX = 900_000;
+
+function buildTranscribeCbPayload(findingId: string, orgId: string, rawTranscript: string, utteranceTimes: number[] | undefined): Record<string, unknown> {
+  const payload: Record<string, unknown> = { findingId, orgId };
+  if (rawTranscript && rawTranscript.length <= TRANSCRIBE_CB_PAYLOAD_MAX) {
+    payload.rawTranscript = rawTranscript;
+    if (utteranceTimes && utteranceTimes.length > 0) payload.utteranceTimes = utteranceTimes;
+  }
+  return payload;
+}
+
 export async function stepPollTranscript(req: Request): Promise<Response> {
   const body = await req.json();
   // `transcriptId` is now carried in the QStash payload by step-transcribe
@@ -39,7 +50,7 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
     finding.rawTranscript = "Genie Invalid";
     finding.findingStatus = "finished";
     await saveFinding(orgId, finding);
-    await enqueueStep("transcribe-complete", { findingId, orgId });
+    await enqueueStep("transcribe-complete", buildTranscribeCbPayload(findingId, orgId, finding.rawTranscript, undefined));
     return json({ ok: true, error: "no transcript id" });
   }
 
@@ -72,7 +83,7 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
     finding.rawTranscript = "Genie Invalid";
     finding.findingStatus = "finished";
     await saveFinding(orgId, finding);
-    await enqueueStep("transcribe-complete", { findingId, orgId });
+    await enqueueStep("transcribe-complete", buildTranscribeCbPayload(findingId, orgId, finding.rawTranscript, undefined));
     return json({ ok: true, transcriptStatus: transcript.status });
   }
 
@@ -91,7 +102,8 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
   }
 
   await saveFinding(orgId, finding);
-  await enqueueStep("transcribe-complete", { findingId, orgId });
+  const utteranceTimes = (finding as Record<string, any>).utteranceTimes as number[] | undefined;
+  await enqueueStep("transcribe-complete", buildTranscribeCbPayload(findingId, orgId, finding.rawTranscript, utteranceTimes));
   console.log(`[STEP-POLL-TRANSCRIPT] ${findingId}: ✅ Completed${elapsedTag}, transcript length=${result.text.length}`);
   return json({ ok: true, completed: true });
 }

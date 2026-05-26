@@ -424,11 +424,128 @@ export class AdminConfigController {
       }
     }
 
+    // ── KV total via __audit-job__ (exact count, fast) ──
+    // AuditJob is a flat TypedStore — one tiny unchunked doc per saveJob call,
+    // and saveJob fires exactly once per pipeline run. So this prefix walk
+    // gives the authoritative finding count without depending on whether the
+    // pipeline reached finalize (completed-audit-stat) or whether the body
+    // is parseable from chunk-0 (audit-finding deep). Values are sub-1KB so
+    // bandwidth is trivial.
+    const kvFindingsResult: { count: number; rowsScanned: number; tookMs?: number; error?: string; capped?: string } = {
+      count: 0, rowsScanned: 0,
+    };
+    if (wantKv) {
+      const KV_JOB_ROW_CAP = 500_000;
+      const KV_JOB_TIME_BUDGET_MS = 20_000;
+      try {
+        const t0 = Date.now();
+        const { getKv } = await import("@core/data/deno-kv/mod.ts");
+        const db = await getKv();
+        const findingIds = new Set<string>();
+        let rows = 0;
+        let capped = false;
+        let timedOut = false;
+        for await (const entry of db.list({ prefix: ["__audit-job__", orgId] })) {
+          rows++;
+          if (rows >= KV_JOB_ROW_CAP) { capped = true; break; }
+          if (Date.now() - t0 > KV_JOB_TIME_BUDGET_MS) { timedOut = true; break; }
+          // Expected shape: ["__audit-job__", orgId, jobId]. jobId 1:1 with finding.
+          const key = entry.key as Deno.KvKey;
+          const jobId = typeof key[2] === "string" ? key[2] : "";
+          if (jobId) findingIds.add(jobId);
+        }
+        kvFindingsResult.count = findingIds.size;
+        kvFindingsResult.rowsScanned = rows;
+        kvFindingsResult.tookMs = Date.now() - t0;
+        if (capped) kvFindingsResult.capped = `row-cap ${KV_JOB_ROW_CAP} reached`;
+        if (timedOut) kvFindingsResult.capped = `time-budget ${KV_JOB_TIME_BUDGET_MS}ms reached`;
+      } catch (err) {
+        kvFindingsResult.error = (err as Error).message ?? String(err);
+        console.error(`❌ [AUDIT-COUNTS] audit-job walk failed:`, err);
+      }
+    }
+
+    // ── KV deep via __audit-finding__ chunk-0 regex (best-effort split) ──
+    // Legacy ChunkedKv serializes the finding as JSON then splits into 30KB
+    // string slices keyed by numeric chunk index. Chunk-0 contains the start
+    // of the JSON string — `recordingIdField` and `record.RecordId` are
+    // assigned in startAudit early in the finding lifecycle, so they land
+    // in the first ~1KB of the JSON and the regex catches them for nearly
+    // every finding. The few outliers (unusual JSON layouts pushing the
+    // fields past 30KB) just don't get categorized; they're still counted
+    // in the audit-job walk above, so the gap is visible.
+    //
+    // Bandwidth: ~27k chunk-0 entries × 30KB ≈ 800MB at scale. Time budget
+    // raised to 50s. Non-chunk-0 entries are still iterated (Deno KV has no
+    // keysOnly mode) but processed as no-op so JS time is negligible.
+    const kvDeepResult: {
+      total: number; packagesUnique: number; dateLegsUnique: number;
+      packageRids?: string[]; dateLegRids?: string[];
+      rowsScanned: number; chunkZeroSeen: number;
+      tookMs?: number; error?: string; capped?: string;
+    } = {
+      total: 0, packagesUnique: 0, dateLegsUnique: 0, rowsScanned: 0, chunkZeroSeen: 0,
+    };
+    if (wantKv) {
+      const KV_DEEP_ROW_CAP = 500_000;
+      const KV_DEEP_TIME_BUDGET_MS = 50_000;
+      const RECORDING_FIELD_RE = /"recordingIdField"\s*:\s*"([^"]+)"/;
+      const RECORD_ID_RE = /"RecordId"\s*:\s*(\d+)/;
+      try {
+        const t0 = Date.now();
+        const { getKv } = await import("@core/data/deno-kv/mod.ts");
+        const db = await getKv();
+        const pkgRids = new Set<string>();
+        const dlRids = new Set<string>();
+        let rows = 0;
+        let chunkZeroSeen = 0;
+        let capped = false;
+        let timedOut = false;
+        for await (const entry of db.list({ prefix: ["__audit-finding__", orgId] })) {
+          rows++;
+          if (rows >= KV_DEEP_ROW_CAP) { capped = true; break; }
+          if (Date.now() - t0 > KV_DEEP_TIME_BUDGET_MS) { timedOut = true; break; }
+          const key = entry.key as Deno.KvKey;
+          if (key.length < 4) continue;
+          const tail = key[key.length - 1];
+          if (tail !== 0 && tail !== "0") continue; // only chunk-0 carries the body head
+          chunkZeroSeen++;
+          const raw = entry.value;
+          if (typeof raw !== "string") continue;
+          const fieldMatch = raw.match(RECORDING_FIELD_RE);
+          const ridMatch = raw.match(RECORD_ID_RE);
+          if (!ridMatch) continue;
+          const rid = ridMatch[1].trim();
+          if (!rid) continue;
+          if (fieldMatch && fieldMatch[1] === "GenieNumber") {
+            pkgRids.add(rid); combinedPackages.add(rid);
+          } else {
+            dlRids.add(rid); combinedDateLegs.add(rid);
+          }
+        }
+        kvDeepResult.total = chunkZeroSeen;
+        kvDeepResult.packagesUnique = pkgRids.size;
+        kvDeepResult.dateLegsUnique = dlRids.size;
+        kvDeepResult.packageRids = [...pkgRids];
+        kvDeepResult.dateLegRids = [...dlRids];
+        kvDeepResult.rowsScanned = rows;
+        kvDeepResult.chunkZeroSeen = chunkZeroSeen;
+        kvDeepResult.tookMs = Date.now() - t0;
+        if (capped) kvDeepResult.capped = `row-cap ${KV_DEEP_ROW_CAP} reached — partial counts`;
+        if (timedOut) kvDeepResult.capped = `time-budget ${KV_DEEP_TIME_BUDGET_MS}ms reached — partial counts`;
+      } catch (err) {
+        kvDeepResult.error = (err as Error).message ?? String(err);
+        console.error(`❌ [AUDIT-COUNTS] audit-finding deep walk failed:`, err);
+      }
+    }
+
     return {
       ok: true,
       range: { sinceMs: from, untilMs: to, allTime: from === 0 && to >= Date.now() - 1000 },
       firestore: fsResult,
       kv: wantKv ? kvResult : { skipped: true },
+      kvFindings: wantKv ? kvFindingsResult : { skipped: true },
+      kvDeep: wantKv ? kvDeepResult : { skipped: true },
       combined: {
         packagesUnique: combinedPackages.size,
         dateLegsUnique: combinedDateLegs.size,

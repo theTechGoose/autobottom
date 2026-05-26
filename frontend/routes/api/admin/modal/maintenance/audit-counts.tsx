@@ -23,11 +23,36 @@ interface CountBlock {
   skipped?: boolean;
 }
 
+interface KvFindingsBlock {
+  count?: number;
+  rowsScanned?: number;
+  tookMs?: number;
+  error?: string;
+  skipped?: boolean;
+  capped?: string;
+}
+
+interface KvDeepBlock {
+  total?: number;
+  packagesUnique?: number;
+  dateLegsUnique?: number;
+  packageRids?: string[];
+  dateLegRids?: string[];
+  rowsScanned?: number;
+  chunkZeroSeen?: number;
+  tookMs?: number;
+  error?: string;
+  skipped?: boolean;
+  capped?: string;
+}
+
 interface Resp {
   ok?: boolean;
   range?: { sinceMs: number; untilMs: number; allTime: boolean };
   firestore?: CountBlock;
   kv?: CountBlock;
+  kvFindings?: KvFindingsBlock;
+  kvDeep?: KvDeepBlock;
   combined?: { packagesUnique: number; dateLegsUnique: number; recordsUnique: number };
   totalTookMs?: number;
   error?: string;
@@ -77,15 +102,23 @@ export const handler = define.handlers({
     const fsErr = r.firestore?.error;
     const kvErr = r.kv?.error;
     const kvSkipped = r.kv?.skipped === true;
+    const kvJobsErr = r.kvFindings?.error;
+    const kvJobsSkipped = r.kvFindings?.skipped === true;
+    const kvDeepErr = r.kvDeep?.error;
+    const kvDeepSkipped = r.kvDeep?.skipped === true;
     const rangeLabel = r.range?.allTime ? "All time" :
       `${r.range?.sinceMs ? new Date(r.range.sinceMs).toISOString().slice(0, 10) : "epoch"} → ${r.range?.untilMs ? new Date(r.range.untilMs).toISOString().slice(0, 10) : "now"}`;
+
+    // RecordId list rendering (collapsible — only when the deep scan ran).
+    const pkgRids = r.kvDeep?.packageRids ?? [];
+    const dlRids = r.kvDeep?.dateLegRids ?? [];
 
     const html = renderToString(
       <div style="border:1px solid var(--border);border-radius:6px;padding:12px;background:var(--bg);">
         <div style="font-size:12px;font-weight:700;color:var(--text-bright);margin-bottom:8px;">
           Audit Counts — {rangeLabel}
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:12px;">
           <div style="border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg-2);">
             <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Combined</div>
             <div style="font-size:18px;font-weight:700;color:var(--text-bright);">{fmt(r.combined?.recordsUnique)}</div>
@@ -107,7 +140,21 @@ export const handler = define.handlers({
             </div>
           </div>
           <div style="border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg-2);">
-            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">KV (legacy)</div>
+            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">KV (audit-job)</div>
+            <div style={`font-size:18px;font-weight:700;color:${kvJobsErr ? "var(--red)" : "var(--text-bright)"};`}>
+              {kvJobsSkipped ? "skipped" : kvJobsErr ? "error" : fmt(r.kvFindings?.count)}
+            </div>
+            <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">
+              {kvJobsSkipped ? "Include KV unchecked" : kvJobsErr ? kvJobsErr : <>
+                exact total — one job per pipeline run
+                <br />
+                {fmt(r.kvFindings?.rowsScanned)} rows · {fmt(r.kvFindings?.tookMs)}ms
+                {r.kvFindings?.capped && <><br /><span style="color:var(--yellow);">⚠ {r.kvFindings.capped}</span></>}
+              </>}
+            </div>
+          </div>
+          <div style="border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg-2);">
+            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">KV (completed)</div>
             <div style={`font-size:18px;font-weight:700;color:${kvErr ? "var(--red)" : "var(--text-bright)"};`}>
               {kvSkipped ? "skipped" : kvErr ? "error" : fmt(r.kv?.recordsUnique)}
             </div>
@@ -116,10 +163,48 @@ export const handler = define.handlers({
                 {fmt(r.kv?.packagesUnique)} packages · {fmt(r.kv?.dateLegsUnique)} date-legs
                 <br />
                 {fmt(r.kv?.rowsScanned)} rows · {fmt(r.kv?.tookMs)}ms
+                <br />
+                <span style="color:var(--text-dim);font-style:italic;">subset — finalize-only</span>
+              </>}
+            </div>
+          </div>
+          <div style="border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg-2);">
+            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">KV (audit-finding deep)</div>
+            <div style={`font-size:18px;font-weight:700;color:${kvDeepErr ? "var(--red)" : "var(--text-bright)"};`}>
+              {kvDeepSkipped ? "skipped" : kvDeepErr ? "error" : fmt(r.kvDeep?.total)}
+            </div>
+            <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">
+              {kvDeepSkipped ? "Include KV unchecked" : kvDeepErr ? kvDeepErr : <>
+                {fmt(r.kvDeep?.packagesUnique)} packages · {fmt(r.kvDeep?.dateLegsUnique)} date-legs
+                <br />
+                {fmt(r.kvDeep?.rowsScanned)} rows · {fmt(r.kvDeep?.tookMs)}ms
+                {r.kvDeep?.capped && <><br /><span style="color:var(--yellow);">⚠ {r.kvDeep.capped}</span></>}
               </>}
             </div>
           </div>
         </div>
+
+        {(pkgRids.length > 0 || dlRids.length > 0) && (
+          <details style="margin-bottom:8px;">
+            <summary style="font-size:11px;color:var(--text-dim);cursor:pointer;">
+              Raw recordIds from deep scan ({pkgRids.length + dlRids.length} unique)
+            </summary>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">
+              <div>
+                <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">
+                  Packages ({pkgRids.length})
+                </div>
+                <pre style="font-size:10px;font-family:var(--mono);background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all;">{pkgRids.join("\n")}</pre>
+              </div>
+              <div>
+                <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">
+                  Date-legs ({dlRids.length})
+                </div>
+                <pre style="font-size:10px;font-family:var(--mono);background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all;">{dlRids.join("\n")}</pre>
+              </div>
+            </div>
+          </details>
+        )}
         <details>
           <summary style="font-size:11px;color:var(--text-dim);cursor:pointer;">Raw JSON</summary>
           <pre style="font-size:10px;font-family:var(--mono);background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:8px;white-space:pre-wrap;">

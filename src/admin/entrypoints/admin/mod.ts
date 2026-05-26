@@ -362,30 +362,44 @@ export class AdminConfigController {
     }
 
     // ── KV legacy via audit-finding ──
+    // Prod legacy stores findings under the TypedStore prefix
+    // ["__audit-finding__", orgId, findingId, chunkN]. Walking
+    // [orgId, "audit-finding"] (the orgKey convention) returns 0 — that's
+    // a different namespace prod never used. See migration/mod.ts:98-106
+    // for the canonical TypedStore key shape documentation.
+    //
+    // 503-prevention rails:
+    //  - HARD row cap (300k) so a runaway scan never blocks the request.
+    //  - Time budget (45s) so we leave headroom under Deno Deploy's 60s
+    //    request budget and surface partial counts instead of timing out.
+    //  - We only DECODE bodies for chunk-0 entries (the head body lives
+    //    there per the legacy chunked layout). Higher chunks are counted
+    //    in `rowsScanned` but skipped without value materialization, so
+    //    transcript chunks don't blow up isolate memory.
     if (wantKv) {
+      const KV_ROW_CAP = 300_000;
+      const KV_TIME_BUDGET_MS = 45_000;
       try {
         const kvT0 = Date.now();
-        const { getKv, orgKey } = await import("@core/data/deno-kv/mod.ts");
+        const { getKv } = await import("@core/data/deno-kv/mod.ts");
         const db = await getKv();
         const kvPackages = new Set<string>();
         const kvDateLegs = new Set<string>();
         let rows = 0;
-        const seenFindingIds = new Set<string>();
-        // Iterate every audit-finding key. The doc body lives at chunk-0
-        // (legacy chunked layout: [..., "audit-finding", fid, "0"]). One
-        // findingId can produce several rows in this scan (header + chunks);
-        // we dedupe by findingId before reading the body, and skip findings
-        // we've already counted.
-        for await (const entry of db.list({ prefix: orgKey(orgId, "audit-finding") })) {
+        let capped = false;
+        let timedOut = false;
+        for await (const entry of db.list({ prefix: ["__audit-finding__", orgId] })) {
           rows++;
+          if (rows >= KV_ROW_CAP) { capped = true; break; }
+          if (Date.now() - kvT0 > KV_TIME_BUDGET_MS) { timedOut = true; break; }
           const key = entry.key as Deno.KvKey;
-          if (key.length < 3) continue;
-          const fid = typeof key[2] === "string" ? key[2] as string : "";
-          if (!fid || seenFindingIds.has(fid)) continue;
-          seenFindingIds.add(fid);
-          // Read the chunk-0 body to extract record.RecordId + recordingIdField.
-          // If the legacy KV layout used a different chunk shape, the values
-          // are simply missing and we skip this finding.
+          // Expected shape: ["__audit-finding__", orgId, findingId, chunkN].
+          if (key.length < 4) continue;
+          // Only the chunk-0 entry has the head body. Skip higher chunks
+          // and the `_n` meta entry — they have no record/RecordId field.
+          const tail = key[key.length - 1];
+          const isChunkZero = tail === 0 || tail === "0";
+          if (!isChunkZero) continue;
           const body = (entry.value as Record<string, unknown> | undefined) ?? undefined;
           if (!body) continue;
           const completedAt = Number((body as { completedAt?: number }).completedAt ?? 0);
@@ -404,6 +418,8 @@ export class AdminConfigController {
         kvResult.recordsUnique = kvPackages.size + kvDateLegs.size;
         kvResult.rowsScanned = rows;
         kvResult.tookMs = Date.now() - kvT0;
+        if (capped) (kvResult as Record<string, unknown>).capped = `row-cap ${KV_ROW_CAP} reached — re-run with a tighter date range for full counts`;
+        if (timedOut) (kvResult as Record<string, unknown>).capped = `time-budget ${KV_TIME_BUDGET_MS}ms reached — re-run with a tighter date range for full counts`;
       } catch (err) {
         kvResult.error = (err as Error).message ?? String(err);
         console.error(`❌ [AUDIT-COUNTS] kv walk failed:`, err);

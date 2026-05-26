@@ -188,6 +188,32 @@ export async function publishStep(step: string, body: unknown): Promise<string> 
   }, {}, "client");
 }
 
+/** Publish JSON to an arbitrary URL via QStash with optional delay. Used by
+ *  long-running multi-tick jobs (e.g. audit-counts deep scan) that need to
+ *  self-schedule a follow-up tick without bolting onto the pipeline-step
+ *  machinery. URL must be absolute. */
+export async function publishUrl(url: string, body: unknown, delaySeconds?: number): Promise<string> {
+  return withSpan("qstash.publishUrl", async (span) => {
+    span.setAttribute("qstash.url", url);
+    if (isLocalMode()) return localEnqueue(url, body, delaySeconds);
+    const headers: Record<string, string> = {
+      ...qstashAuth(),
+      "Content-Type": "application/json",
+      "Upstash-Retries": "0",
+    };
+    if (delaySeconds) headers["Upstash-Delay"] = `${delaySeconds}s`;
+    const res = await fetch(`${qstashUrl()}/v2/publish/${url}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`QStash publishUrl failed: ${res.status} ${await res.text()}`);
+    const data = await res.json();
+    metric("autobottom.qstash.publish_url", 1);
+    return data.messageId;
+  }, {}, "client");
+}
+
 export function enqueueCleanup(body: unknown, delaySeconds: number): Promise<string> {
   return withSpan("qstash.enqueueCleanup", async () => {
     const url = `${selfUrl()}/audit/step/cleanup`;

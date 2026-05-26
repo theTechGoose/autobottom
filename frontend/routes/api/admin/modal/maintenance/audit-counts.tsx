@@ -10,7 +10,7 @@
  *  source succeeded. */
 
 import { define } from "../../../../../lib/define.ts";
-import { apiFetch } from "../../../../../lib/api.ts";
+import { apiFetch, apiPost } from "../../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 
 interface CountBlock {
@@ -74,6 +74,7 @@ export const handler = define.handlers({
     const sinceStr = String(form.get("since") ?? "").trim();
     const untilStr = String(form.get("until") ?? "").trim();
     const skipKv = String(form.get("skipKv") ?? "") === "true";
+    const email = String(form.get("email") ?? "").trim();
 
     const sinceMs = parseDateInputToMs(sinceStr);
     // For untilMs we want end-of-day so a "to: 2026-05-15" includes audits
@@ -81,6 +82,68 @@ export const handler = define.handlers({
     const untilMsRaw = parseDateInputToMs(untilStr);
     const untilMs = untilMsRaw != null ? untilMsRaw + 86_400_000 - 1 : null;
 
+    // If an email is provided, kick off the multi-tick background job that
+    // walks the entire __audit-finding__ prefix across multiple QStash
+    // self-scheduled ticks (each ~45s) and emails the operator the exact
+    // counts + a CSV of every unique recordId when done.
+    if (email && email.includes("@")) {
+      try {
+        const startResp = await apiPost<{ ok: boolean; jobId?: string; error?: string }>(
+          `/admin/audit-counts/start`,
+          ctx.req,
+          {
+            email,
+            sinceMs: sinceMs ?? 0,
+            untilMs: untilMs ?? Date.now(),
+          },
+        );
+        if (!startResp.ok || !startResp.jobId) {
+          return new Response(
+            renderToString(
+              <div style="font-size:11px;padding:10px;border:1px solid var(--red);border-radius:6px;color:var(--red);">
+                Failed to start background job: {startResp.error ?? "unknown"}
+              </div>,
+            ),
+            { headers: { "content-type": "text/html" } },
+          );
+        }
+        const jobId = startResp.jobId;
+        const html = renderToString(
+          <div style="border:1px solid var(--border);border-radius:6px;padding:12px;background:var(--bg);">
+            <div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px;">
+              ✓ Deep scan queued
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">
+              Job <code>{jobId}</code> is walking the full <code>__audit-finding__</code> prefix in the background.
+              Expected runtime: ~2-4 minutes. When done, <strong>{email}</strong> will get an email with the exact counts and a CSV attachment of every unique recordId.
+              You can close this modal — the job runs server-side.
+            </div>
+            {/* Live status — polls every 4s until status flips to complete/error. */}
+            <div
+              id={`acj-status-${jobId}`}
+              hx-get={`/api/admin/modal/maintenance/audit-counts-status?jobId=${encodeURIComponent(jobId)}`}
+              hx-trigger="load delay:4s, every 4s"
+              hx-swap="outerHTML"
+              style="font-size:11px;color:var(--text-dim);margin-top:6px;padding:8px;background:var(--bg-2);border:1px solid var(--border);border-radius:5px;"
+            >
+              Status: <span style="color:var(--yellow);">queuing…</span>
+            </div>
+          </div>,
+        );
+        return new Response(html, { headers: { "content-type": "text/html" } });
+      } catch (e) {
+        return new Response(
+          renderToString(
+            <div style="font-size:11px;padding:10px;border:1px solid var(--red);border-radius:6px;color:var(--red);">
+              Failed to start background job: {String((e as Error).message ?? e)}
+            </div>,
+          ),
+          { headers: { "content-type": "text/html" } },
+        );
+      }
+    }
+
+    // No email → existing synchronous (capped) behavior.
     const qs = new URLSearchParams();
     if (sinceMs != null) qs.set("since", String(sinceMs));
     if (untilMs != null) qs.set("until", String(untilMs));

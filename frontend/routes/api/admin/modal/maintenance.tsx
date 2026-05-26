@@ -407,6 +407,14 @@ function AuditCountsPanel() {
             <input type="checkbox" name="skipKv" value="true" /> Skip KV walk (Firestore only — faster)
           </label>
         </div>
+        <div class="sf" style="margin-bottom:8px;">
+          <label class="sf-label">Email results (optional — for the exact deep-scan + CSV attachment)</label>
+          <input type="email" name="email" class="sf-input" placeholder="you@monsterrg.com" />
+          <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">
+            Leave blank for the inline (capped) result. Fill it in to run the multi-tick deep scan (~3 min);
+            you'll get an email with the exact counts and a CSV of every unique date-leg + package recordId.
+          </div>
+        </div>
         <button type="submit" class="sf-btn primary ac-btn" style="padding:8px 16px;min-width:160px;">
           <span class="ac-label">Count audits</span>
           <span class="ac-loading">Counting… (may take 10–30s)</span>

@@ -555,6 +555,55 @@ export class AdminConfigController {
     };
   }
 
+  /** Audit Counts background job — multi-tick deep scan with email delivery.
+   *  See `src/admin/domain/business/audit-counts-job/mod.ts` for rationale.
+   *  Operator workflow: fill in email + dates on the maintenance modal,
+   *  click Count audits → this endpoint kicks off the job, returns jobId,
+   *  schedules first tick. Operator gets emailed exact counts + CSV when done. */
+  @Post("audit-counts/start") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
+  async startAuditCountsJob(@Body() body: GenericBodyRequest) {
+    const b = body as { email?: string; sinceMs?: number; untilMs?: number };
+    const email = String(b.email ?? "").trim();
+    if (!email || !email.includes("@")) return { error: "valid email required" };
+    const sinceMs = Number.isFinite(b.sinceMs) && Number(b.sinceMs) > 0 ? Number(b.sinceMs) : 0;
+    const untilMs = Number.isFinite(b.untilMs) && Number(b.untilMs) > 0 ? Number(b.untilMs) : Date.now();
+    const { startAuditCountsJob } = await import("@admin/domain/business/audit-counts-job/mod.ts");
+    const result = await startAuditCountsJob(ORG(), { email, sinceMs, untilMs });
+    return { ok: true, ...result };
+  }
+
+  /** QStash callback for the audit-counts-job deep-scan tick. Self-schedules
+   *  the next tick (or finalizes + emails) per the job's progress. */
+  @Post("audit-counts/tick") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
+  async tickAuditCountsJob(@Body() body: GenericBodyRequest) {
+    const b = body as { jobId?: string };
+    const jobId = String(b.jobId ?? "").trim();
+    if (!jobId) return { error: "jobId required" };
+    const { tickAuditCountsJob } = await import("@admin/domain/business/audit-counts-job/mod.ts");
+    await tickAuditCountsJob(ORG(), jobId);
+    return { ok: true };
+  }
+
+  /** UI polling endpoint — returns the current state of a running or
+   *  recently-completed audit-counts job. */
+  @Get("audit-counts/status") @ReturnedType(MessageResponse)
+  async statusAuditCountsJob(@Query("jobId") jobId: string) {
+    if (!jobId) return { error: "jobId required" };
+    const { getAuditCountsJob } = await import("@admin/domain/business/audit-counts-job/mod.ts");
+    const job = await getAuditCountsJob(ORG(), jobId);
+    if (!job) return { error: "job not found", jobId };
+    // Strip the recordId arrays from the status response — they can be
+    // 240KB+ once the deep scan accumulates and the UI doesn't need them.
+    // Email + CSV deliver the full list separately.
+    const { packageRids, dateLegRids, ...rest } = job;
+    return {
+      ok: true,
+      ...rest,
+      packagesUnique: packageRids.length,
+      dateLegsUnique: dateLegRids.length,
+    };
+  }
+
   /** Per-question failure report. Reads pre-aggregated counter docs written
    *  by step-finalize + reviewer/admin/judge flip handlers (see
    *  @audit/domain/data/question-stats-repository/mod.ts). Bounded reads:

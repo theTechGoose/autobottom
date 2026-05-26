@@ -36,6 +36,10 @@ Production lives on the `main` branch as a monolithic Deno app (~5000-line `main
    collection=autobottom)   SA JSON blobs)         Pinecone / Postmark
                                                     QStash / Google Sheets
 
+  In-process pub/sub bus (src/events/domain/business/event-bus) backs the
+  SSE streams at /api/events/stream + /api/chat/stream. Per-isolate scope;
+  polling fallback covers cross-isolate misses. NOT an external service.
+
   Deno KV is unused at runtime (post-cutover). Old KV state from main is
   preserved untouched as a backup; the seeding script copies it to Firestore.
   Future use: KV-as-cache for hot reads. Not wired today.
@@ -112,7 +116,7 @@ Run `deno task shape-check` to verify. Run `deno task check` for type checking. 
 | `src/agent/` | Agent dashboard + history endpoints |
 | `src/chat/` | In-app chat between roles |
 | `src/cron/` | Scheduled jobs (weekly sheets, watchdog) |
-| `src/events/` | Event/prefab broadcasts (used for sale_completed etc.) |
+| `src/events/` | Event/prefab broadcasts + in-memory pub/sub bus + SSE delivery (`events-stream`, `chat-stream`) |
 | `src/weekly-builder/` | Weekly report builder (currently placeholder) |
 | `src/core/` | Shared: KV, S3, qstash, OpenTelemetry, auth, DTOs, Google Sheets |
 
@@ -266,6 +270,55 @@ admin `#58a6ff` · review `#8b5cf6` · judge `#14b8a6` · manager `#bc8cff` · a
 
 ## Critical workflows (with file pointers)
 
+### Gamification lane (XP / badges / cosmetics)
+
+All four roles route through a shared `awardForCompletion(ctx)` ([gamification-lane/mod.ts](src/gamification/domain/business/gamification-lane/mod.ts)) wrapped in `runInBackgroundLane` so the request that earned it never blocks on the award. Hook sites:
+
+- Agent: [step-finalize/mod.ts](src/audit/domain/business/step-finalize/mod.ts) (refactored from the previous inline block)
+- Reviewer: [finalizeReviewedAudit](src/review/domain/business/review-queue/mod.ts) post-success
+- Judge: [recordJudgeDecision](src/judge/domain/data/judge-repository/mod.ts) (includes the `overturned` flag so role-specific badges evaluate correctly)
+- Manager: [submitRemediation](src/manager/domain/data/manager-repository/mod.ts) (with arrival→submit latency for the same-day bonus + 24h badge counter)
+
+**XP formulas** (per role): agent `floor(score * 0.3) + 50 perfect / +20 high`, reviewer `15 + 5 × questionsReviewed`, judge `20 flat`, manager `30 + 20 same-day bonus`.
+
+`checkAndEmitPrefab` now accepts an `animationId`; the lane resolves the user's `animBindings[prefabType]` per emit so the toast plays their equipped sound/animation. Streak milestones at 7/14/30/60/100, level-up fires when `awardXp` returns `leveledUp:true`.
+
+**Cosmetic resolver** at [frontend/lib/cosmetics.ts](frontend/lib/cosmetics.ts) maps `equippedTitle / equippedNameColor / equippedFrame / equippedFlair` against the static `STORE_CATALOG`. Imports the catalog directly via the `@gamification/` alias added to [frontend/deno.json](frontend/deno.json). Used everywhere we render a user's identity:
+
+- Sidebar avatar (always-visible; prefetched into `ctx.state.gameState` via a 30s in-isolate `_gameStateCache` in [frontend/routes/_middleware.ts](frontend/routes/_middleware.ts) so per-page cost is ~1 Firestore read per user per 30s)
+- `GameStateRow` card on every role dashboard (`/agent`, `/review/dashboard`, `/judge/dashboard`, `/manager/audits`) showing XP / level / streak / badges-earned
+- `LeaderboardCard` rows ([LeaderboardCard.tsx](frontend/components/LeaderboardCard.tsx)) via the shared `EquippedName` component
+- Chat bubble sender names for received messages
+
+### Real-time SSE pipeline
+
+In-memory pub/sub bus at [src/events/domain/business/event-bus/mod.ts](src/events/domain/business/event-bus/mod.ts) with two channels: per-user (`subscribeUser(orgId, email, cb)`) and per-org (`subscribeOrg(orgId, cb)`). Listener throws are caught so one bad client never wedges the publish loop.
+
+`emitEvent` / `emitBroadcastEvent` in events-repository now publish to the bus AFTER persisting to Firestore. The existing `/api/events` polling endpoint stays as the fallback; polling clients pick up the same data on the next tick.
+
+**Two SSE controllers**, both direct-dispatched in [main.ts](main.ts) (danet can't return a streaming Response):
+
+- `GET /api/events/stream` — global toaster: all broadcast events + per-user app events
+- `GET /api/chat/stream` — chat-filtered subset (`new-message`, `unread-changed`, `message-received`, typing-start/stop)
+
+A 25s `: keepalive\n\n` heartbeat per stream defeats Deno Deploy's idle-kill.
+
+**`EventToaster` island** ([frontend/islands/EventToaster.tsx](frontend/islands/EventToaster.tsx)) is mounted globally in `Layout.tsx`. Opens an EventSource, renders broadcast events as top-right toasts with role-accent colors + prefab icons (4.5s auto-dismiss), plays a rarity-keyed Web Audio tone for events carrying an `animationId`, and bumps a `.sb-chat-badge` counter on the Chat sidebar link for `message-received` events. Falls back to 10s polling against `/api/events` if EventSource fails or disconnects for >10s; reconnects on a 3s backoff.
+
+**`ChatStreamListener` island** ([frontend/islands/ChatStreamListener.tsx](frontend/islands/ChatStreamListener.tsx)) is chat-page-only — opens the chat-filtered stream and fires a synthetic `new-chat-message` event on the document body. The thread fragment's `hx-trigger="load, new-chat-message from:body, every 10s"` picks it up and re-fetches in real time; the 10s polling is the safety net.
+
+**Per-isolate scope** — v1 limitation. A publish in isolate A isn't visible to subscribers in isolate B; polling fallback covers it within 5-10s. Acceptable for current traffic; cross-isolate fanout (Firestore listener or shared KV broadcast) is a future enhancement.
+
+### Gamification Admin modal
+
+Admin destination for browsing + mutating per-user gamification state without impersonation. Sidebar entry under Configuration → "Gamification Admin" ([Sidebar.tsx](frontend/components/Sidebar.tsx)). Lazy-loaded modal at [gamification-admin.tsx](frontend/routes/api/admin/modal/gamification-admin.tsx) with three tabs:
+
+- **Users** (default) — full org table sorted by XP, equipped cosmetic swatches per row (frame ring + name-color dot + flair glyph), per-row Grant XP / Award Badge buttons that jump to the form tabs pre-filled. Auto-refreshes every 30s via HTMX.
+- **Grant XP** — pick user + amount (1-5000) + reason + opt-out broadcast checkbox. Calls `awardXp` from gamification-repository via the new `POST /admin/gamification/grant-xp` endpoint; emits the `level_up` prefab event when the grant pushes past a threshold.
+- **Award Badge** — pick user + badge from `BADGE_CATALOG`. Badge `<select>` filters client-side to the user's role via an `hx-on:change` handler. Atomic via `setStoredIfAbsent` — re-award shows a yellow "already earned — no-op" pill. Also grants the badge's `xpReward` so admin awards behave identically to natural earns.
+
+Three new endpoints in [admin/mod.ts](src/admin/entrypoints/admin/mod.ts): `gamification/users-list` (10s in-isolate cache, joins listUsers + listGameStates + earned-badge counts), `gamification/grant-xp`, `gamification/award-badge`. Every action reuses existing gamification-repository helpers; no new business modules.
+
 ### File Appeal (3 paths)
 1. **Judge Appeal** — failed-question checkboxes → judge queue + `appeal` webhook. [src/audit/domain/business/file-appeal/mod.ts](src/audit/domain/business/file-appeal/mod.ts), [frontend/islands/AppealModal.tsx](frontend/islands/AppealModal.tsx).
 2. **Re-audit with new genies** — soft-deletes original, creates new finding with `appealSourceFindingId`. [src/audit/domain/business/reaudit/mod.ts](src/audit/domain/business/reaudit/mod.ts).
@@ -308,6 +361,21 @@ Re-audit / admin delete calls `decrementForFinding` ([question-stats-repository/
 [reaudit/mod.ts](src/audit/domain/business/reaudit/mod.ts) creates a new finding with a fresh ID, stamps the OLD finding with `reAuditedAt` + `reAuditedTo: newFindingId`, runs `cleanupFindingFromIndices` (drops chargebackEntry / audit-done-idx / completedStat / queue entries), and calls `decrementForFinding` so the void shows up in the Question Failures report too.
 
 Frontend: the "Re-Audited" pill on a stale report links to `/audit/report?id=<reAuditedTo>` ([AppealModal.tsx](frontend/islands/AppealModal.tsx)). Admin "Re-run with genies" auto-navigates to the new finding's report on success ([report.tsx](frontend/routes/audit/report.tsx)) — same UX as the agent appeal flow's "View New Report" button, just auto-followed.
+
+### Dashboard Re-run button + chunked-read retry pattern
+
+Per-row **Re-run** button on the Recently Completed table ([DashboardTables.tsx](frontend/components/DashboardTables.tsx)) fires `/admin/reset-finding`, which calls `resetFindingDerivedState` to drain derived state (`review-pending` / `review-active` / `review-decided`, `audit-done-idx`, `completed-audit-stat`, `chargeback-entry`, `wire-deduction-entry`) and re-publishes step-init against the **same findingId**. The finding doc itself (record, owner, dates, recordingId) is preserved — only the audit run resets. Confirms via `hx-confirm` with the findingId in the prompt; status pill swaps into the existing `#queue-action-status` slot.
+
+**Chunked-read retry pattern** — findings are chunk-stored in Firestore (`>700KB` triggers chunking) and `saveFinding` in one isolate isn't always visible to a different isolate within the QStash hop. Both [finalizeReviewedAudit](src/review/domain/business/review-queue/mod.ts) and (as of `09b01fc`) [step-transcribe-cb/mod.ts](src/audit/domain/business/step-transcribe-cb/mod.ts) retry `getFinding` up to 3× with 200/400/600ms backoff when a required field reads as missing on the first attempt. Apply the same pattern to any future step that depends on a field written in the previous step. Pair with a diagnostic log on the skip/error branch so the next race is debuggable from log alone.
+
+### Reset XP launch tool
+
+Wipes per-user gamification progression (`game-state`, `badge-stats`, `earned-badge`) for selected roles, with an optional date-window filter. Two modes:
+
+- **Full reset** (no `fromMs` / `toMs`) — zeroes every selected role's game-state + badge-stats and deletes every earned-badge.
+- **Window reset** (both supplied) — deletes only earned-badges with `earnedAt` in `[fromMs, toMs)`. Game-state + badge-stats are zeroed for users whose `lastActiveDate` falls in the window. Approximate — operator intent is "wipe this dev-era activity," not surgical XP arithmetic; the UI documents the trade-off.
+
+Dry-run by default; live wipe requires the typed `HX-Prompt` value `WIPE XP`. Wrapped in `runInBackgroundLane` so the admin request returns immediately even on large orgs. Backend module: [reset-xp/mod.ts](src/admin/domain/business/reset-xp/mod.ts). Endpoint: `POST /admin/reset-xp`. UI: Data Maintenance → Reset XP tab.
 
 ### Scheduled Email Reports
 Every-minute `Deno.cron("email-reports", "* * * * *", …)` ([cron-core/mod.ts](src/cron/domain/business/cron-core/mod.ts)) walks every org's `email-report-config` docs, evaluates each enabled schedule's cron against the current wall-clock instant in the config's IANA tz (default `America/New_York`), and fires `prepareReport` + `sendPreparedReport` for each match.
@@ -404,6 +472,7 @@ Persistent AI memory lives at `~/.claude/projects/-Users-adam-Programming-autobo
 - **`/admin/*` is routed to danet by default.** New Fresh routes under `/admin/` (e.g. `/admin/impersonate-go`) must be added to `FRONTEND_EXACT_PAGES` in [main.ts](main.ts) or the dispatcher 404s them via danet.
 - **`Deno.env.set` quirk applies to other env vars too** — if a behavior depends on env at *callsite read time*, set it via the Deploy dashboard not from code.
 - **Pre-deploy command must flip per branch** — `main` needs `deno task build` OFF; `refactor/danet-backend` (if revived) needs it ON. Stored in memory.
+- **SSE streams need a keepalive heartbeat.** Deno Deploy kills idle connections after ~30s. Every SSE handler must emit a comment-line heartbeat (`: keepalive\n\n`) more frequently than that — current handlers use 25s. Without it, EventSource clients see the stream drop within a minute and fall back to polling, defeating the whole real-time path. Pattern lives at [events-stream/mod.ts](src/events/entrypoints/events-stream/mod.ts).
 
 ---
 
@@ -416,7 +485,7 @@ Persistent AI memory lives at `~/.claude/projects/-Users-adam-Programming-autobo
 | "Second recording uploaded but won't play" appeal bug | Reported but no concrete finding ID yet. Held until a repro example lands; defensive logging at the audio-URL construction point is a quick next step. |
 | Weekly Builder | Page is "coming in Phase 2" placeholder. |
 | Atomic counter race | `decrementBatchCounter` / `purchaseStoreItem` / question-fail counter R-M-W all use read-modify-write. Acceptable for current concurrency; swap to Firestore field-transform `increment` if we see drift. |
-| `judge-decided` indexing — **Phase 2** | Phase 1 shipped (Index Tests card at `judge-decided-decidedAt`). Once the operator confirms the composite `(_org, _type, decidedAt, __name__)` is built and Run+Compare go green, swap `getMyJudgeStats` from `listStoredWithKeys` to `listStoredByCompletedAt` with range-keyed SWR cache + optional FAILED_PRECONDITION fallback. ~30 LOC. |
+| `transcribe-cb` invalid-transcript skip | Chunked-read retry + diagnostic log shipped in `09b01fc`. Future hardening: replace the `includes("Invalid Genie")` substring check with strict equality against the `"Genie Invalid"` sentinel set by [step-poll-transcript/mod.ts](src/audit/domain/business/step-poll-transcript/mod.ts) so a real transcript that happens to contain the phrase can't trigger the skip. ~5 LOC once we confirm no other write paths set the sentinel. |
 | Question Failures sub-monthly granularity | v1 ships month-aligned only (counter data bucketed monthly). If the operator wants real 24h/7d windows in the Reports modal, add a per-day `question-fail-stat-day` bucket alongside the monthly one — `incrFailed` writes both; report path picks the right one based on chosen range. ~30 LOC. |
 
 When working on any of these, read the relevant `main:` prod file first and prefer minimal-but-functional Fresh ports over 1:1 inline-HTML ports.

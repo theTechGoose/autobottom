@@ -156,7 +156,10 @@ async function askLlmOne(
 
 export async function stepAskAll(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId, adminRetry } = body;
+  // rawTranscript carried in the payload by step-prepare so the grading loop
+  // can never race-read finding.rawTranscript and grade against an empty
+  // string (the no-score audit class). See plan file.
+  const { findingId, orgId, adminRetry, rawTranscript: payloadRaw } = body;
 
   const stepStart = Date.now();
   console.log(`[STEP-ASK-ALL] ${findingId}: 🚀 Starting...`);
@@ -171,6 +174,15 @@ export async function stepAskAll(req: Request): Promise<Response> {
   if (finding.findingStatus === "terminated" || finding.findingStatus === "finished") {
     console.log(`[STEP-ASK-ALL] ${findingId}: Skipped — finding already ${finding.findingStatus}`);
     return json({ ok: true, skipped: true, reason: finding.findingStatus });
+  }
+
+  // Grep-able tag — see step-transcribe-cb for taxonomy.
+  {
+    const fromPayload = typeof payloadRaw === "string" && payloadRaw.length > 0;
+    const fromFinding = !fromPayload && (finding.rawTranscript?.length ?? 0) > 0;
+    const outcome = fromPayload ? "payload-hit" : fromFinding ? "payload-miss-finding-hit" : "BOTH-MISS";
+    const log = outcome === "BOTH-MISS" ? console.warn : console.log;
+    log(`🔍 [TRANSCRIPT-RACE] step=ask-all fid=${findingId} ${outcome} payloadLen=${typeof payloadRaw === "string" ? payloadRaw.length : 0} findingLen=${finding.rawTranscript?.length ?? 0}`);
   }
 
   // Prevent infinite QStash retry loops — terminate after 3 failed attempts.
@@ -196,7 +208,11 @@ export async function stepAskAll(req: Request): Promise<Response> {
   // Read from dedicated chunked KV key first (survives finding trim), fall back to finding
   const allPopulated = await getPopulatedQuestions(orgId, findingId) ?? finding.populatedQuestions ?? [];
   const questions: IQuestion[] = allPopulated;
-  const rawTranscript = finding.rawTranscript ?? "";
+  // Prefer payload-carried value; fall back to finding doc for legacy
+  // in-flight messages enqueued before this deployed.
+  const rawTranscript = (typeof payloadRaw === "string" && payloadRaw.length > 0)
+    ? payloadRaw
+    : (finding.rawTranscript ?? "");
 
   if (questions.length === 0) {
     console.log(`[STEP-ASK-ALL] ${findingId}: No questions, going straight to finalize`);

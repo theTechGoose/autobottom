@@ -9,13 +9,24 @@ function json(data: unknown, status = 200) {
 
 export async function stepDiarizeAsync(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId } = body;
+  // rawTranscript carried in the payload by transcribe-cb so this step doesn't
+  // depend on transcribe-cb's saveFinding being visible across the QStash hop.
+  const { findingId, orgId, rawTranscript: payloadRaw } = body;
 
   const finding = await getFinding(orgId, findingId);
   if (!finding) return json({ error: "finding not found" }, 404);
   if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
   // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
+
+  // Grep-able tag — see step-transcribe-cb for taxonomy.
+  {
+    const fromPayload = typeof payloadRaw === "string" && payloadRaw.length > 0;
+    const fromFinding = !fromPayload && (finding.rawTranscript?.length ?? 0) > 0;
+    const outcome = fromPayload ? "payload-hit" : fromFinding ? "payload-miss-finding-hit" : "BOTH-MISS";
+    const log = outcome === "BOTH-MISS" ? console.warn : console.log;
+    log(`🔍 [TRANSCRIPT-RACE] step=diarize-async fid=${findingId} ${outcome} payloadLen=${typeof payloadRaw === "string" ? payloadRaw.length : 0} findingLen=${finding.rawTranscript?.length ?? 0}`);
+  }
 
   if (finding.diarizedTranscript) {
     console.log(`[STEP-DIARIZE] ${findingId}: Already diarized, skipping`);
@@ -24,7 +35,11 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
 
   console.log(`[STEP-DIARIZE] ${findingId}: Starting diarization...`);
 
-  const raw = finding.rawTranscript ?? "";
+  // Prefer payload; fall back to finding doc (covers in-flight legacy messages
+  // enqueued before the carry shipped).
+  const raw = (typeof payloadRaw === "string" && payloadRaw.length > 0)
+    ? payloadRaw
+    : (finding.rawTranscript ?? "");
   if (!raw || raw.includes("Invalid Genie") || raw.includes("Genie Invalid")) {
     console.log(`[STEP-DIARIZE] ${findingId}: Skipping — no valid transcript`);
     return json({ ok: true, skipped: true });

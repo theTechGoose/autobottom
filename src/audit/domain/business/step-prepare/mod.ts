@@ -16,7 +16,14 @@ function json(data: unknown, status = 200) {
 
 export async function stepPrepare(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId, adminRetry } = body;
+  // rawTranscript carried in the payload by transcribe-cb to survive the
+  // QStash isolate hop. Without this, getFinding can race transcribe-cb's
+  // saveFinding and read the finding doc with `rawTranscript: undefined`.
+  // step-prepare's saveFinding at the end of this handler would then OVERWRITE
+  // the persisted value with undefined, destroying the transcript for every
+  // downstream step (ask-all, ask-batch) and producing the no-score audit
+  // class we've been chasing.
+  const { findingId, orgId, adminRetry, rawTranscript: payloadRaw } = body;
 
   console.log(`[STEP-PREPARE] ${findingId}: Starting preparation...`);
   // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
@@ -26,8 +33,30 @@ export async function stepPrepare(req: Request): Promise<Response> {
     if (!finding) return json({ error: "finding not found" }, 404);
     if (finding.findingStatus === "terminated") return json({ ok: true, skipped: true, reason: "terminated" });
 
+    // Grep-able tag — see step-transcribe-cb for taxonomy.
+    {
+      const fromPayload = typeof payloadRaw === "string" && payloadRaw.length > 0;
+      const fromFinding = !fromPayload && (finding.rawTranscript?.length ?? 0) > 0;
+      const outcome = fromPayload ? "payload-hit" : fromFinding ? "payload-miss-finding-hit" : "BOTH-MISS";
+      const log = outcome === "BOTH-MISS" ? console.warn : console.log;
+      log(`🔍 [TRANSCRIPT-RACE] step=prepare fid=${findingId} ${outcome} payloadLen=${typeof payloadRaw === "string" ? payloadRaw.length : 0} findingLen=${finding.rawTranscript?.length ?? 0}`);
+    }
+
+    // CRITICAL: restore rawTranscript onto the finding from the payload BEFORE
+    // any saveFinding below. If the finding doc raced and reads as missing,
+    // the saveFinding at line ~190 of this file would persist the missing
+    // value, wiping the transcript for downstream steps. Rescue happens here
+    // and only when needed — if finding already has it, no-op.
+    if (typeof payloadRaw === "string" && payloadRaw.length > 0 && !finding.rawTranscript) {
+      finding.rawTranscript = payloadRaw;
+      console.warn(`🛟 [TRANSCRIPT-RESCUE] step=prepare fid=${findingId} finding-doc-stale — restored rawTranscript from payload (${payloadRaw.length} chars)`);
+    }
+
+    // Resolved transcript value used by every downstream branch in this step.
+    const rawTranscript = finding.rawTranscript ?? "";
+
     // If transcript is invalid, skip to finalize
-    if (finding.rawTranscript?.includes("Invalid Genie") || finding.rawTranscript?.includes("Genie Invalid")) {
+    if (rawTranscript.includes("Invalid Genie") || rawTranscript.includes("Genie Invalid")) {
       const dispatch = adminRetry ? publishStep : enqueueStep;
       await dispatch("finalize", { findingId, orgId });
       return json({ ok: true, skipped: true });
@@ -161,9 +190,13 @@ export async function stepPrepare(req: Request): Promise<Response> {
     await savePopulatedQuestions(orgId, findingId, populated);
     await saveFinding(orgId, finding);
 
-    // 3. Bad word check for package records (off critical path)
-    if (finding.rawTranscript && finding.recordingIdField === "GenieNumber") {
-      enqueueStep("bad-word-check", { findingId, orgId }).catch((err) =>
+    // 3. Bad word check for package records (off critical path).
+    // Forward rawTranscript so bad-word-check doesn't race-read the finding
+    // doc and silently skip (same class of bug as the transcript race).
+    if (rawTranscript && finding.recordingIdField === "GenieNumber") {
+      const bwPayload: Record<string, unknown> = { findingId, orgId };
+      if (rawTranscript.length <= 900_000) bwPayload.rawTranscript = rawTranscript;
+      enqueueStep("bad-word-check", bwPayload).catch((err) =>
         console.error(`[STEP-PREPARE] ${findingId}: Failed to enqueue bad-word-check:`, err)
       );
     }
@@ -179,8 +212,12 @@ export async function stepPrepare(req: Request): Promise<Response> {
     finding.findingStatus = "asking-questions";
     await saveFinding(orgId, finding);
 
+    // Carry rawTranscript forward to ask-all so the grading steps don't have
+    // to depend on this isolate's saveFinding propagating before they read.
+    const askPayload: Record<string, unknown> = { findingId, orgId, adminRetry };
+    if (rawTranscript && rawTranscript.length <= 900_000) askPayload.rawTranscript = rawTranscript;
     const dispatch = adminRetry ? publishStep : enqueueStep;
-    await dispatch("ask-all", { findingId, orgId, adminRetry });
+    await dispatch("ask-all", askPayload);
 
     console.log(`[STEP-PREPARE] ${findingId}: ✅ Enqueued ask-all for ${populated.length} questions`);
     return json({ ok: true, questions: populated.length });

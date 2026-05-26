@@ -32,6 +32,18 @@ export async function stepTranscribeCb(req: Request): Promise<Response> {
   let utteranceTimes: number[] | undefined = (Array.isArray(payloadTimes) ? payloadTimes : undefined)
     ?? (finding as Record<string, any>).utteranceTimes;
 
+  // Grep-able tag for tomorrow's audit — one line per step entry, classifies
+  // where the transcript came from. payload-hit → healthy path; finding-hit
+  // → payload was missing but finding doc had it (legacy in-flight message);
+  // BOTH-MISS → race-window bug fired here. See plan file.
+  {
+    const fromPayload = typeof payloadRaw === "string" && payloadRaw.length > 0;
+    const fromFinding = !fromPayload && (finding.rawTranscript?.length ?? 0) > 0;
+    const outcome = fromPayload ? "payload-hit" : fromFinding ? "payload-miss-finding-hit" : "BOTH-MISS";
+    const log = outcome === "BOTH-MISS" ? console.warn : console.log;
+    log(`🔍 [TRANSCRIPT-RACE] step=transcribe-cb fid=${findingId} ${outcome} payloadLen=${typeof payloadRaw === "string" ? payloadRaw.length : 0} findingLen=${finding.rawTranscript?.length ?? 0}`);
+  }
+
   // Backstop retry only when both payload and finding doc are empty —
   // catches the rare in-flight message enqueued before payload-carry
   // deployed. Same backoff schedule as before.
@@ -74,9 +86,17 @@ export async function stepTranscribeCb(req: Request): Promise<Response> {
 
   // Fire prepare (critical path) + diarize-async (parallel, non-blocking) concurrently.
   // QA runs entirely off rawTranscript — diarize result is cosmetic only (report display).
+  // Carry rawTranscript + utteranceTimes in the QStash payload so the next-isolate
+  // getFinding race can't drop the transcript at prepare or diarize-async (the
+  // bNbk468 incident — diarize-async logged "Skipping — no valid transcript" while
+  // transcribe-cb had just successfully written a 14k transcript). 900KB cap matches
+  // the cap on poll-transcript → transcribe-cb hop.
+  const carry: Record<string, unknown> = { findingId, orgId };
+  if (rawTranscript.length <= 900_000) carry.rawTranscript = rawTranscript;
+  if (utteranceTimes && utteranceTimes.length > 0) carry.utteranceTimes = utteranceTimes;
   await Promise.all([
-    enqueueStep("prepare", { findingId, orgId }),
-    enqueueStep("diarize-async", { findingId, orgId }),
+    enqueueStep("prepare", carry),
+    enqueueStep("diarize-async", carry),
   ]);
 
   console.log(`[STEP-TRANSCRIBE-CB] ${findingId}: Enqueued prepare + diarize-async`);

@@ -126,7 +126,7 @@ async function askLlmOne(
 
 export async function stepAskBatch(req: Request): Promise<Response> {
   const body = await req.json();
-  const { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches, retryCount = 0 } = body;
+  const { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches, retryCount = 0, rawTranscript: payloadRaw } = body;
 
   const stepStartMs = Date.now();
   console.log(`[STEP-ASK] ${findingId}: Batch ${batchIndex}/${totalBatches} started at ${new Date(stepStartMs).toISOString()} (${questionIndices.length} questions, attempt ${retryCount + 1})`);
@@ -139,6 +139,15 @@ export async function stepAskBatch(req: Request): Promise<Response> {
     return json({ ok: true, skipped: true, reason: finding.findingStatus });
   }
 
+  // Grep-able tag — see step-transcribe-cb for taxonomy.
+  {
+    const fromPayload = typeof payloadRaw === "string" && payloadRaw.length > 0;
+    const fromFinding = !fromPayload && (finding.rawTranscript?.length ?? 0) > 0;
+    const outcome = fromPayload ? "payload-hit" : fromFinding ? "payload-miss-finding-hit" : "BOTH-MISS";
+    const log = outcome === "BOTH-MISS" ? console.warn : console.log;
+    log(`🔍 [TRANSCRIPT-RACE] step=ask-batch fid=${findingId} ${outcome} payloadLen=${typeof payloadRaw === "string" ? payloadRaw.length : 0} findingLen=${finding.rawTranscript?.length ?? 0}`);
+  }
+
   const pipelineCfg = await getPipelineConfig(orgId);
 
   // Read from dedicated chunked KV key first (survives finding trim), fall back to finding
@@ -146,7 +155,11 @@ export async function stepAskBatch(req: Request): Promise<Response> {
   const questions: IQuestion[] = allPopulated
     .filter((_: any, i: number) => questionIndices.includes(i));
 
-  const rawTranscript = finding.rawTranscript ?? "";
+  // Prefer payload-carried value; fall back to finding doc for legacy
+  // in-flight messages enqueued before this deployed.
+  const rawTranscript = (typeof payloadRaw === "string" && payloadRaw.length > 0)
+    ? payloadRaw
+    : (finding.rawTranscript ?? "");
 
   // Heartbeat: log every 15s so observability confirms batch hasn't hung
   const batchStart = Date.now();
@@ -184,7 +197,11 @@ export async function stepAskBatch(req: Request): Promise<Response> {
     if (retryCount < pipelineCfg.maxRetries) {
       const delay = pipelineCfg.retryDelaySeconds * Math.pow(2, retryCount);
       console.warn(`[STEP-ASK] ${findingId}: Batch ${batchIndex} error (attempt ${retryCount + 1}/${pipelineCfg.maxRetries}), retrying in ${delay}s — ${(batchError as Error).message.slice(0, 100)}`);
-      await enqueueStep("ask-batch", { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches, retryCount: retryCount + 1 }, delay);
+      // Carry rawTranscript through the retry so the next attempt doesn't
+      // depend on Firestore propagation either.
+      const retryPayload: Record<string, unknown> = { findingId, orgId, adminRetry, batchIndex, questionIndices, totalBatches, retryCount: retryCount + 1 };
+      if (rawTranscript && rawTranscript.length <= 900_000) retryPayload.rawTranscript = rawTranscript;
+      await enqueueStep("ask-batch", retryPayload, delay);
       return json({ ok: true, retrying: true, attempt: retryCount + 1 });
     }
     console.error(`[STEP-ASK] ${findingId}: Batch ${batchIndex} exhausted ${pipelineCfg.maxRetries} retries — saving Error answers`);

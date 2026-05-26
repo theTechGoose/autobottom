@@ -145,6 +145,7 @@ export class DashboardController {
     @Query("auditor") auditor: string,
     @Query("scoreMin") scoreMin: string,
     @Query("scoreMax") scoreMax: string,
+    @Query("scoreState") scoreState: string,
     @Query("page") page: string,
     @Query("limit") limit: string,
     @Query("format") format: string,
@@ -208,6 +209,13 @@ export class DashboardController {
       if (reviewed === "no" && (reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
       if (reviewed === "auto" && c.reason !== "perfect_score" && c.reason !== "invalid_genie") return false;
       if (reviewed === "invalid_genie" && c.reason !== "invalid_genie") return false;
+      // Score state: "no-score" → only rows where finalize wrote no score
+      // (0/0 questions answered — pipeline completed but produced no result).
+      // Reaudit + dashboard Re-run drain the audit-done-idx entry, so a row
+      // present here with score==null is also "not yet retried." Perfect for
+      // operator bulk-retry workflow.
+      if (scoreState === "no-score" && c.score != null) return false;
+      if (scoreState === "has-score" && c.score == null) return false;
       return true;
     });
 

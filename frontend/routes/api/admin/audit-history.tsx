@@ -52,6 +52,7 @@ export interface AdminAuditFilters {
   auditor: string;
   scoreMin: string;
   scoreMax: string;
+  scoreState: string;   // "" | "has-score" | "no-score"
   page: string;
   limit: string;
 }
@@ -157,6 +158,7 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
             <th>Duration</th>
             <th>Reviewed</th>
             <th>Appeal</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -190,6 +192,29 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
                 <td style="font-variant-numeric:tabular-nums;">{fmtDur(c.durationMs)}</td>
                 <td>{reviewedBadge(c)}</td>
                 <td>{appealBadge(c.appealStatus)}</td>
+                <td style="white-space:nowrap;">
+                  {/* Same Re-run pattern as DashboardTables.tsx — POSTs to the
+                      Fresh /api/admin/config-save proxy which forwards to the
+                      backend's /admin/reset-finding. resetFindingDerivedState
+                      drains the OLD audit-done-idx entry (via
+                      deleteAuditDoneIdxByFindingId — scans + removes ALL rows
+                      for this findingId), then re-publishes step-init against
+                      the SAME findingId. When the new run completes,
+                      step-finalize writes exactly ONE new audit-done-idx row
+                      → no duplicates on this page. */}
+                  <button
+                    type="button"
+                    class="ah-btn ah-btn-ghost"
+                    style="font-size:10px;padding:3px 8px;"
+                    hx-post="/api/admin/config-save"
+                    hx-vals={`{"endpoint":"/admin/reset-finding","findingId":"${fid}"}`}
+                    hx-target={`#retry-status-${fid}`}
+                    hx-swap="innerHTML"
+                    hx-confirm={`Re-run audit ${fid}? Same finding ID, fresh pipeline run (~1-2 min). The row will disappear from this list during the run and reappear with the new score when finalize lands.`}
+                    {...{ "hx-on:after-request": `if (event.detail.successful) { document.getElementById('retry-status-${fid}').innerHTML='<span style=\\'color:var(--yellow);\\'>re-running…</span>'; setTimeout(function(){var el=document.getElementById('retry-status-${fid}'); if(el) el.innerHTML='';}, 4000); }` }}
+                  >Retry</button>
+                  <span id={`retry-status-${fid}`} style="margin-left:6px;font-size:10px;"></span>
+                </td>
               </tr>
             );
           })}
@@ -287,6 +312,7 @@ export function readFilters(url: URL): AdminAuditFilters {
     auditor: url.searchParams.get("auditor") ?? "",
     scoreMin: url.searchParams.get("scoreMin") ?? "0",
     scoreMax: url.searchParams.get("scoreMax") ?? "100",
+    scoreState: url.searchParams.get("scoreState") ?? "",
     page: url.searchParams.get("page") ?? "1",
     limit: url.searchParams.get("limit") ?? "50",
   };

@@ -36,6 +36,7 @@ function buildInitialFilters(url: URL): AdminAuditFilters {
     auditor: url.searchParams.get("auditor") ?? "",
     scoreMin: url.searchParams.get("scoreMin") ?? "0",
     scoreMax: url.searchParams.get("scoreMax") ?? "100",
+    scoreState: url.searchParams.get("scoreState") ?? "",
     page: url.searchParams.get("page") ?? "1",
     limit: "50",
   };
@@ -81,7 +82,7 @@ const clearBtnJs =
 
 /** JS for Reset button — clears all filters back to defaults and 24h. */
 const resetJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-score-state').value='';document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
 
 /** JS for CSV button — gathers form values + format=csv into a download URL. */
 const csvBtnJs =
@@ -329,6 +330,14 @@ export default define.page(async function AdminAuditsPage(ctx) {
 
         <label>Max Score %
           <input type="number" name="scoreMax" id="f-score-max" value={filters.scoreMax} min="0" max="100" style="width:70px;" />
+        </label>
+
+        <label>Score State
+          <select name="scoreState" id="f-score-state">
+            <option value="" selected={filters.scoreState === ""}>All</option>
+            <option value="has-score" selected={filters.scoreState === "has-score"}>Has score</option>
+            <option value="no-score" selected={filters.scoreState === "no-score"}>No score (—)</option>
+          </select>
         </label>
 
         <label style="align-self:flex-end;">

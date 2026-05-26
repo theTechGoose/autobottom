@@ -353,7 +353,7 @@ function QuestionRow({ q }: { q: QLQuestion }) {
         <button
           class="sf-btn danger"
           style="font-size:10px;"
-          hx-post={`/api/qlab/questions/delete?id=${q.id}`}
+          hx-post={`/api/qlab/questions/delete?id=${q.id}&configId=${q.configId}`}
           hx-confirm={`Delete "${q.name}"?`}
           hx-target="closest tr"
           hx-swap="outerHTML"

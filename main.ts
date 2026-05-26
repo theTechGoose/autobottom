@@ -661,6 +661,20 @@ const FRONTEND_EXACT_PAGES = new Set([
   "/audit/report",
   "/super-admin",
   "/gamification",
+  // QLab Fresh HTMX wrappers that share URLs with same-name danet endpoints
+  // (the QL controller is mounted at @Controller("api")). Browser HTMX hits
+  // these expecting an HTML fragment → Fresh. Server-side apiPost loopback
+  // from those Fresh handlers sets Accept: application/json → must reach
+  // the backend's JSON handler instead of recursing into the same Fresh
+  // route. Without this, the delete handlers loop back through their own
+  // Fresh route, the silent catch swallows the eventual timeout, and the
+  // HX-Redirect still fires — user bounces to the list without anything
+  // actually deleting.
+  "/api/qlab/configs/clone",
+  "/api/qlab/configs/delete",
+  "/api/qlab/questions/restore",
+  "/api/qlab/questions/update",
+  "/api/qlab/questions/delete",
 ]);
 
 // Frontend PREFIX paths — anything starting with these goes to Fresh

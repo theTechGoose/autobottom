@@ -84,7 +84,16 @@ export async function stepTranscribe(req: Request): Promise<Response> {
     }
 
     await saveFinding(orgId, finding);
-    await enqueueStep("transcribe-complete", { findingId, orgId });
+    // Payload-carry rawTranscript across the QStash hop so transcribe-cb
+    // doesn't depend on the saveFinding write propagating across isolates.
+    // Without this, multi-genie audits raced and finalized with 0 questions
+    // (BOTH-MISS at [TRANSCRIPT-RACE] — see 7xjSz3Cb8HgKmDOmRfhAP incident).
+    // 900KB cap matches the cap on transcribe-cb → prepare/diarize hop.
+    const cbCarry: Record<string, unknown> = { findingId, orgId };
+    if (finding.rawTranscript && finding.rawTranscript.length <= 900_000) {
+      cbCarry.rawTranscript = finding.rawTranscript;
+    }
+    await enqueueStep("transcribe-complete", cbCarry);
     return json({ ok: true, multiGenie: true, transcribed: texts.length });
   }
 

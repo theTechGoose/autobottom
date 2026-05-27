@@ -152,6 +152,24 @@ test-by-rid / package-by-rid / appeal/different-recording / appeal/upload-record
 
 **Race-survival rule, learned the hard way (`mqlfcCsh3sP1zH_6vpeT6` incident):** any state a later QStash callback needs MUST be carried in the QStash payload. The original "step-poll-transcript reads `assemblyAiTranscriptId` back from the finding doc" cost us a chargeback when Firestore replication dropped the field across the 15s isolate gap. Fix lives at [step-transcribe/mod.ts](src/audit/domain/business/step-transcribe/mod.ts) (`enqueueStep("poll-transcript", { findingId, orgId, transcriptId })`) with the regression test in [step-poll-transcript/test.ts](src/audit/domain/business/step-poll-transcript/test.ts). Apply the same payload-carry pattern to any future step that depends on a value that was written within the previous step.
 
+**Transcript payload-carry chain (extended across the whole pipeline, 2026-05-26 / -27):** The same race fires at EVERY hop where a step writes the finding doc then enqueues another step that reads it. Three more incidents (`LI6JHRl9-N6uvuRoA8ykO` — Invalid-Genie despite a successful genie download / `bNbk468DlcRwS8kPd9Q3b` — diarize-async "Skipping — no valid transcript" with a 14k transcript already on payload-side / mass bulk-flips of every No→Yes by reviewers like `DwEmJY0Yit7ZfcZ4dPPQc`) all traced to the same race-class one hop further down each time. Current carries:
+
+- step-init → step-transcribe: `s3RecordingKey` / `s3RecordingKeys` / `recordingPath` / `assemblyAiUploadUrl` (otherwise transcribe's `findingStatus = "transcribing"` save overwrites the finding with a stale snapshot, wiping the recording fields and routing to the "no s3 key" Invalid-Genie skip)
+- step-transcribe → step-poll-transcript: `transcriptId` (original fix)
+- step-poll-transcript → step-transcribe-cb: `rawTranscript` + `utteranceTimes` (with 900KB cap)
+- step-transcribe-cb → step-prepare + step-diarize-async: `rawTranscript` + `utteranceTimes`
+- step-prepare → step-ask-all + step-bad-word-check: `rawTranscript`
+- step-ask-all → step-ask-batch + retry: `rawTranscript`
+
+Every step that reads transcript fields now does `payloadValue ?? findingDocValue` — falls back to the finding doc only for legacy in-flight messages. step-prepare additionally hydrates `finding.rawTranscript` from the payload **before** any saveFinding to prevent the destructive overwrite that wipes the transcript for downstream readers.
+
+**Diagnostic tag:** `🔍 [TRANSCRIPT-RACE]` fires at every hop with one of three outcomes per finding × step:
+- `payload-hit` — healthy. Should be ~100% post-deploy.
+- `payload-miss-finding-hit` — legacy in-flight message; falls back to the finding doc. Fades as old messages drain.
+- `BOTH-MISS` — race fired AND payload-carry didn't catch it. The actual remaining bug. Grep tomorrow's logs for `[TRANSCRIPT-RACE] BOTH-MISS` to surface any stragglers.
+
+Bonus: `🛟 [TRANSCRIPT-RESCUE]` fires from step-prepare specifically when it had to restore `rawTranscript` from the payload onto a stale finding doc — counts how often the destructive-overwrite path would have fired.
+
 ---
 
 ## Data layer (Firestore)
@@ -266,6 +284,13 @@ frontend/
 **Per-role accent colors:**
 admin `#58a6ff` · review `#8b5cf6` · judge `#14b8a6` · manager `#bc8cff` · agent `#f97316` · chat `#39d0d8`
 
+**Frontend↔backend URL collisions: when a Fresh handler needs to call its own URL.** Some URLs serve BOTH an HTML page (Fresh) and a JSON endpoint (danet) — e.g. `/admin/users`, `/admin/audits`, `/api/qlab/questions/delete`. The unified-server dispatcher in [main.ts](main.ts) `isBackendRequest` resolves the collision by **`Accept` header** for paths in `FRONTEND_EXACT_PAGES`:
+
+- Browser nav / HTMX request → `Accept: text/html…` → routes to Fresh
+- `apiFetch()` from a Fresh page handler → `Accept: application/json` → routes to danet (the backend's same-URL JSON handler)
+
+`FRONTEND_PREFIX_PATHS` does NOT honor Accept — paths there go to Fresh unconditionally. So when a Fresh handler's `apiPost()` loopbacks to its own URL (e.g. the QL `/api/qlab/configs/delete` Fresh wrapper posting to `/api/qlab/configs/delete` which is also a backend `@Controller("api")` route), the loopback recurses through Fresh forever instead of reaching the backend. Fix: put the colliding path in `FRONTEND_EXACT_PAGES` so the dispatcher's Accept-based switch fires. This trapdoor cost us QL delete/clone/restore/update silently no-op'ing under a wrapped `try { } catch (_e) { /* swallow */ }`; fix in `ec46bd7`.
+
 ---
 
 ## Critical workflows (with file pointers)
@@ -324,6 +349,10 @@ Three new endpoints in [admin/mod.ts](src/admin/entrypoints/admin/mod.ts): `gami
 2. **Re-audit with new genies** — soft-deletes original, creates new finding with `appealSourceFindingId`. [src/audit/domain/business/reaudit/mod.ts](src/audit/domain/business/reaudit/mod.ts).
 3. **Upload recording with snip** — multipart upload to S3, snipStart/snipEnd → AssemblyAI's `audio_start_from`/`audio_end_at`. [src/audit/domain/business/upload-reaudit/mod.ts](src/audit/domain/business/upload-reaudit/mod.ts). Direct-dispatched in `main.ts` because @Req can't read multipart.
 
+### Audit report transcript fallback
+
+The `/audit/report` page reads `finding.diarizedTranscript` / `finding.rawTranscript` for the Transcript panel. These can race-miss on the finding doc (chunked write not yet propagated, or step-prepare's defensive overwrite scenario from before the payload-carry fix). [src/audit/entrypoints/audit/mod.ts](src/audit/entrypoints/audit/mod.ts) `getFinding` endpoint merges the canonical `audit-transcript` doc (written by step-transcribe-cb + step-diarize-async) into the response when either transcript field on the finding is missing — using `getTranscript` from [audit-repository/mod.ts](src/audit/domain/data/audit-repository/mod.ts), same helper the review queue + judge repo already use. Without this merge the report page renders "No transcript available" even when the canonical transcript is sitting in `audit-transcript` ready to read.
+
 ### Bulk Audit
 Paste a list of RIDs + stagger interval. Loops sequentially through `/audit/test-by-rid` or `/audit/package-by-rid`. [frontend/islands/BulkAuditRunner.tsx](frontend/islands/BulkAuditRunner.tsx).
 
@@ -367,6 +396,41 @@ Frontend: the "Re-Audited" pill on a stale report links to `/audit/report?id=<re
 Per-row **Re-run** button on the Recently Completed table ([DashboardTables.tsx](frontend/components/DashboardTables.tsx)) fires `/admin/reset-finding`, which calls `resetFindingDerivedState` to drain derived state (`review-pending` / `review-active` / `review-decided`, `audit-done-idx`, `completed-audit-stat`, `chargeback-entry`, `wire-deduction-entry`) and re-publishes step-init against the **same findingId**. The finding doc itself (record, owner, dates, recordingId) is preserved — only the audit run resets. Confirms via `hx-confirm` with the findingId in the prompt; status pill swaps into the existing `#queue-action-status` slot.
 
 **Chunked-read retry pattern** — findings are chunk-stored in Firestore (`>700KB` triggers chunking) and `saveFinding` in one isolate isn't always visible to a different isolate within the QStash hop. Both [finalizeReviewedAudit](src/review/domain/business/review-queue/mod.ts) and (as of `09b01fc`) [step-transcribe-cb/mod.ts](src/audit/domain/business/step-transcribe-cb/mod.ts) retry `getFinding` up to 3× with 200/400/600ms backoff when a required field reads as missing on the first attempt. Apply the same pattern to any future step that depends on a field written in the previous step. Pair with a diagnostic log on the skip/error branch so the next race is debuggable from log alone.
+
+### Admin Audits page (`/admin/audits`)
+
+Full-featured filtered audit history for ops. Page in [frontend/routes/admin/audits.tsx](frontend/routes/admin/audits.tsx), HTMX fragment in [frontend/routes/api/admin/audit-history.tsx](frontend/routes/api/admin/audit-history.tsx), backend in [src/admin/entrypoints/dashboard/mod.ts](src/admin/entrypoints/dashboard/mod.ts) `auditsData`.
+
+- **Genie column** — `recordingId` (genie #), hydrated from finding doc per page slice. Red w/ tooltip when `reason === "invalid_genie"`. After the first hydrate the audit-done-idx entry is self-healed via `writeAuditDoneIndex` so future page loads find it directly.
+- **Score State filter** — `All / Has score / No score (—) / Invalid Genie / No score OR Invalid Genie / Likely no-transcript (rerun candidates)`. The last one runs a bounded-concurrency (20-wide, 45s budget, 5k row cap) hydration scan that keeps rows with `rawTranscript.length < 500` and EXCLUDES already-touched rows (`reviewedBy` set, `reviewedIds.has(findingId)`, or `reason` is `perfect_score`/`invalid_genie`) so the operator can hit Retry on every match without clobbering a manual flip-rescue. Result banner reports hydrated count + match count + `capped` reason if a budget hit.
+- **Per-row Retry** — same `/admin/reset-finding` path as the dashboard Re-run. Status pill swaps into `#retry-status-${fid}`.
+- **Page-clamp** — backend clamps requested page to `[1, totalPages]` so a stale `ah-page=2` after filter-narrowing returns the last valid page instead of an empty slice. Frontend also resets `ah-page=1` on any filter change (form-level `hx-on:change` + explicit reset in window/Go/Clear button handlers).
+- **`?as=` impersonation** — for `/manager/audits`, the page handler forwards `as` to the backend so admins impersonating a specific manager get THAT manager's department/shift scope. Hidden `<input name="as">` keeps it included on HTMX filter refreshes.
+- **Always-manager scoping for `/manager/api/audit-history`** — endpoint hardcodes `role="manager"` regardless of who's authenticated. Admins who want unrestricted view use `/admin/audits` instead. Backend in [main.ts](main.ts) `handleManagerAuditHistory`.
+
+### Reviewed badge + auditor column consistency
+
+`audit-done-idx` entries carry `reviewedBy` (string); a separate `review-done` sentinel set drives `reviewedIds.has(findingId)`. Both signals should be set whenever a reviewer finalizes an audit. The `reviewedBadge` renderer shows `✓ Reviewed` when EITHER is set so legacy rows with only one signal don't display contradictions.
+
+**All review-finalize write paths now write BOTH signals:**
+- `finalizeReviewedAudit` — review-done + reviewedBy on index (original, correct path)
+- `adminFlipFinding` / `finalizePerfectFinding` / `adminFlipQuestion` — fixed in `70f6e91` to also include `reviewedBy: flippedBy` (or `reviewer`) on their `writeAuditDoneIndex` calls
+- `backfillScores` — fixed in `70f6e91` to also write the `review-done` sentinel when it stamps `reviewedBy` (was the original divergence source)
+
+Historical divergence is patched by `reconcileReviewedSignals(orgId)` in [admin-backfills/mod.ts](src/audit/domain/business/admin-backfills/mod.ts) — walks audit-done-idx, fills in whichever signal is missing. Idempotent. Wired into Data Maintenance → Backfill Scores tab as the "Reconcile Reviewed Signals" button.
+
+### Audit Counts deep verification + email-on-done
+
+Data Maintenance → Audit Counts. Renders unique audited record counts (deduped by recordId) split by package vs date-leg, across four sources:
+
+- **Firestore (audit-done-idx)** — fast indexed walk
+- **KV (audit-job)** — authoritative count of historical pipeline runs. AuditJob is a flat unchunked TypedStore at `["__audit-job__", orgId, jobId]`. One job per run, sub-1KB per entry — ~1-2s for 27k findings.
+- **KV (completed-audit-stat)** — finalize-only subset, split available. Always smaller than audit-job because not every run reaches finalize.
+- **KV (audit-finding deep)** — chunk-0 regex extract over `["__audit-finding__", orgId]`. Each finding's serialized JSON starts with `id / record / recordingIdField / recordingId` in the first ~1KB, so regex over chunk-0 catches `RecordId` + `recordingIdField` for ~95%+ of findings. 50s time budget; partial result surfaced with `capped` indicator if hit.
+
+**Background multi-tick mode** — when an email is filled in on the form, kicks off an `audit-counts-job` Firestore doc and a chain of QStash-self-scheduled tick callbacks (`/admin/audit-counts/tick`). Each tick walks Deno KV via `db.list({ prefix, cursor })` for ~45s, saves new cursor + accumulated Sets, schedules next tick. When the prefix is exhausted, sends an HTML summary email + `audit-counts-<jobId>.csv` attachment listing every unique date-leg + package recordId. ~2-4 minutes end-to-end for a full 27k-finding scan. Three endpoints: `POST /admin/audit-counts/start`, `POST /admin/audit-counts/tick`, `GET /admin/audit-counts/status?jobId=X` (UI polls every 4s). Business module: [src/admin/domain/business/audit-counts-job/mod.ts](src/admin/domain/business/audit-counts-job/mod.ts).
+
+**`publishUrl(url, body, delaySeconds)` helper** in [src/core/data/qstash/mod.ts](src/core/data/qstash/mod.ts) — publishes JSON to an arbitrary URL via QStash (vs. the pipeline-step-specific `enqueueStep`). Used by audit-counts-job's tick chain.
 
 ### Reset XP launch tool
 
@@ -487,5 +551,7 @@ Persistent AI memory lives at `~/.claude/projects/-Users-adam-Programming-autobo
 | Atomic counter race | `decrementBatchCounter` / `purchaseStoreItem` / question-fail counter R-M-W all use read-modify-write. Acceptable for current concurrency; swap to Firestore field-transform `increment` if we see drift. |
 | `transcribe-cb` invalid-transcript skip | Chunked-read retry + diagnostic log shipped in `09b01fc`. Future hardening: replace the `includes("Invalid Genie")` substring check with strict equality against the `"Genie Invalid"` sentinel set by [step-poll-transcript/mod.ts](src/audit/domain/business/step-poll-transcript/mod.ts) so a real transcript that happens to contain the phrase can't trigger the skip. ~5 LOC once we confirm no other write paths set the sentinel. |
 | Question Failures sub-monthly granularity | v1 ships month-aligned only (counter data bucketed monthly). If the operator wants real 24h/7d windows in the Reports modal, add a per-day `question-fail-stat-day` bucket alongside the monthly one — `incrFailed` writes both; report path picks the right one based on chosen range. ~30 LOC. |
+| Bulk Retry on /admin/audits | Single-row Retry shipped (`612508d`). Bulk-select + "Retry selected" with 200ms stagger is the natural follow-up. ~30 LOC. |
+| Audit-finding deep scan partial coverage | The synchronous Audit Counts deep scan caps at ~50s and returns partial results for orgs >5k findings. Workaround: fill in the Email field to kick off the multi-tick background job (~2-4 min, exact counts + CSV). Could backfill chunk-0 regex results onto the audit-done-idx as a `lowTranscript: boolean` field on first hydrate so future Audit Counts runs hit a precomputed cache, but operator constraint was "no field writes" so deferred. |
 
 When working on any of these, read the relevant `main:` prod file first and prefer minimal-but-functional Fresh ports over 1:1 inline-HTML ports.

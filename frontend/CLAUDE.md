@@ -204,6 +204,30 @@ Full-page admin tools (Question Lab, Weekly Builder, Email Reports) use `href: "
 
 When you add a new admin tool with rich interactivity, default to a full page (rule 1).
 
+### 6. **`apiPost()` from a Fresh handler to its own URL recurses through Fresh forever**
+
+Some URLs serve BOTH an HTML page (Fresh route file) and a JSON endpoint (danet `@Controller` route). The unified-server dispatcher routes them by `Accept` header **only if the path is in `FRONTEND_EXACT_PAGES`** in [main.ts](../main.ts). Paths in `FRONTEND_PREFIX_PATHS` go to Fresh unconditionally — Accept is ignored.
+
+So if you write a Fresh handler at `/api/qlab/questions/delete` that does `apiPost("/api/qlab/questions/delete", ctx.req, { id })` expecting the loopback to hit the danet backend handler at the same path, and that path is in `FRONTEND_PREFIX_PATHS`, the apiPost lands back at YOUR fresh handler, which loops again, which loops again, until the wrapped `try { } catch (_e) { /* swallow */ }` finally gives up. Visible symptom: HTMX click swallows the error, fires `HX-Redirect`, page navigates, but nothing actually happened backend-side. Cost us QL deletes silently no-op'ing for a day.
+
+**Rule:** Any Fresh wrapper that needs to call the backend's same-URL JSON handler must be in `FRONTEND_EXACT_PAGES`, not `FRONTEND_PREFIX_PATHS`. See `/api/qlab/configs/delete`, `/api/qlab/questions/delete`, `/api/qlab/configs/clone`, `/api/qlab/questions/restore`, `/api/qlab/questions/update` for the canonical pattern.
+
+### 7. **Page-state retention across HTMX filter changes ≠ what the user expects**
+
+A hidden form input (`<input type="hidden" name="page" value={page}>`) retains its value across HTMX filter changes. If the user paginates to page 2 on a 7d window, then narrows to 3d (smaller result set), the backend slices off the end with `pageSlice = filtered.slice(50, 100)` → empty page → renders "X audits in window / No audits match the current filters." Same shape: stale `?since=NaN` propagates through the URL into `new Date(NaN).toISOString()` → RangeError → 500.
+
+**Two-pronged fix pattern** (used on `/admin/audits`):
+- **Backend clamp** — `effectivePg = Math.min(Math.max(1, pg), totalPages)`. Always returns a valid page; never an empty slice with non-zero total.
+- **Frontend reset** — every filter-changing handler explicitly sets `ah-page=1` before refresh. Form-level `hx-on:change` catches descendant change events; per-button JS handlers (window buttons, Go, Clear) include it inline.
+
+Combined: backend can't ever render the "X total / 0 rows" contradiction; frontend self-corrects on every filter change so the URL stays sane.
+
+### 8. **`?as=<email>` impersonation doesn't propagate to backend calls automatically**
+
+When admin uses `?as=alice@manager.com`, the frontend middleware swaps `ctx.state.user` to Alice for SSR. But `apiFetch()` from the page handler only forwards the session cookie — which is still the admin's. The backend sees `auth.role === "admin"` and has no way to know an impersonation is happening.
+
+If your backend endpoint needs to behave as the impersonated user (e.g. apply that user's scope, role-specific filters), the frontend page handler must explicitly forward `?as=` to the backend URL, AND keep it included across HTMX filter refreshes via a hidden `<input name="as" value={asEmail}>`. The backend then reads `?as=` directly off the URL and decides whether to honor it based on the real auth role. Pattern: [main.ts handleManagerAuditHistory](../main.ts) + [frontend/routes/manager/audits.tsx](routes/manager/audits.tsx).
+
 ## Pages / Implementation Status
 | Page | Route | Status |
 |------|-------|--------|

@@ -61,10 +61,18 @@ export default define.page(async function ManagerAuditsPage(ctx) {
   const scoreMin = url.searchParams.get("scoreMin") ?? "0";
   const scoreMax = url.searchParams.get("scoreMax") ?? "100";
   const page = url.searchParams.get("page") ?? "1";
+  // Forward `?as=<email>` so the backend can scope to the impersonated
+  // manager's department/shift instead of the admin's empty scope.
+  // The middleware swap of ctx.state.user doesn't reach the backend — only
+  // the session cookie does, so the backend can't tell impersonation is
+  // happening unless we thread it explicitly via the query string.
+  const asEmail = url.searchParams.get("as") ?? "";
 
-  const qs = new URLSearchParams({
+  const qsInit: Record<string, string> = {
     since, until, owner, department, shift, reviewed, scoreMin, scoreMax, page, limit: "50",
-  });
+  };
+  if (asEmail) qsInit.as = asEmail;
+  const qs = new URLSearchParams(qsInit);
 
   let data: AuditHistoryData;
   try {
@@ -187,6 +195,11 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         </div>
         <input type="hidden" name="page" value={page} id="ah-page" />
         <input type="hidden" name="limit" value="50" />
+        {/* Propagate ?as=<email> through filter refreshes so backend
+            scope lookup uses the impersonated manager's email, not the
+            admin's. Without this hidden field, HTMX filter changes drop
+            the impersonation context and scope reverts to admin's. */}
+        {asEmail && <input type="hidden" name="as" value={asEmail} />}
         <a href="/manager/audits" class="btn btn-ghost btn-sm">Clear</a>
       </form>
 

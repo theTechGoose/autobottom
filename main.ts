@@ -144,9 +144,21 @@ async function handleManagerAuditHistory(req: Request): Promise<Response> {
     const n = parseInt(v, 10);
     return Number.isFinite(n) ? n : dflt;
   };
+  // /manager/api/audit-history is the backing endpoint for /manager/audits.
+  // Anyone hitting it gets the manager experience (scoped to dept/shift +
+  // reviewed-only) regardless of their real role — the page contract is
+  // "manager view." Admins who want unrestricted access hit /admin/audits.
+  //
+  // Honor `?as=<email>` so an admin impersonating a specific manager gets
+  // that manager's scope (departments + shifts), not the admin's empty
+  // scope. The middleware swap of ctx.state.user doesn't propagate to
+  // backend calls — they only see the session cookie — so we read `?as=`
+  // off the request URL directly.
+  const asEmail = q.get("as");
+  const scopeEmail = (asEmail && auth.role === "admin") ? asEmail : auth.email;
   const { getAuditHistory } = await import("@manager/domain/business/audit-history/mod.ts");
   try {
-    const result = await getAuditHistory(auth.orgId, auth.email, auth.role as "manager" | "admin", {
+    const result = await getAuditHistory(auth.orgId, scopeEmail, "manager", {
       owner: q.get("owner") || undefined,
       shift: q.get("shift") || undefined,
       department: q.get("department") || undefined,

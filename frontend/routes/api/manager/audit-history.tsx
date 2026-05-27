@@ -150,7 +150,10 @@ export const handler = define.handlers({
   async GET(ctx) {
     const url = new URL(ctx.req.url);
     const params = new URLSearchParams();
-    for (const k of ["since", "until", "owner", "department", "shift", "reviewed", "scoreMin", "scoreMax", "page", "limit"]) {
+    // Include `as` so backend manager-scope lookup uses the impersonated
+    // manager's email when an admin is viewing via ?as=<email>. Without
+    // this the backend would default to the admin's email (empty scope).
+    for (const k of ["since", "until", "owner", "department", "shift", "reviewed", "scoreMin", "scoreMax", "page", "limit", "as"]) {
       const v = url.searchParams.get(k);
       if (v != null && v !== "") params.set(k, v);
     }

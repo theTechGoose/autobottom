@@ -199,7 +199,47 @@ export class DashboardController {
       return true;
     };
 
-    const filtered = windowEntries.filter((c) => {
+    // ── Retroactive "likely no-transcript" pre-filter ─────────────────────
+    // Race-victim audits (pre-payload-carry-fix) end up with empty or near-
+    // empty finding.rawTranscript. After review they often look healthy
+    // (reviewer bulk-flipped every No→Yes → score=100%) so they slip past
+    // the regular filters. To surface them retroactively without writing
+    // anything to the index, hydrate each windowEntry's finding doc and
+    // keep only the ones with rawTranscript.length < 500.
+    //
+    // Bounded: 20-wide concurrency, 45s time budget, 5k row cap. Beyond
+    // that we return a partial result + a `capped` banner asking the
+    // operator to narrow the date window.
+    let preFiltered: AuditRow[] = windowEntries;
+    let lowTranscriptScan: { capped: boolean; reason?: string; hydrated: number; matched: number; tookMs: number } | undefined;
+    if (scoreState === "low-transcript") {
+      const lowT0 = Date.now();
+      const TIME_BUDGET_MS = 45_000;
+      const CONCURRENCY = 20;
+      const ROW_CAP = 5_000;
+      const kept: AuditRow[] = [];
+      let hydratedCount = 0;
+      let capped = false;
+      let cappedReason: string | undefined;
+      for (let i = 0; i < windowEntries.length; i += CONCURRENCY) {
+        if (Date.now() - lowT0 > TIME_BUDGET_MS) { capped = true; cappedReason = `time-budget ${TIME_BUDGET_MS}ms reached`; break; }
+        if (hydratedCount >= ROW_CAP) { capped = true; cappedReason = `row-cap ${ROW_CAP} reached`; break; }
+        const slice = windowEntries.slice(i, i + CONCURRENCY);
+        const findings = await Promise.all(slice.map((r) => getFinding(orgId, r.findingId).catch(() => null)));
+        for (let j = 0; j < slice.length; j++) {
+          hydratedCount++;
+          const f = findings[j] as Record<string, unknown> | null;
+          const raw = f?.rawTranscript as string | undefined;
+          const isLow = !raw || raw.length < 500 || raw === "Invalid Genie" || raw === "Genie Invalid";
+          if (isLow) kept.push(slice[j]);
+        }
+      }
+      preFiltered = kept;
+      lowTranscriptScan = { capped, reason: cappedReason, hydrated: hydratedCount, matched: kept.length, tookMs: Date.now() - lowT0 };
+      console.log(`[AUDIT-HISTORY] low-transcript scan: hydrated=${hydratedCount} matched=${kept.length} took=${Date.now() - lowT0}ms capped=${capped}`);
+    }
+
+    const filtered = preFiltered.filter((c) => {
       if (!matchesBase(c)) return false;
       if (owner && (c.voName || c.owner) !== owner) return false;
       if (department && c.department !== department) return false;
@@ -220,6 +260,9 @@ export class DashboardController {
       //   have score==0, NOT null — hence the dedicated branch.
       // "no-score-or-invalid-genie" → catches both above. Operator's
       //   "show me every broken audit" filter.
+      //
+      // "low-transcript" branch is handled above (pre-filter via hydration);
+      // no per-row check here.
       if (scoreState === "no-score" && c.score != null) return false;
       if (scoreState === "has-score" && c.score == null) return false;
       if (scoreState === "invalid-genie" && c.reason !== "invalid_genie") return false;
@@ -370,7 +413,7 @@ export class DashboardController {
       }));
 
       console.log(`[AUDIT-HISTORY] ✅ DONE total=${total}/${windowEntries.length} page=${effectivePg}/${pages} type=${t} owner=${owner || "all"} dept=${department || "all"}`);
-      return { items, total, pages, page: effectivePg, owners, departments, shifts, reviewers };
+      return { items, total, pages, page: effectivePg, owners, departments, shifts, reviewers, lowTranscriptScan };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error && err.stack ? err.stack : "<no stack>";

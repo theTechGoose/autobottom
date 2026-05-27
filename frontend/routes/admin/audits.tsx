@@ -348,6 +348,7 @@ export default define.page(async function AdminAuditsPage(ctx) {
             <option value="no-score" selected={filters.scoreState === "no-score"}>No score (—)</option>
             <option value="invalid-genie" selected={filters.scoreState === "invalid-genie"}>Invalid Genie</option>
             <option value="no-score-or-invalid-genie" selected={filters.scoreState === "no-score-or-invalid-genie"}>No score OR Invalid Genie</option>
+            <option value="low-transcript" selected={filters.scoreState === "low-transcript"}>Likely no-transcript (rerun candidates)</option>
           </select>
         </label>
 

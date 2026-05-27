@@ -40,6 +40,16 @@ export interface AdminAuditData {
   departments: string[];
   shifts: string[];
   reviewers: string[];
+  // Populated only when the "Likely no-transcript" Score State filter is active.
+  // Surfaces hydrate count + match count + whether the time/row budget hit
+  // (so operator knows to narrow the date window for full coverage).
+  lowTranscriptScan?: {
+    capped: boolean;
+    reason?: string;
+    hydrated: number;
+    matched: number;
+    tookMs: number;
+  };
 }
 
 export interface AdminAuditFilters {
@@ -273,9 +283,33 @@ function renderOptions(values: string[], selected: string, allLabel: string): VN
 export function renderAuditHistoryMain(data: AdminAuditData, windowLabel: string, logsBase: string | null): VNode {
   return (
     <div>
+      {renderLowTranscriptBanner(data)}
       {renderStats(data, windowLabel)}
       {renderTable(data, logsBase)}
       {renderPagination(data)}
+    </div>
+  );
+}
+
+/** Banner shown above the table when the "Likely no-transcript" filter is
+ *  active. Reports hydration coverage so the operator knows whether the
+ *  window was fully scanned or capped. */
+function renderLowTranscriptBanner(data: AdminAuditData): VNode | null {
+  const s = data.lowTranscriptScan;
+  if (!s) return null;
+  if (s.capped) {
+    return (
+      <div style="margin-bottom:12px;padding:10px 14px;border-radius:6px;background:rgba(248,191,73,0.1);border:1px solid var(--yellow);color:var(--text);font-size:12px;">
+        ⚠ Scan capped — hydrated {s.hydrated.toLocaleString()} findings in {s.tookMs.toLocaleString()}ms,
+        found {s.matched.toLocaleString()} likely-no-transcript matches.
+        {s.reason && <> ({s.reason})</>}
+        {" "}Narrow the date window to cover the rest.
+      </div>
+    );
+  }
+  return (
+    <div style="margin-bottom:12px;padding:10px 14px;border-radius:6px;background:rgba(46,160,67,0.08);border:1px solid var(--green);color:var(--text);font-size:12px;">
+      ✓ Scanned {s.hydrated.toLocaleString()} findings in {s.tookMs.toLocaleString()}ms — {s.matched.toLocaleString()} likely-no-transcript matches.
     </div>
   );
 }

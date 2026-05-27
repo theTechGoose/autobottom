@@ -1301,6 +1301,7 @@ export async function adminFlipFinding(
       owner: finding.owner as string | undefined,
       department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
       shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+      reviewedBy: flippedBy,
     });
   } catch { /* index write is best-effort */ }
   await updateCompletedStatScore(orgId, findingId, score);
@@ -1378,6 +1379,7 @@ export async function finalizePerfectFinding(
       owner: finding.owner as string | undefined,
       department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
       shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+      reviewedBy: reviewer,
     });
   } catch { /* index write is best-effort */ }
   await updateCompletedStatScore(orgId, findingId, reviewScore);
@@ -1539,6 +1541,7 @@ export async function adminFlipQuestion(
       owner: finding.owner as string | undefined,
       department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
       shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+      reviewedBy: flippedBy,
     });
   } catch (err) {
     console.warn(`⚠️ [ADMIN-FLIP-Q] ${findingId} writeAuditDoneIndex failed (best-effort):`, err);

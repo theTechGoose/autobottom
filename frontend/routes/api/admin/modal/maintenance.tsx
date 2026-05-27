@@ -109,15 +109,27 @@ function PanelCard(props: { title: string; subtitle?: string; danger?: boolean; 
 function BackfillPanel() {
   return (
     <PanelCard title="Backfill Scores" subtitle="Recalculate scores for findings missing score data. Paginated — re-run until done.">
-      <button
-        class="sf-btn primary"
-        style="padding:8px 14px;"
-        hx-post="/api/admin/config-save"
-        hx-vals='{"endpoint":"/admin/backfill-stale-scores"}'
-        hx-target="#maint-msg"
-        hx-swap="innerHTML"
-        hx-confirm="Backfill stale scores for findings missing score data?"
-      >Run Backfill</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button
+          class="sf-btn primary"
+          style="padding:8px 14px;"
+          hx-post="/api/admin/config-save"
+          hx-vals='{"endpoint":"/admin/backfill-stale-scores"}'
+          hx-target="#maint-msg"
+          hx-swap="innerHTML"
+          hx-confirm="Backfill stale scores for findings missing score data?"
+        >Run Backfill</button>
+        <button
+          class="sf-btn"
+          style="padding:8px 14px;"
+          hx-post="/api/admin/config-save"
+          hx-vals='{"endpoint":"/admin/reconcile-reviewed-signals"}'
+          hx-target="#maint-msg"
+          hx-swap="innerHTML"
+          hx-confirm="Reconcile the reviewedBy / review-done divergence across all audit-done-idx entries? Idempotent — safe to re-run."
+          title="One-shot pass — for each audit-done-idx entry where reviewedBy is set but the review-done sentinel is missing (or vice versa), write the missing side so /admin/audits shows consistent Auditor + Reviewed columns."
+        >Reconcile Reviewed Signals</button>
+      </div>
     </PanelCard>
   );
 }

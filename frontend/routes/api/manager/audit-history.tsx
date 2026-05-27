@@ -22,6 +22,7 @@ export interface AuditHistoryItem {
   durationMs?: number;
   reason?: string;
   reviewed?: boolean;
+  reviewedBy?: string;
   appealStatus?: string | null;
 }
 
@@ -51,7 +52,9 @@ function ownerLabel(item: AuditHistoryItem): string {
 function reviewedBadge(item: AuditHistoryItem) {
   if (item.reason === "perfect_score") return <span class="pill pill-green">Auto</span>;
   if (item.reason === "invalid_genie") return <span class="pill pill-blue">Invalid Genie</span>;
-  if (item.reviewed) return <span class="pill pill-green">Reviewed</span>;
+  // Either signal counts as reviewed — review-done sentinel and audit-done-idx
+  // reviewedBy can disagree on legacy rows; renderer tolerates both states.
+  if (item.reviewed || item.reviewedBy) return <span class="pill pill-green">Reviewed</span>;
   return <span style="color:var(--text-dim);font-size:11px;">—</span>;
 }
 

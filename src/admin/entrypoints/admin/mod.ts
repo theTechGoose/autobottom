@@ -961,6 +961,16 @@ export class AdminConfigController {
     const { backfillReviewScores } = await import("@audit/domain/business/admin-backfills/mod.ts");
     return runInBackgroundLane(async () => ({ ok: true, ...(await backfillReviewScores(ORG(), since, until)) }));
   }
+
+  /** One-shot reconcile of the reviewedBy / review-done divergence introduced
+   *  by the gap between adminFlipQuestion / adminFlipFinding (write
+   *  review-done, skipped reviewedBy on the index) and backfillScores (wrote
+   *  reviewedBy on the index, skipped review-done). Idempotent. */
+  @Post("reconcile-reviewed-signals") @ReturnedType(OkMessageResponse)
+  async reconcileReviewedSignalsEndpoint() {
+    const { reconcileReviewedSignals } = await import("@audit/domain/business/admin-backfills/mod.ts");
+    return runInBackgroundLane(async () => ({ ok: true, ...(await reconcileReviewedSignals(ORG())) }));
+  }
   @Post("backfill-chargeback-entries") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillChargebackEntries(@Body() body: GenericBodyRequest) {
     const { since, until } = body as any;

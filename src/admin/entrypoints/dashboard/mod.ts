@@ -228,10 +228,23 @@ export class DashboardController {
         const findings = await Promise.all(slice.map((r) => getFinding(orgId, r.findingId).catch(() => null)));
         for (let j = 0; j < slice.length; j++) {
           hydratedCount++;
+          const candidate = slice[j];
           const f = findings[j] as Record<string, unknown> | null;
           const raw = f?.rawTranscript as string | undefined;
           const isLow = !raw || raw.length < 500 || raw === "Invalid Genie" || raw === "Genie Invalid";
-          if (isLow) kept.push(slice[j]);
+          if (!isLow) continue;
+          // Skip audits already touched by a human or auto-resolved —
+          // rerunning would clobber a reviewer's manual flip-rescue work,
+          // and auto-passed audits (perfect_score / invalid_genie) aren't
+          // race-victim rerun candidates anyway. Operator only wants
+          // "broken AND nobody's fixed it yet."
+          const alreadyHandled =
+            candidate.reason === "perfect_score" ||
+            candidate.reason === "invalid_genie" ||
+            !!candidate.reviewedBy ||
+            reviewedIds.has(candidate.findingId);
+          if (alreadyHandled) continue;
+          kept.push(candidate);
         }
       }
       preFiltered = kept;

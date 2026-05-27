@@ -102,7 +102,10 @@ function typeBadge(isPackage?: boolean): VNode {
 function reviewedBadge(item: AdminAuditItem): VNode | string {
   if (item.reason === "perfect_score") return <span class="pill pill-green" title="100% — no review needed">✓ Auto</span>;
   if (item.reason === "invalid_genie") return <span class="pill pill-blue" title="No recording — no review needed">✓ Auto</span>;
-  if (item.reviewed) return <span class="pill pill-green">✓ Reviewed</span>;
+  // Either signal counts as reviewed — review-done sentinel and audit-done-idx
+  // reviewedBy field can disagree on legacy rows (reconcileReviewedSignals
+  // backfills the divergence; new write paths write both).
+  if (item.reviewed || item.reviewedBy) return <span class="pill pill-green">✓ Reviewed</span>;
   return "\u2014";
 }
 

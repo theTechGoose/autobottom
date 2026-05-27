@@ -146,10 +146,79 @@ export async function backfillStaleScores(
       durationMs: entry.durationMs ?? (finding as any).durationMs,
       reviewedBy: reviewerEmail ?? entry.reviewedBy,
     });
+
+    // Whenever we stamp reviewedBy onto the index from a per-question
+    // pencil-flip stamp, also write the review-done sentinel so the
+    // sentinel-based getReviewedFindingIds query agrees with what we just
+    // put on the index. Without this, the Reviewed column on /admin/audits
+    // shows "—" even though the Auditor column shows the reviewer email.
+    // Idempotent — skip if review-done already exists.
+    const newReviewer = reviewerEmail ?? entry.reviewedBy;
+    if (newReviewer) {
+      const existingDone = await getStored<{ reviewedAt?: string }>("review-done", orgId, entry.findingId);
+      if (!existingDone) {
+        await setStored("review-done", orgId, [entry.findingId], {
+          reviewedAt: new Date().toISOString(),
+          reviewScore: actualScore ?? entry.score,
+          reviewedBy: newReviewer,
+        });
+      }
+    }
     updated++;
   }
 
   return { scanned, updated, cursor: nextCursor, done };
+}
+
+// ── Reconcile reviewedBy / review-done divergence across the org ─────────────
+//
+// One-shot pass for historical data — every audit-done-idx entry with a
+// reviewedBy gets a matching review-done sentinel (and vice versa). Closes
+// the divergence introduced by the gap between adminFlipQuestion / admin-
+// FlipFinding / finalizePerfectFinding (write review-done, skipped
+// reviewedBy on the index) and backfillScores (wrote reviewedBy on the
+// index, skipped review-done). New write paths now write both signals; this
+// helper backfills the legacy data so /admin/audits stops showing the
+// "aknight / —" or "api (dim) / ✓ Reviewed" mismatches.
+//
+// Idempotent — re-runs are no-ops once both stores agree.
+export async function reconcileReviewedSignals(
+  orgId: OrgId,
+): Promise<{ scanned: number; sentinelsWritten: number; indexUpdates: number }> {
+  const entries = await listStoredWithKeys<AuditDoneIndexEntry>("audit-done-idx", orgId);
+  let scanned = 0;
+  let sentinelsWritten = 0;
+  let indexUpdates = 0;
+  for (const { key, value: entry } of entries) {
+    scanned++;
+    if (!entry?.findingId) continue;
+
+    const indexHasReviewer = !!entry.reviewedBy;
+    const sentinel = await getStored<{ reviewedAt?: string; reviewScore?: number; reviewedBy?: string }>(
+      "review-done", orgId, entry.findingId,
+    );
+    const sentinelExists = !!sentinel;
+
+    // Case 1: index says someone reviewed it, sentinel missing → write the sentinel.
+    if (indexHasReviewer && !sentinelExists) {
+      await setStored("review-done", orgId, [entry.findingId], {
+        reviewedAt: new Date(entry.doneAt ?? entry.completedAt ?? Date.now()).toISOString(),
+        reviewScore: entry.score,
+        reviewedBy: entry.reviewedBy,
+      });
+      sentinelsWritten++;
+      continue;
+    }
+
+    // Case 2: sentinel says reviewed but index has no reviewedBy → stamp the
+    // reviewer from the sentinel onto the index.
+    if (sentinelExists && !indexHasReviewer && sentinel?.reviewedBy) {
+      await setStored("audit-done-idx", orgId, key, { ...entry, reviewedBy: sentinel.reviewedBy });
+      indexUpdates++;
+    }
+  }
+  console.log(`🔧 [RECONCILE-REVIEWED] org=${orgId} scanned=${scanned} sentinelsWritten=${sentinelsWritten} indexUpdates=${indexUpdates}`);
+  return { scanned, sentinelsWritten, indexUpdates };
 }
 
 // ── Backfill partner dimensions from finished findings ───────────────────────

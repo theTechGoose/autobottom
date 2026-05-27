@@ -93,7 +93,7 @@ export default define.page(async function ManagerAuditsPage(ctx) {
           <h1>Audit History</h1>
           <p class="page-sub">Historical audits scoped to your team</p>
         </div>
-        <a href="/manager" class="btn btn-ghost btn-sm">&larr; Manager</a>
+        <a href={asEmail ? `/manager?as=${encodeURIComponent(asEmail)}` : "/manager"} class="btn btn-ghost btn-sm">&larr; Manager</a>
       </div>
 
       <GameStateRow
@@ -200,7 +200,7 @@ export default define.page(async function ManagerAuditsPage(ctx) {
             admin's. Without this hidden field, HTMX filter changes drop
             the impersonation context and scope reverts to admin's. */}
         {asEmail && <input type="hidden" name="as" value={asEmail} />}
-        <a href="/manager/audits" class="btn btn-ghost btn-sm">Clear</a>
+        <a href={asEmail ? `/manager/audits?as=${encodeURIComponent(asEmail)}` : "/manager/audits"} class="btn btn-ghost btn-sm">Clear</a>
       </form>
 
       {/* Table region — initial server-rendered, swapped on filter change. */}

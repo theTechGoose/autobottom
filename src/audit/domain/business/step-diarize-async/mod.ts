@@ -1,5 +1,5 @@
 /** STEP 2c: Async speaker diarization — runs in parallel with prepare, not on the critical path. */
-import { getFinding, saveFinding, saveTranscript } from "@audit/domain/data/audit-repository/mod.ts";
+import { getFinding, saveFinding, saveTranscript, invalidateFindingCache } from "@audit/domain/data/audit-repository/mod.ts";
 import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
 import { diarize } from "@audit/domain/data/groq/mod.ts";
 
@@ -59,6 +59,10 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
     // that left lTBHV… and NLbvBCPh… stuck for joshk + ashleyk.
     // Only mutate diarizedTranscript on the fresh read so concurrent
     // writers on other fields don't lose their work.
+    // Bypass the 30s getFinding cache: without this, the re-fetch returns our
+    // own stale pre-diarize snapshot (this step's first getFinding), so the
+    // save below would revert findingStatus and wipe finalize's answers/score.
+    invalidateFindingCache(orgId, findingId);
     const fresh = await getFinding(orgId, findingId);
     if (fresh) {
       fresh.diarizedTranscript = diarized;

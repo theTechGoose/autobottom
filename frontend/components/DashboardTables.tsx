@@ -8,7 +8,7 @@ import { timeAgo } from "../lib/format.ts";
 
 export interface ActiveItem { findingId: string; recordId?: string; step: string; ts: number; isPackage?: boolean; startedAt?: number; }
 export interface ErrorItem { findingId: string; step: string; error: string; ts: number; }
-export interface CompletedItem { findingId: string; recordId?: string; score?: number; completedAt: number; ts?: number; startedAt?: number; durationMs?: number; type?: string; isPackage?: boolean; }
+export interface CompletedItem { findingId: string; recordId?: string; genies?: string; score?: number; completedAt: number; ts?: number; startedAt?: number; durationMs?: number; type?: string; isPackage?: boolean; }
 
 interface Props {
   recent: CompletedItem[];
@@ -161,10 +161,10 @@ export function DashboardTables({ recent, active, errors, logsBase, paused }: Pr
           <a href="/admin/audits" target="_blank" class="tbl-link" style="font-size:10px;">View All &rarr;</a>
         </div>
         <table class="data-table">
-          <thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Finding ID</th><th>Logs</th><th>QB Record</th><th>Genie</th><th>Score</th><th>Started</th><th>Finished</th><th>Duration</th><th>Actions</th></tr></thead>
           <tbody>
             {recent.length === 0 ? (
-              <tr class="empty-row"><td colSpan={8}>No completed audits</td></tr>
+              <tr class="empty-row"><td colSpan={9}>No completed audits</td></tr>
             ) : recent.map((c) => {
               const fid = c.findingId || "\u2014";
               const reportHref = `/audit/report?id=${encodeURIComponent(fid)}`;
@@ -179,6 +179,7 @@ export function DashboardTables({ recent, active, errors, logsBase, paused }: Pr
                   <td><a href={reportHref} target="_blank" rel="noopener" class="tbl-link mono">{fid}</a></td>
                   <td>{logsHref ? <a href={logsHref} target="_blank" rel="noopener" class="tbl-link" style="font-size:10px;">logs</a> : "\u2014"}</td>
                   <td>{qbHref ? <a href={qbHref} target="_blank" rel="noopener" class="tbl-link">{c.recordId}</a> : "\u2014"}</td>
+                  <td class="mono">{c.genies ?? "\u2014"}</td>
                   <td>{c.score != null
                     ? <span style={`color:${scoreColor};font-weight:700;font-variant-numeric:tabular-nums;`}>{c.score}%</span>
                     : "\u2014"}</td>

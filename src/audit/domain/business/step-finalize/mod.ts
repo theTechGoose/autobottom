@@ -176,6 +176,9 @@ export async function stepFinalize(req: Request): Promise<Response> {
     ? (rawVoName.includes(" - ") ? rawVoName.split(" - ").slice(1).join(" - ").trim() : rawVoName.trim()) || undefined
     : undefined;
   const reason = isInvalid ? "invalid_genie" : (score === 100 ? "perfect_score" : undefined);
+  const genieList = (Array.isArray(finding.genieIds) && finding.genieIds.length)
+    ? finding.genieIds.map(String)
+    : (finding.recordingId ? [String(finding.recordingId)] : []);
   await trackCompleted(orgId, findingId, {
     recordId: String(finding.record?.RecordId ?? "") || undefined,
     isPackage,
@@ -186,6 +189,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
     department,
     voName,
     reason,
+    genies: genieList.join(", ") || undefined,
     shift: isPackage ? undefined : String((finding.record as any)?.Shift ?? "") || undefined,
   });
   console.log(`[STEP-FINALIZE] ${findingId}: ✅ trackCompleted saved — score=${score ?? "?"}% owner=${finding.owner ?? "unknown"} dept=${department ?? "unknown"} type=${isPackage ? "package" : "date-leg"}`);

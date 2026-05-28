@@ -3,7 +3,7 @@
 import { assertEquals, assert } from "#assert";
 import {
   getFinding, saveFinding, getJob, saveJob,
-  claimAuditDedup, setBatchCounter, decrementBatchCounter,
+  claimAuditDedup,
   saveBatchAnswers, getAllBatchAnswers, getAllAnswersForFinding,
   savePopulatedQuestions, getPopulatedQuestions,
   cacheAnswer, getCachedAnswer, cacheQuestions, getCachedQuestions,
@@ -52,13 +52,6 @@ Deno.test({ name: "dedup — first claim succeeds, second fails", ...kvOpts, fn:
   assertEquals(first, true);
   const second = await claimAuditDedup(ORG, rid);
   assertEquals(second, false);
-}});
-
-Deno.test({ name: "batch counter — set and decrement", ...kvOpts, fn: async () => {
-  await setBatchCounter(ORG, "f-counter", 3);
-  assertEquals(await decrementBatchCounter(ORG, "f-counter"), 2);
-  assertEquals(await decrementBatchCounter(ORG, "f-counter"), 1);
-  assertEquals(await decrementBatchCounter(ORG, "f-counter"), 0);
 }});
 
 Deno.test({ name: "batch answers — save and retrieve all", ...kvOpts, fn: async () => {

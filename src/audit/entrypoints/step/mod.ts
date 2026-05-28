@@ -48,9 +48,6 @@ export class StepController {
   @Post("prepare") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
   prepare() { return movedStub(); }
 
-  @Post("ask-batch") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
-  askBatch() { return movedStub(); }
-
   @Post("ask-all") @ReturnedType(StepResponse) @Description("moved to main.ts direct dispatch")
   askAll() { return movedStub(); }
 

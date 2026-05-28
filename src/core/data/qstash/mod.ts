@@ -27,7 +27,6 @@ const STEP_QUEUE: Record<string, string> = {
   "poll-transcript": TRANSCRIBE_QUEUE,
   "transcribe-complete": TRANSCRIBE_QUEUE,
   "prepare": TRANSCRIBE_QUEUE,
-  "ask-batch": QUESTIONS_QUEUE,
   "ask-all": QUESTIONS_QUEUE,
   "finalize": CLEANUP_QUEUE,
   "diarize-async": CLEANUP_QUEUE,

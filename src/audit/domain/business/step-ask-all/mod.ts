@@ -85,12 +85,11 @@ async function askLlmOne(
     return answered;
   }
 
-  // Resolve compound AST
-  const orResults: Array<Array<{ answer: boolean; thinking: string; defense: string; snippet: string }>> = [];
-
-  for (const andNodes of ast) {
-    const andResults: Array<{ answer: boolean; thinking: string; defense: string; snippet: string }> = [];
-
+  // Resolve compound AST. OR-groups are independent, and within a group the
+  // per-node Groq calls are independent once sharedContext is computed — so
+  // resolve both levels with Promise.all. Promise.all preserves order, so the
+  // AND/OR aggregation and snippet concatenation below are unaffected.
+  const orResults = await Promise.all(ast.map(async (andNodes) => {
     // Build a combined Pinecone query from transcript-lookup nodes only.
     // Logical/semantic nodes ("Does 'X' include 'Y'?") don't need specific transcript context
     // and contaminate the combined query, pulling Pinecone toward the wrong section.
@@ -103,7 +102,7 @@ async function askLlmOne(
     const combinedQuery = queryNodes.map((n) => toQueryText(n.question)).filter(Boolean).join(" ");
     const sharedContext = await getContext(combinedQuery || andNodes[0].question, question.numDocs);
 
-    for (const node of andNodes) {
+    return await Promise.all(andNodes.map(async (node) => {
       const llmAnswer = await askQuestion(node.question, sharedContext, 0, question.temperature ?? 0.8);
       const boolAnswer = strToBool(llmAnswer.answer);
 
@@ -111,17 +110,14 @@ async function askLlmOne(
         // LLM returned ambiguous text — with the lenient strToBool above this should be rare.
         // Log and treat as No so compound evaluation can proceed rather than silently bailing.
         console.warn(`[STEP-ASK-ALL] ${findingId}: "${question.header}" node returned ambiguous answer "${llmAnswer.answer}", treating as No`);
-        andResults.push({ answer: false, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: sharedContext });
-        continue;
+        return { answer: false, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: sharedContext };
       }
 
       const finalBool = node.flip ? !boolAnswer : boolAnswer;
       console.log(`[STEP-ASK-ALL] ${findingId}: "${question.header}" node="${node.question.slice(0, 60)}..." → ${llmAnswer.answer}${node.flip ? ` (flipped→${finalBool})` : ""}`);
-      andResults.push({ answer: finalBool, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: sharedContext });
-    }
-
-    orResults.push(andResults);
-  }
+      return { answer: finalBool, thinking: llmAnswer.thinking, defense: llmAnswer.defense, snippet: sharedContext };
+    }));
+  }));
 
   // Evaluate: AND within groups, OR across groups
   const andBoolResults = orResults.map((group) => group.every((r) => r.answer));

@@ -67,7 +67,7 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import {
   stepInit, stepTranscribe, stepTranscribeCb, stepPollTranscript,
   stepDiarizeAsync, stepPineconeAsync, stepPrepare,
-  stepAskBatch, stepAskAll, stepFinalize, stepCleanup, stepBadWordCheck,
+  stepAskAll, stepFinalize, stepCleanup, stepBadWordCheck,
 } from "@audit/mod-root.ts";
 
 const STEP_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
@@ -78,7 +78,6 @@ const STEP_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
   "diarize-async": stepDiarizeAsync,
   "pinecone-async": stepPineconeAsync,
   "prepare": stepPrepare,
-  "ask-batch": stepAskBatch,
   "ask-all": stepAskAll,
   "finalize": stepFinalize,
   "cleanup": stepCleanup,

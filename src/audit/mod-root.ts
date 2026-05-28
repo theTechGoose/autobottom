@@ -24,7 +24,6 @@ export { stepPollTranscript } from "@audit/domain/business/step-poll-transcript/
 export { stepDiarizeAsync } from "@audit/domain/business/step-diarize-async/mod.ts";
 export { stepPineconeAsync } from "@audit/domain/business/step-pinecone-async/mod.ts";
 export { stepPrepare } from "@audit/domain/business/step-prepare/mod.ts";
-export { stepAskBatch } from "@audit/domain/business/step-ask-batch/mod.ts";
 export { stepAskAll } from "@audit/domain/business/step-ask-all/mod.ts";
 export { stepFinalize } from "@audit/domain/business/step-finalize/mod.ts";
 export { stepCleanup } from "@audit/domain/business/step-cleanup/mod.ts";

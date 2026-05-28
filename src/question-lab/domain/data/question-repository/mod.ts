@@ -45,6 +45,31 @@ export interface QLTestRun {
   runAt: number;
 }
 
+// ── serveConfig cache ──────────────────────────────────────────────────────
+// serveConfig runs on every Question-Lab audit (step-prepare) and the serve
+// endpoint, doing getConfig (+ maybe listConfigs) + getQuestionsForConfig
+// uncached. A short-TTL per-isolate cache absorbs bulk-audit bursts on the same
+// config; every mutator below calls clearServeConfigCache() so the UI and serve
+// endpoint reflect edits immediately rather than waiting out the TTL.
+
+export interface ServedQuestion {
+  header: string;
+  unpopulated: string;
+  populated: string;
+  autoYesExp: string;
+  temperature: number;
+  numDocs: number;
+  egregious: boolean;
+  weight: number;
+}
+
+const SERVE_CONFIG_CACHE_TTL_MS = 30_000;
+const _serveConfigCache = new Map<string, { value: ServedQuestion[]; expiresAt: number }>();
+
+export function clearServeConfigCache(): void {
+  _serveConfigCache.clear();
+}
+
 // ── Config CRUD ──────────────────────────────────────────────────────────────
 
 export async function listConfigs(orgId: OrgId): Promise<QLConfig[]> {
@@ -60,6 +85,7 @@ export async function createConfig(orgId: OrgId, name: string, type: "internal" 
   const now = Date.now();
   const config: QLConfig = { id, name, type, createdAt: now, updatedAt: now, active: true };
   await setStored("qlab-config", orgId, [id], config);
+  clearServeConfigCache();
   return config;
 }
 
@@ -68,6 +94,7 @@ export async function updateConfig(orgId: OrgId, id: string, patch: Partial<QLCo
   if (!existing) return null;
   const updated = { ...existing, ...patch, updatedAt: Date.now() };
   await setStored("qlab-config", orgId, [id], updated);
+  clearServeConfigCache();
   return updated;
 }
 
@@ -75,9 +102,12 @@ export async function deleteConfig(orgId: OrgId, id: string): Promise<void> {
   await deleteStored("qlab-config", orgId, id);
   // Also delete all questions for this config
   const questions = await listStoredWithKeys<QLQuestion>("qlab-question", orgId);
-  for (const { key, value } of questions) {
-    if (value?.configId === id) await deleteStored("qlab-question", orgId, ...key);
-  }
+  await Promise.all(
+    questions
+      .filter(({ value }) => value?.configId === id)
+      .map(({ key }) => deleteStored("qlab-question", orgId, ...key)),
+  );
+  clearServeConfigCache();
 }
 
 export async function listConfigNames(orgId: OrgId): Promise<Array<{ id: string; name: string }>> {
@@ -125,6 +155,7 @@ export async function createQuestion(
     ...(extras.order !== undefined ? { order: extras.order } : {}),
   };
   await setStored("qlab-question", orgId, [id], q);
+  clearServeConfigCache();
   return q;
 }
 
@@ -132,14 +163,10 @@ export async function createQuestion(
  *  overwrite path so a re-import doesn't stack on top of the old questions. */
 export async function bulkDeleteQuestions(orgId: OrgId, configId: string): Promise<number> {
   const rows = await listStoredWithKeys<QLQuestion>("qlab-question", orgId);
-  let deleted = 0;
-  for (const { key, value } of rows) {
-    if (value.configId === configId) {
-      await deleteStored("qlab-question", orgId, ...key);
-      deleted++;
-    }
-  }
-  return deleted;
+  const toDelete = rows.filter(({ value }) => value.configId === configId);
+  await Promise.all(toDelete.map(({ key }) => deleteStored("qlab-question", orgId, ...key)));
+  if (toDelete.length > 0) clearServeConfigCache();
+  return toDelete.length;
 }
 
 export async function updateQuestion(orgId: OrgId, id: string, patch: Partial<QLQuestion>): Promise<QLQuestion | null> {
@@ -149,11 +176,13 @@ export async function updateQuestion(orgId: OrgId, id: string, patch: Partial<QL
   versions.push({ text: existing.text, updatedAt: existing.updatedAt });
   const updated = { ...existing, ...patch, updatedAt: Date.now(), versions };
   await setStored("qlab-question", orgId, [id], updated);
+  clearServeConfigCache();
   return updated;
 }
 
 export async function deleteQuestion(orgId: OrgId, id: string): Promise<void> {
   await deleteStored("qlab-question", orgId, id);
+  clearServeConfigCache();
 }
 
 export async function restoreVersion(orgId: OrgId, id: string, versionIndex: number): Promise<QLQuestion | null> {
@@ -182,6 +211,7 @@ export async function bulkSetEgregious(orgId: OrgId, questionName: string, egreg
       updated++;
     }
   }
+  if (updated > 0) clearServeConfigCache();
   return updated;
 }
 
@@ -263,18 +293,26 @@ export async function setPartnerAssignment(orgId: OrgId, officeName: string, con
 
 const QLQUESTION_DEFAULTS = { temperature: 0.8, numDocs: 4, egregious: false, weight: 5 };
 
-export async function serveConfig(orgId: OrgId, configNameOrId: string) {
+export async function serveConfig(orgId: OrgId, configNameOrId: string): Promise<ServedQuestion[]> {
+  const cacheKey = `${orgId}:${configNameOrId}`;
+  const now = Date.now();
+  const cached = _serveConfigCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.value;
+
   let config = await getConfig(orgId, configNameOrId);
   if (!config) {
     const all = await listConfigs(orgId);
     config = all.find((c) => c.name === configNameOrId) ?? null;
   }
-  if (!config) return [];
+  if (!config) {
+    _serveConfigCache.set(cacheKey, { value: [], expiresAt: now + SERVE_CONFIG_CACHE_TTL_MS });
+    return [];
+  }
   const questions = await getQuestionsForConfig(orgId, config.id);
   const ordered = [...questions].sort((a, b) =>
     (a.order ?? 0) - (b.order ?? 0) || a.createdAt - b.createdAt,
   );
-  return ordered.map((q) => ({
+  const served: ServedQuestion[] = ordered.map((q) => ({
     header: q.name,
     unpopulated: q.text,
     populated: q.text,
@@ -284,4 +322,6 @@ export async function serveConfig(orgId: OrgId, configNameOrId: string) {
     egregious: q.egregious ?? QLQUESTION_DEFAULTS.egregious,
     weight: q.weight ?? QLQUESTION_DEFAULTS.weight,
   }));
+  _serveConfigCache.set(cacheKey, { value: served, expiresAt: now + SERVE_CONFIG_CACHE_TTL_MS });
+  return served;
 }

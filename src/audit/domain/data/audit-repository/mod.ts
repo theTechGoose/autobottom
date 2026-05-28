@@ -122,23 +122,6 @@ export async function cacheQuestions(orgId: OrgId, destinationId: string, questi
   await setStoredChunked("destination-questions", orgId, [destinationId], questions, { expireInMs: CACHE_TTL_MS });
 }
 
-// ── Batch Counter ───────────────────────────────────────────────────────────
-
-export async function setBatchCounter(orgId: OrgId, findingId: string, count: number): Promise<void> {
-  await setStored("batch-counter", orgId, [findingId], count);
-}
-
-/** Decrement the batch counter and return the new value.
- *  Note: simple read-modify-write — under high concurrency on Firestore,
- *  could race. Acceptable for our load (handful of QStash callbacks per
- *  finding); finalize is idempotent via the review-done sentinel. */
-export async function decrementBatchCounter(orgId: OrgId, findingId: string): Promise<number> {
-  const current = (await getStored<number>("batch-counter", orgId, findingId)) ?? 0;
-  const next = current - 1;
-  await setStored("batch-counter", orgId, [findingId], next);
-  return next;
-}
-
 // ── Populated Questions (chunked) ───────────────────────────────────────────
 
 export async function savePopulatedQuestions(orgId: OrgId, findingId: string, questions: any[]): Promise<void> {

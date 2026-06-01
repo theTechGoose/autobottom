@@ -13,6 +13,8 @@ import { PipelineConfigResponse, ParallelismResponse, WebhookConfigResponse, Bad
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
+// TEMPORARY email-tracking spike — remove with the rest of the track-test feature.
+import { sendTrackingTest, listTrackingHits } from "@admin/domain/business/track-test/mod.ts";
 const ORG = defaultOrgId;
 
 @SwaggerDescription("Admin — pipeline config, settings, queue management, backfills")
@@ -2034,6 +2036,20 @@ export class AdminConfigController {
      console.warn(`⚠️ [UNREVIEWED-AUDITS] failed — soft fallback:`, err);
      return { items: [], total: 0, owners: [], departments: [], shifts: [], retry: true };
    }
+  }
+
+  // -- TEMPORARY email-tracking spike (remove with the feature) --
+  // Send the instrumented test email + read back the pixel/click hits. Driven
+  // from Data Maintenance → Email Tracking Test. The pixel/click endpoints
+  // themselves live in main.ts (public, unauthenticated).
+  @Post("track-test/send") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
+  async trackTestSend(@Body() body: { to?: string; label?: string }) {
+    return await sendTrackingTest(ORG(), String(body?.to ?? ""), String(body?.label ?? "workspace"));
+  }
+
+  @Get("track-test/hits") @ReturnedType(OkResponse)
+  async trackTestHits() {
+    return { results: await listTrackingHits(ORG()) };
   }
 }
 

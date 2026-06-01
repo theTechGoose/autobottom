@@ -73,14 +73,20 @@ function selfUrl(): string {
   // 2. Fall back to the most recent external origin observed in this process
   //    — handles internal Fresh→backend localhost fetches.
   if (knownPublicOrigin) return knownPublicOrigin;
-  // 3. Construct this deployment's public URL from Deno Deploy's build hash.
-  //    Handles cron jobs and any call-site that runs before any HTTP request.
-  const deploymentId = Deno.env.get("DENO_DEPLOYMENT_ID");
-  if (deploymentId) return `https://autobottom-${deploymentId}.thetechgoose.deno.net`;
-  // 4. Env fallback (for local dev or non-Deploy hosts).
+  // 3. SELF_URL env — the stable callback host for non-request contexts
+  //    (cron jobs, any call-site that runs before any HTTP request). On prod
+  //    this is https://autobottom.thetechgoose.deno.net.
+  //
+  //    NOTE: we deliberately do NOT construct a host from DENO_DEPLOYMENT_ID
+  //    here. That id is a 64-char build hash that does NOT map to a routable
+  //    `autobottom-<id>.thetechgoose.deno.net` hostname (preview hosts use a
+  //    short slug), so the constructed URL fails DNS ("no such host") and
+  //    broke the watchdog cron's re-publish in production. The legitimate
+  //    branch-preview case is covered by the AsyncLocalStorage origin (step 1)
+  //    on real HTTP requests; Deno Deploy crons run on production only.
   const envUrl = Deno.env.get("SELF_URL");
   if (envUrl) return envUrl;
-  // 5. Last resort — only reachable when QStash is disabled (local dev).
+  // 4. Last resort — only reachable when QStash is disabled (local dev).
   return scoped ?? "http://localhost:3000";
 }
 
@@ -89,7 +95,9 @@ function selfUrl(): string {
 export function getSelfUrl(): string { return selfUrl(); }
 
 /** Debug helper: dump every candidate source selfUrl() considers, so operators
- *  can see exactly why the callback URL is what it is. */
+ *  can see exactly why the callback URL is what it is. `deploymentId` is
+ *  informational only — it no longer drives selfUrl() (see the note in selfUrl
+ *  about why DENO_DEPLOYMENT_ID can't build a routable host). */
 export function getSelfUrlSources(): {
   scopedOrigin: string | null;
   scopedIsLocalhost: boolean;

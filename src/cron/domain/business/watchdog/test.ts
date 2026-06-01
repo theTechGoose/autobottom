@@ -1,6 +1,7 @@
 /** Tests for watchdog stuck-finding detection logic. */
 
 import { assertEquals, assert } from "#assert";
+import { resolveStep } from "./mod.ts";
 
 interface StuckFinding {
   orgId: string; findingId: string; step: string; ts: number; ageMs: number;
@@ -47,4 +48,17 @@ Deno.test("watchdog — ageMs calculated correctly", () => {
   const entries = [{ orgId: "o1", findingId: "f1", step: "init", ts: 50_000 }];
   const stuck = detectStuck(entries, now, 10_000);
   assertEquals(stuck[0].ageMs, 50_000);
+});
+
+Deno.test("watchdog — resolveStep maps non-step labels to init", () => {
+  // "queued" (audit controller) and "genie-retry" (step-init) are display
+  // labels, not dispatchable steps — they must re-publish as `init`.
+  assertEquals(resolveStep("queued"), "init");
+  assertEquals(resolveStep("genie-retry"), "init");
+});
+
+Deno.test("watchdog — resolveStep passes real steps through unchanged", () => {
+  for (const step of ["init", "transcribe", "poll-transcript", "prepare", "ask-all", "finalize", "cleanup"]) {
+    assertEquals(resolveStep(step), step);
+  }
 });

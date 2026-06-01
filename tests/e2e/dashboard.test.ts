@@ -109,15 +109,15 @@ Deno.test({ name: "E2E Debug: /admin/debug/self-url exposes all fallback sources
   // Sources must always be present for debugging.
   assert(body.sources, "sources breakdown must be present");
   assertEquals(body.sources.effective, body.selfUrl, "sources.effective must match top-level selfUrl");
-  // In local E2E, BASE is localhost and there's no DENO_DEPLOYMENT_ID — so selfUrl
-  // falls back to the localhost scoped origin. In a real deployment, it would
-  // resolve via async-local-storage (external host) or deno-deployment-id.
-  // The invariant we care about: if a public source is available, selfUrl MUST
-  // use it instead of localhost.
+  // In local E2E, BASE is localhost and there's no SELF_URL — so selfUrl falls
+  // back to the localhost scoped origin. In a real deployment, it resolves via
+  // async-local-storage (external host) or the SELF_URL env. The invariant we
+  // care about: if a public source is available, selfUrl MUST use it instead of
+  // localhost. NOTE: deploymentId is intentionally NOT a public source — a
+  // routable host can't be derived from DENO_DEPLOYMENT_ID (see selfUrl()).
   const hasPublicSource =
     (body.sources.scopedOrigin !== null && !body.sources.scopedIsLocalhost) ||
     body.sources.knownPublicOrigin !== null ||
-    body.sources.deploymentId !== null ||
     body.sources.envSelfUrl !== null;
   if (hasPublicSource) {
     assert(

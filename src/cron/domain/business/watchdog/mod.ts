@@ -6,6 +6,22 @@ import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 
 const STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
+/** active-tracking.step doubles as a dashboard display label, and a few labels
+ *  are NOT dispatchable pipeline steps. Re-publishing them verbatim hits an
+ *  unknown /audit/step/<label> route (404) and the finding never recovers.
+ *  Both of these mean "the audit still needs init to (re)run", so map them to
+ *  the real `init` step (which is idempotent and converges to finalize).
+ *   • "queued"      — written by the audit controller at creation
+ *   • "genie-retry" — written by step-init between genie download retries */
+const STEP_ALIASES: Record<string, string> = { queued: "init", "genie-retry": "init" };
+
+/** Resolve a tracked active-tracking label to a dispatchable pipeline step,
+ *  mapping the non-step display labels (see STEP_ALIASES) to real steps.
+ *  Exported for unit testing. */
+export function resolveStep(label: string): string {
+  return STEP_ALIASES[label] ?? label;
+}
+
 interface StuckFinding {
   orgId: string;
   findingId: string;
@@ -44,9 +60,10 @@ export async function runWatchdog(): Promise<{ recovered: number }> {
     let recovered = 0;
     for (const s of stuck) {
       try {
-        await publishStep(s.step, { findingId: s.findingId, orgId: s.orgId });
+        const step = resolveStep(s.step);
+        await publishStep(step, { findingId: s.findingId, orgId: s.orgId });
         recovered++;
-        console.log(`🔧 [WATCHDOG] Re-published ${s.findingId} stuck at ${s.step} for ${Math.round(s.ageMs / 60000)}min`);
+        console.log(`🔧 [WATCHDOG] Re-published ${s.findingId} stuck at ${s.step}${step !== s.step ? ` (→ ${step})` : ""} for ${Math.round(s.ageMs / 60000)}min`);
       } catch (err) {
         console.error(`❌ [WATCHDOG] Failed to re-publish ${s.findingId}:`, err);
       }

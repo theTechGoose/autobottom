@@ -9,65 +9,14 @@
 
 import { define } from "../../../../../lib/define.ts";
 import { apiFetch } from "../../../../../lib/api.ts";
+import { resolveRange } from "../../../../../lib/report-range.ts";
+import { MiniStat, RateCard } from "../../../../../components/EngagementCards.tsx";
 import { renderToString } from "preact-render-to-string";
 
 interface Resp {
   total: number; sent: number; opened: number; clicked: number; appealed: number;
   appealedAmongOpened: number; appealedAmongClicked: number;
   openRate: number; clickRate: number; appealRateAll: number; appealRateOpened: number; appealRateClicked: number;
-}
-
-function startOfMonth(offset: number): number {
-  const d = new Date();
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + offset, 1);
-}
-
-function dateToMs(dateStr: string, endOfDay: boolean): number | null {
-  if (!dateStr) return null;
-  const ts = Date.parse(dateStr + "T00:00:00Z");
-  if (!Number.isFinite(ts)) return null;
-  return endOfDay ? ts + 86_400_000 - 1 : ts;
-}
-
-interface Resolved { since: number; until: number; label: string }
-
-function resolveRange(preset: string, customFrom: string, customTo: string): Resolved {
-  const now = Date.now();
-  switch (preset) {
-    case "this-month": return { since: startOfMonth(0), until: now, label: "This Month" };
-    case "last-month": return { since: startOfMonth(-1), until: startOfMonth(0) - 1, label: "Last Month" };
-    case "last-3": return { since: startOfMonth(-2), until: now, label: "Last 3 Months" };
-    case "last-6": return { since: startOfMonth(-5), until: now, label: "Last 6 Months" };
-    case "all-time": return { since: 0, until: now, label: "All Time" };
-    case "custom": {
-      const since = dateToMs(customFrom, false);
-      const until = dateToMs(customTo, true);
-      if (since != null && until != null) return { since, until, label: `${customFrom} → ${customTo}` };
-      if (since != null) return { since, until: now, label: `${customFrom} → now` };
-      if (until != null) return { since: 0, until, label: `epoch → ${customTo}` };
-      return { since: startOfMonth(0), until: now, label: "This Month (no custom range)" };
-    }
-    default: return { since: startOfMonth(0), until: now, label: "This Month" };
-  }
-}
-
-function RateCard({ title, rate, appealLabel, appealRate, accent }: { title: string; rate: number; appealLabel: string; appealRate: number; accent: string }) {
-  return (
-    <div style={`border:1px solid var(--border);border-left:3px solid ${accent};border-radius:8px;padding:14px;background:var(--bg-2);`}>
-      <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">{title}</div>
-      <div style={`font-size:28px;font-weight:800;color:${accent};font-variant-numeric:tabular-nums;`}>{rate}%</div>
-      <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">{appealLabel} <strong style="color:var(--text-bright);">{appealRate}%</strong></div>
-    </div>
-  );
-}
-
-function MiniStat({ label, value, color }: { label: string; value: number; color?: string }) {
-  return (
-    <div style="border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg);">
-      <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">{label}</div>
-      <div style={`font-size:18px;font-weight:700;color:${color ?? "var(--text-bright)"};font-variant-numeric:tabular-nums;`}>{value.toLocaleString()}</div>
-    </div>
-  );
 }
 
 async function renderEngagement(req: Request, preset: string, customFrom: string, customTo: string): Promise<string> {
@@ -85,8 +34,17 @@ async function renderEngagement(req: Request, preset: string, customFrom: string
 
   return renderToString(
     <div style="border:1px solid var(--border);border-radius:6px;padding:14px;background:var(--bg);">
-      <div style="font-size:12px;font-weight:700;color:var(--text-bright);margin-bottom:12px;">
-        Email Engagement — {label} · {r.total.toLocaleString()} audits
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
+        <div style="font-size:12px;font-weight:700;color:var(--text-bright);">
+          Email Engagement — {label} · {r.total.toLocaleString()} audits
+        </div>
+        <a
+          href={`/admin/email-engagement?since=${since}&until=${until}`}
+          target="_blank"
+          rel="noopener"
+          class="sf-btn ghost"
+          style="font-size:11px;padding:4px 10px;text-decoration:none;white-space:nowrap;"
+        >Open full report ↗</a>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
         <RateCard title="Open rate (opened ÷ sent)" rate={r.openRate} accent="var(--cyan)"
@@ -113,13 +71,13 @@ async function renderEngagement(req: Request, preset: string, customFrom: string
 export const handler = define.handlers({
   async GET(ctx) {
     const sp = new URL(ctx.req.url).searchParams;
-    const preset = sp.get("preset") ?? "this-month";
+    const preset = sp.get("preset") ?? "today";
     const html = await renderEngagement(ctx.req, preset, sp.get("custom-from") ?? "", sp.get("custom-to") ?? "");
     return new Response(html, { headers: { "content-type": "text/html" } });
   },
   async POST(ctx) {
     const form = await ctx.req.formData();
-    const preset = String(form.get("preset") ?? "this-month");
+    const preset = String(form.get("preset") ?? "today");
     const customFrom = String(form.get("custom-from") ?? "");
     const customTo = String(form.get("custom-to") ?? "");
     const html = await renderEngagement(ctx.req, preset, customFrom, customTo);

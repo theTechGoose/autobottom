@@ -14,7 +14,9 @@
 
 import { getStored, setStored } from "@core/data/firestore/mod.ts";
 import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
+import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
+import type { AppealRecord, AuditDoneIndexEntry } from "@core/dto/types.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 const MARK_TYPE = "audit-email-mark";
@@ -189,4 +191,183 @@ export async function getEmailEngagement(orgId: OrgId, from: number, to: number)
     Promise.all(entries.map((e) => getAppeal(orgId, e.findingId).catch(() => null))),
   ]);
   return tallyEngagement(marks, appeals);
+}
+
+// ── Drill-down detail ─────────────────────────────────────────────────────────
+
+/** One per-email row for the full-page drill-down. */
+export interface EngagementRow {
+  findingId: string;
+  completedAt: number;
+  voName?: string;
+  department?: string;
+  isPackage?: boolean;
+  recordingId?: string;
+  recordId?: string;
+  score: number;
+  sentAt?: number;
+  openedAt?: number;
+  openPrefetchAt?: number;
+  firstClickAt?: number;
+  appealStatus?: "pending" | "complete" | null;
+}
+
+/** A segment tally — the same engagement metrics scoped to one group. */
+export type GroupTally = { key: string } & EmailEngagement;
+
+export interface EmailEngagementDetail {
+  aggregate: EmailEngagement;
+  byDepartment: GroupTally[];
+  byType: GroupTally[];
+  rows: EngagementRow[];
+  total: number;
+  page: number;
+  pages: number;
+  /** Cohort size (audits completed in the window). */
+  cohortSize: number;
+  /** True when the cohort exceeded HYDRATE_CAP — only the visible page was
+   *  hydrated, so the department breakdown reflects only what the index carried
+   *  for the un-hydrated remainder. */
+  hydrationCapped: boolean;
+}
+
+/** Finding-doc hydration is bounded. The audit-done-idx writer doesn't store
+ *  department / VoName on most entries (they're back-filled lazily by the
+ *  /admin/audits page), so an un-hydrated breakdown is ~all "Unknown". Small
+ *  windows (Today / a month) hydrate the whole cohort for accurate department +
+ *  team-member grouping; very large windows hydrate only the visible page (so
+ *  the per-email table stays accurate) and set hydrationCapped. */
+const HYDRATE_CAP = 2000;
+const HYDRATE_CONCURRENCY = 25;
+
+interface Enriched {
+  e: AuditDoneIndexEntry;
+  m: EmailMark | null;
+  a: AppealRecord | null;
+  voName?: string;
+  department?: string;
+  isPackage?: boolean;
+  recordingId?: string;
+}
+
+/** Fill missing voName / department / isPackage / recordingId from the finding
+ *  doc — mirrors the dashboard's hydrateMissing extraction (date-leg department =
+ *  ActivatingOffice, package department = OfficeName). */
+function enrichFromFinding(it: Enriched, f: Record<string, unknown> | null): void {
+  if (!f) return;
+  const rec = f.record as Record<string, unknown> | undefined;
+  const isPkg = f.recordingIdField === "GenieNumber";
+  const rawVo = String(rec?.VoName ?? "");
+  const vo = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+  it.isPackage = it.isPackage ?? isPkg;
+  it.voName = it.voName || (vo || undefined);
+  it.department = it.department || (String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined);
+  it.recordingId = it.recordingId || (String(f.recordingId ?? "").trim() || undefined);
+}
+
+/** Fetch finding docs for the given ids in bounded-concurrency batches. */
+async function hydrateFindings(orgId: OrgId, ids: string[]): Promise<Map<string, Record<string, unknown> | null>> {
+  const map = new Map<string, Record<string, unknown> | null>();
+  for (let i = 0; i < ids.length; i += HYDRATE_CONCURRENCY) {
+    const slice = ids.slice(i, i + HYDRATE_CONCURRENCY);
+    const docs = await Promise.all(slice.map((id) => getFinding(orgId, id).catch(() => null)));
+    slice.forEach((id, j) => map.set(id, (docs[j] as Record<string, unknown> | null) ?? null));
+  }
+  return map;
+}
+
+function tallyGroup(key: string, group: Enriched[]): GroupTally {
+  return { key, ...tallyEngagement(group.map((g) => g.m), group.map((g) => g.a)) };
+}
+
+function toRow(it: Enriched): EngagementRow {
+  return {
+    findingId: it.e.findingId,
+    completedAt: it.e.completedAt,
+    voName: it.voName,
+    department: it.department,
+    isPackage: it.isPackage,
+    recordingId: it.recordingId,
+    recordId: it.e.recordId,
+    score: it.e.score,
+    sentAt: it.m?.sentAt,
+    openedAt: it.m?.openedAt,
+    openPrefetchAt: it.m?.openPrefetchAt,
+    firstClickAt: it.m?.firstClickAt,
+    appealStatus: it.a?.status ?? null,
+  };
+}
+
+/** Detailed engagement over [from, to]: headline aggregate + per-department and
+ *  per-type (Internal/Partner) breakdowns + a paginated per-email row list.
+ *
+ *  Reuses the same cohort + parallel mark/appeal hydration that
+ *  getEmailEngagement does, then enriches missing department / team-member
+ *  fields from the finding docs (bounded — see HYDRATE_CAP). Aggregate + type
+ *  breakdown cover the whole window; only `rows` are paginated. */
+export async function getEmailEngagementDetail(
+  orgId: OrgId,
+  from: number,
+  to: number,
+  page = 1,
+  limit = 100,
+): Promise<EmailEngagementDetail> {
+  const entries = await queryAuditDoneIndex(orgId, from, to);
+  const [marks, appeals] = await Promise.all([
+    Promise.all(entries.map((e) => getMark(orgId, e.findingId).catch(() => null))),
+    Promise.all(entries.map((e) => getAppeal(orgId, e.findingId).catch(() => null))),
+  ]);
+
+  const aggregate = tallyEngagement(marks, appeals);
+
+  // Most-recently-sent first (fall back to completedAt).
+  const items: Enriched[] = entries
+    .map((e, i): Enriched => ({
+      e, m: marks[i], a: appeals[i],
+      voName: e.voName, department: e.department, isPackage: e.isPackage, recordingId: e.recordingId,
+    }))
+    .sort((x, y) => ((y.m?.sentAt ?? y.e.completedAt) - (x.m?.sentAt ?? x.e.completedAt)));
+
+  const cohortSize = items.length;
+  const lim = Math.min(500, Math.max(10, limit));
+  const pages = Math.max(1, Math.ceil(cohortSize / lim));
+  const pg = Math.min(Math.max(1, page), pages);
+  const pageItems = items.slice((pg - 1) * lim, pg * lim);
+
+  // Hydrate department / team-member from finding docs. Whole cohort for small
+  // windows; only the visible page when the cohort blows past HYDRATE_CAP.
+  const hydrationCapped = cohortSize > HYDRATE_CAP;
+  const hydrateSet = hydrationCapped ? pageItems : items;
+  const needIds = [...new Set(
+    hydrateSet
+      .filter((it) => !it.department || !it.voName || it.isPackage === undefined || !it.recordingId)
+      .map((it) => it.e.findingId),
+  )];
+  if (needIds.length) {
+    const fmap = await hydrateFindings(orgId, needIds);
+    hydrateSet.forEach((it) => enrichFromFinding(it, fmap.get(it.e.findingId) ?? null));
+  }
+
+  // Department breakdown (enriched) + audit-type breakdown (index isPackage is
+  // reliably written, so type doesn't need hydration).
+  const deptGroups = new Map<string, Enriched[]>();
+  const typeGroups = new Map<string, Enriched[]>();
+  for (const it of items) {
+    const dept = (it.department ?? "").trim() || "Unknown";
+    (deptGroups.get(dept) ?? deptGroups.set(dept, []).get(dept)!).push(it);
+    const type = it.isPackage ? "Partner" : "Internal";
+    (typeGroups.get(type) ?? typeGroups.set(type, []).get(type)!).push(it);
+  }
+  const byDepartment = [...deptGroups.entries()]
+    .map(([key, group]) => tallyGroup(key, group))
+    .sort((a, b) => b.sent - a.sent || b.total - a.total);
+  const byType = ["Internal", "Partner"]
+    .filter((k) => typeGroups.has(k))
+    .map((k) => tallyGroup(k, typeGroups.get(k)!));
+
+  return {
+    aggregate, byDepartment, byType,
+    rows: pageItems.map(toRow),
+    total: cohortSize, page: pg, pages, cohortSize, hydrationCapped,
+  };
 }

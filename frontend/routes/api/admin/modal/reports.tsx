@@ -8,6 +8,7 @@
 import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import { apiFetch } from "../../../../lib/api.ts";
+import { ENG_PRESETS } from "../../../../lib/report-range.ts";
 
 type TabKey = "qfailures" | "weekly" | "engagement";
 
@@ -178,13 +179,13 @@ function EngagementInitial() {
       >
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;">
           <span style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-right:4px;">Range</span>
-          {QF_PRESETS.map((p) => (
+          {ENG_PRESETS.map((p) => (
             <button
               key={p.key}
               type="submit"
               name="preset"
               value={p.key}
-              class={`sf-btn ${p.key === "this-month" ? "primary" : "ghost"}`}
+              class={`sf-btn ${p.key === "today" ? "primary" : "ghost"}`}
               style="font-size:11px;padding:4px 12px;"
             >{p.label}</button>
           ))}
@@ -197,8 +198,8 @@ function EngagementInitial() {
           <span id="eng-loading" class="htmx-indicator" style="font-size:11px;color:var(--text-dim);">⏳</span>
         </div>
       </form>
-      <div id="eng-result" hx-get="/api/admin/modal/reports/engagement?preset=this-month" hx-trigger="load" hx-swap="innerHTML">
-        <div style="font-size:11px;color:var(--text-dim);padding:18px;text-align:center;">Loading current-month data…</div>
+      <div id="eng-result" hx-get="/api/admin/modal/reports/engagement?preset=today" hx-trigger="load" hx-swap="innerHTML">
+        <div style="font-size:11px;color:var(--text-dim);padding:18px;text-align:center;">Loading today's data…</div>
       </div>
     </div>
   );

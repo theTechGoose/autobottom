@@ -666,6 +666,7 @@ Deno.env.set("API_URL", `http://localhost:${port}`);
 const FRONTEND_EXACT_PAGES = new Set([
   "/admin/dashboard", "/admin/users", "/admin/audits", "/admin/weekly-builder",
   "/admin/badge-editor",
+  "/admin/email-engagement",
   "/admin/impersonate-go",
   "/manager/audits",
   "/review", "/review/dashboard",

@@ -27,6 +27,13 @@ export class EmailEngagementResponse {
   appealedAmongOpened = 0; appealedAmongClicked = 0;
   openRate = 0; clickRate = 0; appealRateAll = 0; appealRateOpened = 0; appealRateClicked = 0;
 }
+export class EmailEngagementDetailResponse {
+  aggregate = new EmailEngagementResponse();
+  byDepartment: unknown[] = [];
+  byType: unknown[] = [];
+  rows: unknown[] = [];
+  total = 0; page = 1; pages = 1; cohortSize = 0; hydrationCapped = false;
+}
 
 // ── Review ───────────────────────────────────────────────────────────────────
 

@@ -5,9 +5,10 @@ import { WebhookController } from "@admin/entrypoints/webhook/mod.ts";
 import { DashboardController } from "@admin/entrypoints/dashboard/mod.ts";
 import { MigrationController } from "@admin/entrypoints/migration/mod.ts";
 import { KvExportController } from "@admin/entrypoints/kv-export/mod.ts";
+import { CanaryErrorsController } from "@admin/entrypoints/canary-errors/mod.ts";
 
 @Module({
-  controllers: [AdminConfigController, UserController, WebhookController, DashboardController, MigrationController, KvExportController],
+  controllers: [AdminConfigController, UserController, WebhookController, DashboardController, MigrationController, KvExportController, CanaryErrorsController],
   injectables: [],
 })
 export class AdminModule {}

@@ -147,6 +147,9 @@ No log access needed for the common failure modes.
 ### Optional
 - `LOCAL_QUEUE=true` — skip QStash entirely, run steps via `setTimeout` (dev only)
 - `S3_BUCKET` or `AWS_S3_BUCKET` — for audio recording streaming
+- `TRACK_LINK_SECRET` — HMAC key signing audit-email open/click tracking links (forgery guard; tracking still works without it, just unsigned)
+- `CANARY_SECRET` — Bearer token for `POST /canary/errors` (the daily previous-day error report). Required for that endpoint to authenticate.
+- `CANARY_LOGS_BASE` — override for the Deno observability logs base URL in the canary response (only needed if the request host won't resolve to the `console.deno.com/{org}/{project}/…` form)
 
 ## Known Issues
 

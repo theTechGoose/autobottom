@@ -156,8 +156,34 @@ export async function terminateAllActive(orgId: OrgId): Promise<number> {
   return count;
 }
 
+// Errors persist longer than the 24h dashboard window so the daily canary
+// endpoint can read "yesterday" when queried mid-next-day (plus a week of
+// history). The dashboard's Recent Errors table still filters to 24h itself.
+const ERROR_RETENTION_MS = 8 * DAY_MS;
+
+export interface ErrorRecord { findingId: string; step: string; error: string; ts: number; }
+
 export async function trackError(orgId: OrgId, findingId: string, step: string, error: string): Promise<void> {
-  await setStored("error-tracking", orgId, [`${Date.now()}-${findingId}`], { findingId, step, error, ts: Date.now() }, { expireInMs: DAY_MS });
+  await setStored("error-tracking", orgId, [`${Date.now()}-${findingId}`], { findingId, step, error, ts: Date.now() }, { expireInMs: ERROR_RETENTION_MS });
+}
+
+/** Read error-tracking rows whose ts is in [from, to), excluding hidden
+ *  findings, sorted ascending by ts. Read-all + filter (errors are low-volume),
+ *  matching getStats's error read. */
+export async function getErrorsInWindow(orgId: OrgId, from: number, to: number): Promise<ErrorRecord[]> {
+  const hidden = await getHiddenFindingIds(orgId);
+  const rows = await listStored<Record<string, unknown>>("error-tracking", orgId);
+  const out: ErrorRecord[] = [];
+  for (const v of rows) {
+    const findingId = String(v?.findingId ?? "");
+    if (findingId && hidden.has(findingId)) continue;
+    const ts = Number(v?.ts ?? 0);
+    if (ts >= from && ts < to) {
+      out.push({ findingId, step: String(v?.step ?? ""), error: String(v?.error ?? ""), ts });
+    }
+  }
+  out.sort((a, b) => a.ts - b.ts);
+  return out;
 }
 
 export async function clearErrors(orgId: OrgId): Promise<number> {

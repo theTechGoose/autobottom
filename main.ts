@@ -56,6 +56,7 @@ import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
+import { handleCanaryErrors } from "@admin/entrypoints/canary-errors/mod.ts";
 import { recordOpen, recordClick, verifyFinding, TRANSPARENT_GIF } from "@reporting/domain/business/email-engagement/mod.ts";
 import { handleEventsStream, handleChatStream } from "@events/entrypoints/events-stream/mod.ts";
 import { buildDispatchErrorResponse, isDanetAbortBody } from "@core/business/dispatch-error/mod.ts";
@@ -805,6 +806,14 @@ Deno.serve({ port }, (req, info) => {
       return handleKvBatchList(req);
     }
 
+    // /canary/errors — secret-gated (CANARY_SECRET) daily previous-day error
+    // report for the external canary monitor. Direct-dispatch: /canary/* isn't
+    // in any frontend/backend prefix list.
+    if (path === "/canary/errors") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct canary-errors handler`);
+      return handleCanaryErrors(req);
+    }
+
     // SSE streams — direct-dispatched because danet controllers can't return
     // a streaming Response. Both endpoints subscribe to the in-memory event
     // bus; polling fallback (/api/events) covers cross-isolate misses.
@@ -953,9 +962,21 @@ Deno.serve({ port }, (req, info) => {
         }
 
         try {
-          return await stepHandler(req);
+          const res = await stepHandler(req);
+          // Persist 5xx step responses as errors (handled failures that didn't
+          // throw) so the daily canary endpoint + dashboard see them.
+          if (res.status >= 500 && orgId && findingId !== "<unknown>") {
+            const { trackError } = await import("@audit/domain/data/stats-repository/mod.ts");
+            await trackError(orgId as OrgId, findingId, stepName, `${stepName} returned HTTP ${res.status}`).catch(() => {});
+          }
+          return res;
         } catch (err) {
           console.error(`❌ [STEP] ${stepName} finding=${findingId} threw:`, err);
+          // Persist the thrown step error for the canary endpoint + dashboard.
+          if (orgId && findingId !== "<unknown>") {
+            const { trackError } = await import("@audit/domain/data/stats-repository/mod.ts");
+            await trackError(orgId as OrgId, findingId, stepName, (err as Error).message ?? String(err)).catch(() => {});
+          }
           return Response.json(
             { error: (err as Error).message, step: stepName, findingId },
             { status: 500 },

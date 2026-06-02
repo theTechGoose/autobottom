@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp" | "email-tracking";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -23,7 +23,6 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "index-tests", label: "Index Tests" },
   { key: "migration", label: "Migration" },
   { key: "reset-xp", label: "Reset XP", danger: true },
-  { key: "email-tracking", label: "Email Tracking Test" },
 ];
 
 export const handler = define.handlers({
@@ -56,7 +55,6 @@ export const handler = define.handlers({
           {active === "index-tests" && <IndexTestsPanel />}
           {active === "migration" && <MigrationPanel />}
           {active === "reset-xp" && <ResetXpPanel />}
-          {active === "email-tracking" && <EmailTrackingPanel />}
         </div>
 
         <div id="maint-msg" style="margin-top:12px;"></div>
@@ -841,55 +839,5 @@ function ResetXpPanel() {
         <div id="reset-xp-result" style="margin-top:14px;"></div>
       </PanelCard>
     </div>
-  );
-}
-
-// ── Email Tracking Test tab ───────────────────────────────────────────────────
-//
-// TEMPORARY experiment. Sends an instrumented email (open-pixel + click link)
-// to measure whether a tracking pixel fires at delivery (machine prefetch) or
-// only on a human open, and whether clicks are clean — before designing real
-// audit-email engagement tracking. Remove this whole tab with the feature.
-
-function EmailTrackingPanel() {
-  return (
-    <PanelCard
-      title="Email Tracking Test"
-      subtitle="TEMPORARY. Sends an instrumented email (1×1 open-pixel + a click link) to the recipient. Then: (A) leave it unopened ~60 min — any hit now = machine prefetch; (B) open it; (C) click the link. Refresh Results after each phase and read the 'Δ since send' / kind columns."
-    >
-      <form
-        hx-post="/api/admin/modal/maintenance/track-test-send"
-        hx-target="#track-test-msg"
-        hx-swap="innerHTML"
-      >
-        <input type="hidden" name="label" value="workspace" />
-        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-          <div class="sf" style="flex:1;min-width:220px;">
-            <label class="sf-label">Recipient</label>
-            <input type="email" name="to" class="sf-input" value="adamp@monsterrg.com" required />
-          </div>
-          <button type="submit" class="sf-btn primary" style="padding:8px 16px;">Send test email</button>
-        </div>
-      </form>
-      <div id="track-test-msg" style="margin-top:10px;"></div>
-
-      <div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;">
-        <div style="font-size:12px;font-weight:700;color:var(--text-bright);">Results</div>
-        <button
-          class="sf-btn ghost"
-          style="padding:6px 12px;font-size:11px;"
-          hx-get="/api/admin/modal/maintenance/track-test-hits"
-          hx-target="#track-test-hits"
-          hx-swap="innerHTML"
-        >Refresh results</button>
-      </div>
-      <div
-        id="track-test-hits"
-        style="margin-top:8px;"
-        hx-get="/api/admin/modal/maintenance/track-test-hits"
-        hx-trigger="load"
-        hx-swap="innerHTML"
-      >loading…</div>
-    </PanelCard>
   );
 }

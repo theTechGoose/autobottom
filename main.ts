@@ -56,8 +56,7 @@ import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
-// TEMPORARY email-tracking spike — remove with the rest of the track-test feature.
-import { recordHit, TRANSPARENT_GIF } from "@admin/domain/business/track-test/mod.ts";
+import { recordOpen, recordClick, verifyFinding, TRANSPARENT_GIF } from "@reporting/domain/business/email-engagement/mod.ts";
 import { handleEventsStream, handleChatStream } from "@events/entrypoints/events-stream/mod.ts";
 import { buildDispatchErrorResponse, isDanetAbortBody } from "@core/business/dispatch-error/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -854,22 +853,34 @@ Deno.serve({ port }, (req, info) => {
       return handleUploadSound(req);
     }
 
-    // TEMPORARY email-tracking spike — public, unauthenticated (mail clients
-    // hit these). Records a pixel/click hit then returns a GIF / 302-redirects.
-    // Both are fail-safe: never error the mail client. Remove with the feature.
-    if (path === "/track/pixel") {
-      const tid = new URL(req.url).searchParams.get("tid") ?? "";
-      await recordHit("pixel", tid, defaultOrgId() as OrgId, req);
+    // Audit-email engagement tracking — public, unauthenticated (mail clients
+    // hit these). Sig-verified; both fail-safe (never error the mail client).
+    // /track/open records a (prefetch-filtered) open + returns a GIF.
+    if (path === "/track/open") {
+      const sp = new URL(req.url).searchParams;
+      const fid = sp.get("fid") ?? "";
+      if (fid && await verifyFinding(fid, sp.get("sig") ?? "")) {
+        await recordOpen(defaultOrgId() as OrgId, fid, req);
+      }
       return new Response(TRANSPARENT_GIF, {
         headers: { "Content-Type": "image/gif", "Cache-Control": "no-store, no-cache, must-revalidate" },
       });
     }
+    // /track/click records a click (binary) then 302-redirects to the real page.
     if (path === "/track/click") {
-      const tid = new URL(req.url).searchParams.get("tid") ?? "";
-      await recordHit("click", tid, defaultOrgId() as OrgId, req);
-      // `to` is whitelisted; default to the report page. Always redirect.
-      const target = `${getSelfUrl()}/audit/report?id=${encodeURIComponent(tid)}`;
-      return Response.redirect(target, 302);
+      const sp = new URL(req.url).searchParams;
+      const fid = sp.get("fid") ?? "";
+      if (fid && await verifyFinding(fid, sp.get("sig") ?? "")) {
+        await recordClick(defaultOrgId() as OrgId, fid, req);
+      }
+      // Whitelist the destination; default to the report page. Always redirect.
+      const to = sp.get("to") ?? "report";
+      const rel = to === "recording"
+        ? `audit/recording?id=${encodeURIComponent(fid)}`
+        : to === "appeal"
+        ? `audit/appeal?findingId=${encodeURIComponent(fid)}`
+        : `audit/report?id=${encodeURIComponent(fid)}`;
+      return Response.redirect(`${getSelfUrl()}/${rel}`, 302);
     }
 
     // Role-scoped "me"/game-state/dashboard — same @Req-broken-via-router.fetch

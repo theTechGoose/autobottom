@@ -13,10 +13,17 @@ import {
 } from "@admin/domain/data/admin-repository/mod.ts";
 import { getEmailTemplate, type EmailTemplate } from "@reporting/domain/data/email-repository/mod.ts";
 import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
+import { signFinding, stampSent } from "@reporting/domain/business/email-engagement/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { WebhookConfig } from "@core/dto/types.ts";
 
 const SELF_URL = (): string => Deno.env.get("SELF_URL") ?? "http://localhost:3000";
+
+/** Build a click-tracked link for an audit-email CTA. The /track/click route
+ *  records the click then 302-redirects to the real page (whitelisted `to`). */
+function trackedLink(findingId: string, to: "report" | "recording" | "appeal", sig: string): string {
+  return `${SELF_URL()}/track/click?fid=${encodeURIComponent(findingId)}&to=${to}&sig=${sig}`;
+}
 const QB_REALM = (): string => Deno.env.get("QB_REALM") ?? "";
 
 /** Parse QB VoName field "VO MB - Harmony Eason" → { full: "Harmony Eason", first: "Harmony" } */
@@ -171,6 +178,9 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   const recordTypeLabel = isPackage ? "Package ID" : "Date Leg ID";
   const urgentNote = isPackage ? "" : `For urgent issues, include your <em>${recordTypeLabel}</em> in the subject so we can find it fast.`;
 
+  // Sign this finding once for the click-tracked CTA links + open pixel below.
+  const sig = await signFinding(findingId);
+
   const vars: Record<string, string> = {
     agentName: teamMemberFull,
     agentEmail: voEmail || agentEmail,
@@ -196,9 +206,9 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
     supportTeamName,
     recordTypeLabel,
     urgentNote,
-    reportUrl: `${SELF_URL()}/audit/report?id=${findingId}`,
-    recordingUrl: `${SELF_URL()}/audit/recording?id=${findingId}`,
-    appealUrl: `${SELF_URL()}/audit/appeal?findingId=${findingId}`,
+    reportUrl: trackedLink(findingId, "report", sig),
+    recordingUrl: trackedLink(findingId, "recording", sig),
+    appealUrl: trackedLink(findingId, "appeal", sig),
     feedbackText: finding.feedback?.text ?? "",
     missedQuestions: missedQuestionsRows,
     missedCount: String(missedQs.length),
@@ -250,15 +260,22 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   const bcc = resolvedTest ? undefined : (cfg?.bcc || undefined);
 
   console.log(`📧 [WEBHOOK:terminate] sending fid=${findingId} to=${to} cc=${cc ?? "none"} bcc=${bcc ?? "none"} score=${scoreVal}%`);
+  // Append the open-tracking pixel to the rendered body (vs a template var) so
+  // it survives operator-edited templates. The /track/open route records a
+  // prefetch-filtered open.
+  const openPixel = `<img src="${SELF_URL()}/track/open?fid=${encodeURIComponent(findingId)}&sig=${sig}" width="1" height="1" alt="" style="display:none">`;
   try {
     await sendEmail({
       to,
       subject: renderTemplate(template.subject, vars),
-      htmlBody: renderTemplate(template.html, vars),
+      htmlBody: renderTemplate(template.html, vars) + openPixel,
       cc,
       bcc,
     });
     console.log(`✅ [WEBHOOK:terminate] email sent fid=${findingId} → ${to}`);
+    // Stamp "sent" for the engagement metric — but not for operator testEmail
+    // overrides, so test sends don't pollute the cohort. Best-effort.
+    if (!resolvedTest) await stampSent(orgId, findingId);
   } catch (err) {
     console.error(`❌ [WEBHOOK:terminate] sendEmail failed fid=${findingId}:`, err);
   }

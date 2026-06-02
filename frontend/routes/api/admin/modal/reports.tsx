@@ -9,11 +9,12 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import { apiFetch } from "../../../../lib/api.ts";
 
-type TabKey = "qfailures" | "weekly";
+type TabKey = "qfailures" | "weekly" | "engagement";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "qfailures", label: "Question Failures" },
   { key: "weekly", label: "Weekly Reports" },
+  { key: "engagement", label: "Email Engagement" },
 ];
 
 interface EmailReportConfig {
@@ -62,6 +63,7 @@ export const handler = define.handlers({
         <div id="reports-content" style="margin-top:14px;">
           {active === "qfailures" && <QuestionFailuresInitial />}
           {active === "weekly" && <WeeklyReportsInitial configs={configs} statuses={statuses} />}
+          {active === "engagement" && <EngagementInitial />}
         </div>
       </div>,
     );
@@ -147,6 +149,55 @@ function QuestionFailuresInitial() {
         </div>
       </form>
       <div id="qf-result" hx-get="/api/admin/modal/reports/question-failures-initial" hx-trigger="load" hx-swap="innerHTML">
+        <div style="font-size:11px;color:var(--text-dim);padding:18px;text-align:center;">Loading current-month data…</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Email Engagement initial panel ───────────────────────────────────────────
+//
+// Preset buttons + custom date range, mirroring Question Failures. Each control
+// POSTs to the /engagement fragment route, which resolves the range to ms and
+// renders the co-headline open-rate / click-rate cards into #eng-result.
+
+function EngagementInitial() {
+  return (
+    <div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">
+        Audit-email engagement over the audits completed in the window. Open rate and click rate side-by-side,
+        each with its own appeal rate. Opens are prefetch-filtered + deduped; clicks are exact human engagement.
+      </div>
+      <form
+        id="eng-form"
+        hx-post="/api/admin/modal/reports/engagement"
+        hx-target="#eng-result"
+        hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find #eng-loading"
+      >
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;">
+          <span style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-right:4px;">Range</span>
+          {QF_PRESETS.map((p) => (
+            <button
+              key={p.key}
+              type="submit"
+              name="preset"
+              value={p.key}
+              class={`sf-btn ${p.key === "this-month" ? "primary" : "ghost"}`}
+              style="font-size:11px;padding:4px 12px;"
+            >{p.label}</button>
+          ))}
+          <span style="margin:0 6px;color:var(--text-dim);">|</span>
+          <span style="font-size:11px;color:var(--text-dim);">Custom:</span>
+          <input type="date" name="custom-from" class="sf-input" style="font-size:11px;padding:2px 6px;width:140px;" />
+          <span style="color:var(--text-dim);font-size:11px;">→</span>
+          <input type="date" name="custom-to" class="sf-input" style="font-size:11px;padding:2px 6px;width:140px;" />
+          <button type="submit" name="preset" value="custom" class="sf-btn primary" style="font-size:11px;padding:4px 12px;">Apply</button>
+          <span id="eng-loading" class="htmx-indicator" style="font-size:11px;color:var(--text-dim);">⏳</span>
+        </div>
+      </form>
+      <div id="eng-result" hx-get="/api/admin/modal/reports/engagement?preset=this-month" hx-trigger="load" hx-swap="innerHTML">
         <div style="font-size:11px;color:var(--text-dim);padding:18px;text-align:center;">Loading current-month data…</div>
       </div>
     </div>

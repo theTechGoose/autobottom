@@ -9,13 +9,14 @@ import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "#danet/swagger-decorators";
-import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse } from "@core/dto/responses.ts";
+import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse, EmailEngagementResponse } from "@core/dto/responses.ts";
 import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId, writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { getReviewStats, getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig, isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
 import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
+import { getEmailEngagement } from "@reporting/domain/business/email-engagement/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
@@ -110,6 +111,15 @@ export class DashboardController {
       new Promise<null>((r) => setTimeout(() => r(null), 5_000)),
     ]);
     return result ?? placeholder;
+  }
+
+  /** Email engagement over the audits completed in [since, until] (ms). Cohort
+   *  from audit-done-idx; per-finding open/click marks + appeals hydrated. */
+  @Get("email-engagement/data") @ReturnedType(EmailEngagementResponse)
+  async emailEngagementData(@Query("since") since: string, @Query("until") until: string) {
+    const from = parseInt(since || "0", 10) || 0;
+    const to = parseInt(until || String(Date.now()), 10) || Date.now();
+    return getEmailEngagement(ORG(), from, to);
   }
   // 5s result cache + in-flight promise dedup. With stale-while-
   // revalidate, the cache value can outlive expiresAt — it's served

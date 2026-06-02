@@ -22,6 +22,11 @@ export class AuditQueuedResponse { jobId = ""; findingId = ""; status = "queued"
 export class StepResponse { ok = true; step = ""; findingId = ""; }
 export class FindingResponse { id = ""; findingStatus = ""; auditJobId = ""; }
 export class PipelineStatsResponse { inPipe = 0; completed24h = 0; errors24h = 0; }
+export class EmailEngagementResponse {
+  total = 0; sent = 0; opened = 0; clicked = 0; appealed = 0;
+  appealedAmongOpened = 0; appealedAmongClicked = 0;
+  openRate = 0; clickRate = 0; appealRateAll = 0; appealRateOpened = 0; appealRateClicked = 0;
+}
 
 // ── Review ───────────────────────────────────────────────────────────────────
 

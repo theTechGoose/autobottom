@@ -23,7 +23,18 @@ interface AnsweredQuestion {
   reviewHandleMs?: number;
   reviewIdleMs?: number;
   reviewDiscarded?: boolean;
+  /** Root-cause attribution for a failed question (manual admin override). */
+  failureSource?: string;
+  failureSourceBy?: string;
 }
+
+/** Failure-source options for the admin override control. */
+const FAILURE_SOURCE_OPTIONS: Array<{ key: string; label: string }> = [
+  { key: "autobot", label: "Autobot" },
+  { key: "vo_app", label: "VO app" },
+  { key: "team_member", label: "Team member" },
+  { key: "unknown", label: "Unknown" },
+];
 
 /** ms → "1m 12s" / "45s" / "—". */
 function fmtHandle(ms?: number): string {
@@ -368,6 +379,24 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
                     <div class="rpt-q-block purple">
                       <div class="rpt-q-label">Defense</div>
                       <div class="rpt-q-text">{q.defense}</div>
+                    </div>
+                  )}
+                  {isAdmin && !yes && !errored && (
+                    <div class="rpt-q-block" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                      <div class="rpt-q-label" style="margin:0;">Failure source</div>
+                      <select
+                        id={`rpt-q-src-${i}`}
+                        style="font-size:12px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"
+                        {...{ onchange: `window.setFailureSource(${i}, ${JSON.stringify(q.header ?? "")}, this.value);` }}
+                      >
+                        <option value="" disabled selected={!q.failureSource}>auto-detected (set to override)</option>
+                        {FAILURE_SOURCE_OPTIONS.map((o) => (
+                          <option key={o.key} value={o.key} selected={q.failureSource === o.key}>{o.label}</option>
+                        ))}
+                      </select>
+                      {q.failureSourceBy && (
+                        <span style="font-size:10px;color:var(--text-dim);">set by {q.failureSourceBy}</span>
+                      )}
                     </div>
                   )}
                 </div>

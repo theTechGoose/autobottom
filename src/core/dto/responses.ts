@@ -45,6 +45,39 @@ export class ReviewerAuditsResponse {
   rows: unknown[] = [];
   total = 0; page = 1; pages = 1;
 }
+export class ReviewerQualityResponse {
+  ranged: unknown = {};
+  lifetime: unknown = {};
+}
+export class ReviewerQualityDetailResponse {
+  range: unknown = null;
+  lifetime: unknown = null;
+}
+
+// ── Failed audits analytics ──────────────────────────────────────────────────
+
+export class FailedFindingsResponse {
+  rows: unknown[] = [];
+  total = 0; page = 1; pages = 1;
+}
+export class FailureByQuestionResponse {
+  rows: unknown[] = [];
+  total = 0;
+}
+export class FailureMatrixResponse {
+  departments: string[] = [];
+  questions: string[] = [];
+  cells: unknown = {};
+  rowTotals: unknown = {};
+  colTotals: unknown = {};
+  grandTotal = 0;
+  truncatedQuestions = 0;
+}
+export class TopFailResponse {
+  rows: unknown[] = [];
+  scope = "";
+  total = 0;
+}
 
 // ── Review ───────────────────────────────────────────────────────────────────
 

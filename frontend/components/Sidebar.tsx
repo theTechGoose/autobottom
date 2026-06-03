@@ -73,6 +73,7 @@ const ADMIN_SECTIONS: SbSection[] = [
       { label: "Email Templates", icon: Icon.mail, color: "var(--cyan-bg)", iconColor: "var(--cyan)", modalId: "email-templates-modal" },
       { label: "Chargebacks & Omissions", icon: Icon.clipboardList, color: "var(--yellow-bg)", iconColor: "var(--yellow)", modalId: "chargebacks-modal" },
       { label: "Reports", icon: Icon.clipboardList, color: "var(--blue-bg)", iconColor: "var(--blue)", modalId: "reports-modal" },
+      { label: "Failed Audits", icon: Icon.alertTriangle, color: "var(--red-bg)", iconColor: "var(--red)", href: "/admin/failed-audits" },
       { label: "Data Maintenance", icon: Icon.trash, color: "var(--red-bg)", iconColor: "var(--red)", modalId: "maintenance-modal" },
       { label: "Bad Words", icon: Icon.alertTriangle, color: "var(--red-bg)", iconColor: "var(--red)", modalId: "bad-words-modal" },
       { label: "Offices", icon: Icon.clipboardList, color: "var(--yellow-bg)", iconColor: "var(--yellow)", modalId: "offices-modal" },

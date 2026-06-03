@@ -29,6 +29,27 @@ interface AuditRow {
   reviewHandleMs?: number; reviewedQuestionCount?: number; reviewedValidCount?: number;
 }
 interface ReviewerResp { rows: AuditRow[]; total: number; page: number; pages: number }
+interface HeaderOverturn { header: string; judged: number; overturns: number; rate: number }
+interface OverturnRow {
+  email: string; judged: number; overturns: number; overturnRate: number;
+  auditsJudged: number; auditsOverturned: number; auditOverturnRate: number; byHeader: HeaderOverturn[];
+}
+interface QualityResult { rows: OverturnRow[]; cohortDecisions: number; hydratedFindings: number; capped: boolean }
+interface QualityResp { ranged: QualityResult; lifetime: QualityResult }
+interface QualityDetailResp { range: OverturnRow | null; lifetime: OverturnRow | null }
+
+/** Org-wide overturn rate = Σ overturns / Σ appealed-and-judged questions. */
+function orgRate(rows: OverturnRow[]): { rate: number; overturns: number; judged: number } {
+  let o = 0, j = 0;
+  for (const r of rows) { o += r.overturns; j += r.judged; }
+  return { rate: j > 0 ? Math.round((o / j) * 100) : 0, overturns: o, judged: j };
+}
+/** Higher overturn rate is worse — red past 30%, yellow past 15%, else green. */
+function rateColor(rate: number): string {
+  if (rate >= 30) return "var(--red)";
+  if (rate >= 15) return "var(--yellow)";
+  return "var(--green)";
+}
 
 function fmtMs(ms?: number): string {
   if (ms == null || ms <= 0) return "—";
@@ -89,6 +110,13 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
       data = await apiFetch<ReviewerResp>(
         `/admin/reviewer-throughput/reviewer?email=${encodeURIComponent(reviewer)}&${rangeQ}&page=${page}`, ctx.req);
     } catch (e) { error = String((e as Error).message ?? e); }
+    let quality: QualityDetailResp | null = null;
+    try {
+      quality = await apiFetch<QualityDetailResp>(
+        `/admin/reviewer-quality/reviewer?email=${encodeURIComponent(reviewer)}&${rangeQ}`, ctx.req);
+    } catch (_e) { /* throughput drill-down still renders without overturn data */ }
+    const qRange = quality?.range ?? null;
+    const qLife = quality?.lifetime ?? null;
     return (
       <Layout title="Reviewer Throughput" section="admin" user={ctx.state.user!} pathname={url.pathname} hideSidebar>
         <div class="ql-topbar">
@@ -102,6 +130,48 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
           <div style="font-size:13px;font-weight:700;color:var(--text-bright);margin-bottom:12px;">
             {reviewer} · {label} · {data?.total?.toLocaleString() ?? 0} audits
           </div>
+
+          {/* Overturn quality — appealed-and-judged questions only. */}
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px;">
+            <div style={`border:1px solid var(--border);border-left:3px solid ${rateColor(qRange?.overturnRate ?? 0)};border-radius:8px;padding:14px;background:var(--bg-2);`}>
+              <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Overturn rate (range)</div>
+              <div style={`font-size:28px;font-weight:800;color:${rateColor(qRange?.overturnRate ?? 0)};font-variant-numeric:tabular-nums;`}>{qRange ? `${qRange.overturnRate}%` : "—"}</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">{qRange?.overturns ?? 0} overturned of <strong style="color:var(--text-bright);">{qRange?.judged ?? 0}</strong> appealed and judged</div>
+            </div>
+            <div style={`border:1px solid var(--border);border-left:3px solid ${rateColor(qLife?.overturnRate ?? 0)};border-radius:8px;padding:14px;background:var(--bg-2);`}>
+              <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Overturn rate (lifetime)</div>
+              <div style={`font-size:28px;font-weight:800;color:${rateColor(qLife?.overturnRate ?? 0)};font-variant-numeric:tabular-nums;`}>{qLife ? `${qLife.overturnRate}%` : "—"}</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">{qLife?.overturns ?? 0} overturned of <strong style="color:var(--text-bright);">{qLife?.judged ?? 0}</strong> all time</div>
+            </div>
+          </div>
+
+          {/* Per-question overturn breakdown (which questions this reviewer gets overturned on). */}
+          {qRange && qRange.byHeader.length > 0 && (
+            <div style="border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:hidden;margin-bottom:18px;">
+              <div style="font-size:11px;font-weight:700;color:var(--text-bright);padding:10px 12px;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:0.5px;">Overturns by question (range)</div>
+              <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead>
+                  <tr style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">
+                    <th style="text-align:left;padding:6px 12px;">Question</th>
+                    <th style="text-align:right;padding:6px 8px;">Appealed and judged</th>
+                    <th style="text-align:right;padding:6px 8px;">Overturned</th>
+                    <th style="text-align:right;padding:6px 12px;">Overturn rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {qRange.byHeader.map((h) => (
+                    <tr key={h.header} style="border-top:1px solid var(--border);font-variant-numeric:tabular-nums;">
+                      <td style="padding:6px 12px;color:var(--text-bright);">{h.header}</td>
+                      <td style="text-align:right;padding:6px 8px;color:var(--text-dim);">{h.judged}</td>
+                      <td style="text-align:right;padding:6px 8px;">{h.overturns}</td>
+                      <td style={`text-align:right;padding:6px 12px;color:${rateColor(h.rate)};`}>{h.rate}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {error ? (
             <div class="error-text" style="font-size:12px;padding:12px;border:1px solid var(--red);border-radius:8px;">Failed: {error}</div>
           ) : (
@@ -163,6 +233,16 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
   } catch (e) { error = String((e as Error).message ?? e); }
   const a = data?.aggregate;
 
+  // Overturn quality (best-effort — throughput still renders if it fails).
+  let quality: QualityResp | null = null;
+  try {
+    quality = await apiFetch<QualityResp>(`/admin/reviewer-quality/detail?${rangeQ}`, ctx.req);
+  } catch (_e) { /* keep throughput even without overturn data */ }
+  const rangedByEmail = new Map((quality?.ranged.rows ?? []).map((r) => [r.email, r]));
+  const lifeByEmail = new Map((quality?.lifetime.rows ?? []).map((r) => [r.email, r]));
+  const orgRange = orgRate(quality?.ranged.rows ?? []);
+  const orgLife = orgRate(quality?.lifetime.rows ?? []);
+
   return (
     <Layout title="Reviewer Throughput" section="admin" user={ctx.state.user!} pathname={url.pathname} hideSidebar>
       <div class="ql-topbar">
@@ -188,9 +268,9 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
         </div>
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:14px;">
           Per-audit handle time is <strong>approximated</strong> from the gap between a reviewer's
-          consecutive audit completions; gaps over 15&nbsp;min are treated as breaks and excluded — so it
-          works across all history. Per-question times (the By&nbsp;Question table) are exact decision-to-decision
-          gaps and fill in going forward.
+          consecutive audit completions; gaps over 15&nbsp;min are treated as breaks and excluded, so it
+          works across all history. Per-question times (the By&nbsp;Question table and the top-row
+          Avg&nbsp;/&nbsp;question) are the true mean of exact decision-to-decision gaps and fill in going forward.
         </div>
 
         {error ? (
@@ -201,11 +281,25 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
               {label} · {a.totalAudits.toLocaleString()} audits · {a.reviewers} reviewers
             </div>
 
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px;">
               <MiniStat label="Audits reviewed" value={a.totalAudits} />
               <TimeStat label="Avg handle / audit" value={fmtMs(a.avgHandleMs)} color="var(--cyan)" />
               <TimeStat label="Avg / question" value={a.avgPerQuestionMs ? fmtMs(a.avgPerQuestionMs) : "—"} color="var(--green)" />
               <MiniStat label="Audits / active hr" value={a.auditsPerActiveHour} color="var(--yellow)" />
+            </div>
+
+            {/* Org-wide overturn quality — appealed-and-judged questions only. */}
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:18px;">
+              <div style={`border:1px solid var(--border);border-left:3px solid ${rateColor(orgRange.rate)};border-radius:8px;padding:14px;background:var(--bg-2);`}>
+                <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Overturn rate (range)</div>
+                <div style={`font-size:28px;font-weight:800;color:${rateColor(orgRange.rate)};font-variant-numeric:tabular-nums;`}>{orgRange.judged ? `${orgRange.rate}%` : "—"}</div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">{orgRange.overturns} overturned of <strong style="color:var(--text-bright);">{orgRange.judged}</strong> appealed and judged</div>
+              </div>
+              <div style={`border:1px solid var(--border);border-left:3px solid ${rateColor(orgLife.rate)};border-radius:8px;padding:14px;background:var(--bg-2);`}>
+                <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Overturn rate (lifetime)</div>
+                <div style={`font-size:28px;font-weight:800;color:${rateColor(orgLife.rate)};font-variant-numeric:tabular-nums;`}>{orgLife.judged ? `${orgLife.rate}%` : "—"}</div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">{orgLife.overturns} overturned of <strong style="color:var(--text-bright);">{orgLife.judged}</strong> all time</div>
+              </div>
             </div>
 
             {/* By reviewer */}
@@ -222,14 +316,19 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
                       <th style="text-align:right;padding:6px 8px;">Avg / question</th>
                       <th style="text-align:right;padding:6px 8px;">Audits/hr</th>
                       <th style="text-align:right;padding:6px 8px;">Avg score</th>
+                      <th style="text-align:right;padding:6px 8px;">Overturn (range)</th>
+                      <th style="text-align:right;padding:6px 8px;">Overturn (life)</th>
                       <th style="text-align:left;padding:6px 12px;">Last</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.byReviewer.length === 0 && (
-                      <tr><td colSpan={8} style="padding:16px;text-align:center;color:var(--text-dim);">No reviewer activity in this window.</td></tr>
+                      <tr><td colSpan={10} style="padding:16px;text-align:center;color:var(--text-dim);">No reviewer activity in this window.</td></tr>
                     )}
-                    {data.byReviewer.map((r) => (
+                    {data.byReviewer.map((r) => {
+                      const qr = rangedByEmail.get(r.email);
+                      const ql = lifeByEmail.get(r.email);
+                      return (
                       <tr key={r.email} style="border-top:1px solid var(--border);font-variant-numeric:tabular-nums;">
                         <td style="padding:6px 12px;">
                           <a href={`/admin/reviewer-throughput?reviewer=${encodeURIComponent(r.email)}&${rangeQ}`} class="tbl-link" style="color:var(--blue);text-decoration:none;">{r.email}</a>
@@ -240,9 +339,16 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
                         <td style="text-align:right;padding:6px 8px;color:var(--green);">{r.validQuestions ? fmtMs(r.avgPerQuestionMs) : "—"}</td>
                         <td style="text-align:right;padding:6px 8px;color:var(--yellow);">{r.handledAudits ? r.auditsPerActiveHour : "—"}</td>
                         <td style="text-align:right;padding:6px 8px;">{r.avgScore}%</td>
+                        <td style="text-align:right;padding:6px 8px;" title={qr ? `${qr.overturns} of ${qr.judged} judged` : "no appeals judged"}>
+                          {qr && qr.judged > 0 ? <span style={`color:${rateColor(qr.overturnRate)};`}>{qr.overturnRate}%</span> : <span style="color:var(--text-dim);">—</span>}
+                        </td>
+                        <td style="text-align:right;padding:6px 8px;" title={ql ? `${ql.overturns} of ${ql.judged} judged` : "no appeals judged"}>
+                          {ql && ql.judged > 0 ? <span style={`color:${rateColor(ql.overturnRate)};`}>{ql.overturnRate}%</span> : <span style="color:var(--text-dim);">—</span>}
+                        </td>
                         <td style="padding:6px 12px;color:var(--text-dim);">{fmtTime(r.lastReviewedAt)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

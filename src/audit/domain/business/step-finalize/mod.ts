@@ -3,6 +3,7 @@ import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob } from "@a
 import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, saveWireDeductionEntry } from "@audit/domain/data/stats-repository/mod.ts";
 import { getOfficeBypassConfig, getBonusPointsConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFailed as incrQuestionFailed, configKeyForFinding, markCounted as markQuestionFailCounted } from "@audit/domain/data/question-stats-repository/mod.ts";
+import { writeFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import { updatePartnerDimensions } from "@admin/domain/data/admin-repository/mod.ts";
 import { emitEvent } from "@events/domain/data/events-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
@@ -239,6 +240,15 @@ export async function stepFinalize(req: Request): Promise<Response> {
     // backfill date range later sweeps through this finding's completedAt.
     markQuestionFailCounted(orgId, findingId, completedAt).catch((err) =>
       console.warn(`[STEP-FINALIZE] ${findingId}: ⚠️ question-fail counted mark failed:`, err));
+
+    // Project failed questions into the failed-finding index for the Failed
+    // Audits dashboard. Seeds source "unknown" for these never-reviewed fails;
+    // later review/judge flips rebuild the rows with an attributed source.
+    try {
+      await writeFailedFindingRows(orgId, finding as Record<string, any>);
+    } catch (err) {
+      console.warn(`[STEP-FINALIZE] ${findingId}: ⚠️ failed-finding index write failed:`, err);
+    }
   }
 
   // Write chargeback/omission report entry for internal (date leg) findings.

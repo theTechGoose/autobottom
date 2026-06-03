@@ -187,6 +187,42 @@ Deno.test("getQuestionTiming — groups by header, excludes idle-discarded from 
   assertEquals(income.discardedCount, 1);
 });
 
+Deno.test("getQuestionTiming — trueAvgPerQuestionMs is Σ samples / count, discards excluded", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("qtiming-true");
+  await seedTimed(orgId, "alice@example.com", [
+    { questions: [
+      { header: "Taxes Due", handleMs: 30_000 },
+      { header: "Income", handleMs: 90_000, discarded: true }, // idle → excluded
+    ] },
+    { questions: [
+      { header: "Taxes Due", handleMs: 50_000 },
+      { header: "Income", handleMs: 40_000 },
+    ] },
+  ]);
+  const res = await getQuestionTiming(orgId);
+  // Non-discarded samples: 30k, 50k, 40k → mean 40k over 3 samples.
+  assertEquals(res.totalSamples, 3);
+  assertEquals(res.trueAvgPerQuestionMs, 40_000);
+  const alice = res.byReviewerTrueAvg.get("alice@example.com")!;
+  assertEquals(alice.samples, 3);
+  assertEquals(Math.round(alice.ms / alice.samples), 40_000);
+});
+
+Deno.test("getQuestionTiming — trueAvgPerQuestionMs ignores the questionFilter (counts all questions)", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("qtiming-true-filter");
+  await seedTimed(orgId, "alice@example.com", [
+    { questions: [{ header: "Taxes Due", handleMs: 20_000 }, { header: "Income", handleMs: 60_000 }] },
+  ]);
+  const res = await getQuestionTiming(orgId, undefined, "income");
+  assertEquals(res.rows.length, 1);             // table rows are filtered
+  assertEquals(res.totalSamples, 2);            // grand total ignores the filter
+  assertEquals(res.trueAvgPerQuestionMs, 40_000); // (20k + 60k) / 2
+});
+
 Deno.test("getQuestionTiming — questionFilter narrows by header substring", async () => {
   resetFirestoreCredentials();
   _resetQueryAuditDoneIndexCacheForTests();

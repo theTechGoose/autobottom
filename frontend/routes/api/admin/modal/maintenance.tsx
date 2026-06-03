@@ -554,6 +554,50 @@ function QuestionFailuresPanel() {
           <div id="qfail-reset-result" style="margin-top:12px;"></div>
         </div>
       </div>
+
+      {/* ── Failed Audits index ── */}
+      <div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:700;color:var(--text-bright);margin-bottom:4px;">Failed Audits index</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">
+          Rebuilds the per-failed-question rows that power the <strong style="color:var(--text-bright);">Failed Audits</strong> dashboard
+          (sidebar → Failed Audits). Walks audit-done-idx over the range and re-emits one row per failed question. Idempotent.
+        </div>
+        <form
+          hx-post="/api/admin/modal/maintenance/failed-audits-backfill"
+          hx-target="#faudit-backfill-result"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']"
+          hx-indicator="find button[type='submit']"
+          hx-confirm="Rebuild the failed-finding index for the chosen date range? Safe to re-run."
+        >
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div class="sf"><label class="sf-label">From date</label><input type="date" name="since" class="sf-input" required /></div>
+            <div class="sf"><label class="sf-label">To date</label><input type="date" name="until" class="sf-input" required /></div>
+          </div>
+          <button type="submit" class="sf-btn qfb-btn" style="padding:8px 16px;min-width:200px;background:var(--red);color:#fff;">
+            <span class="qfb-label">Rebuild failed-audit rows</span>
+            <span class="qfb-loading">Backfilling… (long ranges = minutes)</span>
+          </button>
+        </form>
+        <div id="faudit-backfill-result" style="margin-top:12px;"></div>
+
+        <div style="margin-top:18px;padding-top:12px;border-top:1px solid var(--border);">
+          <form
+            hx-post="/api/admin/modal/maintenance/failed-audits-reset"
+            hx-target="#faudit-reset-result"
+            hx-swap="innerHTML"
+            hx-disabled-elt="find button[type='submit']"
+            hx-indicator="find button[type='submit']"
+            hx-confirm="Delete ALL failed-finding index rows for this org? You'll need to re-run the backfill."
+          >
+            <button type="submit" class="sf-btn danger qfr-btn" style="padding:8px 16px;min-width:200px;">
+              <span class="qfr-label">Reset failed-audit index</span>
+              <span class="qfr-loading">Wiping…</span>
+            </button>
+          </form>
+          <div id="faudit-reset-result" style="margin-top:12px;"></div>
+        </div>
+      </div>
     </PanelCard>
   );
 }

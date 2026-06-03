@@ -21,6 +21,10 @@ export interface IQuestion {
   resolvedAst?: IQuestionAstNode[];
 }
 
+/** Root cause attribution for a failed audit finding. Auto-seeded from review /
+ *  judge signals at finalize, manually overridable by an admin on /audit/report. */
+export type FailureSource = "autobot" | "vo_app" | "team_member" | "unknown";
+
 export interface IAnsweredQuestion extends IQuestion {
   answer: string;
   thinking: string;
@@ -32,6 +36,11 @@ export interface IAnsweredQuestion extends IQuestion {
   judgedBy?: string;
   judgeAction?: "overturn" | "uphold";
   judgeReason?: "error" | "logic" | "fragment" | "transcript";
+  /** Root-cause attribution for a failed (answer "No") question. */
+  failureSource?: FailureSource;
+  /** Email of the admin who manually set failureSource. When present, the
+   *  auto-seed heuristic leaves failureSource untouched. */
+  failureSourceBy?: string;
 }
 
 export interface AuditDoneIndexEntry {
@@ -58,6 +67,33 @@ export interface AuditDoneIndexEntry {
   reviewedQuestionCount?: number;
   /** Reviewed questions that survived the idle filter (counted in reviewHandleMs). */
   reviewedValidCount?: number;
+}
+
+// ── Failed-audit analytics types ─────────────────────────────────────────────
+
+/** One row per failed (answer "No") question, denormalized for the Failed Audits
+ *  dashboard. Lives in the `failed-finding-idx` collection, range-scanned by
+ *  completedAt. The finding doc's answeredQuestions[] stays the source of truth;
+ *  these rows are a queryable projection rebuilt idempotently per finding. */
+export interface FailedFindingIndexEntry {
+  findingId: string;
+  questionKey: string;        // normalizeQuestionKey(header)
+  header: string;             // verbatim header for display
+  completedAt: number;        // = finding.completedAt (range field)
+  voName?: string;
+  owner?: string;
+  department?: string;
+  shift?: string;
+  recordId?: string;
+  recordingId?: string;
+  isPackage?: boolean;
+  score: number;
+  defense?: string;           // truncated finding detail for the line-item view
+  failureSource: FailureSource;
+  appealed?: boolean;         // an appeal record covered this finding+question
+  appealDenied?: boolean;     // a judge upheld this question's fail (appeal denied)
+  configKey: string;          // configKeyForFinding — parity with question-fail-stat
+  yyyymm: string;             // bucket month (UTC)
 }
 
 // ── Chargeback / Wire types ──────────────────────────────────────────────────
@@ -321,3 +357,4 @@ export type ReportColumnKey = "recordId" | "findingId" | "guestName" | "voName" 
 import { z } from "#zod";
 export const ChargebackEntrySchema = z.object({ findingId: z.string(), ts: z.number(), voName: z.string(), score: z.number() });
 export const WireDeductionEntrySchema = z.object({ findingId: z.string(), ts: z.number(), score: z.number() });
+export const FailedFindingIndexEntrySchema = z.object({ findingId: z.string(), questionKey: z.string(), header: z.string(), completedAt: z.number(), score: z.number(), failureSource: z.string() });

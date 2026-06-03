@@ -9,7 +9,7 @@ import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "#danet/swagger-decorators";
-import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse, EmailEngagementResponse, EmailEngagementDetailResponse, ReviewerThroughputResponse, ReviewerAuditsResponse } from "@core/dto/responses.ts";
+import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse, EmailEngagementResponse, EmailEngagementDetailResponse, ReviewerThroughputResponse, ReviewerAuditsResponse, ReviewerQualityResponse, ReviewerQualityDetailResponse } from "@core/dto/responses.ts";
 import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId, writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { getReviewStats, getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig, isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
@@ -18,6 +18,7 @@ import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { getEmailEngagement, getEmailEngagementDetail } from "@reporting/domain/business/email-engagement/mod.ts";
 import { getReviewerLeaderboard, getQuestionTiming, getReviewerAudits } from "@review/domain/business/review-stats/mod.ts";
+import { getReviewerOverturns, getReviewerOverturnsLifetime, getReviewerOverturnDetail } from "@review/domain/business/reviewer-quality/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
@@ -150,19 +151,27 @@ export class DashboardController {
       getReviewerLeaderboard(orgId, { from, to }),
       getQuestionTiming(orgId, { from, to }, q || undefined),
     ]);
+    // The top-row "Avg / question" is the TRUE per-question mean from the same
+    // hydrated samples that power the By-Question table (Σ sample ms / Σ samples),
+    // not whole-audit reviewHandleMs spread over the question count (which rounds
+    // to ~0s). Overwrite each reviewer's avg/question with their true per-question
+    // mean where it was hydrated; reviewers outside the hydration cap keep the old
+    // value, consistent with the `capped` banner.
+    for (const r of byReviewer) {
+      const t = qt.byReviewerTrueAvg.get(r.email);
+      if (t && t.samples > 0) r.avgPerQuestionMs = Math.round(t.ms / t.samples);
+    }
     // Aggregate. Per-audit handle is cadence-based (works on all history);
     // per-question is forward-only.
     const totalAudits = byReviewer.reduce((s, r) => s + r.reviewed, 0);
     const handledAudits = byReviewer.reduce((s, r) => s + r.handledAudits, 0);
     const activeMs = byReviewer.reduce((s, r) => s + r.activeMs, 0);
-    const validQuestions = byReviewer.reduce((s, r) => s + r.validQuestions, 0);
-    const perQuestionTotalMs = byReviewer.reduce((s, r) => s + r.avgPerQuestionMs * r.validQuestions, 0);
     const aggregate = {
       reviewers: byReviewer.length,
       totalAudits,
       handledAudits,
       avgHandleMs: handledAudits ? Math.round(activeMs / handledAudits) : 0,
-      avgPerQuestionMs: validQuestions ? Math.round(perQuestionTotalMs / validQuestions) : 0,
+      avgPerQuestionMs: qt.trueAvgPerQuestionMs,
       auditsPerActiveHour: activeMs > 0 ? Math.round((handledAudits / (activeMs / 3_600_000)) * 10) / 10 : 0,
     };
     return { aggregate, byReviewer, byQuestion: qt.rows, cohort: qt.cohort, hydrated: qt.hydrated, capped: qt.capped };
@@ -179,6 +188,34 @@ export class DashboardController {
     const pg = Math.max(1, parseInt(page || "1", 10) || 1);
     if (!email) return { rows: [], total: 0, page: 1, pages: 1 };
     return getReviewerAudits(ORG(), email, { from, to }, pg, 100);
+  }
+
+  /** Reviewer quality — per-reviewer overturn rates (range + lifetime), with a
+   *  per-question-header breakdown. Numerator = judge overturns of the
+   *  reviewer's decisions; denominator = the reviewer's reviews that were
+   *  appealed AND judged. Admin only. */
+  @Get("reviewer-quality/detail") @ReturnedType(ReviewerQualityResponse)
+  async reviewerQualityDetail(@Query("since") since: string, @Query("until") until: string) {
+    const orgId = ORG();
+    const from = parseInt(since || "0", 10) || 0;
+    const to = parseInt(until || String(Date.now()), 10) || Date.now();
+    const [ranged, lifetime] = await Promise.all([
+      getReviewerOverturns(orgId, { from, to }),
+      getReviewerOverturnsLifetime(orgId),
+    ]);
+    console.log(`📊 [REVIEWER-QUALITY] detail org=${orgId} reviewers=${ranged.rows.length} (lifetime ${lifetime.rows.length})`);
+    return { ranged, lifetime };
+  }
+
+  /** One reviewer's overturn breakdown (range + lifetime) — drill-down. */
+  @Get("reviewer-quality/reviewer") @ReturnedType(ReviewerQualityDetailResponse)
+  async reviewerQualityReviewer(
+    @Query("email") email: string, @Query("since") since: string, @Query("until") until: string,
+  ) {
+    const from = parseInt(since || "0", 10) || 0;
+    const to = parseInt(until || String(Date.now()), 10) || Date.now();
+    if (!email) return { range: null, lifetime: null };
+    return getReviewerOverturnDetail(ORG(), email, { from, to });
   }
   // 5s result cache + in-flight promise dedup. With stale-while-
   // revalidate, the cache value can outlive expiresAt — it's served

@@ -292,11 +292,25 @@ export async function getReviewerAudits(
 const HYDRATE_CAP = 2000;
 const HYDRATE_CONCURRENCY = 25;
 
+export interface ReviewerTrueAvg { ms: number; samples: number }
+
 export async function getQuestionTiming(
   orgId: OrgId,
   opts?: RangeOpts,
   questionFilter?: string,
-): Promise<{ rows: QuestionTimingRow[]; cohort: number; hydrated: number; capped: boolean }> {
+): Promise<{
+  rows: QuestionTimingRow[];
+  cohort: number;
+  hydrated: number;
+  capped: boolean;
+  /** Σ of every non-discarded per-question sample (ms), across ALL questions
+   *  (ignores questionFilter) — powers the top-row "true avg / question". */
+  totalSamples: number;
+  trueAvgPerQuestionMs: number;
+  /** Per-reviewer Σ sample ms + count, keyed by the finding's reviewedBy — lets
+   *  the leaderboard's "avg / question" column use the true per-question mean. */
+  byReviewerTrueAvg: Map<string, ReviewerTrueAvg>;
+}> {
   const { from, to } = resolveRange(opts);
   const all = await queryAuditDoneIndex(orgId, from, to);
   const reviewed = all.filter((r) =>
@@ -307,10 +321,15 @@ export async function getQuestionTiming(
 
   interface QAcc { samples: number[]; discardedCount: number }
   const byHeader = new Map<string, QAcc>();
+  const byReviewerTrueAvg = new Map<string, ReviewerTrueAvg>();
+  let grandTotalMs = 0;
+  let grandSamples = 0;
   for (let i = 0; i < targets.length; i += HYDRATE_CONCURRENCY) {
     const slice = targets.slice(i, i + HYDRATE_CONCURRENCY);
-    const findings = await Promise.all(slice.map((r) => getFinding(orgId, r.findingId).catch(() => null)));
-    for (const f of findings) {
+    const findings = await Promise.all(slice.map((r) =>
+      getFinding(orgId, r.findingId).then((f) => ({ f, reviewer: r.reviewedBy })).catch(() => ({ f: null, reviewer: r.reviewedBy }))
+    ));
+    for (const { f, reviewer } of findings) {
       const answered = (f as { answeredQuestions?: unknown[] } | null)?.answeredQuestions;
       if (!Array.isArray(answered)) continue;
       for (const q of answered) {
@@ -320,7 +339,17 @@ export async function getQuestionTiming(
         const header = String(qq.header ?? "").trim() || "(untitled)";
         const acc = byHeader.get(header) ?? { samples: [], discardedCount: 0 };
         if (qq.reviewDiscarded) acc.discardedCount++;
-        else if (typeof qq.reviewHandleMs === "number") acc.samples.push(qq.reviewHandleMs);
+        else if (typeof qq.reviewHandleMs === "number") {
+          acc.samples.push(qq.reviewHandleMs);
+          grandTotalMs += qq.reviewHandleMs;
+          grandSamples++;
+          if (reviewer) {
+            const rAcc = byReviewerTrueAvg.get(reviewer) ?? { ms: 0, samples: 0 };
+            rAcc.ms += qq.reviewHandleMs;
+            rAcc.samples++;
+            byReviewerTrueAvg.set(reviewer, rAcc);
+          }
+        }
         byHeader.set(header, acc);
       }
     }
@@ -340,5 +369,13 @@ export async function getQuestionTiming(
     });
   }
   rows.sort((a, b) => b.avgMs - a.avgMs);
-  return { rows, cohort: reviewed.length, hydrated: targets.length, capped };
+  return {
+    rows,
+    cohort: reviewed.length,
+    hydrated: targets.length,
+    capped,
+    totalSamples: grandSamples,
+    trueAvgPerQuestionMs: grandSamples ? Math.round(grandTotalMs / grandSamples) : 0,
+    byReviewerTrueAvg,
+  };
 }

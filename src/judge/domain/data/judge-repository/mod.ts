@@ -9,7 +9,8 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
 import { getFinding, getTranscript, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
-import { incrFlipToPass, configKeyForFinding } from "@audit/domain/data/question-stats-repository/mod.ts";
+import { incrFlipToPass, configKeyForFinding, normalizeQuestionKey } from "@audit/domain/data/question-stats-repository/mod.ts";
+import { writeFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import {
   deleteChargebackEntry,
   deleteWireDeductionEntry,
@@ -185,9 +186,19 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
     const totalQuestions = decisions.length;
 
     const all = (finding.answeredQuestions ?? []) as Array<Record<string, unknown>>;
+    // Stamp every decided question with the judge's action/reason/identity so
+    // downstream analytics (failure-source attribution) can read it off the
+    // finding doc, and flip overturned answers to "Yes".
     const corrected = all.map((q, i) => {
-      const flip = decisions.find((d) => d.questionIndex === i && d.decision === "overturn");
-      return flip ? { ...q, answer: "Yes" } : q;
+      const d = decisions.find((dd) => dd.questionIndex === i);
+      if (!d) return q;
+      const stamped: Record<string, unknown> = {
+        ...q,
+        judgeAction: d.decision,
+        judgedBy: judge,
+        ...(d.reason ? { judgeReason: d.reason } : {}),
+      };
+      return d.decision === "overturn" ? { ...stamped, answer: "Yes" } : stamped;
     });
     const total = corrected.length;
     const yesIs = (a: unknown) => String(a ?? "").toLowerCase().startsWith("yes");
@@ -196,9 +207,29 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
     const origYes = all.filter((q) => yesIs(q.answer)).length;
     const originalScore = total > 0 ? Math.round((origYes / total) * 100) : 0;
 
-    if (overturns > 0) {
-      await saveFinding(orgId, { ...finding, answeredQuestions: corrected });
+    // Always persist the stamped/corrected questions (even on all-uphold) so the
+    // judgeAction stamps stick for failure-source attribution.
+    await saveFinding(orgId, { ...finding, answeredQuestions: corrected });
 
+    // Rebuild the failed-finding index from the judged finding. Every decided
+    // question was appealed and judged; upheld ones mark the row appealDenied
+    // (powers the "appealed and still failed" view). Overturned questions are
+    // now "Yes" and drop out naturally. Best-effort.
+    try {
+      const appealedKeys = new Set(
+        decisions.filter((d) => d.header).map((d) => normalizeQuestionKey(String(d.header))),
+      );
+      const deniedKeys = new Set(
+        decisions.filter((d) => d.decision === "uphold" && d.header).map((d) => normalizeQuestionKey(String(d.header))),
+      );
+      await writeFailedFindingRows(orgId, { ...finding, answeredQuestions: corrected }, {
+        appealedQuestionKeys: appealedKeys, deniedQuestionKeys: deniedKeys,
+      });
+    } catch (err) {
+      console.warn(`⚠️ [JUDGE] ${findingId} failed-finding index rebuild failed (best-effort):`, err);
+    }
+
+    if (overturns > 0) {
       // Per-question counter — each overturn is a No→Yes flip. Fire-and-
       // forget so a counter write failure doesn't strand the judge result.
       const cfgKeyJ = configKeyForFinding(finding as Record<string, any>);

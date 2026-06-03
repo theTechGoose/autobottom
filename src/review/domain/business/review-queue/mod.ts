@@ -27,6 +27,7 @@ import {
 } from "@audit/domain/data/stats-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFlipToPass, incrFlipToFail, configKeyForFinding } from "@audit/domain/data/question-stats-repository/mod.ts";
+import { writeFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;
 const LOCK_TTL = ACTIVE_TTL;
@@ -983,6 +984,10 @@ export async function finalizeReviewedAudit(
     reviewScore,
   };
   await saveFinding(orgId, correctedFinding);
+  // Rebuild the failed-finding index now that review actions are stamped — a
+  // confirmed "No" attributes to team_member, a flip removes the row. Best-effort.
+  writeFailedFindingRows(orgId, correctedFinding as Record<string, any>).catch((err) =>
+    console.warn(`[REVIEW] ${findingId}: ⚠️ failed-finding index rebuild failed:`, err));
 
   await setStored("review-done", orgId, [findingId], { reviewedAt: new Date(reviewedAt).toISOString(), reviewScore, reviewedBy: reviewer });
   // Defensive sweep: drop any lingering locks for this finding. Per-question
@@ -1311,6 +1316,10 @@ export async function adminFlipFinding(
   // refuse to send. Contract locked in webhook-handlers/test.ts.
   (finding as Record<string, unknown>).noWebhook = true;
   await saveFinding(orgId, finding);
+  // Bulk flip clears every "No", so this rebuild removes the finding's failure
+  // rows. Best-effort.
+  writeFailedFindingRows(orgId, finding as Record<string, any>).catch((err) =>
+    console.warn(`[ADMIN-FLIP] ${findingId}: ⚠️ failed-finding index rebuild failed:`, err));
   await saveBatchAnswers(orgId, findingId, 0, corrected);
 
   // Clean up review queue entries for this finding
@@ -1567,6 +1576,10 @@ export async function adminFlipQuestion(
   (finding as Record<string, unknown>).reviewedAt = new Date().toISOString();
   (finding as Record<string, unknown>).reviewScore = score;
   await saveFinding(orgId, finding);
+  // Single-question pencil flip: rebuild this finding's failure rows (Yes->No
+  // adds an autobot-attributed row, No->Yes removes one). Best-effort.
+  writeFailedFindingRows(orgId, finding as Record<string, any>).catch((err) =>
+    console.warn(`[ADMIN-FLIP-Q] ${findingId}: ⚠️ failed-finding index rebuild failed:`, err));
   await saveBatchAnswers(orgId, findingId, 0, flipped);
   await updateCompletedStatScore(orgId, findingId, score);
 

@@ -18,6 +18,7 @@ import { enqueueStep } from "@core/data/qstash/mod.ts";
 import { cleanupFindingFromIndices } from "@judge/domain/data/judge-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { decrementForFinding as decrementQuestionFailCounters } from "@audit/domain/data/question-stats-repository/mod.ts";
+import { deleteFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
 
 export interface ReauditInput {
   recordingIds: string[];
@@ -89,6 +90,9 @@ export async function startReauditWithGenies(
   // overcounts. Best-effort; failure doesn't block the re-audit.
   decrementQuestionFailCounters(orgId, old as Record<string, unknown>).catch((err) =>
     console.error(`[REAUDIT] ❌ question-fail counter decrement fid=${findingId} failed:`, err));
+  // Drop the old finding's failed-finding-idx rows for the same reason.
+  deleteFailedFindingRows(orgId, findingId).catch((err) =>
+    console.error(`[REAUDIT] ❌ failed-finding index delete fid=${findingId} failed:`, err));
 
   // Spin up a fresh job so the new audit appears independent in admin views.
   const oldJobId = old.auditJobId as string | undefined;

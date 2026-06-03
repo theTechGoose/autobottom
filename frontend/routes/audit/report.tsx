@@ -142,6 +142,20 @@ window.flipQuestion = function(idx) {
     else { alert(d.error || 'Failed to flip'); if (btn) { btn.disabled = false; btn.textContent = '✏'; } }
   }).catch(function() { if (btn) { btn.disabled = false; btn.textContent = '✏'; } });
 };
+window.setFailureSource = function(idx, header, source) {
+  if (!source) return;
+  var sel = document.getElementById('rpt-q-src-' + idx);
+  if (sel) sel.disabled = true;
+  fetch('/admin/failed-audits/source', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ findingId: ${JSON.stringify(id)}, header: header, source: source, by: ${JSON.stringify(user?.email ?? "admin")} }),
+    credentials: 'include',
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (sel) sel.disabled = false;
+    if (!d.ok) { alert(d.error || 'Failed to set source'); }
+  }).catch(function() { if (sel) sel.disabled = false; alert('Failed to set source'); });
+};
 window.adminRerunGenies = function() {
   var idsEl = document.getElementById('rpt-rerun-ids');
   var commentEl = document.getElementById('rpt-rerun-comment');

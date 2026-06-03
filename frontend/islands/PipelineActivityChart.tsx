@@ -79,7 +79,10 @@ export default function PipelineActivityChart(props: Props) {
       const rB = bucketByHour(retriesTs);
 
       const maxVal = Math.max(1, ...cB, ...eB, ...rB);
-      const padL = 28, padR = 8, padT = 10, padB = 22;
+      // padT reserves a top band for the legend. A series peak is drawn at
+      // y = padT (its highest possible point), so keeping the legend above padT
+      // means the line can never overwrite it.
+      const padL = 28, padR = 8, padT = 26, padB = 22;
       const plotW = cssW - padL - padR;
       const plotH = cssH - padT - padB;
       const slot = plotW / 23; // 24 points → 23 spans
@@ -151,7 +154,7 @@ export default function PipelineActivityChart(props: Props) {
         { c: "#f85149", label: `Errors ${errorsTs.length}` },
       ];
       let lx = padL;
-      const ly = padT / 2 + 2;
+      const ly = 10; // fixed within the reserved top band, clear of the plot (starts at padT)
       for (const item of legend) {
         ctx.fillStyle = item.c;
         ctx.fillRect(lx, ly - 4, 8, 8);

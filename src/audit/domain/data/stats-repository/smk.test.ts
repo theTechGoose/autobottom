@@ -7,7 +7,9 @@ import {
   saveChargebackEntry, getChargebackEntry, getChargebackEntries, deleteChargebackEntry,
   saveWireDeductionEntry, getWireDeductionEntry, getWireDeductionEntries, deleteWireDeductionEntry,
   getStats, terminateFinding, terminateAllActive,
+  getErrorsInWindow, isFindingRecovered,
 } from "./mod.ts";
+import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
@@ -114,4 +116,59 @@ Deno.test({ name: "wire — save, get, list, delete", ...kvOpts, fn: async () =>
   assert(list.some((e) => e.findingId === "f-w-1"));
   await deleteWireDeductionEntry(ORG, "f-w-1");
   assertEquals(await getWireDeductionEntry(ORG, "f-w-1"), null);
+}});
+
+// ── Error recovery classification ────────────────────────────────────────────
+// A transient blip (e.g. an init-step Firestore abort) whose audit later
+// FINISHED is "recovered" — not autobottom's fault — and must not trip the
+// canary failure count. A finding still stuck at the failing step is a genuine
+// fault. Each test uses a unique org so the tight ts window is fully isolated.
+
+Deno.test({ name: "errors — finished finding classifies as recovered", ...kvOpts, fn: async () => {
+  const ORG_R = "test-rec-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-recovered-" + crypto.randomUUID().slice(0, 8);
+  await saveFinding(ORG_R, { id: fid, findingStatus: "finished" });
+  await trackError(ORG_R, fid, "init", "The signal has been aborted");
+  const now = Date.now();
+  const rows = await getErrorsInWindow(ORG_R, now - 5000, now + 5000, { includeRecovery: true });
+  const row = rows.find((r) => r.findingId === fid);
+  assert(row, "seeded error must be in window");
+  assertEquals(row!.recovered, true, "finished finding → recovered");
+}});
+
+Deno.test({ name: "errors — stuck finding classifies as NOT recovered", ...kvOpts, fn: async () => {
+  const ORG_S = "test-stuck-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-stuck-" + crypto.randomUUID().slice(0, 8);
+  await saveFinding(ORG_S, { id: fid, findingStatus: "getting-recording" });
+  await trackError(ORG_S, fid, "init", "The signal has been aborted");
+  const now = Date.now();
+  const rows = await getErrorsInWindow(ORG_S, now - 5000, now + 5000, { includeRecovery: true });
+  const row = rows.find((r) => r.findingId === fid);
+  assert(row, "seeded error must be in window");
+  assertEquals(row!.recovered, false, "still at getting-recording → not recovered");
+}});
+
+Deno.test({ name: "errors — terminated finding counts as recovered (deliberate stop)", ...kvOpts, fn: async () => {
+  const ORG_T = "test-term-rec-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-terminated-" + crypto.randomUUID().slice(0, 8);
+  await saveFinding(ORG_T, { id: fid, findingStatus: "terminated" });
+  await trackError(ORG_T, fid, "init", "The signal has been aborted");
+  const now = Date.now();
+  const rows = await getErrorsInWindow(ORG_T, now - 5000, now + 5000, { includeRecovery: true });
+  assertEquals(rows.find((r) => r.findingId === fid)?.recovered, true);
+}});
+
+Deno.test({ name: "errors — recovery tag omitted unless includeRecovery is set", ...kvOpts, fn: async () => {
+  const ORG_O = "test-norec-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-norec-" + crypto.randomUUID().slice(0, 8);
+  await saveFinding(ORG_O, { id: fid, findingStatus: "finished" });
+  await trackError(ORG_O, fid, "init", "boom");
+  const now = Date.now();
+  const rows = await getErrorsInWindow(ORG_O, now - 5000, now + 5000);
+  assertEquals(rows.find((r) => r.findingId === fid)?.recovered, undefined);
+}});
+
+Deno.test({ name: "isFindingRecovered — missing finding is not recovered (fail-safe)", ...kvOpts, fn: async () => {
+  const ORG_M = "test-missing-" + crypto.randomUUID().slice(0, 8);
+  assertEquals(await isFindingRecovered(ORG_M, "f-does-not-exist"), false);
 }});

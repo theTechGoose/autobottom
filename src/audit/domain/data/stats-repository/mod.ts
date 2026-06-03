@@ -161,16 +161,41 @@ export async function terminateAllActive(orgId: OrgId): Promise<number> {
 // history). The dashboard's Recent Errors table still filters to 24h itself.
 const ERROR_RETENTION_MS = 8 * DAY_MS;
 
-export interface ErrorRecord { findingId: string; step: string; error: string; ts: number; }
+export interface ErrorRecord { findingId: string; step: string; error: string; ts: number; recovered?: boolean; }
 
 export async function trackError(orgId: OrgId, findingId: string, step: string, error: string): Promise<void> {
   await setStored("error-tracking", orgId, [`${Date.now()}-${findingId}`], { findingId, step, error, ts: Date.now() }, { expireInMs: ERROR_RETENTION_MS });
 }
 
+/** True if a finding that recorded an error ultimately reached a terminal,
+ *  non-fault end state — "finished" (delivered its audit) or "terminated"
+ *  (deliberately stopped). Anything else (still in-progress, or the finding
+ *  can't be read) is treated as an UNrecovered fault. Fail-safe: on a read
+ *  error we return false so a real problem is surfaced, never silently hidden.
+ *
+ *  Used to tell a transient blip that self-healed (e.g. an init-step Firestore
+ *  abort that the watchdog/QStash retry re-drove to completion) apart from a
+ *  genuinely stuck audit, so the daily canary report only fails on the latter. */
+export async function isFindingRecovered(orgId: OrgId, findingId: string): Promise<boolean> {
+  try {
+    const finding = await getFinding(orgId, findingId);
+    const status = String(finding?.findingStatus ?? "");
+    return status === "finished" || status === "terminated";
+  } catch {
+    return false;
+  }
+}
+
 /** Read error-tracking rows whose ts is in [from, to), excluding hidden
  *  findings, sorted ascending by ts. Read-all + filter (errors are low-volume),
- *  matching getStats's error read. */
-export async function getErrorsInWindow(orgId: OrgId, from: number, to: number): Promise<ErrorRecord[]> {
+ *  matching getStats's error read.
+ *
+ *  With `opts.includeRecovery`, each row is tagged `recovered` via
+ *  isFindingRecovered (one getFinding per DISTINCT errored finding — bounded by
+ *  error volume). Opt-in so existing callers (e.g. the dashboard) pay nothing. */
+export async function getErrorsInWindow(
+  orgId: OrgId, from: number, to: number, opts?: { includeRecovery?: boolean },
+): Promise<ErrorRecord[]> {
   const hidden = await getHiddenFindingIds(orgId);
   const rows = await listStored<Record<string, unknown>>("error-tracking", orgId);
   const out: ErrorRecord[] = [];
@@ -183,6 +208,15 @@ export async function getErrorsInWindow(orgId: OrgId, from: number, to: number):
     }
   }
   out.sort((a, b) => a.ts - b.ts);
+  if (opts?.includeRecovery) {
+    const recoveredById = new Map<string, boolean>();
+    for (const r of out) {
+      if (!recoveredById.has(r.findingId)) {
+        recoveredById.set(r.findingId, await isFindingRecovered(orgId, r.findingId));
+      }
+      r.recovered = recoveredById.get(r.findingId);
+    }
+  }
   return out;
 }
 

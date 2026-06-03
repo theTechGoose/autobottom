@@ -5,6 +5,12 @@
  *  observability logs link, plus a total count and the set of finding ids.
  *  Errors are persisted by the step dispatcher (main.ts) via trackError.
  *
+ *  Each error is also tagged `recovered` (the audit ultimately finished or was
+ *  terminated — a self-healed/transient blip, not a fault) vs not. The response
+ *  exposes `unrecoveredErrors` / `unrecoveredFindingIds` alongside the totals;
+ *  the canary monitor fails on `unrecoveredErrors > 0`, not `totalErrors`, so a
+ *  transient Firestore abort that the watchdog re-drove doesn't trip an alarm.
+ *
  *  Dispatched directly from main.ts (same @Req-via-router.fetch workaround as
  *  kv-export); the Controller below is a no-op stub registration. */
 import "npm:reflect-metadata@0.1.13";
@@ -114,7 +120,7 @@ export async function handleCanaryErrors(req: Request): Promise<Response> {
   const dateOverride = new URL(req.url).searchParams.get("date") ?? undefined;
   const { since, until, date } = etDayWindow(Date.now(), dateOverride);
 
-  const rows = await getErrorsInWindow(defaultOrgId() as OrgId, since, until);
+  const rows = await getErrorsInWindow(defaultOrgId() as OrgId, since, until, { includeRecovery: true });
 
   // Dedup to unique timestamps (per requirement); keep first per ts.
   const seen = new Set<number>();
@@ -123,7 +129,14 @@ export async function handleCanaryErrors(req: Request): Promise<Response> {
   const base = logsBaseFromReq(req);
   const findingIds = [...new Set(unique.map((r) => r.findingId).filter(Boolean))];
 
-  console.log(`🐤 [CANARY] errors for ${date} (ET) — ${unique.length} unique of ${rows.length} rows, ${findingIds.length} findings`);
+  // Split self-healed blips (the audit still finished / was terminated) from
+  // genuine stuck faults. Canary should fail on `unrecoveredErrors`, not the
+  // total — a transient Firestore abort that the watchdog re-drove to
+  // completion is not an autobottom fault.
+  const unrecovered = unique.filter((r) => r.recovered === false);
+  const unrecoveredFindingIds = [...new Set(unrecovered.map((r) => r.findingId).filter(Boolean))];
+
+  console.log(`🐤 [CANARY] errors for ${date} (ET) — ${unique.length} unique of ${rows.length} rows (${unrecovered.length} unrecovered), ${findingIds.length} findings`);
 
   return json({
     ok: true,
@@ -131,13 +144,16 @@ export async function handleCanaryErrors(req: Request): Promise<Response> {
     date,
     window: { since, until },
     totalErrors: unique.length,
+    unrecoveredErrors: unrecovered.length,
     findingIds,
+    unrecoveredFindingIds,
     errors: unique.map((r) => ({
       findingId: r.findingId,
       step: r.step,
       error: r.error,
       ts: r.ts,
       timestamp: new Date(r.ts).toISOString(),
+      recovered: r.recovered ?? false,
       logsUrl: buildLogsUrl(base, r.findingId),
     })),
   });

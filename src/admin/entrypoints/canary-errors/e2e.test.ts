@@ -125,3 +125,60 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "handleCanaryErrors — classifies recovered vs unrecovered (genuine fault) errors",
+  sanitizeResources: false, sanitizeOps: false,
+  async fn() {
+    Deno.env.set("CANARY_SECRET", "top-secret");
+    try {
+      const { trackError, clearErrors } = await import("@audit/domain/data/stats-repository/mod.ts");
+      const { saveFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+      const { defaultOrgId } = await import("@core/business/auth/mod.ts");
+      const org = defaultOrgId() as never;
+
+      // The handler reads the shared default org and dedups by ts; clear first
+      // so this test sees only its own two rows (deterministic under the full
+      // suite, where other tests also seed default-org errors). Tests run
+      // sequentially, so this can't race a concurrent seeder.
+      await clearErrors(org);
+
+      // A self-healed blip (audit finished) and a genuine stuck fault.
+      const recoveredFid = "canary-recovered-" + crypto.randomUUID().slice(0, 8);
+      const stuckFid = "canary-stuck-" + crypto.randomUUID().slice(0, 8);
+      await saveFinding(org, { id: recoveredFid, findingStatus: "finished" });
+      await saveFinding(org, { id: stuckFid, findingStatus: "getting-recording" });
+      await trackError(org, recoveredFid, "init", "The signal has been aborted");
+      // Distinct ms so the handler's per-ts dedup keeps both rows.
+      await new Promise((r) => setTimeout(r, 3));
+      await trackError(org, stuckFid, "init", "The signal has been aborted");
+
+      const todayEt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const res = await handleCanaryErrors(new Request(`https://autobottom.thetechgoose.deno.net/canary/errors?date=${todayEt}`, {
+        method: "POST", headers: { Authorization: "Bearer top-secret" },
+      }));
+      assertEquals(res.status, 200);
+      const body = await res.json();
+
+      // New contract fields present + typed.
+      assert(typeof body.unrecoveredErrors === "number", "unrecoveredErrors is a number");
+      assert(Array.isArray(body.unrecoveredFindingIds), "unrecoveredFindingIds is an array");
+
+      const rec = body.errors.find((x: { findingId: string }) => x.findingId === recoveredFid);
+      const stuck = body.errors.find((x: { findingId: string }) => x.findingId === stuckFid);
+      assert(rec, "recovered error present in errors[]");
+      assert(stuck, "stuck error present in errors[]");
+      assertEquals(rec.recovered, true, "finished finding → recovered:true");
+      assertEquals(stuck.recovered, false, "getting-recording finding → recovered:false");
+
+      // The genuine fault is the only one that should count against canary.
+      assert(!body.unrecoveredFindingIds.includes(recoveredFid), "recovered finding excluded from unrecovered set");
+      assert(body.unrecoveredFindingIds.includes(stuckFid), "stuck finding listed as unrecovered");
+      assert(body.unrecoveredErrors >= 1, "at least the stuck finding counts as unrecovered");
+      // totalErrors keeps its meaning: both errors are still listed for visibility.
+      assert(body.findingIds.includes(recoveredFid) && body.findingIds.includes(stuckFid), "both findings in full findingIds");
+    } finally {
+      Deno.env.delete("CANARY_SECRET");
+    }
+  },
+});

@@ -316,11 +316,19 @@ const FS_RETRY_DELAYS_MS = [200, 600];
 //    completes (worst case 8s × 3 = 24s wall-clock) rather than
 //    bouncing them to an error screen and asking them to retry by
 //    hand.
-//  - background: 15s, no retry. Maintenance work (dedup, purge,
-//    backfills) should fail fast on a hung call so the operator
-//    sees the error in their modal — they have the dedup-progress
-//    UI to interpret it. Retrying a hung scan just compounds the
-//    wedge.
+//  - background: 30s, no retry. Two uses share this lane: (a) operator
+//    maintenance (dedup, purge, backfills), which should fail fast on a
+//    hung call so the operator sees the error in their modal — retrying
+//    a hung scan just compounds the wedge; and (b) the audit pipeline
+//    (wrapped at the step dispatcher in main.ts). Budget was raised
+//    15s → 30s because a transient Firestore latency spike (cold-isolate
+//    first call / brief pool wedge) was aborting a pipeline read in the
+//    init step at 15s and surfacing as a bare "The signal has been
+//    aborted" error in the daily canary report. 30s lets a slow-but-
+//    progressing call finish; fast calls (the 99.9% case) clear the
+//    watchdog on success, so this adds zero happy-path overhead. A
+//    genuinely-hung call still fails (and the hourly watchdog cron
+//    re-drives the stalled finding), so we're no worse off there.
 type LaneConfig = { timeoutMs: number; retryOnTimeout: boolean };
 const FS_LANE_CONFIG: Record<"foreground" | "background" | "auth", LaneConfig> = {
   // Foreground was 60s. Reviewers were seeing "spins then 503": a brief
@@ -332,7 +340,7 @@ const FS_LANE_CONFIG: Record<"foreground" | "background" | "auth", LaneConfig> =
   // up. Normal queries complete in 1-2s — only genuinely-wedged
   // requests are affected.
   foreground: { timeoutMs: 25_000, retryOnTimeout: false },
-  background: { timeoutMs: 15_000, retryOnTimeout: false },
+  background: { timeoutMs: 30_000, retryOnTimeout: false },
   auth:       { timeoutMs:  8_000, retryOnTimeout: true  },
 };
 

@@ -12,6 +12,7 @@ import TranscriptInteractive from "../../islands/TranscriptInteractive.tsx";
 import QueueModals from "../../islands/QueueModals.tsx";
 import BottomBar from "../../islands/BottomBar.tsx";
 import DecideEffects from "../../islands/DecideEffects.tsx";
+import ReviewTiming from "../../islands/ReviewTiming.tsx";
 
 interface BufferResponse {
   buffer: ReviewItem[];
@@ -67,6 +68,7 @@ export default define.page(async function ReviewQueue(ctx) {
       <HotkeyHandler mode="review" />
       <SoundEngine />
       <DecideEffects />
+      <ReviewTiming />
       {/* TranscriptInteractive lives OUTSIDE #queue-content so its mount
           survives every HTMX swap of the queue panel. See island header. */}
       <TranscriptInteractive />

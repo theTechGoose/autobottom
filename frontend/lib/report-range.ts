@@ -20,6 +20,15 @@ export const ENG_PRESETS: Array<{ key: string; label: string }> = [
   { key: "all-time", label: "All Time" },
 ];
 
+/** Presets for the Reviewer Throughput report (default Today). */
+export const RT_PRESETS: Array<{ key: string; label: string }> = [
+  { key: "today", label: "Today" },
+  { key: "this-week", label: "This Week" },
+  { key: "7d", label: "Last 7 Days" },
+  { key: "30d", label: "Last 30 Days" },
+  { key: "all-time", label: "All Time" },
+];
+
 /** Offset (ms) of `tz` from UTC at `instant`: (tz wall-clock read as UTC) − instant.
  *  Negative for the Americas (−4h EDT, −5h EST). */
 function tzOffsetMs(instant: number, tz: string): number {
@@ -52,6 +61,15 @@ export function etTodayWindow(now: number): { since: number; until: number } {
   return { since: etMidnightUtcMs(y, mo, d), until: now };
 }
 
+/** Start of the current ET week (Sunday 00:00 ET), as UTC ms. */
+function etWeekStart(now: number): number {
+  const { y, mo, d } = etYmd(now);
+  const todayStart = etMidnightUtcMs(y, mo, d);
+  const dow = new Date(todayStart).getUTCDay(); // 0 = Sunday (ET midnight ≈ 4–5am UTC same date)
+  const sunday = etYmd(todayStart - dow * 86_400_000);
+  return etMidnightUtcMs(sunday.y, sunday.mo, sunday.d);
+}
+
 function startOfMonth(offset: number): number {
   const d = new Date();
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + offset, 1);
@@ -75,6 +93,9 @@ export function resolveRange(preset: string, customFrom: string, customTo: strin
       const { since, until } = etTodayWindow(now);
       return { since, until, label: "Today" };
     }
+    case "this-week": return { since: etWeekStart(now), until: now, label: "This Week" };
+    case "7d": return { since: now - 7 * 86_400_000, until: now, label: "Last 7 Days" };
+    case "30d": return { since: now - 30 * 86_400_000, until: now, label: "Last 30 Days" };
     case "this-month": return { since: startOfMonth(0), until: now, label: "This Month" };
     case "last-month": return { since: startOfMonth(-1), until: startOfMonth(0) - 1, label: "Last Month" };
     case "last-3": return { since: startOfMonth(-2), until: now, label: "Last 3 Months" };

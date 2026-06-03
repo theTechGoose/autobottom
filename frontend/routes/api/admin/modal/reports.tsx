@@ -8,16 +8,17 @@
 import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import { apiFetch } from "../../../../lib/api.ts";
-import { ENG_PRESETS } from "../../../../lib/report-range.ts";
+import { ENG_PRESETS, RT_PRESETS } from "../../../../lib/report-range.ts";
 import { QF_PRESETS } from "../../../../lib/qf-range.ts";
 import { WeeklyReportsList, type EmailReportConfig, type StatusEntry } from "../../../../components/WeeklyReportsList.tsx";
 
-type TabKey = "qfailures" | "weekly" | "engagement";
+type TabKey = "qfailures" | "weekly" | "engagement" | "throughput";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "qfailures", label: "Question Failures" },
   { key: "weekly", label: "Weekly Reports" },
   { key: "engagement", label: "Email Engagement" },
+  { key: "throughput", label: "Reviewer Throughput" },
 ];
 
 export const handler = define.handlers({
@@ -57,6 +58,7 @@ export const handler = define.handlers({
           {active === "qfailures" && <QuestionFailuresInitial />}
           {active === "weekly" && <WeeklyReportsInitial configs={configs} statuses={statuses} />}
           {active === "engagement" && <EngagementInitial />}
+          {active === "throughput" && <ThroughputInitial />}
         </div>
       </div>,
     );
@@ -183,6 +185,54 @@ function EngagementInitial() {
         </div>
       </form>
       <div id="eng-result" hx-get="/api/admin/modal/reports/engagement?preset=today" hx-trigger="load" hx-swap="innerHTML">
+        <div style="font-size:11px;color:var(--text-dim);padding:18px;text-align:center;">Loading today's data…</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reviewer Throughput initial panel ────────────────────────────────────────
+//
+// Per-reviewer audit handle time + throughput. Default Today; presets This Week /
+// 7d / 30d / All Time. Posts to the /reviewer-throughput fragment.
+
+function ThroughputInitial() {
+  return (
+    <div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">
+        How long reviewers take to work audits — active handle time per question + per audit, with throughput.
+        Idle (&gt;60s) / tab-away questions are discarded so lunch breaks don't skew averages. Forward-only.
+      </div>
+      <form
+        id="rt-form"
+        hx-post="/api/admin/modal/reports/reviewer-throughput"
+        hx-target="#rt-result"
+        hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find #rt-loading"
+      >
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;">
+          <span style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-right:4px;">Range</span>
+          {RT_PRESETS.map((p) => (
+            <button
+              key={p.key}
+              type="submit"
+              name="preset"
+              value={p.key}
+              class={`sf-btn ${p.key === "today" ? "primary" : "ghost"}`}
+              style="font-size:11px;padding:4px 12px;"
+            >{p.label}</button>
+          ))}
+          <span style="margin:0 6px;color:var(--text-dim);">|</span>
+          <span style="font-size:11px;color:var(--text-dim);">Custom:</span>
+          <input type="date" name="custom-from" class="sf-input" style="font-size:11px;padding:2px 6px;width:140px;" />
+          <span style="color:var(--text-dim);font-size:11px;">→</span>
+          <input type="date" name="custom-to" class="sf-input" style="font-size:11px;padding:2px 6px;width:140px;" />
+          <button type="submit" name="preset" value="custom" class="sf-btn primary" style="font-size:11px;padding:4px 12px;">Apply</button>
+          <span id="rt-loading" class="htmx-indicator" style="font-size:11px;color:var(--text-dim);">⏳</span>
+        </div>
+      </form>
+      <div id="rt-result" hx-get="/api/admin/modal/reports/reviewer-throughput?preset=today" hx-trigger="load" hx-swap="innerHTML">
         <div style="font-size:11px;color:var(--text-dim);padding:18px;text-align:center;">Loading today's data…</div>
       </div>
     </div>

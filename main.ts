@@ -669,6 +669,7 @@ const FRONTEND_EXACT_PAGES = new Set([
   "/admin/email-engagement",
   "/admin/question-failures",
   "/admin/weekly-reports",
+  "/admin/reviewer-throughput",
   "/admin/impersonate-go",
   "/manager/audits",
   "/review", "/review/dashboard",

@@ -1,5 +1,6 @@
 /** Review stats — analytics for the review queue. */
 import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
+import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 export function computeReviewRate(decided: number, hours: number): number {
@@ -7,6 +8,15 @@ export function computeReviewRate(decided: number, hours: number): number {
 }
 
 const MS_DAY = 86_400_000;
+const MS_HOUR = 3_600_000;
+
+/** Median of a numeric array (0 for empty). */
+function median(xs: number[]): number {
+  if (xs.length === 0) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
+}
 
 export interface ReviewerBucket {
   reviewed: number;
@@ -35,6 +45,23 @@ export interface LeaderboardRow {
   reviewed: number;
   avgScore: number;
   lastReviewedAt: number | null;
+  /** Handle-time stats (forward-only — based on audits that carry reviewHandleMs).
+   *  timedAudits is how many of `reviewed` have timing; the rest predate capture. */
+  timedAudits: number;
+  totalHandleMs: number;
+  avgHandleMs: number;
+  medianHandleMs: number;
+  validQuestions: number;
+  avgPerQuestionMs: number;
+  auditsPerActiveHour: number;
+}
+
+export interface QuestionTimingRow {
+  header: string;
+  samples: number;
+  avgMs: number;
+  medianMs: number;
+  discardedCount: number;
 }
 
 export interface RangeOpts { from?: number; to?: number }
@@ -158,26 +185,145 @@ export async function getMyReviewerStats(orgId: OrgId, email: string, opts?: Ran
 export async function getReviewerLeaderboard(orgId: OrgId, opts?: RangeOpts): Promise<LeaderboardRow[]> {
   const { from, to } = resolveRange(opts);
   const all = await queryAuditDoneIndex(orgId, from, to);
-  const by = new Map<string, { reviewed: number; sum: number; last: number }>();
+  interface Acc { reviewed: number; sum: number; last: number; handleSamples: number[]; validQuestions: number }
+  const by = new Map<string, Acc>();
   for (const r of all) {
     const who = r.reviewedBy;
     if (!who) continue;
     if (r.completedAt < from || r.completedAt > to) continue;
-    const entry = by.get(who) ?? { reviewed: 0, sum: 0, last: 0 };
+    const entry = by.get(who) ?? { reviewed: 0, sum: 0, last: 0, handleSamples: [], validQuestions: 0 };
     entry.reviewed++;
     entry.sum += r.score;
     if (r.completedAt > entry.last) entry.last = r.completedAt;
+    // Handle time is only present on audits reviewed after timing capture shipped.
+    if (typeof r.reviewHandleMs === "number" && (r.reviewedValidCount ?? 0) > 0) {
+      entry.handleSamples.push(r.reviewHandleMs);
+      entry.validQuestions += r.reviewedValidCount ?? 0;
+    }
     by.set(who, entry);
   }
   const rows: LeaderboardRow[] = [];
   for (const [email, e] of by) {
+    const totalHandleMs = e.handleSamples.reduce((s, x) => s + x, 0);
+    const timedAudits = e.handleSamples.length;
+    const avgHandleMs = timedAudits ? Math.round(totalHandleMs / timedAudits) : 0;
     rows.push({
       email,
       reviewed: e.reviewed,
       avgScore: e.reviewed ? Math.round(e.sum / e.reviewed) : 0,
       lastReviewedAt: e.last || null,
+      timedAudits,
+      totalHandleMs,
+      avgHandleMs,
+      medianHandleMs: median(e.handleSamples),
+      validQuestions: e.validQuestions,
+      avgPerQuestionMs: e.validQuestions ? Math.round(totalHandleMs / e.validQuestions) : 0,
+      auditsPerActiveHour: totalHandleMs > 0 ? Math.round((timedAudits / (totalHandleMs / MS_HOUR)) * 10) / 10 : 0,
     });
   }
   rows.sort((a, b) => b.reviewed - a.reviewed);
   return rows;
+}
+
+export interface ReviewerAuditRow {
+  findingId: string;
+  completedAt: number;
+  score: number;
+  isPackage?: boolean;
+  recordId?: string;
+  recordingId?: string;
+  voName?: string;
+  reviewHandleMs?: number;
+  reviewedQuestionCount?: number;
+  reviewedValidCount?: number;
+}
+
+/** One reviewer's audits in range (newest first), paginated — drill-down from
+ *  the throughput report's by-reviewer table. Reads the index directly (cheap). */
+export async function getReviewerAudits(
+  orgId: OrgId,
+  email: string,
+  opts: RangeOpts | undefined,
+  page = 1,
+  limit = 100,
+): Promise<{ rows: ReviewerAuditRow[]; total: number; page: number; pages: number }> {
+  const { from, to } = resolveRange(opts);
+  const all = await queryAuditDoneIndex(orgId, from, to);
+  const mine = all
+    .filter((r) => r.reviewedBy === email && r.completedAt >= from && r.completedAt <= to)
+    .sort((a, b) => b.completedAt - a.completedAt);
+  const lim = Math.min(500, Math.max(10, limit));
+  const pages = Math.max(1, Math.ceil(mine.length / lim));
+  const pg = Math.min(Math.max(1, page), pages);
+  const rows: ReviewerAuditRow[] = mine.slice((pg - 1) * lim, pg * lim).map((r) => ({
+    findingId: r.findingId,
+    completedAt: r.completedAt,
+    score: r.score,
+    isPackage: r.isPackage,
+    recordId: r.recordId,
+    recordingId: r.recordingId,
+    voName: r.voName,
+    reviewHandleMs: r.reviewHandleMs,
+    reviewedQuestionCount: r.reviewedQuestionCount,
+    reviewedValidCount: r.reviewedValidCount,
+  }));
+  return { rows, total: mine.length, page: pg, pages };
+}
+
+/** Per-question review handle time over a range. Hydrates the reviewed audits'
+ *  finding docs (bounded by HYDRATE_CAP) and groups answeredQuestions[].reviewHandleMs
+ *  by header, excluding idle-discarded questions. `questionFilter` is a
+ *  case-insensitive substring match on the header. */
+const HYDRATE_CAP = 2000;
+const HYDRATE_CONCURRENCY = 25;
+
+export async function getQuestionTiming(
+  orgId: OrgId,
+  opts?: RangeOpts,
+  questionFilter?: string,
+): Promise<{ rows: QuestionTimingRow[]; cohort: number; hydrated: number; capped: boolean }> {
+  const { from, to } = resolveRange(opts);
+  const all = await queryAuditDoneIndex(orgId, from, to);
+  const reviewed = all.filter((r) =>
+    r.reason === "reviewed" && r.completedAt >= from && r.completedAt <= to
+  );
+  const capped = reviewed.length > HYDRATE_CAP;
+  const targets = capped ? reviewed.slice(0, HYDRATE_CAP) : reviewed;
+
+  interface QAcc { samples: number[]; discardedCount: number }
+  const byHeader = new Map<string, QAcc>();
+  for (let i = 0; i < targets.length; i += HYDRATE_CONCURRENCY) {
+    const slice = targets.slice(i, i + HYDRATE_CONCURRENCY);
+    const findings = await Promise.all(slice.map((r) => getFinding(orgId, r.findingId).catch(() => null)));
+    for (const f of findings) {
+      const answered = (f as { answeredQuestions?: unknown[] } | null)?.answeredQuestions;
+      if (!Array.isArray(answered)) continue;
+      for (const q of answered) {
+        const qq = q as { header?: string; reviewHandleMs?: number; reviewDiscarded?: boolean; reviewedAt?: number };
+        // Only count questions that actually went through review (have timing).
+        if (qq.reviewHandleMs == null && qq.reviewedAt == null) continue;
+        const header = String(qq.header ?? "").trim() || "(untitled)";
+        const acc = byHeader.get(header) ?? { samples: [], discardedCount: 0 };
+        if (qq.reviewDiscarded) acc.discardedCount++;
+        else if (typeof qq.reviewHandleMs === "number") acc.samples.push(qq.reviewHandleMs);
+        byHeader.set(header, acc);
+      }
+    }
+  }
+
+  const filter = (questionFilter ?? "").trim().toLowerCase();
+  const rows: QuestionTimingRow[] = [];
+  for (const [header, acc] of byHeader) {
+    if (filter && !header.toLowerCase().includes(filter)) continue;
+    const total = acc.samples.reduce((s, x) => s + x, 0);
+    rows.push({
+      header,
+      samples: acc.samples.length,
+      avgMs: acc.samples.length ? Math.round(total / acc.samples.length) : 0,
+      medianMs: median(acc.samples),
+      discardedCount: acc.discardedCount,
+    });
+  }
+  rows.sort((a, b) => b.avgMs - a.avgMs);
+  return { rows, cohort: reviewed.length, hydrated: targets.length, capped };
 }

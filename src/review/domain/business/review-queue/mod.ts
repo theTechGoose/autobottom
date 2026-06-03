@@ -631,12 +631,19 @@ export async function claimNextItem(
 
 // ── Decision Recording ──────────────────────────────────────────────────────
 
+/** A question is excluded from handle-time stats once it accrues this much idle
+ *  (tab hidden, or >60s of no mouse/hover/key activity) — insulates averages
+ *  from someone leaving the screen open. Mirrors the island's idle threshold. */
+export const REVIEW_IDLE_DISCARD_MS = 60_000;
+
 export async function recordDecision(
   orgId: OrgId,
   findingId: string,
   questionIndex: number,
   decision: "confirm" | "flip",
   reviewer: string,
+  handleMs?: number,
+  idleMs?: number,
 ): Promise<{ remaining: number; auditComplete: boolean }> {
   const now = Date.now();
 
@@ -657,7 +664,13 @@ export async function recordDecision(
     };
   }
 
-  const decisionRecord: ReviewDecision = { ...baseItem, decision, reviewer, decidedAt: now };
+  const cleanHandleMs = typeof handleMs === "number" && Number.isFinite(handleMs) && handleMs >= 0 ? Math.round(handleMs) : undefined;
+  const cleanIdleMs = typeof idleMs === "number" && Number.isFinite(idleMs) && idleMs >= 0 ? Math.round(idleMs) : undefined;
+  const discarded = (cleanIdleMs ?? 0) >= REVIEW_IDLE_DISCARD_MS;
+  const decisionRecord: ReviewDecision = {
+    ...baseItem, decision, reviewer, decidedAt: now,
+    handleMs: cleanHandleMs, idleMs: cleanIdleMs, discarded,
+  };
   await setStored("review-decided", orgId, [findingId, questionIndex], decisionRecord);
 
   // Undo index — keyed by reverse-chronological so listing gives newest first
@@ -833,9 +846,15 @@ export async function finalizeReviewedAudit(
   }
 
   const flipDiag: Array<{ qIndex: number; targetIdx: number; matched: string; decision: string; prevAnswer: string; finalAnswer: string }> = [];
+  // Review handle-time rollup (forward-only). Per-question timing was captured
+  // client-side by the ReviewTiming island; discarded questions (>=60s idle) are
+  // excluded from the sum + valid count so lunch-break audits don't skew stats.
+  let sumHandleMs = 0, reviewedQuestionCount = 0, reviewedValidCount = 0;
   const cfgKey = configKeyForFinding(finding as Record<string, any>);
   for (const d of decisions.values()) {
     const { matched, targetIdx } = applyDecisionByIdentity(d);
+    reviewedQuestionCount++;
+    if (!d.discarded) { reviewedValidCount++; sumHandleMs += d.handleMs ?? 0; }
     const prev = (targetIdx >= 0 ? answered[targetIdx] : {}) as { answer?: string; header?: string };
     const nextAnswer = d.decision === "flip" ? "Yes" : (prev.answer ?? "");
     if (targetIdx >= 0) {
@@ -845,6 +864,9 @@ export async function finalizeReviewedAudit(
         reviewAction: d.decision,
         reviewedBy: d.reviewer,
         reviewedAt: d.decidedAt,
+        reviewHandleMs: d.handleMs,
+        reviewIdleMs: d.idleMs,
+        reviewDiscarded: d.discarded,
       };
       // Per-question counter — reviewer flipped a previously-failed question
       // to pass. Decrement the fail count + bump flippedToPass. Wrapped so
@@ -980,6 +1002,9 @@ export async function finalizeReviewedAudit(
     recordId: (finding.recordId ?? finding.record?.RelatedDestinationId ?? finding.record?.GenieNumber ?? "") as string,
     isPackage: finding.recordingIdField === "GenieNumber",
     reviewedBy: reviewer,
+    reviewHandleMs: reviewedValidCount > 0 ? sumHandleMs : undefined,
+    reviewedQuestionCount,
+    reviewedValidCount,
   });
 
   await updateCompletedStatScore(orgId, findingId, reviewScore);

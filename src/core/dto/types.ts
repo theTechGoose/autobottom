@@ -49,8 +49,15 @@ export interface AuditDoneIndexEntry {
   department?: string;
   shift?: string;
   startedAt?: number;
-  durationMs?: number;
+  durationMs?: number;       // BOT pipeline duration (not human review time)
   reviewedBy?: string;
+  /** Human review handle time: Σ active time over the audit's reviewed questions,
+   *  excluding idle-discarded ones (set at finalize). Forward-only. */
+  reviewHandleMs?: number;
+  /** Number of questions reviewed (failed questions that went through review). */
+  reviewedQuestionCount?: number;
+  /** Reviewed questions that survived the idle filter (counted in reviewHandleMs). */
+  reviewedValidCount?: number;
 }
 
 // ── Chargeback / Wire types ──────────────────────────────────────────────────
@@ -136,6 +143,13 @@ export interface ReviewDecision extends ReviewItem {
   decision: "confirm" | "flip";
   reviewer: string;
   decidedAt: number;
+  /** Active (non-idle) on-screen time the reviewer spent on this question, ms.
+   *  Captured client-side by the ReviewTiming island. */
+  handleMs?: number;
+  /** Idle time accrued on this question (tab hidden, or >60s no activity), ms. */
+  idleMs?: number;
+  /** True when the question accrued >=60s idle — excluded from handle-time stats. */
+  discarded?: boolean;
 }
 
 // ── Judge types ──────────────────────────────────────────────────────────────

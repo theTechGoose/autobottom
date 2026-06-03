@@ -18,6 +18,18 @@ interface AnsweredQuestion {
   thinking?: string;
   defense?: string;
   snippet?: string;
+  /** Reviewer handle time for this question (active on-screen ms). Reviewed
+   *  (failed) questions only; idle-discarded ones set reviewDiscarded. */
+  reviewHandleMs?: number;
+  reviewIdleMs?: number;
+  reviewDiscarded?: boolean;
+}
+
+/** ms → "1m 12s" / "45s" / "—". */
+function fmtHandle(ms?: number): string {
+  if (ms == null || ms <= 0) return "—";
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 interface Finding {
@@ -211,6 +223,12 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
             <span style="color:var(--green);">● {yesCount} passed</span>
             <span style="color:var(--red);">● {noCount} failed</span>
             <span style="color:var(--text-dim);">● {total} total</span>
+            {(() => {
+              const tot = questions.reduce((s, q) => s + (q.reviewDiscarded ? 0 : (q.reviewHandleMs ?? 0)), 0);
+              return tot > 0
+                ? <span style="color:var(--cyan);" title="Reviewer active handle time across this audit's reviewed questions">⏱ {fmtHandle(tot)} review</span>
+                : null;
+            })()}
           </div>
         </div>
       ) : (
@@ -308,6 +326,13 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
                 <summary>
                   <span class="rpt-q-num">{i + 1}</span>
                   <span class="rpt-q-title">{q.header ?? "Untitled question"}</span>
+                  {q.reviewDiscarded ? (
+                    <span title="Reviewer went idle (>60s) — excluded from handle-time stats"
+                      style="font-size:10px;color:var(--text-dim);font-variant-numeric:tabular-nums;margin-right:6px;">⏱ idle-discarded</span>
+                  ) : q.reviewHandleMs != null ? (
+                    <span title="Reviewer active handle time"
+                      style="font-size:10px;color:var(--cyan);font-variant-numeric:tabular-nums;margin-right:6px;">⏱ {fmtHandle(q.reviewHandleMs)}</span>
+                  ) : null}
                   <span class={`rpt-q-verdict ${verdictClass}`} id={`rpt-q-answer-${i}`}>{verdictLabel}</span>
                   {isAdmin && (
                     <button

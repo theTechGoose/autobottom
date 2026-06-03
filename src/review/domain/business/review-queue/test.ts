@@ -2,9 +2,9 @@
  *  audit-done-idx sync contract on admin flips. */
 
 import { assertEquals, assert, assertExists } from "#assert";
-import { selectOldestFinding, adminFlipQuestion } from "./mod.ts";
-import type { ReviewItem } from "@core/dto/types.ts";
-import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
+import { selectOldestFinding, adminFlipQuestion, recordDecision, REVIEW_IDLE_DISCARD_MS } from "./mod.ts";
+import type { ReviewDecision, ReviewItem } from "@core/dto/types.ts";
+import { getStored, resetFirestoreCredentials, setStored } from "@core/data/firestore/mod.ts";
 import { saveFinding, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import {
   writeAuditDoneIndex,
@@ -172,4 +172,39 @@ Deno.test("adminFlipQuestion — reverse flip (Yes→No) drops index score appro
   assertExists(entry);
   assertEquals(entry!.score, 75, "Yes→No flip must drop index score from 100 to 75");
   assertEquals(entry!.completed, false, "Yes→No flip must clear completed flag");
+});
+
+// ── Per-question timing capture (handleMs / idle discard) ───────────────────
+
+function tOrg(tag: string): OrgId {
+  return (`test-rq-${tag}-${crypto.randomUUID().slice(0, 8)}`) as unknown as OrgId;
+}
+
+Deno.test("recordDecision — stores active handleMs + idleMs (not discarded)", async () => {
+  resetFirestoreCredentials();
+  const orgId = tOrg("handle");
+  const fid = "rt-fid-a", reviewer = "rev@example.com";
+  await setStored("review-pending", orgId, [fid, 0], {
+    findingId: fid, questionIndex: 0, reviewIndex: 1, totalForFinding: 1,
+    header: "Taxes Due", populated: "p", thinking: "t", defense: "d", answer: "No",
+  });
+  await setStored("review-audit-pending", orgId, [fid], 1);
+  await recordDecision(orgId, fid, 0, "confirm", reviewer, 45_000, 3_000);
+  const d = await getStored<ReviewDecision>("review-decided", orgId, fid, 0);
+  assertExists(d);
+  assertEquals(d!.handleMs, 45_000);
+  assertEquals(d!.idleMs, 3_000);
+  assertEquals(d!.discarded, false);
+  assertEquals(d!.header, "Taxes Due", "carries the question header from review-pending");
+});
+
+Deno.test("recordDecision — idle >= 60s marks the question discarded", async () => {
+  resetFirestoreCredentials();
+  const orgId = tOrg("discard");
+  const fid = "rt-fid-b", reviewer = "rev@example.com";
+  await setStored("review-audit-pending", orgId, [fid], 1);
+  await recordDecision(orgId, fid, 0, "confirm", reviewer, 8_000, REVIEW_IDLE_DISCARD_MS);
+  const d = await getStored<ReviewDecision>("review-decided", orgId, fid, 0);
+  assertExists(d);
+  assertEquals(d!.discarded, true, "idleMs >= 60s ⇒ discarded");
 });

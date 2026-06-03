@@ -35,6 +35,17 @@ export class EmailEngagementDetailResponse {
   total = 0; page = 1; pages = 1; cohortSize = 0; hydrationCapped = false;
 }
 
+export class ReviewerThroughputResponse {
+  aggregate: Record<string, number> = {};
+  byReviewer: unknown[] = [];
+  byQuestion: unknown[] = [];
+  cohort = 0; hydrated = 0; capped = false;
+}
+export class ReviewerAuditsResponse {
+  rows: unknown[] = [];
+  total = 0; page = 1; pages = 1;
+}
+
 // ── Review ───────────────────────────────────────────────────────────────────
 
 export class ReviewStatsResponse { pending = 0; decided = 0; pendingAuditCount = 0; }

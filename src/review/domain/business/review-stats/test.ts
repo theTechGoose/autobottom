@@ -4,7 +4,7 @@
  *  by integration tests; what we need to lock here is "given a known set
  *  of audit-done dates, do we count the streak right". */
 import { assert, assertEquals } from "#assert";
-import { computeReviewRate, getMyReviewerStats, getReviewerLeaderboard } from "./mod.ts";
+import { computeReviewRate, getMyReviewerStats, getQuestionTiming, getReviewerLeaderboard } from "./mod.ts";
 import { _resetQueryAuditDoneIndexCacheForTests, writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
@@ -101,4 +101,85 @@ Deno.test("getReviewerLeaderboard — respects custom range", async () => {
   });
   assertEquals(rows.length, 1);
   assertEquals(rows[0].reviewed, 2);
+});
+
+// ── Handle-time aggregation + idle discard ──────────────────────────────────
+
+interface TimedAudit {
+  handleMs?: number; validCount?: number; questionCount?: number;
+  questions?: Array<{ header: string; handleMs?: number; discarded?: boolean }>;
+}
+async function seedTimed(orgId: OrgId, email: string, audits: TimedAudit[]): Promise<void> {
+  const now = Date.now();
+  for (let i = 0; i < audits.length; i++) {
+    const a = audits[i];
+    const fid = `tfid-${i}-${crypto.randomUUID().slice(0, 6)}`;
+    const answeredQuestions = (a.questions ?? []).map((q) => ({
+      header: q.header, answer: "No", reviewedAt: now,
+      reviewHandleMs: q.handleMs, reviewDiscarded: q.discarded,
+    }));
+    await saveFinding(orgId, { id: fid, findingStatus: "finished", record: {}, answeredQuestions });
+    await writeAuditDoneIndex(orgId, {
+      findingId: fid, completedAt: now - i * 1000, completed: true, score: 100,
+      reason: "reviewed", reviewedBy: email,
+      reviewHandleMs: a.handleMs, reviewedValidCount: a.validCount, reviewedQuestionCount: a.questionCount,
+    });
+  }
+}
+
+Deno.test("getReviewerLeaderboard — handle-time stats (avg/median/per-question/throughput)", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("ldb-handle");
+  await seedTimed(orgId, "alice@example.com", [
+    { handleMs: 120_000, validCount: 4, questionCount: 4 }, // 2 min
+    { handleMs: 60_000, validCount: 2, questionCount: 2 },  // 1 min
+    {}, // untimed audit — must not count toward timedAudits / handle stats
+  ]);
+  const rows = await getReviewerLeaderboard(orgId);
+  const r = rows.find((x) => x.email === "alice@example.com")!;
+  assertEquals(r.reviewed, 3);
+  assertEquals(r.timedAudits, 2);
+  assertEquals(r.totalHandleMs, 180_000);
+  assertEquals(r.avgHandleMs, 90_000);
+  assertEquals(r.medianHandleMs, 90_000);
+  assertEquals(r.validQuestions, 6);
+  assertEquals(r.avgPerQuestionMs, 30_000);   // 180000 / 6
+  assertEquals(r.auditsPerActiveHour, 40);    // 2 / (180000/3.6e6) = 2 / 0.05
+});
+
+Deno.test("getQuestionTiming — groups by header, excludes idle-discarded from avg", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("qtiming");
+  await seedTimed(orgId, "alice@example.com", [
+    { questions: [
+      { header: "Taxes Due", handleMs: 30_000 },
+      { header: "Income", handleMs: 90_000, discarded: true }, // idle → excluded from avg
+    ] },
+    { questions: [
+      { header: "Taxes Due", handleMs: 50_000 },
+      { header: "Income", handleMs: 40_000 },
+    ] },
+  ]);
+  const { rows } = await getQuestionTiming(orgId);
+  const taxes = rows.find((x) => x.header === "Taxes Due")!;
+  const income = rows.find((x) => x.header === "Income")!;
+  assertEquals(taxes.samples, 2);
+  assertEquals(taxes.avgMs, 40_000);          // (30k + 50k) / 2
+  assertEquals(income.samples, 1);            // discarded one excluded
+  assertEquals(income.avgMs, 40_000);         // only the valid sample
+  assertEquals(income.discardedCount, 1);
+});
+
+Deno.test("getQuestionTiming — questionFilter narrows by header substring", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("qfilter");
+  await seedTimed(orgId, "alice@example.com", [
+    { questions: [{ header: "Taxes Due", handleMs: 30_000 }, { header: "Income", handleMs: 40_000 }] },
+  ]);
+  const { rows } = await getQuestionTiming(orgId, undefined, "income");
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].header, "Income");
 });

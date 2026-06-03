@@ -9,7 +9,7 @@ import "npm:reflect-metadata@0.1.13";
 import { Controller, Get, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "#danet/swagger-decorators";
-import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse, EmailEngagementResponse, EmailEngagementDetailResponse } from "@core/dto/responses.ts";
+import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse, EmailEngagementResponse, EmailEngagementDetailResponse, ReviewerThroughputResponse, ReviewerAuditsResponse } from "@core/dto/responses.ts";
 import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId, writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { getReviewStats, getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig, isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
@@ -17,6 +17,7 @@ import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.t
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { getEmailEngagement, getEmailEngagementDetail } from "@reporting/domain/business/email-engagement/mod.ts";
+import { getReviewerLeaderboard, getQuestionTiming, getReviewerAudits } from "@review/domain/business/review-stats/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
@@ -136,6 +137,46 @@ export class DashboardController {
     const pg = Math.max(1, parseInt(page || "1", 10) || 1);
     const lim = Math.min(500, Math.max(10, parseInt(limit || "100", 10) || 100));
     return getEmailEngagementDetail(ORG(), from, to, pg, lim);
+  }
+
+  /** Reviewer throughput + handle-time report. by-reviewer (from audit-done-idx)
+   *  + by-question (hydrated, optional `q` filter) + an aggregate summary. */
+  @Get("reviewer-throughput/detail") @ReturnedType(ReviewerThroughputResponse)
+  async reviewerThroughputDetail(@Query("since") since: string, @Query("until") until: string, @Query("q") q: string) {
+    const orgId = ORG();
+    const from = parseInt(since || "0", 10) || 0;
+    const to = parseInt(until || String(Date.now()), 10) || Date.now();
+    const [byReviewer, qt] = await Promise.all([
+      getReviewerLeaderboard(orgId, { from, to }),
+      getQuestionTiming(orgId, { from, to }, q || undefined),
+    ]);
+    // Aggregate over reviewers that have timing.
+    const totalAudits = byReviewer.reduce((s, r) => s + r.reviewed, 0);
+    const timedAudits = byReviewer.reduce((s, r) => s + r.timedAudits, 0);
+    const totalHandleMs = byReviewer.reduce((s, r) => s + r.totalHandleMs, 0);
+    const validQuestions = byReviewer.reduce((s, r) => s + r.validQuestions, 0);
+    const aggregate = {
+      reviewers: byReviewer.length,
+      totalAudits,
+      timedAudits,
+      avgHandleMs: timedAudits ? Math.round(totalHandleMs / timedAudits) : 0,
+      avgPerQuestionMs: validQuestions ? Math.round(totalHandleMs / validQuestions) : 0,
+      auditsPerActiveHour: totalHandleMs > 0 ? Math.round((timedAudits / (totalHandleMs / 3_600_000)) * 10) / 10 : 0,
+    };
+    return { aggregate, byReviewer, byQuestion: qt.rows, cohort: qt.cohort, hydrated: qt.hydrated, capped: qt.capped };
+  }
+
+  /** One reviewer's audits in range (drill-down from the throughput report). */
+  @Get("reviewer-throughput/reviewer") @ReturnedType(ReviewerAuditsResponse)
+  async reviewerThroughputReviewer(
+    @Query("email") email: string, @Query("since") since: string,
+    @Query("until") until: string, @Query("page") page: string,
+  ) {
+    const from = parseInt(since || "0", 10) || 0;
+    const to = parseInt(until || String(Date.now()), 10) || Date.now();
+    const pg = Math.max(1, parseInt(page || "1", 10) || 1);
+    if (!email) return { rows: [], total: 0, page: 1, pages: 1 };
+    return getReviewerAudits(ORG(), email, { from, to }, pg, 100);
   }
   // 5s result cache + in-flight promise dedup. With stale-while-
   // revalidate, the cache value can outlive expiresAt — it's served

@@ -51,12 +51,19 @@ export class ReviewController {
   }
 
   @Post("decide") @ReturnedType(DecisionResponse) @Description("Confirm or flip a reviewed question") @BodyType(ReviewDecideRequest)
-  async decide(@Body() body: { findingId: string; questionIndex: number; decision: "confirm" | "flip"; reviewer: string }) {
+  async decide(@Body() body: { findingId: string; questionIndex: number; decision: "confirm" | "flip"; reviewer: string; handleMs?: number | string; idleMs?: number | string }) {
     if (!body.findingId || body.questionIndex == null || !body.decision || !body.reviewer) {
       return { error: "findingId, questionIndex, decision, reviewer required" };
     }
     try {
-      const result = await recordDecision(ORG(), body.findingId, body.questionIndex, body.decision, body.reviewer);
+      // Timing comes from the ReviewTiming island via HTMX form params (strings).
+      const handleMs = Number(body.handleMs);
+      const idleMs = Number(body.idleMs);
+      const result = await recordDecision(
+        ORG(), body.findingId, body.questionIndex, body.decision, body.reviewer,
+        Number.isFinite(handleMs) ? handleMs : undefined,
+        Number.isFinite(idleMs) ? idleMs : undefined,
+      );
       const [fullBuffer, decisions] = await Promise.all([
         getFailedQuestionsForFinding(ORG(), body.findingId),
         getDecisionsByFinding(ORG(), body.findingId, body.reviewer),

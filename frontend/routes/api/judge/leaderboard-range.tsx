@@ -13,6 +13,15 @@ interface LeaderRow {
   reviewed: number;
   avgScore: number;
   lastReviewedAt: number | null;
+  timedAudits?: number;
+  avgHandleMs?: number;
+  auditsPerActiveHour?: number;
+}
+
+function fmtHandle(ms?: number): string {
+  if (ms == null || ms <= 0) return "—";
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 export const handler = define.handlers({
@@ -49,9 +58,11 @@ export const handler = define.handlers({
               <thead>
                 <tr style="text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;">
                   <th style="padding:8px;">Reviewer</th>
-                  <th style="padding:8px;width:90px;">Reviewed</th>
-                  <th style="padding:8px;width:90px;">Avg Score</th>
-                  <th style="padding:8px;width:140px;">Last Reviewed</th>
+                  <th style="padding:8px;width:80px;">Reviewed</th>
+                  <th style="padding:8px;width:90px;">Avg Handle</th>
+                  <th style="padding:8px;width:80px;">Audits/hr</th>
+                  <th style="padding:8px;width:80px;">Avg Score</th>
+                  <th style="padding:8px;width:130px;">Last Reviewed</th>
                 </tr>
               </thead>
               <tbody>
@@ -59,6 +70,8 @@ export const handler = define.handlers({
                   <tr key={r.email} style="border-top:1px solid var(--border);">
                     <td style="padding:8px;">{r.email}</td>
                     <td style="padding:8px;font-weight:600;">{r.reviewed.toLocaleString()}</td>
+                    <td style="padding:8px;color:var(--cyan);">{r.timedAudits ? fmtHandle(r.avgHandleMs) : "—"}</td>
+                    <td style="padding:8px;color:var(--yellow);">{r.timedAudits ? (r.auditsPerActiveHour ?? "—") : "—"}</td>
                     <td style="padding:8px;">{r.avgScore}%</td>
                     <td style="padding:8px;color:var(--text-dim);">{fmtTime(r.lastReviewedAt)}</td>
                   </tr>

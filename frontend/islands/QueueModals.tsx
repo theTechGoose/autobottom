@@ -155,11 +155,17 @@ export default function QueueModals() {
         //    skip directly to finalize.
         const finalAnswer = pendingFinalAnswerRef.current;
         if (finalAnswer) {
+          // Pull the ReviewTiming island's accumulated time for this final
+          // question (its htmx:configRequest hook can't fire on this manual fetch).
+          const timing = (globalThis as unknown as { __reviewTiming?: () => { handleMs: number; idleMs: number } })
+            .__reviewTiming?.() ?? { handleMs: 0, idleMs: 0 };
           const fd = new URLSearchParams({
             findingId: finalAnswer.findingId,
             questionIndex: String(finalAnswer.questionIndex),
             decision: finalAnswer.decision,
             reviewer: finalAnswer.reviewer,
+            handleMs: String(timing.handleMs),
+            idleMs: String(timing.idleMs),
           });
           const decideRes = await fetch("/api/review/decide", {
             method: "POST",

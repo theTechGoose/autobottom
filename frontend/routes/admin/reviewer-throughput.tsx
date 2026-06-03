@@ -1,0 +1,279 @@
+/** Reviewer Throughput — full-page report. Popped out from the Reports modal.
+ *  Two pivots (By-Reviewer + By-Question) with a question filter; clicking a
+ *  reviewer drills into that reviewer's audits (?reviewer=), and each audit
+ *  links to its report (per-question handle times live there).
+ *
+ *  Handle time is forward-only — only audits reviewed after timing capture
+ *  shipped have it; older rows show volume only. Plain SSR + native GET nav.
+ *  Registered in FRONTEND_EXACT_PAGES. */
+
+import { define } from "../../lib/define.ts";
+import { Layout } from "../../components/Layout.tsx";
+import { apiFetch } from "../../lib/api.ts";
+import { RT_PRESETS, resolveRange } from "../../lib/report-range.ts";
+import { MiniStat } from "../../components/EngagementCards.tsx";
+
+interface ByReviewer {
+  email: string; reviewed: number; avgScore: number; lastReviewedAt: number | null;
+  timedAudits: number; totalHandleMs: number; avgHandleMs: number; medianHandleMs: number;
+  validQuestions: number; avgPerQuestionMs: number; auditsPerActiveHour: number;
+}
+interface ByQuestion { header: string; samples: number; avgMs: number; medianMs: number; discardedCount: number }
+interface DetailResp {
+  aggregate: { reviewers: number; totalAudits: number; timedAudits: number; avgHandleMs: number; avgPerQuestionMs: number; auditsPerActiveHour: number };
+  byReviewer: ByReviewer[]; byQuestion: ByQuestion[]; cohort: number; hydrated: number; capped: boolean;
+}
+interface AuditRow {
+  findingId: string; completedAt: number; score: number; isPackage?: boolean;
+  recordId?: string; recordingId?: string; voName?: string;
+  reviewHandleMs?: number; reviewedQuestionCount?: number; reviewedValidCount?: number;
+}
+interface ReviewerResp { rows: AuditRow[]; total: number; page: number; pages: number }
+
+function fmtMs(ms?: number): string {
+  if (ms == null || ms <= 0) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+function fmtTime(ms: number | null | undefined): string {
+  if (!ms) return "—";
+  return new Date(ms).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+export default define.page(async function ReviewerThroughputPage(ctx) {
+  const url = new URL(ctx.req.url);
+  const sp = url.searchParams;
+
+  // Range: explicit preset → explicit since/until → default Today.
+  const presetParam = sp.get("preset") ?? "";
+  const customFrom = sp.get("custom-from") ?? "";
+  const customTo = sp.get("custom-to") ?? "";
+  const sinceParam = sp.get("since");
+  const untilParam = sp.get("until");
+  let since: number, until: number, label: string, activePreset: string;
+  if (presetParam) {
+    ({ since, until, label } = resolveRange(presetParam, customFrom, customTo));
+    activePreset = presetParam;
+  } else if (sinceParam != null && untilParam != null) {
+    since = parseInt(sinceParam, 10) || 0;
+    until = parseInt(untilParam, 10) || Date.now();
+    label = `${fmtTime(since)} → ${fmtTime(until)}`;
+    activePreset = "";
+  } else {
+    ({ since, until, label } = resolveRange("today", "", ""));
+    activePreset = "today";
+  }
+
+  const q = (sp.get("q") ?? "").trim();
+  const reviewer = (sp.get("reviewer") ?? "").trim();
+  const rangeQ = `since=${since}&until=${until}`;
+
+  // ── Drill-down: one reviewer's audits ──────────────────────────────────────
+  if (reviewer) {
+    const page = Math.max(1, parseInt(sp.get("page") ?? "1", 10) || 1);
+    let data: ReviewerResp | null = null;
+    let error = "";
+    try {
+      data = await apiFetch<ReviewerResp>(
+        `/admin/reviewer-throughput/reviewer?email=${encodeURIComponent(reviewer)}&${rangeQ}&page=${page}`, ctx.req);
+    } catch (e) { error = String((e as Error).message ?? e); }
+    return (
+      <Layout title="Reviewer Throughput" section="admin" user={ctx.state.user!} pathname={url.pathname} hideSidebar>
+        <div class="ql-topbar">
+          <div class="ql-topbar-title"><span class="ql-topbar-icon" aria-hidden="true">⏱️</span><h1>Reviewer Throughput</h1></div>
+          <a href="/admin/dashboard" class="ql-topbar-back">← Dashboard</a>
+        </div>
+        <div class="ql-page-body">
+          <div style="margin-bottom:12px;">
+            <a href={`/admin/reviewer-throughput?${rangeQ}`} class="sf-btn ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;">← All reviewers</a>
+          </div>
+          <div style="font-size:13px;font-weight:700;color:var(--text-bright);margin-bottom:12px;">
+            {reviewer} · {label} · {data?.total?.toLocaleString() ?? 0} audits
+          </div>
+          {error ? (
+            <div class="error-text" style="font-size:12px;padding:12px;border:1px solid var(--red);border-radius:8px;">Failed: {error}</div>
+          ) : (
+            <div style="border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:hidden;">
+              <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead>
+                  <tr style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">
+                    <th style="text-align:left;padding:6px 12px;">Audit</th>
+                    <th style="text-align:left;padding:6px 8px;">Team Member</th>
+                    <th style="text-align:right;padding:6px 8px;">Score</th>
+                    <th style="text-align:right;padding:6px 8px;">Handle time</th>
+                    <th style="text-align:right;padding:6px 8px;">Qs (valid)</th>
+                    <th style="text-align:left;padding:6px 12px;">Reviewed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data?.rows ?? []).length === 0 && (
+                    <tr><td colSpan={6} style="padding:16px;text-align:center;color:var(--text-dim);">No audits in this window.</td></tr>
+                  )}
+                  {(data?.rows ?? []).map((r) => (
+                    <tr key={r.findingId} style="border-top:1px solid var(--border);font-variant-numeric:tabular-nums;">
+                      <td style="padding:6px 12px;">
+                        <a href={`/audit/report?id=${encodeURIComponent(r.findingId)}`} target="_blank" rel="noopener" class="tbl-link" style="color:var(--blue);text-decoration:none;">
+                          {r.recordingId || r.recordId || r.findingId.slice(0, 8)}
+                        </a>
+                      </td>
+                      <td style="padding:6px 8px;color:var(--text);">{r.voName || "—"}</td>
+                      <td style="text-align:right;padding:6px 8px;">{r.score != null ? `${r.score}%` : "—"}</td>
+                      <td style="text-align:right;padding:6px 8px;color:var(--cyan);">{fmtMs(r.reviewHandleMs)}</td>
+                      <td style="text-align:right;padding:6px 8px;color:var(--text-dim);">{r.reviewedValidCount ?? 0}/{r.reviewedQuestionCount ?? 0}</td>
+                      <td style="padding:6px 12px;color:var(--text-dim);">{fmtTime(r.completedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {data && data.pages > 1 && (
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-top:1px solid var(--border);">
+                  {data.page > 1
+                    ? <a href={`/admin/reviewer-throughput?reviewer=${encodeURIComponent(reviewer)}&${rangeQ}&page=${data.page - 1}`} class="sf-btn ghost" style="font-size:11px;padding:4px 12px;text-decoration:none;">← Prev</a>
+                    : <span></span>}
+                  <span style="font-size:11px;color:var(--text-dim);">Page {data.page} of {data.pages}</span>
+                  {data.page < data.pages
+                    ? <a href={`/admin/reviewer-throughput?reviewer=${encodeURIComponent(reviewer)}&${rangeQ}&page=${data.page + 1}`} class="sf-btn ghost" style="font-size:11px;padding:4px 12px;text-decoration:none;">Next →</a>
+                    : <span></span>}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </Layout>
+    );
+  }
+
+  // ── Main: by-reviewer + by-question ────────────────────────────────────────
+  let data: DetailResp | null = null;
+  let error = "";
+  try {
+    data = await apiFetch<DetailResp>(`/admin/reviewer-throughput/detail?${rangeQ}&q=${encodeURIComponent(q)}`, ctx.req);
+  } catch (e) { error = String((e as Error).message ?? e); }
+  const a = data?.aggregate;
+
+  return (
+    <Layout title="Reviewer Throughput" section="admin" user={ctx.state.user!} pathname={url.pathname} hideSidebar>
+      <div class="ql-topbar">
+        <div class="ql-topbar-title"><span class="ql-topbar-icon" aria-hidden="true">⏱️</span><h1>Reviewer Throughput</h1></div>
+        <a href="/admin/dashboard" class="ql-topbar-back">← Dashboard</a>
+      </div>
+
+      <div class="ql-page-body">
+        {/* Range presets (native nav) + question filter form */}
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;padding:10px 12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;">
+          <span style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-right:4px;">Range</span>
+          {RT_PRESETS.map((p) => (
+            <a key={p.key} href={`/admin/reviewer-throughput?preset=${p.key}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
+              class={`sf-btn ${p.key === activePreset ? "primary" : "ghost"}`}
+              style="font-size:11px;padding:4px 12px;text-decoration:none;">{p.label}</a>
+          ))}
+          <form method="GET" action="/admin/reviewer-throughput" style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+            <input type="hidden" name="since" value={String(since)} />
+            <input type="hidden" name="until" value={String(until)} />
+            <input type="text" name="q" value={q} placeholder="filter questions…" class="sf-input" style="font-size:11px;padding:2px 6px;width:180px;" />
+            <button type="submit" class="sf-btn primary" style="font-size:11px;padding:4px 12px;">Filter</button>
+          </form>
+        </div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:14px;">
+          Handle time is the reviewer's <strong>active</strong> on-screen time per question
+          (idle &gt;60s or tab-away questions are discarded). Forward-only — audits reviewed before this
+          shipped show volume but no handle time.
+        </div>
+
+        {error ? (
+          <div class="error-text" style="font-size:12px;padding:12px;border:1px solid var(--red);border-radius:8px;">Failed to load: {error}</div>
+        ) : a && data ? (
+          <>
+            <div style="font-size:13px;font-weight:700;color:var(--text-bright);margin-bottom:12px;">
+              {label} · {a.totalAudits.toLocaleString()} audits · {a.reviewers} reviewers
+              {a.timedAudits < a.totalAudits && (
+                <span style="font-weight:400;color:var(--text-dim);"> · {a.timedAudits.toLocaleString()} with handle time</span>
+              )}
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
+              <MiniStat label="Audits reviewed" value={a.totalAudits} />
+              <MiniStat label="Avg handle / audit" value={Math.round(a.avgHandleMs / 1000)} color="var(--cyan)" />
+              <MiniStat label="Avg / question" value={Math.round(a.avgPerQuestionMs / 1000)} color="var(--green)" />
+              <MiniStat label="Audits / active hr" value={a.auditsPerActiveHour} color="var(--yellow)" />
+            </div>
+
+            {/* By reviewer */}
+            <div style="border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:hidden;margin-bottom:18px;">
+              <div style="font-size:11px;font-weight:700;color:var(--text-bright);padding:10px 12px;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:0.5px;">By reviewer</div>
+              <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                  <thead>
+                    <tr style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">
+                      <th style="text-align:left;padding:6px 12px;">Reviewer</th>
+                      <th style="text-align:right;padding:6px 8px;">Audits</th>
+                      <th style="text-align:right;padding:6px 8px;">Avg handle</th>
+                      <th style="text-align:right;padding:6px 8px;">Median</th>
+                      <th style="text-align:right;padding:6px 8px;">Avg / question</th>
+                      <th style="text-align:right;padding:6px 8px;">Audits/hr</th>
+                      <th style="text-align:right;padding:6px 8px;">Avg score</th>
+                      <th style="text-align:left;padding:6px 12px;">Last</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.byReviewer.length === 0 && (
+                      <tr><td colSpan={8} style="padding:16px;text-align:center;color:var(--text-dim);">No reviewer activity in this window.</td></tr>
+                    )}
+                    {data.byReviewer.map((r) => (
+                      <tr key={r.email} style="border-top:1px solid var(--border);font-variant-numeric:tabular-nums;">
+                        <td style="padding:6px 12px;">
+                          <a href={`/admin/reviewer-throughput?reviewer=${encodeURIComponent(r.email)}&${rangeQ}`} class="tbl-link" style="color:var(--blue);text-decoration:none;">{r.email}</a>
+                        </td>
+                        <td style="text-align:right;padding:6px 8px;font-weight:600;">{r.reviewed.toLocaleString()}</td>
+                        <td style="text-align:right;padding:6px 8px;color:var(--cyan);">{r.timedAudits ? fmtMs(r.avgHandleMs) : "—"}</td>
+                        <td style="text-align:right;padding:6px 8px;color:var(--text-dim);">{r.timedAudits ? fmtMs(r.medianHandleMs) : "—"}</td>
+                        <td style="text-align:right;padding:6px 8px;color:var(--green);">{r.validQuestions ? fmtMs(r.avgPerQuestionMs) : "—"}</td>
+                        <td style="text-align:right;padding:6px 8px;color:var(--yellow);">{r.timedAudits ? r.auditsPerActiveHour : "—"}</td>
+                        <td style="text-align:right;padding:6px 8px;">{r.avgScore}%</td>
+                        <td style="padding:6px 12px;color:var(--text-dim);">{fmtTime(r.lastReviewedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* By question */}
+            <div style="border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:hidden;">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border);">
+                <div style="font-size:11px;font-weight:700;color:var(--text-bright);text-transform:uppercase;letter-spacing:0.5px;">By question{q ? ` · “${q}”` : ""} (slowest first)</div>
+                <div style="font-size:11px;color:var(--text-dim);">{data.byQuestion.length} questions{data.capped ? ` · sampled first ${data.hydrated.toLocaleString()} of ${data.cohort.toLocaleString()} audits` : ""}</div>
+              </div>
+              <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead>
+                  <tr style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">
+                    <th style="text-align:left;padding:6px 12px;">Question</th>
+                    <th style="text-align:right;padding:6px 8px;">Samples</th>
+                    <th style="text-align:right;padding:6px 8px;">Avg time</th>
+                    <th style="text-align:right;padding:6px 8px;">Median</th>
+                    <th style="text-align:right;padding:6px 12px;">Discarded</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.byQuestion.length === 0 && (
+                    <tr><td colSpan={5} style="padding:16px;text-align:center;color:var(--text-dim);">No per-question timing yet for this window{q ? " / filter" : ""}.</td></tr>
+                  )}
+                  {data.byQuestion.map((qq) => (
+                    <tr key={qq.header} style="border-top:1px solid var(--border);font-variant-numeric:tabular-nums;">
+                      <td style="padding:6px 12px;color:var(--text-bright);">{qq.header}</td>
+                      <td style="text-align:right;padding:6px 8px;">{qq.samples.toLocaleString()}</td>
+                      <td style="text-align:right;padding:6px 8px;color:var(--cyan);">{fmtMs(qq.avgMs)}</td>
+                      <td style="text-align:right;padding:6px 8px;color:var(--text-dim);">{fmtMs(qq.medianMs)}</td>
+                      <td style="text-align:right;padding:6px 12px;color:var(--text-dim);">{qq.discardedCount || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
+      </div>
+    </Layout>
+  );
+});

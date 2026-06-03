@@ -106,6 +106,7 @@ Deno.test("getReviewerLeaderboard — respects custom range", async () => {
 // ── Handle-time aggregation + idle discard ──────────────────────────────────
 
 interface TimedAudit {
+  at?: number;            // finalize timestamp (default: now − i·1000)
   handleMs?: number; validCount?: number; questionCount?: number;
   questions?: Array<{ header: string; handleMs?: number; discarded?: boolean }>;
 }
@@ -120,32 +121,46 @@ async function seedTimed(orgId: OrgId, email: string, audits: TimedAudit[]): Pro
     }));
     await saveFinding(orgId, { id: fid, findingStatus: "finished", record: {}, answeredQuestions });
     await writeAuditDoneIndex(orgId, {
-      findingId: fid, completedAt: now - i * 1000, completed: true, score: 100,
+      findingId: fid, completedAt: a.at ?? (now - i * 1000), completed: true, score: 100,
       reason: "reviewed", reviewedBy: email,
       reviewHandleMs: a.handleMs, reviewedValidCount: a.validCount, reviewedQuestionCount: a.questionCount,
     });
   }
 }
 
-Deno.test("getReviewerLeaderboard — handle-time stats (avg/median/per-question/throughput)", async () => {
+Deno.test("getReviewerLeaderboard — cadence handle time (in-session gaps, break excluded)", async () => {
   resetFirestoreCredentials();
   _resetQueryAuditDoneIndexCacheForTests();
-  const orgId = uniqueOrg("ldb-handle");
+  const orgId = uniqueOrg("ldb-cadence");
+  const t0 = Date.now() - 3 * 3_600_000; // 3h ago, safely in the default window
+  const M = 60_000;
   await seedTimed(orgId, "alice@example.com", [
-    { handleMs: 120_000, validCount: 4, questionCount: 4 }, // 2 min
-    { handleMs: 60_000, validCount: 2, questionCount: 2 },  // 1 min
-    {}, // untimed audit — must not count toward timedAudits / handle stats
+    { at: t0 },
+    { at: t0 + 5 * M },   // gap 5m
+    { at: t0 + 10 * M },  // gap 5m
+    { at: t0 + 90 * M },  // gap 80m → break, excluded
+    { at: t0 + 95 * M },  // gap 5m
   ]);
-  const rows = await getReviewerLeaderboard(orgId);
-  const r = rows.find((x) => x.email === "alice@example.com")!;
-  assertEquals(r.reviewed, 3);
-  assertEquals(r.timedAudits, 2);
-  assertEquals(r.totalHandleMs, 180_000);
-  assertEquals(r.avgHandleMs, 90_000);
-  assertEquals(r.medianHandleMs, 90_000);
+  const r = (await getReviewerLeaderboard(orgId)).find((x) => x.email === "alice@example.com")!;
+  assertEquals(r.reviewed, 5);
+  assertEquals(r.handledAudits, 3);            // 3 in-session gaps (the 80m break excluded)
+  assertEquals(r.activeMs, 15 * M);            // 5+5+5 min
+  assertEquals(r.avgHandleMs, 5 * M);
+  assertEquals(r.medianHandleMs, 5 * M);
+  assertEquals(r.auditsPerActiveHour, 12);     // 3 / (15min/60min)
+});
+
+Deno.test("getReviewerLeaderboard — per-question avg from forward reviewHandleMs", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const orgId = uniqueOrg("ldb-perq");
+  await seedTimed(orgId, "bob@example.com", [
+    { handleMs: 120_000, validCount: 4 },
+    { handleMs: 60_000, validCount: 2 },
+  ]);
+  const r = (await getReviewerLeaderboard(orgId)).find((x) => x.email === "bob@example.com")!;
   assertEquals(r.validQuestions, 6);
-  assertEquals(r.avgPerQuestionMs, 30_000);   // 180000 / 6
-  assertEquals(r.auditsPerActiveHour, 40);    // 2 / (180000/3.6e6) = 2 / 0.05
+  assertEquals(r.avgPerQuestionMs, 30_000);    // (120000 + 60000) / 6
 });
 
 Deno.test("getQuestionTiming — groups by header, excludes idle-discarded from avg", async () => {

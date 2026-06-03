@@ -15,12 +15,12 @@ import { MiniStat } from "../../components/EngagementCards.tsx";
 
 interface ByReviewer {
   email: string; reviewed: number; avgScore: number; lastReviewedAt: number | null;
-  timedAudits: number; totalHandleMs: number; avgHandleMs: number; medianHandleMs: number;
-  validQuestions: number; avgPerQuestionMs: number; auditsPerActiveHour: number;
+  handledAudits: number; avgHandleMs: number; medianHandleMs: number; activeMs: number;
+  auditsPerActiveHour: number; validQuestions: number; avgPerQuestionMs: number;
 }
 interface ByQuestion { header: string; samples: number; avgMs: number; medianMs: number; discardedCount: number }
 interface DetailResp {
-  aggregate: { reviewers: number; totalAudits: number; timedAudits: number; avgHandleMs: number; avgPerQuestionMs: number; auditsPerActiveHour: number };
+  aggregate: { reviewers: number; totalAudits: number; handledAudits: number; avgHandleMs: number; avgPerQuestionMs: number; auditsPerActiveHour: number };
   byReviewer: ByReviewer[]; byQuestion: ByQuestion[]; cohort: number; hydrated: number; capped: boolean;
 }
 interface AuditRow {
@@ -39,6 +39,17 @@ function fmtMs(ms?: number): string {
 function fmtTime(ms: number | null | undefined): string {
   if (!ms) return "—";
   return new Date(ms).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+/** Stat card whose value is a preformatted string (e.g. "2m 1s") — MiniStat only
+ *  takes numbers, so handle-time cards use this. */
+function TimeStat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div style="border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg);">
+      <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">{label}</div>
+      <div style={`font-size:18px;font-weight:700;color:${color ?? "var(--text-bright)"};font-variant-numeric:tabular-nums;`}>{value}</div>
+    </div>
+  );
 }
 
 export default define.page(async function ReviewerThroughputPage(ctx) {
@@ -176,9 +187,10 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
           </form>
         </div>
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:14px;">
-          Handle time is the reviewer's <strong>active</strong> on-screen time per question
-          (idle &gt;60s or tab-away questions are discarded). Forward-only — audits reviewed before this
-          shipped show volume but no handle time.
+          Per-audit handle time is <strong>approximated</strong> from the gap between a reviewer's
+          consecutive audit completions; gaps over 15&nbsp;min are treated as breaks and excluded — so it
+          works across all history. Per-question times (the By&nbsp;Question table) are exact decision-to-decision
+          gaps and fill in going forward.
         </div>
 
         {error ? (
@@ -187,15 +199,12 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
           <>
             <div style="font-size:13px;font-weight:700;color:var(--text-bright);margin-bottom:12px;">
               {label} · {a.totalAudits.toLocaleString()} audits · {a.reviewers} reviewers
-              {a.timedAudits < a.totalAudits && (
-                <span style="font-weight:400;color:var(--text-dim);"> · {a.timedAudits.toLocaleString()} with handle time</span>
-              )}
             </div>
 
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
               <MiniStat label="Audits reviewed" value={a.totalAudits} />
-              <MiniStat label="Avg handle / audit" value={Math.round(a.avgHandleMs / 1000)} color="var(--cyan)" />
-              <MiniStat label="Avg / question" value={Math.round(a.avgPerQuestionMs / 1000)} color="var(--green)" />
+              <TimeStat label="Avg handle / audit" value={fmtMs(a.avgHandleMs)} color="var(--cyan)" />
+              <TimeStat label="Avg / question" value={a.avgPerQuestionMs ? fmtMs(a.avgPerQuestionMs) : "—"} color="var(--green)" />
               <MiniStat label="Audits / active hr" value={a.auditsPerActiveHour} color="var(--yellow)" />
             </div>
 
@@ -226,10 +235,10 @@ export default define.page(async function ReviewerThroughputPage(ctx) {
                           <a href={`/admin/reviewer-throughput?reviewer=${encodeURIComponent(r.email)}&${rangeQ}`} class="tbl-link" style="color:var(--blue);text-decoration:none;">{r.email}</a>
                         </td>
                         <td style="text-align:right;padding:6px 8px;font-weight:600;">{r.reviewed.toLocaleString()}</td>
-                        <td style="text-align:right;padding:6px 8px;color:var(--cyan);">{r.timedAudits ? fmtMs(r.avgHandleMs) : "—"}</td>
-                        <td style="text-align:right;padding:6px 8px;color:var(--text-dim);">{r.timedAudits ? fmtMs(r.medianHandleMs) : "—"}</td>
+                        <td style="text-align:right;padding:6px 8px;color:var(--cyan);">{r.handledAudits ? fmtMs(r.avgHandleMs) : "—"}</td>
+                        <td style="text-align:right;padding:6px 8px;color:var(--text-dim);">{r.handledAudits ? fmtMs(r.medianHandleMs) : "—"}</td>
                         <td style="text-align:right;padding:6px 8px;color:var(--green);">{r.validQuestions ? fmtMs(r.avgPerQuestionMs) : "—"}</td>
-                        <td style="text-align:right;padding:6px 8px;color:var(--yellow);">{r.timedAudits ? r.auditsPerActiveHour : "—"}</td>
+                        <td style="text-align:right;padding:6px 8px;color:var(--yellow);">{r.handledAudits ? r.auditsPerActiveHour : "—"}</td>
                         <td style="text-align:right;padding:6px 8px;">{r.avgScore}%</td>
                         <td style="padding:6px 12px;color:var(--text-dim);">{fmtTime(r.lastReviewedAt)}</td>
                       </tr>

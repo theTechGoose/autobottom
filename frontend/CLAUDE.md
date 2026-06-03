@@ -240,6 +240,7 @@ If your backend endpoint needs to behave as the impersonated user (e.g. apply th
 | Admin Badge Editor | `/admin/badge-editor` | Done — admin-gated catalog editor (two-pane list + detail; built-in items render read-only) |
 | Weekly Builder | `/admin/weekly-builder` | Done — full prod parity (two-pane stage + publish) |
 | Email Reports | (modal `email-reports-modal`) | Done — full prod parity (rule builder, sections, preview iframe). Pre-rendered inline in dashboard.tsx so the EmailReportEditor island hydrates. |
+| Reports pop-out pages | `/admin/email-engagement`, `/admin/question-failures`, `/admin/weekly-reports`, `/admin/reviewer-throughput` | Done — full-page "Open full report ↗" versions of the Reports-modal tabs (range bar, drill-down, filters). Each is registered in `FRONTEND_EXACT_PAGES` (main.ts) or it 404s on danet. |
 | Review Queue | `/review` | Done — split panel, hotkeys, sounds |
 | Review Dashboard | `/review/dashboard` | Done — stats |
 | Judge Queue | `/judge` | Done — split panel, overturn reasons |
@@ -270,6 +271,7 @@ If your backend endpoint needs to behave as the impersonated user (e.g. apply th
 - `ImpersonationBanner.tsx` — golden "ADMIN VIEW" bar; auto-shows for admin on non-admin pages. `EXCLUDED_PREFIXES` suppresses it on admin-tool pages: `/admin`, `/audit`, `/login`, `/register`, `/question-lab`, `/manager`. (Managers ARE administrators of their team — admins on `/manager` are doing admin work, not impersonating.) Explicit `?as=<email>` overrides the exclusion.
 - `ModalController.tsx` — opens/closes admin modals on `data-modal` clicks; emits `modal-open` event for HTMX `hx-trigger="modal-open"`
 - `PipelineActivityChart.tsx` — canvas chart on the admin dashboard
+- `ReviewTiming.tsx` — on `/review`; tracks per-question idle (tab hidden / >60s no activity) and injects `idleMs` into the decide request so the server can discard walk-away questions. Durations themselves are server-measured (decision-gap), not client-tracked.
 - `SoundEngine.tsx` — Web Audio API for gamification sounds
 - `WeeklyBuilderEditor.tsx` — two-pane staging + publish for `/admin/weekly-builder`
 

@@ -13,7 +13,7 @@ interface LeaderRow {
   reviewed: number;
   avgScore: number;
   lastReviewedAt: number | null;
-  timedAudits?: number;
+  handledAudits?: number;
   avgHandleMs?: number;
   auditsPerActiveHour?: number;
 }
@@ -70,8 +70,8 @@ export const handler = define.handlers({
                   <tr key={r.email} style="border-top:1px solid var(--border);">
                     <td style="padding:8px;">{r.email}</td>
                     <td style="padding:8px;font-weight:600;">{r.reviewed.toLocaleString()}</td>
-                    <td style="padding:8px;color:var(--cyan);">{r.timedAudits ? fmtHandle(r.avgHandleMs) : "—"}</td>
-                    <td style="padding:8px;color:var(--yellow);">{r.timedAudits ? (r.auditsPerActiveHour ?? "—") : "—"}</td>
+                    <td style="padding:8px;color:var(--cyan);">{r.handledAudits ? fmtHandle(r.avgHandleMs) : "—"}</td>
+                    <td style="padding:8px;color:var(--yellow);">{r.handledAudits ? (r.auditsPerActiveHour ?? "—") : "—"}</td>
                     <td style="padding:8px;">{r.avgScore}%</td>
                     <td style="padding:8px;color:var(--text-dim);">{fmtTime(r.lastReviewedAt)}</td>
                   </tr>

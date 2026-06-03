@@ -196,7 +196,9 @@ All durable state lives in a single Firestore collection (default `autobottom`) 
 | `audit-done-idx` | Time-ordered completion index | Key: `[padTs, id]` |
 | `active-tracking` | In-flight pipeline state | |
 | `completed-audit-stat` | Completion record for dashboard | All-time |
-| `error-tracking` / `retry-tracking` | Error / retry logs | 24h TTL |
+| `error-tracking` | Step error log — written by the step dispatcher on throws + 5xx ([main.ts](main.ts)); read by the dashboard (24h) + `/canary/errors` (prev day) | 8d TTL |
+| `retry-tracking` | Retry log | 24h TTL |
+| `audit-email-mark` | Per-finding email engagement: `sentAt` / `openedAt` / `openPrefetchAt` / `firstClickAt` | Key = findingId |
 | `review-pending` / `review-active` / `review-decided` | Review queue items | |
 | `review-audit-pending` / `review-done` / `review-undo-idx` | Review counters / sentinels / undo | |
 | `judge-pending` / `judge-active` / `judge-decided` / `judge-audit-pending` | Judge queue | |
@@ -371,6 +373,14 @@ Personal-stats panels on `/review/dashboard` and `/judge/dashboard` are driven b
 - Backend helpers (`getMyReviewerStats`, `getReviewerLeaderboard`, `getMyJudgeStats`) accept optional `{from, to}` ms args; missing → trailing-365d default. New `?from=&to=` query params on `/review/api/my-stats`, `/judge/api/my-stats`, `/judge/api/leaderboard`.
 - Underlying scans reuse the existing `queryAuditDoneIndex` SWR cache (30s) for review-side; `judge-decided` gets its own 60s SWR in [judge-analytics/mod.ts](src/judge/domain/business/judge-analytics/mod.ts).
 
+### Reviewer throughput + handle time
+How long reviewers take to work audits, surfaced in **Reports modal → Reviewer Throughput** + the full-page pop-out **`/admin/reviewer-throughput`** (by-reviewer + by-question pivots, a question filter, click-through reviewer → their audits → audit report; presets Today / This Week / 7d / 30d / All Time). Handle time is **server-measured** — the client is never trusted for durations (an earlier client-island approach recorded 0 in prod).
+
+- **Per-audit handle (historical + forward)** — *cadence*: the gap between a reviewer's consecutive audit-completion (`audit-done-idx.completedAt`) timestamps; gaps `> REVIEW_BREAK_MS` (15 min) are breaks, excluded. Computed in `getReviewerLeaderboard` ([review-stats/mod.ts](src/review/domain/business/review-stats/mod.ts)) — works over ALL history, so the report is populated immediately. Primary by-reviewer / aggregate metric + `auditsPerActiveHour`.
+- **Per-question handle (forward-only)** — at finalize, sort the audit's `review-decided` by `decidedAt`; each consecutive gap is the time spent on the later-decided question (`questionTimingFromGap` — discarded when there's no prior gap, the gap exceeds 15 min, or the client flagged ≥60s idle). Written onto the finding's `answeredQuestions[].reviewHandleMs/reviewDiscarded` (audit report shows per-question times + a total) and rolled up to `reviewHandleMs` / `reviewedQuestionCount` / `reviewedValidCount` on the `audit-done-idx` entry. `getQuestionTiming` aggregates by question header (with the filter).
+- **Idle flag only** from the client: [ReviewTiming.tsx](frontend/islands/ReviewTiming.tsx) tracks idle (tab hidden, or >60s no activity) and injects `idleMs` into the `/api/review/decide` request (and the deferred final-question commit via `globalThis.__reviewTiming()`); durations come from the server, so the island can't zero out the metric.
+- Judge dashboard Reviewer Leaderboard ([leaderboard-range.tsx](frontend/routes/api/judge/leaderboard-range.tsx)) gained Avg Handle / Audits-hr columns (cadence-fed).
+
 ### Question Failure reporting
 Per-question failure rollup driven by the `question-fail-stat` counter docs. Counters get incremented at four sites:
 - `step-finalize` → for every `answer === "No"` ([step-finalize/mod.ts](src/audit/domain/business/step-finalize/mod.ts))
@@ -465,6 +475,18 @@ Every-minute `Deno.cron("email-reports", "* * * * *", …)` ([cron-core/mod.ts](
 - **Data Maintenance → Parallelism** tab has "Apply persisted defaults" button — fires `applyDefaultQueueParallelism()` which returns per-queue results; renders status (`✓` / `✗` per queue). Useful when ops manually changed parallelism in the QStash dashboard and want to re-sync.
 - Orphaned `/admin/queues` POST (wrote to dead `queue-config` type) was deleted in commit `d5dfcd9`.
 
+### Audit-email engagement tracking (opens + clicks)
+The audit-complete (`terminate`) email is instrumented for engagement, surfaced in
+**Reports modal → Email Engagement** (date-range; co-headline **open rate** + **click rate**, each with its own appeal rate). Logic in [email-engagement/mod.ts](src/reporting/domain/business/email-engagement/mod.ts).
+- **Why clicks + filtered opens, not raw opens:** Gmail/Apple proxy *prefetch* tracking pixels. Empirically (see the spike findings) Gmail fetches the pixel **on open** (trackable) while Apple Mail prefetches **at delivery**. So opens are filtered: a pixel firing `< OPEN_PREFETCH_WINDOW_MS` (10s) after send = machine prefetch → recorded as `openPrefetchAt`, not counted. Clicks are binary per finding (absorbs link-scanner double-clicks).
+- **Wiring:** `sendAuditCompleteEmail` ([webhook-handlers/mod.ts](src/reporting/domain/business/webhook-handlers/mod.ts)) signs the finding (HMAC, `TRACK_LINK_SECRET`), routes the report/recording/appeal CTA links through `/track/click`, appends an open pixel hitting `/track/open`, and `stampSent` on success (skips operator `testEmail` overrides). Both `/track/*` routes are public + sig-verified + fail-safe ([main.ts](main.ts)).
+- **Read:** `getEmailEngagement(orgId, from, to)` — cohort from `audit-done-idx`, hydrated with per-finding `audit-email-mark` + `getAppeal`. Endpoint `/admin/email-engagement/data?since=&until=`. Forward-only (no backfill).
+
+### Canary errors endpoint (`POST /canary/errors`)
+Secure machine endpoint (Bearer `CANARY_SECRET`, constant-time) for an external daily monitor. Returns the **previous US-Eastern day's** step errors: `{ totalErrors, findingIds, errors:[{ findingId, step, error, ts, timestamp, logsUrl }] }` (DST-correct window; `?date=YYYY-MM-DD` override). Handler at [canary-errors/mod.ts](src/admin/entrypoints/canary-errors/mod.ts), direct-dispatched in [main.ts](main.ts).
+- **Errors are now persisted:** `trackError` was dead code (so the dashboard's Recent Errors table was always empty). The step dispatcher now calls it on step **throws + 5xx responses**; retention bumped to 8d so "yesterday" is readable. `getErrorsInWindow(orgId, from, to)` reads + dedups by ts.
+- **logsUrl** mirrors the dashboard's Deno observability link: `console.deno.com/{org}/{project}/observability/logs?query={findingId}&start=now/y&end=now`.
+
 ---
 
 ## Critical env vars
@@ -489,6 +511,9 @@ Every-minute `Deno.cron("email-reports", "* * * * *", …)` ([cron-core/mod.ts](
 | `FIREBASE_SA_S3_KEY` | S3 object key of Firebase SA JSON |
 | `FIREBASE_COLLECTION` | Firestore collection name (default `autobottom`) |
 | `FIREBASE_DATABASE_ID` | Firestore database ID (default `(default)`) |
+| `TRACK_LINK_SECRET` | HMAC key signing audit-email open/click tracking links (forgery guard; tracking still works unsigned if unset) |
+| `CANARY_SECRET` | Bearer token for `POST /canary/errors` (daily prev-day error report). Required for that endpoint to auth. |
+| `CANARY_LOGS_BASE` | Optional override for the Deno observability logs base in the canary response (only if the request host won't resolve to `console.deno.com/{org}/{project}/…`) |
 
 ---
 

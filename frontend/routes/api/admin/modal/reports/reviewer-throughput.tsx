@@ -8,11 +8,11 @@ import { resolveRange } from "../../../../../lib/report-range.ts";
 import { renderToString } from "preact-render-to-string";
 
 interface ByReviewer {
-  email: string; reviewed: number; avgScore: number; timedAudits: number;
-  avgHandleMs: number; avgPerQuestionMs: number; auditsPerActiveHour: number;
+  email: string; reviewed: number; avgScore: number; handledAudits: number;
+  avgHandleMs: number; avgPerQuestionMs: number; auditsPerActiveHour: number; validQuestions: number;
 }
 interface Resp {
-  aggregate: { reviewers: number; totalAudits: number; timedAudits: number; avgHandleMs: number; avgPerQuestionMs: number; auditsPerActiveHour: number };
+  aggregate: { reviewers: number; totalAudits: number; handledAudits: number; avgHandleMs: number; avgPerQuestionMs: number; auditsPerActiveHour: number };
   byReviewer: ByReviewer[];
 }
 
@@ -68,8 +68,8 @@ async function renderThroughput(req: Request, preset: string, customFrom: string
             <tr key={x.email} style="border-top:1px solid var(--border);font-variant-numeric:tabular-nums;">
               <td style="padding:6px 8px;color:var(--text-bright);">{x.email}</td>
               <td style="padding:6px 8px;font-weight:600;">{x.reviewed.toLocaleString()}</td>
-              <td style="padding:6px 8px;color:var(--cyan);">{x.timedAudits ? fmtMs(x.avgHandleMs) : "—"}</td>
-              <td style="padding:6px 8px;color:var(--green);">{x.timedAudits ? fmtMs(x.avgPerQuestionMs) : "—"}</td>
+              <td style="padding:6px 8px;color:var(--cyan);">{x.handledAudits ? fmtMs(x.avgHandleMs) : "—"}</td>
+              <td style="padding:6px 8px;color:var(--green);">{x.validQuestions ? fmtMs(x.avgPerQuestionMs) : "—"}</td>
             </tr>
           ))}
         </tbody>

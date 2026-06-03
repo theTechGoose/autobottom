@@ -636,6 +636,21 @@ export async function claimNextItem(
  *  from someone leaving the screen open. Mirrors the island's idle threshold. */
 export const REVIEW_IDLE_DISCARD_MS = 60_000;
 
+/** A gap longer than this between two consecutive decisions is a break (the
+ *  reviewer stepped away), not active work — that question's time is discarded. */
+export const REVIEW_BREAK_MS = 15 * 60_000;
+
+/** Per-question handle time = the gap between this decision and the previous one
+ *  (the time spent working THIS question). Discarded (no time counted) when there's
+ *  no prior gap, the gap is a break (>15 min), or the client flagged ≥60s idle. */
+export function questionTimingFromGap(
+  gapMs: number | undefined,
+  clientIdleMs: number,
+): { handleMs?: number; discarded: boolean } {
+  const discarded = gapMs == null || gapMs <= 0 || gapMs > REVIEW_BREAK_MS || clientIdleMs >= REVIEW_IDLE_DISCARD_MS;
+  return { handleMs: discarded ? undefined : gapMs, discarded };
+}
+
 export async function recordDecision(
   orgId: OrgId,
   findingId: string,
@@ -846,15 +861,29 @@ export async function finalizeReviewedAudit(
   }
 
   const flipDiag: Array<{ qIndex: number; targetIdx: number; matched: string; decision: string; prevAnswer: string; finalAnswer: string }> = [];
-  // Review handle-time rollup (forward-only). Per-question timing was captured
-  // client-side by the ReviewTiming island; discarded questions (>=60s idle) are
-  // excluded from the sum + valid count so lunch-break audits don't skew stats.
+  // Per-question handle time, server-measured: the gap between consecutive
+  // decisions (sorted by decidedAt) is the time spent on the later-decided
+  // question. A question is discarded (no time counted) when its gap exceeds the
+  // 15-min break threshold OR the client island flagged >=60s idle on it. The
+  // first-decided question has no prior gap, so it's excluded.
+  const timing = new Map<ReviewDecision, { handleMs?: number; discarded: boolean }>();
+  const sortedByTime = [...decisions.values()].sort((a, b) => (a.decidedAt ?? 0) - (b.decidedAt ?? 0));
+  for (let i = 0; i < sortedByTime.length; i++) {
+    const d = sortedByTime[i];
+    const prevAt = i > 0 ? sortedByTime[i - 1].decidedAt : undefined;
+    const gap = (prevAt != null && d.decidedAt != null) ? d.decidedAt - prevAt : undefined;
+    timing.set(d, questionTimingFromGap(gap, d.idleMs ?? 0));
+  }
+
+  // Review handle-time rollup (forward-only). Discarded questions are excluded
+  // from the sum + valid count so breaks / idle don't skew stats.
   let sumHandleMs = 0, reviewedQuestionCount = 0, reviewedValidCount = 0;
   const cfgKey = configKeyForFinding(finding as Record<string, any>);
   for (const d of decisions.values()) {
     const { matched, targetIdx } = applyDecisionByIdentity(d);
+    const t = timing.get(d) ?? { discarded: true };
     reviewedQuestionCount++;
-    if (!d.discarded) { reviewedValidCount++; sumHandleMs += d.handleMs ?? 0; }
+    if (!t.discarded) { reviewedValidCount++; sumHandleMs += t.handleMs ?? 0; }
     const prev = (targetIdx >= 0 ? answered[targetIdx] : {}) as { answer?: string; header?: string };
     const nextAnswer = d.decision === "flip" ? "Yes" : (prev.answer ?? "");
     if (targetIdx >= 0) {
@@ -864,9 +893,9 @@ export async function finalizeReviewedAudit(
         reviewAction: d.decision,
         reviewedBy: d.reviewer,
         reviewedAt: d.decidedAt,
-        reviewHandleMs: d.handleMs,
+        reviewHandleMs: t.handleMs,
         reviewIdleMs: d.idleMs,
-        reviewDiscarded: d.discarded,
+        reviewDiscarded: t.discarded,
       };
       // Per-question counter — reviewer flipped a previously-failed question
       // to pass. Decrement the fail count + bump flippedToPass. Wrapped so

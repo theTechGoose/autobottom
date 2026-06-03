@@ -9,6 +9,9 @@ export function computeReviewRate(decided: number, hours: number): number {
 
 const MS_DAY = 86_400_000;
 const MS_HOUR = 3_600_000;
+/** A gap longer than this between a reviewer's consecutive audit completions is a
+ *  break, not active work — excluded from cadence-based handle time. */
+const BREAK_MS = 15 * 60_000;
 
 /** Median of a numeric array (0 for empty). */
 function median(xs: number[]): number {
@@ -45,15 +48,17 @@ export interface LeaderboardRow {
   reviewed: number;
   avgScore: number;
   lastReviewedAt: number | null;
-  /** Handle-time stats (forward-only — based on audits that carry reviewHandleMs).
-   *  timedAudits is how many of `reviewed` have timing; the rest predate capture. */
-  timedAudits: number;
-  totalHandleMs: number;
-  avgHandleMs: number;
+  /** Cadence-based per-audit handle time — gap between consecutive audit
+   *  completions, breaks (>15 min) excluded. Works on ALL history. */
+  handledAudits: number;      // audits with an in-session gap
+  avgHandleMs: number;        // mean in-session gap
   medianHandleMs: number;
+  activeMs: number;           // Σ in-session gaps
+  auditsPerActiveHour: number;
+  /** Per-question handle (forward-only — decision-to-decision gaps stored on the
+   *  finding). Blank for audits reviewed before timing shipped. */
   validQuestions: number;
   avgPerQuestionMs: number;
-  auditsPerActiveHour: number;
 }
 
 export interface QuestionTimingRow {
@@ -185,40 +190,50 @@ export async function getMyReviewerStats(orgId: OrgId, email: string, opts?: Ran
 export async function getReviewerLeaderboard(orgId: OrgId, opts?: RangeOpts): Promise<LeaderboardRow[]> {
   const { from, to } = resolveRange(opts);
   const all = await queryAuditDoneIndex(orgId, from, to);
-  interface Acc { reviewed: number; sum: number; last: number; handleSamples: number[]; validQuestions: number }
+  interface Acc {
+    completedAts: number[]; sum: number; last: number;
+    perQuestionMs: number; validQuestions: number;
+  }
   const by = new Map<string, Acc>();
   for (const r of all) {
     const who = r.reviewedBy;
     if (!who) continue;
     if (r.completedAt < from || r.completedAt > to) continue;
-    const entry = by.get(who) ?? { reviewed: 0, sum: 0, last: 0, handleSamples: [], validQuestions: 0 };
-    entry.reviewed++;
-    entry.sum += r.score;
-    if (r.completedAt > entry.last) entry.last = r.completedAt;
-    // Handle time is only present on audits reviewed after timing capture shipped.
+    const e = by.get(who) ?? { completedAts: [], sum: 0, last: 0, perQuestionMs: 0, validQuestions: 0 };
+    e.completedAts.push(r.completedAt);
+    e.sum += r.score;
+    if (r.completedAt > e.last) e.last = r.completedAt;
+    // Forward-only per-question handle (decision gaps stored at finalize).
     if (typeof r.reviewHandleMs === "number" && (r.reviewedValidCount ?? 0) > 0) {
-      entry.handleSamples.push(r.reviewHandleMs);
-      entry.validQuestions += r.reviewedValidCount ?? 0;
+      e.perQuestionMs += r.reviewHandleMs;
+      e.validQuestions += r.reviewedValidCount ?? 0;
     }
-    by.set(who, entry);
+    by.set(who, e);
   }
   const rows: LeaderboardRow[] = [];
   for (const [email, e] of by) {
-    const totalHandleMs = e.handleSamples.reduce((s, x) => s + x, 0);
-    const timedAudits = e.handleSamples.length;
-    const avgHandleMs = timedAudits ? Math.round(totalHandleMs / timedAudits) : 0;
+    const reviewed = e.completedAts.length;
+    // Cadence: in-session gaps between consecutive completions (≤ BREAK_MS).
+    const ts = [...e.completedAts].sort((a, b) => a - b);
+    const gaps: number[] = [];
+    for (let i = 1; i < ts.length; i++) {
+      const g = ts[i] - ts[i - 1];
+      if (g > 0 && g <= BREAK_MS) gaps.push(g);
+    }
+    const activeMs = gaps.reduce((s, x) => s + x, 0);
+    const handledAudits = gaps.length;
     rows.push({
       email,
-      reviewed: e.reviewed,
-      avgScore: e.reviewed ? Math.round(e.sum / e.reviewed) : 0,
+      reviewed,
+      avgScore: reviewed ? Math.round(e.sum / reviewed) : 0,
       lastReviewedAt: e.last || null,
-      timedAudits,
-      totalHandleMs,
-      avgHandleMs,
-      medianHandleMs: median(e.handleSamples),
+      handledAudits,
+      avgHandleMs: handledAudits ? Math.round(activeMs / handledAudits) : 0,
+      medianHandleMs: median(gaps),
+      activeMs,
+      auditsPerActiveHour: activeMs > 0 ? Math.round((handledAudits / (activeMs / MS_HOUR)) * 10) / 10 : 0,
       validQuestions: e.validQuestions,
-      avgPerQuestionMs: e.validQuestions ? Math.round(totalHandleMs / e.validQuestions) : 0,
-      auditsPerActiveHour: totalHandleMs > 0 ? Math.round((timedAudits / (totalHandleMs / MS_HOUR)) * 10) / 10 : 0,
+      avgPerQuestionMs: e.validQuestions ? Math.round(e.perQuestionMs / e.validQuestions) : 0,
     });
   }
   rows.sort((a, b) => b.reviewed - a.reviewed);

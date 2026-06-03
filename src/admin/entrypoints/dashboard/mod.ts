@@ -150,18 +150,20 @@ export class DashboardController {
       getReviewerLeaderboard(orgId, { from, to }),
       getQuestionTiming(orgId, { from, to }, q || undefined),
     ]);
-    // Aggregate over reviewers that have timing.
+    // Aggregate. Per-audit handle is cadence-based (works on all history);
+    // per-question is forward-only.
     const totalAudits = byReviewer.reduce((s, r) => s + r.reviewed, 0);
-    const timedAudits = byReviewer.reduce((s, r) => s + r.timedAudits, 0);
-    const totalHandleMs = byReviewer.reduce((s, r) => s + r.totalHandleMs, 0);
+    const handledAudits = byReviewer.reduce((s, r) => s + r.handledAudits, 0);
+    const activeMs = byReviewer.reduce((s, r) => s + r.activeMs, 0);
     const validQuestions = byReviewer.reduce((s, r) => s + r.validQuestions, 0);
+    const perQuestionTotalMs = byReviewer.reduce((s, r) => s + r.avgPerQuestionMs * r.validQuestions, 0);
     const aggregate = {
       reviewers: byReviewer.length,
       totalAudits,
-      timedAudits,
-      avgHandleMs: timedAudits ? Math.round(totalHandleMs / timedAudits) : 0,
-      avgPerQuestionMs: validQuestions ? Math.round(totalHandleMs / validQuestions) : 0,
-      auditsPerActiveHour: totalHandleMs > 0 ? Math.round((timedAudits / (totalHandleMs / 3_600_000)) * 10) / 10 : 0,
+      handledAudits,
+      avgHandleMs: handledAudits ? Math.round(activeMs / handledAudits) : 0,
+      avgPerQuestionMs: validQuestions ? Math.round(perQuestionTotalMs / validQuestions) : 0,
+      auditsPerActiveHour: activeMs > 0 ? Math.round((handledAudits / (activeMs / 3_600_000)) * 10) / 10 : 0,
     };
     return { aggregate, byReviewer, byQuestion: qt.rows, cohort: qt.cohort, hydrated: qt.hydrated, capped: qt.capped };
   }

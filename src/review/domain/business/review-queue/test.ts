@@ -2,7 +2,7 @@
  *  audit-done-idx sync contract on admin flips. */
 
 import { assertEquals, assert, assertExists } from "#assert";
-import { selectOldestFinding, adminFlipQuestion, recordDecision, REVIEW_IDLE_DISCARD_MS } from "./mod.ts";
+import { selectOldestFinding, adminFlipQuestion, recordDecision, questionTimingFromGap, REVIEW_BREAK_MS, REVIEW_IDLE_DISCARD_MS } from "./mod.ts";
 import type { ReviewDecision, ReviewItem } from "@core/dto/types.ts";
 import { getStored, resetFirestoreCredentials, setStored } from "@core/data/firestore/mod.ts";
 import { saveFinding, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -207,4 +207,26 @@ Deno.test("recordDecision — idle >= 60s marks the question discarded", async (
   const d = await getStored<ReviewDecision>("review-decided", orgId, fid, 0);
   assertExists(d);
   assertEquals(d!.discarded, true, "idleMs >= 60s ⇒ discarded");
+});
+
+// ── questionTimingFromGap — server-measured per-question handle ──────────────
+
+Deno.test("questionTimingFromGap — normal gap counts as handle time", () => {
+  const t = questionTimingFromGap(42_000, 0);
+  assertEquals(t.discarded, false);
+  assertEquals(t.handleMs, 42_000);
+});
+
+Deno.test("questionTimingFromGap — no prior gap (first question) is discarded", () => {
+  assertEquals(questionTimingFromGap(undefined, 0).discarded, true);
+});
+
+Deno.test("questionTimingFromGap — gap over the 15-min break is discarded", () => {
+  assertEquals(questionTimingFromGap(REVIEW_BREAK_MS + 1, 0).discarded, true);
+  assertEquals(questionTimingFromGap(REVIEW_BREAK_MS, 0).discarded, false);
+});
+
+Deno.test("questionTimingFromGap — client idle >= 60s discards even a short gap", () => {
+  assertEquals(questionTimingFromGap(5_000, REVIEW_IDLE_DISCARD_MS).discarded, true);
+  assertEquals(questionTimingFromGap(5_000, REVIEW_IDLE_DISCARD_MS - 1).discarded, false);
 });

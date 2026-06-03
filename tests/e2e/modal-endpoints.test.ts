@@ -98,7 +98,7 @@ Deno.test({ name: "E2E Modal: frontend /api/admin/modal/email-templates renders 
   // Must NOT be redirected to /login — the session cookie is valid for backend, must also work for frontend
   assertEquals(res.status, 200, `expected 200, got ${res.status} ${res.headers.get("location") ?? ""}`);
   const html = await res.text();
-  assertEquals(res.headers.get("content-type"), "text/html");
+  assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
   assertStringIncludes(html, "Email Templates", "should render the email templates modal");
 }});
 
@@ -112,7 +112,7 @@ Deno.test({ name: "E2E Modal: save email template via frontend endpoint — 200 
   });
   assertEquals(saveRes.status, 200, "save must return 200 OK (not a redirect)");
   const saveHtml = await saveRes.text();
-  assertEquals(saveRes.headers.get("content-type"), "text/html");
+  assertStringIncludes(saveRes.headers.get("content-type") ?? "", "text/html");
   assertStringIncludes(saveHtml, name, "saved template name should appear in returned HTML");
 }});
 

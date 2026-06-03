@@ -60,7 +60,7 @@ Deno.test("audit-history cache — cold call returns seeded entries", async () =
 
   const ctrl = new DashboardController();
   const result = await ctrl.auditsData(
-    String(ts - 1), String(ts + 1000), "all", "", "", "", "", "", "0", "100", "1", "50", "",
+    String(ts - 1), String(ts + 1000), "all", "", "", "", "", "", "0", "100", "1", "50", "", "",
   ) as { items: unknown[]; total: number };
   assertExists(result.items);
   assertEquals(result.total, 3);
@@ -74,7 +74,7 @@ Deno.test("audit-history cache — warm call within 30s reuses cache (behavioral
   const ctrl = new DashboardController();
   // Warm the cache with one call.
   await ctrl.auditsData(
-    String(ts - 1), String(ts + 1000), "all", "", "", "", "", "", "0", "100", "1", "50", "",
+    String(ts - 1), String(ts + 1000), "all", "", "", "", "", "", "0", "100", "1", "50", "", "",
   );
   // Drop the in-mem FS store entries — if the second call re-fetches from
   // FS it'll see zero entries; if it correctly serves from the repo cache
@@ -85,7 +85,7 @@ Deno.test("audit-history cache — warm call within 30s reuses cache (behavioral
   // — that's the cache we're verifying.
 
   const result = await ctrl.auditsData(
-    String(ts - 1), String(ts + 1000), "all", "", "", "", "", "", "0", "100", "1", "50", "",
+    String(ts - 1), String(ts + 1000), "all", "", "", "", "", "", "0", "100", "1", "50", "", "",
   ) as { items: unknown[]; total: number };
   assertEquals(result.total, 3, "second call within 30s must serve cached value, not refetch");
 });
@@ -98,13 +98,13 @@ Deno.test("audit-history cache — different date ranges return their own result
   const ctrl = new DashboardController();
   // Range 1 covers all 5
   const r1 = await ctrl.auditsData(
-    String(ts - 1), String(ts + 100), "all", "", "", "", "", "", "0", "100", "1", "50", "",
+    String(ts - 1), String(ts + 100), "all", "", "", "", "", "", "0", "100", "1", "50", "", "",
   ) as { items: unknown[]; total: number };
   assertEquals(r1.total, 5);
 
   // Range 2 covers only first 3 — different cache slot, must not return r1's value
   const r2 = await ctrl.auditsData(
-    String(ts - 1), String(ts + 2), "all", "", "", "", "", "", "0", "100", "1", "50", "",
+    String(ts - 1), String(ts + 2), "all", "", "", "", "", "", "0", "100", "1", "50", "", "",
   ) as { items: unknown[]; total: number };
   assertEquals(r2.total, 3, "different (from,to) range must have its own cache slot");
 });

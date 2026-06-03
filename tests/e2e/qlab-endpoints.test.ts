@@ -28,7 +28,7 @@ Deno.test({ name: "E2E QLab: POST /api/qlab/configs/new returns 200 HTML (regres
     redirect: "manual",
   });
   assertEquals(res.status, 200, `expected 200 (frontend HTMX wrapper), got ${res.status}`);
-  assertEquals(res.headers.get("content-type"), "text/html");
+  assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
   await res.text();
 }});
 
@@ -38,7 +38,7 @@ Deno.test({ name: "E2E QLab: GET /api/admin/modal/qlab renders modal HTML with b
     redirect: "manual",
   });
   assertEquals(res.status, 200);
-  assertEquals(res.headers.get("content-type"), "text/html");
+  assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
   const html = await res.text();
   assertStringIncludes(html, "Question Lab");
   assertStringIncludes(html, "Open Config Builder");

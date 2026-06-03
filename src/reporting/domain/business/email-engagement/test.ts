@@ -3,7 +3,7 @@
 
 import { assertEquals, assert } from "#assert";
 import {
-  signFinding, verifyFinding, stampSent, recordOpen, recordClick,
+  signFinding, verifyFinding, stampSent, recordOpen, recordClick, classifyUa,
   tallyEngagement, OPEN_PREFETCH_WINDOW_MS, TRANSPARENT_GIF, type EmailMark,
 } from "./mod.ts";
 import { getStored, setStored } from "@core/data/firestore/mod.ts";
@@ -11,7 +11,8 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
 const ORG = ("email-eng-" + crypto.randomUUID().slice(0, 8)) as OrgId;
-const req = () => new Request("https://example.test/track");
+const req = (ua?: string) =>
+  new Request("https://example.test/track", ua ? { headers: { "user-agent": ua } } : undefined);
 
 async function markOf(fid: string): Promise<EmailMark | null> {
   return getStored<EmailMark>("audit-email-mark", ORG, fid);
@@ -75,6 +76,42 @@ Deno.test({ name: "recordClick — sets firstClickAt once", ...kvOpts, fn: async
   await new Promise((r) => setTimeout(r, 5));
   await recordClick(ORG, fid, req());
   assertEquals((await markOf(fid))!.firstClickAt, first, "firstClickAt unchanged on second click");
+}});
+
+Deno.test("classifyUa — proxy vs real browser labels", () => {
+  assertEquals(classifyUa("Mozilla/5.0 (...) GoogleImageProxy"), "Gmail proxy");
+  assertEquals(classifyUa("YahooMailProxy/1.0"), "Yahoo proxy");
+  assertEquals(classifyUa("Microsoft Office/16.0"), "Outlook");
+  assertEquals(classifyUa("Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"), "Chrome");
+  assertEquals(classifyUa("Mozilla/5.0 (Macintosh) AppleWebKit/605 Version/17.0 Safari/605"), "Safari");
+  assertEquals(classifyUa(""), "Unknown");
+});
+
+Deno.test({ name: "recordOpen — tracks lastOpenAt, openCount, source (most-recent open)", ...kvOpts, fn: async () => {
+  const fid = "f-open-meta";
+  await setStored("audit-email-mark", ORG, [fid], { findingId: fid, sentAt: Date.now() - 100_000 });
+  await recordOpen(ORG, fid, req("Mozilla/5.0 (...) GoogleImageProxy"));
+  const m1 = (await markOf(fid))!;
+  assertEquals(m1.openCount, 1);
+  assertEquals(m1.lastOpenSource, "Gmail proxy");
+  assert(m1.lastOpenAt && m1.lastOpenAt === m1.openedAt, "lastOpenAt == first openedAt on first open");
+  await new Promise((r) => setTimeout(r, 5));
+  await recordOpen(ORG, fid, req("Mozilla/5.0 (...) Chrome/120.0 Safari/537.36"));
+  const m2 = (await markOf(fid))!;
+  assertEquals(m2.openCount, 2, "openCount increments");
+  assertEquals(m2.openedAt, m1.openedAt, "first openedAt unchanged");
+  assert(m2.lastOpenAt! > m1.lastOpenAt!, "lastOpenAt advances on repeat open");
+  assertEquals(m2.lastOpenSource, "Chrome", "source reflects most-recent open");
+}});
+
+Deno.test({ name: "recordClick — tracks lastClickSource from real browser UA", ...kvOpts, fn: async () => {
+  const fid = "f-click-src";
+  await stampSent(ORG, fid);
+  await recordClick(ORG, fid, req("Mozilla/5.0 (...) Chrome/120.0 Safari/537.36"));
+  const m = (await markOf(fid))!;
+  assertEquals(m.clickCount, 1);
+  assertEquals(m.lastClickSource, "Chrome");
+  assert(m.lastClickAt, "lastClickAt set");
 }});
 
 Deno.test("tallyEngagement — rates + appeals-among-opened/clicked", () => {

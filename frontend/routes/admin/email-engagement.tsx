@@ -28,6 +28,8 @@ interface Row {
   isPackage?: boolean; recordingId?: string; recordId?: string; score: number;
   sentAt?: number; openedAt?: number; openPrefetchAt?: number; firstClickAt?: number;
   appealStatus?: "pending" | "complete" | null;
+  lastOpenAt?: number; openCount?: number; lastOpenSource?: string;
+  lastClickAt?: number; clickCount?: number; lastClickSource?: string;
 }
 interface DetailResp {
   aggregate: Agg; byDepartment: GroupTally[]; byType: GroupTally[];
@@ -214,8 +216,8 @@ export default define.page(async function EmailEngagementPage(ctx) {
                       <th style="text-align:left;padding:6px 8px;font-weight:600;">Type</th>
                       <th style="text-align:right;padding:6px 8px;font-weight:600;">Score</th>
                       <th style="text-align:left;padding:6px 8px;font-weight:600;">Sent</th>
-                      <th style="text-align:left;padding:6px 8px;font-weight:600;">Opened</th>
-                      <th style="text-align:left;padding:6px 8px;font-weight:600;">Clicked</th>
+                      <th style="text-align:left;padding:6px 8px;font-weight:600;">Opened (latest · src)</th>
+                      <th style="text-align:left;padding:6px 8px;font-weight:600;">Clicked (latest · src)</th>
                       <th style="text-align:left;padding:6px 12px;font-weight:600;">Appeal</th>
                     </tr>
                   </thead>
@@ -224,10 +226,7 @@ export default define.page(async function EmailEngagementPage(ctx) {
                       <tr><td colSpan={9} style="padding:16px;text-align:center;color:var(--text-dim);">No audits in this window.</td></tr>
                     )}
                     {data.rows.map((r) => {
-                      const openCell = r.openedAt
-                        ? fmt(r.openedAt)
-                        : (r.openPrefetchAt ? "prefetch" : "—");
-                      const openColor = r.openedAt ? "var(--cyan)" : "var(--text-dim)";
+                      const openTs = r.lastOpenAt ?? r.openedAt;
                       return (
                         <tr key={r.findingId} style="border-top:1px solid var(--border);font-variant-numeric:tabular-nums;">
                           <td style="padding:6px 12px;">
@@ -244,8 +243,30 @@ export default define.page(async function EmailEngagementPage(ctx) {
                           </td>
                           <td style="text-align:right;padding:6px 8px;color:var(--text);">{r.score != null ? `${r.score}%` : "—"}</td>
                           <td style="padding:6px 8px;color:var(--text-dim);">{fmt(r.sentAt)}</td>
-                          <td style={`padding:6px 8px;color:${openColor};`}>{openCell}</td>
-                          <td style={`padding:6px 8px;color:${r.firstClickAt ? "var(--green)" : "var(--text-dim)"};`}>{fmt(r.firstClickAt)}</td>
+                          <td style="padding:6px 8px;">
+                            {openTs ? (
+                              <div title={r.lastOpenSource ?? ""}>
+                                <div style="color:var(--cyan);">
+                                  {fmt(openTs)}{r.openCount && r.openCount > 1 ? ` ·×${r.openCount}` : ""}
+                                </div>
+                                {r.lastOpenSource && <div style="font-size:10px;color:var(--text-dim);">{r.lastOpenSource}</div>}
+                              </div>
+                            ) : (
+                              <span style="color:var(--text-dim);">{r.openPrefetchAt ? "prefetch" : "—"}</span>
+                            )}
+                          </td>
+                          <td style="padding:6px 8px;">
+                            {(r.lastClickAt ?? r.firstClickAt) ? (
+                              <div>
+                                <div style="color:var(--green);">
+                                  {fmt(r.lastClickAt ?? r.firstClickAt)}{r.clickCount && r.clickCount > 1 ? ` ·×${r.clickCount}` : ""}
+                                </div>
+                                {r.lastClickSource && <div style="font-size:10px;color:var(--text-dim);">{r.lastClickSource}</div>}
+                              </div>
+                            ) : (
+                              <span style="color:var(--text-dim);">—</span>
+                            )}
+                          </td>
                           <td style="padding:6px 12px;">
                             {r.appealStatus
                               ? <span class={`pill pill-${r.appealStatus === "complete" ? "green" : "yellow"}`} style="font-size:9px;padding:1px 6px;">{r.appealStatus}</span>
@@ -272,8 +293,10 @@ export default define.page(async function EmailEngagementPage(ctx) {
 
             <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-top:12px;">
               Opens: Apple-Mail prefetch (&lt;10s) is filtered out and Gmail opens are deduped/geo-masked per recipient —
-              a fuzzy-but-broad signal. Clicks: exact human engagement (scanner double-clicks absorbed by binary-per-finding) —
-              clean-but-narrower. Engagement is recorded per finding; only audits whose email was actually sent count toward "sent".
+              a fuzzy-but-broad signal. The Opened column shows the <strong>most recent</strong> open (·×N = total opens) and its
+              source from the User-Agent — note this is usually the mail provider's proxy (Gmail proxy / Outlook), not the recipient's
+              real browser. Clicks are hit by the recipient's real browser, so the Clicked source is the actual client. Engagement is
+              recorded per finding; only audits whose email was actually sent count toward "sent".
               Breakdowns + rates cover the full window; only the per-email table is paginated.
             </div>
           </>

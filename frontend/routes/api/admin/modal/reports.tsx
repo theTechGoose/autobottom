@@ -9,6 +9,8 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import { apiFetch } from "../../../../lib/api.ts";
 import { ENG_PRESETS } from "../../../../lib/report-range.ts";
+import { QF_PRESETS } from "../../../../lib/qf-range.ts";
+import { WeeklyReportsList, type EmailReportConfig, type StatusEntry } from "../../../../components/WeeklyReportsList.tsx";
 
 type TabKey = "qfailures" | "weekly" | "engagement";
 
@@ -17,16 +19,6 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "weekly", label: "Weekly Reports" },
   { key: "engagement", label: "Email Engagement" },
 ];
-
-interface EmailReportConfig {
-  id?: string;
-  name: string;
-  schedule?: { cron: string; tz?: string };
-  enabled?: boolean;
-  disabled?: boolean;
-  recipients?: string[];
-}
-interface StatusEntry { lastRunAt?: number; lastRunStatus?: string }
 
 export const handler = define.handlers({
   async GET(ctx) {
@@ -102,14 +94,6 @@ function TabBar({ active }: { active: TabKey }) {
 // /question-failures fragment route, which renders the result table into
 // #qf-result. The "active" preset is highlighted via a data attribute set
 // by the fragment route on each render.
-
-const QF_PRESETS: Array<{ key: string; label: string }> = [
-  { key: "this-month", label: "This Month" },
-  { key: "last-month", label: "Last Month" },
-  { key: "last-3", label: "Last 3 Months" },
-  { key: "last-6", label: "Last 6 Months" },
-  { key: "all-time", label: "All Time" },
-];
 
 function QuestionFailuresInitial() {
   return (
@@ -206,98 +190,18 @@ function EngagementInitial() {
 }
 
 // ── Weekly Reports initial panel ─────────────────────────────────────────────
+//
+// Thin wrapper around the shared WeeklyReportsList: adds the "Open full report"
+// pop-out (to the standalone /admin/weekly-reports page) above the list.
 
 function WeeklyReportsInitial({ configs, statuses }: { configs: EmailReportConfig[]; statuses: Record<string, StatusEntry> }) {
-  if (configs.length === 0) {
-    return (
-      <div style="font-size:13px;color:var(--text-dim);padding:24px;text-align:center;">
-        No email report configs saved yet. Configure one via <strong style="color:var(--text-bright);">Email Reports</strong> in the sidebar.
-      </div>
-    );
-  }
   return (
     <div>
-      <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">
-        Click Preview to generate the report HTML and view it in-browser without sending. Click Send Live Now to fire the actual email to configured recipients.
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+        <a href="/admin/weekly-reports" target="_blank" rel="noopener" class="sf-btn ghost"
+          style="font-size:11px;padding:4px 10px;text-decoration:none;white-space:nowrap;">Open full report ↗</a>
       </div>
-      {configs.map((c) => {
-        const id = c.id ?? "";
-        const isActive = c.enabled !== false && !c.disabled;
-        const st = statuses[id];
-        return (
-          <div key={id} style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--bg);">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-              <div>
-                <div style="font-weight:600;color:var(--text-bright);font-size:13px;">{c.name || "Untitled"}</div>
-                <div style="font-size:10px;color:var(--text-dim);margin-top:2px;">
-                  {humanizeCron(c.schedule?.cron)} · {c.recipients?.length ?? 0} recipient(s) ·{" "}
-                  <span class={`pill pill-${isActive ? "green" : "red"}`} style="font-size:9px;padding:1px 6px;">
-                    {isActive ? "Active" : "Off"}
-                  </span>
-                  {st?.lastRunAt && (
-                    <>
-                      {" · last ran "}
-                      <span style={`color:${st.lastRunStatus === "ok" ? "var(--green)" : "var(--red)"};`}>
-                        {st.lastRunStatus === "ok" ? "✓" : "✗"} {new Date(st.lastRunAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:6px;">
-                <button
-                  type="button"
-                  class="sf-btn ghost"
-                  style="font-size:11px;padding:4px 10px;"
-                  hx-post={`/api/admin/modal/reports/preview?configId=${encodeURIComponent(id)}`}
-                  hx-target={`#wr-preview-${id}`}
-                  hx-swap="innerHTML"
-                  hx-disabled-elt="this"
-                  hx-indicator={`#wr-preview-${id}`}
-                  disabled={!id}
-                >Preview ▶</button>
-                <button
-                  type="button"
-                  class="sf-btn primary"
-                  style="font-size:11px;padding:4px 10px;"
-                  hx-post={`/api/admin/modal/reports/send-now?configId=${encodeURIComponent(id)}`}
-                  hx-target={`#wr-send-${id}`}
-                  hx-swap="innerHTML"
-                  hx-confirm={`Send "${c.name || "this report"}" live to ${c.recipients?.length ?? 0} recipient(s) right now?`}
-                  hx-disabled-elt="this"
-                  disabled={!id}
-                >Send Live Now</button>
-                <span id={`wr-send-${id}`} style="font-size:10px;color:var(--text-dim);min-width:60px;"></span>
-              </div>
-            </div>
-            <div id={`wr-preview-${id}`} style="margin-top:10px;"></div>
-          </div>
-        );
-      })}
+      <WeeklyReportsList configs={configs} statuses={statuses} />
     </div>
   );
-}
-
-// Same cron humanizer used in EmailReportEditor's ListView — kept in sync.
-function humanizeCron(cron: string | undefined): string {
-  if (!cron) return "No schedule";
-  const fields = cron.trim().split(/\s+/);
-  if (fields.length !== 5) return cron;
-  const [minF, hourF, domF, monF, dowF] = fields;
-  const min = Number(minF);
-  const hour = Number(hourF);
-  if (!Number.isFinite(min) || !Number.isFinite(hour)) return cron;
-  if (monF !== "*") return `Custom: ${cron}`;
-  const time = `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
-  if (domF === "*" && dowF === "*") return `Daily @ ${time} EST`;
-  if (domF === "*") {
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const d = Number(dowF);
-    if (Number.isFinite(d)) return `${days[d % 7]} @ ${time} EST`;
-  }
-  if (dowF === "*") {
-    const d = Number(domF);
-    if (Number.isFinite(d)) return `Day ${d} @ ${time} EST`;
-  }
-  return `Custom: ${cron}`;
 }

@@ -37,6 +37,36 @@ export interface EmailMark {
   openedAt?: number;
   openPrefetchAt?: number;
   firstClickAt?: number;
+  // Most-recent open/click + source. Opens are usually fetched by the mail
+  // provider's proxy (Gmail's GoogleImageProxy, Apple MPP), so lastOpenSource
+  // is typically a proxy label, NOT the recipient's real browser. Clicks are
+  // hit by the recipient's real browser, so lastClickSource is the real client.
+  lastOpenAt?: number;
+  openCount?: number;
+  lastOpenSource?: string;
+  lastOpenUa?: string;
+  lastClickAt?: number;
+  clickCount?: number;
+  lastClickSource?: string;
+  lastClickUa?: string;
+}
+
+/** Classify a User-Agent into a friendly source label. Email opens are usually
+ *  proxied (Gmail → GoogleImageProxy, Yahoo → YahooMailProxy, Outlook); only
+ *  clicks and non-proxied dev opens carry the real browser. */
+export function classifyUa(ua: string): string {
+  const s = (ua ?? "").trim();
+  if (!s) return "Unknown";
+  if (/GoogleImageProxy/i.test(s)) return "Gmail proxy";
+  if (/YahooMailProxy/i.test(s)) return "Yahoo proxy";
+  if (/Microsoft Office|MSOffice|Outlook|ms-office|Office\//i.test(s)) return "Outlook";
+  if (/GoogleDocs|Google-Apps-Script|AHC|curl|wget|python-requests|HeadlessChrome/i.test(s)) return "Bot/agent";
+  if (/Edg\//i.test(s)) return "Edge";
+  if (/Firefox\//i.test(s) && !/Seamonkey/i.test(s)) return "Firefox";
+  if (/Chrome\//i.test(s) && !/Chromium/i.test(s)) return "Chrome";
+  if (/Safari\//i.test(s) && /Version\//i.test(s)) return "Safari";
+  if (/Mozilla\//i.test(s)) return "Real browser";
+  return "Other";
 }
 
 export interface EmailEngagement {
@@ -113,10 +143,13 @@ export async function stampSent(orgId: OrgId, findingId: string): Promise<void> 
 }
 
 /** Record an email open. Applies the prefetch filter; sets openedAt (first only)
- *  for human opens, openPrefetchAt for machine prefetch. Best-effort. */
-export async function recordOpen(orgId: OrgId, findingId: string, _req: Request): Promise<void> {
+ *  for human opens, openPrefetchAt for machine prefetch. Also tracks most-recent
+ *  open time, total human-open count, and the source (from the User-Agent — see
+ *  classifyUa; usually a proxy label, not the real browser). Best-effort. */
+export async function recordOpen(orgId: OrgId, findingId: string, req: Request): Promise<void> {
   try {
     const now = Date.now();
+    const ua = req.headers.get("user-agent") ?? "";
     const mark = (await getMark(orgId, findingId)) ?? { findingId };
     const sentAt = mark.sentAt ?? 0;
     const delta = sentAt ? now - sentAt : Infinity;
@@ -125,7 +158,11 @@ export async function recordOpen(orgId: OrgId, findingId: string, _req: Request)
       console.log(`📭 [EMAIL-OPEN] ${findingId} PREFETCH Δ=${delta}ms — not counted as open`);
     } else {
       if (!mark.openedAt) mark.openedAt = now;
-      console.log(`📬 [EMAIL-OPEN] ${findingId} open Δ=${sentAt ? `${delta}ms` : "unknown"}`);
+      mark.lastOpenAt = now;
+      mark.openCount = (mark.openCount ?? 0) + 1;
+      mark.lastOpenSource = classifyUa(ua);
+      mark.lastOpenUa = ua ? ua.slice(0, 300) : undefined;
+      console.log(`📬 [EMAIL-OPEN] ${findingId} open #${mark.openCount} Δ=${sentAt ? `${delta}ms` : "unknown"} src=${mark.lastOpenSource}`);
     }
     await putMark(orgId, mark);
   } catch (err) {
@@ -133,12 +170,20 @@ export async function recordOpen(orgId: OrgId, findingId: string, _req: Request)
   }
 }
 
-/** Record an email click (binary per finding — first click only). Best-effort. */
-export async function recordClick(orgId: OrgId, findingId: string, _req: Request): Promise<void> {
+/** Record an email click. Keeps firstClickAt (binary, first only) and also tracks
+ *  most-recent click + count + source. Clicks are hit by the recipient's real
+ *  browser, so lastClickSource is the real client (not a proxy). Best-effort. */
+export async function recordClick(orgId: OrgId, findingId: string, req: Request): Promise<void> {
   try {
+    const now = Date.now();
+    const ua = req.headers.get("user-agent") ?? "";
     const mark = (await getMark(orgId, findingId)) ?? { findingId };
-    if (!mark.firstClickAt) mark.firstClickAt = Date.now();
-    console.log(`🖱️ [EMAIL-CLICK] ${findingId}`);
+    if (!mark.firstClickAt) mark.firstClickAt = now;
+    mark.lastClickAt = now;
+    mark.clickCount = (mark.clickCount ?? 0) + 1;
+    mark.lastClickSource = classifyUa(ua);
+    mark.lastClickUa = ua ? ua.slice(0, 300) : undefined;
+    console.log(`🖱️ [EMAIL-CLICK] ${findingId} #${mark.clickCount} src=${mark.lastClickSource}`);
     await putMark(orgId, mark);
   } catch (err) {
     console.warn(`⚠️ [EMAIL-ENGAGE] recordClick failed (non-fatal) fid=${findingId}:`, err);
@@ -210,6 +255,13 @@ export interface EngagementRow {
   openPrefetchAt?: number;
   firstClickAt?: number;
   appealStatus?: "pending" | "complete" | null;
+  // Open/click recency + source (see EmailMark).
+  lastOpenAt?: number;
+  openCount?: number;
+  lastOpenSource?: string;
+  lastClickAt?: number;
+  clickCount?: number;
+  lastClickSource?: string;
 }
 
 /** A segment tally — the same engagement metrics scoped to one group. */
@@ -295,6 +347,12 @@ function toRow(it: Enriched): EngagementRow {
     openPrefetchAt: it.m?.openPrefetchAt,
     firstClickAt: it.m?.firstClickAt,
     appealStatus: it.a?.status ?? null,
+    lastOpenAt: it.m?.lastOpenAt,
+    openCount: it.m?.openCount,
+    lastOpenSource: it.m?.lastOpenSource,
+    lastClickAt: it.m?.lastClickAt,
+    clickCount: it.m?.clickCount,
+    lastClickSource: it.m?.lastClickSource,
   };
 }
 

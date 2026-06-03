@@ -240,7 +240,8 @@ If your backend endpoint needs to behave as the impersonated user (e.g. apply th
 | Admin Badge Editor | `/admin/badge-editor` | Done — admin-gated catalog editor (two-pane list + detail; built-in items render read-only) |
 | Weekly Builder | `/admin/weekly-builder` | Done — full prod parity (two-pane stage + publish) |
 | Email Reports | (modal `email-reports-modal`) | Done — full prod parity (rule builder, sections, preview iframe). Pre-rendered inline in dashboard.tsx so the EmailReportEditor island hydrates. |
-| Reports pop-out pages | `/admin/email-engagement`, `/admin/question-failures`, `/admin/weekly-reports`, `/admin/reviewer-throughput` | Done — full-page "Open full report ↗" versions of the Reports-modal tabs (range bar, drill-down, filters). Each is registered in `FRONTEND_EXACT_PAGES` (main.ts) or it 404s on danet. |
+| Reports pop-out pages | `/admin/email-engagement`, `/admin/question-failures`, `/admin/weekly-reports`, `/admin/reviewer-throughput` | Done — full-page "Open full report ↗" versions of the Reports-modal tabs (range bar, drill-down, filters). Each is registered in `FRONTEND_EXACT_PAGES` (main.ts) or it 404s on danet. Reviewer Throughput also carries Reviewer Performance: true avg/question + per-reviewer overturn rate (range + lifetime) + a per-question overturn drill-down. |
+| Failed Audits | `/admin/failed-audits` | Done — failures-only analytics: four views (failed findings, appealed-and-still-failed, by-question, dept × question matrix) + "#1 fail" drill-down with scope degradation, ISO-week + TM/dept/shift/question/source filters. Per-question failure-source override lives on `/audit/report` (admin). Registered in `FRONTEND_EXACT_PAGES`; backfill/reset in Data Maintenance. |
 | Review Queue | `/review` | Done — split panel, hotkeys, sounds |
 | Review Dashboard | `/review/dashboard` | Done — stats |
 | Judge Queue | `/judge` | Done — split panel, overturn reasons |

@@ -6,8 +6,11 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
-## 2026-06-03 — Dashboard fix
+## 2026-06-03 — UI fixes
 
+- **Audit report** — reviewer handle-time badges (the per-question `⏱ Xs` and the
+  score-block total) are now admin-only on the public report. It is a render-time
+  gate on existing data, so it applies retroactively to every finding.
 - **Pipeline Activity chart** — reserve a top band for the legend so the series
   line can never overwrite the Retries / Errors legend at peak values (the line's
   highest point now sits below the legend by construction).

@@ -62,3 +62,17 @@ Deno.test("AuditReport — missing job.timestamp falls back to em-dash", () => {
   // "Date" label is followed by the field value in the metadata grid; em-dash should render.
   assertContains(html, "Date");
 });
+
+// Reviewer handle-time (⏱) is internal performance data — admin only.
+const timedFinding = () =>
+  baseFinding({ answeredQuestions: [{ header: "Q1", answer: "Yes", reviewHandleMs: 6000 }] });
+
+Deno.test("AuditReport — reviewer handle-time badge shows for admin", () => {
+  const html = renderHTML(<AuditReport finding={timedFinding()} id="fid-test" isAdmin={true} />);
+  assertContains(html, "⏱");
+});
+
+Deno.test("AuditReport — reviewer handle-time badge hidden for non-admin", () => {
+  const html = renderHTML(<AuditReport finding={timedFinding()} id="fid-test" isAdmin={false} />);
+  assertNotContains(html, "⏱");
+});

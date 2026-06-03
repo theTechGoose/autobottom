@@ -1,6 +1,6 @@
 # Autobottom — Project Context
 
-This file is the canonical orientation doc for any AI agent working in this repo. Read it first when context is fresh.
+This file is the canonical deep reference for any AI agent working in this repo. For a fast first-time orientation start with [docs/context.md](docs/context.md); for a curated log of recent big features see [docs/CHANGELOG.md](docs/CHANGELOG.md). This README is the detailed, workflow-by-workflow companion to both.
 
 ---
 

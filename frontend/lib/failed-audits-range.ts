@@ -91,15 +91,19 @@ export function weekOptions(now: number, count = 16): Array<{ value: string; lab
   return out;
 }
 
+/** Current ISO week so far: Monday 00:00 → now. Shared by the "this-week"
+ *  preset and the default fallback. */
+function currentWeekResolved(now: number): Resolved {
+  const { year, week } = isoWeekParts(now);
+  const { since } = isoWeekRange(year, week);
+  return { since, until: now, label: `This Week (${weekLabel(year, week)})` };
+}
+
 /** Resolve a preset to ms bounds + label. Default is the current ISO week. */
 export function resolveFaRange(preset: string): Resolved {
   const now = Date.now();
   switch (preset) {
-    case "this-week": {
-      const { year, week } = isoWeekParts(now);
-      const { since } = isoWeekRange(year, week);
-      return { since, until: now, label: `This Week (${weekLabel(year, week)})` };
-    }
+    case "this-week": return currentWeekResolved(now);
     case "last-week": {
       const { year, week } = isoWeekParts(now - MS_WEEK);
       const { since, until } = isoWeekRange(year, week);
@@ -108,10 +112,6 @@ export function resolveFaRange(preset: string): Resolved {
     case "this-month": return { since: startOfMonth(0), until: now, label: "This Month" };
     case "last-month": return { since: startOfMonth(-1), until: startOfMonth(0) - 1, label: "Last Month" };
     case "all-time": return { since: 0, until: now, label: "All Time" };
-    default: {
-      const { year, week } = isoWeekParts(now);
-      const { since } = isoWeekRange(year, week);
-      return { since, until: now, label: `This Week (${weekLabel(year, week)})` };
-    }
+    default: return currentWeekResolved(now);
   }
 }

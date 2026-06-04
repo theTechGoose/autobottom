@@ -34,13 +34,13 @@ const weekly = {
 };
 
 Deno.test("EmailReportEditor.ListView — both action buttons render", () => {
-  const html = renderHTML(<ListView configs={[regular]} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
+  const html = renderHTML(<ListView configs={[regular]} statuses={{}} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
   assertContains(html, "+ New Report");
   assertContains(html, "+ Weekly Report");
 });
 
 Deno.test("EmailReportEditor.ListView — WEEKLY REPORTS divider appears when a weekly config exists", () => {
-  const html = renderHTML(<ListView configs={[regular, weekly]} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
+  const html = renderHTML(<ListView configs={[regular, weekly]} statuses={{}} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
   // Both names render in the table
   assertContains(html, "Daily MCC");
   assertContains(html, "ODS");
@@ -49,7 +49,7 @@ Deno.test("EmailReportEditor.ListView — WEEKLY REPORTS divider appears when a 
 });
 
 Deno.test("EmailReportEditor.ListView — no divider when configs are all regular", () => {
-  const html = renderHTML(<ListView configs={[regular]} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
+  const html = renderHTML(<ListView configs={[regular]} statuses={{}} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
   // The case-sensitive divider label doesn't appear
   assertNotContains(html, "WEEKLY REPORTS");
   // (still might appear lowercase elsewhere — ensure the row-divider styling doesn't appear either)
@@ -57,12 +57,12 @@ Deno.test("EmailReportEditor.ListView — no divider when configs are all regula
 });
 
 Deno.test("EmailReportEditor.ListView — empty state renders", () => {
-  const html = renderHTML(<ListView configs={[]} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
+  const html = renderHTML(<ListView configs={[]} statuses={{}} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
   assertContains(html, "No email reports configured");
 });
 
 Deno.test("EmailReportEditor.ListView — Build Weekly Reports footer link", () => {
-  const html = renderHTML(<ListView configs={[]} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
+  const html = renderHTML(<ListView configs={[]} statuses={{}} onNew={noop} onNewWeekly={noop} onEdit={noop} />);
   assertContains(html, "Build Weekly Reports");
   assertContains(html, '/admin/weekly-builder');
 });

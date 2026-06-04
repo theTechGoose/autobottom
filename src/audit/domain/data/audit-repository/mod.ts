@@ -120,6 +120,19 @@ export async function getCachedQuestions(orgId: OrgId, destinationId: string): P
 
 export async function cacheQuestions(orgId: OrgId, destinationId: string, questions: any[]): Promise<void> {
   await setStoredChunked("destination-questions", orgId, [destinationId], questions, { expireInMs: CACHE_TTL_MS });
+  // Durable last-known-good copy (NO TTL) — used as a fallback by step-prepare
+  // when a live QuickBase fetch fails/times out, so a transient QB outage
+  // doesn't fatal the audit (and doesn't thundering-herd every audit for this
+  // destination into the same 90s timeout). The TTL'd cache above still drives
+  // the fast path + freshness; this is purely a safety net.
+  await setStoredChunked("destination-questions-lkg", orgId, [destinationId], questions);
+}
+
+/** Last-known-good questions for a destination, ignoring the fresh-cache TTL.
+ *  Written on every successful cacheQuestions. Returns null if QB questions for
+ *  this destination have never been fetched successfully. */
+export async function getLastGoodQuestions(orgId: OrgId, destinationId: string): Promise<any[] | null> {
+  return await getStoredChunked<any[]>("destination-questions-lkg", orgId, destinationId);
 }
 
 // ── Populated Questions (chunked) ───────────────────────────────────────────

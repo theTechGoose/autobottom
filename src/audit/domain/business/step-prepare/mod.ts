@@ -1,5 +1,5 @@
 /** STEP 3: Fetch questions from QuickBase (or Question Lab), populate with record values, enqueue ask-all. */
-import { getFinding, saveFinding, getCachedQuestions, cacheQuestions, savePopulatedQuestions } from "@audit/domain/data/audit-repository/mod.ts";
+import { getFinding, saveFinding, getCachedQuestions, cacheQuestions, getLastGoodQuestions, savePopulatedQuestions } from "@audit/domain/data/audit-repository/mod.ts";
 import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
 import { enqueueStep, publishStep } from "@core/data/qstash/mod.ts";
 import { getQuestionsForDestination } from "@audit/domain/data/quickbase/mod.ts";
@@ -143,21 +143,38 @@ export async function stepPrepare(req: Request): Promise<Response> {
         questionSeeds = cached;
       } else {
         console.log(`[STEP-PREPARE] ${findingId}: Fetching questions from QuickBase for destination ${destinationId}...`);
-        const qbQuestions = await Promise.race([
-          getQuestionsForDestination(destinationId),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`QB question fetch timed out after 90s (dest=${destinationId})`)), 90_000)
-          ),
-        ]);
-        console.log(`[STEP-PREPARE] ${findingId}: Got ${qbQuestions.length} questions from QuickBase`);
-        questionSeeds = qbQuestions.map((q) => ({
-          header: q.header,
-          unpopulated: q.question,
-          populated: q.question,
-          autoYesExp: q.autoYes,
-        }));
-        if (questionSeeds.length > 0) {
-          await cacheQuestions(orgId, destinationId, questionSeeds);
+        try {
+          const qbQuestions = await Promise.race([
+            getQuestionsForDestination(destinationId),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`QB question fetch timed out after 90s (dest=${destinationId})`)), 90_000)
+            ),
+          ]);
+          console.log(`[STEP-PREPARE] ${findingId}: Got ${qbQuestions.length} questions from QuickBase`);
+          questionSeeds = qbQuestions.map((q) => ({
+            header: q.header,
+            unpopulated: q.question,
+            populated: q.question,
+            autoYesExp: q.autoYes,
+          }));
+          if (questionSeeds.length > 0) {
+            await cacheQuestions(orgId, destinationId, questionSeeds);
+          }
+        } catch (qbErr) {
+          // QuickBase slow/down: fall back to the last-known-good questions for
+          // this destination so a transient QB outage doesn't fatal the audit.
+          // Without this, a brief QB slowdown thundering-herds every audit for
+          // the dest into the same 90s timeout (5 findings died this way on
+          // 2026-06-03). The cache miss above only means the 10-min fresh cache
+          // expired — last-known-good has no TTL.
+          const lastGood = await getLastGoodQuestions(orgId, destinationId);
+          if (lastGood && lastGood.length > 0) {
+            console.warn(`[STEP-PREPARE] ${findingId}: ⚠️ QB fetch failed (${(qbErr as Error).message}) — serving ${lastGood.length} last-known-good questions for dest ${destinationId}`);
+            questionSeeds = lastGood;
+          } else {
+            console.error(`[STEP-PREPARE] ${findingId}: ❌ QB fetch failed and no last-known-good cache for dest ${destinationId}`);
+            throw qbErr;
+          }
         }
       }
     }

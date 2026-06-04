@@ -20,6 +20,24 @@ const API = "https://api.quickbase.com/v1";
 const QB_TIMEOUT_MS = 30_000;
 const QB_RETRY_DELAYS = [2000, 5000, 10000];
 
+// Force HTTP/1.1 for QuickBase, same rationale as the Firestore client (see
+// src/core/data/firestore/mod.ts): HTTP/2 multiplexes streams over one TCP
+// connection, so a single stalled stream wedges every other in-flight request
+// on it. Under a burst of audits (each prepare step fetches questions), an
+// HTTP/2 wedge turns one slow QB call into many — which is how 5 findings all
+// hit the 90s prepare timeout in one ~10-min window. HTTP/1.1 gives each
+// request its own TCP slot so one slow call can't drag the others down. Lazy
+// init so importing this module in unit tests doesn't leak a client resource.
+const QB_HTTP1_ONLY_OPTS: Deno.CreateHttpClientOptions = { http1: true, http2: false };
+let _qbHttpClient: Deno.HttpClient | null = null;
+function qbHttpClient(): Deno.HttpClient {
+  if (!_qbHttpClient) {
+    _qbHttpClient = Deno.createHttpClient(QB_HTTP1_ONLY_OPTS);
+    console.log(`🔧 [QB-HTTP] client created (HTTP/1.1 only)`);
+  }
+  return _qbHttpClient;
+}
+
 export interface QBQueryOptions {
   tableId: string;
   where: string;
@@ -38,7 +56,8 @@ async function queryRecordsInner(opts: QBQueryOptions, attempt = 0): Promise<any
   try {
     res = await fetch(`${API}/records/query`, {
       method: "POST", headers: headers(), body: JSON.stringify(body), signal: controller.signal,
-    });
+      client: qbHttpClient(),
+    } as RequestInit & { client: Deno.HttpClient });
   } catch (e: any) {
     clearTimeout(timeoutId);
     const msg = String(e?.message ?? e);

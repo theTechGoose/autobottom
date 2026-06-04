@@ -6,7 +6,7 @@ import {
   claimAuditDedup,
   saveBatchAnswers, getAllBatchAnswers, getAllAnswersForFinding,
   savePopulatedQuestions, getPopulatedQuestions,
-  cacheAnswer, getCachedAnswer, cacheQuestions, getCachedQuestions,
+  cacheAnswer, getCachedAnswer, cacheQuestions, getCachedQuestions, getLastGoodQuestions,
   saveTranscript, getTranscript,
 } from "./mod.ts";
 
@@ -95,6 +95,17 @@ Deno.test({ name: "question cache — cache and retrieve (chunked)", ...kvOpts, 
   const result = await getCachedQuestions(ORG, "dest-1");
   assert(result !== null);
   assertEquals(result!.length, 2);
+}});
+
+Deno.test({ name: "question cache — cacheQuestions also writes a durable last-known-good copy", ...kvOpts, fn: async () => {
+  const dest = "dest-lkg-" + crypto.randomUUID().slice(0, 8);
+  assertEquals(await getLastGoodQuestions(ORG, dest), null, "no last-good before any successful fetch");
+  const qs = [{ header: "H1" }, { header: "H2" }, { header: "H3" }];
+  await cacheQuestions(ORG, dest, qs);
+  const lkg = await getLastGoodQuestions(ORG, dest);
+  assert(lkg !== null, "last-good must be written alongside the fresh cache");
+  assertEquals(lkg!.length, 3);
+  assertEquals(lkg!.map((q: { header: string }) => q.header), ["H1", "H2", "H3"]);
 }});
 
 Deno.test({ name: "transcript — save and retrieve", ...kvOpts, fn: async () => {

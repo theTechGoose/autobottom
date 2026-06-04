@@ -211,7 +211,9 @@ application/json`) → Danet. **Any new `/admin/*` Fresh page must be added to
 - **No inline JS** in general; islands only when the browser physically needs JS
   (canvas, audio, file upload, multi-step modal state). Exception: the audit
   report page (`/audit/report`) carries a few `window.*` admin helpers inline by
-  established convention (e.g. `flipQuestion`, `setFailureSource`).
+  established convention (e.g. `flipQuestion`, `setFailureSource`). That page is
+  public, so admin-only extras (per-question flip, failure-source override,
+  reviewer handle-time `⏱` badges) are gated behind `isAdmin`.
 - HTMX POST handlers return **HTML fragments directly** (not redirects).
 - HTMX-swapped islands do NOT hydrate — islands must be in a page's initial SSR.
 - Per-role accent colors via `--accent`: admin `#58a6ff` · review `#8b5cf6` ·

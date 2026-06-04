@@ -254,7 +254,7 @@ If your backend endpoint needs to behave as the impersonated user (e.g. apply th
 | Question Lab config | `/question-lab/config/[id]` | Done — Settings + Run Test Audit (HTMX polling) + Questions inline-edit |
 | Question Lab editor | `/question-lab/question/[id]` | Done — full editor + version history + simulator |
 | Store | `/store` | Done — item grid, buy flow |
-| Audit Report | `/audit/report` | Done — multi-recording REC tabs, File Appeal, Different Recording reaudit |
+| Audit Report | `/audit/report` | Done — multi-recording REC tabs, File Appeal, Different Recording reaudit. Public page; admin-only extras (gated by `isAdmin`): per-question flip, failure-source override, reviewer handle-time (`⏱`) badges. |
 | Super Admin | `/super-admin` | Done (gated to `ai@monsterrg.com`) |
 | Gamification | `/gamification` | Done |
 | 404 | `*` | Done |

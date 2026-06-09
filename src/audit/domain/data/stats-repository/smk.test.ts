@@ -130,10 +130,15 @@ Deno.test({ name: "findAuditsByRecordId — self-heals from completed-audit-stat
   assertEquals(results.length, 1, "fallback must surface the finding");
   assertEquals(results[0].findingId, fid);
 
-  // Self-heal write is fire-and-forget — let the microtask flush, then confirm
-  // the audit-done-idx row now exists so the next search hits the fast path.
-  await new Promise((r) => setTimeout(r, 25));
-  const idx = await queryAuditDoneIndex(ORG_H, now - 2000, now + 2000);
+  // Self-heal write is fire-and-forget — poll until the backfilled row lands
+  // (returns on the first iteration normally; tolerates ~500ms under load
+  // instead of flaking on a fixed sleep).
+  let idx: AuditDoneIndexEntry[] = [];
+  for (let i = 0; i < 50; i++) {
+    idx = await queryAuditDoneIndex(ORG_H, now - 2000, now + 2000);
+    if (idx.some((e) => e.findingId === fid && e.recordId === rid)) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
   assert(idx.some((e) => e.findingId === fid && e.recordId === rid), "self-heal must backfill audit-done-idx");
 }});
 
@@ -160,6 +165,17 @@ Deno.test({ name: "writeAuditDoneIndex — guard skips unfinished, assumeFinishe
 
   assertEquals(await writeAuditDoneIndex(ORG_G, entry), false, "must skip while not finished");
   assertEquals(await writeAuditDoneIndex(ORG_G, entry, { assumeFinished: true }), true, "assumeFinished must write anyway");
+
+  // Happy path the flip/judge writers actually take: finding IS finished, no
+  // override → returns true AND the row lands (guard falls through).
+  const ORG_F = "test-guard-finished-" + crypto.randomUUID().slice(0, 8);
+  const fid2 = "f-finished-" + crypto.randomUUID().slice(0, 8);
+  const ts = Date.now();
+  await saveFinding(ORG_F, { id: fid2, findingStatus: "finished" });
+  const entry2: AuditDoneIndexEntry = { findingId: fid2, completedAt: ts, score: 100, completed: true, recordId: "RG-2" };
+  assertEquals(await writeAuditDoneIndex(ORG_F, entry2), true, "finished finding writes without override");
+  const idx = await queryAuditDoneIndex(ORG_F, ts - 1000, ts + 1000);
+  assert(idx.some((e) => e.findingId === fid2), "returned true AND actually wrote the row");
 }});
 
 Deno.test({ name: "inspect + repair — re-asserts index rows for a finding missing from both", ...kvOpts, fn: async () => {
@@ -185,6 +201,25 @@ Deno.test({ name: "inspect + repair — re-asserts index rows for a finding miss
   // And it's now searchable.
   const found = await findAuditsByRecordId(ORG_R, "333111");
   assert(found.some((e) => e.findingId === fid));
+}});
+
+Deno.test({ name: "repairRecordIndexForFinding — does not duplicate an existing completed-audit-stat row", ...kvOpts, fn: async () => {
+  const ORG_I = "test-repair-idem-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-idem-" + crypto.randomUUID().slice(0, 8);
+  const rid = "R-IDEM-" + crypto.randomUUID().slice(0, 6);
+  await saveFinding(ORG_I, {
+    id: fid, findingStatus: "finished", completedAt: Date.now(),
+    record: { RecordId: rid }, answeredQuestions: [{ answer: "Yes" }],
+  });
+  // The finding already has a stat row (the common case — only audit-done-idx
+  // was dropped). completed-audit-stat keys embed Date.now(), so a naive
+  // trackCompleted would mint a second row and double-count it.
+  await trackCompleted(ORG_I, fid, { recordId: rid, score: 100 }, { assumeFinished: true });
+  await repairRecordIndexForFinding(ORG_I, fid);
+  await repairRecordIndexForFinding(ORG_I, fid); // twice — still no dup
+
+  const insp = await inspectRecordIndex(ORG_I, fid);
+  assertEquals(insp.completedStatRows.length, 1, "repair must not append duplicate completed-audit-stat rows");
 }});
 
 Deno.test({ name: "restoreHiddenFinding — un-hides + re-indexes a wrongly-hidden finding", ...kvOpts, fn: async () => {

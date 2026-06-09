@@ -24,6 +24,39 @@ export function deriveQbRecordId(finding: Record<string, any> | null | undefined
   return String((finding as any)?.record?.RecordId ?? (finding as any)?.recordId ?? "") || undefined;
 }
 
+/** The index/stat dimension fields that EVERY completed-audit writer derives
+ *  identically from the finding doc. Extracted (like [[deriveQbRecordId]]) so
+ *  step-finalize, postJudgedAudit, the review-queue flip writers, and the
+ *  repair path can't silently drift in how they parse voName/department/shift.
+ *  NOTE: score, completedAt, completed, reason, and durationMs are deliberately
+ *  NOT here — each path resolves score/timing with its own semantics (finalize's
+ *  auto-complete logic vs judge's finalScore vs review's reviewScore), so the
+ *  caller supplies those explicitly. */
+export interface IndexMeta {
+  recordId?: string;
+  isPackage: boolean;
+  voName?: string;
+  owner?: string;
+  department?: string;
+  shift?: string;
+  startedAt?: number;
+}
+export function buildIndexMeta(finding: Record<string, any> | null | undefined): IndexMeta {
+  const rec = ((finding as any)?.record as Record<string, any>) ?? {};
+  const isPackage = (finding as any)?.recordingIdField === "GenieNumber";
+  const rawVo = String(rec.VoName ?? "");
+  const voName = (rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim()) || undefined;
+  return {
+    recordId: deriveQbRecordId(finding),
+    isPackage,
+    voName,
+    owner: (finding as any)?.owner as string | undefined,
+    department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
+    shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+    startedAt: (finding as any)?.startedAt as number | undefined,
+  };
+}
+
 // Watchdog-active is org-agnostic (one global namespace). Use empty-string org.
 const GLOBAL = "" as OrgId;
 
@@ -355,36 +388,34 @@ export async function repairRecordIndexForFinding(
   if (finding.findingStatus !== "finished") {
     return { repaired: false, reason: `findingStatus=${finding.findingStatus}` };
   }
-  const recordId = deriveQbRecordId(finding);
-  if (!recordId) return { repaired: false, reason: "no-record-id" };
+  const meta = buildIndexMeta(finding);
+  if (!meta.recordId) return { repaired: false, reason: "no-record-id" };
 
   const completedAt = (finding.completedAt as number | undefined) ?? Date.now();
-  const isPackage = finding.recordingIdField === "GenieNumber";
-  const rec = (finding.record as Record<string, any>) ?? {};
-  const rawVo = String(rec.VoName ?? "");
-  const voName = (rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim()) || undefined;
-  const department = String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined;
-  const shift = isPackage ? undefined : String(rec.Shift ?? "") || undefined;
+  const durationMs = meta.startedAt ? completedAt - meta.startedAt : undefined;
   const qs = finding.answeredQuestions as Array<{ answer?: string }> | undefined;
   const score = typeof finding.reviewScore === "number"
     ? finding.reviewScore
     : (qs?.length ? Math.round((qs.filter((q) => q.answer === "Yes").length / qs.length) * 100) : 0);
-  const meta = {
-    recordId, isPackage, voName, owner: finding.owner, department, shift,
-    startedAt: finding.startedAt as number | undefined,
-    durationMs: finding.startedAt ? completedAt - (finding.startedAt as number) : undefined,
-    score,
-  };
 
-  await trackCompleted(orgId, findingId, meta, { assumeFinished: true });
+  // completed-audit-stat keys embed Date.now(), so trackCompleted is NOT
+  // idempotent on findingId — calling it when a row already exists appends a
+  // duplicate (double-counts in "Recently Completed" + aggregates). Only write
+  // if the finding has no stat row. A paged scan, NOT deleteCompletedStat,
+  // because the latter caps at 1000 rows and misses recent rows on a large org.
+  const statRows = await listStoredByCompletedAt<{ findingId?: string }>(
+    "completed-audit-stat", orgId, 0, Date.now(), { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
+  );
+  if (!statRows.some((s) => s.findingId === findingId)) {
+    await trackCompleted(orgId, findingId, { ...meta, durationMs, score }, { assumeFinished: true });
+  }
+  // audit-done-idx is keyed [padTs(completedAt), findingId] → re-writing is
+  // idempotent (overwrites the same doc), so this is always safe to re-assert.
   await writeAuditDoneIndex(orgId, {
-    findingId, completedAt, score, completed: true,
-    recordId, isPackage, voName, owner: finding.owner as string | undefined, department, shift,
-    startedAt: finding.startedAt as number | undefined,
-    durationMs: meta.durationMs,
+    findingId, completedAt, score, completed: true, durationMs, ...meta,
   }, { assumeFinished: true });
-  console.log(`🔧 [REPAIR-RECORD-IDX] ${findingId}: re-asserted index rows under recordId=${recordId} score=${score}%`);
-  return { repaired: true, recordId };
+  console.log(`🔧 [REPAIR-RECORD-IDX] ${findingId}: re-asserted index rows under recordId=${meta.recordId} score=${score}%`);
+  return { repaired: true, recordId: meta.recordId };
 }
 
 /** Read-only diagnostic: dump everything the record search depends on for one

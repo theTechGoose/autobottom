@@ -26,6 +26,7 @@ import {
   writeAuditDoneIndex,
   updateCompletedStatScore,
   deriveQbRecordId,
+  buildIndexMeta,
 } from "@audit/domain/data/stats-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;
@@ -251,10 +252,6 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
       // cause that bit us on adminFlipQuestion. Best-effort; the webhook +
       // user-visible decision succeed regardless.
       const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
-      const rec = (finding as Record<string, unknown>).record as Record<string, unknown> ?? {};
-      const isPackage = (finding as Record<string, unknown>).recordingIdField === "GenieNumber";
-      const rawVo = String(rec.VoName ?? "");
-      const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
       try {
         await writeAuditDoneIndex(orgId, {
           findingId,
@@ -262,12 +259,7 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
           score: finalScore,
           completed: finalScore === 100,
           ...(finalScore === 100 ? { doneAt: Date.now(), reason: "reviewed" as const } : {}),
-          recordId: deriveQbRecordId(finding),
-          isPackage,
-          voName: voName || undefined,
-          owner: (finding as Record<string, unknown>).owner as string | undefined,
-          department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
-          shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+          ...buildIndexMeta(finding as Record<string, any>),
         });
       } catch (err) {
         console.warn(`⚠️ [JUDGE] ${findingId} writeAuditDoneIndex failed (best-effort):`, err);

@@ -24,7 +24,7 @@ import {
   deleteCompletedStat,
   deleteAuditDoneIdxByFindingId,
   getHiddenFindingIds,
-  deriveQbRecordId,
+  buildIndexMeta,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFlipToPass, incrFlipToFail, configKeyForFinding } from "@audit/domain/data/question-stats-repository/mod.ts";
@@ -1034,11 +1034,10 @@ export async function finalizeReviewedAudit(
     completed: true,
     reason: "reviewed",
     score: reviewScore,
-    // Index under the QB RecordId — what "Find by QB Record" searches. This
-    // previously fell through to RelatedDestinationId/GenieNumber, keying
-    // review-completed findings under the wrong id (un-searchable by RecordId).
-    recordId: deriveQbRecordId(finding),
-    isPackage: finding.recordingIdField === "GenieNumber",
+    // buildIndexMeta keys recordId on the QB RecordId — what "Find by QB
+    // Record" searches. (Previously fell through to RelatedDestinationId/
+    // GenieNumber, keying review-completed findings under the wrong id.)
+    ...buildIndexMeta(finding),
     reviewedBy: reviewer,
     reviewHandleMs: reviewedValidCount > 0 ? sumHandleMs : undefined,
     reviewedQuestionCount,
@@ -1350,10 +1349,6 @@ export async function adminFlipFinding(
   });
 
   const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
-  const rec = (finding as any).record as Record<string, any> ?? {};
-  const isPackage = finding.recordingIdField === "GenieNumber";
-  const rawVo = String(rec.VoName ?? "");
-  const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
   try {
     await writeAuditDoneIndex(orgId, {
       findingId,
@@ -1362,12 +1357,7 @@ export async function adminFlipFinding(
       completed: true,
       doneAt: Date.now(),
       reason: "reviewed",
-      recordId: deriveQbRecordId(finding),
-      isPackage,
-      voName: voName || undefined,
-      owner: finding.owner as string | undefined,
-      department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
-      shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+      ...buildIndexMeta(finding),
       reviewedBy: flippedBy,
     });
   } catch { /* index write is best-effort */ }
@@ -1428,10 +1418,6 @@ export async function finalizePerfectFinding(
   await setStored("review-done", orgId, [findingId], { reviewedAt, reviewScore, reviewedBy: reviewer });
 
   const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
-  const rec = (finding as any).record as Record<string, any> ?? {};
-  const isPackage = finding.recordingIdField === "GenieNumber";
-  const rawVo = String(rec.VoName ?? "");
-  const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
   try {
     await writeAuditDoneIndex(orgId, {
       findingId,
@@ -1440,12 +1426,7 @@ export async function finalizePerfectFinding(
       completed: true,
       doneAt: Date.now(),
       reason: "reviewed",
-      recordId: deriveQbRecordId(finding),
-      isPackage,
-      voName: voName || undefined,
-      owner: finding.owner as string | undefined,
-      department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
-      shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+      ...buildIndexMeta(finding),
       reviewedBy: reviewer,
     });
   } catch { /* index write is best-effort */ }
@@ -1595,10 +1576,6 @@ export async function adminFlipQuestion(
   // entry as a non-perfect index row (still surfaceable in unreviewed lists
   // until either reviewer-finalize or admin-bulk-flip lifts it to 100).
   const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
-  const rec = (finding as any).record as Record<string, any> ?? {};
-  const isPackage = finding.recordingIdField === "GenieNumber";
-  const rawVo = String(rec.VoName ?? "");
-  const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
   try {
     await writeAuditDoneIndex(orgId, {
       findingId,
@@ -1606,12 +1583,7 @@ export async function adminFlipQuestion(
       score,
       completed: score === 100,
       ...(score === 100 ? { doneAt: Date.now(), reason: "reviewed" as const } : {}),
-      recordId: deriveQbRecordId(finding),
-      isPackage,
-      voName: voName || undefined,
-      owner: finding.owner as string | undefined,
-      department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
-      shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
+      ...buildIndexMeta(finding),
       reviewedBy: flippedBy,
     });
   } catch (err) {

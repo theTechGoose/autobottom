@@ -1,6 +1,6 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
 import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
-import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, saveWireDeductionEntry, deriveQbRecordId } from "@audit/domain/data/stats-repository/mod.ts";
+import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, saveWireDeductionEntry, buildIndexMeta } from "@audit/domain/data/stats-repository/mod.ts";
 import { getOfficeBypassConfig, getBonusPointsConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFailed as incrQuestionFailed, configKeyForFinding, markCounted as markQuestionFailCounted } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { writeFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
@@ -166,16 +166,15 @@ export async function stepFinalize(req: Request): Promise<Response> {
     return json({ ok: true, test: true });
   }
 
-  const isPackage = finding.recordingIdField === "GenieNumber";
-  const department = String(isPackage ? (finding.record?.OfficeName ?? "") : (finding.record?.ActivatingOffice ?? "")) || undefined;
+  // Shared dimension fields (recordId/isPackage/voName/owner/department/shift/
+  // startedAt) — same helper the judge/review/repair writers use, so they
+  // can't drift. score/completedAt/durationMs/reason stay finalize-specific.
+  const meta = buildIndexMeta(finding);
+  const { isPackage, department, voName } = meta;
   const bypassCfg = await getOfficeBypassConfig(orgId);
   const isOfficeBypassed = bypassCfg.patterns.length > 0 && !!department &&
     bypassCfg.patterns.some((p) => department.toLowerCase().includes(p.toLowerCase()));
   if (isOfficeBypassed) console.log(`[STEP-FINALIZE] ${findingId}: ⚠️ Office "${department}" is bypassed — skipping review queue + audit email`);
-  const rawVoName = (finding.record as any)?.VoName as string | undefined;
-  const voName = rawVoName
-    ? (rawVoName.includes(" - ") ? rawVoName.split(" - ").slice(1).join(" - ").trim() : rawVoName.trim()) || undefined
-    : undefined;
   const reason = isInvalid ? "invalid_genie" : (score === 100 ? "perfect_score" : undefined);
   const genieList = (Array.isArray(finding.genieIds) && finding.genieIds.length)
     ? finding.genieIds.map(String)
@@ -183,17 +182,11 @@ export async function stepFinalize(req: Request): Promise<Response> {
   // assumeFinished: we set findingStatus="finished" + saveFinding above, so the
   // re-read guard would only risk dropping these rows to a read-after-write lag.
   await trackCompleted(orgId, findingId, {
-    recordId: deriveQbRecordId(finding),
-    isPackage,
-    startedAt,
+    ...meta,
     durationMs,
     score,
-    owner: finding.owner,
-    department,
-    voName,
     reason,
     genies: genieList.join(", ") || undefined,
-    shift: isPackage ? undefined : String((finding.record as any)?.Shift ?? "") || undefined,
   }, { assumeFinished: true });
   console.log(`[STEP-FINALIZE] ${findingId}: ✅ trackCompleted saved — score=${score ?? "?"}% owner=${finding.owner ?? "unknown"} dept=${department ?? "unknown"} type=${isPackage ? "package" : "date-leg"}`);
 
@@ -206,13 +199,7 @@ export async function stepFinalize(req: Request): Promise<Response> {
       score: score ?? 0,
       completed: isAutoComplete,
       ...(isAutoComplete ? { doneAt: completedAt, reason: reason! } : {}),
-      recordId: deriveQbRecordId(finding),
-      isPackage,
-      voName,
-      owner: finding.owner,
-      department,
-      shift: isPackage ? undefined : String((finding.record as any)?.Shift ?? "") || undefined,
-      startedAt,
+      ...meta,
       durationMs,
     }, { assumeFinished: true });
     console.log(wrote

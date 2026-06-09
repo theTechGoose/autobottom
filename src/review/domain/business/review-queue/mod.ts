@@ -24,6 +24,7 @@ import {
   deleteCompletedStat,
   deleteAuditDoneIdxByFindingId,
   getHiddenFindingIds,
+  deriveQbRecordId,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFlipToPass, incrFlipToFail, configKeyForFinding } from "@audit/domain/data/question-stats-repository/mod.ts";
@@ -1033,7 +1034,10 @@ export async function finalizeReviewedAudit(
     completed: true,
     reason: "reviewed",
     score: reviewScore,
-    recordId: (finding.recordId ?? finding.record?.RelatedDestinationId ?? finding.record?.GenieNumber ?? "") as string,
+    // Index under the QB RecordId — what "Find by QB Record" searches. This
+    // previously fell through to RelatedDestinationId/GenieNumber, keying
+    // review-completed findings under the wrong id (un-searchable by RecordId).
+    recordId: deriveQbRecordId(finding),
     isPackage: finding.recordingIdField === "GenieNumber",
     reviewedBy: reviewer,
     reviewHandleMs: reviewedValidCount > 0 ? sumHandleMs : undefined,
@@ -1358,7 +1362,7 @@ export async function adminFlipFinding(
       completed: true,
       doneAt: Date.now(),
       reason: "reviewed",
-      recordId: String(rec.RecordId ?? "") || undefined,
+      recordId: deriveQbRecordId(finding),
       isPackage,
       voName: voName || undefined,
       owner: finding.owner as string | undefined,
@@ -1436,7 +1440,7 @@ export async function finalizePerfectFinding(
       completed: true,
       doneAt: Date.now(),
       reason: "reviewed",
-      recordId: String(rec.RecordId ?? "") || undefined,
+      recordId: deriveQbRecordId(finding),
       isPackage,
       voName: voName || undefined,
       owner: finding.owner as string | undefined,
@@ -1602,7 +1606,7 @@ export async function adminFlipQuestion(
       score,
       completed: score === 100,
       ...(score === 100 ? { doneAt: Date.now(), reason: "reviewed" as const } : {}),
-      recordId: String(rec.RecordId ?? "") || undefined,
+      recordId: deriveQbRecordId(finding),
       isPackage,
       voName: voName || undefined,
       owner: finding.owner as string | undefined,

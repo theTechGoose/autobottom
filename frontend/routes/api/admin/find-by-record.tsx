@@ -15,6 +15,7 @@ interface AuditEntry {
   reason?: string;
   completedAt?: number;
   doneAt?: number;
+  hidden?: boolean;
 }
 
 function fmtScore(n: number): string {
@@ -105,6 +106,9 @@ export const handler = define.handlers({
                   {a.completed
                     ? <span class="pill pill-green">{a.reason ?? "complete"}</span>
                     : <span class="pill pill-yellow">in review</span>}
+                  {a.hidden
+                    ? <span class="pill" style="margin-left:4px;background:var(--bg);color:var(--text-dim);border:1px solid var(--border);">duplicate</span>
+                    : null}
                 </td>
                 <td style="padding:6px 10px;color:var(--text);">{a.voName ?? "—"}</td>
                 <td style="padding:6px 10px;color:var(--text-dim);">{a.department ?? "—"}</td>

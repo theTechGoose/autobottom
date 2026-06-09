@@ -25,6 +25,7 @@ import {
   getHiddenFindingIds,
   writeAuditDoneIndex,
   updateCompletedStatScore,
+  deriveQbRecordId,
 } from "@audit/domain/data/stats-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;
@@ -261,7 +262,7 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
           score: finalScore,
           completed: finalScore === 100,
           ...(finalScore === 100 ? { doneAt: Date.now(), reason: "reviewed" as const } : {}),
-          recordId: String(rec.RecordId ?? "") || undefined,
+          recordId: deriveQbRecordId(finding),
           isPackage,
           voName: voName || undefined,
           owner: (finding as Record<string, unknown>).owner as string | undefined,

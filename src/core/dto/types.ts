@@ -67,6 +67,11 @@ export interface AuditDoneIndexEntry {
   reviewedQuestionCount?: number;
   /** Reviewed questions that survived the idle filter (counted in reviewHandleMs). */
   reviewedValidCount?: number;
+  /** Transient, set at read time only (never persisted): the finding is in the
+   *  dedup hidden set. Aggregate views filter these out; the explicit "Find by
+   *  QB Record" lookup surfaces them flagged so an operator investigating one
+   *  record sees every audit for it, including dedup-flagged duplicates. */
+  hidden?: boolean;
 }
 
 // ── Failed-audit analytics types ─────────────────────────────────────────────

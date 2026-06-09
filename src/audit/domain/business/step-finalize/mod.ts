@@ -1,6 +1,6 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
 import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
-import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, saveWireDeductionEntry } from "@audit/domain/data/stats-repository/mod.ts";
+import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, saveWireDeductionEntry, deriveQbRecordId } from "@audit/domain/data/stats-repository/mod.ts";
 import { getOfficeBypassConfig, getBonusPointsConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFailed as incrQuestionFailed, configKeyForFinding, markCounted as markQuestionFailCounted } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { writeFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
@@ -180,8 +180,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
   const genieList = (Array.isArray(finding.genieIds) && finding.genieIds.length)
     ? finding.genieIds.map(String)
     : (finding.recordingId ? [String(finding.recordingId)] : []);
+  // assumeFinished: we set findingStatus="finished" + saveFinding above, so the
+  // re-read guard would only risk dropping these rows to a read-after-write lag.
   await trackCompleted(orgId, findingId, {
-    recordId: String(finding.record?.RecordId ?? "") || undefined,
+    recordId: deriveQbRecordId(finding),
     isPackage,
     startedAt,
     durationMs,
@@ -192,19 +194,19 @@ export async function stepFinalize(req: Request): Promise<Response> {
     reason,
     genies: genieList.join(", ") || undefined,
     shift: isPackage ? undefined : String((finding.record as any)?.Shift ?? "") || undefined,
-  });
+  }, { assumeFinished: true });
   console.log(`[STEP-FINALIZE] ${findingId}: ✅ trackCompleted saved — score=${score ?? "?"}% owner=${finding.owner ?? "unknown"} dept=${department ?? "unknown"} type=${isPackage ? "package" : "date-leg"}`);
 
   // Write secondary index entry for email reporting
   try {
     const isAutoComplete = isInvalid || score === 100;
-    await writeAuditDoneIndex(orgId, {
+    const wrote = await writeAuditDoneIndex(orgId, {
       findingId,
       completedAt,
       score: score ?? 0,
       completed: isAutoComplete,
       ...(isAutoComplete ? { doneAt: completedAt, reason: reason! } : {}),
-      recordId: String((finding.record as any)?.RecordId ?? "") || undefined,
+      recordId: deriveQbRecordId(finding),
       isPackage,
       voName,
       owner: finding.owner,
@@ -212,8 +214,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
       shift: isPackage ? undefined : String((finding.record as any)?.Shift ?? "") || undefined,
       startedAt,
       durationMs,
-    });
-    console.log(`[STEP-FINALIZE] ${findingId}: 📇 audit-done-idx written — completed=${isAutoComplete} reason=${reason ?? "pending-review"}`);
+    }, { assumeFinished: true });
+    console.log(wrote
+      ? `[STEP-FINALIZE] ${findingId}: 📇 audit-done-idx written — completed=${isAutoComplete} reason=${reason ?? "pending-review"}`
+      : `[STEP-FINALIZE] ${findingId}: ⚠️ audit-done-idx write skipped by status guard`);
   } catch (err) {
     console.error(`[STEP-FINALIZE] ${findingId}: ❌ audit-done-idx write failed:`, err);
   }

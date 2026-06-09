@@ -12,6 +12,18 @@ const DAY_MS = 86_400_000;
 
 function padTs(ts: number): string { return String(ts).padStart(15, "0"); }
 
+/** Single source of truth for the QB record id we index a finding under.
+ *  ALWAYS the QuickBase RecordId (the value the operator types into "Find by
+ *  QB Record"). Falls back to a top-level `recordId` if some future caller
+ *  sets one. Returned as a string so the index key matches the string the
+ *  search form submits. Historically several writers derived this differently
+ *  (notably review-finalize used RelatedDestinationId/GenieNumber), which made
+ *  review-completed findings invisible to record search — route every writer
+ *  through here so they agree. */
+export function deriveQbRecordId(finding: Record<string, any> | null | undefined): string | undefined {
+  return String((finding as any)?.record?.RecordId ?? (finding as any)?.recordId ?? "") || undefined;
+}
+
 // Watchdog-active is org-agnostic (one global namespace). Use empty-string org.
 const GLOBAL = "" as OrgId;
 
@@ -114,7 +126,12 @@ export async function untrackHandler(orgId: OrgId, findingId: string): Promise<v
   await deleteStored("active-tracking", orgId, findingId);
 }
 
-export async function trackCompleted(orgId: OrgId, findingId: string, meta?: Record<string, unknown>): Promise<void> {
+export async function trackCompleted(
+  orgId: OrgId,
+  findingId: string,
+  meta?: Record<string, unknown>,
+  opts?: { assumeFinished?: boolean },
+): Promise<void> {
   await deleteStored("active-tracking", orgId, findingId);
   await deleteStored("watchdog-active", GLOBAL, findingId);
   // Refuse to record a completed-stat row if the finding isn't actually
@@ -122,10 +139,18 @@ export async function trackCompleted(orgId: OrgId, findingId: string, meta?: Rec
   // wrote the row before step-finalize set the terminal status. The dashboard
   // "Recently Completed" panel reads completed-audit-stat, and a stale row
   // here is the exact symptom that surfaced the retry-doesn't-drain bug.
-  const finding = await getFinding(orgId, findingId);
-  if (finding && finding.findingStatus !== "finished") {
-    console.warn(`⚠️ [TRACK-COMPLETED] ${findingId}: skipped — findingStatus=${finding.findingStatus} (expected "finished")`);
-    return;
+  //
+  // assumeFinished: the caller has authoritatively set findingStatus="finished"
+  // on the in-memory finding it just saved. Skip the re-read — a cross-isolate
+  // read-after-write lag showing the pre-finished status would otherwise drop
+  // this row silently, leaving the finding absent from completed-audit-stat
+  // (and thus from record search) even though it finished cleanly.
+  if (!opts?.assumeFinished) {
+    const finding = await getFinding(orgId, findingId);
+    if (finding && finding.findingStatus !== "finished") {
+      console.warn(`⚠️ [TRACK-COMPLETED] ${findingId}: skipped — findingStatus=${finding.findingStatus} (expected "finished")`);
+      return;
+    }
   }
   await setStored("completed-audit-stat", orgId, [`${Date.now()}-${findingId}`], { findingId, ts: Date.now(), ...(meta ?? {}) });
 }
@@ -286,17 +311,121 @@ export async function deleteCompletedStat(orgId: OrgId, findingId: string): Prom
 
 // ── Audit Done Index ─────────────────────────────────────────────────────────
 
-export async function writeAuditDoneIndex(orgId: OrgId, entry: AuditDoneIndexEntry): Promise<void> {
+/** Writes the secondary index row record search + audit-history read from.
+ *  Returns true if the row was written, false if the status guard skipped it —
+ *  callers should not log "written" on a false return.
+ *
+ *  opts.assumeFinished: the caller just set findingStatus="finished" on the
+ *  finding it saved. Skip the re-read so a cross-isolate read-after-write lag
+ *  can't silently drop the row (the exact failure that made completed findings
+ *  invisible to "Find by QB Record"). */
+export async function writeAuditDoneIndex(
+  orgId: OrgId,
+  entry: AuditDoneIndexEntry,
+  opts?: { assumeFinished?: boolean },
+): Promise<boolean> {
   // Same guard as updateCompletedStatScore: if the finding isn't actually
   // finished right now, refuse the index write. Catches future callers that
   // forget to gate on status and prevents stale "Recently Completed" rows
   // for findings that are mid-rebuild.
-  const finding = await getFinding(orgId, entry.findingId);
-  if (finding && finding.findingStatus !== "finished") {
-    console.warn(`⚠️ [WRITE-DONE-IDX] ${entry.findingId}: skipped — findingStatus=${finding.findingStatus} (expected "finished")`);
-    return;
+  if (!opts?.assumeFinished) {
+    const finding = await getFinding(orgId, entry.findingId);
+    if (finding && finding.findingStatus !== "finished") {
+      console.warn(`⚠️ [WRITE-DONE-IDX] ${entry.findingId}: skipped — findingStatus=${finding.findingStatus} (expected "finished")`);
+      return false;
+    }
   }
   await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], entry);
+  return true;
+}
+
+/** Deterministically (re)write the record-search index rows for a finished
+ *  finding straight from the finding document. The escape hatch for findings
+ *  the search self-heal can't reach — i.e. a finding absent from BOTH
+ *  audit-done-idx and completed-audit-stat (a write the finished-status guard
+ *  silently dropped). The operator on the report page has the findingId, so a
+ *  findingId-keyed repair can fix what a recordId-only search cannot locate.
+ *  Re-asserts both rows under the correct QB RecordId. Returns what it did. */
+export async function repairRecordIndexForFinding(
+  orgId: OrgId,
+  findingId: string,
+): Promise<{ repaired: boolean; recordId?: string; reason?: string }> {
+  const finding = await getFinding(orgId, findingId);
+  if (!finding) return { repaired: false, reason: "finding-not-found" };
+  if (finding.findingStatus !== "finished") {
+    return { repaired: false, reason: `findingStatus=${finding.findingStatus}` };
+  }
+  const recordId = deriveQbRecordId(finding);
+  if (!recordId) return { repaired: false, reason: "no-record-id" };
+
+  const completedAt = (finding.completedAt as number | undefined) ?? Date.now();
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const rec = (finding.record as Record<string, any>) ?? {};
+  const rawVo = String(rec.VoName ?? "");
+  const voName = (rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim()) || undefined;
+  const department = String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined;
+  const shift = isPackage ? undefined : String(rec.Shift ?? "") || undefined;
+  const qs = finding.answeredQuestions as Array<{ answer?: string }> | undefined;
+  const score = typeof finding.reviewScore === "number"
+    ? finding.reviewScore
+    : (qs?.length ? Math.round((qs.filter((q) => q.answer === "Yes").length / qs.length) * 100) : 0);
+  const meta = {
+    recordId, isPackage, voName, owner: finding.owner, department, shift,
+    startedAt: finding.startedAt as number | undefined,
+    durationMs: finding.startedAt ? completedAt - (finding.startedAt as number) : undefined,
+    score,
+  };
+
+  await trackCompleted(orgId, findingId, meta, { assumeFinished: true });
+  await writeAuditDoneIndex(orgId, {
+    findingId, completedAt, score, completed: true,
+    recordId, isPackage, voName, owner: finding.owner as string | undefined, department, shift,
+    startedAt: finding.startedAt as number | undefined,
+    durationMs: meta.durationMs,
+  }, { assumeFinished: true });
+  console.log(`🔧 [REPAIR-RECORD-IDX] ${findingId}: re-asserted index rows under recordId=${recordId} score=${score}%`);
+  return { repaired: true, recordId };
+}
+
+/** Read-only diagnostic: dump everything the record search depends on for one
+ *  finding so we can see WHY a search misses it — whether its index rows are
+ *  absent, present under a different recordId, or stored as a non-string type.
+ *  Scans both indexes for the findingId (no window/hidden/recordId filter). */
+export async function inspectRecordIndex(orgId: OrgId, findingId: string): Promise<{
+  findingId: string;
+  finding: { found: boolean; findingStatus?: string; derivedRecordId?: string; recordIdField?: string; relatedDestinationId?: string; genieNumber?: string };
+  hidden: boolean;
+  doneIdxRows: Array<{ recordId: unknown; recordIdType: string; completedAt: number; score?: number }>;
+  completedStatRows: Array<{ recordId: unknown; recordIdType: string; ts: number; score?: number }>;
+}> {
+  const finding = await getFinding(orgId, findingId);
+  const rec = (finding?.record as Record<string, any>) ?? {};
+  const hidden = (await getHiddenFindingIds(orgId)).has(findingId);
+
+  const doneIdx = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId);
+  const doneIdxRows = doneIdx
+    .filter((e) => e.findingId === findingId)
+    .map((e) => ({ recordId: e.recordId, recordIdType: typeof e.recordId, completedAt: e.completedAt, score: e.score }));
+
+  const stats = await listStored<Record<string, unknown>>("completed-audit-stat", orgId);
+  const completedStatRows = stats
+    .filter((s) => s.findingId === findingId)
+    .map((s) => ({ recordId: s.recordId, recordIdType: typeof s.recordId, ts: Number(s.ts ?? 0), score: s.score as number | undefined }));
+
+  return {
+    findingId,
+    finding: {
+      found: !!finding,
+      findingStatus: finding?.findingStatus,
+      derivedRecordId: deriveQbRecordId(finding),
+      recordIdField: rec.RecordId != null ? String(rec.RecordId) : undefined,
+      relatedDestinationId: rec.RelatedDestinationId != null ? String(rec.RelatedDestinationId) : undefined,
+      genieNumber: rec.GenieNumber != null ? String(rec.GenieNumber) : undefined,
+    },
+    hidden,
+    doneIdxRows,
+    completedStatRows,
+  };
 }
 
 // SWR cache for queryAuditDoneIndex. Each cold call scans audit-done-idx
@@ -419,56 +548,60 @@ export async function findAuditsByRecordId(orgId: OrgId, recordId: string): Prom
   return promise;
 }
 
-async function _findAuditsByRecordIdRaw(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
-  console.log(`🔍 [FIND-BY-RECORD] orgId=${orgId} recordId=${recordId} starting`);
-  // Page via the (_type, _org, completedAt)-indexed scan. Window narrowed
-  // from 365d → 90d: cuts scan size from 51k rows to ~12k on a hot org,
-  // dropping query time from seconds-on-a-good-day to ~hundreds of ms.
-  // Operators looking up records older than 90d should use the audit
-  // history page directly (which takes an explicit date range).
-  const now = Date.now();
-  const since = now - 90 * DAY_MS;
-  const hidden = await getHiddenFindingIds(orgId);
+type CompletedStatRow = {
+  findingId: string;
+  ts: number;
+  recordId?: string;
+  score?: number;
+  isPackage?: boolean;
+  voName?: string;
+  owner?: string;
+  department?: string;
+  shift?: string;
+  startedAt?: number;
+  durationMs?: number;
+  reason?: string;
+};
 
+/** Scan audit-done-idx (primary) then completed-audit-stat (fallback) over a
+ *  [since, now] window for rows matching `recordId`. recordId comparisons are
+ *  string-normalized so a legacy number-typed value still matches the string
+ *  the search form submits. Fallback hits are lazily backfilled into
+ *  audit-done-idx so the next search resolves on the fast primary path. */
+async function _scanRecordWindow(
+  orgId: OrgId,
+  recordId: string,
+  hidden: Set<string>,
+  since: number,
+  now: number,
+): Promise<AuditDoneIndexEntry[]> {
+  const target = String(recordId);
+  // Unlike the dashboard/report list views, this is an EXPLICIT single-record
+  // lookup — do NOT drop dedup-hidden findings, surface them flagged so the
+  // operator sees every audit for the record they're investigating.
   const idx = await listStoredByCompletedAt<AuditDoneIndexEntry>(
     "audit-done-idx", orgId, since, now,
     { limit: Number.MAX_SAFE_INTEGER, fieldName: "completedAt" },
   );
   const out: AuditDoneIndexEntry[] = [];
   for (const e of idx) {
-    if (hidden.has(e.findingId)) continue;
-    if (e.recordId !== recordId) continue;
-    out.push(e);
+    if (String(e.recordId ?? "") !== target) continue;
+    out.push({ ...e, hidden: hidden.has(e.findingId) });
   }
   console.log(`🔍 [FIND-BY-RECORD] audit-done-idx primary count=${out.length} (scanned ${idx.length})`);
 
   // Fallback: completed-audit-stat (post-migration, audit-done-idx may be sparse
-  // for old orgs). Same paged scan; merge matches into the AuditDoneIndexEntry shape.
+  // for old orgs, or a row was lost to the finished-status write guard).
   if (out.length === 0) {
-    type CompletedStatRow = {
-      findingId: string;
-      ts: number;
-      recordId?: string;
-      score?: number;
-      isPackage?: boolean;
-      voName?: string;
-      owner?: string;
-      department?: string;
-      shift?: string;
-      startedAt?: number;
-      durationMs?: number;
-      reason?: string;
-    };
     const stats = await listStoredByCompletedAt<CompletedStatRow>(
       "completed-audit-stat", orgId, since, now,
       { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
     );
     let fallbackCount = 0;
     for (const s of stats) {
-      if (hidden.has(s.findingId)) continue;
-      if (s.recordId !== recordId) continue;
+      if (String(s.recordId ?? "") !== target) continue;
       fallbackCount++;
-      out.push({
+      const entry: AuditDoneIndexEntry = {
         findingId: s.findingId,
         completedAt: s.ts,
         completed: true,
@@ -482,9 +615,35 @@ async function _findAuditsByRecordIdRaw(orgId: OrgId, recordId: string): Promise
         shift: s.shift,
         startedAt: s.startedAt,
         durationMs: s.durationMs,
-      });
+      };
+      out.push({ ...entry, hidden: hidden.has(s.findingId) });
+      // Self-heal: the finding completed (it's in completed-audit-stat) but has
+      // no audit-done-idx row under this recordId. Re-assert one (clean entry,
+      // without the transient hidden flag) so the next search hits the primary
+      // path. Best-effort; the result is returned regardless. assumeFinished
+      // because a completed-audit-stat row only exists for a finished finding.
+      writeAuditDoneIndex(orgId, entry, { assumeFinished: true }).catch((err) =>
+        console.warn(`⚠️ [FIND-BY-RECORD] ${s.findingId}: self-heal done-idx write failed:`, err)
+      );
     }
     console.log(`🔍 [FIND-BY-RECORD] completed-audit-stat fallback count=${fallbackCount} (scanned ${stats.length})`);
+  }
+  return out;
+}
+
+async function _findAuditsByRecordIdRaw(orgId: OrgId, recordId: string): Promise<AuditDoneIndexEntry[]> {
+  console.log(`🔍 [FIND-BY-RECORD] orgId=${orgId} recordId=${recordId} starting`);
+  // Page via the (_type, _org, completedAt)-indexed scan. Primary window is
+  // 90d — keeps the hot path to ~12k rows / hundreds of ms. On a miss we widen
+  // to 365d once so an older (or just-outside-90d) record still resolves before
+  // we report "no audits"; operators needing older still have audit-history.
+  const now = Date.now();
+  const hidden = await getHiddenFindingIds(orgId);
+
+  let out = await _scanRecordWindow(orgId, recordId, hidden, now - 90 * DAY_MS, now);
+  if (out.length === 0) {
+    console.log(`🔍 [FIND-BY-RECORD] 90d empty — widening to 365d for recordId=${recordId}`);
+    out = await _scanRecordWindow(orgId, recordId, hidden, now - 365 * DAY_MS, now);
   }
 
   console.log(`🔍 [FIND-BY-RECORD] total=${out.length}`);

@@ -8,6 +8,8 @@ import {
   saveWireDeductionEntry, getWireDeductionEntry, getWireDeductionEntries, deleteWireDeductionEntry,
   getStats, terminateFinding, terminateAllActive,
   getErrorsInWindow, isFindingRecovered,
+  deriveQbRecordId, inspectRecordIndex, repairRecordIndexForFinding,
+  markFindingHidden, _resetHiddenCacheForTesting,
 } from "./mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
@@ -94,6 +96,95 @@ Deno.test({ name: "audit-done-idx — findAuditsByRecordId", ...kvOpts, fn: asyn
   const results = await findAuditsByRecordId(ORG, "REC-1");
   assertEquals(results.length, 2);
   assertEquals(results[0].completedAt, now); // newest first
+}});
+
+Deno.test({ name: "deriveQbRecordId — QB RecordId wins over RelatedDestinationId/GenieNumber", ...kvOpts, fn: () => {
+  // The exact mis-key that hid review-completed date-legs: RecordId 478060 vs
+  // RelatedDestinationId 261. Search is by RecordId, so RecordId must win.
+  assertEquals(deriveQbRecordId({ record: { RecordId: 478060, RelatedDestinationId: 261, GenieNumber: 99 } }), "478060");
+  assertEquals(deriveQbRecordId({ record: { RelatedDestinationId: 261 } }), undefined);
+  assertEquals(deriveQbRecordId({ recordId: "top-level" }), "top-level");
+  assertEquals(deriveQbRecordId({}), undefined);
+  assertEquals(deriveQbRecordId(null), undefined);
+}});
+
+Deno.test({ name: "findAuditsByRecordId — number-typed recordId still matches the string search", ...kvOpts, fn: async () => {
+  const now = Date.now();
+  // Legacy/foreign writer stored recordId as a NUMBER; the form submits a string.
+  await writeAuditDoneIndex(ORG, { findingId: "f-numkey", completedAt: now - 500, score: 88, completed: true, recordId: 909090 as any });
+  const results = await findAuditsByRecordId(ORG, "909090");
+  assert(results.some((e) => e.findingId === "f-numkey"), "string search must match number-typed stored recordId");
+}});
+
+Deno.test({ name: "findAuditsByRecordId — self-heals from completed-audit-stat into audit-done-idx", ...kvOpts, fn: async () => {
+  const ORG_H = "test-heal-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-heal-" + crypto.randomUUID().slice(0, 8);
+  const rid = "REC-HEAL-" + crypto.randomUUID().slice(0, 6);
+  const now = Date.now();
+  // Finding finished and recorded in completed-audit-stat, but NO audit-done-idx
+  // row (the guard-skip symptom). Search must still find it — then backfill.
+  await saveFinding(ORG_H, { id: fid, findingStatus: "finished", record: { RecordId: rid }, completedAt: now - 1000 });
+  await trackCompleted(ORG_H, fid, { recordId: rid, score: 77 }, { assumeFinished: true });
+
+  const results = await findAuditsByRecordId(ORG_H, rid);
+  assertEquals(results.length, 1, "fallback must surface the finding");
+  assertEquals(results[0].findingId, fid);
+
+  // Self-heal write is fire-and-forget — let the microtask flush, then confirm
+  // the audit-done-idx row now exists so the next search hits the fast path.
+  await new Promise((r) => setTimeout(r, 25));
+  const idx = await queryAuditDoneIndex(ORG_H, now - 2000, now + 2000);
+  assert(idx.some((e) => e.findingId === fid && e.recordId === rid), "self-heal must backfill audit-done-idx");
+}});
+
+Deno.test({ name: "findAuditsByRecordId — dedup-hidden findings are surfaced flagged, not dropped", ...kvOpts, fn: async () => {
+  const ORG_D = "test-dedup-" + crypto.randomUUID().slice(0, 8);
+  const rid = "REC-DUP-" + crypto.randomUUID().slice(0, 6);
+  const now = Date.now();
+  await writeAuditDoneIndex(ORG_D, { findingId: "f-keep", completedAt: now, score: 95, completed: true, recordId: rid });
+  await writeAuditDoneIndex(ORG_D, { findingId: "f-dup", completedAt: now - 1000, score: 80, completed: true, recordId: rid });
+  await markFindingHidden(ORG_D, "f-dup", "dedup");
+  _resetHiddenCacheForTesting();
+
+  const results = await findAuditsByRecordId(ORG_D, rid);
+  assertEquals(results.length, 2, "explicit record lookup must return BOTH the keeper and the deduped duplicate");
+  assertEquals(results.find((e) => e.findingId === "f-keep")?.hidden, false);
+  assertEquals(results.find((e) => e.findingId === "f-dup")?.hidden, true, "the deduped finding must be flagged hidden");
+}});
+
+Deno.test({ name: "writeAuditDoneIndex — guard skips unfinished, assumeFinished overrides", ...kvOpts, fn: async () => {
+  const ORG_G = "test-guard-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-guard-" + crypto.randomUUID().slice(0, 8);
+  await saveFinding(ORG_G, { id: fid, findingStatus: "populating-questions" });
+  const entry: AuditDoneIndexEntry = { findingId: fid, completedAt: Date.now(), score: 90, completed: true, recordId: "RG-1" };
+
+  assertEquals(await writeAuditDoneIndex(ORG_G, entry), false, "must skip while not finished");
+  assertEquals(await writeAuditDoneIndex(ORG_G, entry, { assumeFinished: true }), true, "assumeFinished must write anyway");
+}});
+
+Deno.test({ name: "inspect + repair — re-asserts index rows for a finding missing from both", ...kvOpts, fn: async () => {
+  const ORG_R = "test-repair-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-repair-" + crypto.randomUUID().slice(0, 8);
+  await saveFinding(ORG_R, {
+    id: fid, findingStatus: "finished", completedAt: Date.now(),
+    record: { RecordId: 333111, RelatedDestinationId: 261 },
+    answeredQuestions: [{ answer: "Yes" }, { answer: "No" }],
+  });
+
+  const before = await inspectRecordIndex(ORG_R, fid);
+  assertEquals(before.finding.derivedRecordId, "333111");
+  assertEquals(before.doneIdxRows.length, 0, "no index row before repair");
+
+  const result = await repairRecordIndexForFinding(ORG_R, fid);
+  assertEquals(result.repaired, true);
+  assertEquals(result.recordId, "333111");
+
+  const after = await inspectRecordIndex(ORG_R, fid);
+  assert(after.doneIdxRows.some((r) => String(r.recordId) === "333111"), "done-idx row present after repair");
+  assert(after.completedStatRows.some((r) => String(r.recordId) === "333111"), "completed-stat row present after repair");
+  // And it's now searchable.
+  const found = await findAuditsByRecordId(ORG_R, "333111");
+  assert(found.some((e) => e.findingId === fid));
 }});
 
 Deno.test({ name: "chargeback — save, get, list, delete", ...kvOpts, fn: async () => {

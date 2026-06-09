@@ -10,7 +10,7 @@ import { Controller, Get, Query } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse, EmailEngagementResponse, EmailEngagementDetailResponse, ReviewerThroughputResponse, ReviewerAuditsResponse, ReviewerQualityResponse, ReviewerQualityDetailResponse } from "@core/dto/responses.ts";
-import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId, writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
+import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId, writeAuditDoneIndex, inspectRecordIndex, repairRecordIndexForFinding } from "@audit/domain/data/stats-repository/mod.ts";
 import { getReviewStats, getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig, isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
 import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
@@ -572,6 +572,25 @@ export class DashboardController {
       console.warn(`⚠️ [AUDITS-BY-RECORD] ${recordId} failed — soft fallback:`, err);
       return { audits: [], retry: true };
     }
+  }
+
+  /** Diagnostic for a record search that returns nothing for a finding that
+   *  clearly exists. Read-only by default — dumps the raw audit-done-idx +
+   *  completed-audit-stat rows for the findingId (no window/hidden/recordId
+   *  filter), the finding's status + derived recordId, and hidden membership,
+   *  so we can see whether the row is missing, mis-keyed, or wrong-typed.
+   *  Pass repair=1 to re-assert the index rows under the correct QB RecordId
+   *  (the escape hatch for a finding absent from both indexes). */
+  @Get("audits-by-record-debug")
+  async auditsByRecordDebug(@Query("findingId") findingId: string, @Query("repair") repair?: string) {
+    if (!findingId) return { error: "findingId required" };
+    const orgId = ORG();
+    const inspection = await inspectRecordIndex(orgId, findingId);
+    if (repair === "1") {
+      const result = await repairRecordIndexForFinding(orgId, findingId);
+      return { inspection, repair: result };
+    }
+    return { inspection };
   }
 
   /** Debug: confirms the "step dispatch moved to main.ts" fix shipped. If the

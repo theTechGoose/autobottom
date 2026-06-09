@@ -193,9 +193,10 @@ All durable state lives in a single Firestore collection (default `autobottom`) 
 |---|---|---|
 | `audit-finding` | Finding document | Chunked when >700KB |
 | `audit-job` | Audit job (groups findings) | Plain |
-| `audit-done-idx` | Time-ordered completion index | Key: `[padTs, id]` |
+| `audit-done-idx` | Time-ordered completion index; carries a denormalized `recordId` (QB RecordId) that "Find by QB Record" matches on — see *Find by QB Record* | Key: `[padTs, id]` |
 | `active-tracking` | In-flight pipeline state | |
 | `completed-audit-stat` | Completion record for dashboard | All-time |
+| `audit-hidden` | Soft-hide marker (dedup losers); read paths filter these out. Reversible via `POST /admin/restore-finding` | Key = findingId |
 | `error-tracking` | Step error log — written by the step dispatcher on throws + 5xx ([main.ts](main.ts)); read by the dashboard (24h) + `/canary/errors` (prev day) | 8d TTL |
 | `retry-tracking` | Retry log | 24h TTL |
 | `audit-email-mark` | Per-finding email engagement: `sentAt` / `openedAt` / `openPrefetchAt` / `firstClickAt` | Key = findingId |
@@ -377,7 +378,7 @@ Personal-stats panels on `/review/dashboard` and `/judge/dashboard` are driven b
 How long reviewers take to work audits, surfaced in **Reports modal → Reviewer Throughput** + the full-page pop-out **`/admin/reviewer-throughput`** (by-reviewer + by-question pivots, a question filter, click-through reviewer → their audits → audit report; presets Today / This Week / 7d / 30d / All Time). Handle time is **server-measured** — the client is never trusted for durations (an earlier client-island approach recorded 0 in prod).
 
 - **Per-audit handle (historical + forward)** — *cadence*: the gap between a reviewer's consecutive audit-completion (`audit-done-idx.completedAt`) timestamps; gaps `> REVIEW_BREAK_MS` (15 min) are breaks, excluded. Computed in `getReviewerLeaderboard` ([review-stats/mod.ts](src/review/domain/business/review-stats/mod.ts)) — works over ALL history, so the report is populated immediately. Primary by-reviewer / aggregate metric + `auditsPerActiveHour`.
-- **Per-question handle (forward-only)** — at finalize, sort the audit's `review-decided` by `decidedAt`; each consecutive gap is the time spent on the later-decided question (`questionTimingFromGap` — discarded when there's no prior gap, the gap exceeds 15 min, or the client flagged ≥60s idle). Written onto the finding's `answeredQuestions[].reviewHandleMs/reviewDiscarded` (audit report shows per-question times + a total) and rolled up to `reviewHandleMs` / `reviewedQuestionCount` / `reviewedValidCount` on the `audit-done-idx` entry. `getQuestionTiming` aggregates by question header (with the filter).
+- **Per-question handle (forward-only)** — at finalize, sort the audit's `review-decided` by `decidedAt`; each consecutive gap is the time spent on the later-decided question (`questionTimingFromGap` — discarded when there's no prior gap, the gap exceeds 15 min, or the client flagged ≥60s idle). Written onto the finding's `answeredQuestions[].reviewHandleMs/reviewDiscarded` (audit report shows per-question times + a total, **admin-only** — gated behind `isAdmin` in [AuditReport.tsx](frontend/components/AuditReport.tsx)) and rolled up to `reviewHandleMs` / `reviewedQuestionCount` / `reviewedValidCount` on the `audit-done-idx` entry. `getQuestionTiming` aggregates by question header (with the filter).
 - **Idle flag only** from the client: [ReviewTiming.tsx](frontend/islands/ReviewTiming.tsx) tracks idle (tab hidden, or >60s no activity) and injects `idleMs` into the `/api/review/decide` request (and the deferred final-question commit via `globalThis.__reviewTiming()`); durations come from the server, so the island can't zero out the metric.
 - Judge dashboard Reviewer Leaderboard ([leaderboard-range.tsx](frontend/routes/api/judge/leaderboard-range.tsx)) gained Avg Handle / Audits-hr columns (cadence-fed).
 - **True avg / question** — the top-row "Avg / question" card and the by-reviewer column are the weighted mean of the same hydrated per-question samples that feed the By-Question table (`getQuestionTiming` returns `trueAvgPerQuestionMs` + a per-reviewer `{ms, samples}` map), not whole-audit `reviewHandleMs` spread over the question count (which rounded to ~0s).
@@ -427,6 +428,21 @@ Full-featured filtered audit history for ops. Page in [frontend/routes/admin/aud
 - **Page-clamp** — backend clamps requested page to `[1, totalPages]` so a stale `ah-page=2` after filter-narrowing returns the last valid page instead of an empty slice. Frontend also resets `ah-page=1` on any filter change (form-level `hx-on:change` + explicit reset in window/Go/Clear button handlers).
 - **`?as=` impersonation** — for `/manager/audits`, the page handler forwards `as` to the backend so admins impersonating a specific manager get THAT manager's department/shift scope. Hidden `<input name="as">` keeps it included on HTMX filter refreshes.
 - **Always-manager scoping for `/manager/api/audit-history`** — endpoint hardcodes `role="manager"` regardless of who's authenticated. Admins who want unrestricted view use `/admin/audits` instead. Backend in [main.ts](main.ts) `handleManagerAuditHistory`.
+
+### Find by QB Record + record-search index invariant
+
+The dashboard "Find by QB Record" lookup ([frontend/routes/api/admin/find-by-record.tsx](frontend/routes/api/admin/find-by-record.tsx) → `/admin/audits-by-record` → `findAuditsByRecordId` in [stats-repository/mod.ts](src/audit/domain/data/stats-repository/mod.ts)) matches a **denormalized `recordId`** stored on `audit-done-idx` (primary) + `completed-audit-stat` (fallback). For an audit to be findable, every write path must denormalize the SAME id the operator types (the QB `RecordId`). Two helpers in stats-repository are the single source of truth — route every writer through them so they can't drift:
+
+- **`deriveQbRecordId(finding)`** — `String(record.RecordId ?? finding.recordId ?? "") || undefined`. (Both `getDateLegByRid`/`getPackageByRid` set `RecordId ?? rid`, so it's always populated; date-legs and packages alike.) Previously `finalizeReviewedAudit` mis-keyed under `RelatedDestinationId`/`GenieNumber`, making review-completed findings un-searchable.
+- **`buildIndexMeta(finding)`** — the shared `{recordId, isPackage, voName, owner, department, shift, startedAt}` derivation (voName ` - ` split, dept, shift). `score`/`completedAt`/`reason`/`durationMs` stay caller-specific. Used by step-finalize, `postJudgedAudit`, the four review-queue flip writers, and the repair path.
+
+Write guard: `writeAuditDoneIndex`/`trackCompleted` skip when the finding isn't `findingStatus==="finished"` (and return `false`/skip), to avoid stale rows mid-rebuild. step-finalize passes `{ assumeFinished: true }` right after it sets status=finished, so a cross-isolate read-after-write lag can't silently drop the row. `findDuplicates` ([judge-repository/mod.ts](src/judge/domain/data/judge-repository/mod.ts)) no longer hides **orphaned** singletons (recordId unresolvable) as "duplicates" — that false-positive hid lone audits.
+
+Search behavior:
+- 0-result widens the scan 90d→365d, string-normalizes the recordId compare (number/string drift), and **self-heals** any `completed-audit-stat` hit back into `audit-done-idx` so the next lookup is fast.
+- Unlike the aggregate list views, this explicit lookup **surfaces dedup-hidden findings flagged `hidden`** (the find-by-record table shows a `duplicate` badge). Dashboards/reports still filter them out.
+- **Restore** (separate button on flagged rows) → `POST /admin/restore-finding` → `restoreHiddenFinding` = un-hide + `repairRecordIndexForFinding` (re-asserts both index rows; the stat write is idempotent — it skips when a row already exists, via a paged scan, since `completed-audit-stat` keys embed `Date.now()`). Deliberately per-finding/operator-confirmed: a "sole audit for record" bulk signal is unsafe at scale because reviewed keepers were historically mis-keyed.
+- **Read-only diagnostic** — `GET /admin/audits-by-record-debug?findingId=…` ([dashboard/mod.ts](src/admin/entrypoints/dashboard/mod.ts) `auditsByRecordDebug`) dumps the raw `audit-done-idx` + `completed-audit-stat` rows (recordId value + `typeof`), hidden membership, and the finding's derived recordId — via paged scans so it can't false-report "no rows". GET stays read-only; all mutation is on the POST.
 
 ### Reviewed badge + auditor column consistency
 

@@ -1021,6 +1021,7 @@ export class AdminConfigController {
     }
   }
 
+
   /** Kick off a dedup job. Returns immediately with a jobId; the actual
    *  scan + delete runs fire-and-forget in the background lane so the
    *  HTTP request doesn't sit open for 5-10 minutes. The maintenance
@@ -1094,6 +1095,18 @@ export class AdminConfigController {
     const job = AdminConfigController._dedupJobs.get(jobId);
     if (!job) return { ok: false, error: `job ${jobId} not found (may have expired)` };
     return { ok: true, jobId, ...job };
+  }
+
+  /** Surgically restore ONE finding wrongly hidden as a duplicate: un-hide it
+   *  and re-assert its index rows so record search surfaces it again. Bounded
+   *  (a few reads/writes) so it runs inline — no background job needed.
+   *  Deliberately per-finding (operator-confirmed); see restoreHiddenFinding. */
+  @Post("restore-finding") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async restoreFinding(@Body() body: GenericBodyRequest) {
+    const findingId = String((body as any)?.findingId ?? "").trim();
+    if (!findingId) return { ok: false, error: "findingId required" };
+    const { restoreHiddenFinding } = await import("@audit/domain/data/stats-repository/mod.ts");
+    return await restoreHiddenFinding(ORG(), findingId);
   }
 
   // -- Purge --

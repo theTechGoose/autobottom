@@ -402,12 +402,19 @@ export async function inspectRecordIndex(orgId: OrgId, findingId: string): Promi
   const rec = (finding?.record as Record<string, any>) ?? {};
   const hidden = (await getHiddenFindingIds(orgId)).has(findingId);
 
-  const doneIdx = await listStored<AuditDoneIndexEntry>("audit-done-idx", orgId);
+  // Paged (uncapped) scans — plain listStored caps at ~1000 rows and would
+  // falsely report "no rows" for a finding whose row sits past the cap.
+  const now = Date.now();
+  const doneIdx = await listStoredByCompletedAt<AuditDoneIndexEntry>(
+    "audit-done-idx", orgId, 0, now, { limit: Number.MAX_SAFE_INTEGER, fieldName: "completedAt" },
+  );
   const doneIdxRows = doneIdx
     .filter((e) => e.findingId === findingId)
     .map((e) => ({ recordId: e.recordId, recordIdType: typeof e.recordId, completedAt: e.completedAt, score: e.score }));
 
-  const stats = await listStored<Record<string, unknown>>("completed-audit-stat", orgId);
+  const stats = await listStoredByCompletedAt<Record<string, unknown>>(
+    "completed-audit-stat", orgId, 0, now, { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
+  );
   const completedStatRows = stats
     .filter((s) => s.findingId === findingId)
     .map((s) => ({ recordId: s.recordId, recordIdType: typeof s.recordId, ts: Number(s.ts ?? 0), score: s.score as number | undefined }));
@@ -426,6 +433,24 @@ export async function inspectRecordIndex(orgId: OrgId, findingId: string): Promi
     doneIdxRows,
     completedStatRows,
   };
+}
+
+/** Surgically restore ONE finding that was wrongly soft-hidden as a duplicate:
+ *  un-hide it and re-assert its index rows so it shows in record search again.
+ *  Per-finding (operator-confirmed) — deliberately NOT a bulk sweep, because
+ *  "sole audit for record" is an unreliable false-positive signal at scale
+ *  (a legit loser can look sole when its reviewed keeper was mis-keyed under
+ *  RelatedDestinationId). The operator restores specific findings they've
+ *  confirmed aren't duplicates. */
+export async function restoreHiddenFinding(
+  orgId: OrgId,
+  findingId: string,
+): Promise<{ ok: boolean; wasHidden: boolean; recordId?: string; reason?: string }> {
+  const wasHidden = (await getHiddenFindingIds(orgId)).has(findingId);
+  await unmarkFindingHidden(orgId, findingId);
+  const repair = await repairRecordIndexForFinding(orgId, findingId);
+  console.log(`🔧 [RESTORE-FINDING] ${findingId}: wasHidden=${wasHidden} reindexed=${repair.repaired} recordId=${repair.recordId ?? "?"}`);
+  return { ok: true, wasHidden, recordId: repair.recordId, reason: repair.repaired ? undefined : repair.reason };
 }
 
 // SWR cache for queryAuditDoneIndex. Each cold call scans audit-done-idx

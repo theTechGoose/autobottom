@@ -187,6 +187,22 @@ Deno.test("dedup — findDuplicates is idempotent after deleteDuplicates", async
   assertEquals(plan2.toDelete.length, 0);
 });
 
+// ─── forward fix: orphaned entries are never flagged as duplicates ─────────
+
+Deno.test("dedup — orphaned entry (no resolvable recordId) is NOT marked a duplicate loser", async () => {
+  reset();
+  const orgId = ("test-orphan-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const ts = 1_700_000_000_000;
+  // Finding finished but with no record.RecordId and no recordingId → unkeyable.
+  await saveFinding(orgId, { id: "fid-orphan", findingStatus: "finished", record: {}, completedAt: ts } as any);
+  // Index row written without a recordId (the exact orphan shape).
+  await writeAuditDoneIndex(orgId, { findingId: "fid-orphan", completedAt: ts, completed: true, score: 88 });
+
+  const plan = await findDuplicates(orgId, ts - 1, ts + 1);
+  assertEquals(plan.orphaned, 1, "should be counted as orphaned");
+  assertEquals(plan.toDelete.filter((d) => !d.keep).length, 0, "a lone orphan must never be a duplicate loser");
+});
+
 // ─── postJudgedAudit — audit-done-idx sync contract ────────────────────────
 // postJudgedAudit must write a fresh audit-done-idx entry whenever judges
 // have overturned at least one question. If a future change removes the

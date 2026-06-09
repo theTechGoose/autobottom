@@ -8,8 +8,8 @@ import {
   saveWireDeductionEntry, getWireDeductionEntry, getWireDeductionEntries, deleteWireDeductionEntry,
   getStats, terminateFinding, terminateAllActive,
   getErrorsInWindow, isFindingRecovered,
-  deriveQbRecordId, inspectRecordIndex, repairRecordIndexForFinding,
-  markFindingHidden, _resetHiddenCacheForTesting,
+  deriveQbRecordId, inspectRecordIndex, repairRecordIndexForFinding, restoreHiddenFinding,
+  markFindingHidden, getHiddenFindingIds, _resetHiddenCacheForTesting,
 } from "./mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
@@ -185,6 +185,29 @@ Deno.test({ name: "inspect + repair — re-asserts index rows for a finding miss
   // And it's now searchable.
   const found = await findAuditsByRecordId(ORG_R, "333111");
   assert(found.some((e) => e.findingId === fid));
+}});
+
+Deno.test({ name: "restoreHiddenFinding — un-hides + re-indexes a wrongly-hidden finding", ...kvOpts, fn: async () => {
+  const ORG_R = "test-restore-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-restore-" + crypto.randomUUID().slice(0, 8);
+  const rid = "R-RESTORE-" + crypto.randomUUID().slice(0, 6);
+  await saveFinding(ORG_R, {
+    id: fid, findingStatus: "finished", completedAt: Date.now(),
+    record: { RecordId: rid }, answeredQuestions: [{ answer: "Yes" }],
+  });
+  await markFindingHidden(ORG_R, fid, "dedup");
+  _resetHiddenCacheForTesting();
+
+  const result = await restoreHiddenFinding(ORG_R, fid);
+  assertEquals(result.ok, true);
+  assertEquals(result.wasHidden, true);
+  assertEquals(result.recordId, rid);
+  _resetHiddenCacheForTesting();
+
+  // No longer hidden, and now resolvable by record search.
+  assert(!(await getHiddenFindingIds(ORG_R)).has(fid));
+  const found = await findAuditsByRecordId(ORG_R, rid);
+  assert(found.some((e) => e.findingId === fid), "restored finding must be searchable by record");
 }});
 
 Deno.test({ name: "chargeback — save, get, list, delete", ...kvOpts, fn: async () => {

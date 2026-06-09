@@ -712,11 +712,13 @@ export async function findDuplicates(
     }
   }
 
-  // Fallback for legacy index entries without recordId — fetch the finding
+  // Fallback for legacy index entries without recordId — fetch the finding.
+  // Resolve the key the same way every index writer now does (deriveQbRecordId)
+  // so dedup groups on the exact value record search uses.
   const orphaned: typeof needFinding = [];
   for (const e of needFinding) {
     const finding = await getFinding(orgId, e.findingId);
-    const recordKey = String((finding as any)?.record?.RecordId ?? (finding as any)?.recordingId ?? "");
+    const recordKey = deriveQbRecordId(finding) ?? String((finding as any)?.recordingId ?? "");
     if (!recordKey) { orphaned.push(e); continue; }
     inRange.push({
       id: e.findingId,
@@ -746,8 +748,15 @@ export async function findDuplicates(
     for (const dup of group.slice(1)) toDelete.push({ ...dup, keep: false });
   }
 
-  for (const e of orphaned) {
-    toDelete.push({ id: e.findingId, recordKey: e.findingId, ts: e.completedAt, reviewed: false, keep: false });
+  // Orphaned entries have NO resolvable recordId, so we could not group them —
+  // they are singletons by definition and must NOT be flagged as duplicates.
+  // (Previously they were force-marked keep:false and hidden, producing
+  // false-positive "duplicate" hides of lone audits — fixed.) Leave them
+  // visible; surface the count + ids so an operator can investigate the
+  // underlying index gap, and run the de-orphan tool to restore any already
+  // wrongly hidden by the old behavior.
+  if (orphaned.length) {
+    console.warn(`[DEDUP] ⚠️ ${orphaned.length} orphaned (no resolvable recordId) — left visible: ${orphaned.map((e) => e.findingId).join(", ")}`);
   }
 
   console.log(`[DEDUP] plan org=${orgId} scanned=${inRange.length} dupGroups=${dupGroups} toDelete=${toDelete.filter((d) => !d.keep).length} orphaned=${orphaned.length}`);
@@ -789,6 +798,7 @@ export async function deleteDuplicates(
   console.log(`[DEDUP] ✅ flagged ${deleted}/${losers.length} duplicates as hidden org=${orgId}`);
   return { deleted };
 }
+
 
 export const backfillChargebackEntriesLegacy = backfillChargebackEntries;
 export const findDuplicatesLegacy = findDuplicates;

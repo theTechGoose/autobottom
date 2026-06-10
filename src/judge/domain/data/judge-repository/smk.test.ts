@@ -67,6 +67,46 @@ Deno.test({ name: "judge — dismiss removes from queue", ...kvOpts, fn: async (
   assert(dismissed > 0);
 }});
 
+// ─── getJudgeStats parity with the queue ───────────────────────────────────
+// Regression for the "dashboard says 16 pending, queue is All caught up" bug:
+// getJudgeStats must count only rows the queue will actually serve — i.e. it
+// must apply the same hidden-finding + auto-skip-appealType gate claimNextItem
+// uses. A raw judge-pending row count over-reports because hidden rows linger.
+
+Deno.test({ name: "getJudgeStats — hidden finding is excluded from pending", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-jstats-hidden-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "f-jstats-hidden";
+  const questions = [
+    { header: "Q1", populated: "P1", thinking: "T1", defense: "D1", answer: "No" },
+    { header: "Q2", populated: "P2", thinking: "T2", defense: "D2", answer: "No" },
+  ];
+  await populateJudgeQueue(org, fid, questions);
+  assertEquals((await getJudgeStats(org)).pending, 2, "both questions count while visible");
+
+  // Soft-hide the finding (dedup path) — it stays in judge-pending but must
+  // drop out of the count, exactly like the queue stops serving it.
+  await markFindingHidden(org, fid, "dedup");
+  _resetHiddenCacheForTesting(); // bust the SWR cache primed by the count above
+  assertEquals((await getJudgeStats(org)).pending, 0, "hidden finding must not be counted");
+}});
+
+Deno.test({ name: "getJudgeStats — auto-skip appeal type is excluded from pending", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-jstats-skip-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const qs = [{ header: "Q", populated: "P", thinking: "T", defense: "D", answer: "No" }];
+  await populateJudgeQueue(org, "f-jstats-skip", qs, "different-recording");
+  assertEquals((await getJudgeStats(org)).pending, 0, "auto-skip appealType must not be counted");
+}});
+
+Deno.test({ name: "getJudgeStats — a normal pending item is counted", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-jstats-normal-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const qs = [{ header: "Q", populated: "P", thinking: "T", defense: "D", answer: "No" }];
+  await populateJudgeQueue(org, "f-jstats-normal", qs);
+  assertEquals((await getJudgeStats(org)).pending, 1, "a plain, visible appeal must be counted");
+}});
+
 // ─── dedup soft-hide path ──────────────────────────────────────────────────
 
 const DEDUP_ORG = "test-org" as OrgId;

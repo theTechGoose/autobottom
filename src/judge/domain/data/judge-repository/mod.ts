@@ -33,6 +33,20 @@ const ACTIVE_TTL = 30 * 60 * 1000;
 const BUFFER_SIZE = 5;
 const SKIP_APPEAL_TYPES = new Set(["different-recording", "additional-recording", "upload-recording"]);
 
+/** A pending row is servable to a judge only if its finding isn't hidden and its
+ *  appealType isn't an auto-skip type. getJudgeStats (the dashboard count) and
+ *  claimFromPending (the queue) MUST share this gate so "Appeals Pending" always
+ *  equals what the queue actually serves — otherwise the dashboard over-counts
+ *  rows the queue silently skips and the two views disagree. */
+function isServablePending(
+  item: { findingId: string; appealType?: string },
+  hidden: Set<string>,
+): boolean {
+  if (hidden.has(item.findingId)) return false;
+  if (item.appealType && SKIP_APPEAL_TYPES.has(item.appealType)) return false;
+  return true;
+}
+
 export interface JudgeItem {
   findingId: string;
   questionIndex: number;
@@ -307,17 +321,21 @@ export async function claimNextItem(
     const claimed: JudgeItem[] = [];
     const rows = await listStoredWithKeys<JudgeItem>("judge-pending", orgId);
     for (const { key, value } of rows) {
-      if (hidden.has(value.findingId)) continue;
-      if (value.appealType && SKIP_APPEAL_TYPES.has(value.appealType)) {
-        const skipFid = value.findingId;
-        const counterVal = (await getStored<number>("judge-audit-pending", orgId, skipFid)) ?? 1;
-        const newCount = counterVal - 1;
-        await deleteStored("judge-pending", orgId, ...key);
-        if (newCount <= 0) await deleteStored("judge-audit-pending", orgId, skipFid);
-        else await setStored("judge-audit-pending", orgId, [skipFid], newCount);
-        if (newCount <= 0) {
-          postJudgedAudit(orgId, skipFid, "system").catch((err) =>
-            console.error(`[JUDGE] ${skipFid}: ❌ SKIP completion failed:`, err));
+      if (!isServablePending(value, hidden)) {
+        // Not servable. Hidden → leave the row in place (it may be un-hidden
+        // later via restore). Skip-type → drain the row, decrement the audit
+        // counter, and auto-complete when this was the last question.
+        if (value.appealType && SKIP_APPEAL_TYPES.has(value.appealType)) {
+          const skipFid = value.findingId;
+          const counterVal = (await getStored<number>("judge-audit-pending", orgId, skipFid)) ?? 1;
+          const newCount = counterVal - 1;
+          await deleteStored("judge-pending", orgId, ...key);
+          if (newCount <= 0) await deleteStored("judge-audit-pending", orgId, skipFid);
+          else await setStored("judge-audit-pending", orgId, [skipFid], newCount);
+          if (newCount <= 0) {
+            postJudgedAudit(orgId, skipFid, "system").catch((err) =>
+              console.error(`[JUDGE] ${skipFid}: ❌ SKIP completion failed:`, err));
+          }
         }
         continue;
       }
@@ -489,9 +507,14 @@ export async function deleteAppeal(orgId: OrgId, fid: string): Promise<void> {
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; decided: number }> {
-  const pending = await listStoredWithKeys("judge-pending", orgId);
+  // Count only what the queue will actually serve — exclude hidden findings and
+  // auto-skip appeal types via the same gate claimFromPending uses. A raw row
+  // count over-reports because hidden rows linger in judge-pending forever.
+  const hidden = await getHiddenFindingIds(orgId);
+  const pendingRows = await listStoredWithKeys<JudgeItem>("judge-pending", orgId);
+  const pending = pendingRows.filter(({ value }) => isServablePending(value, hidden)).length;
   const decided = await listStoredWithKeys("judge-decided", orgId);
-  return { pending: pending.length, decided: decided.length };
+  return { pending, decided: decided.length };
 }
 
 // ── Dismiss / Clear ──────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
  *  acceptable given the per-judge concurrency profile and idempotent finalize. */
 
 import {
-  getStored, setStored, deleteStored, listStoredWithKeys,
+  getStored, setStored, deleteStored, listStoredWithKeys, listStoredWithKeysAll,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
@@ -707,40 +707,41 @@ export async function findDuplicates(
   // ensures re-runs are idempotent — already-flagged findings aren't re-
   // flagged.
   const hidden = await getHiddenFindingIds(orgId);
+  // Findings with an OPEN appeal (in the judge queue) must never be dedup-hidden:
+  // an appeal is a human-requested re-review. Treat them like already-hidden so
+  // they can be neither a loser nor a keeper that hides distinct siblings.
+  const appealedRows = await listStoredWithKeysAll<{ findingId?: string }>("judge-pending", orgId);
+  const appealed = new Set<string>();
+  for (const { value } of appealedRows) if (value?.findingId) appealed.add(value.findingId);
   const indexEntries = await queryAuditDoneIndex(orgId, since, until);
 
   type Entry = { id: string; recordKey: string; ts: number; reviewed: boolean };
   const inRange: Entry[] = [];
   const needFinding: typeof indexEntries = [];
 
+  // Group on the RECORDING (recordingId) — the only key unique per recording.
+  // recordId is too coarse for date-legs: it is the destination value, shared
+  // across many distinct recordings, so grouping on it falsely marks unrelated
+  // date-legs as duplicates and hides them. Fall back to recordId only when an
+  // entry has no recordingId (legacy rows), preserving prior behaviour there.
   for (const e of indexEntries) {
-    if (hidden.has(e.findingId)) continue;
-    if (e.recordId) {
-      inRange.push({
-        id: e.findingId,
-        recordKey: e.recordId,
-        ts: e.completedAt,
-        reviewed: e.reason === "reviewed",
-      });
+    if (hidden.has(e.findingId) || appealed.has(e.findingId)) continue;
+    const recordKey = e.recordingId ? String(e.recordingId) : (e.recordId ? String(e.recordId) : "");
+    if (recordKey) {
+      inRange.push({ id: e.findingId, recordKey, ts: e.completedAt, reviewed: e.reason === "reviewed" });
     } else {
       needFinding.push(e);
     }
   }
 
-  // Fallback for legacy index entries without recordId — fetch the finding.
-  // Resolve the key the same way every index writer now does (deriveQbRecordId)
-  // so dedup groups on the exact value record search uses.
+  // Fallback for entries with neither recordingId nor recordId — fetch the
+  // finding and resolve the recording (then QB record) key from the doc.
   const orphaned: typeof needFinding = [];
   for (const e of needFinding) {
     const finding = await getFinding(orgId, e.findingId);
-    const recordKey = deriveQbRecordId(finding) ?? String((finding as any)?.recordingId ?? "");
+    const recordKey = String((finding as any)?.recordingId ?? "") || deriveQbRecordId(finding) || "";
     if (!recordKey) { orphaned.push(e); continue; }
-    inRange.push({
-      id: e.findingId,
-      recordKey,
-      ts: e.completedAt,
-      reviewed: e.reason === "reviewed",
-    });
+    inRange.push({ id: e.findingId, recordKey, ts: e.completedAt, reviewed: e.reason === "reviewed" });
   }
 
   const groups = new Map<string, Entry[]>();

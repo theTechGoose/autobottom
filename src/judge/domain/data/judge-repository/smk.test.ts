@@ -243,6 +243,55 @@ Deno.test("dedup — orphaned entry (no resolvable recordId) is NOT marked a dup
   assertEquals(plan.toDelete.filter((d) => !d.keep).length, 0, "a lone orphan must never be a duplicate loser");
 });
 
+// ─── dedup groups by RECORDING, and never touches an appealed finding ──────
+// Root-cause fix for dedup soft-hiding real appeals: dedup must group on the
+// recording (recordingId, unique per recording), NOT the coarse recordId —
+// which for date-legs is the destination value shared by many distinct
+// recordings. And a finding with an OPEN appeal must never be a dedup loser.
+
+Deno.test("dedup — distinct recordings sharing a coarse recordId are NOT deduped", async () => {
+  reset();
+  const orgId = ("test-dedup-reckey-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const ts = 1_700_000_000_000;
+  // Two DIFFERENT recordings (vo-1, vo-2) that happen to share the same coarse
+  // recordId "dest-1" (e.g. two date-legs in one destination). NOT duplicates.
+  await writeAuditDoneIndex(orgId, { findingId: "fid-leg1", completedAt: ts, completed: true, score: 90, recordId: "dest-1", recordingId: "vo-1", reason: "reviewed" });
+  await writeAuditDoneIndex(orgId, { findingId: "fid-leg2", completedAt: ts + 1000, completed: true, score: 80, recordId: "dest-1", recordingId: "vo-2" });
+
+  const plan = await findDuplicates(orgId, ts - 1, ts + 2000);
+  assertEquals(plan.groups, 0, "different recordings must not group by the shared destination recordId");
+  assertEquals(plan.toDelete.filter((d) => !d.keep).length, 0, "no losers — these are distinct recordings");
+});
+
+Deno.test("dedup — two findings of the SAME recording ARE deduped", async () => {
+  reset();
+  const orgId = ("test-dedup-samerec-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const ts = 1_700_000_000_000;
+  // Same recording (vo-1) audited twice → a genuine duplicate. Keep the reviewed one.
+  await writeAuditDoneIndex(orgId, { findingId: "fid-keep", completedAt: ts, completed: true, score: 90, recordId: "dest-1", recordingId: "vo-1", reason: "reviewed" });
+  await writeAuditDoneIndex(orgId, { findingId: "fid-loser", completedAt: ts + 1000, completed: true, score: 80, recordId: "dest-1", recordingId: "vo-1" });
+
+  const plan = await findDuplicates(orgId, ts - 1, ts + 2000);
+  assertEquals(plan.groups, 1, "same recording must form one duplicate group");
+  const losers = plan.toDelete.filter((d) => !d.keep).map((d) => d.id);
+  assertEquals(losers, ["fid-loser"], "the non-reviewed copy is the loser");
+  assertEquals(plan.toDelete.find((d) => d.keep)?.id, "fid-keep", "the reviewed copy is kept");
+});
+
+Deno.test("dedup — a finding with an open appeal is never a duplicate loser", async () => {
+  reset();
+  const orgId = ("test-dedup-appeal-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const ts = 1_700_000_000_000;
+  // Genuine same-recording pair, but the second copy has an OPEN appeal.
+  await writeAuditDoneIndex(orgId, { findingId: "fid-keep", completedAt: ts, completed: true, score: 90, recordId: "dest-1", recordingId: "vo-1", reason: "reviewed" });
+  await writeAuditDoneIndex(orgId, { findingId: "fid-appealed", completedAt: ts + 1000, completed: true, score: 80, recordId: "dest-1", recordingId: "vo-1" });
+  await populateJudgeQueue(orgId, "fid-appealed", [{ header: "Q", populated: "P", thinking: "T", defense: "D", answer: "No" }], "redo");
+
+  const plan = await findDuplicates(orgId, ts - 1, ts + 2000);
+  const losers = plan.toDelete.filter((d) => !d.keep).map((d) => d.id);
+  assert(!losers.includes("fid-appealed"), "an appealed finding must never be hidden by dedup");
+});
+
 // ─── postJudgedAudit — audit-done-idx sync contract ────────────────────────
 // postJudgedAudit must write a fresh audit-done-idx entry whenever judges
 // have overturned at least one question. If a future change removes the

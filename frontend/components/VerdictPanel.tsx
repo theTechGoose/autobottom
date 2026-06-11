@@ -44,6 +44,12 @@ interface VerdictPanelProps {
   remaining: number;
   email: string;
   combo: number;
+  /** Judge-only global queue split, mirroring the dashboard's "Appeals Pending"
+   *  card: pendingQuestions = question-rows still to review, pendingAudits =
+   *  distinct appeals those rows belong to. When both are provided (judge mode),
+   *  the header reads "N / M questions / audits" instead of per-audit remaining. */
+  pendingQuestions?: number;
+  pendingAudits?: number;
   /** Map of questionIndex (string) → decision. When provided, the Failed Questions
    *  pill list shows a status dot per question and the counter reads decided/total. */
   decisions?: Record<string, "confirm" | "flip">;
@@ -98,7 +104,7 @@ function RecordDetails({ item, isPackage }: { item: ReviewItem; isPackage: boole
   );
 }
 
-export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, email, combo, decisions, allowedTypesCsv }: VerdictPanelProps) {
+export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, email, combo, decisions, allowedTypesCsv, pendingQuestions, pendingAudits }: VerdictPanelProps) {
   const isReview = mode === "review";
 
   if (!item) {
@@ -181,9 +187,17 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
         </div>
       )}
 
-      {/* Remaining + combo */}
+      {/* Remaining + combo. Judge mode shows the dashboard's global
+          "questions / audits" split when supplied; otherwise (review, or no
+          stats) falls back to per-audit remaining. */}
       <div class="verdict-header">
-        <span class="verdict-remaining">{auditRemaining} remaining</span>
+        {!isReview && pendingQuestions !== undefined && pendingAudits !== undefined ? (
+          <span class="verdict-remaining">
+            <span class="verdict-remaining-count">{pendingQuestions} / {pendingAudits}</span> questions / audits
+          </span>
+        ) : (
+          <span class="verdict-remaining">{auditRemaining} remaining</span>
+        )}
         {combo > 1 && <span class="verdict-combo">🔥 {combo}× combo</span>}
       </div>
 

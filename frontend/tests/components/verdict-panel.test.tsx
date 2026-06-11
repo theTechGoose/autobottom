@@ -50,6 +50,25 @@ Deno.test("VerdictPanel — remaining count displayed", () => {
   assertContains(html, "15 remaining");
 });
 
+// Judge mode with the dashboard stats supplied shows the global "questions /
+// audits" split instead of per-audit remaining (mirrors the Judge Dashboard's
+// "Appeals Pending" card).
+Deno.test("VerdictPanel — judge mode shows questions / audits split when stats supplied", () => {
+  const item = { ...MOCK_ITEM, auditRemaining: 1 };
+  const html = renderHTML(<VerdictPanel item={item} buffer={[item]} currentIndex={0} mode="judge" remaining={0} email="a@b.com" combo={0} pendingQuestions={14} pendingAudits={10} />);
+  assertContains(html, "14 / 10");
+  assertContains(html, "questions / audits");
+  assertNotContains(html, "1 remaining");
+});
+
+// Review mode ignores the stats props — it always shows per-audit remaining.
+Deno.test("VerdictPanel — review mode ignores questions/audits stats", () => {
+  const item = { ...MOCK_ITEM, auditRemaining: 7 };
+  const html = renderHTML(<VerdictPanel item={item} buffer={[item]} currentIndex={0} mode="review" remaining={0} email="a@b.com" combo={0} pendingQuestions={14} pendingAudits={10} />);
+  assertContains(html, "7 remaining");
+  assertNotContains(html, "questions / audits");
+});
+
 Deno.test("VerdictPanel — combo > 1 shows indicator", () => {
   const html = renderHTML(<VerdictPanel item={MOCK_ITEM} buffer={[MOCK_ITEM]} currentIndex={0} mode="review" remaining={5} email="a@b.com" combo={3} />);
   // Component renders combo with U+00D7 multiplication sign, not ASCII "x".

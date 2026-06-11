@@ -15,12 +15,17 @@ import BottomBar from "../../islands/BottomBar.tsx";
 import DecideEffects from "../../islands/DecideEffects.tsx";
 
 interface BufferResponse { buffer: ReviewItem[]; remaining: number; }
+interface JudgeStats { pending: number; pendingAudits: number; decided: number; }
 
 export default define.page(async function JudgeQueue(ctx) {
   const user = ctx.state.user!;
   let data: BufferResponse = { buffer: [], remaining: 0 };
+  let stats: JudgeStats = { pending: 0, pendingAudits: 0, decided: 0 };
   try {
-    data = await apiFetch<BufferResponse>(`/judge/api/next?judge=${encodeURIComponent(user.email)}`, ctx.req);
+    [data, stats] = await Promise.all([
+      apiFetch<BufferResponse>(`/judge/api/next?judge=${encodeURIComponent(user.email)}`, ctx.req),
+      apiFetch<JudgeStats>(`/judge/api/stats`, ctx.req),
+    ]);
   } catch (e) { console.error("Failed to load judge queue:", e); }
   const buffer = data.buffer ?? [];
   const currentIndex = 0;
@@ -42,6 +47,8 @@ export default define.page(async function JudgeQueue(ctx) {
             remaining={data.remaining}
             email={user.email}
             combo={0}
+            pendingQuestions={stats.pending}
+            pendingAudits={stats.pendingAudits}
           />
         </div>
         <div class="queue-right">

@@ -1,6 +1,6 @@
 /** HTMX handler — undo last judge decision, return queue fragment. */
 import { define } from "../../../lib/define.ts";
-import { apiPost, parseHtmxBody } from "../../../lib/api.ts";
+import { apiPost, apiFetch, parseHtmxBody } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { VerdictPanel } from "../../../components/VerdictPanel.tsx";
 import { TranscriptPanel } from "../../../components/TranscriptPanel.tsx";
@@ -13,6 +13,9 @@ export const handler = define.handlers({
       const result = await apiPost<{ buffer: ReviewItem[]; remaining: number }>(
         "/judge/api/back", ctx.req, body,
       );
+      const stats = await apiFetch<{ pending: number; pendingAudits: number; decided: number }>(
+        `/judge/api/stats`, ctx.req,
+      ).catch(() => ({ pending: 0, pendingAudits: 0, decided: 0 }));
       const buffer = result.buffer ?? [];
       const currentIndex = 0;
       const item = buffer[currentIndex] ?? null;
@@ -27,6 +30,8 @@ export const handler = define.handlers({
               remaining={result.remaining}
               email={String(body.judge ?? "")}
               combo={0}
+              pendingQuestions={stats.pending}
+              pendingAudits={stats.pendingAudits}
             />
           </div>
           <div class="queue-right">

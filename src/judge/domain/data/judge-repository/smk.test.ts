@@ -123,6 +123,38 @@ Deno.test({ name: "getJudgeStats — pendingAudits counts distinct appeals, pend
   assertEquals(s.pendingAudits, 2, "2 distinct appeals/audits pending");
 }});
 
+// Pins the listStoredWithKeysAll fix: getJudgeStats must page past the 1000-row
+// single-shot cap that plain listStoredWithKeys imposes. Every other stats test
+// uses tiny fixtures, so a regression to the capped scan would be invisible to
+// them. Seed 1001 rows (comfortably over the page boundary) on BOTH scanned
+// types — judge-pending and judge-decided — and assert the full count survives.
+// With the capped scan these would read ~1000; with listStoredWithKeysAll, 1001.
+Deno.test({ name: "getJudgeStats — pending + decided counts page past the 1000-row cap", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-jstats-page-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const OVER_CAP = 1001;
+
+  // 1001 distinct findings, one question each → 1001 pending rows AND 1001
+  // distinct appeals, so both `pending` and `pendingAudits` must read 1001.
+  for (let i = 0; i < OVER_CAP; i++) {
+    await populateJudgeQueue(org, "f-cap-" + i, [
+      { header: "Q", populated: "P", thinking: "T", defense: "D", answer: "No" },
+    ]);
+  }
+  // Seed judge-decided directly (recordJudgeDecision ×1001 would be needlessly
+  // slow) — getJudgeStats reads `decided` via the same paged scan.
+  for (let i = 0; i < OVER_CAP; i++) {
+    await setStored("judge-decided", org, ["f-dec-" + i, 0], {
+      findingId: "f-dec-" + i, questionIndex: 0, judge: "j@test.com", decidedAt: i,
+    });
+  }
+
+  const s = await getJudgeStats(org);
+  assertEquals(s.pending, OVER_CAP, "every pending row counts past the page cap");
+  assertEquals(s.pendingAudits, OVER_CAP, "every distinct appeal counts past the page cap");
+  assertEquals(s.decided, OVER_CAP, "every decided row counts past the page cap");
+}});
+
 // claimNextItem's two non-servable branches differ — pin them: skip-type rows
 // are DRAINED (deleted + counter decremented), hidden rows LINGER (untouched).
 

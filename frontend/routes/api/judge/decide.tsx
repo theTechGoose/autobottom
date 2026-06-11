@@ -13,9 +13,14 @@ export const handler = define.handlers({
       const decideResult = await apiPost<{ ok: boolean; remaining?: number; auditComplete?: boolean }>(
         "/judge/api/decide", ctx.req, body,
       );
-      const next = await apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
-        `/judge/api/next?judge=${encodeURIComponent(String(body.judge ?? ""))}`, ctx.req,
-      );
+      const [next, stats] = await Promise.all([
+        apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
+          `/judge/api/next?judge=${encodeURIComponent(String(body.judge ?? ""))}`, ctx.req,
+        ),
+        apiFetch<{ pending: number; pendingAudits: number; decided: number }>(
+          `/judge/api/stats`, ctx.req,
+        ).catch(() => ({ pending: 0, pendingAudits: 0, decided: 0 })),
+      ]);
       const buffer = next.buffer ?? [];
       const currentIndex = 0;
       const item = buffer[currentIndex] ?? null;
@@ -39,6 +44,8 @@ export const handler = define.handlers({
               remaining={next.remaining}
               email={String(body.judge ?? "")}
               combo={0}
+              pendingQuestions={stats.pending}
+              pendingAudits={stats.pendingAudits}
             />
           </div>
           <div class="queue-right">

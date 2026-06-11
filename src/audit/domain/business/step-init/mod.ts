@@ -1,6 +1,6 @@
 /** STEP 1: Initialize finding, fetch recording, save to S3. */
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
-import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
+import { trackActive, trackError } from "@audit/domain/data/stats-repository/mod.ts";
 import { getPipelineConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { enqueueStep } from "@core/data/qstash/mod.ts";
 import { downloadRecording } from "@audit/domain/data/genie/mod.ts";
@@ -81,7 +81,7 @@ export async function stepInit(req: Request): Promise<Response> {
 
     const results = await Promise.all(
       validIds.map(async (trimmed: string) => {
-        const bytes = await downloadRecording(Number(trimmed), findingId);
+        const bytes = await downloadRecording(Number(trimmed), findingId, orgId);
         if (!bytes) {
           console.warn(`[STEP-INIT] ${findingId}: No recording for genie ${trimmed}, skipping`);
           return null;
@@ -180,7 +180,7 @@ export async function stepInit(req: Request): Promise<Response> {
   }
 
   // Download recording from Genie
-  const bytes = await downloadRecording(Number(rid), findingId);
+  const bytes = await downloadRecording(Number(rid), findingId, orgId);
   if (!bytes) {
     const attempts = (finding.genieAttempts ?? 0) + 1;
     if (isRetryableGenie(rid) && attempts < MAX_GENIE_RETRIES) {
@@ -227,6 +227,10 @@ export async function stepInit(req: Request): Promise<Response> {
     console.log(`[STEP-INIT] ${findingId}: Pre-uploaded to AssemblyAI`);
   } catch (err) {
     console.warn(`[STEP-INIT] ${findingId}: AssemblyAI pre-upload failed (transcribe will retry):`, err);
+    // Surface to the daily canary report. Transcribe retries the upload, so the
+    // finding normally still finishes → tagged `recovered` → visible but
+    // non-paging. Never let tracking break the path.
+    trackError(orgId, findingId, "init:assemblyai-preupload", (err as Error).message ?? String(err)).catch(() => {});
   }
 
   // Enqueue transcription — carry recording fields so step-transcribe doesn't

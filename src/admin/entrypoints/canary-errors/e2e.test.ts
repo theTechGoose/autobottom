@@ -182,3 +182,55 @@ Deno.test({
     }
   },
 });
+
+// The caught-and-continue errors newly routed through trackError (Pinecone /
+// AssemblyAI pre-upload / genie per-role download / review finalize). The
+// degraded-but-completed class (audit still finishes) must surface for
+// visibility yet stay OUT of unrecoveredErrors so it never pages; a genie
+// download failure that leaves the finding stuck must count as unrecovered.
+Deno.test({
+  name: "handleCanaryErrors — degraded-but-recovered instrumentation doesn't page; stuck genie does",
+  sanitizeResources: false, sanitizeOps: false,
+  async fn() {
+    Deno.env.set("CANARY_SECRET", "top-secret");
+    try {
+      const { trackError, clearErrors } = await import("@audit/domain/data/stats-repository/mod.ts");
+      const { saveFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+      const { defaultOrgId } = await import("@core/business/auth/mod.ts");
+      const org = defaultOrgId() as never;
+      await clearErrors(org);
+
+      // Pinecone upload failed but the audit still finished (questions fell back
+      // to the raw transcript) → recovered, must not page.
+      const pineconeFid = "canary-pinecone-" + crypto.randomUUID().slice(0, 8);
+      // Every genie role died → the finding never got a recording → stuck.
+      const genieFid = "canary-genie-" + crypto.randomUUID().slice(0, 8);
+      await saveFinding(org, { id: pineconeFid, findingStatus: "finished" });
+      await saveFinding(org, { id: genieFid, findingStatus: "getting-recording" });
+      await trackError(org, pineconeFid, "ask-all:pinecone", "OpenAI embed timed out after 30s");
+      await new Promise((r) => setTimeout(r, 3)); // distinct ms so dedup keeps both
+      await trackError(org, genieFid, "genie:download:primary", "Dead URL — cascade. DEAD_URL: file is 5530 bytes");
+
+      const todayEt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const res = await handleCanaryErrors(new Request(`https://autobottom.thetechgoose.deno.net/canary/errors?date=${todayEt}`, {
+        method: "POST", headers: { Authorization: "Bearer top-secret" },
+      }));
+      assertEquals(res.status, 200);
+      const body = await res.json();
+
+      const pinecone = body.errors.find((x: { findingId: string }) => x.findingId === pineconeFid);
+      const genie = body.errors.find((x: { findingId: string }) => x.findingId === genieFid);
+      assert(pinecone, "pinecone error surfaced for visibility");
+      assertEquals(pinecone.step, "ask-all:pinecone", "step tag preserved");
+      assertEquals(pinecone.recovered, true, "finished audit → recovered, non-paging");
+      assert(!body.unrecoveredFindingIds.includes(pineconeFid), "degraded-but-recovered excluded from paging set");
+
+      assert(genie, "genie error surfaced");
+      assertEquals(genie.step, "genie:download:primary", "genie step tag preserved");
+      assertEquals(genie.recovered, false, "stuck finding → unrecovered");
+      assert(body.unrecoveredFindingIds.includes(genieFid), "stuck genie download pages");
+    } finally {
+      Deno.env.delete("CANARY_SECRET");
+    }
+  },
+});

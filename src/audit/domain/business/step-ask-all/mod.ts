@@ -1,6 +1,6 @@
 /** STEP 4 (alt): Answer ALL questions in a single Promise.all — no fan-out overhead. Like OmniSource's approach. */
 import { getFinding, getCachedAnswer, cacheAnswer, saveBatchAnswers, getPopulatedQuestions } from "@audit/domain/data/audit-repository/mod.ts";
-import { trackActive, terminateFinding } from "@audit/domain/data/stats-repository/mod.ts";
+import { trackActive, terminateFinding, trackError } from "@audit/domain/data/stats-repository/mod.ts";
 import { enqueueStep, publishStep } from "@core/data/qstash/mod.ts";
 import { upload as pineconeUpload } from "@audit/domain/data/pinecone/mod.ts";
 import { askQuestion, summarize } from "@audit/domain/data/groq/mod.ts";
@@ -229,6 +229,10 @@ export async function stepAskAll(req: Request): Promise<Response> {
       console.log(`[STEP-ASK-ALL] ${findingId}: ✅ Pinecone upload done in ${Date.now() - uploadStart}ms`);
     }).catch((err) => {
       console.error(`[STEP-ASK-ALL] ${findingId}: ⚠️ Pinecone upload failed (questions using raw transcript):`, err);
+      // Surface to the daily canary report. Graceful degradation (questions fall
+      // back to the raw transcript) so the finding still finishes → tagged
+      // `recovered` → visible but non-paging. Never let tracking break the path.
+      trackError(orgId, findingId, "ask-all:pinecone", (err as Error).message ?? String(err)).catch(() => {});
     });
   }
 

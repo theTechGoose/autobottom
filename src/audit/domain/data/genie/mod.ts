@@ -1,5 +1,6 @@
 /** Genie recording provider - fetches recording URLs and downloads audio. */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
+import { trackError } from "@audit/domain/data/stats-repository/mod.ts";
 
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -260,7 +261,12 @@ async function downloadWithRetry(
   throw new Error(`Genie download failed after ${maxAttempts} attempts. Last: ${String(lastError)}`);
 }
 
-async function tryStrategy(role: AccountRole, contract: number, tag: string): Promise<Uint8Array | null> {
+async function tryStrategy(
+  role: AccountRole,
+  contract: number,
+  tag: string,
+  ctx?: { orgId: string; findingId: string },
+): Promise<Uint8Array | null> {
   console.log(`[GENIE] 🚀 strategy: static-${role} contract=${contract} ${tag}`);
 
   // Fast path: sync search API
@@ -280,6 +286,10 @@ async function tryStrategy(role: AccountRole, contract: number, tag: string): Pr
     return await downloadWithRetry(src, role, contract, tag);
   } catch (err) {
     console.warn(`[GENIE] ❌ strategy failed: role=${role} contract=${contract} ${tag}`, err);
+    // Surface the per-role cascade to the daily canary report. If a later role
+    // recovers, the finding still finishes → tagged `recovered` → visible but
+    // non-paging; if every role dies, the finding never finishes → unrecovered.
+    if (ctx) trackError(ctx.orgId, ctx.findingId, `genie:download:${role}`, String(err)).catch(() => {});
     return null;
   }
 }
@@ -290,17 +300,20 @@ async function tryStrategy(role: AccountRole, contract: number, tag: string): Pr
  *  1. static-primary   — sync search, then async job fallback
  *  2. static-secondary — sync search, then async job fallback
  */
-export async function downloadRecording(genieId: number, findingId?: string): Promise<Uint8Array | null> {
+export async function downloadRecording(genieId: number, findingId?: string, orgId?: string): Promise<Uint8Array | null> {
   return await withSpan("genie.downloadRecording", async (span) => {
     span.setAttributes({
       "genie.contract": genieId,
       "finding.id": findingId ?? "",
     });
     const tag = findingId ?? String(genieId);
+    // Only thread tracking context when we have both ids — keeps callers that
+    // pass neither (e.g. ad-hoc tooling) unaffected.
+    const ctx = orgId && findingId ? { orgId, findingId } : undefined;
     console.log(`[GENIE] 🚀 download begin: contract=${genieId} ${tag}`);
 
     for (const role of ["primary", "secondary"] as AccountRole[]) {
-      const bytes = await tryStrategy(role, genieId, tag);
+      const bytes = await tryStrategy(role, genieId, tag, ctx);
       if (bytes) {
         span.setAttributes({ "genie.role_used": role, "genie.bytes": bytes.length });
         metric("autobottom.genie.downloads", 1, { outcome: "ok", role });

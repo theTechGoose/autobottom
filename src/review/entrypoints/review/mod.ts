@@ -8,6 +8,7 @@ import { GenericBodyRequest, ReviewDecideRequest, ReviewBackRequest } from "@cor
 import { recordDecision, finalizeReviewedAudit, getReviewStats, getReviewedFindingIds, clearReviewQueue, getFailedQuestionsForFinding, getDecisionsByFinding, discardReview, jumpToQuestion } from "@review/domain/business/review-queue/mod.ts";
 import { getMyReviewerStats } from "@review/domain/business/review-stats/mod.ts";
 import { getReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
+import { trackError } from "@audit/domain/data/stats-repository/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
@@ -97,6 +98,11 @@ export class ReviewController {
       return { ok: true, score: r.score, alreadyFinalized: r.alreadyFinalized ?? false };
     } catch (err) {
       console.error(`❌ [REVIEW] finalize failed for ${b.findingId}:`, err);
+      // This handler returns 200 {ok:false}, so the main.ts dispatcher never
+      // tracks it — record here so the daily canary report can see it. The
+      // finding re-queues when the pipeline finishes; if it does, it's tagged
+      // `recovered` (non-paging), otherwise it surfaces as unrecovered.
+      trackError(ORG(), b.findingId, "finalize", String(err)).catch(() => {});
       return { ok: false, error: String(err) };
     }
   }

@@ -29,7 +29,9 @@ function pillColor(score: number | null) {
 function scoreOf(item: QueueItem): number | null {
   if (item.totalQuestions == null || item.totalQuestions <= 0) return null;
   const failed = item.failedCount ?? 0;
-  return Math.round((1 - failed / item.totalQuestions) * 100);
+  // Clamp to [0,100] so a backend that ever reports failed > total (or a
+  // stray negative) can't render a -10% / 110% pill.
+  return Math.max(0, Math.min(100, Math.round((1 - failed / item.totalQuestions) * 100)));
 }
 
 /** Pure render of the queue table. Agent column = `owner`; Score = derived
@@ -43,11 +45,18 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
           <tr class="empty-row"><td colSpan={5}>No items in queue</td></tr>
         ) : items.map((item) => {
           const score = scoreOf(item);
+          // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
+          // instead of nesting a two-level ternary inside the <td>.
+          const scoreCell = score != null
+            ? <span class={`pill pill-${pillColor(score)}`}>{score}%</span>
+            : item.failedCount != null
+              ? <span class="pill pill-red">{item.failedCount} failed</span>
+              : "\u2014";
           return (
           <tr
             key={item.findingId}
             style="cursor:pointer;"
-            hx-get={`/api/manager/finding?findingId=${item.findingId}`}
+            hx-get={`/api/manager/finding?findingId=${encodeURIComponent(item.findingId)}`}
             hx-target="#finding-detail-content"
             hx-swap="innerHTML"
             hx-trigger="click"
@@ -55,14 +64,16 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
           >
             <td class="mono">{item.findingId?.slice(0, 8)}</td>
             <td>{item.owner ?? "\u2014"}</td>
-            <td>{score != null
-              ? <span class={`pill pill-${pillColor(score)}`}>{score}%</span>
-              : (item.failedCount != null ? <span class="pill pill-red">{item.failedCount} failed</span> : "\u2014")}</td>
+            <td>{scoreCell}</td>
             <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>
             <td {...{ "hx-on:click": "event.stopPropagation()" }}>
+              {/* Carry the id on a data-attribute (Preact attribute-escapes it)
+                  and read it via this.dataset \u2014 never inline it into the JS
+                  string, where a `'` would break out of the literal. */}
               <button
                 class="btn btn-ghost btn-sm"
-                {...{ "hx-on:click": `event.stopPropagation();document.getElementById('remediate-modal')?.classList.add('open');document.getElementById('rem-findingId').value='${item.findingId}'` }}
+                data-finding-id={item.findingId}
+                {...{ "hx-on:click": "event.stopPropagation();document.getElementById('remediate-modal')?.classList.add('open');document.getElementById('rem-findingId').value=this.dataset.findingId" }}
               >Remediate</button>
             </td>
           </tr>

@@ -21,6 +21,7 @@
  *  `_value`. The high-level setStored/getStored API hides this detail. */
 
 import { S3Ref } from "@core/data/s3/mod.ts";
+import { withTiming } from "@core/data/datadog-otel/mod.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const SEP = "__";
@@ -450,44 +451,14 @@ export function runInBackgroundLane<T>(fn: () => Promise<T>): Promise<T> {
   return _laneStorage.run("background", fn);
 }
 
-export interface TimingOpts {
-  /** Only log when the call meets/exceeds this many ms. Default 1000 — keeps
-   *  the happy path out of the logs and surfaces only the slow calls. */
-  thresholdMs?: number;
-  /** Perf category — drives the log tag so a single grep can slice by layer.
-   *  "fs" (default) keeps the legacy `[FS-PROFILE]` prefix that existing FS
-   *  call-sites + any external Datadog alert already match; anything else
-   *  logs `[PERF:<category>]` (e.g. "http" for endpoints, "db" for heavy
-   *  aggregation reads, "ext" for external-provider calls). */
-  category?: string;
-}
-
-/** Wrap an async function and log its duration if it exceeds a threshold.
- *  Originally for localizing slow FS queries; now the general performance
- *  timer — pass a `category` to tag the layer (http / db / ext / fs). Wrapping
- *  boundary functions lets prod logs tell us exactly which call is blowing
- *  Ns at any moment, instead of guessing from generic abort errors. */
-export async function withTiming<T>(
-  label: string,
-  fn: () => Promise<T>,
-  opts: TimingOpts = {},
-): Promise<T> {
-  const { thresholdMs = 1000, category = "fs" } = opts;
-  const start = Date.now();
-  let outcome: "ok" | "err" = "ok";
-  try {
-    return await fn();
-  } catch (err) {
-    outcome = "err";
-    throw err;
-  } finally {
-    const elapsed = Date.now() - start;
-    if (elapsed >= thresholdMs) {
-      const tag = category === "fs" ? "FS-PROFILE" : `PERF:${category}`;
-      console.log(`⏱️  [${tag}] ${label} took ${elapsed}ms (${outcome})`);
-    }
-  }
-}
+/** `withTiming` (the general perf timer) now lives in the observability module
+ *  alongside `withSpan`, so the OTel-dormant span fallback can delegate to it
+ *  without the firestore → s3 → datadog-otel import cycle. Imported here for
+ *  this module's own internal call sites AND re-exported so the many
+ *  `import { withTiming } from "@core/data/firestore"` consumers (repositories
+ *  + main.ts dispatch) keep working unchanged. */
+export { withTiming };
+export type { TimingOpts, PerfCategory } from "@core/data/datadog-otel/mod.ts";
 
 type SlotKind = "foreground" | "background" | "auth";
 

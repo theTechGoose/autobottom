@@ -34,8 +34,55 @@ import { AsyncLocalStorage } from "node:async_hooks";
 const SERVICE_NAME = "autobottom";
 const SCOPE_NAME = "autobottom";
 
-// Slow-span threshold (ms) for the OTel-dormant perf-log fallback in withSpan.
-const SPAN_PERF_THRESHOLD_MS = 1000;
+// ---------- Perf timing (withTiming) ----------
+//
+// Lives here, in the observability module, so the OTel-dormant span fallback
+// below can delegate to it without the firestore → s3 → datadog-otel import
+// cycle. firestore/mod.ts re-exports it so existing call sites are unchanged.
+
+/** The single slow-call threshold for every perf timer + the span fallback. */
+const DEFAULT_PERF_THRESHOLD_MS = 1000;
+
+/** Perf log layer. A closed union so a typo (`"htttp"`) is a compile error
+ *  rather than a silent `[PERF:htttp]` tag. "fs" keeps the legacy
+ *  `[FS-PROFILE]` prefix that existing call sites + Datadog alerts match. */
+export type PerfCategory = "fs" | "http" | "db" | "ext";
+
+export interface TimingOpts {
+  /** Only log when the call meets/exceeds this many ms. Default 1000 — keeps
+   *  the happy path out of the logs and surfaces only the slow calls. */
+  thresholdMs?: number;
+  /** Layer tag: "fs" → `[FS-PROFILE]`; everything else → `[PERF:<category>]`
+   *  ("http" for endpoints, "db" for heavy aggregation reads, "ext" for
+   *  external-provider / span-wrapped calls). Default "fs". */
+  category?: PerfCategory;
+}
+
+/** Wrap an async function and log its duration if it exceeds a threshold.
+ *  The general performance timer — pass a `category` to tag the layer. Wrapping
+ *  boundary functions lets prod logs tell us exactly which call is blowing Ns
+ *  at any moment, instead of guessing from generic abort errors. */
+export async function withTiming<T>(
+  label: string,
+  fn: () => Promise<T>,
+  opts: TimingOpts = {},
+): Promise<T> {
+  const { thresholdMs = DEFAULT_PERF_THRESHOLD_MS, category = "fs" } = opts;
+  const start = Date.now();
+  let outcome: "ok" | "err" = "ok";
+  try {
+    return await fn();
+  } catch (err) {
+    outcome = "err";
+    throw err;
+  } finally {
+    const elapsed = Date.now() - start;
+    if (elapsed >= thresholdMs) {
+      const tag = category === "fs" ? "FS-PROFILE" : `PERF:${category}`;
+      console.log(`⏱️  [${tag}] ${label} took ${elapsed}ms (${outcome})`);
+    }
+  }
+}
 
 // ---------- Types ----------
 
@@ -184,19 +231,11 @@ export async function withSpan<T>(
 ): Promise<T> {
   if (!_initialized) {
     // OTel is dormant (no DD_API_KEY / initOtel() commented out in main.ts),
-    // so spans aren't shipped. Still surface slow operations as a lightweight
-    // perf log — keeps timing visibility across every withSpan-wrapped call
-    // (groq / assemblyai / quickbase / pinecone / s3 / qstash / cron) without
-    // the OTLP exporter or per-call-site changes. Mirrors withTiming's format.
-    const start = Date.now();
-    try {
-      return await fn(NOOP_SPAN);
-    } finally {
-      const elapsed = Date.now() - start;
-      if (elapsed >= SPAN_PERF_THRESHOLD_MS) {
-        console.log(`⏱️  [PERF:ext] ${name} took ${elapsed}ms`);
-      }
-    }
+    // so spans aren't shipped. Delegate to withTiming so slow operations still
+    // surface as `[PERF:ext]` logs across every withSpan-wrapped call (groq /
+    // assemblyai / quickbase / pinecone / s3 / qstash / cron) — one timing
+    // implementation, threshold, and format, no per-call-site changes.
+    return withTiming(name, () => Promise.resolve(fn(NOOP_SPAN)), { category: "ext" });
   }
   const parent = _spanContext.getStore();
   const traceId = parent?.traceId ?? hex(16);

@@ -16,6 +16,7 @@ import {
   withSpan,
   withRequest,
   runStep,
+  withTiming,
   flushOtel,
   verifyDatadogIntake,
   type Span,
@@ -23,6 +24,15 @@ import {
 
 const DD_API_KEY = Deno.env.get("DD_API_KEY");
 const LIVE_MODE = !!DD_API_KEY;
+
+/** Run `fn` with console.log captured; returns the emitted lines. */
+async function captureLogs(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const orig = console.log;
+  console.log = (...a: unknown[]) => { lines.push(a.map(String).join(" ")); };
+  try { await fn(); } finally { console.log = orig; }
+  return lines;
+}
 
 // ── Live tests (require DD_API_KEY) ─────────────────────────────────────────
 
@@ -177,4 +187,62 @@ Deno.test("offline — console patching does not recurse", async () => {
     console.error("[SMK] offline console error test");
     return null;
   });
+});
+
+// ---------- withTiming (the general perf timer) ----------
+
+Deno.test("withTiming — returns the wrapped value", async () => {
+  assertEquals(await withTiming("x", async () => 42, { thresholdMs: 0 }), 42);
+});
+
+Deno.test("withTiming — fast calls stay below the default threshold (no log)", async () => {
+  const lines = await captureLogs(async () => { await withTiming("fast", async () => 1); });
+  assert(!lines.some((l) => l.includes("fast")), "an instant call must not log at the 1s default threshold");
+});
+
+Deno.test("withTiming — default category keeps the legacy [FS-PROFILE] prefix + real ms", async () => {
+  const lines = await captureLogs(async () => { await withTiming("getStats", async () => 1, { thresholdMs: 0 }); });
+  // Pin the elapsed value to an actual integer — a NaN/undefined regression
+  // would still contain "took" but fail this regex.
+  assert(lines.some((l) => l.includes("[FS-PROFILE] getStats") && /took \d+ms \(ok\)/.test(l)), lines.join("|"));
+});
+
+Deno.test("withTiming — non-fs categories log the [PERF:<category>] tag", async () => {
+  const lines = await captureLogs(async () => {
+    await withTiming("GET /admin", async () => 1, { thresholdMs: 0, category: "http" });
+    await withTiming("getJudgeStats", async () => 1, { thresholdMs: 0, category: "db" });
+    await withTiming("groq.askQuestion", async () => 1, { thresholdMs: 0, category: "ext" });
+  });
+  assert(lines.some((l) => l.includes("[PERF:http] GET /admin took")), lines.join("|"));
+  assert(lines.some((l) => l.includes("[PERF:db] getJudgeStats took")), lines.join("|"));
+  assert(lines.some((l) => l.includes("[PERF:ext] groq.askQuestion took")), lines.join("|"));
+});
+
+Deno.test("withTiming — re-throws and logs the (err) outcome", async () => {
+  let threw = false;
+  const lines = await captureLogs(async () => {
+    try { await withTiming("boom", async () => { throw new Error("nope"); }, { thresholdMs: 0, category: "db" }); }
+    catch { threw = true; }
+  });
+  assert(threw, "withTiming must propagate the error");
+  assert(lines.some((l) => l.includes("[PERF:db] boom took") && l.includes("(err)")), lines.join("|"));
+});
+
+// ---------- withSpan OTel-dormant fallback ----------
+// When OTel is uninitialized (no DD_API_KEY), withSpan delegates to withTiming
+// with category "ext" — so the single timing impl/threshold/format is reused.
+// These confirm the dormant delegation path executes; the [PERF:ext] format
+// itself is locked by the withTiming tests above. Gated off in LIVE_MODE where
+// initOtel() would activate spans instead of the fallback.
+
+Deno.test({ name: "withSpan (dormant) returns the fn result", ignore: LIVE_MODE }, async () => {
+  assert(!isOtelInitialized(), "test assumes OTel dormant");
+  assertEquals(await withSpan("ext.op", async () => 7), 7);
+});
+
+Deno.test({ name: "withSpan (dormant) propagates errors", ignore: LIVE_MODE }, async () => {
+  assert(!isOtelInitialized(), "test assumes OTel dormant");
+  let threw = false;
+  try { await withSpan("ext.boom", async () => { throw new Error("x"); }); } catch { threw = true; }
+  assert(threw, "withSpan must propagate the wrapped fn's error");
 });

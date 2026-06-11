@@ -355,3 +355,22 @@ Deno.test({ name: "isFindingRecovered — missing finding is not recovered (fail
   const ORG_M = "test-missing-" + crypto.randomUUID().slice(0, 8);
   assertEquals(await isFindingRecovered(ORG_M, "f-does-not-exist"), false);
 }});
+
+// getStats feeds the dashboard "Recent Errors (24h)" panel + the Errors stat
+// card. It must tag each error row `recovered` so a finished audit (e.g. an
+// ask-all:pinecone embed timeout that still delivered) isn't shown as a fault.
+Deno.test({ name: "getStats — tags errors recovered (finished) vs not (stuck)", ...kvOpts, fn: async () => {
+  const ORG_GS = "test-getstats-rec-" + crypto.randomUUID().slice(0, 8);
+  const okFid = "f-gs-ok-" + crypto.randomUUID().slice(0, 8);
+  const stuckFid = "f-gs-stuck-" + crypto.randomUUID().slice(0, 8);
+  await saveFinding(ORG_GS, { id: okFid, findingStatus: "finished" });
+  await saveFinding(ORG_GS, { id: stuckFid, findingStatus: "getting-recording" });
+  await trackError(ORG_GS, okFid, "ask-all:pinecone", "OpenAI embed timed out after 30s");
+  await trackError(ORG_GS, stuckFid, "init", "The signal has been aborted");
+  const stats = await getStats(ORG_GS);
+  const okRow = stats.errors.find((e) => (e as { findingId?: string }).findingId === okFid);
+  const stuckRow = stats.errors.find((e) => (e as { findingId?: string }).findingId === stuckFid);
+  assert(okRow && stuckRow, "both seeded errors present in getStats");
+  assertEquals((okRow as { recovered?: boolean }).recovered, true, "finished finding → recovered");
+  assertEquals((stuckRow as { recovered?: boolean }).recovered, false, "stuck finding → not recovered");
+}});

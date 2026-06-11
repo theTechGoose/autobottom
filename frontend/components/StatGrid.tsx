@@ -4,7 +4,7 @@
 import { StatCard } from "./StatCard.tsx";
 
 interface ActiveItem { step: string; }
-interface ErrorItem { step: string; }
+interface ErrorItem { step: string; recovered?: boolean; }
 
 export interface PipelineStatsShape {
   inPipe?: number;
@@ -26,6 +26,16 @@ export function StatGrid({ p }: { p: PipelineStatsShape }) {
   const steps: Record<string, number> = {};
   activeList.forEach(a => { steps[a.step] = (steps[a.step] ?? 0) + 1; });
 
+  // Split caught-and-continue "recovered" errors (audit still finished) from
+  // genuine faults so the red count reflects real problems, not non-fatal blips
+  // like an ask-all:pinecone embed timeout. See stats-repository.isFindingRecovered.
+  const genuineErrors = errorList.filter(e => !e.recovered).length;
+  const recoveredErrors = errorList.length - genuineErrors;
+  const errorValue = errorList.length ? genuineErrors : (p.errors24h ?? 0);
+  const errorSub = recoveredErrors
+    ? `${recoveredErrors} recovered`
+    : (errorValue ? `${errorValue} unique` : "Clean");
+
   return (
     <div class="stat-grid">
       <StatCard label="In Pipeline" value={p.inPipe ?? 0} color="yellow" />
@@ -40,7 +50,7 @@ export function StatGrid({ p }: { p: PipelineStatsShape }) {
         </div>
       </div>
       <StatCard label="Completed (24h)" value={completed} color="green" />
-      <StatCard label="Errors (24h)" value={p.errors24h ?? errorList.length} color="red" sub={errorList.length ? `${errorList.length} unique` : "Clean"} />
+      <StatCard label="Errors (24h)" value={errorValue} color="red" sub={errorSub} />
       <StatCard label="Retries (24h)" value={p.retries24h ?? 0} color="yellow" />
     </div>
   );

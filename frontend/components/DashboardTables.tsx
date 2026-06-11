@@ -7,7 +7,7 @@
 import { timeAgo } from "../lib/format.ts";
 
 export interface ActiveItem { findingId: string; recordId?: string; step: string; ts: number; isPackage?: boolean; startedAt?: number; }
-export interface ErrorItem { findingId: string; step: string; error: string; ts: number; }
+export interface ErrorItem { findingId: string; step: string; error: string; ts: number; recovered?: boolean; }
 export interface CompletedItem { findingId: string; recordId?: string; genies?: string; score?: number; completedAt: number; ts?: number; startedAt?: number; durationMs?: number; type?: string; isPackage?: boolean; }
 
 interface Props {
@@ -44,6 +44,13 @@ function logsUrl(findingId: string, logsBase?: string): string | null {
 }
 
 export function DashboardTables({ recent, active, errors, logsBase, paused }: Props) {
+  // "recovered" = a caught-and-continue error whose audit still finished (e.g.
+  // ask-all:pinecone embed timeout). Show genuine faults first, dim recovered
+  // ones, so a finished audit no longer reads as a failure. (tagged backend-side
+  // by stats-repository.isFindingRecovered)
+  const genuineCount = errors.filter(e => !e.recovered).length;
+  const recoveredCount = errors.length - genuineCount;
+  const sortedErrors = [...errors].sort((a, b) => Number(!!a.recovered) - Number(!!b.recovered) || b.ts - a.ts);
   return (
     <>
       {/* Active Audits — ALWAYS visible */}
@@ -126,7 +133,9 @@ export function DashboardTables({ recent, active, errors, logsBase, paused }: Pr
       {/* Recent Errors — ALWAYS visible */}
       <div class="tbl" style="margin-top:16px;">
         <div class="tbl-title" style="display:flex;align-items:center;justify-content:space-between;">
-          <span>Recent Errors (24h)</span>
+          <span>Recent Errors (24h){errors.length > 0 && (
+            <span style="font-weight:normal;color:var(--text-dim);font-size:11px;"> · {genuineCount} fault{genuineCount === 1 ? "" : "s"}{recoveredCount > 0 ? ` · ${recoveredCount} recovered` : ""}</span>
+          )}</span>
           <button class="sf-btn danger" hx-post="/api/admin/queue-action" hx-vals='{"action":"clear-errors"}' hx-swap="none" hx-confirm="Clear all errors?" style="font-size:9px;padding:3px 10px;">Clear Errors</button>
         </div>
         <table class="data-table">
@@ -134,17 +143,20 @@ export function DashboardTables({ recent, active, errors, logsBase, paused }: Pr
           <tbody>
             {errors.length === 0 ? (
               <tr class="empty-row"><td colSpan={5}>No errors</td></tr>
-            ) : errors.map((e) => {
+            ) : sortedErrors.map((e) => {
               const fid = e.findingId || "\u2014";
               const reportHref = fid !== "\u2014" ? `/audit/report?id=${encodeURIComponent(fid)}` : null;
               const logsHref = logsUrl(e.findingId, logsBase);
               return (
-                <tr key={e.findingId}>
+                <tr key={e.findingId} style={e.recovered ? "opacity:0.55;" : undefined}>
                   <td>{reportHref
                     ? <a href={reportHref} target="_blank" rel="noopener" class="tbl-link mono" style="font-size:10px;">{fid.slice(0, 12)}</a>
                     : <span class="mono">{fid.slice(0, 12)}</span>}</td>
                   <td>{logsHref ? <a href={logsHref} target="_blank" rel="noopener" class="tbl-link" style="font-size:10px;">logs</a> : "\u2014"}</td>
-                  <td><span class="step-badge">{e.step}</span></td>
+                  <td>
+                    <span class="step-badge">{e.step}</span>
+                    {e.recovered && <span class="pill pill-green" style="margin-left:6px;font-size:9px;" title="The audit still finished \u2014 non-fatal, recovered">recovered</span>}
+                  </td>
                   <td class="error-msg">{e.error}</td>
                   <td class="time-ago">{timeAgo(e.ts)}</td>
                 </tr>

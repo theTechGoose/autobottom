@@ -898,6 +898,22 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
     if (ts >= cutoff) errorsTs.push(ts);
   }
 
+  // Tag each error row `recovered` so the dashboard can tell a caught-and-continue
+  // blip whose audit still finished (e.g. ask-all:pinecone) apart from a genuine
+  // fault that left the finding stuck — same distinction the canary report makes.
+  // Only classify rows in the 24h window the dashboard shows, and dedup the
+  // getFinding by findingId (Map), so the cost is bounded by distinct recent
+  // errored findings — mirrors getErrorsInWindow's includeRecovery loop.
+  const recoveredById = new Map<string, boolean>();
+  for (const v of errors) {
+    const ts = Number(v?.ts ?? 0);
+    if (ts < cutoff) continue;
+    const fid = String(v?.findingId ?? "");
+    if (!fid) continue;
+    if (!recoveredById.has(fid)) recoveredById.set(fid, await isFindingRecovered(orgId, fid));
+    v.recovered = recoveredById.get(fid);
+  }
+
   const retriesRaw = await listStored<Record<string, unknown>>("retry-tracking", orgId);
   const retries = retriesRaw.filter((v) => !isHidden(v));
   const retriesTs: number[] = [];

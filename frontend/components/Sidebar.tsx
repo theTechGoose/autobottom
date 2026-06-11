@@ -129,6 +129,7 @@ const JUDGE_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
 ]}];
 
 const MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
+  { label: "Queue", icon: Icon.clipboardList, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager" },
   { label: "Audit History", icon: Icon.barChart, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/audits" },
 ]}];
 

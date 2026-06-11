@@ -15,7 +15,7 @@ interface MyStateResp {
 
 export default define.page(async function JudgeDashboard(ctx) {
   const user = ctx.state.user!;
-  let stats = { pending: 0, decided: 0 };
+  let stats = { pending: 0, pendingAudits: 0, decided: 0 };
   let leaderboard: LeaderboardEntry[] = [];
   let myState: MyStateResp = {};
   try { stats = await apiFetch<typeof stats>("/judge/api/dashboard", ctx.req); }
@@ -40,7 +40,7 @@ export default define.page(async function JudgeDashboard(ctx) {
 
       <div id="judge-stats" hx-get="/api/judge/stats" hx-trigger="every 10s" hx-swap="innerHTML">
         <div class="stat-grid">
-          <StatCard label="Appeals Pending" value={stats.pending} color="purple" />
+          <StatCard label="Appeals Pending" value={`${stats.pending} / ${stats.pendingAudits}`} sub="questions / audits" color="purple" />
           <StatCard label="Decided" value={stats.decided} color="green" />
           <StatCard label="Total" value={stats.pending + stats.decided} color="blue" />
         </div>

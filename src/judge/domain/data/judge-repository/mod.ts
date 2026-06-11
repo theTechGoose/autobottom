@@ -513,7 +513,7 @@ export async function deleteAppeal(orgId: OrgId, fid: string): Promise<void> {
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 
-export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; decided: number }> {
+export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; pendingAudits: number; decided: number }> {
   // Count only what the queue will actually serve — exclude hidden findings and
   // auto-skip appeal types via the same gate claimFromPending uses. A raw row
   // count over-reports because hidden rows linger in judge-pending forever.
@@ -521,9 +521,14 @@ export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; de
   // Paged (uncapped) scans — plain listStoredWithKeys caps at 1000 rows, which
   // would silently under-count once judge-pending/decided exceed a page.
   const pendingRows = await listStoredWithKeysAll<JudgeItem>("judge-pending", orgId);
-  const pending = pendingRows.filter(({ value }) => isServablePending(value, hidden)).length;
+  const servable = pendingRows.filter(({ value }) => isServablePending(value, hidden));
+  // `pending` = question-rows still to review; `pendingAudits` = the distinct
+  // appeals (findings) those rows belong to — so the dashboard can read
+  // "N questions across M audits".
+  const pending = servable.length;
+  const pendingAudits = new Set(servable.map(({ value }) => value.findingId)).size;
   const decided = await listStoredWithKeysAll("judge-decided", orgId);
-  return { pending, decided: decided.length };
+  return { pending, pendingAudits, decided: decided.length };
 }
 
 // ── Dismiss / Clear ──────────────────────────────────────────────────────────

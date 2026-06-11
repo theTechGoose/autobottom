@@ -88,7 +88,7 @@ export class ReviewerConfigResponse { allowedTypes: string[] = []; }
 
 // ── Judge ────────────────────────────────────────────────────────────────────
 
-export class JudgeStatsResponse { pending = 0; decided = 0; }
+export class JudgeStatsResponse { pending = 0; pendingAudits = 0; decided = 0; }
 export class DismissResponse { dismissed = 0; }
 export class ReviewerListResponse { reviewers: unknown[] = []; }
 

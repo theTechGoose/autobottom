@@ -4,17 +4,18 @@ import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { StatCard } from "../../../components/StatCard.tsx";
 
-interface JudgeStats { pending?: number; decided?: number; }
+interface JudgeStats { pending?: number; pendingAudits?: number; decided?: number; }
 
 export const handler = define.handlers({
   async GET(ctx) {
     try {
       const stats = await apiFetch<JudgeStats>("/judge/api/dashboard", ctx.req);
       const pending = stats.pending ?? 0;
+      const pendingAudits = stats.pendingAudits ?? 0;
       const decided = stats.decided ?? 0;
       const html = renderToString(
         <div class="stat-grid">
-          <StatCard label="Appeals Pending" value={pending} color="purple" />
+          <StatCard label="Appeals Pending" value={`${pending} / ${pendingAudits}`} sub="questions / audits" color="purple" />
           <StatCard label="Decided" value={decided} color="green" />
           <StatCard label="Total" value={pending + decided} color="blue" />
         </div>,

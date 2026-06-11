@@ -69,7 +69,7 @@ export class JudgeController {
   async stats() {
     try { return await getJudgeStats(ORG()); }
     catch (err) {
-      return softFail("stats", err, { pending: 0, decided: 0, pendingAuditCount: 0 } as any);
+      return softFail("stats", err, { pending: 0, pendingAudits: 0, decided: 0 } as any);
     }
   }
 
@@ -157,7 +157,7 @@ export class JudgeController {
   async dashboardData() {
     try { return await getJudgeStats(ORG()); }
     catch (err) {
-      return softFail("dashboardData", err, { pending: 0, decided: 0, pendingAuditCount: 0 } as any);
+      return softFail("dashboardData", err, { pending: 0, pendingAudits: 0, decided: 0 } as any);
     }
   }
 

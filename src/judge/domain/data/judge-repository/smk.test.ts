@@ -108,6 +108,21 @@ Deno.test({ name: "getJudgeStats — a normal pending item is counted", ...kvOpt
   assertEquals((await getJudgeStats(org)).pending, 1, "a plain, visible appeal must be counted");
 }});
 
+Deno.test({ name: "getJudgeStats — pendingAudits counts distinct appeals, pending counts questions", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-jstats-audits-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  await populateJudgeQueue(org, "f-audit-A", [
+    { header: "Q1", populated: "P", thinking: "T", defense: "D", answer: "No" },
+    { header: "Q2", populated: "P", thinking: "T", defense: "D", answer: "No" },
+  ]);
+  await populateJudgeQueue(org, "f-audit-B", [
+    { header: "Q1", populated: "P", thinking: "T", defense: "D", answer: "No" },
+  ]);
+  const s = await getJudgeStats(org);
+  assertEquals(s.pending, 3, "3 question-rows pending across both audits");
+  assertEquals(s.pendingAudits, 2, "2 distinct appeals/audits pending");
+}});
+
 // claimNextItem's two non-servable branches differ — pin them: skip-type rows
 // are DRAINED (deleted + counter decremented), hidden rows LINGER (untouched).
 

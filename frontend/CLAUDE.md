@@ -246,7 +246,7 @@ If your backend endpoint needs to behave as the impersonated user (e.g. apply th
 | Review Dashboard | `/review/dashboard` | Done — stats |
 | Judge Queue | `/judge` | Done — split panel, overturn reasons |
 | Judge Dashboard | `/judge/dashboard` | Done — stats |
-| Manager | `/manager` | Done — queue, agents, remediate |
+| Manager Portal | `/manager` | Done — auto-refreshing stat strip + remediation queue + finding-detail / remediate modals (pre-rendered inline so HTMX can toggle them). **Deferred** (handlers exist under `routes/api/manager/`, no UI yet): agent mgmt (`add-agent`/`delete-agent`), backfill, notif settings. |
 | Manager Audit History | `/manager/audits` | Done — date/agent/dept/shift/score/reviewed filters, paginated table, scoped to the manager's team (admins see all) |
 | Agent Dashboard | `/agent` | Done — stats, trend, audit history |
 | Chat | `/chat` | Done — conversations, thread, send |

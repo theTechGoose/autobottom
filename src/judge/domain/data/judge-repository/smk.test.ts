@@ -11,6 +11,7 @@ import {
   populateJudgeQueue,
   recordJudgeDecision,
   getJudgeStats,
+  claimNextItem,
   dismissFindingFromJudgeQueue,
   findDuplicates,
   deleteDuplicates,
@@ -105,6 +106,36 @@ Deno.test({ name: "getJudgeStats — a normal pending item is counted", ...kvOpt
   const qs = [{ header: "Q", populated: "P", thinking: "T", defense: "D", answer: "No" }];
   await populateJudgeQueue(org, "f-jstats-normal", qs);
   assertEquals((await getJudgeStats(org)).pending, 1, "a plain, visible appeal must be counted");
+}});
+
+// claimNextItem's two non-servable branches differ — pin them: skip-type rows
+// are DRAINED (deleted + counter decremented), hidden rows LINGER (untouched).
+
+Deno.test({ name: "claimNextItem — auto-skip rows are drained and the audit counter cleared", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-claim-skip-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "f-claim-skip";
+  await populateJudgeQueue(org, fid, [
+    { header: "Q1", populated: "P", thinking: "T", defense: "D", answer: "No" },
+    { header: "Q2", populated: "P", thinking: "T", defense: "D", answer: "No" },
+  ], "different-recording");
+  const { buffer } = await claimNextItem(org, "judge@test.com");
+  assertEquals(buffer.length, 0, "auto-skip rows are never served to a judge");
+  assertEquals((await getJudgeStats(org)).pending, 0, "drained rows leave judge-pending");
+  assertEquals(await getStored("judge-audit-pending", org, fid), null, "audit counter cleared once it drains to zero");
+}});
+
+Deno.test({ name: "claimNextItem — hidden rows are left in place, not drained", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-claim-hidden-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "f-claim-hidden";
+  await populateJudgeQueue(org, fid, [{ header: "Q", populated: "P", thinking: "T", defense: "D", answer: "No" }]);
+  await markFindingHidden(org, fid, "dedup");
+  _resetHiddenCacheForTesting();
+  const { buffer } = await claimNextItem(org, "judge@test.com");
+  assertEquals(buffer.length, 0, "hidden rows are not served");
+  assertEquals(await getStored("judge-audit-pending", org, fid), 1, "hidden row lingers — its counter is untouched (NOT drained)");
+  assertEquals((await getJudgeStats(org)).pending, 0, "and it stays excluded from the count");
 }});
 
 // ─── dedup soft-hide path ──────────────────────────────────────────────────
@@ -290,6 +321,20 @@ Deno.test("dedup — a finding with an open appeal is never a duplicate loser", 
   const plan = await findDuplicates(orgId, ts - 1, ts + 2000);
   const losers = plan.toDelete.filter((d) => !d.keep).map((d) => d.id);
   assert(!losers.includes("fid-appealed"), "an appealed finding must never be hidden by dedup");
+});
+
+Deno.test("dedup — legacy rows with a recordId but NO recordingId still group by recordId", async () => {
+  // Pins the documented fallback: pre-recordingId index rows keep the prior
+  // coarse-recordId grouping (the known limitation called out in findDuplicates).
+  reset();
+  const orgId = ("test-dedup-legacy-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const ts = 1_700_000_000_000;
+  await writeAuditDoneIndex(orgId, { findingId: "fid-l1", completedAt: ts, completed: true, score: 90, recordId: "rk-legacy", reason: "reviewed" });
+  await writeAuditDoneIndex(orgId, { findingId: "fid-l2", completedAt: ts + 1000, completed: true, score: 80, recordId: "rk-legacy" });
+
+  const plan = await findDuplicates(orgId, ts - 1, ts + 2000);
+  assertEquals(plan.groups, 1, "legacy recordId-only rows still group by recordId (prior behaviour preserved)");
+  assertEquals(plan.toDelete.filter((d) => !d.keep).map((d) => d.id), ["fid-l2"], "the newer, non-reviewed legacy row is the loser");
 });
 
 // ─── postJudgedAudit — audit-done-idx sync contract ────────────────────────

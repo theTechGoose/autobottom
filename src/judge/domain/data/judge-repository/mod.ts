@@ -33,6 +33,13 @@ const ACTIVE_TTL = 30 * 60 * 1000;
 const BUFFER_SIZE = 5;
 const SKIP_APPEAL_TYPES = new Set(["different-recording", "additional-recording", "upload-recording"]);
 
+/** An auto-skip appeal type — the queue drains these without judge review. The
+ *  single source of truth for the skip-set membership check, shared by
+ *  isServablePending and claimFromPending so they can't drift. */
+function isSkipType(item: { appealType?: string }): boolean {
+  return !!item.appealType && SKIP_APPEAL_TYPES.has(item.appealType);
+}
+
 /** A pending row is servable to a judge only if its finding isn't hidden and its
  *  appealType isn't an auto-skip type. getJudgeStats (the dashboard count) and
  *  claimFromPending (the queue) MUST share this gate so "Appeals Pending" always
@@ -43,7 +50,7 @@ function isServablePending(
   hidden: Set<string>,
 ): boolean {
   if (hidden.has(item.findingId)) return false;
-  if (item.appealType && SKIP_APPEAL_TYPES.has(item.appealType)) return false;
+  if (isSkipType(item)) return false;
   return true;
 }
 
@@ -325,7 +332,7 @@ export async function claimNextItem(
         // Not servable. Hidden → leave the row in place (it may be un-hidden
         // later via restore). Skip-type → drain the row, decrement the audit
         // counter, and auto-complete when this was the last question.
-        if (value.appealType && SKIP_APPEAL_TYPES.has(value.appealType)) {
+        if (isSkipType(value)) {
           const skipFid = value.findingId;
           const counterVal = (await getStored<number>("judge-audit-pending", orgId, skipFid)) ?? 1;
           const newCount = counterVal - 1;
@@ -511,9 +518,11 @@ export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; de
   // auto-skip appeal types via the same gate claimFromPending uses. A raw row
   // count over-reports because hidden rows linger in judge-pending forever.
   const hidden = await getHiddenFindingIds(orgId);
-  const pendingRows = await listStoredWithKeys<JudgeItem>("judge-pending", orgId);
+  // Paged (uncapped) scans — plain listStoredWithKeys caps at 1000 rows, which
+  // would silently under-count once judge-pending/decided exceed a page.
+  const pendingRows = await listStoredWithKeysAll<JudgeItem>("judge-pending", orgId);
   const pending = pendingRows.filter(({ value }) => isServablePending(value, hidden)).length;
-  const decided = await listStoredWithKeys("judge-decided", orgId);
+  const decided = await listStoredWithKeysAll("judge-decided", orgId);
   return { pending, decided: decided.length };
 }
 
@@ -724,6 +733,12 @@ export async function findDuplicates(
   // across many distinct recordings, so grouping on it falsely marks unrelated
   // date-legs as duplicates and hides them. Fall back to recordId only when an
   // entry has no recordingId (legacy rows), preserving prior behaviour there.
+  //
+  // KNOWN LIMITATION: a legacy index row with a recordId but no recordingId
+  // still groups by the coarse recordId, so the original date-leg collision can
+  // recur for those rows. Accepted on purpose — recovering the true recordingId
+  // would cost a getFinding per legacy row, and new rows always carry
+  // recordingId. The legacy-grouping behaviour is pinned by a test below.
   for (const e of indexEntries) {
     if (hidden.has(e.findingId) || appealed.has(e.findingId)) continue;
     const recordKey = e.recordingId ? String(e.recordingId) : (e.recordId ? String(e.recordId) : "");

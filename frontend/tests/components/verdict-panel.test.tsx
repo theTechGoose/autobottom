@@ -61,6 +61,23 @@ Deno.test("VerdictPanel — judge mode shows questions / audits split when stats
   assertNotContains(html, "1 remaining");
 });
 
+// The header guard is `pendingQuestions !== undefined && pendingAudits !== undefined`
+// (an AND). Supplying only one — e.g. a stats outage that nulled one field, or a
+// regression that weakened the && to a || — must fall back to per-audit remaining.
+Deno.test("VerdictPanel — judge mode with only pendingQuestions falls back to remaining", () => {
+  const item = { ...MOCK_ITEM, auditRemaining: 1 };
+  const html = renderHTML(<VerdictPanel item={item} buffer={[item]} currentIndex={0} mode="judge" remaining={0} email="a@b.com" combo={0} pendingQuestions={14} />);
+  assertContains(html, "1 remaining");
+  assertNotContains(html, "questions / audits");
+});
+
+Deno.test("VerdictPanel — judge mode with only pendingAudits falls back to remaining", () => {
+  const item = { ...MOCK_ITEM, auditRemaining: 1 };
+  const html = renderHTML(<VerdictPanel item={item} buffer={[item]} currentIndex={0} mode="judge" remaining={0} email="a@b.com" combo={0} pendingAudits={10} />);
+  assertContains(html, "1 remaining");
+  assertNotContains(html, "questions / audits");
+});
+
 // Review mode ignores the stats props — it always shows per-audit remaining.
 Deno.test("VerdictPanel — review mode ignores questions/audits stats", () => {
   const item = { ...MOCK_ITEM, auditRemaining: 7 };

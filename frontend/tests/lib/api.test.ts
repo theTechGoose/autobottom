@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { mockFetch } from "../helpers/mock-fetch.ts";
-import { apiFetch, apiPost, ApiError } from "../../lib/api.ts";
+import { apiFetch, apiPost, ApiError, fetchJudgeStats } from "../../lib/api.ts";
 
 const REQ = new Request("http://localhost/test", { headers: { cookie: "session=abc123" } });
 const REQ_NO_COOKIE = new Request("http://localhost/test");
@@ -63,6 +63,29 @@ Deno.test("apiFetch returns parsed JSON on success", async () => {
   try {
     const result = await apiFetch<{ count: number }>("/data", REQ);
     assertEquals(result.count, 42);
+  } finally { mock.restore(); }
+});
+
+Deno.test("fetchJudgeStats returns parsed stats on success", async () => {
+  const mock = mockFetch({ "/judge/api/stats": { body: { pending: 14, pendingAudits: 10, decided: 244 } } });
+  try {
+    const stats = await fetchJudgeStats(REQ);
+    assertEquals(stats.pending, 14);
+    assertEquals(stats.pendingAudits, 10);
+    assertEquals(stats.decided, 244);
+  } finally { mock.restore(); }
+});
+
+// Pins the degraded path: a stats-endpoint failure must resolve (never reject)
+// to undefined questions/audits so the verdict panel falls back to per-audit
+// remaining instead of rendering a misleading "0 / 0".
+Deno.test("fetchJudgeStats resolves to undefined-fields default on failure", async () => {
+  const mock = mockFetch({ "/judge/api/stats": { status: 500, body: { error: "boom" } } });
+  try {
+    const stats = await fetchJudgeStats(REQ);
+    assertEquals(stats.pending, undefined);
+    assertEquals(stats.pendingAudits, undefined);
+    assertEquals(stats.decided, 0);
   } finally { mock.restore(); }
 });
 

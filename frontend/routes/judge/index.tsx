@@ -4,7 +4,8 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { VerdictPanel } from "../../components/VerdictPanel.tsx";
 import { TranscriptPanel } from "../../components/TranscriptPanel.tsx";
-import { apiFetch } from "../../lib/api.ts";
+import { apiFetch, fetchJudgeStats } from "../../lib/api.ts";
+import type { JudgeStats } from "../../lib/api.ts";
 import type { ReviewItem } from "../../components/VerdictPanel.tsx";
 import HotkeyHandler from "../../islands/HotkeyHandler.tsx";
 import SoundEngine from "../../islands/SoundEngine.tsx";
@@ -15,16 +16,17 @@ import BottomBar from "../../islands/BottomBar.tsx";
 import DecideEffects from "../../islands/DecideEffects.tsx";
 
 interface BufferResponse { buffer: ReviewItem[]; remaining: number; }
-interface JudgeStats { pending: number; pendingAudits: number; decided: number; }
 
 export default define.page(async function JudgeQueue(ctx) {
   const user = ctx.state.user!;
   let data: BufferResponse = { buffer: [], remaining: 0 };
-  let stats: JudgeStats = { pending: 0, pendingAudits: 0, decided: 0 };
+  // fetchJudgeStats never rejects, so a stats outage can't tank the Promise.all
+  // and blank the queue — only a /next failure falls to the catch (empty queue).
+  let stats: JudgeStats = { decided: 0 };
   try {
     [data, stats] = await Promise.all([
       apiFetch<BufferResponse>(`/judge/api/next?judge=${encodeURIComponent(user.email)}`, ctx.req),
-      apiFetch<JudgeStats>(`/judge/api/stats`, ctx.req),
+      fetchJudgeStats(ctx.req),
     ]);
   } catch (e) { console.error("Failed to load judge queue:", e); }
   const buffer = data.buffer ?? [];

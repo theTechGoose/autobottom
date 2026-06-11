@@ -42,6 +42,22 @@ export async function apiPost<T = unknown>(
   });
 }
 
+/** Judge queue stats, mirroring backend GET /judge/api/stats. On the queue
+ *  pages `pending`/`pendingAudits` may be undefined (a stats outage) so the
+ *  verdict panel can fall back to per-audit "N remaining" instead of rendering
+ *  a misleading "0 / 0". `decided` defaults to 0. */
+export interface JudgeStats { pending?: number; pendingAudits?: number; decided: number; }
+
+/** Fetch judge stats, never rejecting — on any failure it resolves to the
+ *  undefined-fields default so callers (the queue page + decide/back/dismiss
+ *  handlers) keep rendering the queue. Centralizes the shape + fallback that
+ *  was previously copy-pasted across four render sites; threading it through a
+ *  Promise.all is safe because it can't reject and tank a sibling fetch. */
+export async function fetchJudgeStats(req: Request): Promise<JudgeStats> {
+  return await apiFetch<JudgeStats>("/judge/api/stats", req)
+    .catch(() => ({ pending: undefined, pendingAudits: undefined, decided: 0 }));
+}
+
 export class ApiError extends Error {
   status: number;
   path: string;

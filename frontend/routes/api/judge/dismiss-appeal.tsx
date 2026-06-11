@@ -1,7 +1,7 @@
 /** HTMX handler — dismiss an appeal (judge-only) then return the next queue
  *  fragment. Thin proxy to backend /judge/api/dismiss-appeal. */
 import { define } from "../../../lib/define.ts";
-import { apiPost, apiFetch, parseHtmxBody } from "../../../lib/api.ts";
+import { apiPost, apiFetch, parseHtmxBody, fetchJudgeStats } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { VerdictPanel } from "../../../components/VerdictPanel.tsx";
 import { TranscriptPanel } from "../../../components/TranscriptPanel.tsx";
@@ -23,9 +23,7 @@ export const handler = define.handlers({
         apiFetch<{ buffer: ReviewItem[]; remaining: number }>(
           `/judge/api/next?judge=${encodeURIComponent(String(body.judge ?? ""))}`, ctx.req,
         ),
-        apiFetch<{ pending: number; pendingAudits: number; decided: number }>(
-          `/judge/api/stats`, ctx.req,
-        ).catch(() => ({ pending: 0, pendingAudits: 0, decided: 0 })),
+        fetchJudgeStats(ctx.req),
       ]);
       const buffer = next.buffer ?? [];
       const item = buffer[0] ?? null;

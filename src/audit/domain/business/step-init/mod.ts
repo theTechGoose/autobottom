@@ -230,7 +230,7 @@ export async function stepInit(req: Request): Promise<Response> {
     // Surface to the daily canary report. Transcribe retries the upload, so the
     // finding normally still finishes → tagged `recovered` → visible but
     // non-paging. Never let tracking break the path.
-    trackError(orgId, findingId, "init:assemblyai-preupload", (err as Error).message ?? String(err)).catch(() => {});
+    trackError(orgId, findingId, "init:assemblyai-preupload", String(err)).catch(() => {});
   }
 
   // Enqueue transcription — carry recording fields so step-transcribe doesn't

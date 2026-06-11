@@ -232,7 +232,7 @@ export async function stepAskAll(req: Request): Promise<Response> {
       // Surface to the daily canary report. Graceful degradation (questions fall
       // back to the raw transcript) so the finding still finishes → tagged
       // `recovered` → visible but non-paging. Never let tracking break the path.
-      trackError(orgId, findingId, "ask-all:pinecone", (err as Error).message ?? String(err)).catch(() => {});
+      trackError(orgId, findingId, "ask-all:pinecone", String(err)).catch(() => {});
     });
   }
 

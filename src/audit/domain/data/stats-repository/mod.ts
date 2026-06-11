@@ -221,8 +221,29 @@ const ERROR_RETENTION_MS = 8 * DAY_MS;
 
 export interface ErrorRecord { findingId: string; step: string; error: string; ts: number; recovered?: boolean; }
 
+/** Scrub secrets from an error string before it lands in the canary store.
+ *  That store is persisted (8-day TTL) and broadly readable (CANARY_SECRET-gated)
+ *  and re-emitted verbatim by /canary/errors — but Deno `fetch` failures read
+ *  `error sending request for url (https://…?token=…)`, so a signed/temporary
+ *  recording URL can ride along. Strip URL query strings and bearer/JWT-ish
+ *  tokens. Full detail still goes to the console.* lines; only the persisted
+ *  copy is redacted. Centralized here so every trackError caller is covered. */
+export function redactErrorMessage(msg: string): string {
+  return msg
+    .replace(/(https?:\/\/[^\s?#)]+)\?[^\s#)]*/g, "$1?<redacted>")
+    .replace(/\b(bearer\s+)[A-Za-z0-9._\-]+/gi, "$1<redacted>")
+    .replace(/\beyJ[A-Za-z0-9._\-]{10,}/g, "<redacted-jwt>");
+}
+
 export async function trackError(orgId: OrgId, findingId: string, step: string, error: string): Promise<void> {
-  await setStored("error-tracking", orgId, [`${Date.now()}-${findingId}`], { findingId, step, error, ts: Date.now() }, { expireInMs: ERROR_RETENTION_MS });
+  // Key on ts + finding + step so two distinct same-finding failures (e.g. genie
+  // primary vs secondary) that land in the same millisecond don't overwrite each
+  // other. The read path (canary-errors) dedups on the matching identity tuple.
+  await setStored(
+    "error-tracking", orgId, [`${Date.now()}-${findingId}-${step}`],
+    { findingId, step, error: redactErrorMessage(error), ts: Date.now() },
+    { expireInMs: ERROR_RETENTION_MS },
+  );
 }
 
 /** True if a finding that recorded an error ultimately reached a terminal,

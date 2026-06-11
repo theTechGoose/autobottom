@@ -7,7 +7,7 @@ import {
   saveChargebackEntry, getChargebackEntry, getChargebackEntries, deleteChargebackEntry,
   saveWireDeductionEntry, getWireDeductionEntry, getWireDeductionEntries, deleteWireDeductionEntry,
   getStats, terminateFinding, terminateAllActive,
-  getErrorsInWindow, isFindingRecovered,
+  getErrorsInWindow, isFindingRecovered, redactErrorMessage,
   deriveQbRecordId, inspectRecordIndex, repairRecordIndexForFinding, restoreHiddenFinding,
   markFindingHidden, getHiddenFindingIds, _resetHiddenCacheForTesting,
 } from "./mod.ts";
@@ -16,6 +16,31 @@ import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
 const ORG = "test-org-" + crypto.randomUUID().slice(0, 8);
+
+Deno.test("redactErrorMessage — strips signed-URL query strings and tokens", () => {
+  // The realistic genie/AssemblyAI case: a Deno fetch error embeds the signed URL.
+  assertEquals(
+    redactErrorMessage("error sending request for url (https://rec.example.com/audio.mp3?token=abc123&sig=deadbeef): timed out"),
+    "error sending request for url (https://rec.example.com/audio.mp3?<redacted>): timed out",
+  );
+  // Bearer tokens and bare JWTs are scrubbed too.
+  assertEquals(redactErrorMessage("auth failed: Bearer sk-live-abc.def_ghi"), "auth failed: Bearer <redacted>");
+  assert(redactErrorMessage("token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9").includes("<redacted-jwt>"));
+  // Plain messages with no secrets pass through untouched.
+  assertEquals(redactErrorMessage("DEAD_URL: file is 5530 bytes"), "DEAD_URL: file is 5530 bytes");
+});
+
+Deno.test({ name: "trackError — same-finding distinct steps both persist (no key collision)", ...kvOpts, fn: async () => {
+  const org = "test-track-collide-" + crypto.randomUUID().slice(0, 8);
+  await clearErrors(org);
+  // Two distinct steps for one finding — the genie primary+secondary cascade.
+  // The write key includes step, so neither overwrites the other even back-to-back.
+  await trackError(org, "f-collide", "genie:download:primary", "primary dead");
+  await trackError(org, "f-collide", "genie:download:secondary", "secondary dead");
+  const rows = await getErrorsInWindow(org, 0, Date.now() + 1000);
+  const mine = rows.filter((r) => r.findingId === "f-collide");
+  assertEquals(mine.length, 2, "both role failures stored under distinct keys");
+}});
 
 Deno.test({ name: "tracking — active → completed lifecycle", ...kvOpts, fn: async () => {
   await trackActive(ORG, "f-track-1", "transcribe");

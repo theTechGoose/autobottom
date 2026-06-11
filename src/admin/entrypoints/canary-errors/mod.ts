@@ -122,9 +122,15 @@ export async function handleCanaryErrors(req: Request): Promise<Response> {
 
   const rows = await getErrorsInWindow(defaultOrgId() as OrgId, since, until, { includeRecovery: true });
 
-  // Dedup to unique timestamps (per requirement); keep first per ts.
-  const seen = new Set<number>();
-  const unique = rows.filter((r) => (seen.has(r.ts) ? false : (seen.add(r.ts), true)));
+  // Dedup on the full identity tuple (finding + step + ts), NOT bare ts — two
+  // distinct errors that happen to share a millisecond (a burst of findings
+  // failing at once, or one finding's primary+secondary genie cascade) must both
+  // survive, or the canary under-reports the very incident it exists to catch.
+  const seen = new Set<string>();
+  const unique = rows.filter((r) => {
+    const id = `${r.findingId}|${r.step}|${r.ts}`;
+    return seen.has(id) ? false : (seen.add(id), true);
+  });
 
   const base = logsBaseFromReq(req);
   const findingIds = [...new Set(unique.map((r) => r.findingId).filter(Boolean))];

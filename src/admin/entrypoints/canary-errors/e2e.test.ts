@@ -148,9 +148,9 @@ Deno.test({
       const stuckFid = "canary-stuck-" + crypto.randomUUID().slice(0, 8);
       await saveFinding(org, { id: recoveredFid, findingStatus: "finished" });
       await saveFinding(org, { id: stuckFid, findingStatus: "getting-recording" });
+      // Distinct findings → distinct dedup identity, so no wall-clock spacing is
+      // needed even if both rows land in the same millisecond.
       await trackError(org, recoveredFid, "init", "The signal has been aborted");
-      // Distinct ms so the handler's per-ts dedup keeps both rows.
-      await new Promise((r) => setTimeout(r, 3));
       await trackError(org, stuckFid, "init", "The signal has been aborted");
 
       const todayEt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -208,7 +208,6 @@ Deno.test({
       await saveFinding(org, { id: pineconeFid, findingStatus: "finished" });
       await saveFinding(org, { id: genieFid, findingStatus: "getting-recording" });
       await trackError(org, pineconeFid, "ask-all:pinecone", "OpenAI embed timed out after 30s");
-      await new Promise((r) => setTimeout(r, 3)); // distinct ms so dedup keeps both
       await trackError(org, genieFid, "genie:download:primary", "Dead URL — cascade. DEAD_URL: file is 5530 bytes");
 
       const todayEt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -229,6 +228,92 @@ Deno.test({
       assertEquals(genie.step, "genie:download:primary", "genie step tag preserved");
       assertEquals(genie.recovered, false, "stuck finding → unrecovered");
       assert(body.unrecoveredFindingIds.includes(genieFid), "stuck genie download pages");
+    } finally {
+      Deno.env.delete("CANARY_SECRET");
+    }
+  },
+});
+
+// review/mod.ts finalize returns HTTP 200 {ok:false}, so the main.ts dispatcher
+// never tracked it — that 200-on-failure gap is the exact case this trackError
+// closes, and the subtlest one to regress. Pin both classifications.
+Deno.test({
+  name: "handleCanaryErrors — finalize errors classify recovered vs stuck",
+  sanitizeResources: false, sanitizeOps: false,
+  async fn() {
+    Deno.env.set("CANARY_SECRET", "top-secret");
+    try {
+      const { trackError, clearErrors } = await import("@audit/domain/data/stats-repository/mod.ts");
+      const { saveFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+      const { defaultOrgId } = await import("@core/business/auth/mod.ts");
+      const org = defaultOrgId() as never;
+      await clearErrors(org);
+
+      // finalize threw, but the pipeline re-queued and the audit finished → recovered.
+      const recoveredFid = "canary-finalize-ok-" + crypto.randomUUID().slice(0, 8);
+      // finalize threw and the finding never reached a terminal state → stuck.
+      const stuckFid = "canary-finalize-stuck-" + crypto.randomUUID().slice(0, 8);
+      await saveFinding(org, { id: recoveredFid, findingStatus: "finished" });
+      await saveFinding(org, { id: stuckFid, findingStatus: "reviewing" });
+      await trackError(org, recoveredFid, "finalize", "review finalize boom");
+      await trackError(org, stuckFid, "finalize", "review finalize boom");
+
+      const todayEt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const res = await handleCanaryErrors(new Request(`https://autobottom.thetechgoose.deno.net/canary/errors?date=${todayEt}`, {
+        method: "POST", headers: { Authorization: "Bearer top-secret" },
+      }));
+      assertEquals(res.status, 200);
+      const body = await res.json();
+
+      const rec = body.errors.find((x: { findingId: string }) => x.findingId === recoveredFid);
+      const stuck = body.errors.find((x: { findingId: string }) => x.findingId === stuckFid);
+      assert(rec, "recovered finalize error surfaced");
+      assertEquals(rec.step, "finalize", "finalize step tag preserved");
+      assertEquals(rec.recovered, true, "finished audit → recovered, non-paging");
+      assert(!body.unrecoveredFindingIds.includes(recoveredFid), "recovered finalize excluded from paging set");
+
+      assert(stuck, "stuck finalize error surfaced");
+      assertEquals(stuck.recovered, false, "non-terminal finding → unrecovered");
+      assert(body.unrecoveredFindingIds.includes(stuckFid), "stuck finalize pages");
+    } finally {
+      Deno.env.delete("CANARY_SECRET");
+    }
+  },
+});
+
+// Pins the dedup fix (notes 2/3): two DISTINCT errors that share a millisecond
+// must both survive. Seed them directly with an identical ts (different step) so
+// the collision is deterministic — the old bare-ts dedup dropped the second.
+Deno.test({
+  name: "handleCanaryErrors — same-ms distinct errors both survive dedup",
+  sanitizeResources: false, sanitizeOps: false,
+  async fn() {
+    Deno.env.set("CANARY_SECRET", "top-secret");
+    try {
+      const { clearErrors } = await import("@audit/domain/data/stats-repository/mod.ts");
+      const { saveFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
+      const { setStored } = await import("@core/data/firestore/mod.ts");
+      const { defaultOrgId } = await import("@core/business/auth/mod.ts");
+      const org = defaultOrgId() as never;
+      await clearErrors(org);
+
+      const fid = "canary-samems-" + crypto.randomUUID().slice(0, 8);
+      await saveFinding(org, { id: fid, findingStatus: "getting-recording" });
+      // One finding, two distinct steps (a genie primary+secondary cascade),
+      // forced onto the SAME ts — the exact collision the old dedup collapsed.
+      const ts = Date.now();
+      await setStored("error-tracking", org, [`${ts}-${fid}-genie:download:primary`], { findingId: fid, step: "genie:download:primary", error: "primary dead", ts });
+      await setStored("error-tracking", org, [`${ts}-${fid}-genie:download:secondary`], { findingId: fid, step: "genie:download:secondary", error: "secondary dead", ts });
+
+      const todayEt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const res = await handleCanaryErrors(new Request(`https://autobottom.thetechgoose.deno.net/canary/errors?date=${todayEt}`, {
+        method: "POST", headers: { Authorization: "Bearer top-secret" },
+      }));
+      const body = await res.json();
+      const mine = body.errors.filter((x: { findingId: string }) => x.findingId === fid);
+      assertEquals(mine.length, 2, "both same-ms role failures survive identity dedup");
+      const steps = mine.map((x: { step: string }) => x.step).sort();
+      assertEquals(steps, ["genie:download:primary", "genie:download:secondary"]);
     } finally {
       Deno.env.delete("CANARY_SECRET");
     }

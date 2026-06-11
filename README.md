@@ -197,7 +197,7 @@ All durable state lives in a single Firestore collection (default `autobottom`) 
 | `active-tracking` | In-flight pipeline state | |
 | `completed-audit-stat` | Completion record for dashboard | All-time |
 | `audit-hidden` | Soft-hide marker (dedup losers); read paths filter these out. Reversible via `POST /admin/restore-finding` | Key = findingId |
-| `error-tracking` | Step error log — written by the step dispatcher on throws + 5xx ([main.ts](main.ts)); read by the dashboard (24h) + `/canary/errors` (prev day) | 8d TTL |
+| `error-tracking` | Step error log — written by the step dispatcher on throws + 5xx ([main.ts](main.ts)) and by caught-and-degraded paths (pinecone/assemblyai-preupload/genie/finalize); redacted before write, keyed on `ts-findingId-step`; read by the dashboard (24h) + `/canary/errors` (prev day) | 8d TTL |
 | `retry-tracking` | Retry log | 24h TTL |
 | `audit-email-mark` | Per-finding email engagement: `sentAt` / `openedAt` / `openPrefetchAt` / `firstClickAt` | Key = findingId |
 | `review-pending` / `review-active` / `review-decided` | Review queue items | |
@@ -509,8 +509,11 @@ The audit-complete (`terminate`) email is instrumented for engagement, surfaced 
 - **Read:** `getEmailEngagement(orgId, from, to)` — cohort from `audit-done-idx`, hydrated with per-finding `audit-email-mark` + `getAppeal`. Endpoint `/admin/email-engagement/data?since=&until=`. Forward-only (no backfill).
 
 ### Canary errors endpoint (`POST /canary/errors`)
-Secure machine endpoint (Bearer `CANARY_SECRET`, constant-time) for an external daily monitor. Returns the **previous US-Eastern day's** step errors: `{ totalErrors, findingIds, errors:[{ findingId, step, error, ts, timestamp, logsUrl }] }` (DST-correct window; `?date=YYYY-MM-DD` override). Handler at [canary-errors/mod.ts](src/admin/entrypoints/canary-errors/mod.ts), direct-dispatched in [main.ts](main.ts).
-- **Errors are now persisted:** `trackError` was dead code (so the dashboard's Recent Errors table was always empty). The step dispatcher now calls it on step **throws + 5xx responses**; retention bumped to 8d so "yesterday" is readable. `getErrorsInWindow(orgId, from, to)` reads + dedups by ts.
+Secure machine endpoint (Bearer `CANARY_SECRET`, constant-time) for an external daily monitor. Returns the **previous US-Eastern day's** step errors: `{ totalErrors, unrecoveredErrors, findingIds, unrecoveredFindingIds, errors:[{ findingId, step, error, ts, timestamp, recovered, logsUrl }] }` (DST-correct window; `?date=YYYY-MM-DD` override). Handler at [canary-errors/mod.ts](src/admin/entrypoints/canary-errors/mod.ts), direct-dispatched in [main.ts](main.ts).
+- **Errors are now persisted:** `trackError` was dead code (so the dashboard's Recent Errors table was always empty). It now fires from two places: the step dispatcher on step **throws + 5xx responses**, AND the caught-and-degraded paths that the dispatcher can't see — Pinecone upload, AssemblyAI pre-upload, genie per-role download, and review `finalize` (which returns HTTP 200 `{ok:false}`). All best-effort/fire-and-forget. Retention is 8d so "yesterday" is readable.
+- **Recovered vs unrecovered:** each error is tagged `recovered` via `isFindingRecovered` (the finding ultimately reached `finished`/`terminated`). A degraded-but-completed blip (e.g. Pinecone fell back to the raw transcript) surfaces for visibility but stays OUT of `unrecoveredErrors`, so the canary pages only on genuinely stuck findings — not self-healed transients.
+- **Secrets are redacted before persistence:** `redactErrorMessage` (stats-repository) strips URL query strings, `user:pass@` userinfo, and bearer/JWT tokens. Deno `fetch` failures embed signed provider URLs (`…?token=…`); the canary store is persisted (8d) and broadly readable, so the stored copy is scrubbed. Full detail stays in the `console.*` lines.
+- **Dedup is identity-based:** `getErrorsInWindow(orgId, from, to)` reads; the canary handler dedups on `errorIdentity` (`findingId|step|ts`), and the `trackError` write key includes `step`. Two distinct errors sharing a millisecond (a burst, or one finding's primary+secondary genie cascade) both survive — bare-ts dedup used to drop one.
 - **logsUrl** mirrors the dashboard's Deno observability link: `console.deno.com/{org}/{project}/observability/logs?query={findingId}&start=now/y&end=now`.
 
 ---

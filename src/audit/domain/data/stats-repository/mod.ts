@@ -231,17 +231,29 @@ export interface ErrorRecord { findingId: string; step: string; error: string; t
 export function redactErrorMessage(msg: string): string {
   return msg
     .replace(/(https?:\/\/[^\s?#)]+)\?[^\s#)]*/g, "$1?<redacted>")
+    .replace(/(https?:\/\/)[^@\s/]+@/g, "$1<redacted>@")
     .replace(/\b(bearer\s+)[A-Za-z0-9._\-]+/gi, "$1<redacted>")
     .replace(/\beyJ[A-Za-z0-9._\-]{10,}/g, "<redacted-jwt>");
+}
+
+/** Read-path dedup identity for an error row: finding + step + ts. NOTE: the
+ *  trackError write key is a *different* string (it leads with ts for
+ *  time-sortable Firestore doc keys) — they encode the same tuple but must not
+ *  be assumed to share a format. */
+export function errorIdentity(r: { findingId: string; step: string; ts: number }): string {
+  return `${r.findingId}|${r.step}|${r.ts}`;
 }
 
 export async function trackError(orgId: OrgId, findingId: string, step: string, error: string): Promise<void> {
   // Key on ts + finding + step so two distinct same-finding failures (e.g. genie
   // primary vs secondary) that land in the same millisecond don't overwrite each
-  // other. The read path (canary-errors) dedups on the matching identity tuple.
+  // other. The read path (canary-errors) dedups via errorIdentity() on the same
+  // tuple. One Date.now() for both the key prefix and the stored ts so they can
+  // never skew. (Key leads with ts for time-sortable doc keys — see errorIdentity.)
+  const now = Date.now();
   await setStored(
-    "error-tracking", orgId, [`${Date.now()}-${findingId}-${step}`],
-    { findingId, step, error: redactErrorMessage(error), ts: Date.now() },
+    "error-tracking", orgId, [`${now}-${findingId}-${step}`],
+    { findingId, step, error: redactErrorMessage(error), ts: now },
     { expireInMs: ERROR_RETENTION_MS },
   );
 }

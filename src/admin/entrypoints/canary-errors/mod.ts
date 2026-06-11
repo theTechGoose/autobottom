@@ -17,7 +17,7 @@ import "npm:reflect-metadata@0.1.13";
 import { Controller, Post } from "@danet/core";
 import { SwaggerDescription } from "@mrg-keystone/danet";
 import { Description } from "#danet/swagger-decorators";
-import { getErrorsInWindow } from "@audit/domain/data/stats-repository/mod.ts";
+import { getErrorsInWindow, errorIdentity } from "@audit/domain/data/stats-repository/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
@@ -128,7 +128,7 @@ export async function handleCanaryErrors(req: Request): Promise<Response> {
   // survive, or the canary under-reports the very incident it exists to catch.
   const seen = new Set<string>();
   const unique = rows.filter((r) => {
-    const id = `${r.findingId}|${r.step}|${r.ts}`;
+    const id = errorIdentity(r);
     return seen.has(id) ? false : (seen.add(id), true);
   });
 

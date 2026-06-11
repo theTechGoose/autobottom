@@ -6,6 +6,23 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
+## 2026-06-11 — Judge queue stats + canary hardening
+
+- **Judge queue header** — the queue now shows the dashboard's `N / M
+  questions / audits` split (global pending) where it used to read "N
+  remaining", refreshed after every decide/undo/dismiss. Stats are fetched via a
+  shared `fetchJudgeStats` helper ([lib/api.ts](../frontend/lib/api.ts)) that
+  never rejects, so a `/judge/api/stats` outage degrades to the honest per-audit
+  "N remaining" instead of blanking the queue or showing a fake "0 / 0".
+- **Canary error tracking hardened** — `trackError` now also fires from the
+  caught-and-degraded paths the step dispatcher can't see (Pinecone, AssemblyAI
+  pre-upload, genie per-role download, review `finalize`), tagging each error
+  `recovered` vs `unrecovered` so the daily monitor pages only on genuinely
+  stuck findings. Error strings are redacted (URL query strings, userinfo,
+  bearer/JWT tokens) before landing in the persisted store, and dedup is now
+  identity-based (`findingId|step|ts`) so same-millisecond bursts no longer drop
+  rows. See [README.md](../README.md) → Canary errors endpoint.
+
 ## 2026-06-03 — UI fixes
 
 - **Audit report** — reviewer handle-time badges (the per-question `⏱ Xs` and the

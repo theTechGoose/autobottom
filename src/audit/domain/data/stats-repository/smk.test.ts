@@ -26,6 +26,15 @@ Deno.test("redactErrorMessage — strips signed-URL query strings and tokens", (
   // Bearer tokens and bare JWTs are scrubbed too.
   assertEquals(redactErrorMessage("auth failed: Bearer sk-live-abc.def_ghi"), "auth failed: Bearer <redacted>");
   assert(redactErrorMessage("token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9").includes("<redacted-jwt>"));
+  // Every query string in a multi-URL message is scrubbed (pins the /g flag),
+  // and the non-greedy match stops at whitespace so the first URL can't swallow
+  // the second.
+  assertEquals(
+    redactErrorMessage("primary https://a.example/x.mp3?token=AAA failed, retry https://b.example/y.mp3?sig=BBB also failed"),
+    "primary https://a.example/x.mp3?<redacted> failed, retry https://b.example/y.mp3?<redacted> also failed",
+  );
+  // Basic-auth userinfo is stripped too.
+  assertEquals(redactErrorMessage("connect https://user:pass@host/file failed"), "connect https://<redacted>@host/file failed");
   // Plain messages with no secrets pass through untouched.
   assertEquals(redactErrorMessage("DEAD_URL: file is 5530 bytes"), "DEAD_URL: file is 5530 bytes");
 });

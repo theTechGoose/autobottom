@@ -34,6 +34,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 const SERVICE_NAME = "autobottom";
 const SCOPE_NAME = "autobottom";
 
+// Slow-span threshold (ms) for the OTel-dormant perf-log fallback in withSpan.
+const SPAN_PERF_THRESHOLD_MS = 1000;
+
 // ---------- Types ----------
 
 type AttrVal = string | number | boolean;
@@ -180,7 +183,20 @@ export async function withSpan<T>(
   kind: "internal" | "server" | "client" = "internal",
 ): Promise<T> {
   if (!_initialized) {
-    return await fn(NOOP_SPAN);
+    // OTel is dormant (no DD_API_KEY / initOtel() commented out in main.ts),
+    // so spans aren't shipped. Still surface slow operations as a lightweight
+    // perf log — keeps timing visibility across every withSpan-wrapped call
+    // (groq / assemblyai / quickbase / pinecone / s3 / qstash / cron) without
+    // the OTLP exporter or per-call-site changes. Mirrors withTiming's format.
+    const start = Date.now();
+    try {
+      return await fn(NOOP_SPAN);
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed >= SPAN_PERF_THRESHOLD_MS) {
+        console.log(`⏱️  [PERF:ext] ${name} took ${elapsed}ms`);
+      }
+    }
   }
   const parent = _spanContext.getStore();
   const traceId = parent?.traceId ?? hex(16);

@@ -12,7 +12,7 @@
  *    SWR per orgId. Used only to compute `lastDecidedAt` (the absolute most-
  *    recent decision for a judge regardless of selected range — the
  *    dashboard "last decided" card needs absolute-recency semantics). */
-import { listStoredByCompletedAt } from "@core/data/firestore/mod.ts";
+import { listStoredByCompletedAt, withTiming } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 export function computeOverturnRate(overturned: number, total: number): number {
@@ -152,7 +152,10 @@ function resolveRange(opts?: JudgeRangeOpts): { from: number; to: number } {
   return { from: opts?.from ?? 0, to: opts?.to ?? now };
 }
 
-export async function getMyJudgeStats(orgId: OrgId, email: string, opts?: JudgeRangeOpts): Promise<JudgeStats> {
+export function getMyJudgeStats(orgId: OrgId, email: string, opts?: JudgeRangeOpts): Promise<JudgeStats> {
+  return withTiming("getMyJudgeStats", () => _getMyJudgeStatsRaw(orgId, email, opts), { category: "db" });
+}
+async function _getMyJudgeStatsRaw(orgId: OrgId, email: string, opts?: JudgeRangeOpts): Promise<JudgeStats> {
   const range = resolveRange(opts);
   // Two parallel queries — range for the bucketed stats, lookback for
   // absolute lastDecidedAt. Both indexed; total cost dominated by range

@@ -450,17 +450,29 @@ export function runInBackgroundLane<T>(fn: () => Promise<T>): Promise<T> {
   return _laneStorage.run("background", fn);
 }
 
+export interface TimingOpts {
+  /** Only log when the call meets/exceeds this many ms. Default 1000 — keeps
+   *  the happy path out of the logs and surfaces only the slow calls. */
+  thresholdMs?: number;
+  /** Perf category — drives the log tag so a single grep can slice by layer.
+   *  "fs" (default) keeps the legacy `[FS-PROFILE]` prefix that existing FS
+   *  call-sites + any external Datadog alert already match; anything else
+   *  logs `[PERF:<category>]` (e.g. "http" for endpoints, "db" for heavy
+   *  aggregation reads, "ext" for external-provider calls). */
+  category?: string;
+}
+
 /** Wrap an async function and log its duration if it exceeds a threshold.
- *  Used to localize slow FS queries in production — wrapping the top-level
- *  repository functions lets prod logs tell us exactly which call is
- *  blowing 5s+ at any moment, instead of guessing from generic abort
- *  errors. Threshold defaults to 1s so we don't flood the log with the
- *  happy path. */
+ *  Originally for localizing slow FS queries; now the general performance
+ *  timer — pass a `category` to tag the layer (http / db / ext / fs). Wrapping
+ *  boundary functions lets prod logs tell us exactly which call is blowing
+ *  Ns at any moment, instead of guessing from generic abort errors. */
 export async function withTiming<T>(
   label: string,
   fn: () => Promise<T>,
-  thresholdMs = 1000,
+  opts: TimingOpts = {},
 ): Promise<T> {
+  const { thresholdMs = 1000, category = "fs" } = opts;
   const start = Date.now();
   let outcome: "ok" | "err" = "ok";
   try {
@@ -471,7 +483,8 @@ export async function withTiming<T>(
   } finally {
     const elapsed = Date.now() - start;
     if (elapsed >= thresholdMs) {
-      console.log(`⏱️  [FS-PROFILE] ${label} took ${elapsed}ms (${outcome})`);
+      const tag = category === "fs" ? "FS-PROFILE" : `PERF:${category}`;
+      console.log(`⏱️  [${tag}] ${label} took ${elapsed}ms (${outcome})`);
     }
   }
 }
@@ -874,10 +887,12 @@ export async function setDocIfAbsent(docId: string, meta: DocMeta, value: unknow
 
 /** Read a typed value. Type+org+key uniquely identify the doc. */
 export async function getStored<T>(type: string, org: string, ...key: (string | number)[]): Promise<T | null> {
-  const docId = encodeDocId(type, org, ...key);
-  const body = await getDoc(docId);
-  if (!body) return null;
-  return unwrapPayload<T>(body);
+  return withTiming(`get:${type}`, async () => {
+    const docId = encodeDocId(type, org, ...key);
+    const body = await getDoc(docId);
+    if (!body) return null;
+    return unwrapPayload<T>(body);
+  });
 }
 
 /** Write a typed value. Same identity rules as getStored. */
@@ -888,8 +903,10 @@ export async function setStored(
   value: unknown,
   opts?: { expireInMs?: number },
 ): Promise<void> {
-  const docId = encodeDocId(type, org, ...key);
-  await setDoc(docId, { type, org, key, expireInMs: opts?.expireInMs }, value);
+  return withTiming(`set:${type}`, async () => {
+    const docId = encodeDocId(type, org, ...key);
+    await setDoc(docId, { type, org, key, expireInMs: opts?.expireInMs }, value);
+  });
 }
 
 /** Atomic-claim variant of setStored. Returns true if we wrote, false if a doc already existed. */
@@ -900,22 +917,28 @@ export async function setStoredIfAbsent(
   value: unknown,
   opts?: { expireInMs?: number },
 ): Promise<boolean> {
-  const docId = encodeDocId(type, org, ...key);
-  return setDocIfAbsent(docId, { type, org, key, expireInMs: opts?.expireInMs }, value);
+  return withTiming(`setIfAbsent:${type}`, async () => {
+    const docId = encodeDocId(type, org, ...key);
+    return setDocIfAbsent(docId, { type, org, key, expireInMs: opts?.expireInMs }, value);
+  });
 }
 
 /** Delete a typed value. Idempotent. */
 export async function deleteStored(type: string, org: string, ...key: (string | number)[]): Promise<void> {
-  const docId = encodeDocId(type, org, ...key);
-  await deleteDoc(docId);
+  return withTiming(`delete:${type}`, async () => {
+    const docId = encodeDocId(type, org, ...key);
+    await deleteDoc(docId);
+  });
 }
 
 /** List all values matching this type+org. */
 export async function listStored<T>(type: string, org: string, opts: { limit?: number } = {}): Promise<T[]> {
-  const limit = opts.limit ?? 1000;
-  const creds = await loadFirestoreCredentials();
-  const bodies = creds ? await restListByType(creds, type, org, limit) : inMemListByType(type, org, limit);
-  return bodies.map((b) => unwrapPayload<T>(b));
+  return withTiming(`list:${type}`, async () => {
+    const limit = opts.limit ?? 1000;
+    const creds = await loadFirestoreCredentials();
+    const bodies = creds ? await restListByType(creds, type, org, limit) : inMemListByType(type, org, limit);
+    return bodies.map((b) => unwrapPayload<T>(b));
+  });
 }
 
 /** Paginated by-type scan. Pages 5000 docs at a time using __name__ as the
@@ -1077,10 +1100,12 @@ export async function listStoredWithKeys<T>(
   org: string,
   opts: { limit?: number } = {},
 ): Promise<Array<{ key: string[]; value: T }>> {
-  const limit = opts.limit ?? 1000;
-  const creds = await loadFirestoreCredentials();
-  const bodies = creds ? await restListByType(creds, type, org, limit) : inMemListByType(type, org, limit);
-  return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
+  return withTiming(`listWithKeys:${type}`, async () => {
+    const limit = opts.limit ?? 1000;
+    const creds = await loadFirestoreCredentials();
+    const bodies = creds ? await restListByType(creds, type, org, limit) : inMemListByType(type, org, limit);
+    return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
+  });
 }
 
 /** Bulk-purge every doc of `type` belonging to `org` using Firestore's batch
@@ -1236,8 +1261,10 @@ export async function listStoredByCompletedAt<T>(
   to: number,
   opts: { limit?: number; fieldName?: string } = {},
 ): Promise<T[]> {
-  const bodies = await _listStoredByFieldRaw(type, org, from, to, opts);
-  return bodies.map((b) => unwrapPayload<T>(b));
+  return withTiming(`listByField:${type}`, async () => {
+    const bodies = await _listStoredByFieldRaw(type, org, from, to, opts);
+    return bodies.map((b) => unwrapPayload<T>(b));
+  });
 }
 
 /** Same field-filter scan as listStoredByCompletedAt, but returns each
@@ -1249,8 +1276,10 @@ export async function listStoredByCompletedAtWithKeys<T>(
   to: number,
   opts: { limit?: number; fieldName?: string } = {},
 ): Promise<Array<{ key: string[]; value: T }>> {
-  const bodies = await _listStoredByFieldRaw(type, org, from, to, opts);
-  return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
+  return withTiming(`listByFieldWithKeys:${type}`, async () => {
+    const bodies = await _listStoredByFieldRaw(type, org, from, to, opts);
+    return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
+  });
 }
 
 /** List values whose doc ID begins with the given prefix.
@@ -1259,10 +1288,12 @@ export async function listStoredByIdPrefix<T>(
   prefix: string,
   opts: { limit?: number } = {},
 ): Promise<Array<{ id: string; key: string[]; value: T }>> {
-  const limit = opts.limit ?? 1000;
-  const creds = await loadFirestoreCredentials();
-  const rows = creds ? await restListByIdPrefix(creds, prefix, limit) : inMemListByIdPrefix(prefix, limit);
-  return rows.map(({ id, body }) => ({ id, key: body._key, value: unwrapPayload<T>(body) }));
+  return withTiming(`listByIdPrefix:${prefix.split(SEP)[0]}`, async () => {
+    const limit = opts.limit ?? 1000;
+    const creds = await loadFirestoreCredentials();
+    const rows = creds ? await restListByIdPrefix(creds, prefix, limit) : inMemListByIdPrefix(prefix, limit);
+    return rows.map(({ id, body }) => ({ id, key: body._key, value: unwrapPayload<T>(body) }));
+  });
 }
 
 /** List values scoped to a (type, org, ...keyParts) tuple via doc-ID prefix.
@@ -1285,27 +1316,29 @@ const CHUNK_BYTES = 700_000;
 
 /** Read a chunked value. Returns null if header missing or chunks corrupt. */
 export async function getStoredChunked<T>(type: string, org: string, ...key: (string | number)[]): Promise<T | null> {
-  const baseId = encodeDocId(type, org, ...key);
-  const header = await getDoc(baseId);
-  if (!header) return null;
-  // If we never had to chunk the payload, the body IS the value (object payload).
-  if (!("totalChunks" in header)) return unwrapPayload<T>(header);
-  const totalChunks = header.totalChunks as number;
-  const parts: string[] = [];
-  for (let i = 0; i < totalChunks; i++) {
-    const chunk = await getDoc(`${baseId}${SEP}chunk_${i}`);
-    if (!chunk) {
-      console.error(`❌ [FIRESTORE] missing chunk ${i}/${totalChunks} for ${baseId}`);
+  return withTiming(`getChunked:${type}`, async () => {
+    const baseId = encodeDocId(type, org, ...key);
+    const header = await getDoc(baseId);
+    if (!header) return null;
+    // If we never had to chunk the payload, the body IS the value (object payload).
+    if (!("totalChunks" in header)) return unwrapPayload<T>(header);
+    const totalChunks = header.totalChunks as number;
+    const parts: string[] = [];
+    for (let i = 0; i < totalChunks; i++) {
+      const chunk = await getDoc(`${baseId}${SEP}chunk_${i}`);
+      if (!chunk) {
+        console.error(`❌ [FIRESTORE] missing chunk ${i}/${totalChunks} for ${baseId}`);
+        return null;
+      }
+      parts.push(unwrapPayload<{ data: string }>(chunk).data);
+    }
+    try {
+      return JSON.parse(parts.join("")) as T;
+    } catch (err) {
+      console.error(`❌ [FIRESTORE] failed to parse chunked JSON for ${baseId}:`, err);
       return null;
     }
-    parts.push(unwrapPayload<{ data: string }>(chunk).data);
-  }
-  try {
-    return JSON.parse(parts.join("")) as T;
-  } catch (err) {
-    console.error(`❌ [FIRESTORE] failed to parse chunked JSON for ${baseId}:`, err);
-    return null;
-  }
+  });
 }
 
 /** Write a chunked value. Splits oversized payloads. */
@@ -1316,28 +1349,32 @@ export async function setStoredChunked(
   value: unknown,
   opts?: { expireInMs?: number },
 ): Promise<void> {
-  const baseId = encodeDocId(type, org, ...key);
-  const json = JSON.stringify(value);
-  if (json.length <= CHUNK_BYTES) {
-    await setDoc(baseId, { type, org, key, expireInMs: opts?.expireInMs }, value);
-    return;
-  }
-  const totalChunks = Math.ceil(json.length / CHUNK_BYTES);
-  await setDoc(baseId, { type, org, key, expireInMs: opts?.expireInMs }, { totalChunks, totalBytes: json.length });
-  for (let i = 0; i < totalChunks; i++) {
-    const data = json.slice(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES);
-    await setDoc(`${baseId}${SEP}chunk_${i}`, { type, org, key: [...key, `chunk_${i}`], expireInMs: opts?.expireInMs }, { data });
-  }
+  return withTiming(`setChunked:${type}`, async () => {
+    const baseId = encodeDocId(type, org, ...key);
+    const json = JSON.stringify(value);
+    if (json.length <= CHUNK_BYTES) {
+      await setDoc(baseId, { type, org, key, expireInMs: opts?.expireInMs }, value);
+      return;
+    }
+    const totalChunks = Math.ceil(json.length / CHUNK_BYTES);
+    await setDoc(baseId, { type, org, key, expireInMs: opts?.expireInMs }, { totalChunks, totalBytes: json.length });
+    for (let i = 0; i < totalChunks; i++) {
+      const data = json.slice(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES);
+      await setDoc(`${baseId}${SEP}chunk_${i}`, { type, org, key: [...key, `chunk_${i}`], expireInMs: opts?.expireInMs }, { data });
+    }
+  });
 }
 
 /** Delete a chunked value (header + all chunks). */
 export async function deleteStoredChunked(type: string, org: string, ...key: (string | number)[]): Promise<void> {
-  const baseId = encodeDocId(type, org, ...key);
-  const header = await getDoc(baseId);
-  if (header && typeof header.totalChunks === "number") {
-    for (let i = 0; i < (header.totalChunks as number); i++) {
-      await deleteDoc(`${baseId}${SEP}chunk_${i}`);
+  return withTiming(`deleteChunked:${type}`, async () => {
+    const baseId = encodeDocId(type, org, ...key);
+    const header = await getDoc(baseId);
+    if (header && typeof header.totalChunks === "number") {
+      for (let i = 0; i < (header.totalChunks as number); i++) {
+        await deleteDoc(`${baseId}${SEP}chunk_${i}`);
+      }
     }
-  }
-  await deleteDoc(baseId);
+    await deleteDoc(baseId);
+  });
 }

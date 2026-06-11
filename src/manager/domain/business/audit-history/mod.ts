@@ -8,6 +8,7 @@
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
+import { withTiming } from "@core/data/firestore/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getManagerScope, getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
@@ -103,7 +104,15 @@ function toRow(e: AuditDoneIndexEntry): AuditHistoryRow {
  *  - role==="manager" → restrict to scope (departments/shifts) and to reviewed
  *    audits (manually reviewed, perfect_score auto-pass, or invalid_genie).
  *  - role==="admin"   → see everything in the window. */
-export async function getAuditHistory(
+export function getAuditHistory(
+  orgId: OrgId,
+  email: string,
+  role: "admin" | "manager",
+  filters: AuditHistoryFilters,
+): Promise<AuditHistoryResult> {
+  return withTiming("getAuditHistory", () => _getAuditHistoryRaw(orgId, email, role, filters), { category: "db" });
+}
+async function _getAuditHistoryRaw(
   orgId: OrgId,
   email: string,
   role: "admin" | "manager",

@@ -5,8 +5,17 @@ import {
   getStored, setStored, setStoredIfAbsent, deleteStored,
   listStored, listStoredWithKeys, listStoredByIdPrefix,
   getStoredChunked, setStoredChunked, deleteStoredChunked,
-  resetFirestoreCredentials,
+  resetFirestoreCredentials, withTiming,
 } from "./mod.ts";
+
+/** Run `fn` with console.log captured; returns the emitted lines. */
+async function captureLogs(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const orig = console.log;
+  console.log = (...a: unknown[]) => { lines.push(a.map(String).join(" ")); };
+  try { await fn(); } finally { console.log = orig; }
+  return lines;
+}
 
 Deno.test("firestore — public API exports", async () => {
   const mod = await import("./mod.ts");
@@ -30,6 +39,39 @@ Deno.test("firestore — encodeDocId sanitizes forbidden chars", () => {
   assertEquals(encodeDocId("audit-finding", "org/with/slash", "id.with.dots"), "audit-finding__org_with_slash__id_with_dots");
   assertEquals(encodeDocId("type__with__seps", "org", "id"), "type_with_seps__org__id");
   assertEquals(encodeDocId("earned-badge", "monsterrg", "user@x.com", "bdg-1"), "earned-badge__monsterrg__user@x_com__bdg-1");
+});
+
+Deno.test("withTiming — returns the wrapped value", async () => {
+  assertEquals(await withTiming("x", async () => 42, { thresholdMs: 0 }), 42);
+});
+
+Deno.test("withTiming — fast calls stay below the default threshold (no log)", async () => {
+  const lines = await captureLogs(async () => { await withTiming("fast", async () => 1); });
+  assert(!lines.some((l) => l.includes("fast")), "an instant call must not log at the 1s default threshold");
+});
+
+Deno.test("withTiming — default category keeps the legacy [FS-PROFILE] prefix", async () => {
+  const lines = await captureLogs(async () => { await withTiming("getStats", async () => 1, { thresholdMs: 0 }); });
+  assert(lines.some((l) => l.includes("[FS-PROFILE] getStats took") && l.includes("(ok)")), lines.join("|"));
+});
+
+Deno.test("withTiming — non-fs category logs the [PERF:<category>] tag", async () => {
+  const lines = await captureLogs(async () => {
+    await withTiming("GET /admin", async () => 1, { thresholdMs: 0, category: "http" });
+    await withTiming("getJudgeStats", async () => 1, { thresholdMs: 0, category: "db" });
+  });
+  assert(lines.some((l) => l.includes("[PERF:http] GET /admin took")), lines.join("|"));
+  assert(lines.some((l) => l.includes("[PERF:db] getJudgeStats took")), lines.join("|"));
+});
+
+Deno.test("withTiming — re-throws and logs the (err) outcome", async () => {
+  let threw = false;
+  const lines = await captureLogs(async () => {
+    try { await withTiming("boom", async () => { throw new Error("nope"); }, { thresholdMs: 0, category: "db" }); }
+    catch { threw = true; }
+  });
+  assert(threw, "withTiming must propagate the error");
+  assert(lines.some((l) => l.includes("[PERF:db] boom took") && l.includes("(err)")), lines.join("|"));
 });
 
 Deno.test("firestore — field codec round-trip", () => {

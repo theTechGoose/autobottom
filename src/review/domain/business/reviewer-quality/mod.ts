@@ -14,7 +14,7 @@
  *  finding-level fallback. We scan `judge-decided` by decidedAt (indexed), then
  *  hydrate only the distinct appealed findings (a small fraction of all audits).
  */
-import { listStoredByCompletedAt } from "@core/data/firestore/mod.ts";
+import { listStoredByCompletedAt, withTiming } from "@core/data/firestore/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { computeOverturnRate } from "@judge/domain/business/judge-analytics/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -115,7 +115,10 @@ async function cached(key: string, ttlMs: number, run: () => Promise<ReviewerQua
   return pending;
 }
 
-async function compute(orgId: OrgId, from: number, to: number): Promise<ReviewerQualityResult> {
+function compute(orgId: OrgId, from: number, to: number): Promise<ReviewerQualityResult> {
+  return withTiming(`reviewerOverturns ${from}-${to}`, () => _computeRaw(orgId, from, to), { category: "db" });
+}
+async function _computeRaw(orgId: OrgId, from: number, to: number): Promise<ReviewerQualityResult> {
   console.log(`🔍 [REVIEWER-QUALITY] compute org=${orgId} from=${from} to=${to}`);
   const raw = await listStoredByCompletedAt<Partial<JudgeDecision>>(
     "judge-decided", orgId, from, to, { fieldName: "decidedAt" },

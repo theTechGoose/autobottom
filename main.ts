@@ -52,7 +52,7 @@ import { saveFinding, saveJob } from "@audit/domain/data/audit-repository/mod.ts
 import { trackActive, getHiddenFindingIds } from "@audit/domain/data/stats-repository/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
 import { enqueueStep, getSelfUrl, applyDefaultQueueParallelism } from "@core/data/qstash/mod.ts";
-import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
+import { runInBackgroundLane, withTiming } from "@core/data/firestore/mod.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
@@ -779,8 +779,11 @@ Deno.serve({ port }, (req, info) => {
   // use this deployment's origin (not the inherited SELF_URL from .env).
   // Critical for branch preview deployments where the hostname is dynamic.
   const origin = new URL(req.url).origin;
-  return runWithOrigin(origin, async () => {
-    const path = new URL(req.url).pathname;
+  const path = new URL(req.url).pathname;
+  // Time every request end-to-end. withTiming only logs when a request crosses
+  // the threshold, so this surfaces slow endpoints (`[PERF:http] METHOD /path
+  // took Nms`) without flooding the logs with fast ones.
+  return runWithOrigin(origin, () => withTiming(`${req.method} ${path}`, async () => {
 
     // Top-level try/catch — guarantees we NEVER bubble an uncaught exception
     // up to Fresh's _500.tsx renderer for backend-style requests. Any throw
@@ -1025,7 +1028,7 @@ Deno.serve({ port }, (req, info) => {
       console.error(`❌ [DISPATCH-CATCH] ${req.method} ${path} threw:`, err);
       return buildDispatchErrorResponse(err, { method: req.method, path });
     }
-  });
+  }, { category: "http" }));
 });
 
 console.log(`🚀 Autobottom running on port ${port} (API + Frontend)`);

@@ -3,7 +3,7 @@
 
 import {
   getStored, setStored, deleteStored, setStoredIfAbsent,
-  listStored, listStoredWithKeys,
+  listStored, listStoredWithKeys, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { BadgeStats, BadgeDef, GameState } from "@core/dto/types.ts";
@@ -139,9 +139,11 @@ export async function saveGameState(orgId: OrgId, email: string, state: Record<s
 }
 
 /** Walk every game-state in the org. Used by leaderboards. */
-export async function listGameStates(orgId: OrgId): Promise<Array<{ email: string; state: GameState & { totalXp?: number; tokenBalance?: number; lastActiveDate?: string } }>> {
-  const rows = await listStoredWithKeys<GameState & { totalXp?: number; tokenBalance?: number; lastActiveDate?: string }>("game-state", orgId);
-  return rows.map(({ key, value }) => ({ email: String(key[0] ?? ""), state: value })).filter((r) => r.email);
+export function listGameStates(orgId: OrgId): Promise<Array<{ email: string; state: GameState & { totalXp?: number; tokenBalance?: number; lastActiveDate?: string } }>> {
+  return withTiming("listGameStates", async () => {
+    const rows = await listStoredWithKeys<GameState & { totalXp?: number; tokenBalance?: number; lastActiveDate?: string }>("game-state", orgId);
+    return rows.map(({ key, value }) => ({ email: String(key[0] ?? ""), state: value })).filter((r) => r.email);
+  }, { category: "db" });
 }
 
 export async function purchaseStoreItem(orgId: OrgId, email: string, itemId: string, price: number): Promise<{ ok: true; newBalance: number } | { ok: false; error: string }> {

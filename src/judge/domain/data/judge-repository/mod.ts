@@ -3,7 +3,7 @@
  *  acceptable given the per-judge concurrency profile and idempotent finalize. */
 
 import {
-  getStored, setStored, deleteStored, listStoredWithKeys, listStoredWithKeysAll,
+  getStored, setStored, deleteStored, listStoredWithKeys, listStoredWithKeysAll, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
@@ -513,7 +513,10 @@ export async function deleteAppeal(orgId: OrgId, fid: string): Promise<void> {
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 
-export async function getJudgeStats(orgId: OrgId): Promise<{ pending: number; pendingAudits: number; decided: number }> {
+export function getJudgeStats(orgId: OrgId): Promise<{ pending: number; pendingAudits: number; decided: number }> {
+  return withTiming("getJudgeStats", () => _getJudgeStatsRaw(orgId), { category: "db" });
+}
+async function _getJudgeStatsRaw(orgId: OrgId): Promise<{ pending: number; pendingAudits: number; decided: number }> {
   // Count only what the queue will actually serve — exclude hidden findings and
   // auto-skip appeal types via the same gate claimFromPending uses. A raw row
   // count over-reports because hidden rows linger in judge-pending forever.

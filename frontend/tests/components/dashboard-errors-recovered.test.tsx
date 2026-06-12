@@ -6,8 +6,8 @@
  *  it from the red "Errors (24h)" fault count — so a finished audit no longer
  *  reads as a failure. */
 import { renderHTML, assertContains, assertNotContains } from "../helpers/render.ts";
-import { assert } from "@std/assert";
-import { DashboardTables, type ErrorItem } from "../../components/DashboardTables.tsx";
+import { assert, assertEquals } from "@std/assert";
+import { DashboardTables, errorRowKey, type ErrorItem } from "../../components/DashboardTables.tsx";
 import { StatGrid } from "../../components/StatGrid.tsx";
 
 const mixed: ErrorItem[] = [
@@ -44,6 +44,16 @@ Deno.test("DashboardTables — recovered row is dimmed", () => {
   assertContains(html, "opacity:0.55");
 });
 
+// Preact keys aren't emitted into SSR HTML, so the collision fix can't be seen
+// in a render test — assert the key helper directly. One finding logging two
+// steps must yield distinct keys.
+Deno.test("errorRowKey — distinct for same finding across steps / timestamps", () => {
+  const base = { findingId: "f1", error: "boom", ts: 5 } as const;
+  assert(errorRowKey({ ...base, step: "init" }) !== errorRowKey({ ...base, step: "ask-all" }), "different step → different key");
+  assert(errorRowKey({ ...base, step: "init" }) !== errorRowKey({ ...base, step: "init", ts: 6 }), "different ts → different key");
+  assertEquals(errorRowKey({ ...base, step: "init" }), "f1:5:init");
+});
+
 /** Slice the html to the Errors (24h) StatCard so value assertions don't match
  *  a zero from a sibling card. */
 function errorsCard(html: string): string {
@@ -64,6 +74,20 @@ Deno.test("StatGrid — prefers the backend genuineErrors24h count over the row 
   // Row list derives to 1 genuine fault, but the authoritative 24h count is 7.
   const html = renderHTML(<StatGrid p={{ errors: mixed, genuineErrors24h: 7 }} />);
   assertContains(errorsCard(html), ">7<");
+});
+
+Deno.test("StatGrid — a legitimate backend zero is preferred, not overridden", () => {
+  // mixed derives to 1 genuine fault; with the nullish chain a real 0 must win
+  // (a `||` regression would wrongly fall through to the row count of 1).
+  const html = renderHTML(<StatGrid p={{ errors: mixed, genuineErrors24h: 0 }} />);
+  assertContains(errorsCard(html), ">0<");
+});
+
+Deno.test("StatGrid — recovered sub uses the backend 24h count when provided", () => {
+  // Value + sub both come from the 24h backend numbers (not the 8-day row list).
+  const html = renderHTML(<StatGrid p={{ errors: mixed, genuineErrors24h: 0, recoveredErrors24h: 4 }} />);
+  assertContains(errorsCard(html), ">0<");
+  assertContains(html, "4 recovered");
 });
 
 Deno.test("StatGrid — all-recovered errors read as 0 faults", () => {

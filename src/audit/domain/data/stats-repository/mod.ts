@@ -833,6 +833,7 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
   completedCount: number;
   errors: Record<string, unknown>[];
   genuineErrors24h: number;
+  recoveredErrors24h: number;
   retries: Record<string, unknown>[];
   completedTs: number[];
   errorsTs: number[];
@@ -908,13 +909,22 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
   // 5s memo, so the per-finding read is cheap.
   const recoveredById = new Map<string, boolean>();
   let genuineErrors24h = 0;
+  let recoveredErrors24h = 0;
   for (const v of errors) {
     const fid = String(v?.findingId ?? "");
     if (fid) {
       if (!recoveredById.has(fid)) recoveredById.set(fid, await isFindingRecovered(orgId, fid));
       v.recovered = recoveredById.get(fid);
     }
-    if (Number(v?.ts ?? 0) >= cutoff && !v.recovered) genuineErrors24h++;
+    // A blank-findingId row can't be classified (recovered stays undefined) and
+    // is deliberately counted as a genuine fault — fail-loud, so an
+    // unattributable error never hides from the headline. In practice tracked
+    // errors always carry a real findingId (trackError skips "<unknown>"), so
+    // this is defensive. Both counts are window-matched (24h) for the card.
+    if (Number(v?.ts ?? 0) >= cutoff) {
+      if (v.recovered) recoveredErrors24h++;
+      else genuineErrors24h++;
+    }
   }
 
   const retriesRaw = await listStored<Record<string, unknown>>("retry-tracking", orgId);
@@ -925,5 +935,5 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
     if (ts >= cutoff) retriesTs.push(ts);
   }
 
-  return { active, completedCount, errors, genuineErrors24h, retries, completedTs, errorsTs, retriesTs };
+  return { active, completedCount, errors, genuineErrors24h, recoveredErrors24h, retries, completedTs, errorsTs, retriesTs };
 }

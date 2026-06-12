@@ -8,6 +8,12 @@ import { timeAgo } from "../lib/format.ts";
 
 export interface ActiveItem { findingId: string; recordId?: string; step: string; ts: number; isPackage?: boolean; startedAt?: number; }
 export interface ErrorItem { findingId: string; step: string; error: string; ts: number; recovered?: boolean; }
+
+/** Stable per-row key. One finding can log multiple error rows (one per failing
+ *  step), so the bare findingId collides — include ts + step to disambiguate.
+ *  Exported for unit testing: Preact `key` props aren't emitted into SSR output,
+ *  so a render test can't observe key collisions; test this directly instead. */
+export const errorRowKey = (e: ErrorItem): string => `${e.findingId}:${e.ts}:${e.step}`;
 export interface CompletedItem { findingId: string; recordId?: string; genies?: string; score?: number; completedAt: number; ts?: number; startedAt?: number; durationMs?: number; type?: string; isPackage?: boolean; }
 
 interface Props {
@@ -147,7 +153,7 @@ export function DashboardTables({ recent, active, errors, logsBase, paused }: Pr
               const reportHref = fid !== "\u2014" ? `/audit/report?id=${encodeURIComponent(fid)}` : null;
               const logsHref = logsUrl(e.findingId, logsBase);
               return (
-                <tr key={`${e.findingId}:${e.ts}:${e.step}`} style={e.recovered ? "opacity:0.55;" : undefined}>
+                <tr key={errorRowKey(e)} style={e.recovered ? "opacity:0.55;" : undefined}>
                   <td>{reportHref
                     ? <a href={reportHref} target="_blank" rel="noopener" class="tbl-link mono" style="font-size:10px;">{fid.slice(0, 12)}</a>
                     : <span class="mono">{fid.slice(0, 12)}</span>}</td>

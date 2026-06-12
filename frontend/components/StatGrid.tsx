@@ -16,6 +16,9 @@ export interface PipelineStatsShape {
    *  backend-side in getStats over the full error set (the row list has an
    *  8-day TTL and isn't the 24h set). Preferred for the red headline number. */
   genuineErrors24h?: number;
+  /** Companion 24h count of recovered (self-healed) rows, so the "M recovered"
+   *  sub-label lives in the same window as genuineErrors24h. */
+  recoveredErrors24h?: number;
   errors?: ErrorItem[];
   retries24h?: number;
 }
@@ -31,12 +34,15 @@ export function StatGrid({ p }: { p: PipelineStatsShape }) {
   activeList.forEach(a => { steps[a.step] = (steps[a.step] ?? 0) + 1; });
 
   // Red count = genuine (non-"recovered") faults only — see
-  // stats-repository.isFindingRecovered. Prefer the backend's authoritative 24h
-  // count; fall back to deriving from the display rows, then to the
-  // pre-aggregated errors24h when no detailed rows were delivered.
-  const recoveredErrors = errorList.filter(e => e.recovered).length;
+  // stats-repository.isFindingRecovered. Both the fault value and the recovered
+  // sub-count prefer the backend's authoritative 24h numbers; when those are
+  // absent both derive from the display row list, so the value and the
+  // "M recovered" label always sit in the same window as each other. (Final
+  // fallback: pre-aggregated errors24h when no detailed rows were delivered.)
+  const rowRecovered = errorList.filter(e => e.recovered).length;
+  const recoveredErrors = p.recoveredErrors24h ?? rowRecovered;
   const errorValue = p.genuineErrors24h
-    ?? (errorList.length ? errorList.length - recoveredErrors : (p.errors24h ?? 0));
+    ?? (errorList.length ? errorList.length - rowRecovered : (p.errors24h ?? 0));
   // sub: "M recovered" when any self-healed; else "N unique" faults; else "Clean".
   const errorSub = recoveredErrors
     ? `${recoveredErrors} recovered`

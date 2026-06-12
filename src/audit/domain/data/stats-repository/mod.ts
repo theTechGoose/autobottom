@@ -832,6 +832,7 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
   active: Record<string, unknown>[];
   completedCount: number;
   errors: Record<string, unknown>[];
+  genuineErrors24h: number;
   retries: Record<string, unknown>[];
   completedTs: number[];
   errorsTs: number[];
@@ -898,20 +899,22 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
     if (ts >= cutoff) errorsTs.push(ts);
   }
 
-  // Tag each error row `recovered` so the dashboard can tell a caught-and-continue
-  // blip whose audit still finished (e.g. ask-all:pinecone) apart from a genuine
-  // fault that left the finding stuck — same distinction the canary report makes.
-  // Only classify rows in the 24h window the dashboard shows, and dedup the
-  // getFinding by findingId (Map), so the cost is bounded by distinct recent
-  // errored findings — mirrors getErrorsInWindow's includeRecovery loop.
+  // Tag every error row `recovered` (see isFindingRecovered) so the dashboard
+  // can badge a caught-and-continue blip apart from a genuine fault, and derive
+  // `genuineErrors24h` — the authoritative non-recovered, in-window fault count
+  // for the headline card. (Don't make the card derive its count from the row
+  // list: error-tracking has an 8-day TTL, so `errors` is NOT the 24h set.)
+  // Dedup getFinding by findingId; error volume is low and getStats is behind a
+  // 5s memo, so the per-finding read is cheap.
   const recoveredById = new Map<string, boolean>();
+  let genuineErrors24h = 0;
   for (const v of errors) {
-    const ts = Number(v?.ts ?? 0);
-    if (ts < cutoff) continue;
     const fid = String(v?.findingId ?? "");
-    if (!fid) continue;
-    if (!recoveredById.has(fid)) recoveredById.set(fid, await isFindingRecovered(orgId, fid));
-    v.recovered = recoveredById.get(fid);
+    if (fid) {
+      if (!recoveredById.has(fid)) recoveredById.set(fid, await isFindingRecovered(orgId, fid));
+      v.recovered = recoveredById.get(fid);
+    }
+    if (Number(v?.ts ?? 0) >= cutoff && !v.recovered) genuineErrors24h++;
   }
 
   const retriesRaw = await listStored<Record<string, unknown>>("retry-tracking", orgId);
@@ -922,5 +925,5 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
     if (ts >= cutoff) retriesTs.push(ts);
   }
 
-  return { active, completedCount, errors, retries, completedTs, errorsTs, retriesTs };
+  return { active, completedCount, errors, genuineErrors24h, retries, completedTs, errorsTs, retriesTs };
 }

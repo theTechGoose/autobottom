@@ -44,10 +44,9 @@ function logsUrl(findingId: string, logsBase?: string): string | null {
 }
 
 export function DashboardTables({ recent, active, errors, logsBase, paused }: Props) {
-  // "recovered" = a caught-and-continue error whose audit still finished (e.g.
-  // ask-all:pinecone embed timeout). Show genuine faults first, dim recovered
-  // ones, so a finished audit no longer reads as a failure. (tagged backend-side
-  // by stats-repository.isFindingRecovered)
+  // "recovered" rows = caught-and-continue errors whose audit still finished
+  // (see stats-repository.isFindingRecovered). Genuine faults first, recovered
+  // dimmed below, so a finished audit no longer reads as a failure.
   const genuineCount = errors.filter(e => !e.recovered).length;
   const recoveredCount = errors.length - genuineCount;
   const sortedErrors = [...errors].sort((a, b) => Number(!!a.recovered) - Number(!!b.recovered) || b.ts - a.ts);
@@ -148,7 +147,7 @@ export function DashboardTables({ recent, active, errors, logsBase, paused }: Pr
               const reportHref = fid !== "\u2014" ? `/audit/report?id=${encodeURIComponent(fid)}` : null;
               const logsHref = logsUrl(e.findingId, logsBase);
               return (
-                <tr key={e.findingId} style={e.recovered ? "opacity:0.55;" : undefined}>
+                <tr key={`${e.findingId}:${e.ts}:${e.step}`} style={e.recovered ? "opacity:0.55;" : undefined}>
                   <td>{reportHref
                     ? <a href={reportHref} target="_blank" rel="noopener" class="tbl-link mono" style="font-size:10px;">{fid.slice(0, 12)}</a>
                     : <span class="mono">{fid.slice(0, 12)}</span>}</td>

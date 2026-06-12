@@ -373,4 +373,6 @@ Deno.test({ name: "getStats — tags errors recovered (finished) vs not (stuck)"
   assert(okRow && stuckRow, "both seeded errors present in getStats");
   assertEquals((okRow as { recovered?: boolean }).recovered, true, "finished finding → recovered");
   assertEquals((stuckRow as { recovered?: boolean }).recovered, false, "stuck finding → not recovered");
+  // Headline count excludes the recovered row — only the stuck finding is a fault.
+  assertEquals(stats.genuineErrors24h, 1, "genuineErrors24h counts the stuck finding only");
 }});

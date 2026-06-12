@@ -12,7 +12,7 @@ import ChargebacksToolbar from "../../islands/ChargebacksToolbar.tsx";
 import BulkAuditRunner from "../../islands/BulkAuditRunner.tsx";
 import EmailReportEditor from "../../islands/EmailReportEditor.tsx";
 
-interface PipelineStats { inPipe?: number; active?: ActiveItem[]; completed24h?: number; completedCount?: number; errors24h?: number; errors?: ErrorItem[]; retries24h?: number; retries?: unknown[]; completedTs?: number[]; errorsTs?: number[]; retriesTs?: number[]; paused?: boolean; }
+interface PipelineStats { inPipe?: number; active?: ActiveItem[]; completed24h?: number; completedCount?: number; errors24h?: number; genuineErrors24h?: number; errors?: ErrorItem[]; retries24h?: number; retries?: unknown[]; completedTs?: number[]; errorsTs?: number[]; retriesTs?: number[]; paused?: boolean; }
 interface DashboardData { pipeline: PipelineStats; review: ReviewStatsShape; recentCompleted: CompletedItem[]; }
 
 export default define.page(async function AdminDashboard(ctx) {

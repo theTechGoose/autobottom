@@ -12,6 +12,10 @@ export interface PipelineStatsShape {
   completed24h?: number;
   completedCount?: number;
   errors24h?: number;
+  /** Authoritative count of non-recovered faults in the 24h window, computed
+   *  backend-side in getStats over the full error set (the row list has an
+   *  8-day TTL and isn't the 24h set). Preferred for the red headline number. */
+  genuineErrors24h?: number;
   errors?: ErrorItem[];
   retries24h?: number;
 }
@@ -26,12 +30,14 @@ export function StatGrid({ p }: { p: PipelineStatsShape }) {
   const steps: Record<string, number> = {};
   activeList.forEach(a => { steps[a.step] = (steps[a.step] ?? 0) + 1; });
 
-  // Split caught-and-continue "recovered" errors (audit still finished) from
-  // genuine faults so the red count reflects real problems, not non-fatal blips
-  // like an ask-all:pinecone embed timeout. See stats-repository.isFindingRecovered.
-  const genuineErrors = errorList.filter(e => !e.recovered).length;
-  const recoveredErrors = errorList.length - genuineErrors;
-  const errorValue = errorList.length ? genuineErrors : (p.errors24h ?? 0);
+  // Red count = genuine (non-"recovered") faults only — see
+  // stats-repository.isFindingRecovered. Prefer the backend's authoritative 24h
+  // count; fall back to deriving from the display rows, then to the
+  // pre-aggregated errors24h when no detailed rows were delivered.
+  const recoveredErrors = errorList.filter(e => e.recovered).length;
+  const errorValue = p.genuineErrors24h
+    ?? (errorList.length ? errorList.length - recoveredErrors : (p.errors24h ?? 0));
+  // sub: "M recovered" when any self-healed; else "N unique" faults; else "Clean".
   const errorSub = recoveredErrors
     ? `${recoveredErrors} recovered`
     : (errorValue ? `${errorValue} unique` : "Clean");

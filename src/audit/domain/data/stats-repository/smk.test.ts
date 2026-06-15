@@ -2,7 +2,7 @@
 
 import { assertEquals, assert } from "#assert";
 import {
-  trackActive, trackCompleted, trackError, clearErrors, trackRetry,
+  trackActive, trackCompleted, trackError, trackErrorOnce, clearErrors, trackRetry,
   writeAuditDoneIndex, queryAuditDoneIndex, findAuditsByRecordId,
   saveChargebackEntry, getChargebackEntry, getChargebackEntries, deleteChargebackEntry,
   saveWireDeductionEntry, getWireDeductionEntry, getWireDeductionEntries, deleteWireDeductionEntry,
@@ -49,6 +49,31 @@ Deno.test({ name: "trackError — same-finding distinct steps both persist (no k
   const rows = await getErrorsInWindow(org, 0, Date.now() + 1000);
   const mine = rows.filter((r) => r.findingId === "f-collide");
   assertEquals(mine.length, 2, "both role failures stored under distinct keys");
+}});
+
+Deno.test({ name: "trackErrorOnce — repeat same finding+step collapses to one row", ...kvOpts, fn: async () => {
+  const org = "test-track-once-" + crypto.randomUUID().slice(0, 8);
+  await clearErrors(org);
+  // Simulate step-init re-driving a dead recording: the same finding+step is
+  // tracked repeatedly. The deterministic day-bucket key collapses the repeats
+  // to one row (last-write-wins), instead of ~8 rows from re-drives.
+  await trackErrorOnce(org, "f-dead", "genie:download:primary", "DEAD_URL: file is 2160 bytes");
+  await trackErrorOnce(org, "f-dead", "genie:download:primary", "DEAD_URL: file is 2160 bytes");
+  await trackErrorOnce(org, "f-dead", "genie:download:primary", "Dead URL — cascade.");
+  const rows = await getErrorsInWindow(org, 0, Date.now() + 1000);
+  const mine = rows.filter((r) => r.findingId === "f-dead");
+  assertEquals(mine.length, 1, "repeat failures of the same finding+step dedup to one row");
+  assertEquals(mine[0].error, "Dead URL — cascade.", "last-write-wins keeps the most recent message");
+}});
+
+Deno.test({ name: "trackErrorOnce — distinct steps (primary vs secondary cascade) keep separate rows", ...kvOpts, fn: async () => {
+  const org = "test-track-once-roles-" + crypto.randomUUID().slice(0, 8);
+  await clearErrors(org);
+  await trackErrorOnce(org, "f-cascade", "genie:download:primary", "DEAD_URL");
+  await trackErrorOnce(org, "f-cascade", "genie:download:secondary", "HTTP 404");
+  const rows = await getErrorsInWindow(org, 0, Date.now() + 1000);
+  const mine = rows.filter((r) => r.findingId === "f-cascade");
+  assertEquals(mine.length, 2, "primary + secondary are distinct steps → distinct rows");
 }});
 
 Deno.test({ name: "tracking — active → completed lifecycle", ...kvOpts, fn: async () => {

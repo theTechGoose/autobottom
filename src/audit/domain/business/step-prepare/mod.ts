@@ -14,6 +14,15 @@ function json(data: unknown, status = 200) {
   });
 }
 
+/** Classify a step-prepare failure as a transient/recoverable blip (Firestore /
+ *  QuickBase abort or timeout — QStash retry / the watchdog will re-drive it)
+ *  vs a genuine fatal (missing data, bad config). Exported so the classification
+ *  is unit-testable without driving the whole step. The `\b` anchors require the
+ *  full token "aborted" — a bare "abort" does NOT match. */
+export function isTransientPrepareError(msg: string): boolean {
+  return /\baborted\b|timed out|timeout|http2|deadline|connection|connect/i.test(msg);
+}
+
 export async function stepPrepare(req: Request): Promise<Response> {
   const body = await req.json();
   // rawTranscript carried in the payload by transcribe-cb to survive the
@@ -254,7 +263,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
     // Classify so ops can tell a recoverable blip (Firestore/QB abort or
     // timeout — QStash retry / the watchdog will re-drive it) from a genuine
     // fatal (missing data, bad config). `phase` says which sub-operation died.
-    const transient = /\baborted\b|timed out|timeout|http2|deadline|connection|connect/i.test(msg);
+    const transient = isTransientPrepareError(msg);
     console.error(`[STEP-PREPARE] ${findingId}: ❌ Fatal error in phase=${phase} transient=${transient}: ${msg}`, err);
     return json({ error: msg, phase, transient, findingId }, 500);
   }

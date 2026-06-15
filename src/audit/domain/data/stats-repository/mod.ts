@@ -317,32 +317,29 @@ export async function clearErrors(orgId: OrgId): Promise<number> {
   return rows.length;
 }
 
-/** Like [[trackError]] but suppresses the row when an error for the SAME
- *  finding + step was already tracked within `withinMs` (default 24h). For a
- *  permanently-failing, repeatedly-re-driven step — e.g. a dead Genie recording
- *  that step-init re-attempts every 10 min up to MAX_GENIE_RETRIES, each run
- *  logging a primary + secondary failure — this collapses ~8 dashboard rows into
- *  one per finding+step+day instead of one per re-drive. Fail-open: if the dedup
- *  read throws, we still track, so a transient read never swallows a real error. */
-export async function trackErrorOnce(
-  orgId: OrgId, findingId: string, step: string, error: string, withinMs = DAY_MS,
-): Promise<void> {
-  try {
-    const since = Date.now() - withinMs;
-    const rows = await listStored<Record<string, unknown>>("error-tracking", orgId);
-    const duplicate = rows.some((v) =>
-      String(v?.findingId ?? "") === findingId &&
-      String(v?.step ?? "") === step &&
-      Number(v?.ts ?? 0) >= since
-    );
-    if (duplicate) {
-      console.log(`🔁 [TRACK-ERROR] skip duplicate ${findingId}/${step} (already tracked within ${Math.round(withinMs / 3_600_000)}h)`);
-      return;
-    }
-  } catch (err) {
-    console.warn(`⚠️ [TRACK-ERROR] dedup read failed for ${findingId}/${step}, tracking anyway:`, err);
-  }
-  await trackError(orgId, findingId, step, error);
+/** Like [[trackError]] but DEDUPED to one row per finding + step + UTC-day, via
+ *  a deterministic day-bucketed key. For a permanently-failing, repeatedly-
+ *  re-driven step — e.g. a dead Genie recording that step-init re-attempts every
+ *  10 min up to MAX_GENIE_RETRIES, plus hourly watchdog re-drives — this turns
+ *  ~8 dashboard rows into one per finding+step+day instead of one per re-drive.
+ *
+ *  Why a deterministic key instead of [[trackError]]'s Date.now()-keyed rows +
+ *  a read-then-write dedup check: concurrent re-drives idempotently collide on
+ *  the SAME doc (last-write-wins) rather than racing a check-then-write that
+ *  could let both writers through, and there's no O(rows) listStored scan in the
+ *  hot retry path. last-write-wins keeps `ts`/`error` reflecting the most recent
+ *  attempt, so the row's "When" + 24h-window membership track the latest failure.
+ *
+ *  Read paths are unaffected: every consumer (getErrorsInWindow, _getStatsRaw,
+ *  clearErrors) reads the row VALUES (findingId/step/ts/error), never the key. */
+export async function trackErrorOnce(orgId: OrgId, findingId: string, step: string, error: string): Promise<void> {
+  const now = Date.now();
+  const dayBucket = Math.floor(now / DAY_MS);
+  await setStored(
+    "error-tracking", orgId, [`${findingId}-${step}-day${dayBucket}`],
+    { findingId, step, error: redactErrorMessage(error), ts: now },
+    { expireInMs: ERROR_RETENTION_MS },
+  );
 }
 
 export async function trackRetry(orgId: OrgId, findingId: string, step: string, attempt: number): Promise<void> {
@@ -966,6 +963,9 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
   // errorsTs (the activity chart, which wants all error activity). Only the
   // displayed table is narrowed, so old rows age out on the 24h boundary and a
   // finished/terminated audit's transient blip never reads as a failure.
+  // NOTE: DashboardTables ALSO re-filters `!recovered` defensively — both layers
+  // are intentional; don't "simplify" either away (the frontend can't see this
+  // backend filter, and this can't see callers that bypass the dashboard feed).
   const displayErrors = errors.filter((v) => Number(v?.ts ?? 0) >= cutoff && !v.recovered);
 
   return { active, completedCount, errors: displayErrors, genuineErrors24h, recoveredErrors24h, retries, completedTs, errorsTs, retriesTs };

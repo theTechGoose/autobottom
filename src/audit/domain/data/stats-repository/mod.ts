@@ -317,6 +317,34 @@ export async function clearErrors(orgId: OrgId): Promise<number> {
   return rows.length;
 }
 
+/** Like [[trackError]] but suppresses the row when an error for the SAME
+ *  finding + step was already tracked within `withinMs` (default 24h). For a
+ *  permanently-failing, repeatedly-re-driven step — e.g. a dead Genie recording
+ *  that step-init re-attempts every 10 min up to MAX_GENIE_RETRIES, each run
+ *  logging a primary + secondary failure — this collapses ~8 dashboard rows into
+ *  one per finding+step+day instead of one per re-drive. Fail-open: if the dedup
+ *  read throws, we still track, so a transient read never swallows a real error. */
+export async function trackErrorOnce(
+  orgId: OrgId, findingId: string, step: string, error: string, withinMs = DAY_MS,
+): Promise<void> {
+  try {
+    const since = Date.now() - withinMs;
+    const rows = await listStored<Record<string, unknown>>("error-tracking", orgId);
+    const duplicate = rows.some((v) =>
+      String(v?.findingId ?? "") === findingId &&
+      String(v?.step ?? "") === step &&
+      Number(v?.ts ?? 0) >= since
+    );
+    if (duplicate) {
+      console.log(`🔁 [TRACK-ERROR] skip duplicate ${findingId}/${step} (already tracked within ${Math.round(withinMs / 3_600_000)}h)`);
+      return;
+    }
+  } catch (err) {
+    console.warn(`⚠️ [TRACK-ERROR] dedup read failed for ${findingId}/${step}, tracking anyway:`, err);
+  }
+  await trackError(orgId, findingId, step, error);
+}
+
 export async function trackRetry(orgId: OrgId, findingId: string, step: string, attempt: number): Promise<void> {
   await setStored("retry-tracking", orgId, [`${Date.now()}-${findingId}`], { findingId, step, attempt, ts: Date.now() }, { expireInMs: DAY_MS });
 }
@@ -816,15 +844,11 @@ export async function getStuckFindings(thresholdMs = 15 * 60 * 1000): Promise<Ar
 
 // ── Pipeline Stats Aggregation ───────────────────────────────────────────────
 
-export async function getStats(orgId: OrgId): Promise<{
-  active: Record<string, unknown>[];
-  completedCount: number;
-  errors: Record<string, unknown>[];
-  retries: Record<string, unknown>[];
-  completedTs: number[];
-  errorsTs: number[];
-  retriesTs: number[];
-}> {
+// Return type mirrors _getStatsRaw exactly (incl. genuineErrors24h /
+// recoveredErrors24h) so the public signature can't drift from what the
+// implementation actually returns — the dashboard + smk tests read those
+// 24h count fields.
+export async function getStats(orgId: OrgId): Promise<Awaited<ReturnType<typeof _getStatsRaw>>> {
   return withTiming("getStats", () => _getStatsRaw(orgId));
 }
 
@@ -935,5 +959,14 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
     if (ts >= cutoff) retriesTs.push(ts);
   }
 
-  return { active, completedCount, errors, genuineErrors24h, recoveredErrors24h, retries, completedTs, errorsTs, retriesTs };
+  // The "Recent Errors (24h)" dashboard table feed: only GENUINE faults from the
+  // last 24h — i.e. errors that actually broke a run. The full `errors` set above
+  // (8-day TTL, includes recovered/self-healed blips) still drives the recovered
+  // tagging + the genuineErrors24h/recoveredErrors24h headline counts and
+  // errorsTs (the activity chart, which wants all error activity). Only the
+  // displayed table is narrowed, so old rows age out on the 24h boundary and a
+  // finished/terminated audit's transient blip never reads as a failure.
+  const displayErrors = errors.filter((v) => Number(v?.ts ?? 0) >= cutoff && !v.recovered);
+
+  return { active, completedCount, errors: displayErrors, genuineErrors24h, recoveredErrors24h, retries, completedTs, errorsTs, retriesTs };
 }

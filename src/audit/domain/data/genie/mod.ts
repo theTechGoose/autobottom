@@ -1,6 +1,6 @@
 /** Genie recording provider - fetches recording URLs and downloads audio. */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
-import { trackError } from "@audit/domain/data/stats-repository/mod.ts";
+import { trackErrorOnce } from "@audit/domain/data/stats-repository/mod.ts";
 
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -289,7 +289,10 @@ async function tryStrategy(
     // Surface the per-role cascade to the daily canary report. If a later role
     // recovers, the finding still finishes → tagged `recovered` → visible but
     // non-paging; if every role dies, the finding never finishes → unrecovered.
-    if (ctx) trackError(ctx.orgId, ctx.findingId, `genie:download:${role}`, String(err)).catch(() => {});
+    // trackErrorOnce: step-init re-drives a dead recording every 10 min (up to
+    // MAX_GENIE_RETRIES), so without dedup one dead recording spams ~8 rows
+    // (primary+secondary × each re-drive). Collapse to one row per finding+role+day.
+    if (ctx) trackErrorOnce(ctx.orgId, ctx.findingId, `genie:download:${role}`, String(err)).catch(() => {});
     return null;
   }
 }

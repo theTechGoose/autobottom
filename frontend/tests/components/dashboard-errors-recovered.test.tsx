@@ -15,33 +15,45 @@ const mixed: ErrorItem[] = [
   { findingId: "fRecovered1", step: "ask-all:pinecone", error: "OpenAI embed timed out after 30s", ts: 2_000, recovered: true },
 ];
 
-Deno.test("DashboardTables — recovered error gets a 'recovered' badge", () => {
+Deno.test("DashboardTables — recovered rows are excluded from the table", () => {
+  // The table shows only errors that actually broke a run. A recovered row
+  // (audit still finished) must not render at all — no row, no badge.
   const html = renderHTML(<DashboardTables recent={[]} active={[]} errors={mixed} />);
-  assertContains(html, ">recovered<");
-  // The genuine fault row carries no recovered badge text of its own.
-  assertContains(html, "ask-all:pinecone");
+  // Genuine fault renders.
+  assertContains(html, "The signal has been aborted");
   assertContains(html, "init");
+  // Recovered row is gone — its error text, its step, and the badge are absent.
+  assertNotContains(html, "OpenAI embed timed out after 30s");
+  assertNotContains(html, "ask-all:pinecone");
+  assertNotContains(html, "recovered");
 });
 
-Deno.test("DashboardTables — genuine fault sorts above recovered (despite newer ts)", () => {
-  // The recovered row has the newer ts (2000 > 1000), so only the primary
-  // recovered-key sort can place the genuine row first — this guards that sort.
-  const html = renderHTML(<DashboardTables recent={[]} active={[]} errors={mixed} />);
+Deno.test("DashboardTables — genuine faults sort newest-first", () => {
+  const faults: ErrorItem[] = [
+    { findingId: "fOld", step: "init", error: "older fault", ts: 1_000 },
+    { findingId: "fNew", step: "prepare", error: "newer fault", ts: 3_000 },
+  ];
+  const html = renderHTML(<DashboardTables recent={[]} active={[]} errors={faults} />);
   assert(
-    html.indexOf("The signal has been aborted") < html.indexOf("OpenAI embed timed out after 30s"),
-    "genuine fault must render before the recovered row",
+    html.indexOf("newer fault") < html.indexOf("older fault"),
+    "newer genuine fault must render before the older one",
   );
 });
 
-Deno.test("DashboardTables — header shows the fault/recovered split", () => {
+Deno.test("DashboardTables — header counts genuine faults only", () => {
   const html = renderHTML(<DashboardTables recent={[]} active={[]} errors={mixed} />);
+  // mixed has 1 genuine + 1 recovered → header shows "1 fault", no recovered split.
   assertContains(html, "1 fault");
-  assertContains(html, "1 recovered");
+  assertNotContains(html, "recovered");
 });
 
-Deno.test("DashboardTables — recovered row is dimmed", () => {
-  const html = renderHTML(<DashboardTables recent={[]} active={[]} errors={mixed} />);
-  assertContains(html, "opacity:0.55");
+Deno.test("DashboardTables — an all-recovered feed renders an empty table", () => {
+  const allRecovered: ErrorItem[] = [
+    { findingId: "r1", step: "ask-all:pinecone", error: "embed timeout", ts: 1, recovered: true },
+  ];
+  const html = renderHTML(<DashboardTables recent={[]} active={[]} errors={allRecovered} />);
+  assertContains(html, "No errors");
+  assertNotContains(html, "embed timeout");
 });
 
 // Preact keys aren't emitted into SSR HTML, so the collision fix can't be seen

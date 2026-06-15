@@ -357,9 +357,13 @@ Deno.test({ name: "isFindingRecovered — missing finding is not recovered (fail
 }});
 
 // getStats feeds the dashboard "Recent Errors (24h)" panel + the Errors stat
-// card. It must tag each error row `recovered` so a finished audit (e.g. an
-// ask-all:pinecone embed timeout that still delivered) isn't shown as a fault.
-Deno.test({ name: "getStats — tags errors recovered (finished) vs not (stuck)", ...kvOpts, fn: async () => {
+// card. The `errors` array is the TABLE feed — only GENUINE, in-window faults
+// (recovered/self-healed blips like an ask-all:pinecone embed timeout that still
+// delivered are filtered out, so a finished audit never reads as a fault) — while
+// genuineErrors24h / recoveredErrors24h carry the headline counts for the stat
+// card. (Row-level `recovered` tagging is covered by the getErrorsInWindow tests
+// above.)
+Deno.test({ name: "getStats — errors array is genuine-only; counts split recovered", ...kvOpts, fn: async () => {
   const ORG_GS = "test-getstats-rec-" + crypto.randomUUID().slice(0, 8);
   const okFid = "f-gs-ok-" + crypto.randomUUID().slice(0, 8);
   const stuckFid = "f-gs-stuck-" + crypto.randomUUID().slice(0, 8);
@@ -370,10 +374,13 @@ Deno.test({ name: "getStats — tags errors recovered (finished) vs not (stuck)"
   const stats = await getStats(ORG_GS);
   const okRow = stats.errors.find((e) => (e as { findingId?: string }).findingId === okFid);
   const stuckRow = stats.errors.find((e) => (e as { findingId?: string }).findingId === stuckFid);
-  assert(okRow && stuckRow, "both seeded errors present in getStats");
-  assertEquals((okRow as { recovered?: boolean }).recovered, true, "finished finding → recovered");
+  // The recovered (finished) row is filtered OUT of the table feed; only the
+  // genuine stuck fault remains.
+  assertEquals(okRow, undefined, "recovered finding is excluded from the errors table feed");
+  assert(stuckRow, "genuine stuck fault present in the errors table feed");
   assertEquals((stuckRow as { recovered?: boolean }).recovered, false, "stuck finding → not recovered");
-  // Window-matched 24h counts: one genuine fault (stuck), one recovered (finished).
+  // Window-matched 24h counts (computed over the full set, before the filter):
+  // one genuine fault (stuck), one recovered (finished).
   assertEquals(stats.genuineErrors24h, 1, "genuineErrors24h counts the stuck finding only");
   assertEquals(stats.recoveredErrors24h, 1, "recoveredErrors24h counts the finished finding only");
 }});

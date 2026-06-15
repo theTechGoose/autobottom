@@ -28,6 +28,13 @@ export async function stepPrepare(req: Request): Promise<Response> {
   console.log(`[STEP-PREPARE] ${findingId}: Starting preparation...`);
   // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
 
+  // Breadcrumb: which sub-operation we're in, so the catch-all 500 below can
+  // say WHICH phase failed (and whether it's a transient FS/QB abort vs a fatal
+  // data problem). Without this the dashboard's "prepare returned HTTP 500" was
+  // opaque — a recoverable Firestore abort looked identical to missing data that
+  // hangs the audit at "populating-questions" forever.
+  let phase = "load-finding";
+
   try {
     const finding = await getFinding(orgId, findingId);
     if (!finding) return json({ error: "finding not found" }, 404);
@@ -54,6 +61,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
 
     // Resolved transcript value used by every downstream branch in this step.
     const rawTranscript = finding.rawTranscript ?? "";
+    phase = "resolve-questions";
 
     // If transcript is invalid, skip to finalize
     if (rawTranscript.includes("Invalid Genie") || rawTranscript.includes("Genie Invalid")) {
@@ -193,6 +201,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
       }
     }
 
+    phase = "populate-questions";
     const populated = populateQuestions(questionSeeds, cleanRecord, fieldLookup);
 
     // Log autoYes expressions after population so we can verify field values resolved correctly
@@ -201,6 +210,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
       console.log(`[STEP-PREPARE] ${findingId}: autoYes expressions after population:\n  ${autoYesPopulated.join("\n  ")}`);
     }
 
+    phase = "save-questions";
     console.log(`[STEP-PREPARE] ${findingId}: Saving ${populated.length} populated questions...`);
     finding.unpopulatedQuestions = questionSeeds;
     finding.populatedQuestions = populated;
@@ -229,6 +239,7 @@ export async function stepPrepare(req: Request): Promise<Response> {
     finding.findingStatus = "asking-questions";
     await saveFinding(orgId, finding);
 
+    phase = "enqueue-ask-all";
     // Carry rawTranscript forward to ask-all so the grading steps don't have
     // to depend on this isolate's saveFinding propagating before they read.
     const askPayload: Record<string, unknown> = { findingId, orgId, adminRetry };
@@ -239,7 +250,12 @@ export async function stepPrepare(req: Request): Promise<Response> {
     console.log(`[STEP-PREPARE] ${findingId}: ✅ Enqueued ask-all for ${populated.length} questions`);
     return json({ ok: true, questions: populated.length });
   } catch (err: any) {
-    console.error(`[STEP-PREPARE] ${findingId}: ❌ Fatal error:`, err);
-    return json({ error: err.message || String(err) }, 500);
+    const msg = err?.message || String(err);
+    // Classify so ops can tell a recoverable blip (Firestore/QB abort or
+    // timeout — QStash retry / the watchdog will re-drive it) from a genuine
+    // fatal (missing data, bad config). `phase` says which sub-operation died.
+    const transient = /\baborted\b|timed out|timeout|http2|deadline|connection|connect/i.test(msg);
+    console.error(`[STEP-PREPARE] ${findingId}: ❌ Fatal error in phase=${phase} transient=${transient}: ${msg}`, err);
+    return json({ error: msg, phase, transient, findingId }, 500);
   }
 }

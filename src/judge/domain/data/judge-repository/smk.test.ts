@@ -517,6 +517,16 @@ Deno.test("writeSoleAuditDoneIndex — one row at reviewedAt, audit-time sibling
   assertEquals(rows[0].reviewedBy, "alice@x.com", "reviewer attribution preserved through judge overwrite");
 });
 
+Deno.test("writeSoleAuditDoneIndex — skips a malformed finding (no finite completedAt/reviewedAt) instead of minting a wall-clock row", async () => {
+  reset();
+  const orgId = ("test-sole-bad-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const wrote = await writeSoleAuditDoneIndex(orgId, {}, {
+    findingId: "fid-bad", completed: true, score: 50, recordId: "recBad",
+  });
+  assertEquals(wrote, false, "no finite timestamp → write is skipped");
+  assertEquals((await idxRowsFor(orgId, "fid-bad")).length, 0, "no orphan row minted at wall-clock time");
+});
+
 // ─── postJudgedAudit — audit-done-idx sync contract ────────────────────────
 // postJudgedAudit must write a fresh audit-done-idx entry whenever judges
 // have overturned at least one question. If a future change removes the

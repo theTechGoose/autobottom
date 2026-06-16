@@ -87,6 +87,7 @@ function renderDiagnosis(d: Diagnosis): string {
     <div><strong>Scanned:</strong> ${d.scannedRows} index rows across ${d.distinctFindings} distinct findings</div>
     <div><strong>Findings with duplicate rows:</strong> ${d.findingsWithDupes}</div>
     <div><strong>Stale rows the cleanup would remove:</strong> ${d.staleRows} (each finding keeps exactly one row — never hidden)</div>
+    <div style="color:var(--text-dim);font-size:11px;">Note: this counts only dupes whose rows both fall in the selected window. A finding whose audit and review rows straddle the range is missed — widen the range for a full sweep.</div>
   </div>`;
   const groups = d.sampleGroups.length
     ? `<div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">Showing ${d.sampleShown} of ${d.sampleTotal} findings with duplicate rows (most rows first). Pink = a stale row that would be removed. "Rec #" = recording (genie) number.</div>${d.sampleGroups.map(renderGroup).join("")}`

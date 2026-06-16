@@ -809,7 +809,15 @@ export async function writeSoleAuditDoneIndex(
   const reviewedAt = Number(finding?.reviewedAt);
   const canonicalTs = Number.isFinite(reviewedAt) ? reviewedAt
     : Number.isFinite(completedAt) ? completedAt
-    : Date.now();
+    : NaN;
+  if (!Number.isFinite(canonicalTs)) {
+    // Malformed finding (no finite completedAt/reviewedAt): don't mint an
+    // arbitrary wall-clock key — that would create an orphan row in a random
+    // time bucket that the sibling-cleanup can't pair and collapse can't reunite.
+    // Surface the data defect and skip; callers treat this write as best-effort.
+    console.warn(`[DONE-IDX] ${entry.findingId}: no finite completedAt/reviewedAt — skipping sole-index write (malformed finding)`);
+    return false;
+  }
   // Merge over any existing row at the canonical key so fields the new writer
   // omits survive — notably reviewedBy/reviewHandleMs when a JUDGE or FLIP
   // overwrites a previously-reviewed finding's row (those entries carry the new
@@ -841,6 +849,10 @@ export function pickCanonicalIndexRow(rows: AuditDoneIndexEntry[]): number {
     const aReviewed = a.reason === "reviewed" || !!a.reviewedBy;
     const bReviewed = b.reason === "reviewed" || !!b.reviewedBy;
     if (aReviewed !== bReviewed) { if (aReviewed) best = i; continue; }
+    // Same reviewed status (incl. two reviewed rows): newest doneAt/completedAt
+    // wins. Strict `>` means an exact-timestamp tie keeps `best` unchanged, so
+    // the earliest-scanned row (lowest index in the ascending completedAt scan)
+    // is kept — deterministic, just tied to scan order.
     const aTs = a.doneAt ?? a.completedAt ?? 0;
     const bTs = b.doneAt ?? b.completedAt ?? 0;
     if (aTs > bTs) best = i;
@@ -856,6 +868,30 @@ export interface CollapseResult {
   rowsDeleted: number;        // redundant rows actually removed (execute mode)
   failed: number;
   failedIds: string[];        // findingIds whose stale-row delete threw
+}
+
+/** Raw scan of audit-done-idx in [since, until], grouped by findingId. Single
+ *  source of truth shared by collapseDuplicateIndexRows (the destructive run)
+ *  and diagnoseDuplicates (the read-only preview) so the two can never drift —
+ *  what Diagnose shows is exactly the set Execute acts on. Includes hidden rows
+ *  (we only ever delete redundant extras, never touch hidden state). */
+export async function scanAndGroupByFinding(
+  orgId: OrgId,
+  since: number,
+  until: number,
+): Promise<{ rows: AuditDoneIndexEntry[]; byFinding: Map<string, AuditDoneIndexEntry[]> }> {
+  const rows = await listStoredByCompletedAt<AuditDoneIndexEntry>(
+    "audit-done-idx", orgId, since, until,
+    { limit: Number.MAX_SAFE_INTEGER, fieldName: "completedAt" },
+  );
+  const byFinding = new Map<string, AuditDoneIndexEntry[]>();
+  for (const r of rows) {
+    if (!r?.findingId) continue;
+    const g = byFinding.get(r.findingId) ?? [];
+    g.push(r);
+    byFinding.set(r.findingId, g);
+  }
+  return { rows, byFinding };
 }
 
 /** Collapse duplicate audit-done-idx rows so each finding keeps exactly ONE row
@@ -879,19 +915,7 @@ export async function collapseDuplicateIndexRows(
 ): Promise<CollapseResult> {
   const execute = !!opts?.execute;
   const deleteRow = opts?.deleteRow ?? deleteAuditDoneIndexEntry;
-  // Raw scan (include hidden — a hidden finding's extra rows are still
-  // redundant; we only ever delete extras, never touch hidden state).
-  const rows = await listStoredByCompletedAt<AuditDoneIndexEntry>(
-    "audit-done-idx", orgId, since, until,
-    { limit: Number.MAX_SAFE_INTEGER, fieldName: "completedAt" },
-  );
-  const byFinding = new Map<string, AuditDoneIndexEntry[]>();
-  for (const r of rows) {
-    if (!r?.findingId) continue;
-    const g = byFinding.get(r.findingId) ?? [];
-    g.push(r);
-    byFinding.set(r.findingId, g);
-  }
+  const { rows, byFinding } = await scanAndGroupByFinding(orgId, since, until);
 
   // Plan first (stable totals + accurate dry-run counts), then act.
   let findingsWithDupes = 0;

@@ -96,6 +96,7 @@ export const handler = define.handlers({
           failed > 0 ? ` <span style="color:var(--red);font-weight:700;">(⚠️ ${failed} failed — re-run to retry)</span>` : ""
         }</div>`);
       }
+      lines.push(`<div style="color:var(--text-dim);font-size:11px;">Counts only dupes whose rows both fall in the window — widen the range for a full sweep.</div>`);
       lines.push(`<div style="color:var(--text-dim);font-size:11px;">Done in ${elapsedSec}s.</div>`);
       const color = (!dryRun && failed > 0) ? "var(--text-bright)" : "var(--green)";
       return new Response(

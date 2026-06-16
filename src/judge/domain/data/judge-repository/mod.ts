@@ -3,10 +3,10 @@
  *  acceptable given the per-judge concurrency profile and idempotent finalize. */
 
 import {
-  getStored, setStored, deleteStored, listStoredWithKeys, listStoredWithKeysAll, listStoredByCompletedAt, withTiming,
+  getStored, setStored, deleteStored, listStoredWithKeys, listStoredWithKeysAll, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
-import type { JudgeDecision, AppealRecord, AuditDoneIndexEntry } from "@core/dto/types.ts";
+import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
 import { getFinding, getTranscript, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFlipToPass, configKeyForFinding, normalizeQuestionKey } from "@audit/domain/data/question-stats-repository/mod.ts";
@@ -28,6 +28,7 @@ import {
   deriveQbRecordId,
   buildIndexMeta,
   pickCanonicalIndexRow,
+  scanAndGroupByFinding,
 } from "@audit/domain/data/stats-repository/mod.ts";
 
 const ACTIVE_TTL = 30 * 60 * 1000;
@@ -897,19 +898,9 @@ export async function diagnoseDuplicates(
   since: number,
   until: number,
 ): Promise<DedupDiagnosis> {
-  // Raw scan — same as collapseDuplicateIndexRows (include hidden; we only ever
-  // remove redundant rows, never change hidden state).
-  const rows = await listStoredByCompletedAt<AuditDoneIndexEntry>(
-    "audit-done-idx", orgId, since, until,
-    { limit: Number.MAX_SAFE_INTEGER, fieldName: "completedAt" },
-  );
-  const byFinding = new Map<string, AuditDoneIndexEntry[]>();
-  for (const r of rows) {
-    if (!r?.findingId) continue;
-    const g = byFinding.get(r.findingId) ?? [];
-    g.push(r);
-    byFinding.set(r.findingId, g);
-  }
+  // Shared scan+group with collapseDuplicateIndexRows — guarantees the preview
+  // matches what Execute will act on.
+  const { rows, byFinding } = await scanAndGroupByFinding(orgId, since, until);
 
   let findingsWithDupes = 0, staleRows = 0;
   const groups: DedupDiagGroup[] = [];

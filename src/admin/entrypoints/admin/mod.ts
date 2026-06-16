@@ -1005,6 +1005,7 @@ export class AdminConfigController {
     phase: "scanning" | "deleting" | "done" | "error";
     total: number;
     deleted: number;
+    failed: number;
     startedAt: number;
     finishedAt?: number;
     error?: string;
@@ -1032,14 +1033,22 @@ export class AdminConfigController {
     const since = parseDateOrMs(b.since, false);
     const until = parseDateOrMs(b.until, true);
     if (since == null || until == null) return { error: "since and until required (date YYYY-MM-DD or ms)" };
+    // Explicit, defensive execute parse. The Mode <select> always submits
+    // "dry"|"execute"; legacy checkbox forms (execute=true/1/on) still honoured.
+    // Anything we don't recognise ⇒ dry run (fail-safe: never delete on doubt).
+    // Log the raw values so a "ran but didn't delete" report is diagnosable.
+    const execute = b.mode === "execute" ||
+      b.execute === true || b.execute === "true" || b.execute === 1 || b.execute === "1" || b.execute === "on";
+    console.log(`[DEDUP] start since=${since} until=${until} raw.mode=${JSON.stringify(b.mode)} raw.execute=${JSON.stringify(b.execute)} → ${execute ? "EXECUTE (delete)" : "DRY RUN"}`);
     AdminConfigController._evictOldDedupJobs();
     const jobId = `dedup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     AdminConfigController._dedupJobs.set(jobId, {
       phase: "scanning",
       total: 0,
       deleted: 0,
+      failed: 0,
       startedAt: Date.now(),
-      dryRun: !b.execute,
+      dryRun: !execute,
     });
 
     // Fire-and-forget. .catch is mandatory — an unhandled rejection here
@@ -1054,17 +1063,17 @@ export class AdminConfigController {
         if (job) {
           job.plan = { scanned: plan.scanned, groups: plan.groups, orphaned: plan.orphaned };
           job.total = losers;
-          job.phase = b.execute ? "deleting" : "done";
+          job.phase = execute ? "deleting" : "done";
         }
-        if (b.execute) {
-          await runInBackgroundLane(() =>
+        if (execute) {
+          const res = await runInBackgroundLane(() =>
             deleteDuplicatesLegacy(ORG(), plan as any, (deleted, total) => {
               const j = AdminConfigController._dedupJobs.get(jobId);
               if (j) { j.deleted = deleted; j.total = total; }
             })
           );
           const j = AdminConfigController._dedupJobs.get(jobId);
-          if (j) { j.phase = "done"; j.finishedAt = Date.now(); }
+          if (j) { j.phase = "done"; j.finishedAt = Date.now(); j.deleted = res.deleted; j.failed = res.failed; }
         } else {
           const j = AdminConfigController._dedupJobs.get(jobId);
           if (j) { j.finishedAt = Date.now(); }
@@ -1084,7 +1093,7 @@ export class AdminConfigController {
       console.error(`[DEDUP:${jobId}] ❌ outer guard:`, err);
     });
 
-    return { ok: true, jobId, message: b.execute ? "Dedup started" : "Dry-run started" };
+    return { ok: true, jobId, message: execute ? "Dedup started" : "Dry-run started" };
   }
 
   /** Poll dedup job state. Called every 2s by the maintenance modal's
@@ -1095,6 +1104,22 @@ export class AdminConfigController {
     const job = AdminConfigController._dedupJobs.get(jobId);
     if (!job) return { ok: false, error: `job ${jobId} not found (may have expired)` };
     return { ok: true, jobId, ...job };
+  }
+
+  /** Read-only dedup verification. Scans the range and reports what the cleanup
+   *  WOULD do under BOTH grouping strategies (current recordingId grouping vs
+   *  grouping by record id), with per-group keep/delete detail. Never hides or
+   *  deletes anything — safe to run anytime. The scan alone is fast (seconds),
+   *  so unlike the delete path this returns inline rather than as a polled job. */
+  @Post("deduplicate-diagnose") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
+  async deduplicateDiagnose(@Body() body: GenericBodyRequest) {
+    const b = body as any;
+    const since = parseDateOrMs(b.since, false);
+    const until = parseDateOrMs(b.until, true);
+    if (since == null || until == null) return { ok: false, error: "since and until required (date YYYY-MM-DD or ms)" };
+    const { diagnoseDuplicatesLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
+    const diagnosis = await runInBackgroundLane(() => diagnoseDuplicatesLegacy(ORG(), since, until));
+    return { ok: true, diagnosis };
   }
 
   /** Surgically restore ONE finding wrongly hidden as a duplicate: un-hide it

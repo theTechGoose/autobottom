@@ -16,6 +16,7 @@ interface DedupStatus {
   phase?: "scanning" | "deleting" | "done" | "error";
   total?: number;
   deleted?: number;
+  failed?: number;
   startedAt?: number;
   finishedAt?: number;
   dryRun?: boolean;
@@ -65,7 +66,7 @@ export const handler = define.handlers({
       );
     }
 
-    const { phase, total = 0, deleted = 0, plan, error, dryRun, startedAt, finishedAt } = status;
+    const { phase, total = 0, deleted = 0, failed = 0, plan, error, dryRun, startedAt, finishedAt } = status;
     const elapsedSec = startedAt ? Math.round(((finishedAt ?? Date.now()) - startedAt) / 1000) : 0;
 
     // Final states — no hx-trigger so polling stops.
@@ -79,19 +80,27 @@ export const handler = define.handlers({
     }
     if (phase === "done") {
       const lines: string[] = [];
+      // Unmistakable mode banner — a dry run must never be mistakable for a real
+      // delete (the original "Done in 1s" confusion was exactly this).
+      lines.push(dryRun
+        ? `<div style="display:inline-block;background:rgba(245,158,11,0.15);color:var(--amber,#f59e0b);border:1px solid var(--amber,#f59e0b);border-radius:4px;padding:3px 10px;font-weight:700;font-size:11px;">DRY RUN — nothing was deleted</div>`
+        : `<div style="display:inline-block;background:rgba(34,197,94,0.15);color:var(--green);border:1px solid var(--green);border-radius:4px;padding:3px 10px;font-weight:700;font-size:11px;">EXECUTED — duplicates removed</div>`);
       if (plan) {
         lines.push(`<div><strong>Scanned:</strong> ${plan.scanned}</div>`);
         lines.push(`<div><strong>Duplicate groups:</strong> ${plan.groups}</div>`);
-        if (plan.orphaned > 0) lines.push(`<div><strong>Orphaned:</strong> ${plan.orphaned}</div>`);
+        if (plan.orphaned > 0) lines.push(`<div><strong>Orphaned:</strong> ${plan.orphaned} (left visible)</div>`);
       }
       if (dryRun) {
-        lines.push(`<div><strong>Would delete:</strong> ${total} (dry run — re-run with Execute checked to actually delete)</div>`);
+        lines.push(`<div><strong>Would delete:</strong> ${total} — re-run with <strong>Mode = Execute</strong> to actually delete.</div>`);
       } else {
-        lines.push(`<div><strong>Deleted:</strong> ${deleted} / ${total}</div>`);
+        lines.push(`<div><strong>Deleted:</strong> ${deleted} / ${total}${
+          failed > 0 ? ` <span style="color:var(--red);font-weight:700;">(⚠️ ${failed} failed — not hidden; re-run to retry)</span>` : ""
+        }</div>`);
       }
       lines.push(`<div style="color:var(--text-dim);font-size:11px;">Done in ${elapsedSec}s.</div>`);
+      const color = (!dryRun && failed > 0) ? "var(--text-bright)" : "var(--green)";
       return new Response(
-        `<div id="maint-progress" style="font-size:12px;color:var(--green);display:grid;gap:4px;">${lines.join("")}</div>`,
+        `<div id="maint-progress" style="font-size:12px;color:${color};display:grid;gap:6px;">${lines.join("")}</div>`,
         { headers: { "content-type": "text/html" } },
       );
     }

@@ -714,6 +714,19 @@ export interface DedupPlan {
   toDelete: DedupCandidate[];
 }
 
+/** Keeper-selection order, shared by the real dedup run (findDuplicates) and
+ *  the read-only diagnostic (diagnoseDuplicates) so the two can never drift:
+ *  a reviewed finding outranks an unreviewed one; within the same reviewed
+ *  status the newest (largest completedAt) wins. After this sort, group[0] is
+ *  the keeper and the rest are losers. Mirrors the operator's stated rule:
+ *  keep whichever was reviewed/appealed/judged, else the most recent. */
+function sortKeeperFirst<T extends { reviewed: boolean; ts: number }>(group: T[]): void {
+  group.sort((a, b) => {
+    if (a.reviewed !== b.reviewed) return a.reviewed ? -1 : 1;
+    return b.ts - a.ts;
+  });
+}
+
 export async function findDuplicates(
   orgId: OrgId,
   since: number,
@@ -779,10 +792,7 @@ export async function findDuplicates(
   for (const [, group] of groups) {
     if (group.length <= 1) continue;
     dupGroups++;
-    group.sort((a, b) => {
-      if (a.reviewed !== b.reviewed) return a.reviewed ? -1 : 1;
-      return b.ts - a.ts;
-    });
+    sortKeeperFirst(group);
     toDelete.push({ ...group[0], keep: true });
     for (const dup of group.slice(1)) toDelete.push({ ...dup, keep: false });
   }
@@ -819,26 +829,189 @@ export async function deleteDuplicates(
   orgId: OrgId,
   plan: DedupPlan,
   onProgress?: (deleted: number, total: number, findingId: string) => void,
-): Promise<{ deleted: number }> {
+): Promise<{ deleted: number; failed: number; failedIds: string[] }> {
   const losers = plan.toDelete.filter((d) => !d.keep);
   let deleted = 0;
+  // Per-finding failures used to be swallowed (warn-only), so a partial run
+  // looked identical to a clean one — "deleted N/N" even when some writes
+  // failed. Collect the failed ids and return them so the caller/UI can show
+  // exactly how many of the intended losers did NOT get hidden.
+  const failedIds: string[] = [];
   for (const dup of losers) {
     try {
       await markFindingHidden(orgId, dup.id, "dedup");
       deleted++;
       onProgress?.(deleted, losers.length, dup.id);
     } catch (err) {
+      failedIds.push(dup.id);
       console.warn(`[DEDUP] ⚠️ flag failed for ${dup.id}: ${(err as Error).message}`);
     }
     // 100ms gap between writes — slow but utterly reliable, no chance of
     // hammering Firestore. 200 findings × 100ms = 20s wall-clock.
     await new Promise((r) => setTimeout(r, 100));
   }
-  console.log(`[DEDUP] ✅ flagged ${deleted}/${losers.length} duplicates as hidden org=${orgId}`);
-  return { deleted };
+  console.log(`[DEDUP] ✅ flagged ${deleted}/${losers.length} duplicates as hidden org=${orgId}${failedIds.length ? ` — ⚠️ ${failedIds.length} FAILED: ${failedIds.join(", ")}` : ""}`);
+  return { deleted, failed: failedIds.length, failedIds };
 }
 
+
+// ── Read-only dedup diagnostic ───────────────────────────────────────────────
+// Verification tool: scans a range and reports what the cleanup WOULD do under
+// BOTH grouping strategies — the current one (recordingId, record id as legacy
+// fallback) and the operator's stated model (record id / date-leg / package id)
+// — with the keep/delete decision per finding. NEVER writes or hides anything.
+// Lets an operator confirm, before any deletion, that (a) the right finding is
+// kept in each group and (b) which "same record id" duplicates the current
+// recordingId grouping silently leaves behind.
+
+export interface DedupDiagMember {
+  findingId: string;
+  recordId: string;
+  recordingId: string;
+  score: number;
+  reason: string;
+  reviewed: boolean;          // current "touched" detection: reason === "reviewed"
+  reviewedBy: string;         // broader touched signal the current keep-logic ignores
+  completedAt: number;
+  decisionCurrent: "KEEP" | "DELETE" | "—";    // today's tool (recordingId grouping)
+  decisionByRecordId: "KEEP" | "DELETE" | "—"; // grouping by record id (operator's model)
+}
+
+export interface DedupDiagGroup {
+  recordId: string;
+  memberCount: number;
+  distinctRecordingIds: number; // >1 ⇒ record-id grouping would merge DISTINCT recordings (risky)
+  missedByCurrent: number;      // members this record-id group deletes but today's tool keeps
+  members: DedupDiagMember[];
+}
+
+export interface DedupDiagnosis {
+  since: number;
+  until: number;
+  scanned: number;
+  current: { groups: number; toDelete: number };    // recordingId grouping (today's behaviour)
+  byRecordId: { groups: number; toDelete: number };  // record-id grouping (operator's model)
+  missedByCurrent: number;   // losers under record-id grouping that today's tool keeps
+  riskyGroups: number;       // record-id groups containing >1 distinct recordingId
+  reviewedByOnly: number;    // entries with reviewedBy set but reason !== "reviewed" (touched gap)
+  sampleGroups: DedupDiagGroup[]; // record-id groups (>=2 members), most informative first, capped
+}
+
+export async function diagnoseDuplicates(
+  orgId: OrgId,
+  since: number,
+  until: number,
+): Promise<DedupDiagnosis> {
+  // Same exclusions as the real run: already-hidden + open-appeal findings are
+  // neither keepers nor losers (an appeal is a human-requested re-review).
+  const hidden = await getHiddenFindingIds(orgId);
+  const appealedRows = await listStoredWithKeysAll<{ findingId?: string }>("judge-pending", orgId);
+  const appealed = new Set<string>();
+  for (const { value } of appealedRows) if (value?.findingId) appealed.add(value.findingId);
+  const indexEntries = await queryAuditDoneIndex(orgId, since, until);
+
+  type E = {
+    findingId: string; recordId: string; recordingId: string;
+    score: number; reason: string; reviewed: boolean; reviewedBy: string; ts: number;
+  };
+  const entries: E[] = [];
+  for (const e of indexEntries) {
+    if (hidden.has(e.findingId) || appealed.has(e.findingId)) continue;
+    let recordingId = e.recordingId ? String(e.recordingId) : "";
+    let recordId = e.recordId ? String(e.recordId) : "";
+    // Same orphan fallback as findDuplicates — only fetch the doc when the index
+    // row carries neither key (rare legacy rows); bounded by orphan count.
+    if (!recordingId && !recordId) {
+      const finding = await getFinding(orgId, e.findingId);
+      recordingId = String((finding as Record<string, unknown> | null)?.recordingId ?? "");
+      recordId = deriveQbRecordId(finding) ?? "";
+    }
+    entries.push({
+      findingId: e.findingId,
+      recordId, recordingId,
+      score: typeof e.score === "number" ? e.score : 0,
+      reason: e.reason ?? "",
+      reviewed: e.reason === "reviewed",
+      reviewedBy: e.reviewedBy ?? "",
+      ts: e.completedAt,
+    });
+  }
+
+  // Tally each grouping strategy and record the per-finding KEEP/DELETE verdict.
+  const groupBy = (keyOf: (e: E) => string) => {
+    const m = new Map<string, E[]>();
+    for (const e of entries) {
+      const k = keyOf(e);
+      if (!k) continue;
+      const g = m.get(k) ?? [];
+      g.push(e);
+      m.set(k, g);
+    }
+    return m;
+  };
+  const tally = (m: Map<string, E[]>, into: Map<string, "KEEP" | "DELETE">) => {
+    let groups = 0, toDelete = 0;
+    for (const [, group] of m) {
+      if (group.length <= 1) continue;
+      groups++;
+      sortKeeperFirst(group);
+      into.set(group[0].findingId, "KEEP");
+      for (const dup of group.slice(1)) { into.set(dup.findingId, "DELETE"); toDelete++; }
+    }
+    return { groups, toDelete };
+  };
+
+  const decisionCurrent = new Map<string, "KEEP" | "DELETE">();
+  const decisionByRecordId = new Map<string, "KEEP" | "DELETE">();
+  const current = tally(groupBy((e) => e.recordingId || e.recordId), decisionCurrent);
+  const recordIdGroups = groupBy((e) => e.recordId);
+  const byRecordId = tally(recordIdGroups, decisionByRecordId);
+
+  const memberOf = (e: E): DedupDiagMember => ({
+    findingId: e.findingId, recordId: e.recordId, recordingId: e.recordingId,
+    score: e.score, reason: e.reason, reviewed: e.reviewed, reviewedBy: e.reviewedBy,
+    completedAt: e.ts,
+    decisionCurrent: decisionCurrent.get(e.findingId) ?? "—",
+    decisionByRecordId: decisionByRecordId.get(e.findingId) ?? "—",
+  });
+
+  let missedByCurrent = 0, riskyGroups = 0;
+  const diagGroups: DedupDiagGroup[] = [];
+  for (const [recordId, group] of recordIdGroups) {
+    if (group.length <= 1) continue;
+    sortKeeperFirst(group); // present keeper-first for readability
+    const recIds = new Set(group.map((e) => e.recordingId).filter(Boolean));
+    const missed = group.filter((e) =>
+      decisionByRecordId.get(e.findingId) === "DELETE" && decisionCurrent.get(e.findingId) !== "DELETE"
+    ).length;
+    missedByCurrent += missed;
+    if (recIds.size > 1) riskyGroups++;
+    diagGroups.push({
+      recordId, memberCount: group.length, distinctRecordingIds: recIds.size,
+      missedByCurrent: missed, members: group.map(memberOf),
+    });
+  }
+  // Most informative first: groups today's tool ignores entirely, then risky
+  // cross-recording merges, then largest.
+  diagGroups.sort((a, b) =>
+    (b.missedByCurrent - a.missedByCurrent) ||
+    (b.distinctRecordingIds - a.distinctRecordingIds) ||
+    (b.memberCount - a.memberCount)
+  );
+
+  const reviewedByOnly = entries.filter((e) => !e.reviewed && e.reviewedBy).length;
+
+  console.log(`[DEDUP-DIAG] org=${orgId} scanned=${entries.length} currentDel=${current.toDelete} byRecordIdDel=${byRecordId.toDelete} missedByCurrent=${missedByCurrent} riskyGroups=${riskyGroups} reviewedByOnly=${reviewedByOnly}`);
+
+  return {
+    since, until, scanned: entries.length,
+    current, byRecordId,
+    missedByCurrent, riskyGroups, reviewedByOnly,
+    sampleGroups: diagGroups.slice(0, 40),
+  };
+}
 
 export const backfillChargebackEntriesLegacy = backfillChargebackEntries;
 export const findDuplicatesLegacy = findDuplicates;
 export const deleteDuplicatesLegacy = deleteDuplicates;
+export const diagnoseDuplicatesLegacy = diagnoseDuplicates;

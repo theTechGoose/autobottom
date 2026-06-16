@@ -151,27 +151,46 @@ function WirePanel() {
 }
 
 function DedupePanel() {
-  // Posts to /api/admin/dedup-start, which kicks off the job on the
-  // backend, returns a jobId immediately, and swaps in a self-polling
-  // progress fragment that updates #maint-msg every 2s until done. The
-  // dedup itself runs fire-and-forget in the background lane — the HTTP
-  // request no longer hangs for 5-10 minutes with zero feedback.
+  // Diagnose (read-only) posts to /api/admin/dedup-diagnose and renders a
+  // verification table inline — never deletes. Run posts to /api/admin/dedup-start,
+  // which kicks off the job on the backend, returns a jobId immediately, and
+  // swaps in a self-polling progress fragment that updates #maint-msg every 2s
+  // until done. The dedup itself runs fire-and-forget in the background lane.
+  //
+  // Mode is an explicit <select> (not a checkbox): a select ALWAYS submits its
+  // current value, so the execute/dry-run intent can never be silently dropped
+  // the way an unchecked-but-looks-checked checkbox can. Defaults to Dry run.
   return (
-    <PanelCard title="Deduplicate Findings" subtitle="Scan a date range for duplicate findings. Dry-run by default — check Execute to actually delete.">
+    <PanelCard title="Deduplicate Findings" subtitle="Group findings by record id; keep the reviewed/appealed/judged one (else the most recent), hide the rest. Diagnose (read-only) first to verify exactly what will be removed.">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
         <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" id="dedupe-since" /></div>
         <div class="sf"><label class="sf-label">To</label><input type="date" name="until" class="sf-input" id="dedupe-until" /></div>
       </div>
-      <div style="display:flex;align-items:center;gap:14px;">
-        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);"><input type="checkbox" name="execute" value="true" /> Execute (default: dry-run)</label>
+      <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;">
+        <div class="sf">
+          <label class="sf-label">Mode</label>
+          <select name="mode" id="dedupe-mode" class="sf-input" style="min-width:210px;">
+            <option value="dry" selected>Dry run — preview only</option>
+            <option value="execute">Execute — actually delete</option>
+          </select>
+        </div>
+        <button
+          class="sf-btn ghost"
+          style="padding:8px 16px;"
+          hx-post="/api/admin/dedup-diagnose"
+          hx-include="#dedupe-since,#dedupe-until"
+          hx-target="#maint-msg"
+          hx-swap="innerHTML"
+          title="Read-only. Scans the range and shows exactly which findings would be kept vs removed, under both grouping strategies. Never deletes."
+        >Diagnose (read-only)</button>
         <button
           class="sf-btn primary"
           style="padding:8px 16px;"
           hx-post="/api/admin/dedup-start"
-          hx-include="#dedupe-since,#dedupe-until,[name='execute']"
+          hx-include="#dedupe-since,#dedupe-until,#dedupe-mode"
           hx-target="#maint-msg"
           hx-swap="innerHTML"
-          hx-confirm="Scan this range for duplicate findings?"
+          hx-confirm="Scan this range for duplicate findings? (deletes only if Mode = Execute)"
         >Run</button>
       </div>
     </PanelCard>

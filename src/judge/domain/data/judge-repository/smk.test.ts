@@ -15,6 +15,7 @@ import {
   dismissFindingFromJudgeQueue,
   findDuplicates,
   deleteDuplicates,
+  diagnoseDuplicates,
   postJudgedAudit,
   type DedupPlan,
 } from "./mod.ts";
@@ -382,6 +383,69 @@ Deno.test("dedup — legacy rows with a recordId but NO recordingId still group 
   const plan = await findDuplicates(orgId, ts - 1, ts + 2000);
   assertEquals(plan.groups, 1, "legacy recordId-only rows still group by recordId (prior behaviour preserved)");
   assertEquals(plan.toDelete.filter((d) => !d.keep).map((d) => d.id), ["fid-l2"], "the newer, non-reviewed legacy row is the loser");
+});
+
+// ─── read-only dedup diagnostic ────────────────────────────────────────────
+// diagnoseDuplicates reports what the cleanup WOULD do under both grouping
+// strategies, never writing anything. Pins the divergence the operator uses to
+// verify: a same-record re-audit the current tool misses, and a distinct-
+// recording pair that grouping-by-record-id would dangerously merge.
+
+Deno.test("diagnoseDuplicates — reports both groupings, missed + risky, and never deletes", async () => {
+  reset();
+  const orgId = ("test-dedup-diag-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const ts = 1_700_000_000_000;
+  const lo = ts - 1, hi = ts + 10_000;
+
+  // A) Same recording audited twice → a TRUE duplicate both strategies catch.
+  await writeAuditDoneIndex(orgId, { findingId: "fid-A-keep", completedAt: ts, completed: true, score: 90, recordId: "recA", recordingId: "voA", reason: "reviewed" });
+  await writeAuditDoneIndex(orgId, { findingId: "fid-A-loser", completedAt: ts + 1000, completed: true, score: 80, recordId: "recA", recordingId: "voA" });
+  // B) Two DISTINCT recordings sharing one record id → the current tool keeps
+  //    both (correct/safe); grouping by record id would delete one (risky).
+  await writeAuditDoneIndex(orgId, { findingId: "fid-B1", completedAt: ts, completed: true, score: 90, recordId: "recB", recordingId: "voB1", reason: "reviewed" });
+  await writeAuditDoneIndex(orgId, { findingId: "fid-B2", completedAt: ts + 1000, completed: true, score: 80, recordId: "recB", recordingId: "voB2" });
+  // C) A lone finding reviewed by a human but reason≠"reviewed" → touched-gap.
+  await writeAuditDoneIndex(orgId, { findingId: "fid-C", completedAt: ts, completed: true, score: 85, recordId: "recC", recordingId: "voC", reviewedBy: "alice@x.com" });
+
+  const diag = await diagnoseDuplicates(orgId, lo, hi);
+
+  assertEquals(diag.scanned, 5);
+  assertEquals(diag.current.toDelete, 1, "current tool only deletes the same-recording loser");
+  assertEquals(diag.byRecordId.toDelete, 2, "record-id grouping deletes A's loser AND one of B's distinct recordings");
+  assertEquals(diag.missedByCurrent, 1, "fid-B2 is a record-id duplicate the current tool keeps");
+  assertEquals(diag.riskyGroups, 1, "recB merges two distinct recordings");
+  assertEquals(diag.reviewedByOnly, 1, "fid-C has reviewedBy but reason≠reviewed");
+
+  const gB = diag.sampleGroups.find((g) => g.recordId === "recB");
+  assertExists(gB);
+  assertEquals(gB?.distinctRecordingIds, 2);
+  assertEquals(gB?.missedByCurrent, 1);
+  const b2 = gB?.members.find((m) => m.findingId === "fid-B2");
+  assertEquals(b2?.decisionByRecordId, "DELETE", "record-id grouping would delete fid-B2");
+  assertEquals(b2?.decisionCurrent, "—", "current tool leaves fid-B2 alone (its own recording)");
+  assertEquals(gB?.members.find((m) => m.findingId === "fid-B1")?.decisionByRecordId, "KEEP", "reviewed copy kept");
+
+  // Read-only: diagnosis must not hide/flag anything.
+  const hidden = await getHiddenFindingIds(orgId);
+  assertEquals(hidden.size, 0, "diagnoseDuplicates must never write audit-hidden");
+});
+
+// ─── deleteDuplicates surfaces per-finding failures ────────────────────────
+
+Deno.test("deleteDuplicates — returns failed count/ids (no longer swallowed)", async () => {
+  reset();
+  const ts = 1_700_000_000_000;
+  const plan: DedupPlan = {
+    scanned: 2, groups: 1, orphaned: 0,
+    toDelete: [
+      { id: "fid-fk", recordKey: "rk", ts, reviewed: true, keep: true },
+      { id: "fid-fl", recordKey: "rk", ts, reviewed: false, keep: false },
+    ],
+  };
+  const res = await deleteDuplicates(DEDUP_ORG, plan);
+  assertEquals(res.deleted, 1);
+  assertEquals(res.failed, 0);
+  assertEquals(res.failedIds, []);
 });
 
 // ─── postJudgedAudit — audit-done-idx sync contract ────────────────────────

@@ -7,5 +7,5 @@ import { OkResponse } from "@core/dto/responses.ts";
 @Controller("cron")
 export class CronStatusController {
   @Get("status") @ReturnedType(OkResponse)
-  async status() { return { ok: true, crons: ["watchdog", "wire-deductions-weekly", "chargebacks-weekly", "email-reports"] }; }
+  async status() { return { ok: true, crons: ["watchdog", "email-reports", "weekly-sheets"] }; }
 }

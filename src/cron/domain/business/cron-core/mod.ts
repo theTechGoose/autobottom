@@ -2,6 +2,7 @@
 import { withSpan, metric, flushOtel } from "@core/data/datadog-otel/mod.ts";
 import { runWatchdog } from "@cron/domain/business/watchdog/mod.ts";
 import { runEmailReportsTick } from "@reporting/domain/business/email-reports-tick/mod.ts";
+import { runWeeklySheetsExport } from "@cron/domain/business/weekly-sheets/mod.ts";
 // Migration imports preserved for when migration-tick is re-enabled:
 // import { listJobs, tickJob } from "@admin/domain/business/migration/mod.ts";
 // import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
@@ -42,6 +43,27 @@ export function registerCrons(): void {
     await flushOtel();
   });
 
+  // Weekly sheets export — Mondays 13:00 UTC. Posts the just-completed week's
+  // chargebacks/omissions/wire to the configured Google Sheet (org =
+  // CHARGEBACKS_ORG_ID). This was silently lost in the monolith→modular cutover,
+  // which is why the sheet went stale. Idempotent per (org, week) via a claim
+  // key so a re-fire can't double-append. Re-run a missed/failed week ad-hoc
+  // with the dashboard "Post to Sheet" button.
+  Deno.cron("weekly-sheets", "0 13 * * 1", async () => {
+    await withSpan("cron.weekly-sheets", async (span) => {
+      try {
+        const result = await runWeeklySheetsExport();
+        span.setAttribute("cron.appended", result.appended ?? 0);
+        span.setAttribute("cron.skipped", String(!!result.skipped));
+        if (result.error) span.setAttribute("cron.error", result.error);
+        metric("autobottom.cron.weekly_sheets", 1, { appended: String(result.appended ?? 0) });
+      } catch (err) {
+        console.error("❌ [CRON:weekly-sheets] threw:", err);
+      }
+    }, {}, "internal");
+    await flushOtel();
+  });
+
   // migration-tick disabled. The KV → Firestore migration is complete.
   // The every-minute cron was the primary cause of periodic 60s connection-
   // pool wedges that timed out reviewer decide submissions, dashboard
@@ -69,5 +91,5 @@ export function registerCrons(): void {
   //   }
   // });
 
-  console.log("⏰ Cron jobs registered: watchdog (hourly), email-reports (every minute)");
+  console.log("⏰ Cron jobs registered: watchdog (hourly), email-reports (every minute), weekly-sheets (Mondays 13:00 UTC)");
 }

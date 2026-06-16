@@ -23,10 +23,13 @@ import {
   resetFirestoreCredentials,
   setStored,
   getStored,
+  listStoredByCompletedAt,
 } from "@core/data/firestore/mod.ts";
 import { saveFinding, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import {
   writeAuditDoneIndex,
+  writeSoleAuditDoneIndex,
+  collapseDuplicateIndexRows,
   queryAuditDoneIndex,
   markFindingHidden,
   getHiddenFindingIds,
@@ -34,6 +37,17 @@ import {
   type AuditHiddenEntry,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
+
+/** Raw read of a finding's audit-done-idx rows — bypasses queryAuditDoneIndex's
+ *  SWR cache so post-mutation assertions see the live store. */
+async function idxRowsFor(orgId: OrgId, findingId: string): Promise<AuditDoneIndexEntry[]> {
+  const rows = await listStoredByCompletedAt<AuditDoneIndexEntry>(
+    "audit-done-idx", orgId, 0, Number.MAX_SAFE_INTEGER,
+    { limit: Number.MAX_SAFE_INTEGER, fieldName: "completedAt" },
+  );
+  return rows.filter((r) => r.findingId === findingId);
+}
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
 const ORG = "test-org-" + crypto.randomUUID().slice(0, 8);
@@ -385,67 +399,122 @@ Deno.test("dedup — legacy rows with a recordId but NO recordingId still group 
   assertEquals(plan.toDelete.filter((d) => !d.keep).map((d) => d.id), ["fid-l2"], "the newer, non-reviewed legacy row is the loser");
 });
 
-// ─── read-only dedup diagnostic ────────────────────────────────────────────
-// diagnoseDuplicates reports what the cleanup WOULD do under both grouping
-// strategies, never writing anything. Pins the divergence the operator uses to
-// verify: a same-record re-audit the current tool misses, and a distinct-
-// recording pair that grouping-by-record-id would dangerously merge.
+// ─── duplicate-index-row cleanup (the real fix) ────────────────────────────
+// The "duplicates" are duplicate audit-done-idx ROWS for the same finding (an
+// audit row + a review row at a different completedAt). The cleanup keeps ONE
+// row per finding (reviewed/judged, else newest) and deletes the stale row by
+// key — it must NEVER hide the finding.
 
-Deno.test("diagnoseDuplicates — reports both groupings, missed + risky, and never deletes", async () => {
+// Helper: seed a finding's original audit row + its later reviewed row.
+async function seedDupRows(orgId: OrgId, fid: string, ts: number): Promise<void> {
+  // Original audit row — older, pre-review score, carries recordingId.
+  await writeAuditDoneIndex(orgId, { findingId: fid, completedAt: ts, completed: false, score: 80, recordId: "rec-" + fid, recordingId: "vo-" + fid });
+  // Review row — newer, post-review score, reviewed, recordingId blank (real shape).
+  await writeAuditDoneIndex(orgId, { findingId: fid, completedAt: ts + 1000, completed: true, score: 96, recordId: "rec-" + fid, reason: "reviewed", reviewedBy: "alice@x.com" });
+}
+
+Deno.test("diagnoseDuplicates — reports duplicate rows per finding, keeper is the reviewed row, never writes", async () => {
   reset();
-  const orgId = ("test-dedup-diag-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const orgId = ("test-diag-rows-" + crypto.randomUUID().slice(0, 8)) as OrgId;
   const ts = 1_700_000_000_000;
-  const lo = ts - 1, hi = ts + 10_000;
+  await seedDupRows(orgId, "fid-X", ts);                       // 2 rows
+  await writeAuditDoneIndex(orgId, { findingId: "fid-Y", completedAt: ts + 5000, completed: true, score: 100, recordId: "recY", recordingId: "voY" }); // 1 row
 
-  // A) Same recording audited twice → a TRUE duplicate both strategies catch.
-  await writeAuditDoneIndex(orgId, { findingId: "fid-A-keep", completedAt: ts, completed: true, score: 90, recordId: "recA", recordingId: "voA", reason: "reviewed" });
-  await writeAuditDoneIndex(orgId, { findingId: "fid-A-loser", completedAt: ts + 1000, completed: true, score: 80, recordId: "recA", recordingId: "voA" });
-  // B) Two DISTINCT recordings sharing one record id → the current tool keeps
-  //    both (correct/safe); grouping by record id would delete one (risky).
-  await writeAuditDoneIndex(orgId, { findingId: "fid-B1", completedAt: ts, completed: true, score: 90, recordId: "recB", recordingId: "voB1", reason: "reviewed" });
-  await writeAuditDoneIndex(orgId, { findingId: "fid-B2", completedAt: ts + 1000, completed: true, score: 80, recordId: "recB", recordingId: "voB2" });
-  // C) A lone finding reviewed by a human but reason≠"reviewed" → touched-gap.
-  await writeAuditDoneIndex(orgId, { findingId: "fid-C", completedAt: ts, completed: true, score: 85, recordId: "recC", recordingId: "voC", reviewedBy: "alice@x.com" });
+  const diag = await diagnoseDuplicates(orgId, ts - 1, ts + 10_000);
+  assertEquals(diag.scannedRows, 3);
+  assertEquals(diag.distinctFindings, 2);
+  assertEquals(diag.findingsWithDupes, 1);
+  assertEquals(diag.staleRows, 1);
+  assertEquals(diag.sampleTotal, 1);
 
-  const diag = await diagnoseDuplicates(orgId, lo, hi);
+  const gX = diag.sampleGroups.find((g) => g.findingId === "fid-X");
+  assertExists(gX);
+  assertEquals(gX?.rowCount, 2);
+  // Keeper presented first = the reviewed row (score 96); the audit row is DELETE.
+  assertEquals(gX?.members[0].decision, "KEEP");
+  assertEquals(gX?.members[0].score, 96);
+  assertEquals(gX?.members[0].reason, "reviewed");
+  assertEquals(gX?.members[1].decision, "DELETE");
+  assertEquals(gX?.members[1].score, 80);
 
-  assertEquals(diag.scanned, 5);
-  assertEquals(diag.current.toDelete, 1, "current tool only deletes the same-recording loser");
-  assertEquals(diag.byRecordId.toDelete, 2, "record-id grouping deletes A's loser AND one of B's distinct recordings");
-  assertEquals(diag.missedByCurrent, 1, "fid-B2 is a record-id duplicate the current tool keeps");
-  assertEquals(diag.riskyGroups, 1, "recB merges two distinct recordings");
-  assertEquals(diag.reviewedByOnly, 1, "fid-C has reviewedBy but reason≠reviewed");
-
-  const gB = diag.sampleGroups.find((g) => g.recordId === "recB");
-  assertExists(gB);
-  assertEquals(gB?.distinctRecordingIds, 2);
-  assertEquals(gB?.missedByCurrent, 1);
-  const b2 = gB?.members.find((m) => m.findingId === "fid-B2");
-  assertEquals(b2?.decisionByRecordId, "DELETE", "record-id grouping would delete fid-B2");
-  assertEquals(b2?.decisionCurrent, "—", "current tool leaves fid-B2 alone (its own recording)");
-  assertEquals(gB?.members.find((m) => m.findingId === "fid-B1")?.decisionByRecordId, "KEEP", "reviewed copy kept");
-
-  // Read-only: diagnosis must not hide/flag anything.
-  const hidden = await getHiddenFindingIds(orgId);
-  assertEquals(hidden.size, 0, "diagnoseDuplicates must never write audit-hidden");
+  // Read-only: diagnosis must never hide a finding.
+  assertEquals((await getHiddenFindingIds(orgId)).size, 0);
 });
 
-// ─── deleteDuplicates surfaces per-finding failures ────────────────────────
-
-Deno.test("deleteDuplicates — returns failed count/ids (no longer swallowed)", async () => {
+Deno.test("collapseDuplicateIndexRows — keeps reviewed row, deletes stale by key, backfills recordingId, idempotent", async () => {
   reset();
+  const orgId = ("test-collapse-" + crypto.randomUUID().slice(0, 8)) as OrgId;
   const ts = 1_700_000_000_000;
-  const plan: DedupPlan = {
-    scanned: 2, groups: 1, orphaned: 0,
-    toDelete: [
-      { id: "fid-fk", recordKey: "rk", ts, reviewed: true, keep: true },
-      { id: "fid-fl", recordKey: "rk", ts, reviewed: false, keep: false },
-    ],
-  };
-  const res = await deleteDuplicates(DEDUP_ORG, plan);
-  assertEquals(res.deleted, 1);
-  assertEquals(res.failed, 0);
-  assertEquals(res.failedIds, []);
+  await seedDupRows(orgId, "fid-X", ts);
+
+  // Dry run: counts only, nothing removed.
+  const dry = await collapseDuplicateIndexRows(orgId, ts - 1, ts + 10_000, { execute: false });
+  assertEquals(dry.findingsWithDupes, 1);
+  assertEquals(dry.staleRows, 1);
+  assertEquals(dry.rowsDeleted, 0);
+  assertEquals((await idxRowsFor(orgId, "fid-X")).length, 2, "dry run leaves both rows");
+
+  // Execute: keep the reviewed row, delete the stale audit row.
+  const run = await collapseDuplicateIndexRows(orgId, ts - 1, ts + 10_000, { execute: true });
+  assertEquals(run.rowsDeleted, 1);
+  assertEquals(run.failed, 0);
+  const remaining = await idxRowsFor(orgId, "fid-X");
+  assertEquals(remaining.length, 1, "exactly one row survives");
+  assertEquals(remaining[0].score, 96, "the reviewed row is kept");
+  assertEquals(remaining[0].recordingId, "vo-fid-X", "recordingId backfilled onto the kept reviewed row");
+  // The finding itself is never hidden.
+  assertEquals((await getHiddenFindingIds(orgId)).size, 0);
+
+  // Idempotent: a second run finds nothing to do.
+  const again = await collapseDuplicateIndexRows(orgId, ts - 1, ts + 10_000, { execute: true });
+  assertEquals(again.findingsWithDupes, 0);
+  assertEquals(again.staleRows, 0);
+});
+
+Deno.test("collapseDuplicateIndexRows — surfaces delete failures via injected deleteRow", async () => {
+  reset();
+  const orgId = ("test-collapse-fail-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const ts = 1_700_000_000_000;
+  await seedDupRows(orgId, "fid-Z", ts);
+
+  const res = await collapseDuplicateIndexRows(orgId, ts - 1, ts + 10_000, {
+    execute: true,
+    deleteRow: () => { throw new Error("boom"); },
+  });
+  assertEquals(res.staleRows, 1);
+  assertEquals(res.rowsDeleted, 0);
+  assertEquals(res.failed, 1);
+  assertEquals(res.failedIds, ["fid-Z"]);
+});
+
+Deno.test("writeSoleAuditDoneIndex — one row at reviewedAt, audit-time sibling deleted, reviewer attribution preserved", async () => {
+  reset();
+  const orgId = ("test-sole-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const completedAt = 1_700_000_000_000;
+  const reviewedAt = completedAt + 5000;
+  // Original audit row.
+  await writeAuditDoneIndex(orgId, { findingId: "fid-S", completedAt, completed: false, score: 80, recordId: "recS", recordingId: "voS" });
+
+  // Review writes via the helper with the corrected finding (reviewedAt set):
+  // keys at reviewedAt and deletes the original audit-time row.
+  await writeSoleAuditDoneIndex(orgId, { completedAt, reviewedAt }, {
+    findingId: "fid-S", doneAt: reviewedAt, completed: true, score: 96, reason: "reviewed",
+    recordId: "recS", recordingId: "voS", reviewedBy: "alice@x.com",
+  });
+  let rows = await idxRowsFor(orgId, "fid-S");
+  assertEquals(rows.length, 1, "exactly one row after review");
+  assertEquals(rows[0].completedAt, reviewedAt, "keyed at reviewedAt (reviewer-throughput bucket preserved)");
+  assertEquals(rows[0].reviewedBy, "alice@x.com");
+
+  // A judge-style overwrite carries the new score but NOT reviewedBy — the merge
+  // must preserve the reviewer attribution.
+  await writeSoleAuditDoneIndex(orgId, { completedAt, reviewedAt }, {
+    findingId: "fid-S", completed: false, score: 50, recordId: "recS",
+  });
+  rows = await idxRowsFor(orgId, "fid-S");
+  assertEquals(rows.length, 1, "still exactly one row after judge");
+  assertEquals(rows[0].score, 50, "judge score applied");
+  assertEquals(rows[0].reviewedBy, "alice@x.com", "reviewer attribution preserved through judge overwrite");
 });
 
 // ─── postJudgedAudit — audit-done-idx sync contract ────────────────────────

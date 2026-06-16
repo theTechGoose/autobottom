@@ -20,7 +20,7 @@ interface DedupStatus {
   startedAt?: number;
   finishedAt?: number;
   dryRun?: boolean;
-  plan?: { scanned: number; groups: number; orphaned: number };
+  plan?: { scannedRows: number; findingsWithDupes: number; staleRows: number };
 }
 
 function progressBar(deleted: number, total: number): string {
@@ -83,18 +83,17 @@ export const handler = define.handlers({
       // Unmistakable mode banner — a dry run must never be mistakable for a real
       // delete (the original "Done in 1s" confusion was exactly this).
       lines.push(dryRun
-        ? `<div style="display:inline-block;background:rgba(245,158,11,0.15);color:var(--amber,#f59e0b);border:1px solid var(--amber,#f59e0b);border-radius:4px;padding:3px 10px;font-weight:700;font-size:11px;">DRY RUN — nothing was deleted</div>`
-        : `<div style="display:inline-block;background:rgba(34,197,94,0.15);color:var(--green);border:1px solid var(--green);border-radius:4px;padding:3px 10px;font-weight:700;font-size:11px;">EXECUTED — duplicates removed</div>`);
+        ? `<div style="display:inline-block;background:rgba(245,158,11,0.15);color:var(--amber,#f59e0b);border:1px solid var(--amber,#f59e0b);border-radius:4px;padding:3px 10px;font-weight:700;font-size:11px;">DRY RUN — nothing was removed</div>`
+        : `<div style="display:inline-block;background:rgba(34,197,94,0.15);color:var(--green);border:1px solid var(--green);border-radius:4px;padding:3px 10px;font-weight:700;font-size:11px;">EXECUTED — duplicate rows removed</div>`);
       if (plan) {
-        lines.push(`<div><strong>Scanned:</strong> ${plan.scanned}</div>`);
-        lines.push(`<div><strong>Duplicate groups:</strong> ${plan.groups}</div>`);
-        if (plan.orphaned > 0) lines.push(`<div><strong>Orphaned:</strong> ${plan.orphaned} (left visible)</div>`);
+        lines.push(`<div><strong>Scanned:</strong> ${plan.scannedRows} index rows</div>`);
+        lines.push(`<div><strong>Findings with duplicate rows:</strong> ${plan.findingsWithDupes}</div>`);
       }
       if (dryRun) {
-        lines.push(`<div><strong>Would delete:</strong> ${total} — re-run with <strong>Mode = Execute</strong> to actually delete.</div>`);
+        lines.push(`<div><strong>Would remove:</strong> ${total} stale rows — re-run with <strong>Mode = Execute</strong> to actually remove them. Each finding keeps one row (never hidden).</div>`);
       } else {
-        lines.push(`<div><strong>Deleted:</strong> ${deleted} / ${total}${
-          failed > 0 ? ` <span style="color:var(--red);font-weight:700;">(⚠️ ${failed} failed — not hidden; re-run to retry)</span>` : ""
+        lines.push(`<div><strong>Removed:</strong> ${deleted} / ${total} stale rows${
+          failed > 0 ? ` <span style="color:var(--red);font-weight:700;">(⚠️ ${failed} failed — re-run to retry)</span>` : ""
         }</div>`);
       }
       lines.push(`<div style="color:var(--text-dim);font-size:11px;">Done in ${elapsedSec}s.</div>`);
@@ -106,8 +105,8 @@ export const handler = define.handlers({
     }
 
     // Still running — re-emit polling fragment.
-    const phaseLabel = phase === "scanning" ? "Scanning for duplicates…"
-      : phase === "deleting" ? `Deleting duplicates… ${deleted} / ${total}`
+    const phaseLabel = phase === "scanning" ? "Scanning index rows…"
+      : phase === "deleting" ? `Removing stale rows… ${deleted} / ${total}`
       : "Running…";
     const bar = phase === "deleting" && total > 0
       ? progressBar(deleted, total)

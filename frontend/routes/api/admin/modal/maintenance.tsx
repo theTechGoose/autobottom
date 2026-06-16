@@ -161,7 +161,7 @@ function DedupePanel() {
   // current value, so the execute/dry-run intent can never be silently dropped
   // the way an unchecked-but-looks-checked checkbox can. Defaults to Dry run.
   return (
-    <PanelCard title="Deduplicate Findings" subtitle="Group findings by record id; keep the reviewed/appealed/judged one (else the most recent), hide the rest. Diagnose (read-only) first to verify exactly what will be removed.">
+    <PanelCard title="Deduplicate Findings" subtitle="Collapse duplicate audit-index rows: each finding keeps ONE row (the reviewed/judged one, else the most recent); stale extra rows are removed. Findings are never hidden. Diagnose (read-only) first to verify exactly what will be removed.">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
         <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" id="dedupe-since" /></div>
         <div class="sf"><label class="sf-label">To</label><input type="date" name="until" class="sf-input" id="dedupe-until" /></div>

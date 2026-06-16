@@ -34,6 +34,7 @@ export function deriveQbRecordId(finding: Record<string, any> | null | undefined
  *  caller supplies those explicitly. */
 export interface IndexMeta {
   recordId?: string;
+  recordingId?: string;
   isPackage: boolean;
   voName?: string;
   owner?: string;
@@ -48,6 +49,10 @@ export function buildIndexMeta(finding: Record<string, any> | null | undefined):
   const voName = (rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim()) || undefined;
   return {
     recordId: deriveQbRecordId(finding),
+    // Genie recording #. Previously omitted, so review/judge index rows had a
+    // blank recordingId — which is why recording-keyed reads/grouping couldn't
+    // match a reviewed finding to its original audit row.
+    recordingId: String((finding as any)?.recordingId ?? "") || undefined,
     isPackage,
     voName,
     owner: (finding as any)?.owner as string | undefined,
@@ -782,6 +787,160 @@ export async function deleteAuditDoneIdxByFindingId(orgId: OrgId, findingId: str
     }
   }
   return removed;
+}
+
+/** Write a finding's audit-done-idx row AND guarantee it is the ONLY row for
+ *  that finding. Canonical key = `reviewedAt ?? completedAt`: a reviewed
+ *  finding indexes at its review time (reviewer-throughput buckets on that),
+ *  everything else at audit-completion time. Any sibling row at the other
+ *  timestamp is point-deleted, so a reviewed finding can never accumulate the
+ *  (audit-row + review-row) duplicate pair. Use in every post-completion writer
+ *  (review / judge / flips) instead of bare writeAuditDoneIndex.
+ *
+ *  Pass the finding doc reflecting the post-action state (e.g. the corrected
+ *  finding with reviewedAt set) so the canonical timestamp resolves correctly. */
+export async function writeSoleAuditDoneIndex(
+  orgId: OrgId,
+  finding: Record<string, any> | null | undefined,
+  entry: Omit<AuditDoneIndexEntry, "completedAt">,
+  opts?: { assumeFinished?: boolean },
+): Promise<boolean> {
+  const completedAt = Number(finding?.completedAt);
+  const reviewedAt = Number(finding?.reviewedAt);
+  const canonicalTs = Number.isFinite(reviewedAt) ? reviewedAt
+    : Number.isFinite(completedAt) ? completedAt
+    : Date.now();
+  // Merge over any existing row at the canonical key so fields the new writer
+  // omits survive — notably reviewedBy/reviewHandleMs when a JUDGE or FLIP
+  // overwrites a previously-reviewed finding's row (those entries carry the new
+  // score but not the reviewer attribution).
+  const existing = await getStored<AuditDoneIndexEntry>("audit-done-idx", orgId, padTs(canonicalTs), entry.findingId)
+    .catch(() => null);
+  const wrote = await writeAuditDoneIndex(
+    orgId,
+    { ...(existing ?? {}), ...entry, completedAt: canonicalTs } as AuditDoneIndexEntry,
+    opts,
+  );
+  // Remove the sibling row at the other timestamp so exactly one row survives.
+  for (const ts of [completedAt, reviewedAt]) {
+    if (Number.isFinite(ts) && ts !== canonicalTs) {
+      await deleteAuditDoneIndexEntry(orgId, entry.findingId, ts).catch((e) =>
+        console.warn(`[DONE-IDX] ${entry.findingId}: sibling row cleanup failed (non-fatal): ${(e as Error).message}`));
+    }
+  }
+  return wrote;
+}
+
+/** Among multiple audit-done-idx rows for ONE finding, pick the index of the
+ *  row to KEEP, per the operator's rule: the reviewed/judged row wins, else the
+ *  most recent (by doneAt, then completedAt). */
+export function pickCanonicalIndexRow(rows: AuditDoneIndexEntry[]): number {
+  let best = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i], b = rows[best];
+    const aReviewed = a.reason === "reviewed" || !!a.reviewedBy;
+    const bReviewed = b.reason === "reviewed" || !!b.reviewedBy;
+    if (aReviewed !== bReviewed) { if (aReviewed) best = i; continue; }
+    const aTs = a.doneAt ?? a.completedAt ?? 0;
+    const bTs = b.doneAt ?? b.completedAt ?? 0;
+    if (aTs > bTs) best = i;
+  }
+  return best;
+}
+
+export interface CollapseResult {
+  scanned: number;            // total index rows scanned in range
+  findingsWithDupes: number;  // findings that had >1 row
+  rowsKept: number;           // one keeper per duplicated finding
+  staleRows: number;          // redundant rows found
+  rowsDeleted: number;        // redundant rows actually removed (execute mode)
+  failed: number;
+  failedIds: string[];        // findingIds whose stale-row delete threw
+}
+
+/** Collapse duplicate audit-done-idx rows so each finding keeps exactly ONE row
+ *  (the reviewed/judged one, else the newest). Deletes only redundant rows by
+ *  exact key — NEVER hides a finding, so no audit data is lost. Dry-run by
+ *  default (execute:false just counts). When the keeper lacks recordingId but a
+ *  sibling carries it, the keeper is re-written with it backfilled. `deleteRow`
+ *  is injectable so the failure path is testable.
+ *
+ *  Range note: a finding is only collapsible when BOTH of its rows fall in
+ *  [since, until]; for a full sweep use a wide range. */
+export async function collapseDuplicateIndexRows(
+  orgId: OrgId,
+  since: number,
+  until: number,
+  opts?: {
+    execute?: boolean;
+    onProgress?: (deleted: number, total: number) => void;
+    deleteRow?: (orgId: OrgId, findingId: string, completedAt: number) => Promise<void>;
+  },
+): Promise<CollapseResult> {
+  const execute = !!opts?.execute;
+  const deleteRow = opts?.deleteRow ?? deleteAuditDoneIndexEntry;
+  // Raw scan (include hidden — a hidden finding's extra rows are still
+  // redundant; we only ever delete extras, never touch hidden state).
+  const rows = await listStoredByCompletedAt<AuditDoneIndexEntry>(
+    "audit-done-idx", orgId, since, until,
+    { limit: Number.MAX_SAFE_INTEGER, fieldName: "completedAt" },
+  );
+  const byFinding = new Map<string, AuditDoneIndexEntry[]>();
+  for (const r of rows) {
+    if (!r?.findingId) continue;
+    const g = byFinding.get(r.findingId) ?? [];
+    g.push(r);
+    byFinding.set(r.findingId, g);
+  }
+
+  // Plan first (stable totals + accurate dry-run counts), then act.
+  let findingsWithDupes = 0;
+  const staleList: Array<{ findingId: string; completedAt: number }> = [];
+  const backfills: Array<{ row: AuditDoneIndexEntry; recordingId: string }> = [];
+  for (const [findingId, group] of byFinding) {
+    if (group.length <= 1) continue;
+    findingsWithDupes++;
+    const keepIdx = pickCanonicalIndexRow(group);
+    const keeper = group[keepIdx];
+    group.forEach((r, i) => { if (i !== keepIdx) staleList.push({ findingId, completedAt: r.completedAt }); });
+    if (!keeper.recordingId) {
+      const sib = group.find((r, i) => i !== keepIdx && !!r.recordingId);
+      if (sib?.recordingId) backfills.push({ row: keeper, recordingId: sib.recordingId });
+    }
+  }
+  const staleRows = staleList.length;
+
+  let rowsDeleted = 0;
+  const failedIds: string[] = [];
+  if (execute) {
+    for (const b of backfills) {
+      await setStored("audit-done-idx", orgId, [padTs(b.row.completedAt), b.row.findingId], { ...b.row, recordingId: b.recordingId })
+        .catch((e) => console.warn(`[DEDUP-ROWS] ${b.row.findingId}: recordingId backfill failed (non-fatal): ${(e as Error).message}`));
+    }
+    for (const s of staleList) {
+      try {
+        await deleteRow(orgId, s.findingId, s.completedAt);
+        rowsDeleted++;
+        opts?.onProgress?.(rowsDeleted, staleRows);
+      } catch (err) {
+        failedIds.push(s.findingId);
+        console.warn(`[DEDUP-ROWS] ⚠️ delete failed for ${s.findingId}@${s.completedAt}: ${(err as Error).message}`);
+      }
+      // Small gap between writes — reliable under Firestore load.
+      await new Promise((res) => setTimeout(res, 50));
+    }
+  }
+
+  console.log(`[DEDUP-ROWS] org=${orgId} scanned=${rows.length} findingsWithDupes=${findingsWithDupes} staleRows=${staleRows} deleted=${rowsDeleted} failed=${failedIds.length} execute=${execute}`);
+  return {
+    scanned: rows.length,
+    findingsWithDupes,
+    rowsKept: findingsWithDupes,
+    staleRows,
+    rowsDeleted,
+    failed: failedIds.length,
+    failedIds,
+  };
 }
 
 // ── Chargeback Entries ───────────────────────────────────────────────────────

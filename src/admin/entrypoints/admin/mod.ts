@@ -1010,7 +1010,7 @@ export class AdminConfigController {
     finishedAt?: number;
     error?: string;
     dryRun: boolean;
-    plan?: { scanned: number; groups: number; orphaned: number };
+    plan?: { scannedRows: number; findingsWithDupes: number; staleRows: number };
   }>();
 
   private static _evictOldDedupJobs() {
@@ -1023,10 +1023,11 @@ export class AdminConfigController {
   }
 
 
-  /** Kick off a dedup job. Returns immediately with a jobId; the actual
-   *  scan + delete runs fire-and-forget in the background lane so the
-   *  HTTP request doesn't sit open for 5-10 minutes. The maintenance
-   *  modal polls /admin/deduplicate-status?jobId=… for progress. */
+  /** Kick off a dedup-rows job: collapse duplicate audit-done-idx rows so each
+   *  finding keeps exactly one row (reviewed/judged, else newest), deleting the
+   *  stale rows by key — never hiding a finding. Returns immediately with a
+   *  jobId; the scan + delete runs fire-and-forget in the background lane. The
+   *  maintenance modal polls /admin/deduplicate-status?jobId=… for progress. */
   @Post("deduplicate-findings") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async deduplicateFindings(@Body() body: GenericBodyRequest) {
     const b = body as any;
@@ -1056,27 +1057,27 @@ export class AdminConfigController {
     // for the dashboard SWR variant of this same trap).
     (async () => {
       try {
-        const { findDuplicatesLegacy, deleteDuplicatesLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
-        const plan = await runInBackgroundLane(() => findDuplicatesLegacy(ORG(), since, until));
-        const losers = (plan.toDelete as Array<{ keep?: boolean }> ?? []).filter((d) => !d.keep).length;
-        const job = AdminConfigController._dedupJobs.get(jobId);
-        if (job) {
-          job.plan = { scanned: plan.scanned, groups: plan.groups, orphaned: plan.orphaned };
-          job.total = losers;
-          job.phase = execute ? "deleting" : "done";
-        }
-        if (execute) {
-          const res = await runInBackgroundLane(() =>
-            deleteDuplicatesLegacy(ORG(), plan as any, (deleted, total) => {
+        // Collapse duplicate audit-done-idx ROWS per finding (keep the
+        // reviewed/judged row, else newest; delete the stale rows by key).
+        // NEVER hides a finding — no audit data is lost.
+        const { collapseDuplicateIndexRows } = await import("@audit/domain/data/stats-repository/mod.ts");
+        const res = await runInBackgroundLane(() =>
+          collapseDuplicateIndexRows(ORG(), since, until, {
+            execute,
+            onProgress: (deleted, total) => {
               const j = AdminConfigController._dedupJobs.get(jobId);
-              if (j) { j.deleted = deleted; j.total = total; }
-            })
-          );
-          const j = AdminConfigController._dedupJobs.get(jobId);
-          if (j) { j.phase = "done"; j.finishedAt = Date.now(); j.deleted = res.deleted; j.failed = res.failed; }
-        } else {
-          const j = AdminConfigController._dedupJobs.get(jobId);
-          if (j) { j.finishedAt = Date.now(); }
+              if (j) { j.deleted = deleted; j.total = total; j.phase = "deleting"; }
+            },
+          })
+        );
+        const j = AdminConfigController._dedupJobs.get(jobId);
+        if (j) {
+          j.plan = { scannedRows: res.scanned, findingsWithDupes: res.findingsWithDupes, staleRows: res.staleRows };
+          j.total = res.staleRows;
+          j.deleted = res.rowsDeleted;
+          j.failed = res.failed;
+          j.phase = "done";
+          j.finishedAt = Date.now();
         }
       } catch (err) {
         console.error(`[DEDUP:${jobId}] ❌ async run threw:`, err);
@@ -1106,11 +1107,10 @@ export class AdminConfigController {
     return { ok: true, jobId, ...job };
   }
 
-  /** Read-only dedup verification. Scans the range and reports what the cleanup
-   *  WOULD do under BOTH grouping strategies (current recordingId grouping vs
-   *  grouping by record id), with per-group keep/delete detail. Never hides or
-   *  deletes anything — safe to run anytime. The scan alone is fast (seconds),
-   *  so unlike the delete path this returns inline rather than as a polled job. */
+  /** Read-only dedup verification. Scans the range and reports, per finding,
+   *  how many audit-done-idx rows it has and which row the cleanup would KEEP
+   *  vs DELETE. Never hides or deletes anything — safe to run anytime. The scan
+   *  is fast (seconds), so unlike the delete path it returns inline. */
   @Post("deduplicate-diagnose") @ReturnedType(MessageResponse) @BodyType(GenericBodyRequest)
   async deduplicateDiagnose(@Body() body: GenericBodyRequest) {
     const b = body as any;

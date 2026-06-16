@@ -17,7 +17,7 @@ import {
   getAllAnswersForFinding,
 } from "@audit/domain/data/audit-repository/mod.ts";
 import {
-  writeAuditDoneIndex,
+  writeSoleAuditDoneIndex,
   updateCompletedStatScore,
   deleteChargebackEntry,
   deleteWireDeductionEntry,
@@ -1027,9 +1027,12 @@ export async function finalizeReviewedAudit(
     console.warn(`[REVIEW] ${findingId}: review-active sweep failed (non-fatal):`, e);
   }
 
-  await writeAuditDoneIndex(orgId, {
+  // One index row per finding: keyed at reviewedAt (so reviewer-throughput
+  // still buckets the review in its week), and the original audit-time row is
+  // point-deleted — that stale row is what double-counted reviewed findings in
+  // audit-history / reports / reviewer stats.
+  await writeSoleAuditDoneIndex(orgId, correctedFinding, {
     findingId,
-    completedAt: reviewedAt,
     doneAt: reviewedAt,
     completed: true,
     reason: "reviewed",
@@ -1037,7 +1040,7 @@ export async function finalizeReviewedAudit(
     // buildIndexMeta keys recordId on the QB RecordId — what "Find by QB
     // Record" searches. (Previously fell through to RelatedDestinationId/
     // GenieNumber, keying review-completed findings under the wrong id.)
-    ...buildIndexMeta(finding),
+    ...buildIndexMeta(correctedFinding),
     reviewedBy: reviewer,
     reviewHandleMs: reviewedValidCount > 0 ? sumHandleMs : undefined,
     reviewedQuestionCount,
@@ -1348,11 +1351,9 @@ export async function adminFlipFinding(
     reviewedBy: flippedBy,
   });
 
-  const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
   try {
-    await writeAuditDoneIndex(orgId, {
+    await writeSoleAuditDoneIndex(orgId, finding, {
       findingId,
-      completedAt,
       score,
       completed: true,
       doneAt: Date.now(),
@@ -1417,11 +1418,9 @@ export async function finalizePerfectFinding(
   const reviewScore = typeof (finding as any).reviewScore === "number" ? (finding as any).reviewScore : 100;
   await setStored("review-done", orgId, [findingId], { reviewedAt, reviewScore, reviewedBy: reviewer });
 
-  const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
   try {
-    await writeAuditDoneIndex(orgId, {
+    await writeSoleAuditDoneIndex(orgId, finding, {
       findingId,
-      completedAt,
       score: reviewScore,
       completed: true,
       doneAt: Date.now(),
@@ -1575,11 +1574,9 @@ export async function adminFlipQuestion(
   // Only marks "completed: true" when score reaches 100, otherwise leaves the
   // entry as a non-perfect index row (still surfaceable in unreviewed lists
   // until either reviewer-finalize or admin-bulk-flip lifts it to 100).
-  const completedAt = ((finding as Record<string, unknown>).completedAt as number | undefined) ?? Date.now();
   try {
-    await writeAuditDoneIndex(orgId, {
+    await writeSoleAuditDoneIndex(orgId, finding, {
       findingId,
-      completedAt,
       score,
       completed: score === 100,
       ...(score === 100 ? { doneAt: Date.now(), reason: "reviewed" as const } : {}),

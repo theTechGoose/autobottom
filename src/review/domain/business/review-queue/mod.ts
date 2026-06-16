@@ -5,7 +5,7 @@
  *  acceptable given typical reviewer concurrency and idempotent finalize. */
 
 import {
-  getStored, setStored, setStoredIfAbsent, deleteStored, listStoredWithKeys, listStoredByCompletedAt, listStoredByCompletedAtWithKeys, listStoredByKeyPrefix, withTiming,
+  getStored, setStored, setStoredIfAbsent, deleteStored, listStoredWithKeys, listStoredWithKeysAll, listStoredByCompletedAt, listStoredByCompletedAtWithKeys, listStoredByKeyPrefix, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewItem, ReviewDecision } from "@core/dto/types.ts";
@@ -1898,7 +1898,12 @@ async function _getReviewStatsRaw(orgId: OrgId): Promise<{
 
 export async function getReviewedFindingIds(orgId: OrgId): Promise<Set<string>> {
   const ids = new Set<string>();
-  const rows = await listStoredWithKeys<{ reviewedAt: string }>("review-done", orgId);
+  // MUST be the uncapped/paged scan. listStoredWithKeys truncates at 1000, so
+  // once >1000 findings had ever been reviewed the set silently froze — every
+  // report gated on "reviewed" (chargebacks, omissions, wire, audit-history's
+  // Reviewed column) then treated the majority of reviewed findings as
+  // unreviewed and dropped their rows. This was the chargeback-report cliff.
+  const rows = await listStoredWithKeysAll<{ reviewedAt: string }>("review-done", orgId);
   for (const { key } of rows) ids.add(String(key[0]));
   return ids;
 }

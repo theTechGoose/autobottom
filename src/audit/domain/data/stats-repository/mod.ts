@@ -2,7 +2,7 @@
  *  Firestore-backed via setStored* helpers. */
 
 import {
-  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredByIdPrefix, listStoredByCompletedAt, withTiming,
+  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredWithKeysAll, listStoredByIdPrefix, listStoredByCompletedAt, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
@@ -983,8 +983,11 @@ export async function getChargebackEntry(orgId: OrgId, findingId: string): Promi
 
 export async function getChargebackEntries(orgId: OrgId, since: number, until: number): Promise<ChargebackEntry[]> {
   const hidden = await getHiddenFindingIds(orgId);
-  const all = await listStored<ChargebackEntry>("chargeback-entry", orgId);
-  return all.filter((e) => e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
+  // MUST be the uncapped/paged scan — plain listStored truncates at 1000, which
+  // silently dropped newer entries once the store grew past 1000 (the reports
+  // went near-empty around the cap-crossing). Report queries can't truncate.
+  const rows = await listStoredWithKeysAll<ChargebackEntry>("chargeback-entry", orgId);
+  return rows.map((r) => r.value).filter((e) => e && e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
 }
 
 // ── Wire Deduction Entries ───────────────────────────────────────────────────
@@ -1003,8 +1006,10 @@ export async function getWireDeductionEntry(orgId: OrgId, findingId: string): Pr
 
 export async function getWireDeductionEntries(orgId: OrgId, since: number, until: number): Promise<WireDeductionEntry[]> {
   const hidden = await getHiddenFindingIds(orgId);
-  const all = await listStored<WireDeductionEntry>("wire-deduction-entry", orgId);
-  return all.filter((e) => e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
+  // Uncapped/paged — see getChargebackEntries: listStored's 1000-row cap
+  // silently truncated the report once the store grew past it.
+  const rows = await listStoredWithKeysAll<WireDeductionEntry>("wire-deduction-entry", orgId);
+  return rows.map((r) => r.value).filter((e) => e && e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
 }
 
 // ── Stuck Findings (watchdog) ────────────────────────────────────────────────

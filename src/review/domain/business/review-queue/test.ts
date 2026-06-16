@@ -2,7 +2,7 @@
  *  audit-done-idx sync contract on admin flips. */
 
 import { assertEquals, assert, assertExists } from "#assert";
-import { selectOldestFinding, adminFlipQuestion, recordDecision, questionTimingFromGap, REVIEW_BREAK_MS, REVIEW_IDLE_DISCARD_MS } from "./mod.ts";
+import { selectOldestFinding, adminFlipQuestion, recordDecision, questionTimingFromGap, getReviewedFindingIds, REVIEW_BREAK_MS, REVIEW_IDLE_DISCARD_MS } from "./mod.ts";
 import type { ReviewDecision, ReviewItem } from "@core/dto/types.ts";
 import { getStored, resetFirestoreCredentials, setStored } from "@core/data/firestore/mod.ts";
 import { saveFinding, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -12,6 +12,21 @@ import {
   _resetHiddenCacheForTesting,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+
+// Regression: getReviewedFindingIds must NOT truncate at 1000 (listStoredWithKeys'
+// default cap). Once >1000 findings had ever been reviewed, the capped read froze
+// reviewedIds, so chargebacks/omissions/wire reports treated most reviewed
+// findings as unreviewed and dropped them — the report cliff.
+Deno.test("getReviewedFindingIds — returns ALL reviewed findings, not just the first 1000", async () => {
+  resetFirestoreCredentials();
+  const orgId = ("test-reviewed-cap-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const N = 1001;
+  for (let i = 0; i < N; i++) {
+    await setStored("review-done", orgId, ["fid-" + i], { reviewedAt: new Date(1_700_000_000_000).toISOString(), reviewScore: 90, reviewedBy: "r@x.com" });
+  }
+  const ids = await getReviewedFindingIds(orgId);
+  assertEquals(ids.size, N, "must not silently truncate at 1000");
+});
 
 function makeItem(findingId: string, questionIndex: number, completedAt?: number, recordingIdField?: string): { value: ReviewItem } {
   return {

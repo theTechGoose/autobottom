@@ -4,9 +4,11 @@
 import { assertEquals, assert } from "#assert";
 import {
   signFinding, verifyFinding, stampSent, recordOpen, recordClick, classifyUa,
-  tallyEngagement, OPEN_PREFETCH_WINDOW_MS, TRANSPARENT_GIF, type EmailMark,
+  tallyEngagement, mapWithConcurrency, getEmailEngagement,
+  OPEN_PREFETCH_WINDOW_MS, TRANSPARENT_GIF, type EmailMark,
 } from "./mod.ts";
 import { getStored, setStored } from "@core/data/firestore/mod.ts";
+import { writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
@@ -151,3 +153,64 @@ Deno.test("tallyEngagement — divide-by-zero guards", () => {
   assertEquals(t.appealRateAll, 0);
   assertEquals(t.appealRateOpened, 0);
 });
+
+// ── Cap + throttle (the wide-window fan-out fix) ─────────────────────────────
+
+Deno.test("mapWithConcurrency — preserves order, never exceeds the limit, handles empty", async () => {
+  assertEquals(await mapWithConcurrency<number, number>([], 4, (x) => Promise.resolve(x)), []);
+
+  const input = Array.from({ length: 20 }, (_, i) => i);
+  let inFlight = 0, peak = 0;
+  const out = await mapWithConcurrency(input, 4, async (n) => {
+    inFlight++; peak = Math.max(peak, inFlight);
+    await new Promise((r) => setTimeout(r, (n % 5) * 2)); // varying delays
+    inFlight--;
+    return n * 10;
+  });
+  assertEquals(out, input.map((n) => n * 10), "results align with input order despite varying delays");
+  assert(peak <= 4, `peak concurrency ${peak} must not exceed the limit (4)`);
+});
+
+Deno.test({ name: "getEmailEngagement — small cohort: not capped, full tally", ...kvOpts, fn: async () => {
+  const SM_ORG = ("eng-small-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const base = 1_700_000_500_000;
+  const fids = ["s-a", "s-b", "s-c"];
+  await Promise.all(fids.map((findingId, i) =>
+    writeAuditDoneIndex(SM_ORG, { findingId, completedAt: base + i, completed: true, score: 88, reason: "reviewed" }, { assumeFinished: true })));
+  await setStored("audit-email-mark", SM_ORG, ["s-a"], { findingId: "s-a", sentAt: base, openedAt: base + 1, firstClickAt: base + 2 });
+  await setStored("audit-email-mark", SM_ORG, ["s-b"], { findingId: "s-b", sentAt: base });
+  // s-c: no mark (in cohort, never emailed)
+
+  const e = await getEmailEngagement(SM_ORG, base - 1, base + 10);
+  assertEquals(e.cohortSize, 3, "true cohort size");
+  assertEquals(e.capped, false, "small cohort is not capped");
+  assertEquals(e.total, 3, "tally covers the whole cohort");
+  assertEquals(e.sent, 2);
+  assertEquals(e.opened, 1);
+  assertEquals(e.clicked, 1);
+}});
+
+Deno.test({ name: "getEmailEngagement — caps at HYDRATE_CAP, keeps most-recent, reports true cohortSize", ...kvOpts, fn: async () => {
+  const CAP_ORG = ("eng-cap-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const base = 1_700_000_000_000;
+  const N = 2001; // one over HYDRATE_CAP (2000)
+  // Seed N index entries with strictly increasing completedAt (i = recency rank).
+  await Promise.all(
+    Array.from({ length: N }, (_, i) =>
+      writeAuditDoneIndex(CAP_ORG, {
+        findingId: `cap-f-${i}`, completedAt: base + i, completed: true, score: 90, reason: "reviewed",
+      }, { assumeFinished: true })),
+  );
+  // Oldest finding (i=0, EXCLUDED by the cap) opened+clicked; a recent one
+  // (i=N-1, INSIDE the cap) opened. If the cap keeps most-recent, only the
+  // recent open counts and the excluded click never does.
+  await setStored("audit-email-mark", CAP_ORG, ["cap-f-0"], { findingId: "cap-f-0", sentAt: base, openedAt: base + 1, firstClickAt: base + 2 });
+  await setStored("audit-email-mark", CAP_ORG, [`cap-f-${N - 1}`], { findingId: `cap-f-${N - 1}`, sentAt: base, openedAt: base + 1 });
+
+  const e = await getEmailEngagement(CAP_ORG, base - 1, base + N + 1);
+  assertEquals(e.cohortSize, N, "cohortSize is the true cohort count, not the sample");
+  assert(e.capped, "capped flag set when cohort exceeds HYDRATE_CAP");
+  assertEquals(e.total, 2000, "tally covers only the most-recent HYDRATE_CAP audits");
+  assertEquals(e.opened, 1, "only the recent (sampled) open counts");
+  assertEquals(e.clicked, 0, "the excluded oldest finding's click is not counted");
+}});

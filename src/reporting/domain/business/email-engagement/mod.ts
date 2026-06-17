@@ -227,15 +227,39 @@ export function tallyEngagement(
   };
 }
 
+/** Headline engagement plus cohort metadata. `cohortSize` is the true number of
+ *  audits completed in the window; `capped` is set when that exceeded HYDRATE_CAP,
+ *  so the metrics reflect only the most-recent HYDRATE_CAP audits. */
+export interface EmailEngagementHeadline extends EmailEngagement {
+  cohortSize: number;
+  capped: boolean;
+}
+
 /** Compute engagement over the audits completed in [from, to]. Cohort comes from
- *  audit-done-idx; each finding's mark + appeal is hydrated in parallel. */
-export async function getEmailEngagement(orgId: OrgId, from: number, to: number): Promise<EmailEngagement> {
+ *  audit-done-idx; each finding's mark + appeal is read in bounded-concurrency
+ *  batches. To stop a wide window from fanning out tens of thousands of
+ *  concurrent reads (which saturated the foreground Firestore lane and 503'd the
+ *  whole app), the per-finding reads are capped at the most-recent HYDRATE_CAP
+ *  audits — `capped` / `cohortSize` let the UI say "most recent N of M". At or
+ *  under the cap this reads the whole cohort exactly as before. */
+export async function getEmailEngagement(orgId: OrgId, from: number, to: number): Promise<EmailEngagementHeadline> {
   const entries = await queryAuditDoneIndex(orgId, from, to);
-  const [marks, appeals] = await Promise.all([
-    Promise.all(entries.map((e) => getMark(orgId, e.findingId).catch(() => null))),
-    Promise.all(entries.map((e) => getAppeal(orgId, e.findingId).catch(() => null))),
-  ]);
-  return tallyEngagement(marks, appeals);
+  const cohortSize = entries.length;
+  const capped = cohortSize > HYDRATE_CAP;
+  const sample = capped
+    ? [...entries].sort((a, b) => b.completedAt - a.completedAt).slice(0, HYDRATE_CAP)
+    : entries;
+  const pairs = await mapWithConcurrency(sample, HYDRATE_CONCURRENCY, (e) =>
+    Promise.all([
+      getMark(orgId, e.findingId).catch(() => null),
+      getAppeal(orgId, e.findingId).catch(() => null),
+    ]),
+  );
+  return {
+    ...tallyEngagement(pairs.map((p) => p[0]), pairs.map((p) => p[1])),
+    cohortSize,
+    capped,
+  };
 }
 
 // ── Drill-down detail ─────────────────────────────────────────────────────────
@@ -317,14 +341,23 @@ function enrichFromFinding(it: Enriched, f: Record<string, unknown> | null): voi
   it.recordingId = it.recordingId || (String(f.recordingId ?? "").trim() || undefined);
 }
 
+/** Map over `items` running at most `limit` calls concurrently, preserving order.
+ *  Keeps wide-window report reads from fanning out unbounded concurrent Firestore
+ *  hits — the cause of the foreground-lane saturation / 503s. Exported for tests. */
+export async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  for (let i = 0; i < items.length; i += limit) {
+    const res = await Promise.all(items.slice(i, i + limit).map(fn));
+    res.forEach((r, j) => { out[i + j] = r; });
+  }
+  return out;
+}
+
 /** Fetch finding docs for the given ids in bounded-concurrency batches. */
 async function hydrateFindings(orgId: OrgId, ids: string[]): Promise<Map<string, Record<string, unknown> | null>> {
+  const docs = await mapWithConcurrency(ids, HYDRATE_CONCURRENCY, (id) => getFinding(orgId, id).catch(() => null));
   const map = new Map<string, Record<string, unknown> | null>();
-  for (let i = 0; i < ids.length; i += HYDRATE_CONCURRENCY) {
-    const slice = ids.slice(i, i + HYDRATE_CONCURRENCY);
-    const docs = await Promise.all(slice.map((id) => getFinding(orgId, id).catch(() => null)));
-    slice.forEach((id, j) => map.set(id, (docs[j] as Record<string, unknown> | null) ?? null));
-  }
+  ids.forEach((id, j) => map.set(id, (docs[j] as Record<string, unknown> | null) ?? null));
   return map;
 }
 
@@ -371,22 +404,43 @@ export async function getEmailEngagementDetail(
   limit = 100,
 ): Promise<EmailEngagementDetail> {
   const entries = await queryAuditDoneIndex(orgId, from, to);
-  const [marks, appeals] = await Promise.all([
-    Promise.all(entries.map((e) => getMark(orgId, e.findingId).catch(() => null))),
-    Promise.all(entries.map((e) => getAppeal(orgId, e.findingId).catch(() => null))),
-  ]);
+  const cohortSize = entries.length;
+  const hydrationCapped = cohortSize > HYDRATE_CAP;
 
-  const aggregate = tallyEngagement(marks, appeals);
+  // Cap the per-finding mark/appeal reads to the most-recent HYDRATE_CAP audits
+  // so a wide window can't fan out tens of thousands of concurrent reads (the bug
+  // that saturated the foreground Firestore lane and 503'd the app). At or under
+  // the cap this reads the whole cohort exactly as before.
+  const ordered = hydrationCapped
+    ? [...entries].sort((a, b) => b.completedAt - a.completedAt)
+    : entries;
+  const sample = hydrationCapped ? ordered.slice(0, HYDRATE_CAP) : ordered;
+  const sampled = new Set(sample.map((e) => e.findingId));
+  const marksMap = new Map<string, EmailMark | null>();
+  const appealsMap = new Map<string, AppealRecord | null>();
+  const pairs = await mapWithConcurrency(sample, HYDRATE_CONCURRENCY, (e) =>
+    Promise.all([
+      getMark(orgId, e.findingId).catch(() => null),
+      getAppeal(orgId, e.findingId).catch(() => null),
+    ]),
+  );
+  sample.forEach((e, i) => { marksMap.set(e.findingId, pairs[i][0]); appealsMap.set(e.findingId, pairs[i][1]); });
 
-  // Most-recently-sent first (fall back to completedAt).
+  // Most-recently-sent first (fall back to completedAt). When capped, un-sampled
+  // entries carry no mark/appeal and sort by completedAt (they land on the last
+  // pages, below the most-recent HYDRATE_CAP that were hydrated).
   const items: Enriched[] = entries
-    .map((e, i): Enriched => ({
-      e, m: marks[i], a: appeals[i],
+    .map((e): Enriched => ({
+      e, m: marksMap.get(e.findingId) ?? null, a: appealsMap.get(e.findingId) ?? null,
       voName: e.voName, department: e.department, isPackage: e.isPackage, recordingId: e.recordingId,
     }))
     .sort((x, y) => ((y.m?.sentAt ?? y.e.completedAt) - (x.m?.sentAt ?? x.e.completedAt)));
 
-  const cohortSize = items.length;
+  // Aggregate + breakdowns reflect the sampled cohort (the whole cohort when not
+  // capped).
+  const sampleItems = hydrationCapped ? items.filter((it) => sampled.has(it.e.findingId)) : items;
+  const aggregate = tallyEngagement(sampleItems.map((it) => it.m), sampleItems.map((it) => it.a));
+
   const lim = Math.min(500, Math.max(10, limit));
   const pages = Math.max(1, Math.ceil(cohortSize / lim));
   const pg = Math.min(Math.max(1, page), pages);
@@ -394,7 +448,6 @@ export async function getEmailEngagementDetail(
 
   // Hydrate department / team-member from finding docs. Whole cohort for small
   // windows; only the visible page when the cohort blows past HYDRATE_CAP.
-  const hydrationCapped = cohortSize > HYDRATE_CAP;
   const hydrateSet = hydrationCapped ? pageItems : items;
   const needIds = [...new Set(
     hydrateSet
@@ -410,7 +463,7 @@ export async function getEmailEngagementDetail(
   // reliably written, so type doesn't need hydration).
   const deptGroups = new Map<string, Enriched[]>();
   const typeGroups = new Map<string, Enriched[]>();
-  for (const it of items) {
+  for (const it of sampleItems) {
     const dept = (it.department ?? "").trim() || "Unknown";
     (deptGroups.get(dept) ?? deptGroups.set(dept, []).get(dept)!).push(it);
     const type = it.isPackage ? "Partner" : "Internal";

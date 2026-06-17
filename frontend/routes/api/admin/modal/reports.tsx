@@ -7,10 +7,8 @@
 
 import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
-import { apiFetch } from "../../../../lib/api.ts";
 import { ENG_PRESETS, RT_PRESETS } from "../../../../lib/report-range.ts";
 import { QF_PRESETS } from "../../../../lib/qf-range.ts";
-import { WeeklyReportsList, type EmailReportConfig, type StatusEntry } from "../../../../components/WeeklyReportsList.tsx";
 
 type TabKey = "qfailures" | "weekly" | "engagement" | "throughput";
 
@@ -26,21 +24,8 @@ export const handler = define.handlers({
     const tab = (new URL(ctx.req.url).searchParams.get("tab") ?? "qfailures") as TabKey;
     const active = TABS.find((t) => t.key === tab) ? tab : "qfailures";
 
-    // For Weekly Reports we need the configs + statuses up-front so the
-    // initial render shows the rows. Question Failures starts empty until
-    // operator hits a preset or "Apply".
-    let configs: EmailReportConfig[] = [];
-    let statuses: Record<string, StatusEntry> = {};
-    if (active === "weekly") {
-      try {
-        const c = await apiFetch<{ configs?: EmailReportConfig[] }>("/admin/email-reports", ctx.req);
-        configs = c.configs ?? [];
-      } catch (e) { console.error("[reports/weekly] configs load:", e); }
-      try {
-        const s = await apiFetch<{ statuses?: Record<string, StatusEntry> }>("/admin/email-reports/all-status", ctx.req);
-        statuses = s.statuses ?? {};
-      } catch (e) { console.error("[reports/weekly] statuses load:", e); }
-    }
+    // Every tab now starts idle — no report scans on modal/tab open. The operator
+    // clicks "Run now" (or a preset) on the active tab, which fetches the data.
 
     const html = renderToString(
       <div id="reports-shell">
@@ -56,7 +41,7 @@ export const handler = define.handlers({
 
         <div id="reports-content" style="margin-top:14px;">
           {active === "qfailures" && <QuestionFailuresInitial />}
-          {active === "weekly" && <WeeklyReportsInitial configs={configs} statuses={statuses} />}
+          {active === "weekly" && <WeeklyReportsInitial />}
           {active === "engagement" && <EngagementInitial />}
           {active === "throughput" && <ThroughputInitial />}
         </div>
@@ -86,6 +71,30 @@ function TabBar({ active }: { active: TabKey }) {
           >{t.label}</button>
         );
       })}
+    </div>
+  );
+}
+
+/** Idle "Run now" panel that replaces the old hx-trigger="load" auto-fire. Reports
+ *  no longer scan on modal/tab open — the operator clicks Run now (or any preset
+ *  above), which swaps the result into this same div. `indicator` reuses the
+ *  preset bar's existing htmx-indicator span. */
+function RunNowResult({ id, endpoint, indicator, note }: { id: string; endpoint: string; indicator: string; note: string }) {
+  return (
+    <div id={id}>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px;border:1px dashed var(--border);border-radius:8px;background:var(--bg);text-align:center;">
+        <button
+          type="button"
+          class="sf-btn primary"
+          hx-get={endpoint}
+          hx-target={`#${id}`}
+          hx-swap="innerHTML"
+          hx-disabled-elt="this"
+          hx-indicator={`#${indicator}`}
+          style="font-size:12px;padding:6px 18px;"
+        >▶ Run now</button>
+        <span style="font-size:11px;color:var(--text-dim);">{note}</span>
+      </div>
     </div>
   );
 }
@@ -135,9 +144,12 @@ function QuestionFailuresInitial() {
           <span id="qf-loading" class="htmx-indicator" style="font-size:11px;color:var(--text-dim);">⏳</span>
         </div>
       </form>
-      <div id="qf-result" hx-get="/api/admin/modal/reports/question-failures-initial" hx-trigger="load" hx-swap="innerHTML">
-        <div style="font-size:11px;color:var(--text-dim);padding:18px;text-align:center;">Loading current-month data…</div>
-      </div>
+      <RunNowResult
+        id="qf-result"
+        endpoint="/api/admin/modal/reports/question-failures-initial"
+        indicator="qf-loading"
+        note="Not run yet — Run now (This Month), or pick a range above."
+      />
     </div>
   );
 }
@@ -184,9 +196,12 @@ function EngagementInitial() {
           <span id="eng-loading" class="htmx-indicator" style="font-size:11px;color:var(--text-dim);">⏳</span>
         </div>
       </form>
-      <div id="eng-result" hx-get="/api/admin/modal/reports/engagement?preset=today" hx-trigger="load" hx-swap="innerHTML">
-        <div style="font-size:11px;color:var(--text-dim);padding:18px;text-align:center;">Loading today's data…</div>
-      </div>
+      <RunNowResult
+        id="eng-result"
+        endpoint="/api/admin/modal/reports/engagement?preset=today"
+        indicator="eng-loading"
+        note="Not run yet — Run now (Today), or pick a range above."
+      />
     </div>
   );
 }
@@ -232,26 +247,36 @@ function ThroughputInitial() {
           <span id="rt-loading" class="htmx-indicator" style="font-size:11px;color:var(--text-dim);">⏳</span>
         </div>
       </form>
-      <div id="rt-result" hx-get="/api/admin/modal/reports/reviewer-throughput?preset=today" hx-trigger="load" hx-swap="innerHTML">
-        <div style="font-size:11px;color:var(--text-dim);padding:18px;text-align:center;">Loading today's data…</div>
-      </div>
+      <RunNowResult
+        id="rt-result"
+        endpoint="/api/admin/modal/reports/reviewer-throughput?preset=today"
+        indicator="rt-loading"
+        note="Not run yet — Run now (Today), or pick a range above."
+      />
     </div>
   );
 }
 
 // ── Weekly Reports initial panel ─────────────────────────────────────────────
 //
-// Thin wrapper around the shared WeeklyReportsList: adds the "Open full report"
-// pop-out (to the standalone /admin/weekly-reports page) above the list.
+// Idle until "Run now": the configs + statuses are fetched on demand by the
+// /weekly fragment route (previously prefetched server-side on every tab open).
+// Keeps the "Open full report" pop-out to the standalone /admin/weekly-reports.
 
-function WeeklyReportsInitial({ configs, statuses }: { configs: EmailReportConfig[]; statuses: Record<string, StatusEntry> }) {
+function WeeklyReportsInitial() {
   return (
     <div>
-      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span id="weekly-loading" class="htmx-indicator" style="font-size:11px;color:var(--text-dim);">⏳ Loading…</span>
         <a href="/admin/weekly-reports" target="_blank" rel="noopener" class="sf-btn ghost"
           style="font-size:11px;padding:4px 10px;text-decoration:none;white-space:nowrap;">Open full report ↗</a>
       </div>
-      <WeeklyReportsList configs={configs} statuses={statuses} />
+      <RunNowResult
+        id="weekly-result"
+        endpoint="/api/admin/modal/reports/weekly"
+        indicator="weekly-loading"
+        note="Not run yet — Run now to load the scheduled report configs + statuses."
+      />
     </div>
   );
 }

@@ -17,6 +17,7 @@ interface Resp {
   total: number; sent: number; opened: number; clicked: number; appealed: number;
   appealedAmongOpened: number; appealedAmongClicked: number;
   openRate: number; clickRate: number; appealRateAll: number; appealRateOpened: number; appealRateClicked: number;
+  cohortSize?: number; capped?: boolean;
 }
 
 async function renderEngagement(req: Request, preset: string, customFrom: string, customTo: string): Promise<string> {
@@ -36,7 +37,10 @@ async function renderEngagement(req: Request, preset: string, customFrom: string
     <div style="border:1px solid var(--border);border-radius:6px;padding:14px;background:var(--bg);">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
         <div style="font-size:12px;font-weight:700;color:var(--text-bright);">
-          Email Engagement — {label} · {r.total.toLocaleString()} audits
+          Email Engagement — {label} ·{" "}
+          {r.capped
+            ? `most recent ${r.total.toLocaleString()} of ${(r.cohortSize ?? r.total).toLocaleString()} audits`
+            : `${r.total.toLocaleString()} audits`}
         </div>
         <a
           href={`/admin/email-engagement?since=${since}&until=${until}`}

@@ -6,6 +6,29 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
+## 2026-06-17 — Reports gated behind "Run now" + watchdog terminal-status guard
+
+- **Reports modal is idle until "Run now"** — every tab (Question Failures, Email
+  Engagement, Reviewer Throughput, Weekly Reports) now waits for an explicit **▶
+  Run now** click instead of auto-firing on modal/tab open. A wide-range Email
+  Engagement run had fanned out an unbounded `Promise.all` of per-finding reads,
+  saturating the 10-slot foreground Firestore lane and 503'ing the whole app
+  until a redeploy. Weekly Reports' configs/statuses fetch moved into an
+  on-demand fragment ([reports/weekly.tsx](../frontend/routes/api/admin/modal/reports/weekly.tsx)).
+- **Email Engagement cohort cap + throttle** — `getEmailEngagement` /
+  `getEmailEngagementDetail` now read at most the most-recent `HYDRATE_CAP` (2000)
+  audits via a bounded `mapWithConcurrency` (25-wide) instead of one `Promise.all`
+  over the whole cohort, so a wide window can no longer wedge the foreground
+  Firestore lane. The headline shows "most recent N of M audits" when capped.
+  ([email-engagement/mod.ts](../src/reporting/domain/business/email-engagement/mod.ts))
+- **Watchdog terminal-status guard** — the hourly watchdog now skips (and clears
+  the stale `active-tracking` row for) any stuck finding that already reached
+  `finished`/`terminated`, instead of blindly re-publishing it. Re-dispatching a
+  completed/in-review finding was re-preparing it back to `asking-questions`,
+  wiping the reviewer's in-progress decisions and tripping the review-finalize
+  refusal guard (the recurring `finalize — findingStatus="asking-questions"`
+  canary error). ([watchdog/mod.ts](../src/cron/domain/business/watchdog/mod.ts))
+
 ## 2026-06-11 — Judge queue stats + canary hardening
 
 - **Judge queue header** — the queue now shows the dashboard's `N / M

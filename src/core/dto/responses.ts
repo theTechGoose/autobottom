@@ -26,6 +26,8 @@ export class EmailEngagementResponse {
   total = 0; sent = 0; opened = 0; clicked = 0; appealed = 0;
   appealedAmongOpened = 0; appealedAmongClicked = 0;
   openRate = 0; clickRate = 0; appealRateAll = 0; appealRateOpened = 0; appealRateClicked = 0;
+  // True cohort size + whether metrics reflect only the most-recent HYDRATE_CAP.
+  cohortSize = 0; capped = false;
 }
 export class EmailEngagementDetailResponse {
   aggregate = new EmailEngagementResponse();

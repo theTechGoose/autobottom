@@ -187,8 +187,9 @@ export default define.page(async function EmailEngagementPage(ctx) {
 
             {data.hydrationCapped && (
               <div style="font-size:11px;color:var(--yellow);background:var(--yellow-bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-bottom:10px;">
-                ⚠️ Large window ({data.cohortSize.toLocaleString()} audits) — the department breakdown only fully
-                resolves the first {(2000).toLocaleString()} audits; narrow the range for complete per-department accuracy.
+                ⚠️ Large window ({data.cohortSize.toLocaleString()} audits) — to stay fast, the headline metrics and
+                per-department / per-type breakdowns reflect the most-recent {(2000).toLocaleString()} audits in this
+                range; narrow the range for a full-cohort tally.
               </div>
             )}
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">

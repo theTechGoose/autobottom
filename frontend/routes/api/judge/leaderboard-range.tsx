@@ -16,12 +16,6 @@ interface LeaderRow {
   handledAudits?: number;
   avgHandleMs?: number;
   auditsPerActiveHour?: number;
-  /** Flip-to-yes: of the bot-failed questions this reviewer adjudicated, how
-   *  many they overturned to "Yes". flipRate is null when no decisions were
-   *  hydrated for this reviewer (render "—", distinct from a real 0%). */
-  flips?: number;
-  flipDecisions?: number;
-  flipRate?: number | null;
 }
 
 function fmtHandle(ms?: number): string {
@@ -68,7 +62,6 @@ export const handler = define.handlers({
                   <th style="padding:8px;width:90px;">Avg Handle</th>
                   <th style="padding:8px;width:80px;">Audits/hr</th>
                   <th style="padding:8px;width:80px;">Avg Score</th>
-                  <th style="padding:8px;width:90px;" title="Of the bot-failed questions this reviewer adjudicated, the share they overturned to Yes">Flip → Yes</th>
                   <th style="padding:8px;width:130px;">Last Reviewed</th>
                 </tr>
               </thead>
@@ -80,10 +73,6 @@ export const handler = define.handlers({
                     <td style="padding:8px;color:var(--cyan);">{r.handledAudits ? fmtHandle(r.avgHandleMs) : "—"}</td>
                     <td style="padding:8px;color:var(--yellow);">{r.handledAudits ? (r.auditsPerActiveHour ?? "—") : "—"}</td>
                     <td style="padding:8px;">{r.avgScore}%</td>
-                    <td style="padding:8px;color:var(--purple);font-weight:600;"
-                      title={r.flipRate != null ? `${r.flips ?? 0} of ${r.flipDecisions ?? 0} failed questions flipped to Yes` : "No reviewer decisions in range"}>
-                      {r.flipRate != null ? `${r.flipRate}%` : <span style="color:var(--text-dim);font-weight:400;">—</span>}
-                    </td>
                     <td style="padding:8px;color:var(--text-dim);">{fmtTime(r.lastReviewedAt)}</td>
                   </tr>
                 ))}

@@ -6,7 +6,7 @@ import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import { JudgeStatsResponse, ReviewBufferResponse, DecisionResponse, OkResponse, OkMessageResponse, ReviewerListResponse, ReviewerConfigResponse, DismissResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, JudgeDecideRequest, DeleteEmailRequest, ReviewerConfigRequest, FindingIdRequest } from "@core/dto/requests.ts";
 import { recordJudgeDecision, getJudgeStats, getAppeal, dismissFindingFromJudgeQueue, clearJudgeQueue, deleteAppeal } from "@judge/domain/data/judge-repository/mod.ts";
-import { getReviewerLeaderboard, getReviewerFlipRates } from "@review/domain/business/review-stats/mod.ts";
+import { getReviewerLeaderboard } from "@review/domain/business/review-stats/mod.ts";
 import { getMyJudgeStats } from "@judge/domain/business/judge-analytics/mod.ts";
 import { getReviewerConfig, saveReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { listUsers } from "@core/business/auth/mod.ts";
@@ -169,28 +169,8 @@ export class JudgeController {
       ? { from: Number.isFinite(fromMs) ? fromMs : undefined, to: Number.isFinite(toMs) ? toMs : undefined }
       : undefined;
     try {
-      // Index-only leaderboard + the bounded flip-rate hydration share the
-      // same SWR-cached audit-done scan (queryAuditDoneIndex dedupes in-flight
-      // calls for the same window), so this adds the hydration pass, not a
-      // second scan. Flip data is merged per-reviewer by email.
-      const [rows, flips] = await Promise.all([
-        getReviewerLeaderboard(ORG(), opts),
-        getReviewerFlipRates(ORG(), opts),
-      ]);
-      const flipByEmail = new Map(flips.rows.map((r) => [r.email, r]));
-      const merged = rows.map((r) => {
-        const f = flipByEmail.get(r.email);
-        return {
-          ...r,
-          flips: f?.flips ?? 0,
-          confirms: f?.confirms ?? 0,
-          flipDecisions: f?.decisions ?? 0,
-          // null (not 0) when this reviewer had no hydrated decisions — the UI
-          // renders "—" so a real 0% flip rate is distinguishable from "no data".
-          flipRate: f && f.decisions > 0 ? f.flipRate : null,
-        };
-      });
-      return { rows: merged, flipsCapped: flips.capped };
+      const rows = await getReviewerLeaderboard(ORG(), opts);
+      return { rows };
     } catch (err) {
       return softFail("leaderboard", err, { rows: [], stale: true });
     }

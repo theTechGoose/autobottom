@@ -4,7 +4,7 @@
  *  by integration tests; what we need to lock here is "given a known set
  *  of audit-done dates, do we count the streak right". */
 import { assert, assertEquals } from "#assert";
-import { computeReviewRate, getMyReviewerStats, getQuestionTiming, getReviewerLeaderboard } from "./mod.ts";
+import { computeReviewRate, getMyReviewerStats, getQuestionTiming, getReviewerLeaderboard, getReviewerFlipRates, _resetReviewerFlipRatesCacheForTests } from "./mod.ts";
 import { _resetQueryAuditDoneIndexCacheForTests, writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
@@ -233,4 +233,90 @@ Deno.test("getQuestionTiming — questionFilter narrows by header substring", as
   const { rows } = await getQuestionTiming(orgId, undefined, "income");
   assertEquals(rows.length, 1);
   assertEquals(rows[0].header, "Income");
+});
+
+// ── Per-reviewer flip-to-yes rate ───────────────────────────────────────────
+
+interface FlipAudit {
+  reviewer: string;   // index-row reviewedBy (per-question fallback)
+  at?: number;
+  questions: Array<{ reviewAction?: string; reviewedBy?: string }>;
+}
+async function seedFlips(orgId: OrgId, audits: FlipAudit[]): Promise<void> {
+  const now = Date.now();
+  for (let i = 0; i < audits.length; i++) {
+    const a = audits[i];
+    const fid = `ffid-${i}-${crypto.randomUUID().slice(0, 6)}`;
+    const answeredQuestions = a.questions.map((q, j) => ({
+      header: `Q${j}`,
+      answer: q.reviewAction === "flip" ? "Yes" : "No",
+      ...(q.reviewAction ? { reviewAction: q.reviewAction } : {}),
+      ...(q.reviewedBy ? { reviewedBy: q.reviewedBy } : {}),
+    }));
+    await saveFinding(orgId, { id: fid, findingStatus: "finished", record: {}, answeredQuestions });
+    await writeAuditDoneIndex(orgId, {
+      findingId: fid, completedAt: a.at ?? (now - i * 1000), completed: true, score: 100,
+      reason: "reviewed", reviewedBy: a.reviewer,
+    });
+  }
+}
+
+Deno.test("getReviewerFlipRates — tallies flips/confirms per reviewer and computes rate", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  _resetReviewerFlipRatesCacheForTests();
+  const orgId = uniqueOrg("flips");
+  await seedFlips(orgId, [
+    { reviewer: "alice@example.com", questions: [
+      { reviewAction: "flip" }, { reviewAction: "confirm" }, { reviewAction: "confirm" },
+      {}, // unreviewed bot-pass (no reviewAction) → ignored
+    ] },
+    { reviewer: "alice@example.com", questions: [{ reviewAction: "flip" }] },
+  ]);
+  const { rows } = await getReviewerFlipRates(orgId);
+  const alice = rows.find((r) => r.email === "alice@example.com")!;
+  assertEquals(alice.flips, 2);
+  assertEquals(alice.confirms, 2);
+  assertEquals(alice.decisions, 4);
+  assertEquals(alice.flipRate, 50); // 2/4
+});
+
+Deno.test("getReviewerFlipRates — excludes admin-flip from the reviewer rate", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  _resetReviewerFlipRatesCacheForTests();
+  const orgId = uniqueOrg("flips-admin");
+  await seedFlips(orgId, [
+    { reviewer: "bob@example.com", questions: [
+      { reviewAction: "flip" }, { reviewAction: "admin-flip" }, { reviewAction: "confirm" },
+    ] },
+  ]);
+  const { rows } = await getReviewerFlipRates(orgId);
+  const bob = rows.find((r) => r.email === "bob@example.com")!;
+  assertEquals(bob.flips, 1);
+  assertEquals(bob.confirms, 1);
+  assertEquals(bob.decisions, 2); // admin-flip not counted
+  assertEquals(bob.flipRate, 50);
+});
+
+Deno.test("getReviewerFlipRates — attributes per-question reviewedBy over the index fallback", async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  _resetReviewerFlipRatesCacheForTests();
+  const orgId = uniqueOrg("flips-attr");
+  await seedFlips(orgId, [
+    { reviewer: "alice@example.com", questions: [
+      { reviewAction: "flip", reviewedBy: "carol@example.com" }, // carol did this one
+      { reviewAction: "confirm" },                               // falls back to alice
+    ] },
+  ]);
+  const { rows } = await getReviewerFlipRates(orgId);
+  const carol = rows.find((r) => r.email === "carol@example.com")!;
+  const alice = rows.find((r) => r.email === "alice@example.com")!;
+  assertEquals(carol.flips, 1);
+  assertEquals(carol.decisions, 1);
+  assertEquals(carol.flipRate, 100);
+  assertEquals(alice.confirms, 1);
+  assertEquals(alice.decisions, 1);
+  assertEquals(alice.flipRate, 0);
 });

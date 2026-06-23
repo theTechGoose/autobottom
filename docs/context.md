@@ -214,6 +214,16 @@ application/json`) → Danet. **Any new `/admin/*` Fresh page must be added to
   established convention (e.g. `flipQuestion`, `setFailureSource`). That page is
   public, so admin-only extras (per-question flip, failure-source override,
   reviewer handle-time `⏱` badges) are gated behind `isAdmin`.
+- **`answeredQuestion.snippet` ≠ a display transcript.** It's the *raw* context
+  the bot graded against (`step-ask-all`); for short calls that's the whole raw
+  transcript, which is a single un-segmented brick when AssemblyAI didn't split
+  speakers. Never render `snippet`/`rawTranscript` to a human directly. The
+  report's per-question **Transcript Context** is a focused, speaker-split
+  excerpt rebuilt from `finding.diarizedTranscript` (Groq's diarized version)
+  and narrowed to the `defense` quote — see `buildFocusedExcerpt`
+  ([frontend/lib/transcript-excerpt.ts](../frontend/lib/transcript-excerpt.ts)).
+  Same rule for the review/judge `TranscriptPanel`: prefer diarized over a
+  one-line raw transcript.
 - HTMX POST handlers return **HTML fragments directly** (not redirects).
 - HTMX-swapped islands do NOT hydrate — islands must be in a page's initial SSR.
 - Per-role accent colors via `--accent`: admin `#58a6ff` · review `#8b5cf6` ·

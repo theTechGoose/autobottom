@@ -268,7 +268,8 @@ frontend/
 │   ├── api.ts                 # apiFetch + parseHtmxBody (forwards session cookie)
 │   ├── auth.ts                # role types, public paths, redirects
 │   ├── define.ts              # createDefine<State>() — typed page/handler/middleware
-│   └── theme.ts               # per-role accent colors
+│   ├── theme.ts               # per-role accent colors
+│   └── transcript-excerpt.ts  # buildFocusedExcerpt — focused diarized excerpt for /audit/report
 ├── components/                # Server-rendered Preact (no client JS)
 ├── islands/                   # Client-side interactive (only when JS is required)
 └── routes/
@@ -283,6 +284,7 @@ frontend/
 - Islands only when the browser physically needs JS (canvas, audio, chord input, file upload, multi-step modal state).
 - HTMX POST handlers return **HTML directly** — never `Response.redirect` or `HX-Redirect`.
 - `parseHtmxBody(req)` handles both form-encoded (HTMX) and JSON (island fetch). Auto-coerces integer strings.
+- **Don't render `answeredQuestion.snippet` / `rawTranscript` to a human.** `snippet` is the *raw* grading context (a single un-segmented brick when AssemblyAI didn't split speakers). The `/audit/report` per-question Transcript Context uses `buildFocusedExcerpt` ([lib/transcript-excerpt.ts](frontend/lib/transcript-excerpt.ts)) — it narrows `finding.diarizedTranscript` to the `defense` quote. The review/judge `TranscriptPanel` likewise prefers diarized over a one-line raw transcript.
 
 **Per-role accent colors:**
 admin `#58a6ff` · review `#8b5cf6` · judge `#14b8a6` · manager `#bc8cff` · agent `#f97316` · chat `#39d0d8`
@@ -603,6 +605,7 @@ Persistent AI memory lives at `~/.claude/projects/-Users-adam-Programming-autobo
 | Area | What's left |
 |---|---|
 | "Second recording uploaded but won't play" appeal bug | Reported but no concrete finding ID yet. Held until a repro example lands; defensive logging at the audio-URL construction point is a quick next step. |
+| Audit report "Transcript Context" brick wall | **Fixed at the render layer** — `buildFocusedExcerpt` ([frontend/lib/transcript-excerpt.ts](frontend/lib/transcript-excerpt.ts)) rebuilds a focused, speaker-split excerpt from the diarized transcript per question (was rendering `answeredQuestion.snippet`, the raw grading context = a single un-segmented brick when AssemblyAI didn't separate speakers). The persisted `snippet` is still the raw context; if we ever want the *stored* snippet itself diarized/focused, do it in [step-diarize-async/mod.ts](src/audit/domain/business/step-diarize-async/mod.ts) after diarization completes — the render fix makes that optional. |
 | Weekly Builder | Page is "coming in Phase 2" placeholder. |
 | Atomic counter race | `decrementBatchCounter` / `purchaseStoreItem` / question-fail counter R-M-W all use read-modify-write. Acceptable for current concurrency; swap to Firestore field-transform `increment` if we see drift. |
 | `transcribe-cb` invalid-transcript skip | Chunked-read retry + diagnostic log shipped in `09b01fc`. Future hardening: replace the `includes("Invalid Genie")` substring check with strict equality against the `"Genie Invalid"` sentinel set by [step-poll-transcript/mod.ts](src/audit/domain/business/step-poll-transcript/mod.ts) so a real transcript that happens to contain the phrase can't trigger the skip. ~5 LOC once we confirm no other write paths set the sentinel. |

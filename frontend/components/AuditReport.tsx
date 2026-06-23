@@ -11,6 +11,7 @@
  *  server-rendered. */
 import AudioPlayer from "../islands/AudioPlayer.tsx";
 import AppealModal from "../islands/AppealModal.tsx";
+import { buildFocusedExcerpt } from "../lib/transcript-excerpt.ts";
 
 interface AnsweredQuestion {
   header?: string;
@@ -112,22 +113,6 @@ function formatTranscript(text: string): string {
   return text
     .replace(/\[AGENT\]/g, '[TEAM MEMBER]')
     .replace(/\[CUSTOMER\]/g, '[GUEST]');
-}
-
-/** Render a snippet as JSX with colored speaker labels. */
-function renderSnippet(text: string): preact.JSX.Element[] {
-  const normalized = formatTranscript(text);
-  // Split keeping the speaker tags as separate tokens
-  const re = /(\[TEAM MEMBER\]|\[GUEST\])/g;
-  const parts = normalized.split(re);
-  const out: preact.JSX.Element[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    if (p === "[TEAM MEMBER]") out.push(<span key={i} class="rpt-speaker team-member">{p}</span>);
-    else if (p === "[GUEST]") out.push(<span key={i} class="rpt-speaker guest">{p}</span>);
-    else if (p) out.push(<span key={i}>{p}</span>);
-  }
-  return out;
 }
 
 export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }: { finding: Finding; id: string; auditorEmail?: string; isAdmin?: boolean }) {
@@ -327,6 +312,13 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
           questions.map((q, i) => {
             const errored = isErrorAnswer(q.answer);
             const yes = !errored && isYes(q.answer);
+            // Transcript Context: rebuild from the diarized transcript, focused to
+            // the turns matching the bot's defense quote. Replaces the raw snippet,
+            // which for short calls was the whole (often un-segmented) transcript —
+            // the brick wall. See lib/transcript-excerpt.ts.
+            const excerpt = q.snippet
+              ? buildFocusedExcerpt({ diarized, raw: finding.rawTranscript, snippet: q.snippet, defense: q.defense })
+              : null;
             const stateClass = errored ? "error" : (yes ? "pass" : "fail");
             const verdictClass = errored ? "error" : (yes ? "yes" : "no");
             const verdictLabel = errored ? "Error" : (yes ? "Yes" : "No");
@@ -360,13 +352,25 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
                     <span style="font-size:14px;">{verdictIcon}</span>
                     <span>Verdict: <strong>{verdictText}</strong></span>
                   </div>
-                  {q.snippet && (
+                  {excerpt && !excerpt.empty && (
                     <div class="rpt-q-block">
                       <div class="rpt-q-label-row">
-                        <div class="rpt-q-label">Transcript Context</div>
+                        <div class="rpt-q-label">Transcript Context{excerpt.focused && <span class="rpt-q-label-hint"> · relevant excerpt</span>}</div>
                         <button type="button" class="rpt-q-copy" data-idx={i} {...{ onclick: `event.preventDefault();copySnippet(${i});` }}>Copy</button>
                       </div>
-                      <pre class="rpt-q-snippet" id={`rpt-q-snippet-${i}`}>{renderSnippet(q.snippet)}</pre>
+                      <div class="rpt-q-snippet" id={`rpt-q-snippet-${i}`} data-copy={excerpt.text}>
+                        {excerpt.segments.map((seg, si) => (
+                          seg.kind === "gap"
+                            ? <div key={si} class="rpt-snip-gap" aria-hidden="true">⋯</div>
+                            : (
+                              <div key={si} class="rpt-snip-line">
+                                {seg.speaker === "team" && <span class="rpt-speaker team">[TEAM MEMBER]</span>}
+                                {seg.speaker === "guest" && <span class="rpt-speaker guest">[GUEST]</span>}
+                                {seg.speaker ? " " : null}{seg.text}
+                              </div>
+                            )
+                        ))}
+                      </div>
                     </div>
                   )}
                   {q.thinking && (

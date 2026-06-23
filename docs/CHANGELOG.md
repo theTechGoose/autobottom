@@ -6,6 +6,32 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
+## 2026-06-23 — Audit report "Transcript Context" is a focused diarized excerpt (brick-wall fix)
+
+- **Per-question Transcript Context no longer renders the raw grading snippet.**
+  `step-ask-all` stores `answeredQuestion.snippet` = the *raw* context the bot
+  graded against; for short calls (≤8000 chars) that's the **entire** raw
+  transcript, and when AssemblyAI fails to separate speakers the raw transcript
+  is a single un-segmented `[AGENT]:` line — the "giant brick wall" under each
+  question on `/audit/report`. New helper
+  [transcript-excerpt.ts](../frontend/lib/transcript-excerpt.ts)
+  (`buildFocusedExcerpt`) rebuilds the context from `finding.diarizedTranscript`
+  (Groq's speaker-split version — what the top Transcript already uses), narrowed
+  to the turns matching the question's `defense` quote (document-frequency-weighted
+  token overlap), with graceful fallbacks: a character window for a true
+  single-line brick, and the full speaker-split transcript when nothing
+  confidently matches. **Render-only** — the grading pipeline is unchanged, so
+  every existing finding is fixed on next view.
+  ([AuditReport.tsx](../frontend/components/AuditReport.tsx))
+- **Review/judge queue TranscriptPanel** had the same brick risk (it prefers the
+  raw transcript when utterance timestamps are present); it now falls back to the
+  diarized transcript when raw is a single un-segmented line — the timestamps
+  can't align to a one-line brick anyway.
+  ([TranscriptPanel.tsx](../frontend/components/TranscriptPanel.tsx))
+- The report's snippet **Copy** button reads a clean `data-copy` payload
+  (speaker-labeled, newline-joined, no `⋯` gap markers) instead of scraping glued
+  `textContent`.
+
 ## 2026-06-17 — Reports gated behind "Run now" + watchdog terminal-status guard
 
 - **Reports modal is idle until "Run now"** — every tab (Question Failures, Email

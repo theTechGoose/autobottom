@@ -39,7 +39,12 @@ export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
   // diarized one. Fall back to diarized for older audits without times.
   const utteranceTimes = transcript?.utteranceTimes ?? [];
   const hasTimes = utteranceTimes.length > 0;
-  const text = hasTimes
+  // …BUT when the raw transcript is a single un-segmented line (AssemblyAI
+  // failed to separate speakers — the "brick wall"), the times can't align to
+  // anything anyway and rendering raw gives one giant line. Prefer the
+  // speaker-split diarized transcript in that case.
+  const rawSegmented = (transcript?.raw ?? "").split(/\r?\n/).filter((l) => l.trim()).length > 1;
+  const text = hasTimes && rawSegmented
     ? (transcript?.raw || transcript?.diarized || "")
     : (transcript?.diarized || transcript?.raw || snippet || "");
 

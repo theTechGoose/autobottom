@@ -30,3 +30,30 @@ Deno.test("TranscriptPanel — non-speaker lines render without label", () => {
   assertNotContains(html, "transcript-speaker");
   assertContains(html, "Just a plain line");
 });
+
+// When AssemblyAI fails to separate speakers, raw is a single un-segmented
+// line. Even though times are indexed to raw, we must NOT render that brick —
+// the times can't align anyway, so prefer the speaker-split diarized transcript.
+Deno.test("TranscriptPanel — single-line raw brick falls back to diarized despite times", () => {
+  const transcript = {
+    raw: "[AGENT]: hi there that's correct wonderful as a reminder the tax resolves resort fees welcome aboard",
+    diarized: "[AGENT]: hi there\n[CUSTOMER]: that's correct\n[AGENT]: as a reminder the tax resolves resort fees\n[CUSTOMER]: okay\n[AGENT]: welcome aboard",
+    utteranceTimes: [0], // one utterance → one time → useless for alignment
+  };
+  const html = renderHTML(<TranscriptPanel transcript={transcript} />);
+  // Diarized (5 turns) rendered, not the 1-line brick.
+  assertContains(html, "5 lines");
+  assertContains(html, "t-speaker-guest");
+});
+
+Deno.test("TranscriptPanel — properly-segmented raw with times still uses raw", () => {
+  const transcript = {
+    raw: "[AGENT]: line one\n[CUSTOMER]: line two\n[AGENT]: line three",
+    diarized: "[AGENT]: different one\n[CUSTOMER]: different two",
+    utteranceTimes: [0, 1000, 2000],
+  };
+  const html = renderHTML(<TranscriptPanel transcript={transcript} />);
+  // raw is segmented → keep raw (times align to it).
+  assertContains(html, "line one");
+  assertNotContains(html, "different one");
+});

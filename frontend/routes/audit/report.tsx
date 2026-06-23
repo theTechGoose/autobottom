@@ -124,7 +124,10 @@ export default define.page(async function AuditReportPage(ctx) {
 window.copySnippet = function(idx) {
   var el = document.getElementById('rpt-q-snippet-' + idx);
   if (!el) return;
-  navigator.clipboard.writeText(el.textContent || '').then(function() {
+  // Prefer the clean, newline-joined excerpt text (speaker-split turns, no gap
+  // markers) over scraping textContent, which glues turns together.
+  var text = el.getAttribute('data-copy') || el.textContent || '';
+  navigator.clipboard.writeText(text).then(function() {
     var btn = document.querySelector('.rpt-q-copy[data-idx="' + idx + '"]');
     if (btn) { var orig = btn.textContent; btn.textContent = 'Copied'; setTimeout(function() { btn.textContent = orig; }, 1200); }
   });

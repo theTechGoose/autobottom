@@ -1431,7 +1431,11 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .rpt-q-block.blue { border-color: rgba(88,166,255,0.2); background: rgba(31,111,235,0.04); }
 .rpt-q-block.purple { border-color: rgba(139,92,246,0.2); background: rgba(139,92,246,0.04); }
 .rpt-q-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-bottom: 6px; }
-.rpt-q-snippet { font-family: var(--mono); font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-word; margin: 0; }
+.rpt-q-snippet { font-family: var(--mono); font-size: 12px; color: var(--text); word-break: break-word; margin: 0; }
+.rpt-snip-line { line-height: 1.7; margin-bottom: 6px; }
+.rpt-snip-line:last-child { margin-bottom: 0; }
+.rpt-snip-gap { text-align: center; color: var(--text-dim); letter-spacing: 4px; margin: 8px 0; user-select: none; }
+.rpt-q-label-hint { font-weight: 600; color: var(--text-dim); text-transform: none; letter-spacing: 0; }
 .rpt-q-text { font-size: 13px; color: var(--text); line-height: 1.6; white-space: pre-wrap; }
 .rpt-speaker { font-weight: 700; }
 .rpt-speaker.team-member { color: var(--blue); }

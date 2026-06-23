@@ -11,7 +11,23 @@
  *  server-rendered. */
 import AudioPlayer from "../islands/AudioPlayer.tsx";
 import AppealModal from "../islands/AppealModal.tsx";
-import { buildFocusedExcerpt } from "../lib/transcript-excerpt.ts";
+import { buildFocusedExcerpt, type ExcerptSegment } from "../lib/transcript-excerpt.ts";
+
+/** Render a focused excerpt's segments: speaker-labeled turns + `⋯` gap markers
+ *  between elided windows. Shared shape with the top transcript / TranscriptPanel. */
+function renderSegments(segments: ExcerptSegment[]): preact.JSX.Element[] {
+  return segments.map((seg, si) =>
+    seg.kind === "gap"
+      ? <div key={si} class="rpt-snip-gap" aria-hidden="true">⋯</div>
+      : (
+        <div key={si} class="rpt-snip-line">
+          {seg.speaker === "team" && <span class="rpt-speaker team">[TEAM MEMBER]</span>}
+          {seg.speaker === "guest" && <span class="rpt-speaker guest">[GUEST]</span>}
+          {seg.speaker ? " " : null}{seg.text}
+        </div>
+      )
+  );
+}
 
 interface AnsweredQuestion {
   header?: string;
@@ -359,17 +375,7 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
                         <button type="button" class="rpt-q-copy" data-idx={i} {...{ onclick: `event.preventDefault();copySnippet(${i});` }}>Copy</button>
                       </div>
                       <div class="rpt-q-snippet" id={`rpt-q-snippet-${i}`} data-copy={excerpt.text}>
-                        {excerpt.segments.map((seg, si) => (
-                          seg.kind === "gap"
-                            ? <div key={si} class="rpt-snip-gap" aria-hidden="true">⋯</div>
-                            : (
-                              <div key={si} class="rpt-snip-line">
-                                {seg.speaker === "team" && <span class="rpt-speaker team">[TEAM MEMBER]</span>}
-                                {seg.speaker === "guest" && <span class="rpt-speaker guest">[GUEST]</span>}
-                                {seg.speaker ? " " : null}{seg.text}
-                              </div>
-                            )
-                        ))}
+                        {renderSegments(excerpt.segments)}
                       </div>
                     </div>
                   )}

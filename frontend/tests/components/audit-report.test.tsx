@@ -138,6 +138,20 @@ Deno.test("AuditReport — Transcript Context renders a focused diarized excerpt
   assertEquals(count(html, "903-421-1348"), 1, "far turn must not be in the excerpt");
 });
 
+Deno.test("AuditReport — Copy payload (data-copy) is clean speaker-labeled text", () => {
+  const html = renderHTML(<AuditReport finding={brickFinding()} id="fid-test" />);
+  // copySnippet reads getAttribute('data-copy') — assert its contents directly.
+  const m = html.match(/data-copy="([^"]*)"/);
+  assert(m, "data-copy attribute must be present on the snippet container");
+  // HTML-decode the few entities preact emits in attribute values.
+  const payload = m![1]
+    .replace(/&#10;/g, "\n").replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  assert(/\[TEAM MEMBER\]|\[GUEST\]/.test(payload), "copy text should carry speaker labels");
+  assert(payload.includes("\n"), "copy text should be newline-joined turns");
+  assert(!payload.includes("⋯"), "gap marker must never leak into copy text");
+});
+
 Deno.test("AuditReport — Transcript Context is speaker-split (no single un-labeled brick)", () => {
   const html = renderHTML(<AuditReport finding={brickFinding()} id="fid-test" />);
   // The focused excerpt around the reminder turn includes its adjacent guest

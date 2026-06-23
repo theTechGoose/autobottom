@@ -214,9 +214,28 @@ Deno.test("buildFocusedExcerpt — short call keeps a token that recurs twice (D
 Deno.test("extractDefenseTokens — pathological smart-quote run stays fast (no ReDoS)", () => {
   const evil = "“".repeat(40000);
   const start = performance.now();
-  extractDefenseTokens(evil);
+  const tokens = extractDefenseTokens(evil);
   const elapsed = performance.now() - start;
   assert(elapsed < 250, `expected <250ms, took ${elapsed.toFixed(0)}ms`);
+  // No 6+ char span ever closes → no tokens. A regression to the backtracking
+  // regex would blow the time bound (or hang) before reaching this assert.
+  assertEquals(tokens, []);
+});
+
+Deno.test("buildFocusedExcerpt — snippet-only source (no raw, no diarized) still renders", () => {
+  // A finding persisted before diarize ran, or one whose rawTranscript wasn't
+  // stored but the graded snippet was. Contract: snippet is the last-resort
+  // source — "snippet present ⇒ something renders", never empty.
+  const ex = buildFocusedExcerpt({ snippet: BRICK, defense: DEFENSE });
+  assert(!ex.empty, "snippet must be used as a fallback source");
+  assert(ex.text.includes("resolves any resort fees"), "snippet content must reach the output");
+  assert(ex.focused, "single-line snippet brick narrows via char-window");
+});
+
+Deno.test("buildFocusedExcerpt — snippet-only source, no defense → whole block, not empty", () => {
+  const ex = buildFocusedExcerpt({ snippet: BRICK, defense: "" });
+  assert(!ex.empty);
+  assert(ex.segments.length === 1 && ex.segments[0].kind === "turn");
 });
 
 Deno.test("buildFocusedExcerpt — focused text carries speaker labels for clean copy", () => {

@@ -72,25 +72,39 @@ export function parseTranscriptTurns(text: string): ExcerptTurn[] {
   return turns;
 }
 
-// Words that appear in LLM defense PROSE or in nearly every transcript turn —
-// matching on these would scatter false hits across the whole call.
-const STOPWORDS = new Set([
+// Tokens we never let anchor a transcript match. Two distinct intents — kept
+// in separate lists so future tuning is obvious (e.g. "state" lives in the
+// defense-prose group, so if a guest literally names a US state you know where
+// to look). DF weighting handles call-SPECIFIC recurring words (names, scripted
+// phrases) per-transcript; these two static lists handle what DF structurally
+// can't anticipate.
+
+// (1) Generic high-frequency English — would scatter hits across every turn.
+const ENGLISH_STOP = [
   "the", "and", "that", "this", "with", "your", "you", "have", "has", "had",
   "was", "were", "are", "for", "not", "but", "they", "them", "from", "what",
   "when", "will", "would", "could", "should", "about", "there", "their",
-  "into", "just", "like", "also", "been", "being", "said", "says", "say",
-  "tell", "told", "ask", "asked", "asks", "answer", "answers", "question",
-  "questions", "transcript", "transcription", "team", "member", "guest",
-  "agent", "customer", "mention", "mentions", "mentioned", "state", "states",
-  "stated", "because", "directly", "relevant", "criteria", "meeting",
-  "therefore", "does", "did", "done", "which", "while", "then", "than",
-  "over", "only", "very", "more", "most", "some", "such", "any", "all",
-  "one", "two", "get", "got", "out", "off", "per", "its", "his", "her",
-  "our", "who", "whom", "how", "why", "yes", "quote", "quoted", "quoting",
-  "excerpt", "excerpts", "reasoning", "defense", "reads", "read", "provided",
-  "provide", "provides", "support", "supports", "claim", "claims",
-  "conversation", "call", "without", "during", "occurred", "point",
-]);
+  "into", "just", "like", "also", "been", "being", "does", "did", "done",
+  "which", "while", "then", "than", "over", "only", "very", "more", "most",
+  "some", "such", "any", "all", "one", "two", "get", "got", "out", "off",
+  "per", "its", "his", "her", "our", "who", "whom", "how", "why", "yes",
+  "without", "during", "point",
+];
+
+// (2) LLM-defense PROSE vocabulary — appears in the bot's reasoning but should
+// never anchor a transcript match (often near-zero document frequency, so DF
+// weighting would otherwise let a stray occurrence anchor a false hit).
+const DEFENSE_PROSE_STOP = [
+  "said", "says", "say", "tell", "told", "ask", "asked", "asks", "answer",
+  "answers", "question", "questions", "transcript", "transcription", "team",
+  "member", "guest", "agent", "customer", "mention", "mentions", "mentioned",
+  "state", "states", "stated", "because", "directly", "relevant", "criteria",
+  "meeting", "therefore", "quote", "quoted", "quoting", "excerpt", "excerpts",
+  "reasoning", "defense", "reads", "read", "provided", "provide", "provides",
+  "support", "supports", "claim", "claims", "conversation", "call", "occurred",
+];
+
+const STOPWORDS = new Set([...ENGLISH_STOP, ...DEFENSE_PROSE_STOP]);
 
 /** Pull distinctive content tokens out of a defense string. Quoted spans are
  *  the verbatim transcript excerpts the bot cited, so prefer them; fall back to
@@ -180,8 +194,21 @@ const MAX_DOC_FREQ = 0.5;
 const MAX_COVERAGE = 0.6;
 const MAX_WINDOWS = 4;
 
-/** Build the focused excerpt. Source preference: a speaker-labeled transcript
- *  (diarized, else raw) → otherwise the first non-empty of diarized/raw/snippet. */
+/** Build the focused excerpt for one graded question.
+ *
+ *  SOURCE preference: a speaker-labeled transcript (diarized, else raw) →
+ *  otherwise the first non-empty of diarized/raw/snippet (so a snippet-only
+ *  finding — e.g. one persisted before diarize ran — still renders).
+ *
+ *  OUTPUT precedence, in the order tried (mirrors the test cases):
+ *    1. multi-turn source + a confident defense-token match → focused window
+ *       (hit turns ± contextTurns, merged), unless it's too broad/fragmented;
+ *    2. multi-turn source, no confident match (or over-broad) → fullExcerpt
+ *       (the whole speaker-split transcript — readable, never a brick);
+ *    3. single-line brick + defense tokens → charWindow (a slice around the
+ *       match, with … elision);
+ *    4. single-line brick, no tokens → that whole block as one turn;
+ *    5. no source at all → { empty: true } (caller hides the block). */
 export function buildFocusedExcerpt(opts: {
   diarized?: string;
   raw?: string;

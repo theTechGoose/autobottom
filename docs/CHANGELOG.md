@@ -31,6 +31,11 @@ full history and [README.md](../README.md) for how each subsystem works.
 - The report's snippet **Copy** button reads a clean `data-copy` payload
   (speaker-labeled, newline-joined, no `⋯` gap markers) instead of scraping glued
   `textContent`.
+- _Post-review polish (no behavior change):_ documented the source/output
+  precedence atop `buildFocusedExcerpt`; split `STOPWORDS` into commented
+  english/defense-prose groups; extracted a `renderSegments` helper in
+  `AuditReport`; added regression tests pinning the snippet-only fallback source,
+  the `data-copy` payload contract, and the smart-quote ReDoS bound.
 
 ## 2026-06-17 — Reports gated behind "Run now" + watchdog terminal-status guard
 

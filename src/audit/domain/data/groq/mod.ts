@@ -1,9 +1,25 @@
 /** Groq LLM adapter for QA, diarization, feedback. Ported from providers/groq.ts. */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
+import { isValidDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
 import Groq from "#groq-sdk";
 import type { ChatCompletion } from "#groq-sdk/resources/chat/completions";
 
-function getClient() { return new Groq({ apiKey: Deno.env.get("GROQ_API_KEY") }); }
+/** Test seam: when set, the Groq client routes requests through this fetch
+ *  instead of the network, so unit tests can script chat-completion responses
+ *  (see test.ts). Production never sets it — the `else` branch below is the
+ *  exact same constructor call as before, so prod behavior is unchanged.
+ *  Typed loosely because the SDK's `Fetch` signature differs from the global
+ *  `fetch` (URLLike vs URL); the cast bridges the two test-only. */
+// deno-lint-ignore no-explicit-any
+type TestFetch = (input: any, init?: any) => Promise<Response>;
+let _testFetch: TestFetch | undefined;
+export function __setGroqTestFetch(f: TestFetch | undefined): void { _testFetch = f; }
+
+function getClient() {
+  // deno-lint-ignore no-explicit-any
+  if (_testFetch) return new Groq({ apiKey: Deno.env.get("GROQ_API_KEY") ?? "test", fetch: _testFetch as any });
+  return new Groq({ apiKey: Deno.env.get("GROQ_API_KEY") });
+}
 
 const FALLBACK_MODELS = [
   "openai/gpt-oss-120b",
@@ -242,20 +258,33 @@ export async function diarize(rawTranscript: string, maxAttempts = 4): Promise<s
       { role: "system", content: DIARIZATION_SYSTEM },
       { role: "user", content: rawTranscript },
     ];
+    // Keep the first structurally-valid attempt so that, if the QA bot never
+    // confirms one, we still return a real transcript rather than the raw text.
+    let firstValid: string | null = null;
     for (let j = 0; j < maxAttempts; j++) {
       const diarized = await groqCallWithRetry({ model: MODEL, messages, max_tokens: 8000 }, "diarize");
       messages.push({ role: "assistant", content: diarized });
+      const structurallyValid = isValidDiarizedTranscript(diarized, rawTranscript);
       const [managerText, qaAnswer] = await Promise.all([
         groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_MANAGER }, { role: "user", content: diarized }], response_format: { type: "json_object" }, max_tokens: 8000 }, "diarize-manager"),
         groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_QA }, { role: "user", content: diarized }], max_tokens: 100 }, "diarize-qa"),
       ]);
-      if (qaAnswer.trim() === "Yes") { metric("autobottom.groq.diarize", 1); return diarized; }
+      // Require BOTH a QA pass AND a structurally-valid transcript: a refusal/
+      // meta reply can slip a "Yes" past the QA bot, and that must never ship.
+      if (qaAnswer.trim() === "Yes" && structurallyValid) { metric("autobottom.groq.diarize", 1); return diarized; }
+      if (structurallyValid && firstValid === null) firstValid = diarized;
       const manager = parseLlmJson<{ isCorrect: boolean; thinking: string; feedback: string | null }>(managerText, { isCorrect: true, thinking: "", feedback: null });
       if (manager.feedback) messages.push({ role: "user", content: manager.feedback });
     }
-    const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
     metric("autobottom.groq.diarize", 1);
-    return lastAssistant?.content ?? rawTranscript;
+    // Never return a QA-rejected attempt. Prefer a clean-but-unconfirmed one;
+    // otherwise fall back to the raw transcript — readable, label-free, and the
+    // report's existing fallback path. (Regression: 76UGB0H1yVYu54OHQgGVe — the
+    // old code returned the last assistant message, i.e. the refusal itself.)
+    if (firstValid !== null) return firstValid;
+    console.warn(`[GROQ-DIARIZE] all ${maxAttempts} attempts failed validation — falling back to raw transcript`);
+    metric("autobottom.groq.diarize.fallback_raw", 1);
+    return rawTranscript;
   }, {}, "client");
 }
 

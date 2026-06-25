@@ -170,3 +170,38 @@ Deno.test("AuditReport — Transcript Context falls back to full split transcrip
   assertContains(html, "Welcome aboard");
   assertNotContains(html, "relevant excerpt");
 });
+
+// ── Diarization refusal must never reach the report (76UGB0… regression) ─────
+// The diarize model occasionally returns a meta/refusal reply that happens to
+// contain [AGENT]/[CUSTOMER], so the old `includes()` check rendered it. The
+// report must validate the diarized field and fall back to the raw transcript.
+const PROD_REFUSAL =
+  "[AGENT]: Sure! Please share the audio file or the raw text of the conversation " +
+  "you'd like transcribed, and I'll return a complete transcription with the required " +
+  "speaker labels ([CUSTOMER] and [AGENT]) for you to evaluate.";
+
+const REAL_RAW =
+  "Thanks for calling Monster Reservations Group. You're arriving to Myrtle Beach " +
+  "on July 26th through the 30th, correct? Yes, that's right.";
+
+Deno.test("AuditReport — diarization refusal falls back to the raw transcript, never rendered", () => {
+  const html = renderHTML(<AuditReport
+    finding={baseFinding({ diarizedTranscript: PROD_REFUSAL, rawTranscript: REAL_RAW })}
+    id="fid-test"
+  />);
+  assertNotContains(html, "Please share the audio file");
+  assertContains(html, "arriving to Myrtle Beach");
+});
+
+Deno.test("AuditReport — a real diarized transcript still renders with speaker labels", () => {
+  const diarized =
+    "[AGENT]: You're arriving to Myrtle Beach on July 26th through the 30th, correct?\n" +
+    "[CUSTOMER]: Yes, that's right.";
+  const html = renderHTML(<AuditReport
+    finding={baseFinding({ diarizedTranscript: diarized, rawTranscript: REAL_RAW })}
+    id="fid-test"
+  />);
+  // formatTranscript maps [AGENT]→[TEAM MEMBER]; the labeled text is rendered.
+  assertContains(html, "[TEAM MEMBER]");
+  assertContains(html, "arriving to Myrtle Beach");
+});

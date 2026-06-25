@@ -2,6 +2,7 @@
 import { getFinding, saveFinding, saveTranscript, invalidateFindingCache } from "@audit/domain/data/audit-repository/mod.ts";
 import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
 import { diarize } from "@audit/domain/data/groq/mod.ts";
+import { isValidDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -47,6 +48,18 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
 
   try {
     const diarized = await diarize(raw);
+    // Belt-and-suspenders: diarize() already guards its own fallback, but never
+    // persist anything that isn't a real diarized transcript. If it's invalid
+    // (a refusal/meta reply or a tiny fragment), store the raw transcript so the
+    // report shows the readable text (no speaker labels) instead of garbage, and
+    // the canonical audit-transcript doc never holds a refusal. The exact
+    // failure on report 76UGB0H1yVYu54OHQgGVe was an unvalidated refusal saved
+    // here and rendered as the transcript.
+    const valid = isValidDiarizedTranscript(diarized, raw);
+    const toStore = valid ? diarized : raw;
+    if (!valid) {
+      console.warn(`⚠️ [STEP-DIARIZE] ${findingId}: diarization invalid (refusal/short) — storing raw transcript as fallback`);
+    }
     // CRITICAL: re-fetch the finding right before save. This step runs IN
     // PARALLEL with prepare → ask-all → finalize on the critical path.
     // Diarization can take seconds-to-minutes; meanwhile the critical path
@@ -65,13 +78,13 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
     invalidateFindingCache(orgId, findingId);
     const fresh = await getFinding(orgId, findingId);
     if (fresh) {
-      fresh.diarizedTranscript = diarized;
+      fresh.diarizedTranscript = toStore;
       await saveFinding(orgId, fresh);
     } else {
       console.warn(`⚠️ [STEP-DIARIZE] ${findingId}: finding disappeared between snapshot + diarize result — skipping save`);
     }
-    await saveTranscript(orgId, findingId, raw, diarized);
-    console.log(`[STEP-DIARIZE] ${findingId}: Diarization complete`);
+    await saveTranscript(orgId, findingId, raw, toStore);
+    console.log(`[STEP-DIARIZE] ${findingId}: Diarization complete${valid ? "" : " (raw fallback)"}`);
   } catch (err) {
     console.error(`[STEP-DIARIZE] ${findingId}: Diarization failed:`, err);
   }

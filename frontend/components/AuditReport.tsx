@@ -12,6 +12,7 @@
 import AudioPlayer from "../islands/AudioPlayer.tsx";
 import AppealModal from "../islands/AppealModal.tsx";
 import { buildFocusedExcerpt, type ExcerptSegment } from "../lib/transcript-excerpt.ts";
+import { isValidDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
 
 /** Render a focused excerpt's segments: speaker-labeled turns + `⋯` gap markers
  *  between elided windows. Shared shape with the top transcript / TranscriptPanel. */
@@ -145,10 +146,14 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
   const isPackage = finding.recordingIdField === "GenieNumber";
   const crmUrl = recordId ? (isPackage ? QB_PKG_URL : QB_DATE_URL) + recordId : null;
 
-  // Transcript: prefer diarized (speaker-labeled), fall back to raw
+  // Transcript: prefer the diarized (speaker-labeled) text, but only when it's a
+  // real diarization. A refusal/meta reply that slipped through historically
+  // (report 76UGB0H1yVYu54OHQgGVe) coincidentally contains [AGENT]/[CUSTOMER], so
+  // the old includes() check rendered it. Validate before trusting it; otherwise
+  // fall back to the readable raw transcript. Covers already-stored bad data too.
   const diarized = finding.diarizedTranscript ?? "";
-  const hasSpeakerLabels = diarized.includes("[AGENT]") || diarized.includes("[CUSTOMER]");
-  const transcriptText = hasSpeakerLabels ? diarized : (finding.rawTranscript ?? "");
+  const rawText = finding.rawTranscript ?? "";
+  const transcriptText = isValidDiarizedTranscript(diarized, rawText) ? diarized : rawText;
 
   // Team member: prod strips the "DEST - " prefix from VoName, falling back to
   // the finding owner if VoName is missing (main:controller.ts:1253).

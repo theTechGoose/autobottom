@@ -63,9 +63,35 @@ Deno.test("looksLikeRefusal — flags meta/refusal phrasings", () => {
   assert(looksLikeRefusal("I'll return a complete transcription once you provide the file."));
   assert(looksLikeRefusal("I'm happy to help — just paste the transcript."));
   assert(looksLikeRefusal(PROD_REFUSAL));
+  // Curly (typographic) apostrophe variants — LLM output routinely uses U+2019,
+  // so the `’` branch of the regexes is the one most likely to fire in prod.
+  assert(looksLikeRefusal("I’ll return a complete transcription once you provide the file."));
+  assert(looksLikeRefusal("I’m happy to help — just paste the transcript."));
 });
 
 Deno.test("looksLikeRefusal — does not flag real transcript content", () => {
   assertEquals(looksLikeRefusal(GOOD_DIARIZED), false);
   assertEquals(looksLikeRefusal("[CUSTOMER]: Can you send me the confirmation email?"), false);
+});
+
+// A real, long, label-rich transcript that happens to contain a refusal-pattern
+// phrase ("please provide your email") in legitimate agent dialogue.
+const LEGIT_WITH_REFUSAL_PHRASE = [
+  "[AGENT]: Thanks for verifying. To send your confirmation, please provide your email address.",
+  "[CUSTOMER]: Sure, it's bobby at example dot com.",
+  "[AGENT]: Got it. You're arriving Myrtle Beach July 26th through the 30th, correct?",
+  "[CUSTOMER]: That's right.",
+  "[AGENT]: Wonderful. Taxes and resort fees are covered, deposits due when you set dates.",
+  "[CUSTOMER]: Okay, understood.",
+].join("\n");
+
+Deno.test("isValidDiarizedTranscript — broad refusal match downgrades a legit transcript to raw (do NOT tighten)", () => {
+  // Intentional tradeoff: REFUSAL_PATTERNS match content, not structure, so a
+  // genuine agent line trips looksLikeRefusal and this real, label-rich,
+  // full-length transcript is judged invalid → the caller falls back to the
+  // readable raw transcript. Losing labels on a rare call is cheap; shipping a
+  // refusal as the audit record is not. Tightening the patterns (e.g. anchoring
+  // to line-start) would reopen the 76UGB0 hole — so this test is a tripwire.
+  const raw = "Thanks for verifying your details. " + "x".repeat(400);
+  assertEquals(isValidDiarizedTranscript(LEGIT_WITH_REFUSAL_PHRASE, raw), false);
 });

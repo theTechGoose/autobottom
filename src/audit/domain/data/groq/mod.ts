@@ -277,11 +277,16 @@ export async function diarize(rawTranscript: string, maxAttempts = 4): Promise<s
       if (manager.feedback) messages.push({ role: "user", content: manager.feedback });
     }
     metric("autobottom.groq.diarize", 1);
-    // Never return a QA-rejected attempt. Prefer a clean-but-unconfirmed one;
-    // otherwise fall back to the raw transcript — readable, label-free, and the
-    // report's existing fallback path. (Regression: 76UGB0H1yVYu54OHQgGVe — the
-    // old code returned the last assistant message, i.e. the refusal itself.)
-    if (firstValid !== null) return firstValid;
+    // Never return a QA-rejected attempt (regression: 76UGB0… returned the
+    // refusal itself). Prefer a structurally-valid but QA-unconfirmed attempt; a
+    // distinct counter makes this path visible — a rising first_valid rate flags
+    // the QA bot mis-rejecting good output before it degrades into raw fallbacks.
+    if (firstValid !== null) {
+      metric("autobottom.groq.diarize.first_valid", 1);
+      return firstValid;
+    }
+    // Otherwise fall back to the raw transcript — readable, label-free, the
+    // report's existing fallback path.
     console.warn(`[GROQ-DIARIZE] all ${maxAttempts} attempts failed validation — falling back to raw transcript`);
     metric("autobottom.groq.diarize.fallback_raw", 1);
     return rawTranscript;

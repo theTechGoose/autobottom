@@ -146,11 +146,8 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
   const isPackage = finding.recordingIdField === "GenieNumber";
   const crmUrl = recordId ? (isPackage ? QB_PKG_URL : QB_DATE_URL) + recordId : null;
 
-  // Transcript: prefer the diarized (speaker-labeled) text, but only when it's a
-  // real diarization. A refusal/meta reply that slipped through historically
-  // (report 76UGB0H1yVYu54OHQgGVe) coincidentally contains [AGENT]/[CUSTOMER], so
-  // the old includes() check rendered it. Validate before trusting it; otherwise
-  // fall back to the readable raw transcript. Covers already-stored bad data too.
+  // Prefer diarized only when it's a real diarization; validate to avoid the
+  // 76UGB0… refusal-as-transcript bug. Also neutralizes already-stored bad data.
   const diarized = finding.diarizedTranscript ?? "";
   const rawText = finding.rawTranscript ?? "";
   const transcriptText = isValidDiarizedTranscript(diarized, rawText) ? diarized : rawText;

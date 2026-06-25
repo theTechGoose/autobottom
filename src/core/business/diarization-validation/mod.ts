@@ -1,22 +1,12 @@
-/** Validator for LLM speaker-diarization output.
- *
- *  The diarization pass (src/audit/domain/data/groq/mod.ts `diarize()`) asks an
- *  LLM to re-emit a raw transcript with `[CUSTOMER]`/`[AGENT]` speaker labels.
- *  Models occasionally respond with a meta/refusal reply instead — e.g.
- *  "Sure! Please share the audio file or the raw text of the conversation you'd
- *  like transcribed…" — even when the transcript IS in the prompt. That reply
- *  is non-deterministic; we can't reliably stop the model from producing it, so
- *  we guard the boundaries: never return it from diarize(), never persist it,
- *  never render it. This is the single source of truth for "is this string a
- *  real diarized transcript?".
+/** Validator for LLM speaker-diarization output — the single source of truth for
+ *  "is this string a real diarized transcript?". The diarize() pass occasionally
+ *  returns a meta/refusal reply instead of labeled transcript content; we can't
+ *  stop the model from producing it, so we guard the boundaries (diarize() return,
+ *  persistence, render). See report 76UGB0H1yVYu54OHQgGVe for the incident.
  *
  *  Pure — string/regex only, zero dependencies, no Deno/Groq/IO. Imported by
  *  both the backend (`@core/...`) and the Fresh frontend (`@core/` → `../src/core/`),
- *  so it MUST stay bundle-safe for Vite.
- *
- *  See incident: report 76UGB0H1yVYu54OHQgGVe — a refusal reached the report's
- *  TRANSCRIPT panel because the diarize() loop returned its QA-rejected output
- *  and nothing downstream checked it. */
+ *  so it MUST stay bundle-safe for Vite. */
 
 /** Speaker labels the diarization prompt mandates. */
 const LABEL_RE = /\[(CUSTOMER|AGENT)\]/g;
@@ -24,7 +14,14 @@ const LABEL_RE = /\[(CUSTOMER|AGENT)\]/g;
 /** Meta/refusal phrasings an LLM emits when it thinks it has no content to work
  *  on. Kept deliberately broad — a false "refusal" verdict only costs us the
  *  speaker labels (we fall back to the readable raw transcript), so over-
- *  rejecting is far cheaper than letting a refusal through. */
+ *  rejecting is far cheaper than letting a refusal through.
+ *
+ *  To add a pattern: append a case-insensitive RegExp matching a meta/refusal
+ *  phrasing. Err broad and do NOT anchor to line-start — a false positive only
+ *  downgrades that one call to the raw transcript, but a false negative ships a
+ *  refusal as the audit record (the 76UGB0… bug). Note these match content, not
+ *  structure, so a genuine "please provide your email" turn is intentionally
+ *  rejected — see the "do not tighten" test in test.ts. */
 const REFUSAL_PATTERNS: RegExp[] = [
   /please (share|provide|paste|send|supply)/i,
   /(share|provide|paste|upload) (the|your)?\s*(audio|file|transcript|conversation|raw text)/i,

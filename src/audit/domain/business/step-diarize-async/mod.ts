@@ -48,13 +48,10 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
 
   try {
     const diarized = await diarize(raw);
-    // Belt-and-suspenders: diarize() already guards its own fallback, but never
-    // persist anything that isn't a real diarized transcript. If it's invalid
-    // (a refusal/meta reply or a tiny fragment), store the raw transcript so the
-    // report shows the readable text (no speaker labels) instead of garbage, and
-    // the canonical audit-transcript doc never holds a refusal. The exact
-    // failure on report 76UGB0H1yVYu54OHQgGVe was an unvalidated refusal saved
-    // here and rendered as the transcript.
+    // Defense-in-depth: never persist a non-diarized string even though diarize()
+    // already falls back to raw. If invalid, store raw so the canonical
+    // audit-transcript never holds a refusal (76UGB0…). The warn below is the
+    // only signal that this second guard actually fired.
     const valid = isValidDiarizedTranscript(diarized, raw);
     const toStore = valid ? diarized : raw;
     if (!valid) {

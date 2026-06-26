@@ -62,7 +62,6 @@ Deno.test("resolveByteRange — single byte bytes=0-0", () => {
 });
 
 // ── buildAudioResponse — the 206 / 416 / 200 wiring the <audio> seek relies on ──
-function bodyBytes(buf: Uint8Array): Uint8Array { return buf; }
 const TEN = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
 Deno.test("buildAudioResponse — no Range → 200 full body + content-length", async () => {
@@ -72,7 +71,7 @@ Deno.test("buildAudioResponse — no Range → 200 full body + content-length", 
   assertEquals(res.headers.get("accept-ranges"), "bytes");
   assertEquals(res.headers.get("content-length"), "10");
   assertEquals(res.headers.get("content-range"), null);
-  assertEquals(new Uint8Array(await res.arrayBuffer()), bodyBytes(TEN));
+  assertEquals(new Uint8Array(await res.arrayBuffer()), TEN);
 });
 
 Deno.test("buildAudioResponse — closed Range → 206 with content-range + sliced body", async () => {
@@ -107,5 +106,5 @@ Deno.test("buildAudioResponse — out-of-bounds Range → 416 with content-range
 Deno.test("buildAudioResponse — junk Range header → 200 full body", async () => {
   const res = buildAudioResponse(TEN, "bytes=abc");
   assertEquals(res.status, 200);
-  assertEquals(new Uint8Array(await res.arrayBuffer()), bodyBytes(TEN));
+  assertEquals(new Uint8Array(await res.arrayBuffer()), TEN);
 });

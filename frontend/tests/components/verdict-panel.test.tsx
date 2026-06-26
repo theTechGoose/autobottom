@@ -1,5 +1,6 @@
 import { renderHTML, assertContains, assertNotContains } from "../helpers/render.ts";
-import { VerdictPanel } from "../../components/VerdictPanel.tsx";
+import { assert, assertEquals } from "@std/assert";
+import { VerdictPanel, computeIsLastForAudit } from "../../components/VerdictPanel.tsx";
 import type { ReviewItem } from "../../components/VerdictPanel.tsx";
 
 const MOCK_ITEM: ReviewItem = {
@@ -189,4 +190,34 @@ Deno.test("VerdictPanel — judge mode shows 'not recorded' when reviewedBy is a
 Deno.test("VerdictPanel — review mode never shows the reviewer chip", () => {
   const html = renderHTML(<VerdictPanel item={MOCK_ITEM} buffer={[MOCK_ITEM]} currentIndex={0} mode="review" remaining={1} email="a@b.com" combo={0} />);
   assertNotContains(html, "not recorded");
+});
+
+// ── computeIsLastForAudit — the finalize-gating logic, tested directly ───────
+Deno.test("computeIsLastForAudit — review: not last while another question is undecided", () => {
+  assertEquals(computeIsLastForAudit({ isReview: true, buffer: BUF3, item: BUF3[0], decisions: DEC_2, auditRemaining: 99 }), false);
+});
+
+Deno.test("computeIsLastForAudit — review: last when every other question is decided", () => {
+  assertEquals(computeIsLastForAudit({ isReview: true, buffer: BUF3, item: BUF3[2], decisions: DEC_2, auditRemaining: 99 }), true);
+});
+
+Deno.test("computeIsLastForAudit — review: ignores stale-low auditRemaining (the jump-back vector)", () => {
+  // auditRemaining=1 would make the OLD counter heuristic say "last" — must not here.
+  assert(!computeIsLastForAudit({ isReview: true, buffer: BUF3, item: BUF3[0], decisions: DEC_2, auditRemaining: 1 }));
+});
+
+Deno.test("computeIsLastForAudit — review: single-question audit is last", () => {
+  const only = [Q(0)];
+  assertEquals(computeIsLastForAudit({ isReview: true, buffer: only, item: only[0], decisions: {}, auditRemaining: 1 }), true);
+});
+
+Deno.test("computeIsLastForAudit — review: missing decisions on a multi-question buffer falls back to NOT last", () => {
+  // The safe fallback: with no decisions map, a multi-question audit never claims
+  // "last" client-side — finalize is left to the server auditComplete backstop.
+  assertEquals(computeIsLastForAudit({ isReview: true, buffer: BUF3, item: BUF3[0], decisions: undefined, auditRemaining: 1 }), false);
+});
+
+Deno.test("computeIsLastForAudit — judge: keeps the counter heuristic (auditRemaining <= 1)", () => {
+  assertEquals(computeIsLastForAudit({ isReview: false, buffer: BUF3, item: BUF3[0], decisions: undefined, auditRemaining: 1 }), true);
+  assertEquals(computeIsLastForAudit({ isReview: false, buffer: BUF3, item: BUF3[0], decisions: undefined, auditRemaining: 2 }), false);
 });

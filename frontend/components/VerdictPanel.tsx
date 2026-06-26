@@ -104,6 +104,34 @@ function RecordDetails({ item, isPackage }: { item: ReviewItem; isPackage: boole
   );
 }
 
+/** "Last for audit" = committing THIS question's decision completes the audit
+ *  (every OTHER failed question already has a decision). In review mode this is
+ *  derived from the decisions map + the full failed-questions buffer, NOT
+ *  item.auditRemaining: jumpToQuestion sets auditRemaining to the audit-pending
+ *  counter, which goes stale-LOW when a reviewer clicks a Failed-Questions pill to
+ *  re-grade an earlier question — keying off `auditRemaining <= 1` then pops the
+ *  finalize modal on the wrong question and drops the last flip (wrong score, e.g.
+ *  96%). `bufferIsFullSet` guards a partial buffer; when it (or a missing
+ *  decisions map) makes this false, the server-side auditComplete path is the
+ *  finalize backstop. Judge mode has no deferred-commit finalize, so it keeps the
+ *  simple counter heuristic. */
+export function computeIsLastForAudit(args: {
+  isReview: boolean;
+  buffer: ReviewItem[];
+  item: ReviewItem;
+  decisions?: Record<string, "confirm" | "flip">;
+  auditRemaining: number;
+}): boolean {
+  const { isReview, buffer, item, decisions, auditRemaining } = args;
+  if (!isReview) return auditRemaining <= 1;
+  const dec = decisions ?? {};
+  const otherUndecided = buffer.filter(
+    (b) => b.questionIndex !== item.questionIndex && !dec[String(b.questionIndex)],
+  ).length;
+  const bufferIsFullSet = buffer.length >= (item.totalForFinding ?? buffer.length);
+  return bufferIsFullSet && otherUndecided === 0;
+}
+
 export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, email, combo, decisions, allowedTypesCsv, pendingQuestions, pendingAudits }: VerdictPanelProps) {
   const isReview = mode === "review";
 
@@ -144,26 +172,7 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
   const typeLabel = isPackage ? "PARTNER" : "INTERNAL";
   const auditRemaining = item.auditRemaining ?? buffer.length - currentIndex;
   const totalForFinding = item.totalForFinding ?? buffer.length;
-  // "Last for audit" = committing THIS question's decision completes the audit,
-  // i.e. every OTHER failed question already has a decision. In review mode we
-  // derive that from the decisions map + the full failed-questions buffer rather
-  // than the mutable audit-pending counter. Clicking a Failed-Questions pill to
-  // re-grade an EARLIER question leaves later questions undecided; a counter-only
-  // check (auditRemaining <= 1) would then mis-flag the current question as
-  // "final" and pop the type-YES finalize modal before the remaining questions
-  // are graded — dropping their flips and submitting a wrong score (e.g. 96%).
-  // Guard with bufferIsFullSet: only trust this when `buffer` holds the complete
-  // failed set; otherwise fall back to false and let the server-side
-  // auditComplete path open the finalize modal once the counter truly hits 0.
-  // Judge mode has no deferred-commit finalize, so it keeps the counter heuristic.
-  const decMapForLast = decisions ?? {};
-  const otherUndecidedCount = buffer.filter(
-    (b) => b.questionIndex !== item.questionIndex && !decMapForLast[String(b.questionIndex)],
-  ).length;
-  const bufferIsFullSet = buffer.length >= (item.totalForFinding ?? buffer.length);
-  const isLastForAudit = isReview
-    ? (bufferIsFullSet && otherUndecidedCount === 0)
-    : auditRemaining <= 1;
+  const isLastForAudit = computeIsLastForAudit({ isReview, buffer, item, decisions, auditRemaining });
   const qbHref = qbUrl(item.recordId, isPackage);
   const reportHref = `/audit/report?id=${encodeURIComponent(item.findingId)}`;
 

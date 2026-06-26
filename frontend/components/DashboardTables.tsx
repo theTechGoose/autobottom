@@ -234,7 +234,10 @@ export function DashboardTables({ recent, active, errors, logsBase, paused }: Pr
 export function computeLogsBase(requestUrl: string): string | undefined {
   try {
     const host = new URL(requestUrl).hostname;
-    const m = host.match(/^([^.]+)\.([^.]+)\.deno\.net$/);
+    // DNS-valid labels only ([a-z0-9-]) — never capture characters like a quote
+    // that could break out of the inline JS string the "View Logs" button builds
+    // from this base. Real *.deno.net hosts always satisfy this.
+    const m = host.match(/^([a-z0-9-]+)\.([a-z0-9-]+)\.deno\.net$/i);
     if (!m) return undefined;
     return `https://console.deno.com/${m[2]}/${m[1]}/observability/logs?query=`;
   } catch {

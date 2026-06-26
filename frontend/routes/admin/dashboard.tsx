@@ -76,6 +76,17 @@ export default define.page(async function AdminDashboard(ctx) {
         <form method="GET" action="/audit/report" target="_blank" style="display:flex;gap:10px;align-items:center;">
           <input type="text" name="id" placeholder="Finding ID..." required style="font-family:var(--mono);font-size:13px;flex:1;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text-bright);" />
           <button class="btn btn-primary" type="submit" style="height:40px;">View Report</button>
+          {logsBase && (
+            // Opens the Deno Deploy observability logs filtered to the typed
+            // finding ID — same URL the dashboard tables' `logs` links use. Only
+            // rendered on deno.net hosts (logsBase is undefined on localhost).
+            <button
+              class="btn"
+              type="button"
+              style="height:40px;"
+              hx-on:click={`var v=this.closest('form').querySelector('[name=id]').value.trim(); if(v) window.open('${logsBase}'+encodeURIComponent(v)+'&start=now%2Fy&end=now','_blank');`}
+            >View Logs</button>
+          )}
           <button
             class="btn btn-danger"
             type="button"

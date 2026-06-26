@@ -13,7 +13,6 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { saveFinding, saveJob, getFinding, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
 import { enqueueStep, getSelfUrl, getQueueCounts } from "@core/data/qstash/mod.ts";
-import { S3Ref } from "@core/data/s3/mod.ts";
 import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
 import { startReauditWithGenies } from "@audit/domain/business/reaudit/mod.ts";
 
@@ -210,51 +209,10 @@ export class AuditController {
     return { error: "not found" };
   }
 
-  @Get("recording") @Description("Stream audit recording audio from S3 as audio/mpeg")
-  async getRecording(@Query("id") id: string, @Query("idx") idxStr: string) {
-    if (!id) return new Response(JSON.stringify({ error: "id parameter required" }), { status: 400, headers: { "content-type": "application/json" } });
-
-    const orgId = defaultOrgId() as OrgId;
-    const finding = await getFinding(orgId, id) as Record<string, unknown> | null;
-    if (!finding) {
-      console.warn(`🔇 [RECORDING] 404 finding-not-found: id=${id} org=${orgId}`);
-      return new Response(JSON.stringify({ error: "finding not found", id }), { status: 404, headers: { "content-type": "application/json" } });
-    }
-
-    const idx = parseInt(idxStr ?? "0") || 0;
-    const keys = finding.s3RecordingKeys as string[] | undefined;
-    const recordingPath = keys?.length ? keys[Math.min(idx, keys.length - 1)] : (finding.recordingPath as string | undefined);
-    if (!recordingPath) {
-      const findingKeys = Object.keys(finding).join(",");
-      console.warn(`🔇 [RECORDING] 404 no-recording-path: id=${id} idx=${idx} keys=[${findingKeys}] s3RecordingKeys=${JSON.stringify(keys ?? null)}`);
-      return new Response(JSON.stringify({ error: "no recording path", id, hint: "finding doc has no recordingPath / s3RecordingKeys — likely from pre-S3 era or a partial migration" }), { status: 404, headers: { "content-type": "application/json" } });
-    }
-
-    const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
-    if (!bucket) {
-      console.error(`🔇 [RECORDING] 500 no-bucket-env: id=${id}`);
-      return new Response(JSON.stringify({ error: "S3 bucket not configured" }), { status: 500, headers: { "content-type": "application/json" } });
-    }
-
-    const s3 = new S3Ref(bucket, recordingPath);
-    const bytes = await s3.get();
-    if (!bytes) {
-      console.warn(`🔇 [RECORDING] 404 s3-miss: id=${id} bucket=${bucket} path=${recordingPath}`);
-      return new Response(JSON.stringify({ error: "recording not found in S3", id, bucket, path: recordingPath }), { status: 404, headers: { "content-type": "application/json" } });
-    }
-
-    // Return full file with proper headers for <audio controls>. Range support is
-    // nice-to-have; native browsers work fine with a full download for short clips.
-    return new Response(bytes, {
-      status: 200,
-      headers: {
-        "content-type": "audio/mpeg",
-        "content-length": String(bytes.byteLength),
-        "accept-ranges": "bytes",
-        "cache-control": "private, max-age=300",
-      },
-    });
-  }
+  // GET /audit/recording is served by a DIRECT-DISPATCH handler in main.ts
+  // (handleRecordingAudio) so it can read the raw `Range` request header and
+  // return 206 Partial Content for <audio> seeking. danet's @Req is broken via
+  // router.fetch in unified mode, so the controller can't see the Range header.
 
   @Post("api/appeal") @ReturnedType(MessageResponse) @Description("File a judge appeal for a completed audit") @BodyType(GenericBodyRequest)
   async fileAppeal(@Body() body: GenericBodyRequest) {

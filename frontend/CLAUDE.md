@@ -228,6 +228,13 @@ When admin uses `?as=alice@manager.com`, the frontend middleware swaps `ctx.stat
 
 If your backend endpoint needs to behave as the impersonated user (e.g. apply that user's scope, role-specific filters), the frontend page handler must explicitly forward `?as=` to the backend URL, AND keep it included across HTMX filter refreshes via a hidden `<input name="as" value={asEmail}>`. The backend then reads `?as=` directly off the URL and decides whether to honor it based on the real auth role. Pattern: [main.ts handleManagerAuditHistory](../main.ts) + [frontend/routes/manager/audits.tsx](routes/manager/audits.tsx).
 
+### 9. **Review queue: derive "last question" from decisions, not the per-audit counter; and `<audio>` needs a 206 server**
+
+Two review/queue traps that ship wrong audit scores or a dead scrubber:
+
+- **`VerdictPanel`'s `isLastForAudit` must come from the decisions map + the FULL failed-questions buffer, not `item.auditRemaining`.** `auditRemaining` is the backend `review-audit-pending` counter, and `jumpToQuestion` sets it to a stale-LOW value when a reviewer clicks a "Failed Questions" pill to re-grade an earlier question. Keying the "last question → type-YES finalize" deferred-commit path off `auditRemaining <= 1` then pops the finalize modal on the *wrong* question and drops the final flip — wrong score (e.g. 96%). The fix derives "last" from "every *other* failed question is already decided" (guarded by `bufferIsFullSet`; the server `auditComplete` flag is the backstop). Backend mirror: `recordDecision` decrements `review-audit-pending` only on a question's *first* decision. The **Undo** button is fine (it re-increments); only the pill-click *jump* path triggered it. [components/VerdictPanel.tsx](components/VerdictPanel.tsx), [../src/review/domain/business/review-queue/mod.ts](../src/review/domain/business/review-queue/mod.ts).
+- **The waveform click-to-scrub needs the recording endpoint to return `206 Partial Content`.** `QueueAudioPlayer` seeks via `audio.currentTime`, which the browser implements with a `Range:` request. `/audit/recording` is direct-dispatched in the root `main.ts` (so it can read the `Range` header — danet's `@Req` can't) and returns a real `206`. Advertising `accept-ranges` while sending a `200` full body makes seeking silently fail on longer clips.
+
 ## Pages / Implementation Status
 | Page | Route | Status |
 |------|-------|--------|

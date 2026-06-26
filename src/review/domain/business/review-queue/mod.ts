@@ -664,6 +664,18 @@ export async function recordDecision(
 ): Promise<{ remaining: number; auditComplete: boolean }> {
   const now = Date.now();
 
+  // Detect a re-decision: the reviewer went BACK to an already-decided question
+  // via the Failed-Questions pills (jumpToQuestion re-creates a review-active row
+  // for it). The audit-pending counter must be decremented exactly ONCE per
+  // question — on its FIRST decision. Re-deciding overwrites the decided record
+  // but must NOT decrement again, or the counter under-counts the still-undecided
+  // questions and the audit finalizes a question early (the last flip never lands
+  // → wrong score, e.g. 96%). Captured BEFORE the review-decided overwrite below.
+  // (The Undo / `B` path is unaffected — undoDecision deletes the decided record
+  // and increments the counter, so a later re-grade correctly counts as "first".)
+  const priorDecision = await getStored<ReviewDecision>("review-decided", orgId, findingId, questionIndex);
+  const isRedecision = priorDecision != null;
+
   // Load full item from active so the decided record includes header/populated/etc.
   let baseItem: ReviewItem | null = null;
   const activeVal = await getStored<ReviewItem & { claimedAt?: number }>("review-active", orgId, reviewer, findingId, questionIndex);
@@ -724,7 +736,10 @@ export async function recordDecision(
   }
 
   const counter = (await getStored<number>("review-audit-pending", orgId, findingId)) ?? 1;
-  const newCount = Math.max(0, counter - 1);
+  // Only decrement on the FIRST decision for this question. A re-decision (reached
+  // by clicking a Failed-Questions pill to go back) leaves the counter unchanged —
+  // the question was already counted as decided.
+  const newCount = isRedecision ? counter : Math.max(0, counter - 1);
   await setStored("review-audit-pending", orgId, [findingId], newCount);
 
   console.log(`✅ [REVIEW] ${findingId}/${questionIndex}: ${decision} by ${reviewer} (${newCount} remaining)`);

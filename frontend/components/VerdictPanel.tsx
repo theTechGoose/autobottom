@@ -144,7 +144,26 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
   const typeLabel = isPackage ? "PARTNER" : "INTERNAL";
   const auditRemaining = item.auditRemaining ?? buffer.length - currentIndex;
   const totalForFinding = item.totalForFinding ?? buffer.length;
-  const isLastForAudit = auditRemaining <= 1;
+  // "Last for audit" = committing THIS question's decision completes the audit,
+  // i.e. every OTHER failed question already has a decision. In review mode we
+  // derive that from the decisions map + the full failed-questions buffer rather
+  // than the mutable audit-pending counter. Clicking a Failed-Questions pill to
+  // re-grade an EARLIER question leaves later questions undecided; a counter-only
+  // check (auditRemaining <= 1) would then mis-flag the current question as
+  // "final" and pop the type-YES finalize modal before the remaining questions
+  // are graded — dropping their flips and submitting a wrong score (e.g. 96%).
+  // Guard with bufferIsFullSet: only trust this when `buffer` holds the complete
+  // failed set; otherwise fall back to false and let the server-side
+  // auditComplete path open the finalize modal once the counter truly hits 0.
+  // Judge mode has no deferred-commit finalize, so it keeps the counter heuristic.
+  const decMapForLast = decisions ?? {};
+  const otherUndecidedCount = buffer.filter(
+    (b) => b.questionIndex !== item.questionIndex && !decMapForLast[String(b.questionIndex)],
+  ).length;
+  const bufferIsFullSet = buffer.length >= (item.totalForFinding ?? buffer.length);
+  const isLastForAudit = isReview
+    ? (bufferIsFullSet && otherUndecidedCount === 0)
+    : auditRemaining <= 1;
   const qbHref = qbUrl(item.recordId, isPackage);
   const reportHref = `/audit/report?id=${encodeURIComponent(item.findingId)}`;
 
@@ -316,9 +335,14 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
         <button class="verdict-meta-chip" type="button" data-action="jump-to-audio">
           Jump to Audio
         </button>
-        {!isReview && item.reviewedBy && (
+        {!isReview && (
+          // Always render in judge mode. When reviewedBy is unknown (e.g. the
+          // finding reached the judge queue without a completed review — a
+          // reviewer's decision discarded by a mid-pipeline re-audit), show an
+          // explicit "not recorded" so the blank reads as "nobody on file" rather
+          // than a rendering glitch.
           <span class="verdict-meta-chip" title="Reviewed by">
-            Reviewer <span class="mono">{item.reviewedBy}</span>
+            Reviewer <span class="mono">{item.reviewedBy ?? "not recorded"}</span>
           </span>
         )}
         {isLastForAudit && (

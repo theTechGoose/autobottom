@@ -96,3 +96,72 @@ export class S3Ref {
     }, {}, "client");
   }
 }
+
+/** Resolve an HTTP `Range` request header against a known total byte length.
+ *  Pure — used by the /audit/recording direct-dispatch handler (main.ts) so the
+ *  <audio> element can seek (it seeks by issuing `Range:` requests). Returns:
+ *    - null            → no/empty/unparseable range → serve the full 200 body.
+ *    - "unsatisfiable" → range out of bounds → caller should send 416.
+ *    - { start, end }  → inclusive byte offsets for a 206 Partial Content slice.
+ *  Supports "bytes=start-", "bytes=start-end", and suffix "bytes=-N" (last N
+ *  bytes). Multi-range is not handled — media elements never request it. */
+export function resolveByteRange(
+  rangeHeader: string | null | undefined,
+  total: number,
+): { start: number; end: number } | "unsatisfiable" | null {
+  if (!rangeHeader || total <= 0) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!m) return null;
+  let start = m[1] === "" ? NaN : parseInt(m[1], 10);
+  let end = m[2] === "" ? NaN : parseInt(m[2], 10);
+  if (Number.isNaN(start) && Number.isNaN(end)) return null; // "bytes=-" — meaningless
+  if (Number.isNaN(start)) {
+    // Suffix range: the last `end` bytes.
+    start = Math.max(0, total - end);
+    end = total - 1;
+  } else if (Number.isNaN(end) || end >= total) {
+    end = total - 1;
+  }
+  if (start > end || start < 0 || start >= total) return "unsatisfiable";
+  return { start, end };
+}
+
+/** Build the HTTP response for serving `bytes` as audio, honoring an optional
+ *  `Range` request header. Returns 206 Partial Content (with Content-Range +
+ *  Content-Length on the slice) for a satisfiable range, 416 for an out-of-bounds
+ *  range, or a full 200 otherwise. This is the seekable response a browser
+ *  <audio> element needs. Pure — used by the /audit/recording handler (main.ts). */
+export function buildAudioResponse(
+  bytes: Uint8Array,
+  rangeHeader: string | null | undefined,
+  contentType = "audio/mpeg",
+): Response {
+  const total = bytes.byteLength;
+  const baseHeaders: Record<string, string> = {
+    "content-type": contentType,
+    "accept-ranges": "bytes",
+    "cache-control": "private, max-age=300",
+  };
+  const range = resolveByteRange(rangeHeader, total);
+  if (range === "unsatisfiable") {
+    return new Response(null, {
+      status: 416,
+      headers: { ...baseHeaders, "content-range": `bytes */${total}` },
+    });
+  }
+  if (range) {
+    const slice = bytes.subarray(range.start, range.end + 1);
+    return new Response(slice, {
+      status: 206,
+      headers: {
+        ...baseHeaders,
+        "content-range": `bytes ${range.start}-${range.end}/${total}`,
+        "content-length": String(slice.byteLength),
+      },
+    });
+  }
+  return new Response(bytes, {
+    status: 200,
+    headers: { ...baseHeaders, "content-length": String(total) },
+  });
+}

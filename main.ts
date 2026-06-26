@@ -43,6 +43,7 @@ import { authenticate } from "@core/business/auth/mod.ts";
 import { registerAllWebhookEmailHandlers } from "@reporting/domain/business/webhook-handlers/mod.ts";
 import { getGameState, getEarnedBadges } from "@gamification/domain/data/gamification-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { S3Ref, buildAudioResponse } from "@core/data/s3/mod.ts";
 import { getKv, orgKey } from "@core/data/deno-kv/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 import { startUploadReaudit } from "@audit/domain/business/upload-reaudit/mod.ts";
@@ -250,6 +251,52 @@ async function _computeAgentDashboard(auth: { orgId: OrgId; email: string }): Pr
     recentAudits: audits.slice(0, 20),
     weeklyTrend,
   });
+}
+
+// Direct-dispatch: GET /audit/recording streams the S3 recording WITH real HTTP
+// range support. Must be direct (not danet) because the browser <audio> element
+// seeks by issuing `Range:` requests and danet's @Req returns undefined via
+// router.fetch — so a controller can't read the Range header. The old danet
+// handler advertised `accept-ranges: bytes` but always returned the full file
+// with 200, so the browser couldn't seek into un-buffered parts of longer clips
+// (click-to-scrub silently failed on anything that wasn't already fully
+// downloaded). Here we honor the range and return 206 Partial Content.
+async function handleRecordingAudio(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const id = url.searchParams.get("id") ?? "";
+  if (!id) return Response.json({ error: "id parameter required" }, { status: 400 });
+
+  const orgId = defaultOrgId() as OrgId;
+  const finding = await getFinding(orgId, id) as Record<string, unknown> | null;
+  if (!finding) {
+    console.warn(`🔇 [RECORDING] 404 finding-not-found: id=${id} org=${orgId}`);
+    return Response.json({ error: "finding not found", id }, { status: 404 });
+  }
+
+  const idx = parseInt(url.searchParams.get("idx") ?? "0") || 0;
+  const keys = finding.s3RecordingKeys as string[] | undefined;
+  const recordingPath = keys?.length ? keys[Math.min(idx, keys.length - 1)] : (finding.recordingPath as string | undefined);
+  if (!recordingPath) {
+    console.warn(`🔇 [RECORDING] 404 no-recording-path: id=${id} idx=${idx} s3RecordingKeys=${JSON.stringify(keys ?? null)}`);
+    return Response.json({ error: "no recording path", id, hint: "finding doc has no recordingPath / s3RecordingKeys" }, { status: 404 });
+  }
+
+  const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
+  if (!bucket) {
+    console.error(`🔇 [RECORDING] 500 no-bucket-env: id=${id}`);
+    return Response.json({ error: "S3 bucket not configured" }, { status: 500 });
+  }
+
+  const s3 = new S3Ref(bucket, recordingPath);
+  const bytes = await s3.get();
+  if (!bytes) {
+    console.warn(`🔇 [RECORDING] 404 s3-miss: id=${id} bucket=${bucket} path=${recordingPath}`);
+    return Response.json({ error: "recording not found in S3", id, bucket, path: recordingPath }, { status: 404 });
+  }
+
+  // 206 Partial Content for a Range request (so the <audio> element can seek),
+  // 416 for an out-of-bounds range, else the full 200. Shared, unit-tested.
+  return buildAudioResponse(bytes, req.headers.get("range"));
 }
 
 // Direct-dispatch: POST /audit/api/appeal/upload-recording accepts a multipart
@@ -830,6 +877,12 @@ Deno.serve({ port }, (req, info) => {
     }
     if (path === "/api/chat/stream") {
       return handleChatStream(req);
+    }
+
+    // /audit/recording — direct (need the raw Range header for <audio> seeking;
+    // danet's @Req is broken via router.fetch). Returns 206 Partial Content.
+    if (path === "/audit/recording" && req.method === "GET") {
+      return handleRecordingAudio(req);
     }
 
     // /audit/api/appeal/upload-recording — direct (multipart; @Req broken)

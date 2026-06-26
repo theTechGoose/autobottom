@@ -2,7 +2,7 @@
  *  audit-done-idx sync contract on admin flips. */
 
 import { assertEquals, assert, assertExists } from "#assert";
-import { selectOldestFinding, adminFlipQuestion, recordDecision, questionTimingFromGap, getReviewedFindingIds, REVIEW_BREAK_MS, REVIEW_IDLE_DISCARD_MS } from "./mod.ts";
+import { selectOldestFinding, adminFlipQuestion, recordDecision, jumpToQuestion, finalizeReviewedAudit, questionTimingFromGap, getReviewedFindingIds, REVIEW_BREAK_MS, REVIEW_IDLE_DISCARD_MS } from "./mod.ts";
 import type { ReviewDecision, ReviewItem } from "@core/dto/types.ts";
 import { getStored, resetFirestoreCredentials, setStored } from "@core/data/firestore/mod.ts";
 import { saveFinding, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -244,4 +244,98 @@ Deno.test("questionTimingFromGap — gap over the 15-min break is discarded", ()
 Deno.test("questionTimingFromGap — client idle >= 60s discards even a short gap", () => {
   assertEquals(questionTimingFromGap(5_000, REVIEW_IDLE_DISCARD_MS).discarded, true);
   assertEquals(questionTimingFromGap(5_000, REVIEW_IDLE_DISCARD_MS - 1).discarded, false);
+});
+
+// ── Re-decision must NOT double-decrement the audit-pending counter ──────────
+// Regression for the "submits as 96%" bug: clicking a Failed-Questions pill to
+// go BACK to an already-decided question re-creates a review-active row for it
+// (jumpToQuestion), and recordDecision used to decrement review-audit-pending
+// again on the re-grade. That made the counter under-count the still-undecided
+// questions, so the audit's NEXT question falsely looked like the last one,
+// finalized early, and a flip was dropped → wrong score. The Undo path is
+// unaffected (it increments the counter), which is why this only reproduced on
+// pill-click navigation.
+
+async function seedClaimedAudit(
+  orgId: OrgId,
+  fid: string,
+  reviewer: string,
+  answers: string[],
+): Promise<void> {
+  await makeFindingFixture(orgId, fid, answers);
+  const noIdx = answers.map((a, i) => ({ a, i })).filter((x) => x.a === "No").map((x) => x.i);
+  const now = Date.now();
+  for (const [reviewIdx, qi] of noIdx.entries()) {
+    await setStored("review-active", orgId, [reviewer, fid, qi], {
+      findingId: fid, questionIndex: qi, reviewIndex: reviewIdx + 1, totalForFinding: noIdx.length,
+      header: `Q${qi}`, populated: `populated ${qi}`, thinking: `thinking ${qi}`, defense: `defense ${qi}`,
+      answer: "No", claimedAt: now,
+    });
+  }
+  await setStored("review-audit-pending", orgId, [fid], noIdx.length);
+}
+
+Deno.test("recordDecision — re-deciding via jump does NOT decrement the counter again", async () => {
+  resetForTest();
+  const orgId = ("test-redecide-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-redecide", reviewer = "rev@example.com";
+  // 5 questions, q0/q1/q2 = No.
+  await seedClaimedAudit(orgId, fid, reviewer, ["No", "No", "No", "Yes", "Yes"]);
+
+  const first = await recordDecision(orgId, fid, 0, "flip", reviewer);
+  assertEquals(first.remaining, 2, "first decision on q0 decrements 3 → 2");
+
+  // Go back to q0 via the pill (recreates the active row) and re-grade it.
+  await jumpToQuestion(orgId, reviewer, fid, 0);
+  const second = await recordDecision(orgId, fid, 0, "confirm", reviewer);
+
+  assertEquals(second.remaining, 2, "re-deciding q0 must keep the counter at 2 (q1, q2 still undecided)");
+  assertEquals(second.auditComplete, false, "audit is NOT complete — two questions remain");
+  const counter = await getStored<number>("review-audit-pending", orgId, fid);
+  assertEquals(counter, 2, "stored counter is unchanged by the re-decision");
+});
+
+Deno.test("review flow — click back to an early question, re-grade, finish all → finalize 100% (no dropped flip)", async () => {
+  // Faithful end-to-end of the reported scenario. Without the fix the audit
+  // finalizes after the SECOND graded question and the third flip is lost
+  // (score 80% here / 96% on a 25-question finding).
+  const orgId = ("test-reflow-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-reflow", reviewer = "rev@example.com";
+  resetForTest();
+  await seedClaimedAudit(orgId, fid, reviewer, ["No", "No", "No", "Yes", "Yes"]); // q0,q1,q2 fail
+
+  // Grade q0 and q1, then click BACK to q0 and re-grade it (the trigger).
+  await recordDecision(orgId, fid, 0, "flip", reviewer); // 3 → 2
+  await recordDecision(orgId, fid, 1, "flip", reviewer); // 2 → 1
+  await jumpToQuestion(orgId, reviewer, fid, 0);
+  const reQ0 = await recordDecision(orgId, fid, 0, "flip", reviewer); // re-grade: stays 1
+  assertEquals(reQ0.remaining, 1, "after re-grading q0, one question (q2) still remains");
+  assertEquals(reQ0.auditComplete, false, "must not finalize before q2 is graded");
+
+  // Now grade the third question — THIS should complete the audit.
+  const q2 = await recordDecision(orgId, fid, 2, "flip", reviewer);
+  assertEquals(q2.remaining, 0);
+  assertEquals(q2.auditComplete, true, "audit completes only after all three are graded");
+
+  const result = await finalizeReviewedAudit(orgId, fid, reviewer);
+  assertEquals(result.score, 100, "all three No→Yes flips applied → 100% (third flip not dropped)");
+
+  const refreshed = await getFinding(orgId, fid);
+  assertExists(refreshed);
+  const qs = (refreshed!.answeredQuestions ?? []) as Array<{ answer: string }>;
+  assertEquals(qs.filter((q) => q.answer === "Yes").length, 5, "every question is Yes after finalize");
+});
+
+Deno.test("recordDecision — normal forward grading still decrements to 0 + completes on the last", async () => {
+  resetForTest();
+  const orgId = ("test-forward-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-forward", reviewer = "rev@example.com";
+  await seedClaimedAudit(orgId, fid, reviewer, ["No", "No", "No"]); // 3 fail
+
+  const r0 = await recordDecision(orgId, fid, 0, "flip", reviewer);
+  assertEquals([r0.remaining, r0.auditComplete], [2, false]);
+  const r1 = await recordDecision(orgId, fid, 1, "confirm", reviewer);
+  assertEquals([r1.remaining, r1.auditComplete], [1, false]);
+  const r2 = await recordDecision(orgId, fid, 2, "flip", reviewer);
+  assertEquals([r2.remaining, r2.auditComplete], [0, true]);
 });

@@ -53,7 +53,7 @@ export default function WeeklyBuilderEditor() {
   const [draft, setDraft] = useState<ReportConfig | null>(null);
   const [stageAllOpen, setStageAllOpen] = useState(false);
   const [saType, setSaType] = useState<"internal" | "partner" | "both">("internal");
-  const [saShift, setSaShift] = useState<string>("All");
+  const [saShifts, setSaShifts] = useState<string[]>(["All"]);
   const [saExcludeDepts, setSaExcludeDepts] = useState<string[]>([]);
   const [saExcludeOffices, setSaExcludeOffices] = useState<string[]>([]);
   const [saGlobalEmails, setSaGlobalEmails] = useState<string[]>([]);
@@ -149,7 +149,7 @@ export default function WeeklyBuilderEditor() {
     if (!data) return;
     const plan = planStageAll({
       type: saType,
-      shift: saShift,
+      shifts: saShifts,
       departments: data.auditDims.departments ?? [],
       offices: Object.keys(data.partnerDims.offices ?? {}),
       deptEmails,
@@ -174,6 +174,17 @@ export default function WeeklyBuilderEditor() {
     setStaged([...staged, ...additions]);
     const noEmail = additions.filter((a) => (a.config.recipients ?? []).length === 0).length;
     setMsg({ kind: "ok", text: `Staged ${additions.length} report${additions.length === 1 ? "" : "s"}${noEmail ? ` · ${noEmail} with no recipients` : ""}.` });
+  }
+
+  /** Multi-select shifts. "All" (one combined report) is mutually exclusive
+   *  with specific shifts; toggling off the last specific shift reverts to All. */
+  function toggleSaShift(sh: string) {
+    if (sh === "All") { setSaShifts(["All"]); return; }
+    setSaShifts((prev) => {
+      const base = prev.filter((x) => x !== "All");
+      const next = base.includes(sh) ? base.filter((x) => x !== sh) : [...base, sh];
+      return next.length === 0 ? ["All"] : next;
+    });
   }
 
   function openEdit(idx: number) { setDraft(structuredClone(staged[idx].config)); setEditIdx(idx); }
@@ -385,10 +396,10 @@ export default function WeeklyBuilderEditor() {
 
             {(saType === "internal" || saType === "both") && (
               <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
-                <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-dim);margin-bottom:6px;">Internal — shift (one report per department)</div>
+                <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-dim);margin-bottom:6px;">Internal — shifts (a report per department, per selected shift)</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">
                   {[...internalShifts, "All"].map((sh) => (
-                    <button key={sh} type="button" class={`sf-btn ${saShift === sh ? "primary" : ""}`} onClick={() => setSaShift(sh)} style="font-size:11px;">{sh}</button>
+                    <button key={sh} type="button" class={`sf-btn ${saShifts.includes(sh) ? "primary" : ""}`} onClick={() => toggleSaShift(sh)} style="font-size:11px;">{sh}</button>
                   ))}
                 </div>
                 <ChipSearch label="Exclude departments" placeholder="Type a department to exclude…" options={data.auditDims.departments ?? []} selected={saExcludeDepts} onChange={setSaExcludeDepts} listId="sa-dept-list" />
@@ -443,7 +454,7 @@ type StageAllSel = { type: "internal" | "partner"; department?: string; office?:
  *  insensitive). Kept pure + exported so it can be unit-tested without the UI. */
 export function planStageAll(input: {
   type: "internal" | "partner" | "both";
-  shift: string; // a shift name, or "All" for no shift filter
+  shifts: string[]; // shift names to stage (a report each), or ["All"]/[] for one combined report
   departments: string[];
   offices: string[];
   deptEmails: Record<string, string[]>;
@@ -455,13 +466,17 @@ export function planStageAll(input: {
   alreadyPublished: (sel: StageAllSel) => boolean;
 }): StageAllSelection[] {
   const out: StageAllSelection[] = [];
-  const shift = input.shift === "All" ? null : input.shift;
+  // "All" (or nothing selected) → one combined report (no shift filter);
+  // otherwise one report per selected shift.
+  const shifts: (string | null)[] = (input.shifts.includes("All") || input.shifts.length === 0) ? [null] : input.shifts;
   if (input.type === "internal" || input.type === "both") {
     for (const department of input.departments) {
       if (input.excludeDepts.includes(department)) continue;
-      const sel = { type: "internal" as const, department, shift };
-      if (input.alreadyStaged(sel) || input.alreadyPublished(sel)) continue;
-      out.push({ ...sel, recipients: dedupeEmails([...(input.deptEmails[department] ?? []), ...input.globalEmails]) });
+      for (const shift of shifts) {
+        const sel = { type: "internal" as const, department, shift };
+        if (input.alreadyStaged(sel) || input.alreadyPublished(sel)) continue;
+        out.push({ ...sel, recipients: dedupeEmails([...(input.deptEmails[department] ?? []), ...input.globalEmails]) });
+      }
     }
   }
   if (input.type === "partner" || input.type === "both") {

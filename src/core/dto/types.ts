@@ -46,6 +46,10 @@ export interface IAnsweredQuestion extends IQuestion {
 export interface AuditDoneIndexEntry {
   findingId: string;
   completedAt: number;
+  /** Appeal state at the last index (re)write, so reports can filter by appeal
+   *  status straight from the index — no appeal-doc hydration at send time.
+   *  Kept fresh by writeAuditDoneIndex on completion / review / judge / flip. */
+  appealStatus?: "none" | "pending" | "complete";
   doneAt?: number;
   completed: boolean;
   reason?: "perfect_score" | "invalid_genie" | "reviewed";

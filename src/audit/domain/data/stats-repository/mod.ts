@@ -5,7 +5,7 @@ import {
   getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredWithKeysAll, listStoredByIdPrefix, listStoredByCompletedAt, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
-import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
+import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry, AppealRecord } from "@core/dto/types.ts";
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 
 const DAY_MS = 86_400_000;
@@ -431,7 +431,14 @@ export async function writeAuditDoneIndex(
       return false;
     }
   }
-  await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], entry);
+  // Stamp the live appeal state onto the row so reports can filter by appeal
+  // status without hydrating the appeal doc at send time. Recomputed on every
+  // (re)write — completion / review / judge / flip all re-call this — so it
+  // never goes stale.
+  const appeal = await getStored<AppealRecord>("appeal", orgId, entry.findingId).catch(() => null);
+  const appealStatus: "none" | "pending" | "complete" =
+    !appeal ? "none" : appeal.status === "pending" ? "pending" : "complete";
+  await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], { ...entry, appealStatus });
   return true;
 }
 

@@ -9,9 +9,10 @@ import {
   getStats, terminateFinding, terminateAllActive,
   getErrorsInWindow, isFindingRecovered, redactErrorMessage,
   deriveQbRecordId, inspectRecordIndex, repairRecordIndexForFinding, restoreHiddenFinding,
-  markFindingHidden, getHiddenFindingIds, _resetHiddenCacheForTesting,
+  markFindingHidden, getHiddenFindingIds, _resetHiddenCacheForTesting, _resetQueryAuditDoneIndexCacheForTests,
 } from "./mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
@@ -194,11 +195,41 @@ Deno.test({ name: "findAuditsByRecordId — self-heals from completed-audit-stat
   // instead of flaking on a fixed sleep).
   let idx: AuditDoneIndexEntry[] = [];
   for (let i = 0; i < 50; i++) {
+    // Reset the SWR cache each poll so we observe the fire-and-forget self-heal
+    // write once it lands — otherwise the first poll caches a no-row result and
+    // every later poll returns that stale cache for the whole TTL.
+    _resetQueryAuditDoneIndexCacheForTests();
     idx = await queryAuditDoneIndex(ORG_H, now - 2000, now + 2000);
     if (idx.some((e) => e.findingId === fid && e.recordId === rid)) break;
     await new Promise((r) => setTimeout(r, 10));
   }
   assert(idx.some((e) => e.findingId === fid && e.recordId === rid), "self-heal must backfill audit-done-idx");
+}});
+
+Deno.test({ name: "writeAuditDoneIndex — stamps live appealStatus onto the row (none → pending → complete)", ...kvOpts, fn: async () => {
+  const ORG = "test-appeal-idx-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-ai-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+  const entry = { findingId: fid, completedAt: now, completed: true, score: 80 } as AuditDoneIndexEntry;
+  const read = async () => {
+    _resetQueryAuditDoneIndexCacheForTests();
+    return (await queryAuditDoneIndex(ORG, now - 1000, now + 1000)).find((e) => e.findingId === fid);
+  };
+
+  // No appeal on file → "none".
+  await writeAuditDoneIndex(ORG, entry, { assumeFinished: true });
+  assertEquals((await read())?.appealStatus, "none");
+
+  // Appeal filed (pending) → a re-write stamps "pending".
+  await saveAppeal(ORG, { findingId: fid, appealedAt: now, status: "pending" });
+  await writeAuditDoneIndex(ORG, entry, { assumeFinished: true });
+  assertEquals((await read())?.appealStatus, "pending");
+
+  // Appeal resolved → a re-write stamps "complete" (the judge path re-writes,
+  // so the index never goes stale).
+  await saveAppeal(ORG, { findingId: fid, appealedAt: now, status: "complete" });
+  await writeAuditDoneIndex(ORG, entry, { assumeFinished: true });
+  assertEquals((await read())?.appealStatus, "complete");
 }});
 
 Deno.test({ name: "findAuditsByRecordId — dedup-hidden findings are surfaced flagged, not dropped", ...kvOpts, fn: async () => {

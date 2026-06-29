@@ -137,7 +137,7 @@ export default function WeeklyBuilderEditor() {
       onlyCompleted: true,
       enabled: true,
       failedOnly: false,
-      schedule: { cron: "0 9 * * *", tz: "America/New_York" },
+      schedule: { cron: "0 21 * * *", tz: "America/New_York" },
       weeklyType: s.type,
       weeklyDepartment: s.department,
       weeklyShift: s.shift ?? undefined,

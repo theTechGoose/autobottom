@@ -33,7 +33,7 @@ function internalStaged(department: string, shift: string | null, name: string, 
       onlyCompleted: true,
       enabled: true,
       failedOnly: false,
-      schedule: { cron: "0 9 * * *", tz: "America/New_York" },
+      schedule: { cron: "0 21 * * *", tz: "America/New_York" },
       weeklyType: "internal",
       weeklyDepartment: department,
       weeklyShift: shift ?? undefined,
@@ -59,7 +59,7 @@ function partnerStaged(office: string, name: string, recipients: string[] = []) 
       onlyCompleted: true,
       enabled: true,
       failedOnly: false,
-      schedule: { cron: "0 9 * * *", tz: "America/New_York" },
+      schedule: { cron: "0 21 * * *", tz: "America/New_York" },
       weeklyType: "partner",
       weeklyOffice: office,
       topLevelFilters: [
@@ -124,7 +124,7 @@ Deno.test({ name: "WeeklyBuilder.publish — empty client recipients fall back t
   assertEquals((cfg as any).weeklyShift, "AM");
   // Regression guard for the "reports never fire" bug: the tick requires BOTH.
   assertEquals((cfg as any).enabled, true);
-  assertEquals(cfg!.schedule?.cron, "0 9 * * *");
+  assertEquals(cfg!.schedule?.cron, "0 21 * * *");
   assertEquals(cfg!.schedule?.tz, "America/New_York");
   assert(Array.isArray(cfg!.topLevelFilters), "topLevelFilters must persist");
   assert(cfg!.topLevelFilters!.some((f) => f.field === "auditType" && f.value === "internal"));
@@ -165,7 +165,7 @@ Deno.test({ name: "WeeklyBuilder.publish — partner config falls back to partne
   assertEquals(cfg!.recipients?.sort(), ["east-asst@example.com", "east-gm@example.com"]);
   assertEquals((cfg as any).weeklyOffice, "EAST");
   assertEquals((cfg as any).enabled, true);
-  assertEquals(cfg!.schedule?.cron, "0 9 * * *");
+  assertEquals(cfg!.schedule?.cron, "0 21 * * *");
 }});
 
 Deno.test({ name: "WeeklyBuilder.publish — duplicate staged config is skipped on second publish", sanitizeOps: false, sanitizeResources: false, fn: async () => {
@@ -219,9 +219,9 @@ Deno.test({ name: "WeeklyBuilder.publish — staggers send times 10 min apart", 
     internalStaged("C", null, "C Weekly", ["m@x.com"]),
   ]));
   const list = await listEmailReportConfigs(ORG as any);
-  assertEquals(list.find((c) => c.name === "A Weekly")!.schedule?.cron, "0 9 * * *");
-  assertEquals(list.find((c) => c.name === "B Weekly")!.schedule?.cron, "10 9 * * *");
-  assertEquals(list.find((c) => c.name === "C Weekly")!.schedule?.cron, "20 9 * * *");
+  assertEquals(list.find((c) => c.name === "A Weekly")!.schedule?.cron, "0 21 * * *");
+  assertEquals(list.find((c) => c.name === "B Weekly")!.schedule?.cron, "10 21 * * *");
+  assertEquals(list.find((c) => c.name === "C Weekly")!.schedule?.cron, "20 21 * * *");
 }});
 
 Deno.test({ name: "WeeklyBuilder.publish — a custom (edited) send time is kept, not staggered", sanitizeOps: false, sanitizeResources: false, fn: async () => {

@@ -76,9 +76,24 @@ async function computeDeptShifts(org: OrgId): Promise<Record<string, string[]>> 
 interface StagedConfig {
   type: "internal" | "partner";
   department?: string;
+  /** Set for a multi-department report; the single `department` stays unset. */
+  departments?: string[];
   office?: string;
   shift?: string | null;
   config: EmailReportConfig;
+}
+
+/** Every department a staged item / saved config covers — unifies the
+ *  single-department and multi-department shapes. */
+function deptsOf(x: { department?: string; departments?: string[] }): string[] {
+  if (x.departments?.length) return x.departments;
+  return x.department ? [x.department] : [];
+}
+
+function sameDeptSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const s = new Set(a);
+  return b.every((d) => s.has(d));
 }
 
 // The staged config — including any per-report customizations made in the
@@ -91,7 +106,7 @@ function isDuplicate(staged: StagedConfig, existing: EmailReportConfig[]): boole
     if (!c.weeklyType) return false;
     if (staged.type === "internal") {
       return c.weeklyType === "internal" &&
-        c.weeklyDepartment === staged.department &&
+        sameDeptSet(deptsOf(c), deptsOf(staged)) &&
         (c.weeklyShift ?? null) === (staged.shift ?? null);
     }
     return c.weeklyType === "partner" && c.weeklyOffice === staged.office;
@@ -212,8 +227,10 @@ export class WeeklyBuilderController {
       // Fall back to manager-scope / office recipients and weekly defaults only
       // when the client left a field empty; otherwise persist the customized
       // config as-is (sections, filters, recipients all come through).
+      // For a multi-department report, the manager-scope fallback is the union
+      // of every member department's managers (deduped).
       const fallbackRecipients = staged.type === "internal"
-        ? (deptEmails[staged.department ?? ""] ?? [])
+        ? [...new Set(deptsOf(staged).flatMap((d) => deptEmails[d] ?? []))]
         : ((partnerDims.offices ?? {})[staged.office ?? ""] ?? []);
 
       const isCustomTime = !!cfg.schedule?.cron && cfg.schedule.cron !== DEFAULT_WEEKLY_CRON;
@@ -227,6 +244,7 @@ export class WeeklyBuilderController {
         schedule,
         ...({
           weeklyDepartment: cfg.weeklyDepartment ?? staged.department,
+          weeklyDepartments: cfg.weeklyDepartments ?? (deptsOf(staged).length ? deptsOf(staged) : undefined),
           weeklyShift: cfg.weeklyShift ?? (staged.shift ?? undefined),
           weeklyOffice: cfg.weeklyOffice ?? staged.office,
         } as any),

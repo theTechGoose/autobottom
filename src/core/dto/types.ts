@@ -271,6 +271,10 @@ export interface EmailReportConfig {
   /** Set by Weekly Builder so dupe-detection + scope-aware recipient
    *  recomputation can find the staged item later. */
   weeklyDepartment?: string;
+  /** Every department a (possibly multi-department) report covers. Drives the
+   *  Builder's "published" marking across all member departments. For a
+   *  single-department report this is just `[weeklyDepartment]`. */
+  weeklyDepartments?: string[];
   weeklyShift?: string;
   weeklyOffice?: string;
   templateId?: string;

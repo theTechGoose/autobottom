@@ -34,6 +34,7 @@ export async function saveEmailReportConfig(
     ...(config.failedOnly != null ? { failedOnly: config.failedOnly } : {}),
     ...(config.weeklyType ? { weeklyType: config.weeklyType } : {}),
     ...(config.weeklyDepartment ? { weeklyDepartment: config.weeklyDepartment } : {}),
+    ...(config.weeklyDepartments?.length ? { weeklyDepartments: config.weeklyDepartments } : {}),
     ...(config.weeklyShift ? { weeklyShift: config.weeklyShift } : {}),
     ...(config.weeklyOffice ? { weeklyOffice: config.weeklyOffice } : {}),
     ...(config.templateId ? { templateId: config.templateId } : {}),

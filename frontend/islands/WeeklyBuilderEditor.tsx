@@ -18,6 +18,7 @@ interface ExistingConfig {
   name: string;
   weeklyType?: string;
   weeklyDepartment?: string;
+  weeklyDepartments?: string[];
   weeklyShift?: string;
   weeklyOffice?: string;
 }
@@ -35,6 +36,8 @@ interface DataResponse {
 interface StagedConfig {
   type: "internal" | "partner";
   department?: string;
+  /** Set for a multi-department report; `department` stays unset then. */
+  departments?: string[];
   office?: string;
   shift?: string | null;
   config: ReportConfig;
@@ -59,6 +62,10 @@ export default function WeeklyBuilderEditor() {
   const [saExcludeDepts, setSaExcludeDepts] = useState<string[]>([]);
   const [saExcludeOffices, setSaExcludeOffices] = useState<string[]>([]);
   const [globalEmails, setGlobalEmails] = useState<string[]>([]);
+  // Multi-department building: departments ticked in the tree (Flow A) and
+  // staged-item indices ticked for merging (Flow B).
+  const [selDepts, setSelDepts] = useState<string[]>([]);
+  const [selStaged, setSelStaged] = useState<number[]>([]);
 
   useEffect(() => { void load(); }, []);
   async function load() {
@@ -121,14 +128,17 @@ export default function WeeklyBuilderEditor() {
   function isPublished(s: { type: "internal" | "partner"; department?: string; office?: string; shift?: string | null }): boolean {
     if (!data) return false;
     return data.existingConfigs.some((c) => {
-      if (c.weeklyType !== s.type) return false;
-      if (s.type === "internal") return c.weeklyDepartment === s.department && (c.weeklyShift ?? null) === (s.shift ?? null);
-      return c.weeklyOffice === s.office;
+      if (s.type === "internal") return coversDept(c, s.department ?? "", s.shift ?? null);
+      return c.weeklyType === "partner" && c.weeklyOffice === s.office;
     });
   }
 
   function isStaged(s: { type: "internal" | "partner"; department?: string; office?: string; shift?: string | null }): boolean {
-    return staged.some((x) => x.type === s.type && x.department === s.department && x.office === s.office && (x.shift ?? null) === (s.shift ?? null));
+    return staged.some((x) => {
+      if (x.type !== s.type) return false;
+      if (s.type === "internal") return deptsOfStaged(x).includes(s.department ?? "") && (x.shift ?? null) === (s.shift ?? null);
+      return x.office === s.office;
+    });
   }
 
   function buildName(s: { type: "internal" | "partner"; department?: string; office?: string; shift?: string | null }): string {
@@ -175,6 +185,53 @@ export default function WeeklyBuilderEditor() {
       config: buildStagedConfig(s),
     }]);
     setMsg(null);
+  }
+
+  /** Build a combined (all-shifts) internal report covering several departments
+   *  — one section each, recipients = union of every department's managers. */
+  function buildStagedConfigMulti(departments: string[]): ReportConfig {
+    return {
+      name: autoNameForDepts(reportName, departments),
+      recipients: dedupeEmails(departments.flatMap((d) => deptEmails[d] ?? [])),
+      reportSections: buildMultiSections(departments),
+      dateRange: { mode: "weekly", startDay: 1 },
+      onlyCompleted: true,
+      enabled: true,
+      failedOnly: false,
+      schedule: { cron: "0 21 * * *", tz: "America/New_York" },
+      weeklyType: "internal",
+      weeklyDepartments: departments,
+      topLevelFilters: multiDeptFilters(),
+    };
+  }
+
+  /** Flow A: stage the ticked departments as ONE combined report. */
+  function stageMulti(departments: string[]) {
+    if (departments.length === 0) return;
+    const exists = staged.some((x) => x.type === "internal" && (x.shift ?? null) === null && sameDeptSet(deptsOfStaged(x), departments));
+    if (!exists) {
+      setStaged([...staged, { type: "internal", departments, shift: null, config: buildStagedConfigMulti(departments) }]);
+    }
+    setSelDepts([]);
+    setMsg(exists ? { kind: "err", text: "That exact department set is already staged." } : null);
+  }
+
+  /** Flow B: merge the ticked staged internal reports into one combined report. */
+  function mergeStaged() {
+    const idxs = selStaged.filter((i) => staged[i]?.type === "internal");
+    if (idxs.length < 2) return;
+    const departments = mergeDepartments(idxs.map((i) => staged[i]));
+    const remaining = staged.filter((_, i) => !idxs.includes(i));
+    setStaged([...remaining, { type: "internal", departments, shift: null, config: buildStagedConfigMulti(departments) }]);
+    setSelStaged([]);
+    setMsg({ kind: "ok", text: `Merged ${idxs.length} reports into one covering ${departments.length} department${departments.length === 1 ? "" : "s"}.` });
+  }
+
+  function toggleSelDept(dept: string) {
+    setSelDepts((p) => p.includes(dept) ? p.filter((d) => d !== dept) : [...p, dept]);
+  }
+  function toggleSelStaged(idx: number) {
+    setSelStaged((p) => p.includes(idx) ? p.filter((i) => i !== idx) : [...p, idx]);
   }
 
   /** Bulk-stage every non-excluded department / office. Each report keeps its
@@ -230,7 +287,7 @@ export default function WeeklyBuilderEditor() {
     closeEdit();
   }
 
-  function unstage(idx: number) { setStaged(staged.filter((_, i) => i !== idx)); }
+  function unstage(idx: number) { setStaged(staged.filter((_, i) => i !== idx)); setSelStaged([]); }
 
   async function sendTest() {
     if (!testEmail.trim()) { setMsg({ kind: "err", text: "Enter a test email first." }); return; }
@@ -326,7 +383,18 @@ export default function WeeklyBuilderEditor() {
           </div>
 
           <div style="margin-bottom:14px;">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:6px;">Internal — Departments</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);">Internal — Departments</div>
+              <div style="font-size:9px;color:var(--text-dim);">tick ☑ several, then combine</div>
+            </div>
+            {/* Multi-select action bar — tick departments to combine into one report. */}
+            {selDepts.length > 0 && (
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 8px;background:var(--bg-raised);border:1px solid var(--accent);border-radius:6px;">
+                <span style="font-size:11px;color:var(--text-bright);font-weight:600;flex:1;min-width:0;">{selDepts.length} selected: <span style="color:var(--text-muted);font-weight:400;">{selDepts.join(", ")}</span></span>
+                <button class="sf-btn primary" type="button" onClick={() => stageMulti(selDepts)} style="font-size:10px;white-space:nowrap;">+ Stage {selDepts.length} as one report</button>
+                <button class="sf-btn ghost" type="button" onClick={() => setSelDepts([])} style="font-size:10px;">Clear</button>
+              </div>
+            )}
             {internalDepts.length === 0
               ? <div style="font-size:11px;color:var(--text-dim);padding:6px 0;">None.</div>
               : <div style="display:flex;flex-direction:column;gap:6px;">
@@ -336,6 +404,8 @@ export default function WeeklyBuilderEditor() {
                       dept={dept}
                       shifts={shiftsForDept(dept)}
                       recipients={deptEmails[dept] ?? []}
+                      selected={selDepts.includes(dept)}
+                      onToggleSelect={() => toggleSelDept(dept)}
                       published={(shift) => isPublished({ type: "internal", department: dept, shift })}
                       staged={(shift) => isStaged({ type: "internal", department: dept, shift })}
                       onStage={(shift) => stage({ type: "internal", department: dept, shift })}
@@ -370,7 +440,12 @@ export default function WeeklyBuilderEditor() {
 
         {/* Right pane — staged list */}
         <div class="card">
-          <div class="tbl-title" style="margin:0 0 10px;">Staged ({staged.length})</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 10px;">
+            <div class="tbl-title" style="margin:0;">Staged ({staged.length})</div>
+            {selStaged.filter((i) => staged[i]?.type === "internal").length >= 2 && (
+              <button class="sf-btn primary" type="button" onClick={mergeStaged} style="font-size:10px;white-space:nowrap;">Merge {selStaged.filter((i) => staged[i]?.type === "internal").length} into one report</button>
+            )}
+          </div>
           {staged.length === 0
             ? <div style="font-size:11px;color:var(--text-dim);padding:14px;text-align:center;border:1px dashed var(--border);border-radius:8px;">Stage a department or office on the left.</div>
             : <div style="display:flex;flex-direction:column;gap:8px;">
@@ -378,14 +453,17 @@ export default function WeeklyBuilderEditor() {
                   const recips = dedupeEmails([...(s.config.recipients ?? []), ...globalEmails]);
                   const noEmails = recips.length === 0;
                   return (
-                  <div key={i} style={`display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;background:${noEmails ? "rgba(248,81,73,0.12)" : "var(--bg)"};border:1px solid ${noEmails ? "var(--red)" : "var(--border)"};`}>
+                  <div key={i} style={`display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;background:${noEmails ? "rgba(248,81,73,0.12)" : "var(--bg)"};border:1px solid ${selStaged.includes(i) ? "var(--accent)" : noEmails ? "var(--red)" : "var(--border)"};`}>
+                    {s.type === "internal" && (
+                      <input type="checkbox" checked={selStaged.includes(i)} onChange={() => toggleSelStaged(i)} title="Tick 2+ to merge into one report" style="cursor:pointer;flex-shrink:0;" />
+                    )}
                     <div style="flex:1;min-width:0;">
                       <div style="font-size:12px;font-weight:600;color:var(--text-bright);">
                         {s.config.name}
                         {noEmails && <span style="margin-left:6px;font-size:8px;font-weight:700;letter-spacing:0.5px;background:var(--red);color:#fff;padding:1px 6px;border-radius:4px;vertical-align:middle;">NO EMAILS</span>}
                       </div>
                       <div style="font-size:10px;color:var(--text-dim);margin-top:2px;">
-                        {s.type === "internal" ? `Internal · ${s.department}${s.shift ? ` · ${s.shift}` : ""}` : `Partner · ${s.office}`}
+                        {s.type === "internal" ? `Internal · ${deptsOfStaged(s).join(" + ") || "—"}${s.shift ? ` · ${s.shift}` : ""}` : `Partner · ${s.office}`}
                         {" · "}
                         <span style={noEmails ? "color:var(--red);" : ""}>{recips.length} recipient{recips.length === 1 ? "" : "s"}</span>
                       </div>
@@ -464,6 +542,76 @@ export default function WeeklyBuilderEditor() {
       )}
     </div>
   );
+}
+
+/** Standard columns for a weekly report section. */
+export const WEEKLY_COLS = ["finalizedAt", "voName", "department", "score", "recordId", "findingId"];
+
+/** Departments a saved/existing config covers — unifies the single- and
+ *  multi-department shapes (`weeklyDepartments` wins; falls back to the lone
+ *  `weeklyDepartment`). */
+export function deptsOfConfig(c: { weeklyDepartment?: string; weeklyDepartments?: string[] }): string[] {
+  if (c.weeklyDepartments?.length) return c.weeklyDepartments;
+  return c.weeklyDepartment ? [c.weeklyDepartment] : [];
+}
+
+/** Departments a staged item covers (multi or single). */
+export function deptsOfStaged(s: { department?: string; departments?: string[] }): string[] {
+  if (s.departments?.length) return s.departments;
+  return s.department ? [s.department] : [];
+}
+
+/** Does an existing internal config cover `dept` at this shift level? Lets the
+ *  Builder mark EVERY member department of a multi-department report as
+ *  published, not just one. */
+export function coversDept(
+  c: { weeklyType?: string; weeklyShift?: string; weeklyDepartment?: string; weeklyDepartments?: string[] },
+  dept: string,
+  shift: string | null,
+): boolean {
+  if (c.weeklyType !== "internal") return false;
+  if ((c.weeklyShift ?? null) !== (shift ?? null)) return false;
+  return deptsOfConfig(c).includes(dept);
+}
+
+/** Two department sets equal, order-insensitive. */
+export function sameDeptSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const s = new Set(a);
+  return b.every((d) => s.has(d));
+}
+
+/** Auto-name for a (possibly multi-) department report — joins the departments
+ *  with " + ". Editable afterward in the staging editor. */
+export function autoNameForDepts(reportName: string, departments: string[]): string {
+  return `${reportName} — ${departments.join(" + ")}`;
+}
+
+/** One section per department, each listing that department's audits. */
+export function buildMultiSections(departments: string[]): ReportConfig["reportSections"] {
+  return departments.map((d) => ({
+    header: d,
+    columns: WEEKLY_COLS,
+    criteria: [{ field: "department", operator: "equals", value: d }],
+  })) as ReportConfig["reportSections"];
+}
+
+/** Top-level filters for an internal multi-department report — audit type +
+ *  drop pending appeals. No single-department filter; each section carries its
+ *  own (mirrors the single-department builder's appeal guard). */
+export function multiDeptFilters(): ReportConfig["topLevelFilters"] {
+  return [
+    { field: "auditType", operator: "equals", value: "internal" },
+    { field: "appealStatus", operator: "not_equals", value: "pending" },
+  ] as ReportConfig["topLevelFilters"];
+}
+
+/** Union of departments across staged items, in first-seen order — used by
+ *  "merge selected into one report". */
+export function mergeDepartments(items: Array<{ department?: string; departments?: string[] }>): string[] {
+  const out: string[] = [];
+  for (const it of items) for (const d of deptsOfStaged(it)) if (!out.includes(d)) out.push(d);
+  return out;
 }
 
 export function dedupeEmails(arr: string[]): string[] {
@@ -628,7 +776,7 @@ function EmailChips({ label, placeholder, value, onChange }: {
   );
 }
 
-function buildFilters(s: StagedConfig) {
+function buildFilters(s: { type: "internal" | "partner"; department?: string; office?: string; shift?: string | null }) {
   const filters: { field: string; operator: string; value: string }[] = [];
   if (s.type === "internal") {
     filters.push({ field: "auditType", operator: "equals", value: "internal" });
@@ -639,13 +787,15 @@ function buildFilters(s: StagedConfig) {
     if (s.office) filters.push({ field: "department", operator: "equals", value: s.office });
   }
   filters.push({ field: "appealStatus", operator: "not_equals", value: "pending" });
-  return filters;
+  return filters as ReportConfig["topLevelFilters"];
 }
 
-function DeptRow({ dept, shifts, recipients, published, staged, onStage }: {
+function DeptRow({ dept, shifts, recipients, selected, onToggleSelect, published, staged, onStage }: {
   dept: string;
   shifts: string[];
   recipients: string[];
+  selected: boolean;
+  onToggleSelect: () => void;
   published: (shift: string | null) => boolean;
   staged: (shift: string | null) => boolean;
   onStage: (shift: string | null) => void;
@@ -653,8 +803,9 @@ function DeptRow({ dept, shifts, recipients, published, staged, onStage }: {
   const allShiftAlready = published(null);
   const allShiftStaged = staged(null);
   return (
-    <div style="border:1px solid var(--border);border-radius:6px;background:var(--bg);">
+    <div style={`border:1px solid ${selected ? "var(--accent)" : "var(--border)"};border-radius:6px;background:var(--bg);`}>
       <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;">
+        <input type="checkbox" checked={selected} onChange={onToggleSelect} title="Tick to combine with other departments into one report" style="cursor:pointer;flex-shrink:0;" />
         <div style="flex:1;min-width:0;">
           <div style="font-size:12px;font-weight:600;color:var(--text-bright);">{dept}</div>
           <div style="font-size:10px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{recipients.length > 0 ? recipients.join(", ") : "no manager-scope recipients"}</div>

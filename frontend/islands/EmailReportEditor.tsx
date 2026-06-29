@@ -51,6 +51,9 @@ export interface ReportConfig {
    *  via the in-modal Weekly editor. */
   weeklyType?: "internal" | "partner" | "both";
   weeklyDepartment?: string;
+  /** Every department a multi-department report covers (single-dept reports
+   *  leave this unset and use `weeklyDepartment`). */
+  weeklyDepartments?: string[];
   weeklyShift?: string;
   weeklyOffice?: string;
   /** HH:mm in EST — UI-only preference, persisted as-is. */

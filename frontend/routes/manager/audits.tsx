@@ -180,7 +180,7 @@ export default define.page(async function ManagerAuditsPage(ctx) {
           </div>
         </div>
         <div class="form-group" style="margin-bottom:0;">
-          <label>Agent</label>
+          <label>Team Member</label>
           <select name="owner">
             <option value="">All</option>
             {data.owners.map((o) => <option key={o} value={o} selected={o === owner}>{o}</option>)}

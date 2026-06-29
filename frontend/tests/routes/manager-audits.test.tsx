@@ -26,7 +26,7 @@ Deno.test("ManagerAudits — empty state renders 'No audits match the current fi
 
 Deno.test("ManagerAudits — table renders all expected column headers", () => {
   const html = renderHTML(renderAuditHistoryTable(fixture()));
-  for (const header of ["Finding", "Agent", "Office / Dept", "Shift", "Score", "Reviewed", "Appeal", "Started"]) {
+  for (const header of ["Finding", "Team Member", "Office / Dept", "Shift", "Score", "Reviewed", "Appeal", "Started"]) {
     assertContains(html, header);
   }
 });

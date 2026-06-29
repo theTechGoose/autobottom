@@ -90,7 +90,7 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
           <thead>
             <tr>
               <th>Finding</th>
-              <th>Agent</th>
+              <th>Team Member</th>
               <th>Office / Dept</th>
               <th>Shift</th>
               <th>Score</th>

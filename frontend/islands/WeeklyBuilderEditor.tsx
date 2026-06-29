@@ -557,6 +557,18 @@ function ChipSearch({ label, placeholder, options, selected, onChange, listId }:
   );
 }
 
+/** Merge free-text email input into the existing list: split on commas,
+ *  semicolons, and whitespace (so a pasted comma-separated list becomes
+ *  separate chips, not one giant blob), trim, and dedupe case-insensitively. */
+export function mergeEmailInput(existing: string[], text: string): string[] {
+  const next = [...existing];
+  for (const raw of text.split(/[\s,;]+/)) {
+    const p = raw.trim();
+    if (p && !next.some((x) => x.toLowerCase() === p.toLowerCase())) next.push(p);
+  }
+  return next;
+}
+
 function EmailChips({ label, placeholder, value, onChange }: {
   label: string;
   placeholder: string;
@@ -564,9 +576,9 @@ function EmailChips({ label, placeholder, value, onChange }: {
   onChange: (next: string[]) => void;
 }) {
   const [q, setQ] = useState("");
-  const add = () => {
-    const v = q.trim().replace(/,+$/, "").trim();
-    if (v && !value.some((x) => x.toLowerCase() === v.toLowerCase())) onChange([...value, v]);
+  const commit = (text: string) => {
+    if (!text.trim()) { setQ(""); return; }
+    onChange(mergeEmailInput(value, text));
     setQ("");
   };
   return (
@@ -574,12 +586,13 @@ function EmailChips({ label, placeholder, value, onChange }: {
       <label style="display:block;font-size:10px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px;">{label}</label>
       <input
         class="sf-input"
-        type="email"
+        type="text"
         value={q}
         placeholder={placeholder}
         onInput={(e) => setQ((e.target as HTMLInputElement).value)}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); } }}
-        onBlur={add}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === "," || e.key === ";") { e.preventDefault(); commit(q); } }}
+        onPaste={(e) => { e.preventDefault(); commit(q + " " + ((e as ClipboardEvent).clipboardData?.getData("text") ?? "")); }}
+        onBlur={() => commit(q)}
         style="font-size:12px;width:100%;"
       />
       {value.length > 0 && (

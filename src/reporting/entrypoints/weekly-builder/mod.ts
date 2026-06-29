@@ -55,7 +55,7 @@ function buildEphemeralConfig(staged: StagedConfig, recipients: string[]): Email
     weeklyType: staged.type,
     dateRange: { mode: "weekly", startDay: 1 },
     onlyCompleted: true,
-    schedule: { cron: "0 1 * * *" },
+    schedule: { cron: "0 9 * * *" },
     reportSections: [{
       header: staged.name,
       columns: ["finalizedAt", "voName", "department", "score", "recordId", "findingId"],
@@ -175,7 +175,7 @@ export class WeeklyBuilderController {
         dateRange: { mode: "weekly", startDay: 1 },
         onlyCompleted: true,
         weeklyType: staged.type,
-        schedule: { cron: "0 1 * * *" },
+        schedule: { cron: "0 9 * * *" },
         // Persist the staged metadata + filters so the cron + rerun knows what to filter.
         ...({
           weeklyDepartment: staged.department,

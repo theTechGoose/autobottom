@@ -12,6 +12,7 @@ import type {
   AuditDoneIndexEntry,
   CriteriaRule,
   ReportColumnKey,
+  AppealRecord,
 } from "@core/dto/types.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
@@ -150,19 +151,34 @@ export async function queryReportData(
   const needsMcc = sections.some((s) => s.columns.includes("mostRecentActiveMccId"));
   const mccRowMeta: { sectionIdx: number; rowIdx: number; recordId: string; isPackage: boolean }[] = [];
 
-  // Hydrate candidates in batches to avoid hammering KV concurrency limits
+  // The finding doc is only needed for question-level criteria
+  // (questionHeader / questionAnswer) or the guestName column. Otherwise every
+  // field the report uses is on the index row, so we synthesize a minimal
+  // finding + appeal from the entry and skip getFinding/getAppeal entirely.
+  // The downstream filter/extract code runs identically against the synthetic
+  // docs — this is what removes the per-finding crawl at send time.
+  const needsFinding = reportNeedsFinding(config);
   const HYDRATE_BATCH = 20;
   const hydrated: { entry: AuditDoneIndexEntry; finding: Awaited<ReturnType<typeof getFinding>>; appealRecord: Awaited<ReturnType<typeof getAppeal>> }[] = [];
   for (let i = 0; i < candidates.length; i += HYDRATE_BATCH) {
     const batch = candidates.slice(i, i + HYDRATE_BATCH);
-    const results = await Promise.all(batch.map(async (entry) => {
-      const [finding, appealRecord] = await Promise.all([
-        getFinding(orgId, entry.findingId),
-        getAppeal(orgId, entry.findingId),
-      ]);
-      return { entry, finding, appealRecord };
+    const batchHydrated = await Promise.all(batch.map(async (entry) => {
+      if (needsFinding) {
+        const [finding, appealRecord] = await Promise.all([
+          getFinding(orgId, entry.findingId),
+          getAppeal(orgId, entry.findingId),
+        ]);
+        return { entry, finding, appealRecord };
+      }
+      // Index-only: appeal is read ONLY for rows written before appealStatus was
+      // stamped (transitional — they self-heal as the weekly window rolls past
+      // the deploy). Stamped rows need no DB read at all.
+      const appealRecord = entry.appealStatus !== undefined
+        ? syntheticAppealFromStatus(entry.appealStatus)
+        : await getAppeal(orgId, entry.findingId);
+      return { entry, finding: syntheticFindingFromEntry(entry) as Awaited<ReturnType<typeof getFinding>>, appealRecord };
     }));
-    hydrated.push(...results);
+    hydrated.push(...batchHydrated);
   }
 
   const topFilters = (config as any).topLevelFilters ?? [];
@@ -242,6 +258,40 @@ export async function queryReportData(
   }
 
   return results;
+}
+
+/** A report only needs the (heavy) finding doc when it filters on question-level
+ *  criteria (questionHeader / questionAnswer) or renders the guestName column.
+ *  Everything else lives on the index row. */
+function reportNeedsFinding(config: EmailReportConfig): boolean {
+  const rules: CriteriaRule[] = [
+    ...((config as any).topLevelFilters ?? []),
+    ...(config.reportSections ?? []).flatMap((s) => s.criteria ?? []),
+  ];
+  if (rules.some((r) => r.field === "questionHeader" || r.field === "questionAnswer")) return true;
+  const columns = (config.reportSections ?? []).flatMap((s) => s.columns ?? []);
+  return columns.includes("guestName");
+}
+
+/** Minimal finding shaped so the existing stat-derivation + extractRow produce
+ *  the same values they would from a real finding — sourced entirely from the
+ *  index row. Only used when reportNeedsFinding(config) is false. */
+function syntheticFindingFromEntry(entry: AuditDoneIndexEntry): Record<string, any> {
+  return {
+    id: entry.findingId,
+    recordingIdField: entry.isPackage ? "GenieNumber" : undefined,
+    record: {
+      RecordId: entry.recordId,
+      VoName: entry.voName,
+      ...(entry.isPackage ? { OfficeName: entry.department } : { ActivatingOffice: entry.department }),
+      Shift: entry.shift,
+    },
+  };
+}
+
+function syntheticAppealFromStatus(status: "none" | "pending" | "complete"): AppealRecord | null {
+  if (status === "none") return null;
+  return { findingId: "", appealedAt: 0, status: status === "complete" ? "complete" : "pending" };
 }
 
 // ── Criteria evaluator ───────────────────────────────────────────────────────

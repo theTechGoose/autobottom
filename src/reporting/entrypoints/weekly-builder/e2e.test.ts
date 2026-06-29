@@ -236,6 +236,18 @@ Deno.test({ name: "WeeklyBuilder.publish — a custom (edited) send time is kept
   assertEquals(cfg!.schedule?.cron, "30 20 * * *", "custom send time preserved, not staggered");
 }});
 
+Deno.test({ name: "WeeklyBuilder.global-recipients — saved list persists and is returned by getData", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const ORG = "wb-glob-" + crypto.randomUUID().slice(0, 8);
+  Deno.env.set("DEFAULT_ORG_ID", ORG);
+  const ctrl = new WeeklyBuilderController();
+
+  assertEquals((await ctrl.getData() as any).globalRecipients, []);
+  await ctrl.saveGlobalRecipients({ emails: ["support@x.com", " ceo@x.com ", ""] } as any);
+  // trims + drops empties, and survives a fresh getData (i.e. a page reload).
+  assertEquals((await ctrl.getData() as any).globalRecipients, ["support@x.com", "ceo@x.com"]);
+}});
+
 Deno.test({ name: "WeeklyBuilder.publish — empty configs returns error", sanitizeOps: false, sanitizeResources: false, fn: async () => {
   resetFirestoreCredentials();
   const controller = new WeeklyBuilderController();

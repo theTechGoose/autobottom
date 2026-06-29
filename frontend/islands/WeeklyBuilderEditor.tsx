@@ -29,6 +29,7 @@ interface DataResponse {
   existingConfigs: ExistingConfig[];
   auditDims: AuditDims;
   deptShifts?: Record<string, string[]>;
+  globalRecipients?: string[];
 }
 
 interface StagedConfig {
@@ -65,9 +66,21 @@ export default function WeeklyBuilderEditor() {
     try {
       const res = await fetch("/admin/weekly-builder/data");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setData(await res.json());
+      const json = await res.json();
+      setData(json);
+      setGlobalEmails(json.globalRecipients ?? []);
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
+  }
+
+  /** Persist the global "always include" list so it survives reloads. */
+  async function saveGlobalEmails(emails: string[]) {
+    try {
+      await fetch("/admin/weekly-builder/global-recipients", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ emails }),
+      });
+    } catch (e) { setMsg({ kind: "err", text: `Couldn't save the always-include emails: ${(e as Error).message}` }); }
   }
 
   // Invert manager scopes once: dept -> emails. Used for live recipient hints
@@ -290,7 +303,7 @@ export default function WeeklyBuilderEditor() {
           department managers + these). Lives above the panes so it applies to
           everything staged, individually or via Stage All. */}
       <div style="margin-bottom:14px;">
-        <EmailChips label="Always include these emails (added to every report)" placeholder="support@…, ceo@… — press Enter" value={globalEmails} onChange={setGlobalEmails} />
+        <EmailChips label="Always include these emails (added to every report)" placeholder="support@…, ceo@… — press Enter" value={globalEmails} onChange={(v) => { setGlobalEmails(v); void saveGlobalEmails(v); }} />
       </div>
 
       {msg && <div style={`margin-bottom:10px;font-size:11px;color:var(--${msg.kind === "ok" ? "green" : "red"});`}>{msg.text}</div>}

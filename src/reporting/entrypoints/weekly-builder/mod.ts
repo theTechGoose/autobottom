@@ -16,7 +16,7 @@ import { ReturnedType, BodyType } from "#danet/swagger-decorators";
 import { OkResponse, WeeklyDataResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import {
-  listEmailReportConfigs, saveEmailReportConfig,
+  listEmailReportConfigs, saveEmailReportConfig, getWeeklyGlobalRecipients, saveWeeklyGlobalRecipients,
 } from "@reporting/domain/data/email-repository/mod.ts";
 import {
   getPartnerDimensions, listManagerScopes, getOfficeBypassConfig, getAuditDimensions,
@@ -122,15 +122,25 @@ export class WeeklyBuilderController {
   @Get("data") @ReturnedType(WeeklyDataResponse)
   async getData() {
     const org = ORG();
-    const [partnerDims, managerScopes, bypassCfg, existingConfigs, auditDims, deptShifts] = await Promise.all([
+    const [partnerDims, managerScopes, bypassCfg, existingConfigs, auditDims, deptShifts, globalRecipients] = await Promise.all([
       getPartnerDimensions(org),
       managerScopesNoSuper(org),
       getOfficeBypassConfig(org),
       listEmailReportConfigs(org),
       getAuditDimensions(org),
       computeDeptShifts(org),
+      getWeeklyGlobalRecipients(org),
     ]);
-    return { partnerDims, managerScopes, bypassCfg, existingConfigs, auditDims, deptShifts };
+    return { partnerDims, managerScopes, bypassCfg, existingConfigs, auditDims, deptShifts, globalRecipients };
+  }
+
+  /** Persist the "always include on every report" global recipient list, so it
+   *  survives a page reload. */
+  @Post("global-recipients") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
+  async saveGlobalRecipients(@Body() body: GenericBodyRequest) {
+    const emails = (body as any)?.emails;
+    await saveWeeklyGlobalRecipients(ORG(), Array.isArray(emails) ? emails as string[] : []);
+    return { ok: true };
   }
 
   /** Send an ephemeral report to a single test address — no persistence. */

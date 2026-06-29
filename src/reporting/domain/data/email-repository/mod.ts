@@ -48,6 +48,18 @@ export async function deleteEmailReportConfig(orgId: OrgId, id: string): Promise
   await deleteStored("email-report-config", orgId, id);
 }
 
+// ── Weekly global recipients (the "always include on every report" list) ──────
+
+export async function getWeeklyGlobalRecipients(orgId: OrgId): Promise<string[]> {
+  const doc = await getStored<{ emails: string[] }>("weekly-global-recipients", orgId);
+  return Array.isArray(doc?.emails) ? doc!.emails : [];
+}
+
+export async function saveWeeklyGlobalRecipients(orgId: OrgId, emails: string[]): Promise<void> {
+  const clean = (emails ?? []).filter((e) => typeof e === "string" && e.trim()).map((e) => e.trim());
+  await setStored("weekly-global-recipients", orgId, [], { emails: clean });
+}
+
 // ── Email Report Previews (24h TTL) ──────────────────────────────────────────
 
 export interface EmailReportPreview { html: string; renderedAt: number; }

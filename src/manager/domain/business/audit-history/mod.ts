@@ -15,6 +15,12 @@ import { getManagerScope, getOfficeBypassConfig } from "@admin/domain/data/admin
 import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 
+/** Offices the super-manager (president) role never sees. Matched
+ *  case-insensitively as a substring via isOfficeBypassed(), so "JAY" also
+ *  covers the whole family — JAY209, JAY123, "JAY Resort", etc. The
+ *  super-manager view is "every department EXCEPT these". */
+const SUPER_MANAGER_EXCLUDED_OFFICES = ["JAY"];
+
 export interface AuditHistoryRow {
   findingId: string;
   ts: number;
@@ -101,13 +107,15 @@ function toRow(e: AuditDoneIndexEntry): AuditHistoryRow {
 
 /** Compute the manager-audit-history payload.
  *
- *  - role==="manager" → restrict to scope (departments/shifts) and to reviewed
- *    audits (manually reviewed, perfect_score auto-pass, or invalid_genie).
- *  - role==="admin"   → see everything in the window. */
+ *  - role==="manager"       → restrict to scope (departments/shifts) and to
+ *    reviewed audits (manually reviewed, perfect_score, or invalid_genie).
+ *  - role==="super-manager" → every department EXCEPT the JAY family, still
+ *    reviewed-only (the president's "manager view of all offices but JAY").
+ *  - role==="admin"         → see everything in the window. */
 export function getAuditHistory(
   orgId: OrgId,
   email: string,
-  role: "admin" | "manager",
+  role: "admin" | "manager" | "super-manager",
   filters: AuditHistoryFilters,
 ): Promise<AuditHistoryResult> {
   return withTiming("getAuditHistory", () => _getAuditHistoryRaw(orgId, email, role, filters), { category: "db" });
@@ -115,7 +123,7 @@ export function getAuditHistory(
 async function _getAuditHistoryRaw(
   orgId: OrgId,
   email: string,
-  role: "admin" | "manager",
+  role: "admin" | "manager" | "super-manager",
   filters: AuditHistoryFilters,
 ): Promise<AuditHistoryResult> {
   const owner = filters.owner ?? "";
@@ -154,6 +162,8 @@ async function _getAuditHistoryRaw(
     : windowEntries.filter((c) => !isOfficeBypassed(String(c.department ?? ""), bypassPatterns));
 
   // Scope to the manager's department+shift configuration; admin sees all.
+  // Super-manager sees every department EXCEPT the JAY family — no per-manager
+  // scope lookup, just the office exclusion.
   let scopedEntries = afterBypass;
   if (role === "manager") {
     const scope = await getManagerScope(orgId, email);
@@ -162,14 +172,19 @@ async function _getAuditHistoryRaw(
       if (scope.shifts.length > 0 && !c.isPackage && !scope.shifts.includes(c.shift ?? "")) return false;
       return true;
     });
+  } else if (role === "super-manager") {
+    scopedEntries = afterBypass.filter(
+      (c) => !isOfficeBypassed(String(c.department ?? ""), SUPER_MANAGER_EXCLUDED_OFFICES),
+    );
   }
 
   const reviewedIds = await getReviewedFindingIds(orgId);
   const isReviewed = (c: AuditHistoryRow) =>
     reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie";
 
-  // Managers only see reviewed audits.
-  const inWindow = scopedEntries.filter((c) => (!until || c.ts <= until) && (role !== "manager" || isReviewed(c)));
+  // Managers and super-managers only see reviewed audits; admin sees all.
+  const managerView = role === "manager" || role === "super-manager";
+  const inWindow = scopedEntries.filter((c) => (!until || c.ts <= until) && (!managerView || isReviewed(c)));
 
   const filtered = inWindow.filter((c) => {
     if (owner && (c.voName || c.owner) !== owner) return false;

@@ -111,7 +111,9 @@ export class ManagerController {
     @Query("role") role: string,
   ) {
     const orgId = ORG();
-    const effectiveRole = (role === "manager" ? "manager" : "admin") as "manager" | "admin";
+    const effectiveRole = (
+      role === "manager" ? "manager" : role === "super-manager" ? "super-manager" : "admin"
+    ) as "manager" | "admin" | "super-manager";
     return getAuditHistory(orgId, email ?? "", effectiveRole, {
       owner: owner || undefined,
       shift: shift || undefined,

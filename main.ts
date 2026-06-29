@@ -135,7 +135,7 @@ async function handleGetBadges(req: Request): Promise<Response> {
 async function handleManagerAuditHistory(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
-  if (auth.role !== "manager" && auth.role !== "admin") {
+  if (auth.role !== "manager" && auth.role !== "admin" && auth.role !== "super-manager") {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   const url = new URL(req.url);
@@ -157,10 +157,15 @@ async function handleManagerAuditHistory(req: Request): Promise<Response> {
   // backend calls — they only see the session cookie — so we read `?as=`
   // off the request URL directly.
   const asEmail = q.get("as");
-  const scopeEmail = (asEmail && auth.role === "admin") ? asEmail : auth.email;
+  const isImpersonating = Boolean(asEmail) && auth.role === "admin";
+  const scopeEmail = isImpersonating ? asEmail! : auth.email;
+  // Super-managers get the "all departments except JAY" view; everyone else
+  // hitting this endpoint (managers, or an admin impersonating one) gets the
+  // standard dept/shift-scoped manager experience.
+  const effectiveRole = (!isImpersonating && auth.role === "super-manager") ? "super-manager" : "manager";
   const { getAuditHistory } = await import("@manager/domain/business/audit-history/mod.ts");
   try {
-    const result = await getAuditHistory(auth.orgId, scopeEmail, "manager", {
+    const result = await getAuditHistory(auth.orgId, scopeEmail, effectiveRole, {
       owner: q.get("owner") || undefined,
       shift: q.get("shift") || undefined,
       department: q.get("department") || undefined,

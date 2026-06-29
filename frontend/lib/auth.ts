@@ -1,6 +1,6 @@
 /** Auth types, role-based routing, user resolution. */
 
-export type Role = "admin" | "judge" | "manager" | "reviewer" | "user";
+export type Role = "admin" | "super-manager" | "judge" | "manager" | "reviewer" | "user";
 
 export interface User {
   email: string;
@@ -32,6 +32,7 @@ export interface State {
 
 export const ROLE_REDIRECTS: Record<Role, string> = {
   admin: "/admin/dashboard",
+  "super-manager": "/manager",
   judge: "/judge",
   manager: "/manager",
   reviewer: "/review/dashboard",

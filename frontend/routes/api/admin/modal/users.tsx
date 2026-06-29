@@ -4,12 +4,13 @@ import { apiFetch } from "../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { Icon } from "../../../../components/Icons.tsx";
 
-const ROLE_COLORS: Record<string, string> = { admin: "blue", judge: "purple", manager: "yellow", reviewer: "green", user: "cyan" };
-const ROLE_BG: Record<string, string> = { admin: "var(--blue-bg)", judge: "var(--purple-bg)", manager: "var(--yellow-bg)", reviewer: "var(--green-bg)", user: "var(--cyan-bg)" };
-const ROLE_FG: Record<string, string> = { admin: "var(--blue)", judge: "var(--purple)", manager: "var(--yellow)", reviewer: "var(--green)", user: "var(--cyan)" };
+const ROLE_COLORS: Record<string, string> = { admin: "blue", "super-manager": "red", judge: "purple", manager: "yellow", reviewer: "green", user: "cyan" };
+const ROLE_BG: Record<string, string> = { admin: "var(--blue-bg)", "super-manager": "var(--red-bg)", judge: "var(--purple-bg)", manager: "var(--yellow-bg)", reviewer: "var(--green-bg)", user: "var(--cyan-bg)" };
+const ROLE_FG: Record<string, string> = { admin: "var(--blue)", "super-manager": "var(--red)", judge: "var(--purple)", manager: "var(--yellow)", reviewer: "var(--green)", user: "var(--cyan)" };
 
 const ROLES = [
   { role: "admin", name: "Admin", desc: "Full access. Manages judges & managers.", icon: Icon.users, bg: "var(--blue-bg)", fg: "var(--blue)" },
+  { role: "super-manager", name: "Super Manager", desc: "Manager view of every department except JAY.", icon: Icon.userCog, bg: "var(--red-bg)", fg: "var(--red)" },
   { role: "judge", name: "Judge", desc: "Reviews appeals. Owns reviewers.", icon: Icon.scale, bg: "var(--purple-bg)", fg: "var(--purple)" },
   { role: "manager", name: "Manager", desc: "Remediates failures. Scoped by dept+shift.", icon: Icon.clipboardList, bg: "var(--yellow-bg)", fg: "var(--yellow)" },
   { role: "reviewer", name: "Reviewer", desc: "Verifies audit findings.", icon: Icon.playCircle, bg: "var(--green-bg)", fg: "var(--green)" },

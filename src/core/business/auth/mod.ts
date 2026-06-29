@@ -11,7 +11,7 @@ const GLOBAL = "" as OrgId;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type Role = "admin" | "judge" | "manager" | "reviewer" | "user";
+export type Role = "admin" | "super-manager" | "judge" | "manager" | "reviewer" | "user";
 
 export interface OrgRecord {
   name: string;
@@ -275,7 +275,11 @@ const ROLE_HIERARCHY: Record<Role, number> = {
   reviewer: 1,
   manager: 2,
   judge: 3,
-  admin: 4,
+  // Super-manager (the president) sits directly below admin and above every
+  // manager. Gates in this codebase use exact-role checks, not hasRole(), so
+  // this ordering only affects requireRole()-style comparisons.
+  "super-manager": 4,
+  admin: 5,
 };
 
 export function hasRole(auth: AuthContext, minRole: Role): boolean {

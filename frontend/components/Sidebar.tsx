@@ -144,6 +144,8 @@ const ROLE_SECTION_MAP: Record<Role, SbSection[]> = {
   reviewer: REVIEWER_SECTIONS,
   judge: JUDGE_SECTIONS,
   manager: MANAGER_SECTIONS,
+  // Super-manager gets the same nav as a manager (Queue + Audit History).
+  "super-manager": MANAGER_SECTIONS,
   user: USER_SECTIONS,
 };
 

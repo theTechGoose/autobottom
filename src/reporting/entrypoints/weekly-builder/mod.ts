@@ -98,6 +98,21 @@ function isDuplicate(staged: StagedConfig, existing: EmailReportConfig[]): boole
   });
 }
 
+const WEEKLY_TZ = "America/New_York";
+const WEEKLY_BASE_HOUR = 9;        // 9:00 AM Eastern — the global base send time
+const WEEKLY_STAGGER_MINUTES = 10; // each report fires 10 min after the previous
+const DEFAULT_WEEKLY_CRON = `0 ${WEEKLY_BASE_HOUR} * * *`;
+
+/** Cron for the Nth staggered weekly slot: slot 0 = 9:00, 1 = 9:10, … rolling
+ *  into later hours. Spreads sends so the every-minute tick handles ~1 report
+ *  per slot instead of a 9 AM pile-up. */
+function staggeredWeeklyCron(slotIndex: number): string {
+  const total = WEEKLY_BASE_HOUR * 60 + slotIndex * WEEKLY_STAGGER_MINUTES;
+  const hh = Math.floor(total / 60) % 24;
+  const mm = total % 60;
+  return `${mm} ${hh} * * *`;
+}
+
 @SwaggerDescription("Weekly Builder — schedule and publish weekly email reports")
 @Controller("admin/weekly-builder")
 export class WeeklyBuilderController {
@@ -173,6 +188,11 @@ export class WeeklyBuilderController {
       }
     }
 
+    // Stagger send times so reports don't all fire in the same minute. New
+    // reports continue from however many weekly reports already exist (10 min
+    // apart off the 9 AM base). A report keeps its own time if it was given a
+    // custom one in the editor — i.e. its cron differs from the default.
+    let slot = (existingConfigs as Array<{ weeklyType?: string }>).filter((c) => c.weeklyType).length;
     let created = 0;
     const skipped: string[] = [];
     for (const staged of configs) {
@@ -181,17 +201,20 @@ export class WeeklyBuilderController {
       const cfg = staged.config;
       // Fall back to manager-scope / office recipients and weekly defaults only
       // when the client left a field empty; otherwise persist the customized
-      // config as-is (sections, filters, schedule, recipients all come through).
+      // config as-is (sections, filters, recipients all come through).
       const fallbackRecipients = staged.type === "internal"
         ? (deptEmails[staged.department ?? ""] ?? [])
         : ((partnerDims.offices ?? {})[staged.office ?? ""] ?? []);
+
+      const isCustomTime = !!cfg.schedule?.cron && cfg.schedule.cron !== DEFAULT_WEEKLY_CRON;
+      const schedule = isCustomTime ? cfg.schedule! : { cron: staggeredWeeklyCron(slot++), tz: WEEKLY_TZ };
 
       await saveEmailReportConfig(org, {
         ...cfg,
         recipients: cfg.recipients?.length ? cfg.recipients : fallbackRecipients,
         weeklyType: cfg.weeklyType ?? staged.type,
         enabled: cfg.enabled ?? true,
-        schedule: cfg.schedule ?? { cron: "0 9 * * *", tz: "America/New_York" },
+        schedule,
         ...({
           weeklyDepartment: cfg.weeklyDepartment ?? staged.department,
           weeklyShift: cfg.weeklyShift ?? (staged.shift ?? undefined),

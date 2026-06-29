@@ -208,6 +208,34 @@ Deno.test({ name: "WeeklyBuilder — super-managers (president role) are exclude
   assertEquals(cfg!.recipients, ["mgr@example.com"]);
 }});
 
+Deno.test({ name: "WeeklyBuilder.publish — staggers send times 10 min apart", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const ORG = "wb-stagger-" + crypto.randomUUID().slice(0, 8);
+  Deno.env.set("DEFAULT_ORG_ID", ORG);
+  await saveManagerScope(ORG as any, "m@x.com", { departments: ["A", "B", "C"], shifts: [] });
+  await new WeeklyBuilderController().publish(publishBody([
+    internalStaged("A", null, "A Weekly", ["m@x.com"]),
+    internalStaged("B", null, "B Weekly", ["m@x.com"]),
+    internalStaged("C", null, "C Weekly", ["m@x.com"]),
+  ]));
+  const list = await listEmailReportConfigs(ORG as any);
+  assertEquals(list.find((c) => c.name === "A Weekly")!.schedule?.cron, "0 9 * * *");
+  assertEquals(list.find((c) => c.name === "B Weekly")!.schedule?.cron, "10 9 * * *");
+  assertEquals(list.find((c) => c.name === "C Weekly")!.schedule?.cron, "20 9 * * *");
+}});
+
+Deno.test({ name: "WeeklyBuilder.publish — a custom (edited) send time is kept, not staggered", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const ORG = "wb-custom-" + crypto.randomUUID().slice(0, 8);
+  Deno.env.set("DEFAULT_ORG_ID", ORG);
+  await saveManagerScope(ORG as any, "m@x.com", { departments: ["A"], shifts: [] });
+  const staged = internalStaged("A", null, "A Weekly", ["m@x.com"]);
+  (staged.config as any).schedule = { cron: "30 20 * * *", tz: "America/New_York" }; // edited → 8:30 PM
+  await new WeeklyBuilderController().publish(publishBody([staged]));
+  const cfg = (await listEmailReportConfigs(ORG as any)).find((c) => c.name === "A Weekly");
+  assertEquals(cfg!.schedule?.cron, "30 20 * * *", "custom send time preserved, not staggered");
+}});
+
 Deno.test({ name: "WeeklyBuilder.publish — empty configs returns error", sanitizeOps: false, sanitizeResources: false, fn: async () => {
   resetFirestoreCredentials();
   const controller = new WeeklyBuilderController();

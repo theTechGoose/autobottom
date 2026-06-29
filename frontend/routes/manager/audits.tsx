@@ -88,6 +88,17 @@ export default define.page(async function ManagerAuditsPage(ctx) {
 
   return (
     <Layout title="Audit History" section="manager" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
+      <style>{`
+        .ah-update .ah-update-spin{ display:none; }
+        .ah-update.is-loading .ah-update-text{ display:none; }
+        .ah-update.is-loading .ah-update-spin{ display:inline-block; }
+        .ah-update:disabled{ opacity:0.4; cursor:default; box-shadow:none; }
+        .ah-update.is-dirty{ opacity:1; box-shadow:0 0 0 2px rgba(88,166,255,0.55); }
+        .ah-loading{ display:none; }
+        .ah-loading.htmx-request{ display:flex; gap:10px; align-items:center; justify-content:center; position:absolute; inset:0; z-index:5; background:rgba(13,17,23,0.55); border-radius:8px; }
+        .ah-loading-spinner{ width:20px; height:20px; border-width:3px; }
+        .ah-loading-text{ color:var(--text-bright); font-size:13px; font-weight:600; }
+      `}</style>
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
         <div>
           <h1>Audit History</h1>
@@ -126,9 +137,20 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         style="margin-bottom:16px;padding:14px 18px;display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;"
         hx-get="/api/manager/audit-history"
         hx-target="#audit-history-table"
-        hx-trigger="change delay:200ms"
         hx-swap="innerHTML"
         hx-include="closest form"
+        hx-indicator="#ah-loading"
+        {...{
+          // Changing any filter no longer auto-loads — it lights up the Update
+          // button so the refresh is an explicit, visible action.
+          "hx-on:change": "var b=document.getElementById('ah-update'); if(b){b.disabled=false; b.classList.add('is-dirty');}",
+          // While the request is in flight, the button shows a spinner (the
+          // table also gets the #ah-loading overlay via hx-indicator).
+          "hx-on:htmx:before-request": "var b=document.getElementById('ah-update'); if(b){b.classList.add('is-loading'); b.disabled=true;}",
+          // Done — clear the spinner + the dirty highlight, lock the button
+          // again until the next change.
+          "hx-on:htmx:after-request": "var b=document.getElementById('ah-update'); if(b){b.classList.remove('is-loading','is-dirty'); b.disabled=true;}",
+        }}
       >
         <div class="form-group" style="margin-bottom:0;">
           <label>Since</label>
@@ -203,12 +225,26 @@ export default define.page(async function ManagerAuditsPage(ctx) {
             admin's. Without this hidden field, HTMX filter changes drop
             the impersonation context and scope reverts to admin's. */}
         {asEmail && <input type="hidden" name="as" value={asEmail} />}
+        {/* Update lights up (enabled + glow) on any filter change, then spins
+            until the new report loads. type=submit fires the form's hx-get. */}
+        <button type="submit" id="ah-update" class="btn btn-primary btn-sm ah-update" disabled>
+          <span class="ah-update-text">Update</span>
+          <span class="ah-update-spin qlab-spinner"></span>
+        </button>
         <a href={asEmail ? `/manager/audits?as=${encodeURIComponent(asEmail)}` : "/manager/audits"} class="btn btn-ghost btn-sm">Clear</a>
       </form>
 
-      {/* Table region — initial server-rendered, swapped on filter change. */}
-      <div id="audit-history-table">
-        {renderAuditHistoryTable(data)}
+      {/* Table region — initial server-rendered, swapped on filter change.
+          Wrapped relative so the #ah-loading overlay can cover it; the overlay
+          shows whenever an HTMX refresh is in flight (hx-indicator target). */}
+      <div style="position:relative;">
+        <div id="ah-loading" class="ah-loading" aria-hidden="true">
+          <span class="qlab-spinner ah-loading-spinner"></span>
+          <span class="ah-loading-text">Loading…</span>
+        </div>
+        <div id="audit-history-table">
+          {renderAuditHistoryTable(data)}
+        </div>
       </div>
     </Layout>
   );

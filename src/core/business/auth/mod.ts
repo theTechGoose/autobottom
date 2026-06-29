@@ -87,6 +87,12 @@ export async function getUser(orgId: OrgId, email: string): Promise<UserRecord |
 export async function deleteUser(orgId: OrgId, email: string): Promise<void> {
   await deleteStored("user", orgId, email);
   await deleteStored("email-index", GLOBAL, email);
+  // A deleted user must not linger as a manager-scope record. Otherwise the
+  // Weekly Builder (and every report recipient list derived from scopes) keeps
+  // showing — and emailing — the dead address. Cascade the scope doc here so
+  // ALL delete paths (admin, manager, org-wipe) clean it up. deleteStored
+  // tolerates a missing doc, so this is a safe no-op for non-manager users.
+  await deleteStored("manager-scope-config", orgId, email);
 }
 
 export async function verifyUser(email: string, password: string): Promise<AuthContext | null> {

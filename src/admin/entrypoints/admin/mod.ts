@@ -11,7 +11,7 @@ import { getTokenUsage } from "@audit/domain/data/groq/mod.ts";
 import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { PipelineConfigResponse, ParallelismResponse, WebhookConfigResponse, BadWordConfigResponse, BypassConfigResponse, BonusConfigResponse, DimensionsResponse, PartnerDimensionsResponse, QueueCountsResponse, OkResponse, OkMessageResponse, ClearedResponse, TerminatedResponse, TokenUsageResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
-import { defaultOrgId } from "@core/business/auth/mod.ts";
+import { defaultOrgId, listUsers } from "@core/business/auth/mod.ts";
 import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
 const ORG = defaultOrgId;
 
@@ -121,6 +121,30 @@ export class AdminConfigController {
   async saveManagerScope(@Body() body: { email: string; scope: { departments: string[]; shifts: string[] } }) {
     await cfg.saveManagerScope(ORG(), body.email, body.scope);
     return { ok: true };
+  }
+
+  /** Reconcile manager-scope records against the live user list. A deleted
+   *  user used to leave its scope doc behind, so the Weekly Builder kept
+   *  listing — and emailing — dead addresses. Dry-run by default; pass
+   *  { confirm: true } to actually delete the orphaned scope docs. Email
+   *  membership is compared case-insensitively; deletes use the stored key. */
+  @Post("cleanup-orphan-scopes") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async cleanupOrphanScopes(@Body() body: { confirm?: boolean }) {
+    const org = ORG();
+    const [scopes, users] = await Promise.all([
+      cfg.listManagerScopes(org),
+      listUsers(org),
+    ]);
+    const liveEmails = new Set(users.map((u) => u.email.toLowerCase()));
+    const orphans = Object.keys(scopes).filter((email) => !liveEmails.has(email.toLowerCase()));
+    const list = orphans.join(", ") || "(none)";
+
+    if (!body?.confirm) {
+      return { ok: true, message: `DRY RUN — ${orphans.length} orphaned scope(s) (not deleted): ${list}` };
+    }
+    for (const email of orphans) await cfg.deleteManagerScope(org, email);
+    console.log(`🧹 [ADMIN] Deleted ${orphans.length} orphaned manager-scope docs: ${list}`);
+    return { ok: true, message: `Deleted ${orphans.length} orphaned scope(s): ${list}` };
   }
 
   // -- Queue management --

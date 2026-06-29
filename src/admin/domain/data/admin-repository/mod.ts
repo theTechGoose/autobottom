@@ -125,6 +125,10 @@ export async function saveManagerScope(orgId: OrgId, managerEmail: string, scope
   await setStored("manager-scope-config", orgId, [managerEmail], scope);
 }
 
+export async function deleteManagerScope(orgId: OrgId, managerEmail: string): Promise<void> {
+  await deleteStored("manager-scope-config", orgId, managerEmail);
+}
+
 export async function listManagerScopes(orgId: OrgId): Promise<Record<string, ManagerScope>> {
   const rows = await listStoredWithKeys<ManagerScope>("manager-scope-config", orgId);
   const result: Record<string, ManagerScope> = {};

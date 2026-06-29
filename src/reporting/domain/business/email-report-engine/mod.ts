@@ -637,6 +637,30 @@ const APPEAL_COLORS: Record<AppealStatus, string> = {
   complete: C.green,
 };
 
+// ── Table styles (defined ONCE) ───────────────────────────────────────────────
+//  Each report row used to carry ~1.1 KB of *repeated* inline style (the same
+//  ~85-char <td> style on every cell, plus per-link styles), so Gmail's ~102 KB
+//  clip limit hit around ~80 rows. Defining the styles once as classes and
+//  emitting bare <td>/<a>/<span class> drops a row to ~0.4 KB, pushing the clip
+//  point past ~250 rows so every finding stays in the body. The block ships with
+//  the sections (see renderSections) so it applies under the fallback wrapper or
+//  a custom template alike. Cell text colours stay class-driven; Gmail (the
+//  recipients' mail host) renders embedded <style> — the CSV attachment remains
+//  the complete, format-independent copy of every row.
+
+const REPORT_TABLE_CSS = `
+.art{border-collapse:collapse;border:1px solid ${C.border};border-radius:8px;overflow:hidden;width:100%}
+.art thead{background:${C.cardAlt}}
+.art th{padding:8px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${C.textMuted};border-bottom:1px solid ${C.border};white-space:nowrap}
+.art td{padding:10px 14px;border-bottom:1px solid ${C.border};vertical-align:top;font-size:13px;color:${C.text};background:${C.card}}
+.art a{color:${C.blue};text-decoration:none;font-family:monospace;font-size:11px}
+.art .m{color:${C.textMuted};font-size:12px}
+.art .d{color:${C.textDim}}
+.art .g{color:${C.green};font-weight:600}
+.art .b{color:${C.blue};font-weight:600}
+.art .y{color:${C.yellow};font-weight:600}
+.art .r{color:${C.red};font-weight:600}`.trim();
+
 // ── EST formatter ─────────────────────────────────────────────────────────────
 
 const estFmt = new Intl.DateTimeFormat("en-US", {
@@ -658,29 +682,29 @@ function formatEst(ts: number): string {
 function renderCell(col: ReportColumnKey, row: ReportRow): string {
   switch (col) {
     case "recordId": {
-      if (!row.recordId) return `<span style="color:${C.textDim};">&mdash;</span>`;
+      if (!row.recordId) return `<span class="d">&mdash;</span>`;
       const url = QB_RECORD_URL + encodeURIComponent(row.recordId);
-      return `<a href="${url}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:12px;">${esc(row.recordId)}</a>`;
+      return `<a href="${url}">${esc(row.recordId)}</a>`;
     }
     case "findingId": {
-      if (!row.findingId) return `<span style="color:${C.textDim};">&mdash;</span>`;
+      if (!row.findingId) return `<span class="d">&mdash;</span>`;
       const url = `${Deno.env.get("SELF_URL") ?? "http://localhost:3000"}/audit/report?id=${encodeURIComponent(row.findingId)}`;
-      return `<a href="${url}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:11px;">${esc(row.findingId)}</a>`;
+      return `<a href="${url}">${esc(row.findingId)}</a>`;
     }
     case "score": {
-      if (row.score == null) return `<span style="color:${C.textDim};">&mdash;</span>`;
-      const color = row.score === 100 ? C.green : row.score >= 80 ? C.blue : row.score >= 60 ? C.yellow : C.red;
-      return `<span style="color:${color};font-weight:600;">${row.score}%</span>`;
+      if (row.score == null) return `<span class="d">&mdash;</span>`;
+      const cls = row.score === 100 ? "g" : row.score >= 80 ? "b" : row.score >= 60 ? "y" : "r";
+      return `<span class="${cls}">${row.score}%</span>`;
     }
     case "appealStatus": {
-      if (!row.appealStatus) return `<span style="color:${C.textDim};">&mdash;</span>`;
-      const color = APPEAL_COLORS[row.appealStatus];
-      return `<span style="color:${color};font-weight:500;">${APPEAL_LABELS[row.appealStatus]}</span>`;
+      if (!row.appealStatus) return `<span class="d">&mdash;</span>`;
+      const cls = row.appealStatus === "complete" ? "g" : row.appealStatus === "pending" ? "y" : "m";
+      return `<span class="${cls}">${APPEAL_LABELS[row.appealStatus]}</span>`;
     }
     case "finalizedAt":
       return row.finalizedAt
-        ? `<span style="color:${C.textMuted};font-size:12px;">${esc(formatEst(row.finalizedAt))}</span>`
-        : `<span style="color:${C.textDim};">&mdash;</span>`;
+        ? `<span class="m">${esc(formatEst(row.finalizedAt))}</span>`
+        : `<span class="d">&mdash;</span>`;
     case "markedForReview":
       return row.markedForReview
         ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(210,153,34,0.15);color:${C.yellow};border:1px solid rgba(210,153,34,0.3);">In Review</span>`
@@ -688,8 +712,8 @@ function renderCell(col: ReportColumnKey, row: ReportRow): string {
     default: {
       const val = row[col as keyof ReportRow];
       return val != null
-        ? `<span style="color:${C.text};">${esc(String(val))}</span>`
-        : `<span style="color:${C.textDim};">&mdash;</span>`;
+        ? esc(String(val))
+        : `<span class="d">&mdash;</span>`;
     }
   }
 }
@@ -697,40 +721,26 @@ function renderCell(col: ReportColumnKey, row: ReportRow): string {
 // ── Section renderer ──────────────────────────────────────────────────────────
 
 function renderSection(section: SectionResult): string {
-  const thStyle = `padding:8px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${C.textMuted};border-bottom:1px solid ${C.border};white-space:nowrap;`;
-  const tdBase  = `padding:10px 14px;border-bottom:1px solid ${C.border};vertical-align:top;font-size:13px;`;
-
   const headerCells = section.columns
-    .map((col) => `<th style="${thStyle}">${COLUMN_LABELS[col]}</th>`)
+    .map((col) => `<th>${COLUMN_LABELS[col]}</th>`)
     .join("");
 
   let bodyRows: string;
 
   if (section.rows.length === 0) {
-    bodyRows = `
-      <tr>
-        <td colspan="${section.columns.length}" style="${tdBase}text-align:center;color:${C.textDim};font-style:italic;padding:20px 14px;">
-          No records
-        </td>
-      </tr>`;
+    bodyRows = `<tr><td colspan="${section.columns.length}" class="d" style="text-align:center;font-style:italic;padding:20px 14px;">No records</td></tr>`;
   } else {
-    bodyRows = section.rows.map((row, i) => {
-      const bg = i % 2 === 0 ? C.card : C.cardAlt;
-      const cells = section.columns
-        .map((col) => `<td style="${tdBase}background:${bg};">${renderCell(col, row)}</td>`)
-        .join("");
-      return `<tr>${cells}</tr>`;
-    }).join("");
+    bodyRows = section.rows
+      .map((row) => `<tr>${section.columns.map((col) => `<td>${renderCell(col, row)}</td>`).join("")}</tr>`)
+      .join("");
   }
 
   return `
 <div style="margin-bottom:28px;">
   <p style="margin:0 0 10px 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:${C.textMuted};">REPORT SECTION</p>
   <h2 style="margin:0 0 14px 0;font-size:18px;font-weight:700;color:${C.textBright};">${esc(section.header)}</h2>
-  <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid ${C.border};border-radius:8px;overflow:hidden;">
-    <thead style="background:${C.cardAlt};">
-      <tr>${headerCells}</tr>
-    </thead>
+  <table class="art" width="100%" cellpadding="0" cellspacing="0">
+    <thead><tr>${headerCells}</tr></thead>
     <tbody>${bodyRows}</tbody>
   </table>
 </div>`.trim();
@@ -739,7 +749,10 @@ function renderSection(section: SectionResult): string {
 // ── Public: render all sections ───────────────────────────────────────────────
 
 export function renderSections(sections: SectionResult[]): string {
-  return sections.map(renderSection).join("\n");
+  // Ship the shared table CSS once, ahead of the sections, so every <td class>
+  // / <a> resolves whether the email is wrapped in the fallback shell or a
+  // custom template.
+  return `<style>${REPORT_TABLE_CSS}</style>\n` + sections.map(renderSection).join("\n");
 }
 
 // ── Weekly summary block ───────────────────────────────────────────────────────

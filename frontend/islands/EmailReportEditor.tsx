@@ -343,7 +343,7 @@ export function ListView(
                         : <span style="color:var(--text-dim);">never</span>}
                     </td>
                     <td style="font-size:11px;color:var(--text-dim);">{c.reportSections?.length ?? 0}</td>
-                    <td><span class={`pill pill-${c.enabled !== false && !c.disabled ? "green" : "red"}`}>{c.enabled !== false && !c.disabled ? "Active" : "Off"}</span></td>
+                    <td><span class={`pill pill-${c.enabled === true ? "green" : "red"}`}>{c.enabled === true ? "Active" : "Off"}</span></td>
                   </tr>
                   );
                 })}
@@ -369,7 +369,7 @@ export function ListView(
                         : <span style="color:var(--text-dim);">never</span>}
                     </td>
                     <td style="font-size:11px;color:var(--text-dim);">{c.reportSections?.length ?? 0}</td>
-                    <td><span class={`pill pill-${c.enabled !== false && !c.disabled ? "green" : "red"}`}>{c.enabled !== false && !c.disabled ? "Active" : "Off"}</span></td>
+                    <td><span class={`pill pill-${c.enabled === true ? "green" : "red"}`}>{c.enabled === true ? "Active" : "Off"}</span></td>
                   </tr>
                   );
                 })}
@@ -529,9 +529,9 @@ export function EditView(props: {
 
       {/* Status toggle */}
       <GreenToggle
-        checked={c.enabled !== false && !c.disabled}
+        checked={c.enabled === true}
         onChange={(v) => props.onChange({ ...c, enabled: v, disabled: !v })}
-        label={c.enabled !== false && !c.disabled ? "Active — will send on schedule" : "Disabled — will not auto-send"}
+        label={c.enabled === true ? "Active — will send on schedule" : "Disabled — will not auto-send"}
       />
 
       {/* Name */}

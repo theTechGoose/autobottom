@@ -57,7 +57,7 @@ export function WeeklyReportsList(
       </div>
       {configs.map((c) => {
         const id = c.id ?? "";
-        const isActive = c.enabled !== false && !c.disabled;
+        const isActive = c.enabled === true;
         const st = statuses[id];
         return (
           <div key={id} id={`wr-row-${id}`} style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--bg);">

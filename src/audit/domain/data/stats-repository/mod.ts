@@ -433,12 +433,19 @@ export async function writeAuditDoneIndex(
   }
   // Stamp the live appeal state onto the row so reports can filter by appeal
   // status without hydrating the appeal doc at send time. Recomputed on every
-  // (re)write — completion / review / judge / flip all re-call this — so it
-  // never goes stale.
-  const appeal = await getStored<AppealRecord>("appeal", orgId, entry.findingId).catch(() => null);
-  const appealStatus: "none" | "pending" | "complete" =
-    !appeal ? "none" : appeal.status === "pending" ? "pending" : "complete";
-  await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], { ...entry, appealStatus });
+  // (re)write — completion / review / judge / flip / file-appeal all re-call
+  // this — so it never goes stale. A genuine "no appeal" (read OK → null) → "none";
+  // a transient read FAILURE preserves whatever the row already had rather than
+  // silently downgrading a pending/complete appeal to "none".
+  let appealStatus = entry.appealStatus;
+  try {
+    const appeal = await getStored<AppealRecord>("appeal", orgId, entry.findingId);
+    appealStatus = !appeal ? "none" : appeal.status === "pending" ? "pending" : "complete";
+  } catch (err) {
+    console.warn(`⚠️ [WRITE-DONE-IDX] ${entry.findingId}: appeal read failed — keeping appealStatus=${appealStatus ?? "unknown"}:`, err);
+  }
+  const toWrite = appealStatus !== undefined ? { ...entry, appealStatus } : { ...entry };
+  await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], toWrite);
   return true;
 }
 

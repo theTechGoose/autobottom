@@ -3,7 +3,7 @@
 import { assertEquals, assert } from "#assert";
 import {
   trackActive, trackCompleted, trackError, trackErrorOnce, clearErrors, trackRetry,
-  writeAuditDoneIndex, queryAuditDoneIndex, findAuditsByRecordId,
+  writeAuditDoneIndex, writeSoleAuditDoneIndex, buildIndexMeta, queryAuditDoneIndex, findAuditsByRecordId,
   saveChargebackEntry, getChargebackEntry, getChargebackEntries, deleteChargebackEntry,
   saveWireDeductionEntry, getWireDeductionEntry, getWireDeductionEntries, deleteWireDeductionEntry,
   getStats, terminateFinding, terminateAllActive,
@@ -230,6 +230,32 @@ Deno.test({ name: "writeAuditDoneIndex — stamps live appealStatus onto the row
   await saveAppeal(ORG, { findingId: fid, appealedAt: now, status: "complete" });
   await writeAuditDoneIndex(ORG, entry, { assumeFinished: true });
   assertEquals((await read())?.appealStatus, "complete");
+}});
+
+Deno.test({ name: "writeSoleAuditDoneIndex — appeal re-stamp marks pending + preserves score (file-appeal path)", ...kvOpts, fn: async () => {
+  const ORG = "test-appeal-restamp-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-ar-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+  const finding = { id: fid, findingStatus: "finished", completedAt: now, record: { RecordId: "R1", ActivatingOffice: "DEPT-A" } };
+  await saveFinding(ORG, finding);
+  // Reviewed + completed row, no appeal yet → "none", score 80.
+  await writeAuditDoneIndex(ORG, { findingId: fid, completedAt: now, doneAt: now, completed: true, reason: "reviewed", score: 80, department: "DEPT-A" } as AuditDoneIndexEntry, { assumeFinished: true });
+
+  const read = async () => {
+    _resetQueryAuditDoneIndexCacheForTests();
+    return (await queryAuditDoneIndex(ORG, now - 1000, now + 1000)).find((e) => e.findingId === fid);
+  };
+  assertEquals((await read())?.appealStatus, "none");
+
+  // File an appeal, then re-stamp via the canonical writer — exactly what
+  // file-appeal does (minimal entry; score/completed survive the merge).
+  await saveAppeal(ORG, { findingId: fid, appealedAt: now, status: "pending" });
+  await writeSoleAuditDoneIndex(ORG, finding, { findingId: fid, ...buildIndexMeta(finding) } as Omit<AuditDoneIndexEntry, "completedAt">);
+
+  const after = await read();
+  assertEquals(after?.appealStatus, "pending", "appeal filing marks the index row pending");
+  assertEquals(after?.score, 80, "finalized score preserved through the appeal re-stamp");
+  assertEquals(after?.completed, true, "completed preserved");
 }});
 
 Deno.test({ name: "findAuditsByRecordId — dedup-hidden findings are surfaced flagged, not dropped", ...kvOpts, fn: async () => {

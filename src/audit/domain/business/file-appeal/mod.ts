@@ -8,6 +8,8 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { populateJudgeQueue, saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
+import { writeSoleAuditDoneIndex, buildIndexMeta } from "@audit/domain/data/stats-repository/mod.ts";
+import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 
 export interface FileAppealInput {
   auditor: string;
@@ -114,6 +116,20 @@ export async function fileJudgeAppeal(
     });
   } catch (err) {
     console.error(`⚠️ [APPEAL] saveFinding appealedAt failed fid=${findingId} (non-fatal):`, err);
+  }
+
+  // Mark the audit's index row as having a pending appeal so weekly reports —
+  // which read appealStatus straight off the index — exclude it until the judge
+  // resolves it. writeAuditDoneIndex recomputes appealStatus from the appeal we
+  // just saved; the merge preserves the finalized score/completed/doneAt.
+  // Best-effort: the judge queue + appeal record are the critical writes.
+  try {
+    await writeSoleAuditDoneIndex(orgId, finding as Record<string, any>, {
+      findingId,
+      ...buildIndexMeta(finding as Record<string, any>),
+    } as Omit<AuditDoneIndexEntry, "completedAt">);
+  } catch (err) {
+    console.warn(`⚠️ [APPEAL] ${findingId} audit-done-idx appealStatus stamp failed (best-effort):`, err);
   }
 
   fireWebhook(orgId, "appeal", {

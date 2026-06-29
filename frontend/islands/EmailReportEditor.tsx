@@ -267,6 +267,8 @@ export default function EmailReportEditor() {
           onChange={setEditing}
           onCancel={cancelEdit}
           onSave={save}
+          onDelete={doDelete}
+          onSendNow={sendNow}
           onPreview={preview}
         />
       )}
@@ -1093,6 +1095,8 @@ export function WeeklyEditView(props: {
   onChange: (c: ReportConfig) => void;
   onCancel: () => void;
   onSave: (c: ReportConfig) => void;
+  onDelete: (c: ReportConfig) => void;
+  onSendNow: (c: ReportConfig) => void;
   onPreview: (c: ReportConfig) => void;
 }) {
   const c = props.config;
@@ -1203,6 +1207,12 @@ export function WeeklyEditView(props: {
         </div>
         <div style="display:flex;gap:6px;">
           <button class="sf-btn secondary" type="button" disabled={props.busy} onClick={() => props.onPreview(c)} style="font-size:11px;">👁 Preview</button>
+          {!props.isNew && (
+            <>
+              <button class="sf-btn secondary" type="button" disabled={props.busy} onClick={() => props.onSendNow(c)} style="font-size:11px;">▶ Send Now</button>
+              <button class="sf-btn danger" type="button" disabled={props.busy} onClick={() => props.onDelete(c)} style="font-size:11px;">Delete</button>
+            </>
+          )}
         </div>
       </div>
 

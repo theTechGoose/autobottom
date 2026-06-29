@@ -7,6 +7,7 @@
  *    Left     → dept (with shifts) + office trees, each row stageable
  *    Right    → staged list with auto-derived recipients, preview, trash */
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { WeeklyEditView, type ReportConfig } from "./EmailReportEditor.tsx";
 
 interface ManagerScope { departments: string[]; shifts: string[] }
 interface PartnerDims { offices: Record<string, string[]> }
@@ -34,8 +35,7 @@ interface StagedConfig {
   department?: string;
   office?: string;
   shift?: string | null;
-  name: string;
-  recipients: string[];
+  config: ReportConfig;
 }
 
 export default function WeeklyBuilderEditor() {
@@ -49,6 +49,8 @@ export default function WeeklyBuilderEditor() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [editIdx, setEditIdx] = useState<number | null>(null);
+  const [draft, setDraft] = useState<ReportConfig | null>(null);
 
   useEffect(() => { void load(); }, []);
   async function load() {
@@ -99,18 +101,47 @@ export default function WeeklyBuilderEditor() {
     return `${reportName} — ${s.office}`;
   }
 
+  function buildStagedConfig(s: { type: "internal" | "partner"; department?: string; office?: string; shift?: string | null }): ReportConfig {
+    const name = buildName(s);
+    return {
+      name,
+      recipients: recipientsFor(s),
+      reportSections: [{
+        header: name,
+        columns: ["finalizedAt", "voName", "department", "score", "recordId", "findingId"],
+        criteria: [],
+      }],
+      dateRange: { mode: "weekly", startDay: 1 },
+      onlyCompleted: true,
+      enabled: true,
+      failedOnly: false,
+      schedule: { cron: "0 9 * * *", tz: "America/New_York" },
+      weeklyType: s.type,
+      weeklyDepartment: s.department,
+      weeklyShift: s.shift ?? undefined,
+      weeklyOffice: s.office,
+      topLevelFilters: buildFilters(s),
+    };
+  }
+
   function stage(s: { type: "internal" | "partner"; department?: string; office?: string; shift?: string | null }) {
     if (isStaged(s)) return;
-    const cfg: StagedConfig = {
+    setStaged([...staged, {
       type: s.type,
       department: s.department,
       office: s.office,
       shift: s.shift ?? null,
-      name: buildName(s),
-      recipients: recipientsFor(s),
-    };
-    setStaged([...staged, cfg]);
+      config: buildStagedConfig(s),
+    }]);
     setMsg(null);
+  }
+
+  function openEdit(idx: number) { setDraft(structuredClone(staged[idx].config)); setEditIdx(idx); }
+  function closeEdit() { setEditIdx(null); setDraft(null); }
+  function saveEdit(cfg: ReportConfig) {
+    if (editIdx === null) return;
+    setStaged(staged.map((x, i) => i === editIdx ? { ...x, config: cfg } : x));
+    closeEdit();
   }
 
   function unstage(idx: number) { setStaged(staged.filter((_, i) => i !== idx)); }
@@ -150,24 +181,12 @@ export default function WeeklyBuilderEditor() {
     finally { setBusy(false); }
   }
 
-  async function preview(s: StagedConfig) {
+  async function previewConfig(cfg: ReportConfig) {
     setBusy(true);
     try {
-      const ephemeral = {
-        name: s.name,
-        recipients: s.recipients,
-        reportSections: [{
-          header: s.name,
-          columns: ["finalizedAt", "voName", "department", "score", "recordId", "findingId"],
-          criteria: [],
-        }],
-        dateRange: { mode: "weekly", startDay: 1 },
-        onlyCompleted: true,
-        topLevelFilters: buildFilters(s),
-      };
       const res = await fetch("/admin/email-reports/preview-inline", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify(ephemeral),
+        body: JSON.stringify(cfg),
       });
       const data = await res.json();
       setPreviewHtml(data.html ?? "");
@@ -258,28 +277,50 @@ export default function WeeklyBuilderEditor() {
           {staged.length === 0
             ? <div style="font-size:11px;color:var(--text-dim);padding:14px;text-align:center;border:1px dashed var(--border);border-radius:8px;">Stage a department or office on the left.</div>
             : <div style="display:flex;flex-direction:column;gap:8px;">
-                {staged.map((s, i) => (
+                {staged.map((s, i) => {
+                  const recips = s.config.recipients ?? [];
+                  return (
                   <div key={i} style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;">
                     <div style="flex:1;min-width:0;">
-                      <div style="font-size:12px;font-weight:600;color:var(--text-bright);">{s.name}</div>
+                      <div style="font-size:12px;font-weight:600;color:var(--text-bright);">{s.config.name}</div>
                       <div style="font-size:10px;color:var(--text-dim);margin-top:2px;">
                         {s.type === "internal" ? `Internal · ${s.department}${s.shift ? ` · ${s.shift}` : ""}` : `Partner · ${s.office}`}
                         {" · "}
-                        <span style={s.recipients.length === 0 ? "color:var(--red);" : ""}>{s.recipients.length} recipient{s.recipients.length === 1 ? "" : "s"}</span>
+                        <span style={recips.length === 0 ? "color:var(--red);" : ""}>{recips.length} recipient{recips.length === 1 ? "" : "s"}</span>
                       </div>
-                      {s.recipients.length > 0 && (
-                        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;overflow-wrap:anywhere;line-height:1.5;">{s.recipients.join(", ")}</div>
+                      {recips.length > 0 && (
+                        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;overflow-wrap:anywhere;line-height:1.5;">{recips.join(", ")}</div>
                       )}
                     </div>
-                    <button class="sf-btn ghost" type="button" disabled={busy} onClick={() => preview(s)} style="font-size:10px;padding:4px 8px;" title="Preview">👁</button>
+                    <button class="sf-btn ghost" type="button" disabled={busy} onClick={() => openEdit(i)} style="font-size:10px;padding:4px 8px;" title="Edit">✎</button>
+                    <button class="sf-btn ghost" type="button" disabled={busy} onClick={() => previewConfig(s.config)} style="font-size:10px;padding:4px 8px;" title="Preview">👁</button>
                     <button class="sf-btn danger" type="button" disabled={busy} onClick={() => unstage(i)} style="font-size:10px;padding:4px 8px;" title="Remove">🗑</button>
                   </div>
-                ))}
+                  );
+                })}
               </div>}
         </div>
       </div>
 
       {previewHtml !== null && <PreviewOverlay html={previewHtml} onClose={() => setPreviewHtml(null)} />}
+      {editIdx !== null && draft && (
+        <div class="modal-overlay open" style="z-index:200;" onClick={(e) => { if (e.target === e.currentTarget) closeEdit(); }}>
+          <div class="modal" style="width:min(900px,96vw);max-width:96vw;max-height:90vh;overflow:auto;padding:0;">
+            <WeeklyEditView
+              config={draft}
+              isNew={false}
+              templates={[]}
+              busy={busy}
+              msg={null}
+              stagingMode
+              onChange={setDraft}
+              onCancel={closeEdit}
+              onSave={saveEdit}
+              onPreview={previewConfig}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

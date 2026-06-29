@@ -30,7 +30,7 @@ type DateRange =
   | { mode: "weekly"; startDay: number }
   | { mode: "fixed"; from: number; to: number };
 
-interface ReportConfig {
+export interface ReportConfig {
   id?: string;
   name: string;
   recipients: string[];
@@ -59,7 +59,7 @@ interface ReportConfig {
   disabled?: boolean;
 }
 
-interface EmailTemplate { id: string; name: string; }
+export interface EmailTemplate { id: string; name: string; }
 
 interface AuditDims { departments: string[]; shifts: string[]; }
 interface PartnerDims { offices: Record<string, string[]>; }
@@ -124,7 +124,7 @@ function emptyWeeklyConfig(): ReportConfig {
     enabled: true,
     weeklyType: undefined,
     failedOnly: false,
-    sendTimeEst: "20:00",
+    schedule: { cron: "0 20 * * *", tz: DEFAULT_TZ },
     dateRange: { mode: "weekly", startDay: 1 },
   };
 }
@@ -1095,9 +1095,10 @@ export function WeeklyEditView(props: {
   onChange: (c: ReportConfig) => void;
   onCancel: () => void;
   onSave: (c: ReportConfig) => void;
-  onDelete: (c: ReportConfig) => void;
-  onSendNow: (c: ReportConfig) => void;
+  onDelete?: (c: ReportConfig) => void;
+  onSendNow?: (c: ReportConfig) => void;
   onPreview: (c: ReportConfig) => void;
+  stagingMode?: boolean;
 }) {
   const c = props.config;
   const set = <K extends keyof ReportConfig>(k: K, v: ReportConfig[K]) => props.onChange({ ...c, [k]: v });
@@ -1207,14 +1208,23 @@ export function WeeklyEditView(props: {
         </div>
         <div style="display:flex;gap:6px;">
           <button class="sf-btn secondary" type="button" disabled={props.busy} onClick={() => props.onPreview(c)} style="font-size:11px;">👁 Preview</button>
-          {!props.isNew && (
+          {!props.isNew && !props.stagingMode && (
             <>
-              <button class="sf-btn secondary" type="button" disabled={props.busy} onClick={() => props.onSendNow(c)} style="font-size:11px;">▶ Send Now</button>
-              <button class="sf-btn danger" type="button" disabled={props.busy} onClick={() => props.onDelete(c)} style="font-size:11px;">Delete</button>
+              <button class="sf-btn secondary" type="button" disabled={props.busy} onClick={() => props.onSendNow?.(c)} style="font-size:11px;">▶ Send Now</button>
+              <button class="sf-btn danger" type="button" disabled={props.busy} onClick={() => props.onDelete?.(c)} style="font-size:11px;">Delete</button>
             </>
           )}
         </div>
       </div>
+
+      {/* Status toggle — hidden in staging mode (enabled is set at publish) */}
+      {!props.stagingMode && (
+        <GreenToggle
+          checked={c.enabled === true}
+          onChange={(v) => props.onChange({ ...c, enabled: v, disabled: !v })}
+          label={c.enabled === true ? "Active — will send on schedule" : "Disabled — will not auto-send"}
+        />
+      )}
 
       {/* Step 1: type pills */}
       <div style="display:flex;flex-direction:column;align-items:center;padding:24px 0 12px;gap:14px;">
@@ -1322,8 +1332,8 @@ export function WeeklyEditView(props: {
             This report covers all audits within the current pay period (Mon–Sun) and sends nightly at{" "}
             <input
               type="time"
-              value={c.sendTimeEst ?? "20:00"}
-              onInput={(e) => set("sendTimeEst", (e.target as HTMLInputElement).value || "20:00")}
+              value={parseCronToShape(c.schedule?.cron).timeOfDay}
+              onInput={(e) => set("schedule", presetShapeToCron({ preset: "Daily", timeOfDay: (e.target as HTMLInputElement).value || "20:00" }) ?? undefined)}
               style="background:#0a0e14;border:1px solid #1e2736;border-radius:5px;color:#c9d1d9;font-size:12px;padding:2px 6px;margin:0 4px;"
             />
             EST
@@ -1345,6 +1355,7 @@ export function WeeklyEditView(props: {
                 ...c,
                 name: c.name || autoName(),
                 dateRange: { mode: "weekly", startDay: 1 },
+                sendTimeEst: undefined,
               })}
             >{props.busy ? "Saving…" : "Save Report"}</button>
           </div>

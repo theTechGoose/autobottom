@@ -31,41 +31,13 @@ interface StagedConfig {
   department?: string;
   office?: string;
   shift?: string | null;
-  name: string;
+  config: EmailReportConfig;
 }
 
-function buildTopLevelFilters(staged: StagedConfig) {
-  const filters: { field: string; operator: string; value: string }[] = [];
-  if (staged.type === "internal") {
-    filters.push({ field: "auditType", operator: "equals", value: "internal" });
-    if (staged.department) filters.push({ field: "department", operator: "equals", value: staged.department });
-    if (staged.shift) filters.push({ field: "shift", operator: "equals", value: staged.shift });
-  } else {
-    filters.push({ field: "auditType", operator: "equals", value: "partner" });
-    if (staged.office) filters.push({ field: "department", operator: "equals", value: staged.office });
-  }
-  filters.push({ field: "appealStatus", operator: "not_equals", value: "pending" });
-  return filters;
-}
-
-function buildEphemeralConfig(staged: StagedConfig, recipients: string[]): EmailReportConfig {
-  return {
-    id: crypto.randomUUID(),
-    name: staged.name,
-    weeklyType: staged.type,
-    dateRange: { mode: "weekly", startDay: 1 },
-    onlyCompleted: true,
-    schedule: { cron: "0 9 * * *" },
-    reportSections: [{
-      header: staged.name,
-      columns: ["finalizedAt", "voName", "department", "score", "recordId", "findingId"],
-      criteria: [],
-    }],
-    recipients,
-    // topLevelFilters is read by report-engine via (config as any).topLevelFilters
-    ...(buildTopLevelFilters(staged).length > 0 ? { topLevelFilters: buildTopLevelFilters(staged) } : {}),
-  } as unknown as EmailReportConfig;
-}
+// The staged config — including any per-report customizations made in the
+// staging editor (recipients, sections, schedule, filters) — is built
+// client-side and sent whole. The controller below just dedupes and persists
+// it; there is no server-side config construction anymore.
 
 function isDuplicate(staged: StagedConfig, existing: EmailReportConfig[]): boolean {
   return existing.some((c: any) => {
@@ -112,18 +84,18 @@ export class WeeklyBuilderController {
 
     const results = await Promise.allSettled(
       configs.map((staged) => {
-        const ephemeral = buildEphemeralConfig(staged, [testEmail]);
+        const cfg = { ...staged.config, recipients: [testEmail] } as EmailReportConfig;
         const timeout = new Promise<never>((_, rej) =>
           setTimeout(() => rej(new Error("timeout after 55s")), 55_000),
         );
-        return Promise.race([runReport(org, ephemeral), timeout]);
+        return Promise.race([runReport(org, cfg), timeout]);
       }),
     );
 
     const sent = results.filter((r) => r.status === "fulfilled").length;
     const errors = results
       .map((r, i) => r.status === "rejected"
-        ? `${configs[i].name}: ${(r as PromiseRejectedResult).reason?.message ?? r.reason}`
+        ? `${configs[i].config?.name ?? "report"}: ${(r as PromiseRejectedResult).reason?.message ?? r.reason}`
         : null)
       .filter(Boolean) as string[];
 
@@ -156,32 +128,26 @@ export class WeeklyBuilderController {
     let created = 0;
     const skipped: string[] = [];
     for (const staged of configs) {
-      if (isDuplicate(staged, existingConfigs)) { skipped.push(staged.name); continue; }
+      if (isDuplicate(staged, existingConfigs)) { skipped.push(staged.config?.name ?? ""); continue; }
 
-      const recipients = staged.type === "internal"
+      const cfg = staged.config;
+      // Fall back to manager-scope / office recipients and weekly defaults only
+      // when the client left a field empty; otherwise persist the customized
+      // config as-is (sections, filters, schedule, recipients all come through).
+      const fallbackRecipients = staged.type === "internal"
         ? (deptEmails[staged.department ?? ""] ?? [])
         : ((partnerDims.offices ?? {})[staged.office ?? ""] ?? []);
 
-      // Save with extra weekly-builder fields persisted alongside the canonical
-      // EmailReportConfig shape. Matches prod's persistence layout.
       await saveEmailReportConfig(org, {
-        name: staged.name,
-        recipients,
-        reportSections: [{
-          header: staged.name,
-          columns: ["finalizedAt", "voName", "department", "score", "recordId", "findingId"],
-          criteria: [],
-        }],
-        dateRange: { mode: "weekly", startDay: 1 },
-        onlyCompleted: true,
-        weeklyType: staged.type,
-        schedule: { cron: "0 9 * * *" },
-        // Persist the staged metadata + filters so the cron + rerun knows what to filter.
+        ...cfg,
+        recipients: cfg.recipients?.length ? cfg.recipients : fallbackRecipients,
+        weeklyType: cfg.weeklyType ?? staged.type,
+        enabled: cfg.enabled ?? true,
+        schedule: cfg.schedule ?? { cron: "0 9 * * *", tz: "America/New_York" },
         ...({
-          weeklyDepartment: staged.department,
-          weeklyShift: staged.shift ?? undefined,
-          weeklyOffice: staged.office,
-          topLevelFilters: buildTopLevelFilters(staged),
+          weeklyDepartment: cfg.weeklyDepartment ?? staged.department,
+          weeklyShift: cfg.weeklyShift ?? (staged.shift ?? undefined),
+          weeklyOffice: cfg.weeklyOffice ?? staged.office,
         } as any),
       } as any);
 

@@ -138,14 +138,20 @@ export default function WeeklyBuilderEditor() {
 
   function buildStagedConfig(s: { type: "internal" | "partner"; department?: string; office?: string; shift?: string | null }): ReportConfig {
     const name = buildName(s);
+    // For an internal "all shifts" report, split into one section per shift the
+    // department actually runs (AM / PM / Weekend) so the single report shows
+    // shift-labelled sections instead of one flat list. Shift is on the index,
+    // so this stays a no-hydration read. Falls back to one flat section when the
+    // department's shifts are unknown, or for a specific-shift / partner report.
+    const COLS = ["finalizedAt", "voName", "department", "score", "recordId", "findingId"];
+    const deptShiftList = s.type === "internal" && !s.shift ? shiftsForDept(s.department ?? "") : [];
+    const reportSections = (deptShiftList.length > 0
+      ? deptShiftList.map((sh) => ({ header: sh, columns: COLS, criteria: [{ field: "shift", operator: "equals", value: sh }] }))
+      : [{ header: name, columns: COLS, criteria: [] }]) as ReportConfig["reportSections"];
     return {
       name,
       recipients: recipientsFor(s),
-      reportSections: [{
-        header: name,
-        columns: ["finalizedAt", "voName", "department", "score", "recordId", "findingId"],
-        criteria: [],
-      }],
+      reportSections,
       dateRange: { mode: "weekly", startDay: 1 },
       onlyCompleted: true,
       enabled: true,

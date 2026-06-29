@@ -43,6 +43,10 @@ function toLocalInputValue(ms: number): string {
 
 export default define.page(async function ManagerAuditsPage(ctx) {
   const user = ctx.state.user!;
+  // Gamification (XP / streak / badges) is only for the gamified roles
+  // (reviewers, judges, team members). Managers, super-managers, and admins
+  // viewing this page don't earn XP — hide the box (and skip its fetch).
+  const showGameStats = user.role === "reviewer" || user.role === "judge" || user.role === "user";
   const url = new URL(ctx.req.url);
   // All query params get defensive parsing — a bad ?since= (NaN, "undefined",
   // empty string, etc.) would otherwise propagate into `new Date(NaN)` and
@@ -83,8 +87,10 @@ export default define.page(async function ManagerAuditsPage(ctx) {
   }
 
   let myState: MyStateResp = {};
-  try { myState = await apiFetch<MyStateResp>(`/gamification/api/my-state?email=${encodeURIComponent(user.email)}`, ctx.req); }
-  catch (e) { console.error("My-state error:", e); }
+  if (showGameStats) {
+    try { myState = await apiFetch<MyStateResp>(`/gamification/api/my-state?email=${encodeURIComponent(user.email)}`, ctx.req); }
+    catch (e) { console.error("My-state error:", e); }
+  }
 
   return (
     <Layout title="Audit History" section="manager" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
@@ -110,14 +116,16 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         )}
       </div>
 
-      <GameStateRow
-        role="manager"
-        totalXp={myState.gameState?.totalXp ?? 0}
-        level={myState.gameState?.level ?? 0}
-        dayStreak={myState.gameState?.dayStreak ?? 0}
-        earnedBadgeCount={myState.earnedBadgeCount ?? 0}
-        accent="#bc8cff"
-      />
+      {showGameStats && (
+        <GameStateRow
+          role="manager"
+          totalXp={myState.gameState?.totalXp ?? 0}
+          level={myState.gameState?.level ?? 0}
+          dayStreak={myState.gameState?.dayStreak ?? 0}
+          earnedBadgeCount={myState.earnedBadgeCount ?? 0}
+          accent="#bc8cff"
+        />
+      )}
 
 
       {/* Filter form — every input refetches the table via HTMX. The form is

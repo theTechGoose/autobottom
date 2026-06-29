@@ -22,9 +22,56 @@ import {
   getPartnerDimensions, listManagerScopes, getOfficeBypassConfig, getAuditDimensions,
 } from "@admin/domain/data/admin-repository/mod.ts";
 import type { EmailReportConfig } from "@core/dto/types.ts";
+import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
-import { defaultOrgId } from "@core/business/auth/mod.ts";
+import { defaultOrgId, listUsers } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
+
+/** Manager scopes with super-managers (the president role) removed, so the
+ *  Weekly Builder never auto-adds an all-departments super-manager to every
+ *  department's report. Their address can still be added deliberately via the
+ *  global "every report" field on the page. */
+async function managerScopesNoSuper(org: OrgId): Promise<Awaited<ReturnType<typeof listManagerScopes>>> {
+  const [scopes, supers] = await Promise.all([
+    listManagerScopes(org),
+    listUsers(org, "super-manager"),
+  ]);
+  const superEmails = new Set(supers.map((u) => u.email.toLowerCase()));
+  const out: Awaited<ReturnType<typeof listManagerScopes>> = {};
+  for (const [email, scope] of Object.entries(scopes)) {
+    if (!superEmails.has(email.toLowerCase())) out[email] = scope;
+  }
+  return out;
+}
+
+const COVERAGE_WINDOW_DAYS = 60;
+
+/** Derive which shifts each department actually runs, straight from the audit
+ *  index (department + shift are ON the index entry — NO per-finding hydration,
+ *  which is the read pattern that previously wedged prod). The window is
+ *  day-rounded so queryAuditDoneIndex's SWR cache key is stable (one cold scan
+ *  per day). Soft-fails to {} so a slow/failed read never breaks the page — the
+ *  UI then just offers all shifts as before. */
+async function computeDeptShifts(org: OrgId): Promise<Record<string, string[]>> {
+  try {
+    const day = 86_400_000;
+    const to = Math.floor(Date.now() / day) * day;
+    const from = to - COVERAGE_WINDOW_DAYS * day;
+    const entries = await queryAuditDoneIndex(org, from, to);
+    const map: Record<string, Set<string>> = {};
+    for (const e of entries) {
+      if (!e.department || !e.shift) continue;
+      (map[e.department] ??= new Set<string>()).add(e.shift);
+    }
+    const out: Record<string, string[]> = {};
+    for (const [dept, shifts] of Object.entries(map)) out[dept] = [...shifts].sort();
+    return out;
+  } catch (err) {
+    console.warn("⚠️ [weekly-builder] deptShifts coverage failed — UI falls back to all shifts:", err);
+    return {};
+  }
+}
 
 interface StagedConfig {
   type: "internal" | "partner";
@@ -60,14 +107,15 @@ export class WeeklyBuilderController {
   @Get("data") @ReturnedType(WeeklyDataResponse)
   async getData() {
     const org = ORG();
-    const [partnerDims, managerScopes, bypassCfg, existingConfigs, auditDims] = await Promise.all([
+    const [partnerDims, managerScopes, bypassCfg, existingConfigs, auditDims, deptShifts] = await Promise.all([
       getPartnerDimensions(org),
-      listManagerScopes(org),
+      managerScopesNoSuper(org),
       getOfficeBypassConfig(org),
       listEmailReportConfigs(org),
       getAuditDimensions(org),
+      computeDeptShifts(org),
     ]);
-    return { partnerDims, managerScopes, bypassCfg, existingConfigs, auditDims };
+    return { partnerDims, managerScopes, bypassCfg, existingConfigs, auditDims, deptShifts };
   }
 
   /** Send an ephemeral report to a single test address — no persistence. */
@@ -112,7 +160,7 @@ export class WeeklyBuilderController {
     const org = ORG();
     const [partnerDims, managerScopes, existingConfigs] = await Promise.all([
       getPartnerDimensions(org),
-      listManagerScopes(org),
+      managerScopesNoSuper(org),
       listEmailReportConfigs(org),
     ]);
 

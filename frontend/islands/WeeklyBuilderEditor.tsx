@@ -28,6 +28,7 @@ interface DataResponse {
   bypassCfg: BypassCfg;
   existingConfigs: ExistingConfig[];
   auditDims: AuditDims;
+  deptShifts?: Record<string, string[]>;
 }
 
 interface StagedConfig {
@@ -56,7 +57,7 @@ export default function WeeklyBuilderEditor() {
   const [saShifts, setSaShifts] = useState<string[]>(["All"]);
   const [saExcludeDepts, setSaExcludeDepts] = useState<string[]>([]);
   const [saExcludeOffices, setSaExcludeOffices] = useState<string[]>([]);
-  const [saGlobalEmails, setSaGlobalEmails] = useState<string[]>([]);
+  const [globalEmails, setGlobalEmails] = useState<string[]>([]);
 
   useEffect(() => { void load(); }, []);
   async function load() {
@@ -87,6 +88,21 @@ export default function WeeklyBuilderEditor() {
     if (!data) return [];
     if (staged.type === "internal") return deptEmails[staged.department ?? ""] ?? [];
     return data.partnerDims.offices?.[staged.office ?? ""] ?? [];
+  }
+
+  /** Shifts a department actually runs (from audit history). Falls back to the
+   *  full shift list when coverage is unknown, so we never hide a department. */
+  function shiftsForDept(dept: string): string[] {
+    const all = data?.auditDims.shifts ?? [];
+    const cov = data?.deptShifts?.[dept];
+    return cov && cov.length > 0 ? all.filter((s) => cov.includes(s)) : all;
+  }
+
+  /** Layer the page-level "always include" emails onto a config's recipients
+   *  (deduped). Applied at preview / test / publish so every report gets them,
+   *  no matter how it was staged or when the global list changed. */
+  function withGlobals(cfg: ReportConfig): ReportConfig {
+    return globalEmails.length ? { ...cfg, recipients: dedupeEmails([...(cfg.recipients ?? []), ...globalEmails]) } : cfg;
   }
 
   function isPublished(s: { type: "internal" | "partner"; department?: string; office?: string; shift?: string | null }): boolean {
@@ -156,7 +172,7 @@ export default function WeeklyBuilderEditor() {
       officeEmails: data.partnerDims.offices ?? {},
       excludeDepts: saExcludeDepts,
       excludeOffices: saExcludeOffices,
-      globalEmails: saGlobalEmails,
+      deptShifts: data.deptShifts,
       alreadyStaged: (sel) => isStaged(sel),
       alreadyPublished: (sel) => isPublished(sel),
     });
@@ -204,7 +220,7 @@ export default function WeeklyBuilderEditor() {
     try {
       const res = await fetch("/admin/weekly-builder/test-send", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ testEmail: testEmail.trim(), configs: staged }),
+        body: JSON.stringify({ testEmail: testEmail.trim(), configs: staged.map((s) => ({ ...s, config: withGlobals(s.config) })) }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -220,7 +236,7 @@ export default function WeeklyBuilderEditor() {
     try {
       const res = await fetch("/admin/weekly-builder/publish", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ configs: staged }),
+        body: JSON.stringify({ configs: staged.map((s) => ({ ...s, config: withGlobals(s.config) })) }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -237,7 +253,7 @@ export default function WeeklyBuilderEditor() {
     try {
       const res = await fetch("/admin/email-reports/preview-inline", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify(cfg),
+        body: JSON.stringify(withGlobals(cfg)),
       });
       const data = await res.json();
       setPreviewHtml(data.html ?? "");
@@ -269,6 +285,14 @@ export default function WeeklyBuilderEditor() {
         <button class="sf-btn" type="button" disabled={busy} onClick={sendTest} style="font-size:11px;">Send Test</button>
         <button class="sf-btn primary" type="button" disabled={busy || staged.length === 0} onClick={publish} style="font-size:11px;">Publish ({staged.length})</button>
       </div>
+
+      {/* Global recipients — layered onto every report (each report = its
+          department managers + these). Lives above the panes so it applies to
+          everything staged, individually or via Stage All. */}
+      <div style="margin-bottom:14px;">
+        <EmailChips label="Always include these emails (added to every report)" placeholder="support@…, ceo@… — press Enter" value={globalEmails} onChange={setGlobalEmails} />
+      </div>
+
       {msg && <div style={`margin-bottom:10px;font-size:11px;color:var(--${msg.kind === "ok" ? "green" : "red"});`}>{msg.text}</div>}
 
       <div style="display:grid;grid-template-columns:minmax(0,55fr) minmax(0,45fr);gap:14px;align-items:flex-start;">
@@ -291,7 +315,7 @@ export default function WeeklyBuilderEditor() {
                     <DeptRow
                       key={dept}
                       dept={dept}
-                      shifts={internalShifts}
+                      shifts={shiftsForDept(dept)}
                       recipients={deptEmails[dept] ?? []}
                       published={(shift) => isPublished({ type: "internal", department: dept, shift })}
                       staged={(shift) => isStaged({ type: "internal", department: dept, shift })}
@@ -332,7 +356,7 @@ export default function WeeklyBuilderEditor() {
             ? <div style="font-size:11px;color:var(--text-dim);padding:14px;text-align:center;border:1px dashed var(--border);border-radius:8px;">Stage a department or office on the left.</div>
             : <div style="display:flex;flex-direction:column;gap:8px;">
                 {staged.map((s, i) => {
-                  const recips = s.config.recipients ?? [];
+                  const recips = dedupeEmails([...(s.config.recipients ?? []), ...globalEmails]);
                   const noEmails = recips.length === 0;
                   return (
                   <div key={i} style={`display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;background:${noEmails ? "rgba(248,81,73,0.12)" : "var(--bg)"};border:1px solid ${noEmails ? "var(--red)" : "var(--border)"};`}>
@@ -412,10 +436,6 @@ export default function WeeklyBuilderEditor() {
               </div>
             )}
 
-            <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
-              <EmailChips label="Add these emails to every report" placeholder="support@example.com — press Enter" value={saGlobalEmails} onChange={setSaGlobalEmails} />
-            </div>
-
             <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
               <button class="sf-btn" type="button" onClick={() => setStageAllOpen(false)} style="font-size:12px;">Cancel</button>
               <button class="sf-btn primary" type="button" onClick={runStageAll} style="font-size:12px;">Stage</button>
@@ -461,7 +481,7 @@ export function planStageAll(input: {
   officeEmails: Record<string, string[]>;
   excludeDepts: string[];
   excludeOffices: string[];
-  globalEmails: string[];
+  deptShifts?: Record<string, string[]>;
   alreadyStaged: (sel: StageAllSel) => boolean;
   alreadyPublished: (sel: StageAllSel) => boolean;
 }): StageAllSelection[] {
@@ -472,10 +492,14 @@ export function planStageAll(input: {
   if (input.type === "internal" || input.type === "both") {
     for (const department of input.departments) {
       if (input.excludeDepts.includes(department)) continue;
+      const deptCov = input.deptShifts?.[department];
       for (const shift of shifts) {
+        // Skip a specific shift the department doesn't actually run (e.g. Weekend
+        // for non-weekend departments). Unknown coverage → don't skip (offer it).
+        if (shift !== null && deptCov && deptCov.length > 0 && !deptCov.includes(shift)) continue;
         const sel = { type: "internal" as const, department, shift };
         if (input.alreadyStaged(sel) || input.alreadyPublished(sel)) continue;
-        out.push({ ...sel, recipients: dedupeEmails([...(input.deptEmails[department] ?? []), ...input.globalEmails]) });
+        out.push({ ...sel, recipients: dedupeEmails(input.deptEmails[department] ?? []) });
       }
     }
   }
@@ -484,7 +508,7 @@ export function planStageAll(input: {
       if (input.excludeOffices.includes(office)) continue;
       const sel = { type: "partner" as const, office, shift: null };
       if (input.alreadyStaged(sel) || input.alreadyPublished(sel)) continue;
-      out.push({ ...sel, recipients: dedupeEmails([...(input.officeEmails[office] ?? []), ...input.globalEmails]) });
+      out.push({ ...sel, recipients: dedupeEmails(input.officeEmails[office] ?? []) });
     }
   }
   return out;

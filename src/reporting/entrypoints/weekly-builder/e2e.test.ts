@@ -12,6 +12,7 @@ import { assert, assertEquals } from "#assert";
 import { WeeklyBuilderController } from "./mod.ts";
 import { listEmailReportConfigs } from "@reporting/domain/data/email-repository/mod.ts";
 import { saveAuditDimensions, saveManagerScope, updatePartnerDimensions } from "@admin/domain/data/admin-repository/mod.ts";
+import { createUser } from "@core/business/auth/mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 
 Deno.env.set("LOCAL_QUEUE", "true");
@@ -92,6 +93,7 @@ Deno.test({ name: "WeeklyBuilder.getData — returns shape with partnerDims, man
   assert("bypassCfg" in data);
   assert("existingConfigs" in data);
   assert("auditDims" in data);
+  assert("deptShifts" in data, "getData must include department→shift coverage");
   assertEquals(data.auditDims.departments.includes("DEPT-A"), true);
   assertEquals(data.managerScopes["alice@example.com"]?.departments, ["DEPT-A"]);
   assert(Array.isArray(data.partnerDims.offices?.["OFFICE-X"]));
@@ -181,6 +183,29 @@ Deno.test({ name: "WeeklyBuilder.publish — duplicate staged config is skipped 
   const r2 = await controller.publish(publishBody([staged])) as any;
   assertEquals(r2.created, 0);
   assertEquals(r2.skipped, ["X Weekly"]);
+}});
+
+Deno.test({ name: "WeeklyBuilder — super-managers (president role) are excluded from scopes + auto-recipients", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const ORG = "wb-super-" + crypto.randomUUID().slice(0, 8);
+  Deno.env.set("DEFAULT_ORG_ID", ORG);
+
+  // boss is a super-manager whose scope spans every department; mgr is normal.
+  await saveManagerScope(ORG as any, "boss@example.com", { departments: ["A", "B", "C"], shifts: [] });
+  await saveManagerScope(ORG as any, "mgr@example.com", { departments: ["A"], shifts: [] });
+  await createUser(ORG as any, "boss@example.com", "pw", "super-manager");
+  await createUser(ORG as any, "mgr@example.com", "pw", "manager");
+
+  const ctrl = new WeeklyBuilderController();
+  const data = await ctrl.getData() as any;
+  assert(!("boss@example.com" in data.managerScopes), "super-manager must be excluded from scopes");
+  assert("mgr@example.com" in data.managerScopes, "normal manager stays");
+
+  // Publishing a dept-A report with empty recipients falls back to scope — and
+  // that fallback must also exclude the super-manager.
+  await ctrl.publish(publishBody([internalStaged("A", null, "A Weekly", [])]));
+  const cfg = (await listEmailReportConfigs(ORG as any)).find((c) => c.name === "A Weekly");
+  assertEquals(cfg!.recipients, ["mgr@example.com"]);
 }});
 
 Deno.test({ name: "WeeklyBuilder.publish — empty configs returns error", sanitizeOps: false, sanitizeResources: false, fn: async () => {

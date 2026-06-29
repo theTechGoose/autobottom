@@ -51,6 +51,12 @@ export default function WeeklyBuilderEditor() {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [editIdx, setEditIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState<ReportConfig | null>(null);
+  const [stageAllOpen, setStageAllOpen] = useState(false);
+  const [saType, setSaType] = useState<"internal" | "partner" | "both">("internal");
+  const [saShift, setSaShift] = useState<string>("All");
+  const [saExcludeDepts, setSaExcludeDepts] = useState<string[]>([]);
+  const [saExcludeOffices, setSaExcludeOffices] = useState<string[]>([]);
+  const [saGlobalEmails, setSaGlobalEmails] = useState<string[]>([]);
 
   useEffect(() => { void load(); }, []);
   async function load() {
@@ -134,6 +140,40 @@ export default function WeeklyBuilderEditor() {
       config: buildStagedConfig(s),
     }]);
     setMsg(null);
+  }
+
+  /** Bulk-stage every non-excluded department / office. Each report keeps its
+   *  own manager-scoped recipients, plus any global emails (deduped). Skips
+   *  anything already staged or published. */
+  function runStageAll() {
+    if (!data) return;
+    const plan = planStageAll({
+      type: saType,
+      shift: saShift,
+      departments: data.auditDims.departments ?? [],
+      offices: Object.keys(data.partnerDims.offices ?? {}),
+      deptEmails,
+      officeEmails: data.partnerDims.offices ?? {},
+      excludeDepts: saExcludeDepts,
+      excludeOffices: saExcludeOffices,
+      globalEmails: saGlobalEmails,
+      alreadyStaged: (sel) => isStaged(sel),
+      alreadyPublished: (sel) => isPublished(sel),
+    });
+
+    setStageAllOpen(false);
+    if (plan.length === 0) {
+      setMsg({ kind: "err", text: "Nothing new to stage — all excluded or already staged/published." });
+      return;
+    }
+    const additions: StagedConfig[] = plan.map((p) => {
+      const config = buildStagedConfig({ type: p.type, department: p.department, office: p.office, shift: p.shift });
+      config.recipients = p.recipients; // managers + globals, already deduped by planStageAll
+      return { type: p.type, department: p.department, office: p.office, shift: p.shift, config };
+    });
+    setStaged([...staged, ...additions]);
+    const noEmail = additions.filter((a) => (a.config.recipients ?? []).length === 0).length;
+    setMsg({ kind: "ok", text: `Staged ${additions.length} report${additions.length === 1 ? "" : "s"}${noEmail ? ` · ${noEmail} with no recipients` : ""}.` });
   }
 
   function openEdit(idx: number) { setDraft(structuredClone(staged[idx].config)); setEditIdx(idx); }
@@ -223,9 +263,12 @@ export default function WeeklyBuilderEditor() {
       <div style="display:grid;grid-template-columns:minmax(0,55fr) minmax(0,45fr);gap:14px;align-items:flex-start;">
         {/* Left pane — trees */}
         <div class="card">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;">
             <div class="tbl-title" style="margin:0;">Available</div>
-            <input class="sf-input" type="search" placeholder="Filter…" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} style="font-size:11px;width:160px;" />
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button class="sf-btn" type="button" onClick={() => setStageAllOpen(true)} style="font-size:11px;">+ Stage All</button>
+              <input class="sf-input" type="search" placeholder="Filter…" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} style="font-size:11px;width:160px;" />
+            </div>
           </div>
 
           <div style="margin-bottom:14px;">
@@ -279,14 +322,18 @@ export default function WeeklyBuilderEditor() {
             : <div style="display:flex;flex-direction:column;gap:8px;">
                 {staged.map((s, i) => {
                   const recips = s.config.recipients ?? [];
+                  const noEmails = recips.length === 0;
                   return (
-                  <div key={i} style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;">
+                  <div key={i} style={`display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;background:${noEmails ? "rgba(248,81,73,0.12)" : "var(--bg)"};border:1px solid ${noEmails ? "var(--red)" : "var(--border)"};`}>
                     <div style="flex:1;min-width:0;">
-                      <div style="font-size:12px;font-weight:600;color:var(--text-bright);">{s.config.name}</div>
+                      <div style="font-size:12px;font-weight:600;color:var(--text-bright);">
+                        {s.config.name}
+                        {noEmails && <span style="margin-left:6px;font-size:8px;font-weight:700;letter-spacing:0.5px;background:var(--red);color:#fff;padding:1px 6px;border-radius:4px;vertical-align:middle;">NO EMAILS</span>}
+                      </div>
                       <div style="font-size:10px;color:var(--text-dim);margin-top:2px;">
                         {s.type === "internal" ? `Internal · ${s.department}${s.shift ? ` · ${s.shift}` : ""}` : `Partner · ${s.office}`}
                         {" · "}
-                        <span style={recips.length === 0 ? "color:var(--red);" : ""}>{recips.length} recipient{recips.length === 1 ? "" : "s"}</span>
+                        <span style={noEmails ? "color:var(--red);" : ""}>{recips.length} recipient{recips.length === 1 ? "" : "s"}</span>
                       </div>
                       {recips.length > 0 && (
                         <div style="font-size:10px;color:var(--text-muted);margin-top:2px;overflow-wrap:anywhere;line-height:1.5;">{recips.join(", ")}</div>
@@ -319,6 +366,191 @@ export default function WeeklyBuilderEditor() {
               onPreview={previewConfig}
             />
           </div>
+        </div>
+      )}
+      {stageAllOpen && (
+        <div class="modal-overlay open" style="z-index:200;" onClick={(e) => { if (e.target === e.currentTarget) setStageAllOpen(false); }}>
+          <div class="modal" style="width:min(560px,96vw);max-width:96vw;max-height:90vh;overflow:auto;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <div class="modal-title" style="margin:0;">Stage All</div>
+              <button type="button" class="sf-btn ghost" style="font-size:11px;" onClick={() => setStageAllOpen(false)}>Close</button>
+            </div>
+
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-dim);margin-bottom:6px;">What to stage</div>
+            <div style="display:flex;gap:8px;">
+              {(["internal", "partner", "both"] as const).map((t) => (
+                <button key={t} type="button" class={`sf-btn ${saType === t ? "primary" : ""}`} onClick={() => setSaType(t)} style="font-size:12px;flex:1;text-transform:capitalize;">{t}</button>
+              ))}
+            </div>
+
+            {(saType === "internal" || saType === "both") && (
+              <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+                <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-dim);margin-bottom:6px;">Internal — shift (one report per department)</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">
+                  {[...internalShifts, "All"].map((sh) => (
+                    <button key={sh} type="button" class={`sf-btn ${saShift === sh ? "primary" : ""}`} onClick={() => setSaShift(sh)} style="font-size:11px;">{sh}</button>
+                  ))}
+                </div>
+                <ChipSearch label="Exclude departments" placeholder="Type a department to exclude…" options={data.auditDims.departments ?? []} selected={saExcludeDepts} onChange={setSaExcludeDepts} listId="sa-dept-list" />
+              </div>
+            )}
+
+            {(saType === "partner" || saType === "both") && (
+              <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+                <ChipSearch label="Exclude offices" placeholder="Type an office to exclude…" options={Object.keys(data.partnerDims.offices ?? {})} selected={saExcludeOffices} onChange={setSaExcludeOffices} listId="sa-office-list" />
+              </div>
+            )}
+
+            <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+              <EmailChips label="Add these emails to every report" placeholder="support@example.com — press Enter" value={saGlobalEmails} onChange={setSaGlobalEmails} />
+            </div>
+
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+              <button class="sf-btn" type="button" onClick={() => setStageAllOpen(false)} style="font-size:12px;">Cancel</button>
+              <button class="sf-btn primary" type="button" onClick={runStageAll} style="font-size:12px;">Stage</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function dedupeEmails(arr: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of arr) {
+    const v = (e ?? "").trim();
+    const k = v.toLowerCase();
+    if (v && !seen.has(k)) { seen.add(k); out.push(v); }
+  }
+  return out;
+}
+
+export interface StageAllSelection {
+  type: "internal" | "partner";
+  department?: string;
+  office?: string;
+  shift: string | null;
+  recipients: string[];
+}
+
+type StageAllSel = { type: "internal" | "partner"; department?: string; office?: string; shift: string | null };
+
+/** Pure decision logic for "Stage All": which departments/offices to stage and
+ *  their final recipient lists. Excludes the excluded, skips anything already
+ *  staged/published, and merges global emails into each report (deduped, case-
+ *  insensitive). Kept pure + exported so it can be unit-tested without the UI. */
+export function planStageAll(input: {
+  type: "internal" | "partner" | "both";
+  shift: string; // a shift name, or "All" for no shift filter
+  departments: string[];
+  offices: string[];
+  deptEmails: Record<string, string[]>;
+  officeEmails: Record<string, string[]>;
+  excludeDepts: string[];
+  excludeOffices: string[];
+  globalEmails: string[];
+  alreadyStaged: (sel: StageAllSel) => boolean;
+  alreadyPublished: (sel: StageAllSel) => boolean;
+}): StageAllSelection[] {
+  const out: StageAllSelection[] = [];
+  const shift = input.shift === "All" ? null : input.shift;
+  if (input.type === "internal" || input.type === "both") {
+    for (const department of input.departments) {
+      if (input.excludeDepts.includes(department)) continue;
+      const sel = { type: "internal" as const, department, shift };
+      if (input.alreadyStaged(sel) || input.alreadyPublished(sel)) continue;
+      out.push({ ...sel, recipients: dedupeEmails([...(input.deptEmails[department] ?? []), ...input.globalEmails]) });
+    }
+  }
+  if (input.type === "partner" || input.type === "both") {
+    for (const office of input.offices) {
+      if (input.excludeOffices.includes(office)) continue;
+      const sel = { type: "partner" as const, office, shift: null };
+      if (input.alreadyStaged(sel) || input.alreadyPublished(sel)) continue;
+      out.push({ ...sel, recipients: dedupeEmails([...(input.officeEmails[office] ?? []), ...input.globalEmails]) });
+    }
+  }
+  return out;
+}
+
+function ChipSearch({ label, placeholder, options, selected, onChange, listId }: {
+  label: string;
+  placeholder: string;
+  options: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  listId: string;
+}) {
+  const [q, setQ] = useState("");
+  const add = (val: string) => {
+    const v = val.trim();
+    if (v && options.includes(v) && !selected.includes(v)) onChange([...selected, v]);
+    setQ("");
+  };
+  return (
+    <div>
+      <label style="display:block;font-size:10px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px;">{label}</label>
+      <input
+        class="sf-input"
+        type="text"
+        list={listId}
+        value={q}
+        placeholder={placeholder}
+        onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+        onChange={(e) => add((e.target as HTMLInputElement).value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(q); } }}
+        style="font-size:12px;width:100%;"
+      />
+      <datalist id={listId}>{options.filter((o) => !selected.includes(o)).map((o) => <option key={o} value={o} />)}</datalist>
+      {selected.length > 0 && (
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
+          {selected.map((s) => (
+            <span key={s} style="display:inline-flex;align-items:center;gap:4px;font-size:11px;background:var(--bg-raised);border:1px solid var(--border);border-radius:5px;padding:2px 6px;color:var(--text-bright);">
+              {s}
+              <button type="button" onClick={() => onChange(selected.filter((x) => x !== s))} style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:13px;line-height:1;padding:0;">×</button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmailChips({ label, placeholder, value, onChange }: {
+  label: string;
+  placeholder: string;
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [q, setQ] = useState("");
+  const add = () => {
+    const v = q.trim().replace(/,+$/, "").trim();
+    if (v && !value.some((x) => x.toLowerCase() === v.toLowerCase())) onChange([...value, v]);
+    setQ("");
+  };
+  return (
+    <div>
+      <label style="display:block;font-size:10px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px;">{label}</label>
+      <input
+        class="sf-input"
+        type="email"
+        value={q}
+        placeholder={placeholder}
+        onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); } }}
+        onBlur={add}
+        style="font-size:12px;width:100%;"
+      />
+      {value.length > 0 && (
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
+          {value.map((s) => (
+            <span key={s} style="display:inline-flex;align-items:center;gap:4px;font-size:11px;background:var(--bg-raised);border:1px solid var(--border);border-radius:5px;padding:2px 6px;color:var(--text-bright);">
+              {s}
+              <button type="button" onClick={() => onChange(value.filter((x) => x !== s))} style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:13px;line-height:1;padding:0;">×</button>
+            </span>
+          ))}
         </div>
       )}
     </div>

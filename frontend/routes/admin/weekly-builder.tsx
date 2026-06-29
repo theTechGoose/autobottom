@@ -18,6 +18,12 @@ export default define.page(function WeeklyBuilder(ctx) {
         <a href="/admin/dashboard" class="ql-topbar-back">← Dashboard</a>
       </div>
       <div class="ql-page-body">
+        <p style="font-size:12px;color:var(--text-dim);line-height:1.6;max-width:780px;margin:0 0 16px;">
+          Each weekly report covers the current week so far — Monday through today, in Eastern time. It
+          sends every morning and grows as the week fills in: Monday shows Monday's audits, Tuesday shows
+          Monday + Tuesday, and so on through Sunday, then it resets when the next Monday begins. Each
+          department's report goes to that department's managers.
+        </p>
         <WeeklyBuilderEditor />
       </div>
     </Layout>

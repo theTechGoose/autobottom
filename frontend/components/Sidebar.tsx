@@ -133,6 +133,11 @@ const MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
   { label: "Audit History", icon: Icon.barChart, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/audits" },
 ]}];
 
+// Super-manager (president) has no remediation queue — Audit History only.
+const SUPER_MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
+  { label: "Audit History", icon: Icon.barChart, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/audits" },
+]}];
+
 const USER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
   { label: "Dashboard", icon: Icon.barChart, color: "rgba(249,115,22,0.10)", iconColor: "#f97316", href: "/agent" },
   { label: "Store", icon: Icon.trophy, color: "var(--yellow-bg)", iconColor: "var(--yellow)", href: "/store" },
@@ -144,8 +149,8 @@ const ROLE_SECTION_MAP: Record<Role, SbSection[]> = {
   reviewer: REVIEWER_SECTIONS,
   judge: JUDGE_SECTIONS,
   manager: MANAGER_SECTIONS,
-  // Super-manager gets the same nav as a manager (Queue + Audit History).
-  "super-manager": MANAGER_SECTIONS,
+  // Super-manager gets a queue-less nav (Audit History only).
+  "super-manager": SUPER_MANAGER_SECTIONS,
   user: USER_SECTIONS,
 };
 
@@ -164,6 +169,9 @@ export function Sidebar({ user, section, pathname, gameState }: SidebarProps) {
   let viewRole: Role = SECTION_ROLE_MAP[section] ?? user.role;
   // Defense in depth: non-admin must never render admin nav even if section="admin"
   if (viewRole === "admin" && user.role !== "admin") viewRole = user.role;
+  // Super-manager has no queue — force its queue-less nav even on the
+  // section="manager" pages (Audit History), which would otherwise show Queue.
+  if (user.role === "super-manager") viewRole = "super-manager";
   const baseSections = ROLE_SECTION_MAP[viewRole] ?? USER_SECTIONS;
   const isAdmin = user.role === "admin";
   const isSuperAdmin = isAdmin && user.email === SUPER_ADMIN_EMAIL;

@@ -32,7 +32,9 @@ export interface State {
 
 export const ROLE_REDIRECTS: Record<Role, string> = {
   admin: "/admin/dashboard",
-  "super-manager": "/manager",
+  // Super-manager has no remediation queue — land on the all-departments
+  // Audit History, not the queue at /manager.
+  "super-manager": "/manager/audits",
   judge: "/judge",
   manager: "/manager",
   reviewer: "/review/dashboard",

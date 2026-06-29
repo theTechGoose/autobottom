@@ -93,7 +93,10 @@ export default define.page(async function ManagerAuditsPage(ctx) {
           <h1>Audit History</h1>
           <p class="page-sub">Historical audits scoped to your team</p>
         </div>
-        <a href={asEmail ? `/manager?as=${encodeURIComponent(asEmail)}` : "/manager"} class="btn btn-ghost btn-sm">&larr; Manager</a>
+        {/* Super-manager has no queue page to go back to — hide the link. */}
+        {user.role !== "super-manager" && (
+          <a href={asEmail ? `/manager?as=${encodeURIComponent(asEmail)}` : "/manager"} class="btn btn-ghost btn-sm">&larr; Manager</a>
+        )}
       </div>
 
       <GameStateRow

@@ -124,6 +124,12 @@ export default define.middleware(async (ctx) => {
       return authRedirect(ctx.req, roleRedirect(ctx.state.user.role));
     }
 
+    // Super-manager (president) has no remediation queue — bounce the bare
+    // Manager Portal (the queue page) to the all-departments Audit History.
+    if (ctx.state.user.role === "super-manager" && (path === "/manager" || path === "/manager/")) {
+      return authRedirect(ctx.req, "/manager/audits");
+    }
+
     // Prefetch game-state for page renders so Sidebar can show equipped
     // cosmetics without an extra round-trip. Skip /api/* (no sidebar) and
     // /login/* (no user yet). Cache hits keep this near-free; misses pay

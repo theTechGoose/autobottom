@@ -46,27 +46,67 @@ export interface SectionResult {
 
 // ── Date range resolution ─────────────────────────────────────────────────────
 
-export function resolveDateRange(dateRange: DateRangeConfig | undefined): { from: number; to: number } {
+/** The weekly Monday→Sunday window is anchored to this wall-clock zone, so the
+ *  week resets at Eastern midnight (DST-safe), not on the server's UTC clock. */
+const WEEK_TZ = "America/New_York";
+
+/** Wall-clock fields for `atMs` projected into `tz` (DST-safe via Intl). */
+function tzParts(tz: string, atMs: number): {
+  year: number; month: number; day: number; hour: number; minute: number; second: number; dow: number;
+} {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, year: "numeric", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "numeric", second: "numeric", weekday: "short", hour12: false,
+  });
+  const p = dtf.formatToParts(new Date(atMs));
+  const get = (t: string) => p.find((x) => x.type === t)?.value ?? "";
+  const wd: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  let hour = Number(get("hour"));
+  if (hour === 24) hour = 0; // en-US returns "24" at midnight
+  return {
+    year: Number(get("year")), month: Number(get("month")), day: Number(get("day")),
+    hour, minute: Number(get("minute")), second: Number(get("second")), dow: wd[get("weekday")] ?? 0,
+  };
+}
+
+/** Epoch ms for a given wall-clock time in `tz` (DST-safe, with one edge-correction pass). */
+function zonedToMs(tz: string, y: number, mo: number, d: number, h: number, mi: number, s: number, ms: number): number {
+  const guess = Date.UTC(y, mo - 1, d, h, mi, s, ms);
+  const offset = (a: number) => {
+    // tz offsets are whole seconds and tzParts has no ms, so compare against
+    // `a` floored to the second — otherwise the sub-second part leaks into the
+    // offset and shifts the result (e.g. the .999 on a Sunday-23:59:59.999 end).
+    const pr = tzParts(tz, a);
+    return Date.UTC(pr.year, pr.month - 1, pr.day, pr.hour, pr.minute, pr.second) - Math.floor(a / 1000) * 1000;
+  };
+  let result = guess - offset(guess);
+  if (offset(result) !== offset(guess)) result = guess - offset(result);
+  return result;
+}
+
+export function resolveDateRange(
+  dateRange: DateRangeConfig | undefined,
+  nowMs: number = Date.now(),
+): { from: number; to: number } {
   if (!dateRange) {
     // Default: rolling 24 hours (backward compat for old configs)
-    const to = Date.now();
-    return { from: to - 86_400_000, to };
+    return { from: nowMs - 86_400_000, to: nowMs };
   }
   if (dateRange.mode === "rolling") {
-    const to = Date.now();
-    return { from: to - dateRange.hours * 3_600_000, to };
+    return { from: nowMs - dateRange.hours * 3_600_000, to: nowMs };
   }
   if (dateRange.mode === "weekly") {
-    const now = new Date();
-    const day = now.getDay(); // 0=Sun, 1=Mon, ...
-    const diff = (day - dateRange.startDay + 7) % 7;
-    const start = new Date(now);
-    start.setDate(now.getDate() - diff);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-    end.setHours(23, 59, 59, 999);
-    return { from: start.getTime(), to: end.getTime() };
+    // Monday 00:00:00.000 EST → Sunday 23:59:59.999 EST. Compute the calendar
+    // date of the week's start in Eastern, then convert both ends back to epoch.
+    const ny = tzParts(WEEK_TZ, nowMs);
+    const diff = (ny.dow - dateRange.startDay + 7) % 7; // days since the week's start day
+    const startCal = new Date(Date.UTC(ny.year, ny.month - 1, ny.day));
+    startCal.setUTCDate(startCal.getUTCDate() - diff);
+    const endCal = new Date(startCal);
+    endCal.setUTCDate(endCal.getUTCDate() + 6);
+    const from = zonedToMs(WEEK_TZ, startCal.getUTCFullYear(), startCal.getUTCMonth() + 1, startCal.getUTCDate(), 0, 0, 0, 0);
+    const to = zonedToMs(WEEK_TZ, endCal.getUTCFullYear(), endCal.getUTCMonth() + 1, endCal.getUTCDate(), 23, 59, 59, 999);
+    return { from, to };
   }
   // fixed
   return { from: dateRange.from, to: dateRange.to };

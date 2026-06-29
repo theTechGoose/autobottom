@@ -626,7 +626,7 @@ const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", 
 
 function pad2(n: number) { return n.toString().padStart(2, "0"); }
 
-function presetShapeToCron(s: PresetShape): { cron: string; tz: string } | null {
+export function presetShapeToCron(s: PresetShape): { cron: string; tz: string } | null {
   if (s.preset === "Disabled" || s.preset === "Custom") return null;
   const [hhRaw, mmRaw] = (s.timeOfDay || "09:00").split(":");
   const hh = Math.max(0, Math.min(23, parseInt(hhRaw, 10) || 0));
@@ -639,7 +639,7 @@ function presetShapeToCron(s: PresetShape): { cron: string; tz: string } | null 
   return null;
 }
 
-function parseCronToShape(cron: string | undefined): PresetShape {
+export function parseCronToShape(cron: string | undefined): PresetShape {
   if (!cron) return { preset: "Disabled", timeOfDay: "09:00" };
   const fields = cron.trim().split(/\s+/);
   if (fields.length !== 5) return { preset: "Custom", timeOfDay: "09:00" };

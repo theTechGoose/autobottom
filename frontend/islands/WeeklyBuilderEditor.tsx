@@ -201,7 +201,7 @@ export default function WeeklyBuilderEditor() {
       </div>
       {msg && <div style={`margin-bottom:10px;font-size:11px;color:var(--${msg.kind === "ok" ? "green" : "red"});`}>{msg.text}</div>}
 
-      <div style="display:grid;grid-template-columns:55fr 45fr;gap:14px;align-items:flex-start;">
+      <div style="display:grid;grid-template-columns:minmax(0,55fr) minmax(0,45fr);gap:14px;align-items:flex-start;">
         {/* Left pane — trees */}
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -268,7 +268,7 @@ export default function WeeklyBuilderEditor() {
                         <span style={s.recipients.length === 0 ? "color:var(--red);" : ""}>{s.recipients.length} recipient{s.recipients.length === 1 ? "" : "s"}</span>
                       </div>
                       {s.recipients.length > 0 && (
-                        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{s.recipients.join(", ")}</div>
+                        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;overflow-wrap:anywhere;line-height:1.5;">{s.recipients.join(", ")}</div>
                       )}
                     </div>
                     <button class="sf-btn ghost" type="button" disabled={busy} onClick={() => preview(s)} style="font-size:10px;padding:4px 8px;" title="Preview">👁</button>

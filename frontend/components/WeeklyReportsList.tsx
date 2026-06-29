@@ -60,7 +60,7 @@ export function WeeklyReportsList(
         const isActive = c.enabled !== false && !c.disabled;
         const st = statuses[id];
         return (
-          <div key={id} style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--bg);">
+          <div key={id} id={`wr-row-${id}`} style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--bg);">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
               <div>
                 <div style="font-weight:600;color:var(--text-bright);font-size:13px;">{c.name || "Untitled"}</div>
@@ -103,6 +103,18 @@ export function WeeklyReportsList(
                   disabled={!id}
                 >Send Live Now</button>
                 <span id={`wr-send-${id}`} style="font-size:10px;color:var(--text-dim);min-width:60px;"></span>
+                <button
+                  type="button"
+                  class="sf-btn danger"
+                  style="font-size:11px;padding:4px 10px;"
+                  hx-post={`/api/admin/modal/reports/delete?configId=${encodeURIComponent(id)}`}
+                  hx-target={`#wr-del-${id}`}
+                  hx-swap="innerHTML"
+                  hx-confirm={`Delete "${c.name || "this report"}" permanently? This removes it from Firestore and it will stop sending.`}
+                  hx-disabled-elt="this"
+                  disabled={!id}
+                >Delete</button>
+                <span id={`wr-del-${id}`} style="font-size:10px;color:var(--text-dim);min-width:40px;"></span>
               </div>
             </div>
             <div id={`wr-preview-${id}`} style="margin-top:10px;"></div>

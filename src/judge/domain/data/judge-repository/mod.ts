@@ -738,27 +738,40 @@ export interface ChargebackBackfillBatchResult {
  *  (or all false when the finding is gone / unanswered and is skipped). */
 type CbOne = { cbUpdated: boolean; cbDeleted: boolean; wireUpdated: boolean; wireDeleted: boolean };
 
+/** The slice of a finding the chargeback/wire reconcile actually reads — turns
+ *  getFinding's broad return into a typed contract so a rename of
+ *  `recordingIdField` / `completedAt` upstream is a compile error, not a silent
+ *  undefined. (A type alias, not an interface, so it's assignable to the wider
+ *  Record<string, any> buildIndexMeta expects.) */
+type CbFinding = {
+  answeredQuestions?: Array<{ answer?: unknown; header?: unknown; egregious?: unknown }>;
+  recordingIdField?: string;
+  record?: Record<string, any>;
+  completedAt?: number;
+};
+
 /** Reconcile ONE finding's chargeback (date-leg) or wire (package) entry against
  *  its CURRENT answers — same canonical predicates as the live review sync (a
  *  fail is `=== "No"`, success `=== "Yes"`). A now-passing audit's entry is
  *  DELETED (the stale "failed VO" row this tool exists to clear); otherwise it's
- *  rewritten to the recomputed score + remaining fails. */
-async function reconcileChargebackForFinding(orgId: OrgId, fid: string): Promise<CbOne> {
+ *  rewritten to the recomputed score + remaining fails. Exported for unit tests. */
+export async function reconcileChargebackForFinding(orgId: OrgId, fid: string): Promise<CbOne> {
   const none: CbOne = { cbUpdated: false, cbDeleted: false, wireUpdated: false, wireDeleted: false };
-  const finding = await getFinding(orgId, fid);
-  if (!finding) return none;
-  const answers = ((finding as any).answeredQuestions ?? []) as Array<{ answer?: unknown; header?: unknown; egregious?: unknown }>;
+  const raw = await getFinding(orgId, fid);
+  if (!raw) return none;
+  const f = raw as unknown as CbFinding;
+  const answers = f.answeredQuestions ?? [];
   if (answers.length === 0) return none;
-  const isPackage = (finding as any).recordingIdField === "GenieNumber";
+  const isPackage = f.recordingIdField === "GenieNumber";
   const yes = answers.filter((a) => String(a.answer ?? "") === "Yes").length;
   const score = Math.round((yes / answers.length) * 100);
   const failedQs = answers
     .map((a) => ({ header: String(a.header ?? ""), egregious: !!a.egregious, answer: String(a.answer ?? "") }))
     .filter((q) => q.answer === "No" && q.header);
   const passing = score >= 100 || failedQs.length === 0;
-  const rec = ((finding as any).record ?? {}) as Record<string, any>;
-  const ts = typeof (finding as any).completedAt === "number" ? (finding as any).completedAt : Date.now();
-  const meta = buildIndexMeta(finding as any);
+  const rec = f.record ?? {};
+  const ts = typeof f.completedAt === "number" ? f.completedAt : Date.now();
+  const meta = buildIndexMeta(f);
   if (isPackage) {
     if (passing) {
       await deleteWireDeductionEntry(orgId, fid).catch(() => {});
@@ -799,9 +812,18 @@ export async function processChargebackBackfillBatch(
   const totals: ChargebackBackfillBatchResult = { scanned: 0, cbUpdated: 0, cbDeleted: 0, wireUpdated: 0, wireDeleted: 0 };
   for (let i = 0; i < fids.length; i += CONCURRENCY) {
     const slice = fids.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(slice.map((fid) => reconcileChargebackForFinding(orgId, fid)));
-    for (const r of results) {
+    // allSettled, not all: a single thrown save must NOT reject the whole slice
+    // (which would discard every count in this batch AND abort the remaining
+    // slices). A failed finding is bounded to one skipped, logged row.
+    const results = await Promise.allSettled(slice.map((fid) => reconcileChargebackForFinding(orgId, fid)));
+    for (let j = 0; j < results.length; j++) {
+      const res = results[j];
       totals.scanned++;
+      if (res.status === "rejected") {
+        console.warn(`[CB-BACKFILL] ⚠️ reconcile failed fid=${slice[j]}:`, res.reason);
+        continue;
+      }
+      const r = res.value;
       if (r.cbUpdated) totals.cbUpdated++;
       if (r.cbDeleted) totals.cbDeleted++;
       if (r.wireUpdated) totals.wireUpdated++;

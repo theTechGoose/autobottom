@@ -19,6 +19,7 @@ import {
   postJudgedAudit,
   listChargebackBackfillFids,
   processChargebackBackfillBatch,
+  reconcileChargebackForFinding,
   type DedupPlan,
 } from "./mod.ts";
 import {
@@ -37,6 +38,8 @@ import {
   getHiddenFindingIds,
   saveChargebackEntry,
   getChargebackEntries,
+  saveWireDeductionEntry,
+  getWireDeductionEntries,
   _resetHiddenCacheForTesting,
   type AuditHiddenEntry,
 } from "@audit/domain/data/stats-repository/mod.ts";
@@ -713,4 +716,135 @@ Deno.test("chargeback backfill — list enumerates fids; process deletes a now-p
   assertExists(b);
   assertEquals(b!.score, 50, "B rewritten to the recomputed 50% (1/2 Yes)");
   assertEquals(b!.failedQHeaders, ["Q1"], "B lists only the real remaining fail (Q1), not the stale Q0");
+});
+
+const CB_NOW = 1_700_000_000_000;
+
+/** Seed a finished finding the chargeback reconcile can read. `answers` are
+ *  {answer, header?, egregious?}; header defaults to Q<i> (pass "" to test the
+ *  empty-header edge). isPackage flips recordingIdField to GenieNumber. */
+async function seedCbFinding(
+  org: OrgId,
+  id: string,
+  answers: Array<{ answer: string; header?: string; egregious?: boolean }>,
+  opts: { isPackage?: boolean } = {},
+): Promise<void> {
+  await saveFinding(org, {
+    id,
+    findingStatus: "finished",
+    recordingIdField: opts.isPackage ? "GenieNumber" : "VoGenie",
+    completedAt: CB_NOW,
+    record: {
+      RecordId: "r-" + id, VoName: "VO 01 - T", GuestName: "G",
+      ActivatingOffice: "ACT", OfficeName: "ACT Office", DestinationDisplay: "HI", "706": "100",
+    },
+    answeredQuestions: answers.map((a, i) => ({
+      header: a.header === undefined ? "Q" + i : a.header,
+      answer: a.answer,
+      egregious: a.egregious,
+    })),
+  } as unknown as Parameters<typeof saveFinding>[1]);
+}
+
+Deno.test("reconcileChargebackForFinding — four outcomes + skip cases + empty-header edge", async () => {
+  resetFirestoreCredentials();
+  _resetHiddenCacheForTesting();
+  const org = ("test-cbrec-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const cbEntry = (id: string) => saveChargebackEntry(org, {
+    findingId: id, ts: CB_NOW, voName: "x", destination: "", revenue: "", recordId: "r-" + id,
+    score: 50, failedQHeaders: ["Q0"], egregiousHeaders: [], omissionHeaders: ["Q0"],
+  });
+  const cbOf = async (id: string) => (await getChargebackEntries(org, 0, CB_NOW + 1000)).find((e) => e.findingId === id);
+  const wireOf = async (id: string) => (await getWireDeductionEntries(org, 0, CB_NOW + 1000)).find((e) => e.findingId === id);
+
+  // (1) cbDeleted — date-leg, all Yes (passing) → deletes the existing chargeback.
+  await seedCbFinding(org, "cbDel", [{ answer: "Yes" }, { answer: "Yes" }]);
+  await cbEntry("cbDel");
+  assertEquals(await reconcileChargebackForFinding(org, "cbDel"),
+    { cbUpdated: false, cbDeleted: true, wireUpdated: false, wireDeleted: false });
+  assertEquals(await cbOf("cbDel"), undefined, "passing date-leg → chargeback deleted");
+
+  // (2) cbUpdated — date-leg with real No+header → saves recomputed score + split headers.
+  await seedCbFinding(org, "cbUpd", [
+    { answer: "Yes" }, { answer: "No", header: "Income", egregious: true }, { answer: "No", header: "Omit" },
+  ]);
+  const r2 = await reconcileChargebackForFinding(org, "cbUpd");
+  assertEquals(r2.cbUpdated, true);
+  const cb = await cbOf("cbUpd");
+  assertExists(cb);
+  assertEquals(cb!.score, 33, "1/3 Yes → 33%");
+  assertEquals([...cb!.failedQHeaders].sort(), ["Income", "Omit"]);
+  assertEquals(cb!.egregiousHeaders, ["Income"], "egregious split by the egregious flag");
+  assertEquals(cb!.omissionHeaders, ["Omit"]);
+
+  // (3) wireDeleted — package, all Yes (passing) → deletes the existing wire entry.
+  await seedCbFinding(org, "wDel", [{ answer: "Yes" }, { answer: "Yes" }], { isPackage: true });
+  await saveWireDeductionEntry(org, {
+    findingId: "wDel", ts: CB_NOW, score: 50, questionsAudited: 2, totalSuccess: 1,
+    recordId: "r-wDel", office: "ACT", excellenceAuditor: "x", guestName: "G",
+  });
+  assertEquals((await reconcileChargebackForFinding(org, "wDel")).wireDeleted, true);
+  assertEquals(await wireOf("wDel"), undefined, "passing package → wire entry deleted (symmetric)");
+
+  // (4) wireUpdated — package, failing → saves wire entry with score + totalSuccess.
+  await seedCbFinding(org, "wUpd", [{ answer: "Yes" }, { answer: "No", header: "X" }], { isPackage: true });
+  assertEquals((await reconcileChargebackForFinding(org, "wUpd")).wireUpdated, true);
+  const w = await wireOf("wUpd");
+  assertExists(w);
+  assertEquals(w!.score, 50);
+  assertEquals(w!.totalSuccess, 1, "totalSuccess counts === \"Yes\"");
+  assertEquals(w!.questionsAudited, 2);
+
+  // skip — missing finding → all-false none, no writes.
+  assertEquals(await reconcileChargebackForFinding(org, "ghost"),
+    { cbUpdated: false, cbDeleted: false, wireUpdated: false, wireDeleted: false });
+
+  // skip — zero answers → all-false none.
+  await seedCbFinding(org, "empty", []);
+  assertEquals(await reconcileChargebackForFinding(org, "empty"),
+    { cbUpdated: false, cbDeleted: false, wireUpdated: false, wireDeleted: false });
+
+  // edge — a literal "No" with an EMPTY header is filtered out (q.header falsy),
+  // so failedQs is empty → passing → DELETE, not a chargeable fail.
+  await seedCbFinding(org, "edge", [{ answer: "Yes" }, { answer: "No", header: "" }]);
+  await cbEntry("edge");
+  assertEquals((await reconcileChargebackForFinding(org, "edge")).cbDeleted, true,
+    "a No with an empty header is not a chargeable fail → entry deleted");
+  assertEquals(await cbOf("edge"), undefined);
+});
+
+Deno.test("processChargebackBackfillBatch — folds totals across >1 concurrency slice (25 fids)", async () => {
+  resetFirestoreCredentials();
+  _resetHiddenCacheForTesting();
+  const org = ("test-cbagg-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fids: string[] = [];
+  // CONCURRENCY=20, so 25 fids = two slices (20 + 5); scanned===25 proves the
+  // outer accumulation folded BOTH, not just the first slice.
+  for (let i = 0; i < 10; i++) {
+    const id = "d" + i; await seedCbFinding(org, id, [{ answer: "Yes" }]);
+    await saveChargebackEntry(org, {
+      findingId: id, ts: CB_NOW, voName: "x", destination: "", revenue: "", recordId: "r-" + id,
+      score: 50, failedQHeaders: ["Q0"], egregiousHeaders: [], omissionHeaders: ["Q0"],
+    });
+    fids.push(id); // → cbDeleted
+  }
+  for (let i = 0; i < 8; i++) { const id = "u" + i; await seedCbFinding(org, id, [{ answer: "No", header: "X" }]); fids.push(id); } // → cbUpdated
+  for (let i = 0; i < 3; i++) {
+    const id = "wd" + i; await seedCbFinding(org, id, [{ answer: "Yes" }], { isPackage: true });
+    await saveWireDeductionEntry(org, {
+      findingId: id, ts: CB_NOW, score: 50, questionsAudited: 1, totalSuccess: 0,
+      recordId: "r-" + id, office: "ACT", excellenceAuditor: "x", guestName: "G",
+    });
+    fids.push(id); // → wireDeleted
+  }
+  for (let i = 0; i < 2; i++) { const id = "wu" + i; await seedCbFinding(org, id, [{ answer: "No", header: "X" }], { isPackage: true }); fids.push(id); } // → wireUpdated
+  await seedCbFinding(org, "empty2", []); fids.push("empty2"); // skipped (no answers)
+  fids.push("missing-fid"); // skipped (no finding)
+
+  const res = await processChargebackBackfillBatch(org, fids);
+  assertEquals(res.scanned, 25, "both concurrency slices folded (would be 20 if only the first ran)");
+  assertEquals(res.cbDeleted, 10);
+  assertEquals(res.cbUpdated, 8);
+  assertEquals(res.wireDeleted, 3);
+  assertEquals(res.wireUpdated, 2);
 });

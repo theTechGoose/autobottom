@@ -6,6 +6,22 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
+## 2026-06-30 — Chargeback backfill: batch-resilience fix + tests
+
+- **A single thrown save no longer aborts a whole batch (or the run).** The
+  concurrent processor used `Promise.all`, which rejects on the first failure —
+  one bad `saveChargebackEntry` would discard every count in the slice, skip the
+  rest of the run, and leave the other ~19 already-issued writes uncounted.
+  Switched to `Promise.allSettled`: a failed finding is bounded to one skipped,
+  logged row.
+  ([judge-repository/mod.ts](../src/judge/domain/data/judge-repository/mod.ts))
+- Extracted `reconcileChargebackForFinding` now reads through a typed `CbFinding`
+  shape instead of `(finding as any)` casts, so an upstream field rename is a
+  compile error. Added tests: the four reconcile outcomes + skip cases + the
+  empty-header edge (a literal "No" with no header is not chargeable), and a
+  `processChargebackBackfillBatch` run over 25 fids that proves totals fold
+  across both concurrency slices.
+
 ## 2026-06-30 — Chargeback backfill: concurrent batches (~10× faster)
 
 - **Each batch now reconciles its findings concurrently (bounded fan-out of 20)

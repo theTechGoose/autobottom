@@ -324,7 +324,26 @@ export async function queryReportData(
     }
   }
 
+  // Weekly reports list audits worst-first (0% → 100%) so failures surface at
+  // the top of each section — and so the email's row-trim keeps the worst ones.
+  // Runs last, after MCC write-backs resolve their captured row indices. Other
+  // report types keep their natural (completedAt) order.
+  if (config.weeklyType) {
+    for (const section of results) sortRowsFailsFirst(section.rows as ReportRow[]);
+  }
+
   return results;
+}
+
+/** Order rows worst-first (0% → 100%); ties break most-recent-first. Mutates in
+ *  place and returns the same array. Pure + exported for unit testing. */
+export function sortRowsFailsFirst(rows: ReportRow[]): ReportRow[] {
+  return rows.sort((a, b) => {
+    const sa = a.score ?? Number.POSITIVE_INFINITY;
+    const sb = b.score ?? Number.POSITIVE_INFINITY;
+    if (sa !== sb) return sa - sb;
+    return (b.finalizedAt ?? 0) - (a.finalizedAt ?? 0);
+  });
 }
 
 /** A report only needs the (heavy) finding doc when it filters on question-level
@@ -659,19 +678,22 @@ export async function prepareReport(orgId: OrgId, config: EmailReportConfig): Pr
     ? await getEmailTemplate(orgId, config.templateId)
     : null;
 
+  const weekly = !!config.weeklyType;
   let summaryHtml: string | undefined;
-  if (config.weeklyType) {
-    const { from, to } = resolveDateRange(config.dateRange);
-    const allRows = sections.flatMap(s => s.rows);
-    const scores = allRows.map(r => r.score ?? 0);
-    const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
-    const failedCount = scores.filter(s => s < 100).length;
-    const summaryData: WeeklySummaryData = { from, to, totalAudits: allRows.length, avgScore, failedCount };
-    summaryHtml = renderWeeklySummary(summaryData);
+  if (weekly) {
+    // Two cards: today's audits (since Eastern midnight) and the whole week.
+    // "Today" relies on the finalizedAt timestamp, which the weekly reports all
+    // carry as a column; rows without it fall outside the daily count.
+    const allRows = sections.flatMap((s) => s.rows);
+    const todayStart = startOfTodayEastern();
+    const todayRows = allRows.filter((r) => (r.finalizedAt ?? 0) >= todayStart);
+    summaryHtml =
+      renderSummaryBlock("Daily Summary", "Today's Audits", summarizeRows(todayRows)) +
+      renderSummaryBlock("Weekly Summary", "This week's Audits", summarizeRows(allRows));
   }
 
   console.log(`${label} — [3/3] rendering HTML...`);
-  const sectionsHtml = renderSections(sections);
+  const sectionsHtml = renderSections(sections, weekly);
   // The complete report — every row — is what we store at the public page and
   // what the email shows when it's small enough.
   const fullHtml = renderFullEmail(template?.html ?? null, sectionsHtml, config.name, summaryHtml);
@@ -695,7 +717,7 @@ export async function prepareReport(orgId: OrgId, config: EmailReportConfig): Pr
     } else {
       const { sections: trimmed, shown, total } = trimSectionsForEmail(sections, MAX_INLINE_ROWS);
       const note = `Showing ${shown} of ${total} audits — open the full report for all of them.`;
-      htmlBody = renderFullEmail(template?.html ?? null, renderSections(trimmed) + renderViewLinkBlock(viewUrl, note), config.name, summaryHtml);
+      htmlBody = renderFullEmail(template?.html ?? null, renderSections(trimmed, weekly) + renderViewLinkBlock(viewUrl, note), config.name, summaryHtml);
     }
   }
 
@@ -797,6 +819,14 @@ const COLUMN_LABELS: Record<ReportColumnKey, string> = {
   mostRecentActiveMccId: "MCC ID",
 };
 
+/** Weekly reports relabel a couple of columns (and the finding cell shows a
+ *  plain "Click Here" link instead of the raw id — see renderCell). Other report
+ *  types keep the defaults above. */
+const WEEKLY_COLUMN_LABELS: Partial<Record<ReportColumnKey, string>> = {
+  recordId:  "Dateleg Link",
+  findingId: "View Full Audit",
+};
+
 const APPEAL_LABELS: Record<AppealStatus, string> = {
   none:     "None",
   pending:  "Pending",
@@ -827,7 +857,7 @@ function formatEst(ts: number): string {
 
 // ── Cell renderer ─────────────────────────────────────────────────────────────
 
-function renderCell(col: ReportColumnKey, row: ReportRow): string {
+function renderCell(col: ReportColumnKey, row: ReportRow, weekly = false): string {
   switch (col) {
     case "recordId": {
       if (!row.recordId) return `<span style="color:${C.textDim};">&mdash;</span>`;
@@ -835,7 +865,11 @@ function renderCell(col: ReportColumnKey, row: ReportRow): string {
     }
     case "findingId": {
       if (!row.findingId) return `<span style="color:${C.textDim};">&mdash;</span>`;
-      return `<a href="${findingUrl(row.findingId)}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:11px;">${esc(row.findingId)}</a>`;
+      // Weekly reports show a friendly "Click Here" link; other reports show the
+      // raw finding id (monospace) for operators who scan ids directly.
+      const linkText = weekly ? "Click Here" : esc(row.findingId);
+      const idStyle = weekly ? "" : "font-family:monospace;font-size:11px;";
+      return `<a href="${findingUrl(row.findingId)}" style="color:${C.blue};text-decoration:none;${idStyle}">${linkText}</a>`;
     }
     case "score": {
       if (row.score == null) return `<span style="color:${C.textDim};">&mdash;</span>`;
@@ -866,12 +900,12 @@ function renderCell(col: ReportColumnKey, row: ReportRow): string {
 
 // ── Section renderer ──────────────────────────────────────────────────────────
 
-function renderSection(section: SectionResult): string {
+function renderSection(section: SectionResult, weekly = false): string {
   const thStyle = `padding:8px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${C.textMuted};border-bottom:1px solid ${C.border};white-space:nowrap;`;
   const tdBase  = `padding:10px 14px;border-bottom:1px solid ${C.border};vertical-align:top;font-size:13px;`;
 
   const headerCells = section.columns
-    .map((col) => `<th style="${thStyle}">${COLUMN_LABELS[col]}</th>`)
+    .map((col) => `<th style="${thStyle}">${(weekly && WEEKLY_COLUMN_LABELS[col]) || COLUMN_LABELS[col]}</th>`)
     .join("");
 
   let bodyRows: string;
@@ -887,7 +921,7 @@ function renderSection(section: SectionResult): string {
     bodyRows = section.rows.map((row, i) => {
       const bg = i % 2 === 0 ? C.card : C.cardAlt;
       const cells = section.columns
-        .map((col) => `<td style="${tdBase}background:${bg};">${renderCell(col, row)}</td>`)
+        .map((col) => `<td style="${tdBase}background:${bg};">${renderCell(col, row, weekly)}</td>`)
         .join("");
       return `<tr>${cells}</tr>`;
     }).join("");
@@ -908,31 +942,42 @@ function renderSection(section: SectionResult): string {
 
 // ── Public: render all sections ───────────────────────────────────────────────
 
-export function renderSections(sections: SectionResult[]): string {
-  return sections.map(renderSection).join("\n");
+export function renderSections(sections: SectionResult[], weekly = false): string {
+  return sections.map((s) => renderSection(s, weekly)).join("\n");
 }
 
 // ── Weekly summary block ───────────────────────────────────────────────────────
 
-export interface WeeklySummaryData {
-  from: number;
-  to: number;
+export interface SummaryStats {
   totalAudits: number;
   avgScore: number;
   failedCount: number;
 }
 
-export function renderWeeklySummary(data: WeeklySummaryData): string {
-  const dayFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", year: "numeric" });
-  const fromLabel = dayFmt.format(new Date(data.from));
-  const toLabel = dayFmt.format(new Date(data.to));
+/** Midnight today in Eastern, as epoch ms — the start of "today's audits". */
+export function startOfTodayEastern(nowMs: number = Date.now()): number {
+  const p = tzParts(WEEK_TZ, nowMs);
+  return zonedToMs(WEEK_TZ, p.year, p.month, p.day, 0, 0, 0, 0);
+}
+
+/** Total / average-score / failed-count over a set of report rows. */
+export function summarizeRows(rows: ReportRow[]): SummaryStats {
+  const scores = rows.map((r) => r.score ?? 0);
+  const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+  const failedCount = scores.filter((s) => s < 100).length;
+  return { totalAudits: rows.length, avgScore, failedCount };
+}
+
+/** One summary card: an uppercase title, a plain-language subtitle, and the
+ *  three stats. Used for both the Daily and Weekly blocks on weekly reports. */
+export function renderSummaryBlock(title: string, subtitle: string, data: SummaryStats): string {
   const failedPct = data.totalAudits > 0 ? Math.round((data.failedCount / data.totalAudits) * 100) : 0;
   const avgColor = data.avgScore === 100 ? C.green : data.avgScore >= 80 ? C.blue : data.avgScore >= 60 ? C.yellow : C.red;
 
   return `
-<div style="margin-bottom:28px;padding:20px 24px;background:${C.cardAlt};border:1px solid ${C.border};border-radius:8px;">
-  <p style="margin:0 0 12px 0;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:${C.textMuted};">Weekly Summary</p>
-  <p style="margin:0 0 16px 0;font-size:15px;font-weight:600;color:${C.textBright};">Week of ${esc(fromLabel)} &ndash; ${esc(toLabel)}</p>
+<div style="margin-bottom:20px;padding:20px 24px;background:${C.cardAlt};border:1px solid ${C.border};border-radius:8px;">
+  <p style="margin:0 0 6px 0;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:${C.textMuted};">${esc(title)}</p>
+  <p style="margin:0 0 16px 0;font-size:15px;font-weight:600;color:${C.textBright};">${esc(subtitle)}</p>
   <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
     <tr>
       <td style="padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Total Audits</td>

@@ -9,8 +9,13 @@ import {
   weeklyReportSlug,
   resolveDateRange,
   weeklySubjectRange,
+  sortRowsFailsFirst,
+  summarizeRows,
+  startOfTodayEastern,
+  renderSections,
   queryReportData,
 } from "./mod.ts";
+import type { ReportRow } from "./mod.ts";
 import type { SectionResult } from "./mod.ts";
 import { writeAuditDoneIndex, _resetQueryAuditDoneIndexCacheForTests } from "@audit/domain/data/stats-repository/mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
@@ -144,6 +149,68 @@ Deno.test("weeklySubjectRange — formats both week ends in Eastern (no UTC off-
   const label = weeklySubjectRange({ mode: "weekly", startDay: 1 }, now);
   assertEquals(label, "Week of 6/29–7/5");
   assert(!label.includes("7/6"), "must not roll the ET Sunday end into Monday via UTC");
+});
+
+Deno.test("sortRowsFailsFirst — worst score on top (0% → 100%), ties newest-first", () => {
+  const rows: ReportRow[] = [
+    { findingId: "a", score: 100, finalizedAt: 10 },
+    { findingId: "b", score: 60, finalizedAt: 20 },
+    { findingId: "c", score: 100, finalizedAt: 30 }, // newer 100 than "a"
+    { findingId: "d", score: 0, finalizedAt: 5 },
+  ];
+  sortRowsFailsFirst(rows);
+  assertEquals(rows.map((r) => r.findingId), ["d", "b", "c", "a"]);
+});
+
+Deno.test("sortRowsFailsFirst — missing score sinks to the bottom", () => {
+  const rows: ReportRow[] = [
+    { findingId: "noScore" },
+    { findingId: "fail", score: 40, finalizedAt: 1 },
+  ];
+  sortRowsFailsFirst(rows);
+  assertEquals(rows.map((r) => r.findingId), ["fail", "noScore"]);
+});
+
+Deno.test("summarizeRows — total, average score, and failed (<100) count", () => {
+  const s = summarizeRows([
+    { score: 100 }, { score: 100 }, { score: 80 }, { score: 0 },
+  ]);
+  assertEquals(s.totalAudits, 4);
+  assertEquals(s.avgScore, 70); // (100+100+80+0)/4
+  assertEquals(s.failedCount, 2); // 80 and 0 are < 100
+});
+
+Deno.test("summarizeRows — empty set is all zeros (no divide-by-zero)", () => {
+  assertEquals(summarizeRows([]), { totalAudits: 0, avgScore: 0, failedCount: 0 });
+});
+
+Deno.test("startOfTodayEastern — returns Eastern midnight before the given instant", () => {
+  // Tue Jun 30 2026, 2:50 PM ET == 18:50 UTC. Midnight ET that day == 04:00 UTC.
+  const now = Date.UTC(2026, 5, 30, 18, 50, 0);
+  assertEquals(startOfTodayEastern(now), Date.UTC(2026, 5, 30, 4, 0, 0));
+});
+
+Deno.test("renderSections weekly flag — relabels columns and shows 'Click Here' for the finding link", () => {
+  const sections = [{
+    header: "GS MB",
+    columns: ["recordId", "findingId"] as const,
+    rows: [{ recordId: "486321", findingId: "lBGpfZ-s3BWh6vSjYJTS4" }],
+  }];
+
+  // The finding id always appears inside the link href (?id=...); what changes
+  // is the VISIBLE cell text — ">Click Here<" vs ">lBGpfZ...<".
+  const weeklyHtml = renderSections(sections as any, true);
+  assert(weeklyHtml.includes("Dateleg Link"), "weekly header renames Record ID → Dateleg Link");
+  assert(weeklyHtml.includes("View Full Audit"), "weekly header renames Audit Report → View Full Audit");
+  assert(weeklyHtml.includes(">Click Here<"), "weekly finding cell shows Click Here");
+  assert(weeklyHtml.includes(">486321<"), "weekly still shows the record number as the dateleg link");
+  assert(!weeklyHtml.includes(">lBGpfZ-s3BWh6vSjYJTS4<"), "weekly hides the raw finding id from the visible cell");
+  assert(weeklyHtml.includes("id=lBGpfZ-s3BWh6vSjYJTS4"), "the link still targets the finding id");
+
+  const normalHtml = renderSections(sections as any, false);
+  assert(normalHtml.includes("Record ID") && normalHtml.includes("Audit Report"), "non-weekly keeps default headers");
+  assert(normalHtml.includes(">lBGpfZ-s3BWh6vSjYJTS4<"), "non-weekly shows the raw finding id as the cell text");
+  assert(!normalHtml.includes(">Click Here<"), "non-weekly does not show Click Here");
 });
 
 Deno.test("buildCsv — clean id columns + appended URL columns", () => {

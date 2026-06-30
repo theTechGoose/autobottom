@@ -58,7 +58,7 @@ export class EmailReportController {
       if (!config) return { error: "config not found" };
       const { queryReportData, renderSections, renderFullEmail } = await import("@reporting/domain/business/email-report-engine/mod.ts");
       const sections = await queryReportData(ORG(), config);
-      const html = renderFullEmail(null, renderSections(sections), config.name);
+      const html = renderFullEmail(null, renderSections(sections, !!config.weeklyType), config.name);
       await repo.saveEmailReportPreview(ORG(), configId, html);
       return { html };
     } catch (err) {
@@ -88,7 +88,7 @@ export class EmailReportController {
     try {
       const { queryReportData, renderSections, renderFullEmail } = await import("@reporting/domain/business/email-report-engine/mod.ts");
       const sections = await queryReportData(ORG(), config as any);
-      const html = renderFullEmail(null, renderSections(sections), config.name);
+      const html = renderFullEmail(null, renderSections(sections, !!config.weeklyType), config.name);
       return { html };
     } catch (err) {
       return softFail("previewInline", err, { html: "", retry: true, error: "Server busy, please retry" });

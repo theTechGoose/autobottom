@@ -113,6 +113,22 @@ export function resolveDateRange(
   return { from: dateRange.from, to: dateRange.to };
 }
 
+/** The "Week of M/D–M/D" label used in the weekly report subject line. Formats
+ *  both ends in Eastern (WEEK_TZ) — the same zone the week boundaries are anchored
+ *  to. A naive UTC format rolled the Sunday-23:59 ET end past midnight UTC into the
+ *  next day (e.g. "7/6" instead of "7/5"). Pure + exported for unit testing. */
+export function weeklySubjectRange(
+  dateRange: DateRangeConfig | undefined,
+  nowMs: number = Date.now(),
+): string {
+  const { from, to } = resolveDateRange(dateRange, nowMs);
+  const fmt = (ts: number) => {
+    const p = tzParts(WEEK_TZ, ts);
+    return p.month + "/" + p.day;
+  };
+  return "Week of " + fmt(from) + "–" + fmt(to);
+}
+
 // ── Record-level dedup ────────────────────────────────────────────────────────
 
 /** A real, dedup-able record id, or "" for blank / placeholder ids that must NOT
@@ -685,12 +701,7 @@ export async function prepareReport(orgId: OrgId, config: EmailReportConfig): Pr
 
   let subject = config.name;
   if (config.weeklyType) {
-    const { from, to } = resolveDateRange(config.dateRange);
-    const fmt = (ts: number) => {
-      const d = new Date(ts);
-      return (d.getUTCMonth() + 1) + "/" + d.getUTCDate();
-    };
-    subject = config.name + " \u2014 Week of " + fmt(from) + "\u2013" + fmt(to);
+    subject = config.name + " \u2014 " + weeklySubjectRange(config.dateRange);
   }
 
   const attachments = totalRows > 0

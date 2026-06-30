@@ -8,6 +8,7 @@ import {
   trimSectionsForEmail,
   weeklyReportSlug,
   resolveDateRange,
+  weeklySubjectRange,
   queryReportData,
 } from "./mod.ts";
 import type { SectionResult } from "./mod.ts";
@@ -133,6 +134,16 @@ Deno.test("weeklyReportSlug — deterministic per (report, week), differs across
   assert(a !== otherWeek, "different week → different slug");
   assert(a !== otherReport, "different report → different slug");
   assert(/^[0-9a-f]{24}$/.test(a), "slug is 24 hex chars, unguessable");
+});
+
+Deno.test("weeklySubjectRange — formats both week ends in Eastern (no UTC off-by-one on the Sunday end)", () => {
+  // Tue Jun 30 2026, 2:50 PM ET == 18:50 UTC. The Mon-start weekly window is
+  // Mon Jun 29 00:00 ET → Sun Jul 5 23:59 ET. That Sunday end is past midnight
+  // UTC, so a naive UTC format would print "7/6" instead of "7/5".
+  const now = Date.UTC(2026, 5, 30, 18, 50, 0);
+  const label = weeklySubjectRange({ mode: "weekly", startDay: 1 }, now);
+  assertEquals(label, "Week of 6/29–7/5");
+  assert(!label.includes("7/6"), "must not roll the ET Sunday end into Monday via UTC");
 });
 
 Deno.test("buildCsv — clean id columns + appended URL columns", () => {

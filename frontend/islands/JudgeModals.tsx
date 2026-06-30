@@ -78,11 +78,15 @@ export default function JudgeModals() {
     };
   }, [open, upOpen]);
 
-  const judgeEmail = (document.getElementById("hx-email") as HTMLInputElement | null)?.value ?? "";
+  // Read the hidden email field lazily, inside the click handlers — they only
+  // run in the browser. Reading it at render time crashes SSR (`document` is
+  // undefined on the server → the whole /judge page 500s).
+  const getJudgeEmail = () =>
+    (document.getElementById("hx-email") as HTMLInputElement | null)?.value ?? "";
 
   function submitDismiss() {
     const reason = (textareaRef.current?.value ?? "").trim();
-    const payload: Record<string, string> = { findingId, judge: judgeEmail };
+    const payload: Record<string, string> = { findingId, judge: getJudgeEmail() };
     if (reason) payload.dismissalReason = reason;
     // @ts-ignore - htmx global
     if (typeof htmx !== "undefined") {
@@ -101,7 +105,7 @@ export default function JudgeModals() {
       htmx.ajax("POST", "/api/judge/decide", {
         target: "#queue-content",
         swap: "innerHTML",
-        values: { findingId: upFid, questionIndex: upQidx, decision: "uphold", judge: judgeEmail, reason },
+        values: { findingId: upFid, questionIndex: upQidx, decision: "uphold", judge: getJudgeEmail(), reason },
       });
     }
     setUpOpen(false);

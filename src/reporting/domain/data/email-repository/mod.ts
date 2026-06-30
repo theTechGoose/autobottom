@@ -2,9 +2,29 @@
 
 import {
   getStored, setStored, deleteStored, listStored,
+  getStoredChunked, setStoredChunked,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { EmailReportConfig } from "@core/dto/types.ts";
+
+// ── Weekly report "View full report" pages ───────────────────────────────────
+//  The full rendered report HTML, stored once per (report, week) so the email
+//  can link to a public page instead of cramming every row inline. Keyed by a
+//  deterministic slug (report+week), stored under the global org so the public
+//  /r/<slug> route can serve it without knowing the org. Latest daily send
+//  overwrites the same key — one record per report-week. No TTL: old links keep
+//  working as long as the record is kept. Chunked because a big report's HTML
+//  can exceed Firestore's ~1 MB per-doc limit.
+
+const REPORT_VIEW_TYPE = "weekly-report-view";
+
+export async function saveWeeklyReportView(slug: string, html: string): Promise<void> {
+  await setStoredChunked(REPORT_VIEW_TYPE, "", [slug], { html, savedAt: Date.now() });
+}
+
+export async function getWeeklyReportView(slug: string): Promise<{ html: string; savedAt: number } | null> {
+  return await getStoredChunked<{ html: string; savedAt: number }>(REPORT_VIEW_TYPE, "", slug);
+}
 
 // ── Email Report Configs ─────────────────────────────────────────────────────
 

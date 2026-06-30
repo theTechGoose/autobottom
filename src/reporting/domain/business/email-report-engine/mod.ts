@@ -5,7 +5,7 @@
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
-import { getEmailTemplate } from "@reporting/domain/data/email-repository/mod.ts";
+import { getEmailTemplate, saveWeeklyReportView } from "@reporting/domain/data/email-repository/mod.ts";
 import type {
   EmailReportConfig,
   DateRangeConfig,
@@ -458,18 +458,30 @@ function cellPlainValue(col: ReportColumnKey, row: ReportRow): string {
   }
 }
 
-function buildCsv(sections: SectionResult[]): string {
+export function buildCsv(sections: SectionResult[]): string {
   const allCols: ReportColumnKey[] = [];
   for (const s of sections) {
     for (const c of s.columns) {
       if (!allCols.includes(c)) allCols.push(c);
     }
   }
-  const header = ["Section", ...allCols.map((c) => COLUMN_LABELS[c])].map(csvEscape).join(",");
+  // The id columns stay clean (just "485817") so the data imports cleanly; the
+  // clickable links live in their own appended URL columns.
+  const hasRecord = allCols.includes("recordId");
+  const hasFinding = allCols.includes("findingId");
+  const urlHeaders = [
+    ...(hasRecord ? ["Record ID URL"] : []),
+    ...(hasFinding ? ["Audit Report URL"] : []),
+  ];
+  const header = ["Section", ...allCols.map((c) => COLUMN_LABELS[c]), ...urlHeaders].map(csvEscape).join(",");
   const lines = [header];
   for (const s of sections) {
     for (const row of s.rows) {
-      const cells = [s.header, ...allCols.map((c) => cellPlainValue(c, row))];
+      const urlCells = [
+        ...(hasRecord ? [row.recordId ? recordUrl(row.recordId) : ""] : []),
+        ...(hasFinding ? [row.findingId ? findingUrl(row.findingId) : ""] : []),
+      ];
+      const cells = [s.header, ...allCols.map((c) => cellPlainValue(c, row)), ...urlCells];
       lines.push(cells.map(csvEscape).join(","));
     }
   }
@@ -482,6 +494,49 @@ function safeFilename(s: string): string {
 
 function toBase64Utf8(s: string): string {
   return btoa(unescape(encodeURIComponent(s)));
+}
+
+// ── "View full report" page: slug + size-aware email body ─────────────────────
+
+/** Gmail clips the inbox view around ~102 KB. Stay under this with a margin; a
+ *  bigger report shows a trimmed table inline + a link to the full page. */
+const EMAIL_INLINE_LIMIT = 90 * 1024;
+/** Rows kept inline when a report is trimmed (the rest live on the linked page). */
+const MAX_INLINE_ROWS = 30;
+
+/** Deterministic, unguessable slug for a report's weekly page — same report +
+ *  same week → same slug, so every daily send links to (and overwrites) one
+ *  page instead of piling up a copy per send. */
+export async function weeklyReportSlug(orgId: string, configId: string, weekFromMs: number): Promise<string> {
+  const bytes = new TextEncoder().encode(`${orgId}|${configId}|${weekFromMs}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Keep the first `maxRows` rows across all sections (in order), reporting how
+ *  many were shown vs the total so the email can say "showing X of Y". */
+export function trimSectionsForEmail(
+  sections: SectionResult[],
+  maxRows: number,
+): { sections: SectionResult[]; shown: number; total: number } {
+  let budget = maxRows, shown = 0, total = 0;
+  const trimmed = sections.map((s) => {
+    total += s.rows.length;
+    const take = Math.max(0, Math.min(s.rows.length, budget));
+    budget -= take;
+    shown += take;
+    return { ...s, rows: s.rows.slice(0, take) };
+  });
+  return { sections: trimmed, shown, total };
+}
+
+/** "View full report" button block — inline-styled so it survives Gmail. */
+function renderViewLinkBlock(url: string, note?: string): string {
+  return `
+<div style="margin:24px 0 8px 0;text-align:center;">
+  ${note ? `<p style="margin:0 0 12px 0;font-size:13px;color:${C.textMuted};">${esc(note)}</p>` : ""}
+  <a href="${url}" style="display:inline-block;padding:12px 28px;background:${C.blue};color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;">View full report</a>
+</div>`.trim();
 }
 
 // ── Run report ────────────────────────────────────────────────────────────────
@@ -533,7 +588,32 @@ export async function prepareReport(orgId: OrgId, config: EmailReportConfig): Pr
 
   console.log(`${label} — [3/3] rendering HTML...`);
   const sectionsHtml = renderSections(sections);
-  const htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml, config.name, summaryHtml);
+  // The complete report — every row — is what we store at the public page and
+  // what the email shows when it's small enough.
+  const fullHtml = renderFullEmail(template?.html ?? null, sectionsHtml, config.name, summaryHtml);
+
+  let htmlBody = fullHtml;
+  // Weekly reports get a public "View full report" page: store the full HTML
+  // once per (report, week) — keyed by a deterministic slug so the daily sends
+  // overwrite one record (latest wins) — link to it, and fall back to a trimmed
+  // inline table when the email would otherwise clip in Gmail.
+  if (config.weeklyType) {
+    const { from } = resolveDateRange(config.dateRange);
+    const slug = await weeklyReportSlug(orgId, config.id, from);
+    try {
+      await saveWeeklyReportView(slug, fullHtml);
+    } catch (err) {
+      console.error(`${label} — failed to store view page:`, err);
+    }
+    const viewUrl = `${selfUrl()}/r/${slug}`;
+    if (fullHtml.length <= EMAIL_INLINE_LIMIT) {
+      htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml + renderViewLinkBlock(viewUrl), config.name, summaryHtml);
+    } else {
+      const { sections: trimmed, shown, total } = trimSectionsForEmail(sections, MAX_INLINE_ROWS);
+      const note = `Showing the first ${shown} of ${total} audits — open the full report for all of them.`;
+      htmlBody = renderFullEmail(template?.html ?? null, renderSections(trimmed) + renderViewLinkBlock(viewUrl, note), config.name, summaryHtml);
+    }
+  }
 
   let subject = config.name;
   if (config.weeklyType) {
@@ -594,6 +674,19 @@ export async function runReport(orgId: OrgId, config: EmailReportConfig): Promis
 
 
 const QB_RECORD_URL = "https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=";
+
+/** This deployment's base URL (for building report/finding links). */
+export function selfUrl(): string {
+  return Deno.env.get("SELF_URL") ?? "http://localhost:3000";
+}
+/** QuickBase deep-link for a record id. */
+export function recordUrl(recordId: string): string {
+  return QB_RECORD_URL + encodeURIComponent(recordId);
+}
+/** Public audit-report page link for a finding id. */
+export function findingUrl(findingId: string): string {
+  return `${selfUrl()}/audit/report?id=${encodeURIComponent(findingId)}`;
+}
 
 // ── Palette (matches autobottom email theme) ──────────────────────────────────
 
@@ -659,13 +752,11 @@ function renderCell(col: ReportColumnKey, row: ReportRow): string {
   switch (col) {
     case "recordId": {
       if (!row.recordId) return `<span style="color:${C.textDim};">&mdash;</span>`;
-      const url = QB_RECORD_URL + encodeURIComponent(row.recordId);
-      return `<a href="${url}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:12px;">${esc(row.recordId)}</a>`;
+      return `<a href="${recordUrl(row.recordId)}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:12px;">${esc(row.recordId)}</a>`;
     }
     case "findingId": {
       if (!row.findingId) return `<span style="color:${C.textDim};">&mdash;</span>`;
-      const url = `${Deno.env.get("SELF_URL") ?? "http://localhost:3000"}/audit/report?id=${encodeURIComponent(row.findingId)}`;
-      return `<a href="${url}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:11px;">${esc(row.findingId)}</a>`;
+      return `<a href="${findingUrl(row.findingId)}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:11px;">${esc(row.findingId)}</a>`;
     }
     case "score": {
       if (row.score == null) return `<span style="color:${C.textDim};">&mdash;</span>`;

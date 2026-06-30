@@ -41,6 +41,7 @@ import { DanetApplication } from "@danet/core";
 import { AppModule } from "./bootstrap/mod.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
 import { registerAllWebhookEmailHandlers } from "@reporting/domain/business/webhook-handlers/mod.ts";
+import { getWeeklyReportView } from "@reporting/domain/data/email-repository/mod.ts";
 import { getGameState, getEarnedBadges } from "@gamification/domain/data/gamification-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { S3Ref, buildAudioResponse } from "@core/data/s3/mod.ts";
@@ -256,6 +257,25 @@ async function _computeAgentDashboard(auth: { orgId: OrgId; email: string }): Pr
     recentAudits: audits.slice(0, 20),
     weeklyTrend,
   });
+}
+
+// Direct-dispatch: GET /r/<slug> serves a stored weekly "View full report"
+// page. Public (partners with the link, no monsterrg login) and served static
+// from one stored record per report-week — no per-open re-query, so 10k opens
+// of the same link is 10k cheap reads, not 10k heavy rebuilds.
+async function handleReportView(req: Request): Promise<Response> {
+  const htmlHeaders = { "content-type": "text/html; charset=utf-8" };
+  const slug = new URL(req.url).pathname.slice("/r/".length).replace(/[^a-f0-9]/gi, "");
+  const notFound = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Report not found</title></head><body style="margin:0;background:#0b0f15;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:520px;margin:80px auto;padding:0 24px;text-align:center;"><h1 style="font-size:20px;color:#e6edf3;">Report unavailable</h1><p style="color:#6e7681;font-size:14px;">This report link is invalid or is no longer available.</p></div></body></html>`;
+  if (!slug) return new Response(notFound, { status: 404, headers: htmlHeaders });
+  try {
+    const rec = await getWeeklyReportView(slug);
+    if (!rec?.html) return new Response(notFound, { status: 404, headers: htmlHeaders });
+    return new Response(rec.html, { headers: { ...htmlHeaders, "cache-control": "public, max-age=300" } });
+  } catch (err) {
+    console.error(`❌ [/r] view failed for slug=${slug}:`, err);
+    return new Response(notFound, { status: 500, headers: htmlHeaders });
+  }
 }
 
 // Direct-dispatch: GET /audit/recording streams the S3 recording WITH real HTTP
@@ -882,6 +902,12 @@ Deno.serve({ port }, (req, info) => {
     }
     if (path === "/api/chat/stream") {
       return handleChatStream(req);
+    }
+
+    // /r/<slug> — public weekly "View full report" page, served static from
+    // storage. Direct-dispatch: /r/ isn't in any frontend/backend prefix list.
+    if (path.startsWith("/r/") && req.method === "GET") {
+      return handleReportView(req);
     }
 
     // /audit/recording — direct (need the raw Range header for <audio> seeking;

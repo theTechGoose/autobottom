@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "#assert";
-import { resolveByteRange, buildAudioResponse, s3FetchWithRetry } from "./mod.ts";
+import { resolveByteRange, buildAudioResponse, s3FetchWithRetry, S3Ref } from "./mod.ts";
 
 Deno.test("s3 — module loads", () => { assert(true); });
 
@@ -77,6 +77,51 @@ Deno.test("s3FetchWithRetry — does NOT retry a 404 (returns immediately)", asy
       assertEquals(calls, 1, "404 is terminal — no retry");
     },
   );
+});
+
+// ── S3Ref.get/save — non-ok HTTP handling (404 → null, other 4xx → throw) ─────
+// s3FetchWithRetry returns 4xx unretried; the throw-on-non-ok logic lives in
+// S3Ref itself. These pin that a 404 (object absent) maps to null while a real
+// failure surfaces as a thrown error with the status — so a future refactor
+// can't silently swallow a 403 into null/empty. signV4 runs with empty creds
+// (env unset) and fetch is stubbed, so no AWS setup is needed.
+
+Deno.test("S3Ref.get — 404 resolves to null (object absent, not an error)", async () => {
+  await withStubs(
+    () => Promise.resolve(new Response("", { status: 404 })),
+    async () => assertEquals(await new S3Ref("bucket", "key").get(), null),
+  );
+});
+
+Deno.test("S3Ref.get — a NoSuchKey body (non-404) also resolves to null", async () => {
+  await withStubs(
+    () => Promise.resolve(new Response("<Error><Code>NoSuchKey</Code></Error>", { status: 403 })),
+    async () => assertEquals(await new S3Ref("bucket", "key").get(), null),
+  );
+});
+
+Deno.test("S3Ref.get — a real 403 throws with the status in the message", async () => {
+  let msg = "";
+  await withStubs(
+    () => Promise.resolve(new Response("AccessDenied", { status: 403 })),
+    async () => {
+      try { await new S3Ref("bucket", "key").get(); }
+      catch (e) { msg = e instanceof Error ? e.message : String(e); }
+    },
+  );
+  assert(msg.includes("403"), `403 must throw with the status surfaced, got: ${msg || "<no throw>"}`);
+});
+
+Deno.test("S3Ref.save — a non-2xx (403) throws with the status in the message", async () => {
+  let msg = "";
+  await withStubs(
+    () => Promise.resolve(new Response("AccessDenied", { status: 403 })),
+    async () => {
+      try { await new S3Ref("bucket", "key").save("payload"); }
+      catch (e) { msg = e instanceof Error ? e.message : String(e); }
+    },
+  );
+  assert(msg.includes("403"), `403 must throw with the status surfaced, got: ${msg || "<no throw>"}`);
 });
 
 // ── resolveByteRange — HTTP Range parsing for <audio> seeking ────────────────

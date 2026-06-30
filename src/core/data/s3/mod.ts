@@ -108,6 +108,10 @@ export class S3Ref {
       const payloadHash = await sha256(body);
       const headers: Record<string, string> = { "content-type": "application/octet-stream" };
       const url = await signV4("PUT", this.bucket, this.key, payloadHash, headers);
+      // `body` is always a re-readable Uint8Array (never a one-shot ReadableStream)
+      // — s3FetchWithRetry reuses this same init across attempts, so a streamed
+      // body would upload empty bytes on a retry. The sha256(body) above already
+      // requires a buffer, which keeps this invariant honest.
       const res = await s3FetchWithRetry(url, { method: "PUT", headers, body: body as BodyInit }, "PUT");
       if (!res.ok) {
         const text = await res.text();

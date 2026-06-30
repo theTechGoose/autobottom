@@ -6,6 +6,33 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
+## 2026-06-30 — Review-driven hardening: dedup determinism, manager-queue date fix, S3 error tests
+
+- **Email-report record dedup is now deterministic and order-preserving.**
+  `dedupeByRecordKeepNewest`
+  ([email-report-engine/mod.ts](../src/reporting/domain/business/email-report-engine/mod.ts))
+  broke ties on an equal `completedAt` by input order (strict `>` kept
+  first-seen) and reordered its output (blank-record rows hoisted ahead of the
+  deduped ones). Since `queryReportData` renders rows in candidate order with no
+  re-sort, both leaked into the email. Now an exact `completedAt` tie is broken by
+  the greater `findingId`, and survivors keep the index's `completedAt` order (an
+  in-place filter instead of `[...passthrough, ...map.values()]`). Added unit
+  tests for the tie / undefined-`completedAt` / order-preservation paths and a
+  `queryReportData` test pinning that dedup runs **before** `failedOnly` — so a
+  fail→pass re-audit is judged on its newest result and dropped from a
+  failures-only report.
+- **Manager Queue admin clear: off-by-one in the preview dates.** `dayMs` parsed
+  the picked day at *local* midnight while `fmtDate` formats via `toISOString()`
+  (UTC), so on a non-UTC server the previewed "from / through" dates (and the
+  clear window) could land a day early. Both now share a UTC basis; added a
+  `dayMs` round-trip test for the previously-untested parse path.
+  ([manager-queue-clear.tsx](../frontend/routes/api/admin/manager-queue-clear.tsx))
+- _No behavior change:_ documented the S3 PUT retry invariant (the body is always
+  a re-readable `Uint8Array`, never a one-shot `ReadableStream` that a retry would
+  upload empty) and added tests pinning `S3Ref.get` 404 → `null` and NoSuchKey →
+  `null` versus a real 4xx → throw with the status, so a future refactor can't
+  silently swallow a 403. ([s3/mod.ts](../src/core/data/s3/mod.ts))
+
 ## 2026-06-23 — Audit report "Transcript Context" is a focused diarized excerpt (brick-wall fix)
 
 - **Per-question Transcript Context no longer renders the raw grading snippet.**

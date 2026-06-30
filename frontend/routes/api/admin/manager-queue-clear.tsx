@@ -10,11 +10,15 @@ import { renderToString } from "preact-render-to-string";
 export interface ClearMatch { findingId: string; owner?: string; department?: string; shift?: string; date?: number; }
 export interface ClearResult { total: number; matched: number; deleted: number; dryRun: boolean; sample: ClearMatch[]; }
 
-/** "YYYY-MM-DD" → ms at local midnight. For `until` (the To date) add a day so
- *  the picked day is included, since the backend window is `until`-exclusive. */
-function dayMs(d: string, endExclusive = false): number | undefined {
+/** "YYYY-MM-DD" → ms at UTC midnight — the SAME basis as fmtDate's toISOString(),
+ *  so the previewed From/through dates and the backend window agree on one
+ *  timezone regardless of the server's local zone (parsing as local-midnight made
+ *  the preview off-by-one on a non-UTC server). For `since` (the From date) return
+ *  midnight as-is (inclusive). For `until` (the To date) add a day so the picked
+ *  day is included, since the backend window is `until`-exclusive. Exported for tests. */
+export function dayMs(d: string, endExclusive = false): number | undefined {
   if (!d) return undefined;
-  const t = new Date(d + "T00:00:00").getTime();
+  const t = new Date(d + "T00:00:00Z").getTime();
   if (!Number.isFinite(t)) return undefined;
   return endExclusive ? t + 86_400_000 : t;
 }

@@ -122,21 +122,39 @@ function normalizeRecordId(recordId: string | undefined): string {
   return v === "" || /^0+$/.test(v) ? "" : v;
 }
 
-/** Keep only the newest finding (by completedAt) per REAL recordId; drop the
- *  rest. Rows with a blank/placeholder recordId pass through untouched (they
- *  aren't duplicates of one another). This is what removes a nullified audit
- *  once a re-audit — a newer finding on the same record — exists. Pure +
- *  exported for unit testing. */
+/** True if `a` is the "newer" finding to keep: greater completedAt wins, and an
+ *  EXACT completedAt tie is broken by the greater findingId — so the survivor is
+ *  deterministic and never depends on input order. */
+function isNewerFinding(a: AuditDoneIndexEntry, b: AuditDoneIndexEntry): boolean {
+  const at = a.completedAt ?? 0;
+  const bt = b.completedAt ?? 0;
+  if (at !== bt) return at > bt;
+  return (a.findingId ?? "") > (b.findingId ?? "");
+}
+
+/** Keep only the newest finding per REAL recordId; drop the rest. Rows with a
+ *  blank/placeholder recordId pass through untouched (they aren't duplicates of
+ *  one another). This is what removes a nullified audit once a re-audit — a
+ *  newer finding on the same record — exists. Surviving rows stay in their
+ *  ORIGINAL order (the index's completedAt order): dedup drops superseded rows
+ *  in place rather than reshuffling, since queryReportData renders rows in this
+ *  order without re-sorting. Pure + exported for unit testing. */
 export function dedupeByRecordKeepNewest(entries: AuditDoneIndexEntry[]): AuditDoneIndexEntry[] {
-  const newestByRecord = new Map<string, AuditDoneIndexEntry>();
-  const passthrough: AuditDoneIndexEntry[] = [];
+  // First pass: pick the single winning finding per real recordId.
+  const winnerByRecord = new Map<string, AuditDoneIndexEntry>();
   for (const e of entries) {
     const rid = normalizeRecordId(e.recordId);
-    if (!rid) { passthrough.push(e); continue; }
-    const cur = newestByRecord.get(rid);
-    if (!cur || (e.completedAt ?? 0) > (cur.completedAt ?? 0)) newestByRecord.set(rid, e);
+    if (!rid) continue;
+    const cur = winnerByRecord.get(rid);
+    if (!cur || isNewerFinding(e, cur)) winnerByRecord.set(rid, e);
   }
-  return [...passthrough, ...newestByRecord.values()];
+  // Second pass: emit passthrough rows + each record's winner at its own
+  // position, preserving input order. (=== identity matches exactly one entry,
+  // so a record contributes exactly one row.)
+  return entries.filter((e) => {
+    const rid = normalizeRecordId(e.recordId);
+    return !rid || winnerByRecord.get(rid) === e;
+  });
 }
 
 // ── Main entry point ─────────────────────────────────────────────────────────

@@ -3,11 +3,24 @@
  *  backend clearManagerQueue tests; this pins the admin-facing display. */
 import { renderHTML, assertContains, assertNotContains } from "../../helpers/render.ts";
 import { assertEquals } from "@std/assert";
-import { renderManagerQueueClear, filterSummary, type ClearResult } from "../../../routes/api/admin/manager-queue-clear.tsx";
+import { renderManagerQueueClear, filterSummary, dayMs, type ClearResult } from "../../../routes/api/admin/manager-queue-clear.tsx";
 
 function result(over: Partial<ClearResult> = {}): ClearResult {
   return { total: 5, matched: 0, deleted: 0, dryRun: true, sample: [], ...over };
 }
+
+Deno.test("dayMs — parses to UTC midnight (matches fmtDate's UTC basis, no off-by-one)", () => {
+  // Goes through the REAL parse (not a hand-built Date.UTC) to pin that the
+  // From/through preview lands on the picked day regardless of server timezone.
+  assertEquals(dayMs("2026-06-25"), Date.UTC(2026, 5, 25));
+  assertEquals(dayMs("2026-06-25", true), Date.UTC(2026, 5, 26)); // exclusive: +1 day
+  assertEquals(dayMs(""), undefined);
+  assertEquals(dayMs("not-a-date"), undefined);
+  // Round-trip: the inclusive To date the summary shows == the picked day.
+  const until = dayMs("2026-06-30", true)!;
+  assertContains(filterSummary("", "", dayMs("2026-06-25"), until), "from 2026-06-25");
+  assertContains(filterSummary("", "", dayMs("2026-06-25"), until), "through 2026-06-30");
+});
 
 Deno.test("filterSummary — composes the active filters", () => {
   assertEquals(filterSummary("2ND", "AM"), ` for dept "2ND" · shift "AM"`);

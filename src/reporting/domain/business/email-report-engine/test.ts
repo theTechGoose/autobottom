@@ -56,6 +56,54 @@ Deno.test("dedupeByRecordKeepNewest — newest wins regardless of input order", 
   assertEquals(out[0].findingId, "new");
 });
 
+Deno.test("dedupeByRecordKeepNewest — equal completedAt: deterministic tiebreak by findingId (greater wins), order-independent", () => {
+  // Same record, identical completedAt — the survivor must NOT depend on input
+  // order. Tiebreak keeps the lexicographically greater findingId ("zzz").
+  const forward = dedupeByRecordKeepNewest([
+    idxEntry("aaa", "R1", 1000, 50),
+    idxEntry("zzz", "R1", 1000, 90),
+  ]);
+  const reversed = dedupeByRecordKeepNewest([
+    idxEntry("zzz", "R1", 1000, 90),
+    idxEntry("aaa", "R1", 1000, 50),
+  ]);
+  assertEquals(forward.length, 1);
+  assertEquals(reversed.length, 1);
+  assertEquals(forward[0].findingId, "zzz");
+  assertEquals(reversed[0].findingId, "zzz"); // same winner either way → deterministic
+});
+
+Deno.test("dedupeByRecordKeepNewest — undefined completedAt loses to a real one; two undefined fall back to findingId", () => {
+  // `?? 0`: an entry with a missing completedAt is treated as oldest, so a real
+  // timestamp always supersedes it.
+  const out = dedupeByRecordKeepNewest([
+    { findingId: "noTs", recordId: "R1", score: 0, completed: true } as AuditDoneIndexEntry,
+    idxEntry("hasTs", "R1", 10, 80),
+  ]);
+  assertEquals(out.length, 1);
+  assertEquals(out[0].findingId, "hasTs");
+
+  // Both missing completedAt → 0 === 0 tie → findingId tiebreak ("b" > "a").
+  const bothMissing = dedupeByRecordKeepNewest([
+    { findingId: "a", recordId: "R2", score: 0, completed: true } as AuditDoneIndexEntry,
+    { findingId: "b", recordId: "R2", score: 0, completed: true } as AuditDoneIndexEntry,
+  ]);
+  assertEquals(bothMissing.length, 1);
+  assertEquals(bothMissing[0].findingId, "b");
+});
+
+Deno.test("dedupeByRecordKeepNewest — preserves input order (drops superseded rows in place, no reshuffle)", () => {
+  // Index order is by completedAt; dedup must keep that order, not hoist the
+  // blank-record rows to the front. Winners stay at their own positions.
+  const out = dedupeByRecordKeepNewest([
+    idxEntry("blank1", "", 1000, 0),
+    idxEntry("rOld", "R1", 2000, 40),   // superseded → dropped
+    idxEntry("blank2", "", 3000, 0),
+    idxEntry("rNew", "R1", 4000, 95),   // winner → stays in place
+  ]);
+  assertEquals(out.map((e) => e.findingId), ["blank1", "blank2", "rNew"]);
+});
+
 Deno.test("email-report-engine — placeholder test", () => {
   assert(true, "email-report-engine test placeholder");
 });
@@ -291,4 +339,41 @@ Deno.test({ name: "queryReportData — guestName column forces finding hydration
   const sections = await queryReportData(ORG as any, config as any);
   // guestName isn't on the index → engine hydrates → finding absent → row skipped.
   assertEquals(sections[0].rows.length, 0, "guestName report hydrates; no finding → no row");
+}});
+
+Deno.test({ name: "queryReportData — dedup runs BEFORE failedOnly: a fail→pass re-audit is judged on its newest result", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-dedup-failed-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+  const at = (offset: number) => now + offset;
+  const seed = async (findingId: string, recordId: string, completedAt: number, score: number) => {
+    await writeAuditDoneIndex(ORG as any, {
+      findingId, completedAt, doneAt: completedAt, completed: true, reason: "reviewed",
+      score, recordId, voName: "VO", department: "DEPT-A", isPackage: false,
+    } as any, { assumeFinished: true });
+  };
+
+  // RWIN: failed first, re-audited to a pass — newest is 100, so a failedOnly
+  // report must NOT include it (dedup drops the old fail before failedOnly runs).
+  await seed("rwin-old-fail", "RWIN", at(-2000), 40);
+  await seed("rwin-new-pass", "RWIN", at(-1000), 100);
+  // RP2F: passed first, re-audited to a fail — newest is 55, so it SHOULD appear.
+  await seed("rp2f-old-pass", "RP2F", at(-2000), 100);
+  await seed("rp2f-new-fail", "RP2F", at(-1000), 55);
+  // RFAIL: a plain single failing audit — the control that always appears.
+  await seed("rfail", "RFAIL", at(-1500), 60);
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    reportSections: [{ header: "t", columns: IDX_COLUMNS, criteria: [] }],
+    dateRange: { mode: "fixed", from: at(-5000), to: at(5000) },
+    onlyCompleted: true,
+    failedOnly: true,
+  };
+
+  const sections = await queryReportData(ORG as any, config as any);
+  const ids = sections[0].rows.map((r) => r.recordId).sort();
+  // If dedup ran AFTER failedOnly, RWIN's old 40% would survive → ["RFAIL","RP2F","RWIN"].
+  assertEquals(ids, ["RFAIL", "RP2F"], "fail→pass re-audit (RWIN) is excluded; pass→fail (RP2F) and plain fail (RFAIL) remain");
 }});

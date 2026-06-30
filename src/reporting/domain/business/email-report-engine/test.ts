@@ -59,12 +59,28 @@ Deno.test("buildCsv — no URL columns when those id columns aren't in the repor
   assert(!csv.includes("Audit Report URL"));
 });
 
-Deno.test("trimSectionsForEmail — keeps first N rows across sections, reports shown/total", () => {
+Deno.test("trimSectionsForEmail — spreads the budget across sections (even split)", () => {
   const { sections, shown, total } = trimSectionsForEmail([section("A", 25), section("B", 25)], 30);
   assertEquals(total, 50);
   assertEquals(shown, 30);
-  assertEquals(sections[0].rows.length, 25); // first section fully fits
-  assertEquals(sections[1].rows.length, 5); // second section gets the remaining budget
+  assertEquals(sections[0].rows.length, 15); // 30 split across 2 sections → 15 each
+  assertEquals(sections[1].rows.length, 15);
+});
+
+Deno.test("trimSectionsForEmail — a section with audits NEVER shows as empty (the WST Inbound bug)", () => {
+  // 74 + 107 = 181, budget 30 → both sections must show rows, neither starved to 0.
+  const { sections, shown } = trimSectionsForEmail([section("IDS A3N", 74), section("GS WST", 107)], 30);
+  assertEquals(shown, 30);
+  assert(sections[0].rows.length > 0, "IDS A3N shows rows");
+  assert(sections[1].rows.length > 0, "GS WST shows rows (not a false 'No records')");
+});
+
+Deno.test("trimSectionsForEmail — small sections fill fully, only truly-empty stay empty", () => {
+  const { sections, shown } = trimSectionsForEmail([section("tiny", 2), section("empty", 0), section("big", 100)], 10);
+  assertEquals(sections[0].rows.length, 2); // tiny shows all it has
+  assertEquals(sections[1].rows.length, 0); // genuinely empty → stays empty (correct "No records")
+  assertEquals(sections[2].rows.length, 8); // big gets the rest
+  assertEquals(shown, 10);
 });
 
 Deno.test("recordUrl / findingUrl — point at QuickBase and the audit-report page", () => {

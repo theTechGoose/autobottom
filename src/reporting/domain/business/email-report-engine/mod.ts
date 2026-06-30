@@ -513,19 +513,35 @@ export async function weeklyReportSlug(orgId: string, configId: string, weekFrom
   return [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Keep the first `maxRows` rows across all sections (in order), reporting how
- *  many were shown vs the total so the email can say "showing X of Y". */
+/** Spread a `maxRows` row budget ACROSS the sections that have rows (round-robin),
+ *  so every department with audits shows some — a section must never render an
+ *  empty "No records" just because an earlier section used up the whole budget.
+ *  Genuinely empty sections (no audits this window) still show "No records".
+ *  Reports shown vs total so the email can say "showing X of Y". */
 export function trimSectionsForEmail(
   sections: SectionResult[],
   maxRows: number,
 ): { sections: SectionResult[]; shown: number; total: number } {
-  let budget = maxRows, shown = 0, total = 0;
-  const trimmed = sections.map((s) => {
-    total += s.rows.length;
-    const take = Math.max(0, Math.min(s.rows.length, budget));
-    budget -= take;
-    shown += take;
-    return { ...s, rows: s.rows.slice(0, take) };
+  const total = sections.reduce((n, s) => n + s.rows.length, 0);
+  const caps = sections.map(() => 0);
+  const withRows = sections.map((s, i) => (s.rows.length > 0 ? i : -1)).filter((i) => i >= 0);
+  let budget = Math.min(maxRows, total);
+  let progressed = true;
+  while (budget > 0 && progressed) {
+    progressed = false;
+    for (const i of withRows) {
+      if (budget <= 0) break;
+      if (caps[i] < sections[i].rows.length) {
+        caps[i]++;
+        budget--;
+        progressed = true;
+      }
+    }
+  }
+  let shown = 0;
+  const trimmed = sections.map((s, i) => {
+    shown += caps[i];
+    return { ...s, rows: s.rows.slice(0, caps[i]) };
   });
   return { sections: trimmed, shown, total };
 }
@@ -610,7 +626,7 @@ export async function prepareReport(orgId: OrgId, config: EmailReportConfig): Pr
       htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml + renderViewLinkBlock(viewUrl), config.name, summaryHtml);
     } else {
       const { sections: trimmed, shown, total } = trimSectionsForEmail(sections, MAX_INLINE_ROWS);
-      const note = `Showing the first ${shown} of ${total} audits — open the full report for all of them.`;
+      const note = `Showing ${shown} of ${total} audits — open the full report for all of them.`;
       htmlBody = renderFullEmail(template?.html ?? null, renderSections(trimmed) + renderViewLinkBlock(viewUrl, note), config.name, summaryHtml);
     }
   }

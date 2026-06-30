@@ -19,6 +19,8 @@ import {
 import {
   writeSoleAuditDoneIndex,
   updateCompletedStatScore,
+  saveChargebackEntry,
+  saveWireDeductionEntry,
   deleteChargebackEntry,
   deleteWireDeductionEntry,
   deleteCompletedStat,
@@ -1064,6 +1066,13 @@ export async function finalizeReviewedAudit(
 
   await updateCompletedStatScore(orgId, findingId, reviewScore);
 
+  // Keep the chargeback (date-leg) / wire (package) "payroll" entry in sync with
+  // the REVIEWED score. The bot wrote it at the PRE-review score, so a flip to a
+  // passing / fewer-fails result would otherwise leave a stale FAILING entry on
+  // the chargeback sheet for an audit that now passes — the "failed VOs are
+  // incorrect" report bug (prod record 483830). See syncChargebackWireToScore.
+  await syncChargebackWireToScore(orgId, findingId, correctedFinding as Record<string, any>, reviewScore);
+
   // Drain review-decided for this finding. Without this, getReviewStats
   // counts every decision since the table was created as "decided
   // in-flight" — the Review Dashboard's Decided/Total Processed/Decision
@@ -1529,6 +1538,74 @@ export async function reconcilePerfectPending(
   return { scanned: pending.size, swept, alreadyFinalized, notPerfect, missing };
 }
 
+/** Resync the chargeback (internal date-leg) / wire (partner package) "payroll"
+ *  entry to a finding's CURRENT answers + score. The bot writes these at audit
+ *  time from its own grade; ANY later human flip — reviewer finalize or admin
+ *  pencil-flip — must call this, or the chargeback/wire sheet shows a stale
+ *  failure for an audit that now passes (the "failed VOs are incorrect" bug,
+ *  prod record 483830), or misses a newly-created failure on a Yes→No flip.
+ *  Mirrors step-finalize, computed from the post-flip answers. The entry ts
+ *  stays the original completedAt so the deduction lands in the same pay period.
+ *  The chargeback/wire reports filter bypassed offices at read time, so no
+ *  bypass check is needed here. `isYes` mirrors the score's yes-count so
+ *  "no fails left" ⟺ score 100. Best-effort: the score is already durable at
+ *  every call site, so a sync failure only risks a transient stale row that the
+ *  next backfill-chargeback-entries run repairs. */
+async function syncChargebackWireToScore(
+  orgId: OrgId,
+  findingId: string,
+  finding: Record<string, any>,
+  score: number,
+): Promise<void> {
+  try {
+    const rec = (finding.record as Record<string, any>) ?? {};
+    const meta = buildIndexMeta(finding);
+    const ts = typeof finding.completedAt === "number" ? finding.completedAt : Date.now();
+    const isYes = (a: unknown) => String(a ?? "").toLowerCase().startsWith("y");
+    const answers = (Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : []) as
+      Array<{ answer?: unknown; header?: unknown; egregious?: unknown }>;
+    if (meta.isPackage) {
+      // Partner finding → wire deduction (queryWireReport filters score<100 at read).
+      await saveWireDeductionEntry(orgId, {
+        findingId,
+        ts,
+        score,
+        questionsAudited: answers.length,
+        totalSuccess: answers.filter((a) => isYes(a.answer)).length,
+        recordId: String(rec.RecordId ?? ""),
+        office: meta.department ?? "",
+        excellenceAuditor: meta.voName ?? "",
+        guestName: String(rec.GuestName ?? ""),
+      });
+    } else {
+      // Internal date-leg → chargeback/omission entry.
+      const failedQs = answers
+        .map((a) => ({ header: String(a.header ?? ""), egregious: !!a.egregious, answer: a.answer }))
+        .filter((q) => !isYes(q.answer) && q.header);
+      if (failedQs.length === 0) {
+        // Every fail flipped to pass → no chargeback. Drop any stale entry.
+        await deleteChargebackEntry(orgId, findingId).catch(() => {});
+      } else {
+        await saveChargebackEntry(orgId, {
+          findingId,
+          ts,
+          voName: meta.voName ?? "",
+          destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
+          revenue: String(rec["706"] ?? ""),
+          recordId: String(rec.RecordId ?? ""),
+          score,
+          failedQHeaders: failedQs.map((q) => q.header),
+          egregiousHeaders: failedQs.filter((q) => q.egregious).map((q) => q.header),
+          omissionHeaders: failedQs.filter((q) => !q.egregious).map((q) => q.header),
+        });
+      }
+    }
+    console.log(`[CHARGEBACK-SYNC] ${findingId}: 💰 chargeback/wire synced to score=${score}%`);
+  } catch (err) {
+    console.error(`[CHARGEBACK-SYNC] ${findingId}: ⚠️ sync failed (sheet may show a stale fail until backfill):`, err);
+  }
+}
+
 // ── Admin-flip single question — toggle one Yes↔No on a finding ─────────────
 
 export async function adminFlipQuestion(
@@ -1581,6 +1658,12 @@ export async function adminFlipQuestion(
     console.warn(`[ADMIN-FLIP-Q] ${findingId}: ⚠️ failed-finding index rebuild failed:`, err));
   await saveBatchAnswers(orgId, findingId, 0, flipped);
   await updateCompletedStatScore(orgId, findingId, score);
+
+  // Keep the chargeback/wire "payroll" entry in sync with the flipped result —
+  // a No→Yes pencil-flip that clears the last fail must drop the chargeback
+  // entry; a Yes→No flip that creates a fail must add one. Same staleness bug as
+  // the reviewer path. score reflects the post-flip answers above.
+  await syncChargebackWireToScore(orgId, findingId, finding as Record<string, any>, score);
 
   // Keep audit-done-idx in sync with the live finding. Without this write,
   // /admin/unreviewed-audits + audit-history queries kept showing the pre-flip

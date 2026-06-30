@@ -6,6 +6,35 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
+## 2026-06-30 — Chargeback "payroll" sheet: stale failures after a review are now cleared
+
+- **Reviewer / admin flips now resync the chargeback + wire ("payroll") entry.**
+  The bot writes a chargeback entry from its OWN grade at finalize; when a
+  reviewer flipped the failed questions to pass (e.g. 88% → 100%) or an admin
+  pencil-flipped a question, the index/score were updated but the **chargeback
+  entry was left at the pre-review score** — so the audit stayed on the
+  chargeback / "failed VOs" sheet as a failure despite passing on review (prod
+  record 483830 / ACT MB: reviewer flipped 3 fails to Yes → 100%, yet the weekly
+  payroll export still listed it as an 88% fail). Both human-flip paths —
+  `finalizeReviewedAudit` and `adminFlipQuestion` — now call a shared
+  `syncChargebackWireToScore` that recomputes the entry from the final post-flip
+  answers: it **deletes** the entry when nothing fails anymore, **rewrites** it to
+  the reviewed score + remaining failed headers otherwise, and **creates** one on
+  a Yes→No flip that introduces a fail. Date-leg → chargeback entry; package →
+  wire entry; the entry `ts` keeps the original `completedAt` so the deduction
+  stays in the same pay period.
+  ([review-queue/mod.ts](../src/review/domain/business/review-queue/mod.ts))
+- **New "Backfill Chargeback Entries" maintenance tool** to repair the existing
+  sheet: Admin → Data Maintenance → **Backfill Scores** tab → a From/To window
+  that re-reads every chargeback + wire entry in range against the finding's
+  CURRENT answers and removes/rewrites the stale ones. Posts to the existing
+  `/admin/backfill-chargeback-entries` backend; idempotent.
+  ([maintenance.tsx](../frontend/routes/api/admin/modal/maintenance.tsx),
+  [backfill-chargeback.tsx](../frontend/routes/api/admin/modal/maintenance/backfill-chargeback.tsx))
+- Regression tests pin the contract: a full flip-to-pass deletes the entry, a
+  partial flip rewrites it to the reviewed score + remaining fails, and a Yes→No
+  admin flip creates one (then flipping back to 100% removes it).
+
 ## 2026-06-30 — Review-driven hardening: dedup determinism, manager-queue date fix, S3 error tests
 
 - **Email-report record dedup is now deterministic and order-preserving.**

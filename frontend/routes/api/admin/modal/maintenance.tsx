@@ -110,29 +110,55 @@ function PanelCard(props: { title: string; subtitle?: string; danger?: boolean; 
 
 function BackfillPanel() {
   return (
-    <PanelCard title="Backfill Scores" subtitle="Recalculate scores for findings missing score data. Paginated — re-run until done.">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <PanelCard title="Backfill Scores" subtitle="Recalculate scores for findings missing score data. Paginated — re-run until done.">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button
+            class="sf-btn primary"
+            style="padding:8px 14px;"
+            hx-post="/api/admin/config-save"
+            hx-vals='{"endpoint":"/admin/backfill-stale-scores"}'
+            hx-target="#maint-msg"
+            hx-swap="innerHTML"
+            hx-confirm="Backfill stale scores for findings missing score data?"
+          >Run Backfill</button>
+          <button
+            class="sf-btn"
+            style="padding:8px 14px;"
+            hx-post="/api/admin/config-save"
+            hx-vals='{"endpoint":"/admin/reconcile-reviewed-signals"}'
+            hx-target="#maint-msg"
+            hx-swap="innerHTML"
+            hx-confirm="Reconcile the reviewedBy / review-done divergence across all audit-done-idx entries? Idempotent — safe to re-run."
+            title="One-shot pass — for each audit-done-idx entry where reviewedBy is set but the review-done sentinel is missing (or vice versa), write the missing side so /admin/audits shows consistent Auditor + Reviewed columns."
+          >Reconcile Reviewed Signals</button>
+        </div>
+      </PanelCard>
+
+      <PanelCard
+        title="Backfill Chargeback Entries (payroll sheet)"
+        subtitle="Repair the chargeback / 'failed VO' sheet. Re-reads every chargeback + wire entry whose audit completed in this window against the finding's CURRENT answers, and REMOVES any entry whose audit now passes (e.g. a reviewer flipped it to 100%) or rewrites it to the reviewed score + remaining fails. Idempotent — safe to re-run."
+      >
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;max-width:420px;">
+          <div class="sf"><label class="sf-label">From (audit date)</label><input type="date" name="since" id="cb-since" class="sf-input" /></div>
+          <div class="sf"><label class="sf-label">To (inclusive)</label><input type="date" name="until" id="cb-until" class="sf-input" /></div>
+        </div>
         <button
           class="sf-btn primary"
-          style="padding:8px 14px;"
-          hx-post="/api/admin/config-save"
-          hx-vals='{"endpoint":"/admin/backfill-stale-scores"}'
+          style="padding:8px 16px;"
+          hx-post="/api/admin/modal/maintenance/backfill-chargeback"
+          hx-include="#cb-since,#cb-until"
           hx-target="#maint-msg"
           hx-swap="innerHTML"
-          hx-confirm="Backfill stale scores for findings missing score data?"
-        >Run Backfill</button>
-        <button
-          class="sf-btn"
-          style="padding:8px 14px;"
-          hx-post="/api/admin/config-save"
-          hx-vals='{"endpoint":"/admin/reconcile-reviewed-signals"}'
-          hx-target="#maint-msg"
-          hx-swap="innerHTML"
-          hx-confirm="Reconcile the reviewedBy / review-done divergence across all audit-done-idx entries? Idempotent — safe to re-run."
-          title="One-shot pass — for each audit-done-idx entry where reviewedBy is set but the review-done sentinel is missing (or vice versa), write the missing side so /admin/audits shows consistent Auditor + Reviewed columns."
-        >Reconcile Reviewed Signals</button>
-      </div>
-    </PanelCard>
+          hx-confirm="Reconcile chargeback/wire entries in this date range against current audit results? Removes entries for audits that now pass. Idempotent — safe to re-run."
+        >Run Chargeback Backfill</button>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:8px;line-height:1.4;">
+          Use the audit-completion date range (e.g. the pay period). Large windows re-read every
+          finding in range, so this can take a moment. After it runs, re-run the weekly export to
+          refresh the Google Sheet.
+        </div>
+      </PanelCard>
+    </div>
   );
 }
 

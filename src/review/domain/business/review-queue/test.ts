@@ -9,6 +9,8 @@ import { saveFinding, getFinding } from "@audit/domain/data/audit-repository/mod
 import {
   writeAuditDoneIndex,
   queryAuditDoneIndex,
+  saveChargebackEntry,
+  getChargebackEntries,
   _resetHiddenCacheForTesting,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -338,4 +340,84 @@ Deno.test("recordDecision — normal forward grading still decrements to 0 + com
   assertEquals([r1.remaining, r1.auditComplete], [1, false]);
   const r2 = await recordDecision(orgId, fid, 2, "flip", reviewer);
   assertEquals([r2.remaining, r2.auditComplete], [0, true]);
+});
+
+// ── Chargeback ("payroll") sync on review-finalize ──────────────────────────
+// Production bug (record 483830 / ACT MB): the bot finalized at 88% and saved a
+// chargeback entry; a reviewer flipped all 3 fails to Yes → 100%, but the
+// chargeback entry was NEVER updated, so the audit stayed on the chargeback /
+// "failed VOs" payroll sheet as an 88% fail despite passing on review. The
+// reviewedIds-filtered chargeback report includes reviewed findings, so the
+// stale entry surfaced. finalizeReviewedAudit must now resync the entry.
+
+Deno.test("review-finalize — flip ALL fails to pass deletes the stale chargeback entry (the 483830 bug)", async () => {
+  resetForTest();
+  const orgId = ("test-cb-del-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-cb-del", reviewer = "rev@example.com";
+  // 5 questions, 3 fail → 40%. Bot saved a chargeback entry at that score.
+  await seedClaimedAudit(orgId, fid, reviewer, ["No", "No", "No", "Yes", "Yes"]);
+  await saveChargebackEntry(orgId, {
+    findingId: fid, ts: Date.now(), voName: "Test Person", destination: "HI - Las Vegas, NV",
+    revenue: "354.09", recordId: "r-" + fid, score: 40,
+    failedQHeaders: ["Q0", "Q1", "Q2"], egregiousHeaders: [], omissionHeaders: ["Q0", "Q1", "Q2"],
+  });
+
+  // Reviewer flips all three fails to pass → 100%.
+  await recordDecision(orgId, fid, 0, "flip", reviewer);
+  await recordDecision(orgId, fid, 1, "flip", reviewer);
+  await recordDecision(orgId, fid, 2, "flip", reviewer);
+  const result = await finalizeReviewedAudit(orgId, fid, reviewer);
+  assertEquals(result.score, 100);
+
+  const entries = await getChargebackEntries(orgId, 0, Date.now() + 10_000);
+  assertEquals(entries.find((e) => e.findingId === fid), undefined, "passing review must drop the chargeback entry");
+});
+
+Deno.test("review-finalize — partial flip rewrites the chargeback entry to the reviewed score + remaining fails", async () => {
+  resetForTest();
+  const orgId = ("test-cb-partial-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-cb-partial", reviewer = "rev@example.com";
+  // 5 questions, q0/q1 fail → 60%. Bot chargeback entry lists both.
+  await seedClaimedAudit(orgId, fid, reviewer, ["No", "No", "Yes", "Yes", "Yes"]);
+  await saveChargebackEntry(orgId, {
+    findingId: fid, ts: Date.now(), voName: "Test Person", destination: "HI - Las Vegas, NV",
+    revenue: "100", recordId: "r-" + fid, score: 60,
+    failedQHeaders: ["Q0", "Q1"], egregiousHeaders: [], omissionHeaders: ["Q0", "Q1"],
+  });
+
+  // Reviewer flips q0 to pass, CONFIRMS q1 as a real fail → 80%, one fail remains.
+  await recordDecision(orgId, fid, 0, "flip", reviewer);
+  await recordDecision(orgId, fid, 1, "confirm", reviewer);
+  const result = await finalizeReviewedAudit(orgId, fid, reviewer);
+  assertEquals(result.score, 80);
+
+  const entries = await getChargebackEntries(orgId, 0, Date.now() + 10_000);
+  const entry = entries.find((e) => e.findingId === fid);
+  assertExists(entry, "a still-failing audit keeps a chargeback entry");
+  assertEquals(entry!.score, 80, "entry score is rewritten to the reviewed 80, not the stale 60");
+  assertEquals(entry!.failedQHeaders, ["Q1"], "only the confirmed-fail question remains; the flipped one is dropped");
+});
+
+Deno.test("adminFlipQuestion — Yes→No creates a chargeback entry; flipping back to 100% removes it", async () => {
+  resetForTest();
+  const orgId = ("test-cb-adminflip-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-cb-adminflip-" + crypto.randomUUID().slice(0, 8);
+  // 4 questions all Yes → 100%, clean (no chargeback entry).
+  const completedAt = await makeFindingFixture(orgId, fid, ["Yes", "Yes", "Yes", "Yes"]);
+  await writeAuditDoneIndex(orgId, {
+    findingId: fid, completedAt, score: 100, completed: true, reason: "reviewed", isPackage: false,
+  });
+
+  // Admin pencil-flips q0 Yes→No → 75% → a chargeback entry must now exist.
+  await adminFlipQuestion(orgId, fid, 0, "admin@x.com");
+  let entries = await getChargebackEntries(orgId, 0, Date.now() + 10_000);
+  const entry = entries.find((e) => e.findingId === fid);
+  assertExists(entry, "a Yes→No admin flip on a clean audit creates a chargeback entry");
+  assertEquals(entry!.score, 75);
+  assertEquals(entry!.failedQHeaders, ["Q0"]);
+
+  // Flip it back No→Yes → 100% → the chargeback entry is dropped.
+  await adminFlipQuestion(orgId, fid, 0, "admin@x.com");
+  entries = await getChargebackEntries(orgId, 0, Date.now() + 10_000);
+  assertEquals(entries.find((e) => e.findingId === fid), undefined, "flipping back to 100% removes the chargeback entry");
 });

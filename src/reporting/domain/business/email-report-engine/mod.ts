@@ -678,19 +678,12 @@ export async function prepareReport(orgId: OrgId, config: EmailReportConfig): Pr
     ? await getEmailTemplate(orgId, config.templateId)
     : null;
 
+  // Two summary cards on weekly reports: today's audits (since Eastern midnight)
+  // and the whole week. "Today" relies on the finalizedAt timestamp, which the
+  // weekly reports all carry as a column; rows without it fall outside the daily
+  // count. Shared with the admin preview so the two render identically.
   const weekly = !!config.weeklyType;
-  let summaryHtml: string | undefined;
-  if (weekly) {
-    // Two cards: today's audits (since Eastern midnight) and the whole week.
-    // "Today" relies on the finalizedAt timestamp, which the weekly reports all
-    // carry as a column; rows without it fall outside the daily count.
-    const allRows = sections.flatMap((s) => s.rows);
-    const todayStart = startOfTodayEastern();
-    const todayRows = allRows.filter((r) => (r.finalizedAt ?? 0) >= todayStart);
-    summaryHtml =
-      renderSummaryBlock("Daily Summary", "Today's Audits", summarizeRows(todayRows)) +
-      renderSummaryBlock("Weekly Summary", "This week's Audits", summarizeRows(allRows));
-  }
+  const summaryHtml = renderWeeklySummaries(sections, config.weeklyType) || undefined;
 
   console.log(`${label} — [3/3] rendering HTML...`);
   const sectionsHtml = renderSections(sections, weekly);
@@ -966,6 +959,24 @@ export function summarizeRows(rows: ReportRow[]): SummaryStats {
   const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
   const failedCount = scores.filter((s) => s < 100).length;
   return { totalAudits: rows.length, avgScore, failedCount };
+}
+
+/** Build the Daily + Weekly summary cards for a weekly report ("" for other
+ *  report types). "Today" = rows completed since Eastern midnight. Shared by the
+ *  send path and the admin preview so the two always match. */
+export function renderWeeklySummaries(
+  sections: SectionResult[],
+  weeklyType: boolean | string | undefined,
+  nowMs: number = Date.now(),
+): string {
+  if (!weeklyType) return "";
+  const allRows = sections.flatMap((s) => s.rows);
+  const todayStart = startOfTodayEastern(nowMs);
+  const todayRows = allRows.filter((r) => (r.finalizedAt ?? 0) >= todayStart);
+  return (
+    renderSummaryBlock("Daily Summary", "Today's Audits", summarizeRows(todayRows)) +
+    renderSummaryBlock("Weekly Summary", "This week's Audits", summarizeRows(allRows))
+  );
 }
 
 /** One summary card: an uppercase title, a plain-language subtitle, and the

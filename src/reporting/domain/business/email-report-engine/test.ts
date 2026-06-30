@@ -13,6 +13,7 @@ import {
   summarizeRows,
   startOfTodayEastern,
   renderSections,
+  renderWeeklySummaries,
   queryReportData,
 } from "./mod.ts";
 import type { ReportRow } from "./mod.ts";
@@ -188,6 +189,30 @@ Deno.test("startOfTodayEastern — returns Eastern midnight before the given ins
   // Tue Jun 30 2026, 2:50 PM ET == 18:50 UTC. Midnight ET that day == 04:00 UTC.
   const now = Date.UTC(2026, 5, 30, 18, 50, 0);
   assertEquals(startOfTodayEastern(now), Date.UTC(2026, 5, 30, 4, 0, 0));
+});
+
+Deno.test("renderWeeklySummaries — daily counts only today's rows; weekly counts all; empty for non-weekly", () => {
+  const now = Date.UTC(2026, 5, 30, 18, 50, 0); // Tue Jun 30 2026, 2:50 PM ET
+  const todayStart = startOfTodayEastern(now);
+  const sections = [{
+    header: "GS MB",
+    columns: ["score", "finalizedAt"] as const,
+    rows: [
+      { score: 100, finalizedAt: todayStart + 3600_000 }, // today
+      { score: 0,   finalizedAt: todayStart + 600_000 },  // today
+      { score: 80,  finalizedAt: todayStart - 5 * 3600_000 }, // yesterday
+    ],
+  }];
+
+  const html = renderWeeklySummaries(sections as any, "internal", now);
+  assert(html.includes("Daily Summary") && html.includes("Today's Audits"));
+  assert(html.includes("Weekly Summary") && html.includes("This week's Audits"));
+  // Daily card sees 2 rows (today); Weekly card sees all 3.
+  assert(html.includes(">2<"), "daily Total Audits = 2");
+  assert(html.includes(">3<"), "weekly Total Audits = 3");
+
+  // Non-weekly reports get nothing.
+  assertEquals(renderWeeklySummaries(sections as any, undefined, now), "");
 });
 
 Deno.test("renderSections weekly flag — relabels columns and shows 'Click Here' for the finding link", () => {

@@ -734,62 +734,82 @@ export interface ChargebackBackfillBatchResult {
   wireDeleted: number;
 }
 
-/** Process one batch of findingIds: re-read each finding's CURRENT answers and
- *  rewrite/delete its chargeback or wire entry to match — same canonical
- *  predicates as the live review sync (a fail is `=== "No"`, success `=== "Yes"`),
- *  so the repair tool and the live path can't drift. A now-passing audit's entry
- *  is DELETED — the stale "failed VO" row this whole tool exists to clear. */
+/** Outcome of reconciling one finding's payroll entry — exactly one flag set
+ *  (or all false when the finding is gone / unanswered and is skipped). */
+type CbOne = { cbUpdated: boolean; cbDeleted: boolean; wireUpdated: boolean; wireDeleted: boolean };
+
+/** Reconcile ONE finding's chargeback (date-leg) or wire (package) entry against
+ *  its CURRENT answers — same canonical predicates as the live review sync (a
+ *  fail is `=== "No"`, success `=== "Yes"`). A now-passing audit's entry is
+ *  DELETED (the stale "failed VO" row this tool exists to clear); otherwise it's
+ *  rewritten to the recomputed score + remaining fails. */
+async function reconcileChargebackForFinding(orgId: OrgId, fid: string): Promise<CbOne> {
+  const none: CbOne = { cbUpdated: false, cbDeleted: false, wireUpdated: false, wireDeleted: false };
+  const finding = await getFinding(orgId, fid);
+  if (!finding) return none;
+  const answers = ((finding as any).answeredQuestions ?? []) as Array<{ answer?: unknown; header?: unknown; egregious?: unknown }>;
+  if (answers.length === 0) return none;
+  const isPackage = (finding as any).recordingIdField === "GenieNumber";
+  const yes = answers.filter((a) => String(a.answer ?? "") === "Yes").length;
+  const score = Math.round((yes / answers.length) * 100);
+  const failedQs = answers
+    .map((a) => ({ header: String(a.header ?? ""), egregious: !!a.egregious, answer: String(a.answer ?? "") }))
+    .filter((q) => q.answer === "No" && q.header);
+  const passing = score >= 100 || failedQs.length === 0;
+  const rec = ((finding as any).record ?? {}) as Record<string, any>;
+  const ts = typeof (finding as any).completedAt === "number" ? (finding as any).completedAt : Date.now();
+  const meta = buildIndexMeta(finding as any);
+  if (isPackage) {
+    if (passing) {
+      await deleteWireDeductionEntry(orgId, fid).catch(() => {});
+      return { ...none, wireDeleted: true };
+    }
+    await saveWireDeductionEntry(orgId, {
+      findingId: fid, ts, score, questionsAudited: answers.length, totalSuccess: yes,
+      recordId: String(rec.RecordId ?? ""), office: meta.department ?? "",
+      excellenceAuditor: meta.voName ?? "", guestName: String(rec.GuestName ?? ""),
+    });
+    return { ...none, wireUpdated: true };
+  }
+  if (passing) {
+    await deleteChargebackEntry(orgId, fid).catch(() => {});
+    return { ...none, cbDeleted: true };
+  }
+  await saveChargebackEntry(orgId, {
+    findingId: fid, ts, voName: meta.voName ?? "",
+    destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
+    revenue: String(rec["706"] ?? ""), recordId: String(rec.RecordId ?? ""),
+    score,
+    failedQHeaders: failedQs.map((q) => q.header),
+    egregiousHeaders: failedQs.filter((q) => q.egregious).map((q) => q.header),
+    omissionHeaders: failedQs.filter((q) => !q.egregious).map((q) => q.header),
+  });
+  return { ...none, cbUpdated: true };
+}
+
+/** Process a batch of findingIds CONCURRENTLY (bounded fan-out) — the sequential
+ *  getFinding-per-entry version timed out repeatedly on real windows. Running the
+ *  findings ~20-at-a-time turns a ~15s batch into ~1s, so the whole job finishes
+ *  in a couple of minutes — well before a Deno Deploy isolate ever recycles. */
 export async function processChargebackBackfillBatch(
   orgId: OrgId,
   fids: string[],
 ): Promise<ChargebackBackfillBatchResult> {
-  let scanned = 0, cbUpdated = 0, cbDeleted = 0, wireUpdated = 0, wireDeleted = 0;
-  for (const fid of fids) {
-    scanned++;
-    const finding = await getFinding(orgId, fid);
-    if (!finding) continue;
-    const answers = ((finding as any).answeredQuestions ?? []) as Array<{ answer?: unknown; header?: unknown; egregious?: unknown }>;
-    if (answers.length === 0) continue;
-    const isPackage = (finding as any).recordingIdField === "GenieNumber";
-    const yes = answers.filter((a) => String(a.answer ?? "") === "Yes").length;
-    const score = Math.round((yes / answers.length) * 100);
-    const failedQs = answers
-      .map((a) => ({ header: String(a.header ?? ""), egregious: !!a.egregious, answer: String(a.answer ?? "") }))
-      .filter((q) => q.answer === "No" && q.header);
-    const passing = score >= 100 || failedQs.length === 0;
-    const rec = ((finding as any).record ?? {}) as Record<string, any>;
-    const ts = typeof (finding as any).completedAt === "number" ? (finding as any).completedAt : Date.now();
-    const meta = buildIndexMeta(finding as any);
-    if (isPackage) {
-      if (passing) {
-        await deleteWireDeductionEntry(orgId, fid).catch(() => {});
-        wireDeleted++;
-      } else {
-        await saveWireDeductionEntry(orgId, {
-          findingId: fid, ts, score, questionsAudited: answers.length, totalSuccess: yes,
-          recordId: String(rec.RecordId ?? ""), office: meta.department ?? "",
-          excellenceAuditor: meta.voName ?? "", guestName: String(rec.GuestName ?? ""),
-        });
-        wireUpdated++;
-      }
-    } else if (passing) {
-      await deleteChargebackEntry(orgId, fid).catch(() => {});
-      cbDeleted++;
-    } else {
-      await saveChargebackEntry(orgId, {
-        findingId: fid, ts, voName: meta.voName ?? "",
-        destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
-        revenue: String(rec["706"] ?? ""), recordId: String(rec.RecordId ?? ""),
-        score,
-        failedQHeaders: failedQs.map((q) => q.header),
-        egregiousHeaders: failedQs.filter((q) => q.egregious).map((q) => q.header),
-        omissionHeaders: failedQs.filter((q) => !q.egregious).map((q) => q.header),
-      });
-      cbUpdated++;
+  const CONCURRENCY = 20;
+  const totals: ChargebackBackfillBatchResult = { scanned: 0, cbUpdated: 0, cbDeleted: 0, wireUpdated: 0, wireDeleted: 0 };
+  for (let i = 0; i < fids.length; i += CONCURRENCY) {
+    const slice = fids.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(slice.map((fid) => reconcileChargebackForFinding(orgId, fid)));
+    for (const r of results) {
+      totals.scanned++;
+      if (r.cbUpdated) totals.cbUpdated++;
+      if (r.cbDeleted) totals.cbDeleted++;
+      if (r.wireUpdated) totals.wireUpdated++;
+      if (r.wireDeleted) totals.wireDeleted++;
     }
   }
-  console.log(`[CB-BACKFILL] ⚙️ batch orgId=${orgId} fids=${fids.length} scanned=${scanned} cbUpdated=${cbUpdated} cbDeleted=${cbDeleted} wireUpdated=${wireUpdated} wireDeleted=${wireDeleted}`);
-  return { scanned, cbUpdated, cbDeleted, wireUpdated, wireDeleted };
+  console.log(`[CB-BACKFILL] ⚙️ batch orgId=${orgId} fids=${fids.length} scanned=${totals.scanned} cbUpdated=${totals.cbUpdated} cbDeleted=${totals.cbDeleted} wireUpdated=${totals.wireUpdated} wireDeleted=${totals.wireDeleted}`);
+  return totals;
 }
 
 // ── Find duplicate findings by RecordId ──────────────────────────────────────

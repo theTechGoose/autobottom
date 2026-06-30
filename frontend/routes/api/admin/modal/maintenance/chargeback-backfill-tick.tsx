@@ -11,7 +11,9 @@ import { renderToString } from "preact-render-to-string";
 import { getCbBackfillJob, deleteCbBackfillJob } from "../../../../../lib/chargeback-backfill-job-store.ts";
 import { ChargebackBackfillProgress } from "../../../../../components/ChargebackBackfillProgress.tsx";
 
-const BATCH_SIZE = 25;
+// The backend processes each batch ~20-concurrent, so 100 findings/request still
+// finishes in ~3-4s — far fewer round-trips, whole job done in ~2 min.
+const BATCH_SIZE = 100;
 
 interface ProcessResp {
   ok?: boolean;

@@ -6,6 +6,18 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
+## 2026-06-30 — Chargeback backfill: concurrent batches (~10× faster)
+
+- **Each batch now reconciles its findings concurrently (bounded fan-out of 20)
+  instead of one `getFinding` at a time.** The sequential version took ~0.7s per
+  entry — ~30 min on a real pay-period window — and repeatedly outran the Deno
+  Deploy isolate lifetime, losing the in-memory job and forcing re-runs. Pulled
+  the per-finding work into `reconcileChargebackForFinding` and run it ~20-at-a-
+  time, with the tick batch raised to 100 findings/request: a batch drops from
+  ~15s to ~1s and a full run finishes in ~2 min — comfortably inside one isolate.
+  ([judge-repository/mod.ts](../src/judge/domain/data/judge-repository/mod.ts),
+  [chargeback-backfill-tick.tsx](../frontend/routes/api/admin/modal/maintenance/chargeback-backfill-tick.tsx))
+
 ## 2026-06-30 — Chargeback backfill: chunked + live progress (Deno-Deploy-safe), and review hardening
 
 - **The "Backfill Chargeback Entries" tool now runs in batches with a live

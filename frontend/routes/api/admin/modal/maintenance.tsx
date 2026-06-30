@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp" | "manager-queue";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -23,6 +23,7 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "index-tests", label: "Index Tests" },
   { key: "migration", label: "Migration" },
   { key: "reset-xp", label: "Reset XP", danger: true },
+  { key: "manager-queue", label: "Manager Queue", danger: true },
 ];
 
 export const handler = define.handlers({
@@ -55,6 +56,7 @@ export const handler = define.handlers({
           {active === "index-tests" && <IndexTestsPanel />}
           {active === "migration" && <MigrationPanel />}
           {active === "reset-xp" && <ResetXpPanel />}
+          {active === "manager-queue" && <ManagerQueuePanel />}
         </div>
 
         <div id="maint-msg" style="margin-top:12px;"></div>
@@ -193,6 +195,35 @@ function DedupePanel() {
           hx-confirm="Scan this range for duplicate findings? (deletes only if Mode = Execute)"
         >Run</button>
       </div>
+    </PanelCard>
+  );
+}
+
+function ManagerQueuePanel() {
+  // Clear pending manager-queue (remediation) items scoped to a team / date.
+  // Used to scope a stale queue to a manager's department before onboarding.
+  // Preview (dry run) renders matched count + a sample into #maint-msg with a
+  // "Clear N items" button; clearing requires hx-confirm. Dept/shift are exact
+  // matches (e.g. "2ND" / "AM"); at least one filter is required (backend
+  // refuses an empty filter) so an empty form can never wipe the whole queue.
+  return (
+    <PanelCard danger title="Clear Manager Queue" subtitle="Remove pending manager-queue (remediation) items by department / shift / date — e.g. to scope a stale queue to a manager's team before they go live. Preview first; clearing cannot be undone.">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div class="sf"><label class="sf-label">Department</label><input type="text" name="department" id="mq-dept" class="sf-input" placeholder="e.g. 2ND — blank = any" /></div>
+        <div class="sf"><label class="sf-label">Shift</label><input type="text" name="shift" id="mq-shift" class="sf-input" placeholder="e.g. AM — blank = any" /></div>
+        <div class="sf"><label class="sf-label">From (audit date)</label><input type="date" name="since" id="mq-since" class="sf-input" /></div>
+        <div class="sf"><label class="sf-label">To (inclusive)</label><input type="date" name="until" id="mq-until" class="sf-input" /></div>
+      </div>
+      <button
+        class="sf-btn primary"
+        style="padding:8px 16px;"
+        hx-post="/api/admin/manager-queue-clear"
+        hx-include="#mq-dept,#mq-shift,#mq-since,#mq-until"
+        hx-vals='{"mode":"preview"}'
+        hx-target="#maint-msg"
+        hx-swap="innerHTML"
+      >Preview</button>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:8px;">At least one filter is required. Combine any of department, shift, and a date range. Preview shows exactly which items match before you clear.</div>
     </PanelCard>
   );
 }

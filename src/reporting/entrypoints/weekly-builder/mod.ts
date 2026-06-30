@@ -84,10 +84,19 @@ interface StagedConfig {
 }
 
 /** Every department a staged item / saved config covers — unifies the
- *  single-department and multi-department shapes. */
-function deptsOf(x: { department?: string; departments?: string[] }): string[] {
+ *  single-department and multi-department shapes. A STAGED item carries
+ *  `department`/`departments`; a SAVED EmailReportConfig carries
+ *  `weeklyDepartment`/`weeklyDepartments`. isDuplicate() compares one of each,
+ *  so this must read both — otherwise deptsOf(savedConfig) returns [] and a
+ *  re-publish never detects the duplicate (creates a second config every time). */
+function deptsOf(
+  x: { department?: string; departments?: string[]; weeklyDepartment?: string; weeklyDepartments?: string[] },
+): string[] {
   if (x.departments?.length) return x.departments;
-  return x.department ? [x.department] : [];
+  if (x.weeklyDepartments?.length) return x.weeklyDepartments;
+  if (x.department) return [x.department];
+  if (x.weeklyDepartment) return [x.weeklyDepartment];
+  return [];
 }
 
 function sameDeptSet(a: string[], b: string[]): boolean {

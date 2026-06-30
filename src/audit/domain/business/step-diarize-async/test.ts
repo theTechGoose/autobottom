@@ -11,7 +11,7 @@
 import { assert, assertEquals } from "#assert";
 import { stepDiarizeAsync } from "./mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
-import { saveFinding, getFinding, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
+import { saveFinding, getFinding, getTranscript, saveTranscript } from "@audit/domain/data/audit-repository/mod.ts";
 import { __setGroqTestFetch } from "@audit/domain/data/groq/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
@@ -98,12 +98,9 @@ Deno.test({
       const res = await stepDiarizeAsync(reqWith({ findingId, orgId, rawTranscript: RAW }));
       assertEquals(res.status, 200);
 
-      const fresh = await getFinding(orgId, findingId);
-      assertEquals(fresh?.diarizedTranscript, RAW, "finding must not hold the refusal");
-      assert(!(fresh?.diarizedTranscript as string).includes("Please share"), "refusal text must not reach the finding");
-
       const t = await getTranscript(orgId, findingId);
       assertEquals(t?.diarized, RAW, "canonical audit-transcript must not hold the refusal");
+      assert(!(t?.diarized as string).includes("Please share"), "refusal text must not reach the transcript store");
     } finally {
       undo();
     }
@@ -124,8 +121,6 @@ Deno.test({
       const res = await stepDiarizeAsync(reqWith({ findingId, orgId, rawTranscript: RAW }));
       assertEquals(res.status, 200);
 
-      const fresh = await getFinding(orgId, findingId);
-      assertEquals(fresh?.diarizedTranscript, GOOD_DIARIZED);
       const t = await getTranscript(orgId, findingId);
       assertEquals(t?.diarized, GOOD_DIARIZED);
     } finally {
@@ -149,8 +144,6 @@ Deno.test({
     try {
       const res = await stepDiarizeAsync(reqWith({ findingId, orgId, rawTranscript: RAW }));
       assertEquals(res.status, 200);
-      const fresh = await getFinding(orgId, findingId);
-      assertEquals(fresh?.diarizedTranscript, GOOD_DIARIZED);
       const t = await getTranscript(orgId, findingId);
       assertEquals(t?.diarized, GOOD_DIARIZED);
     } finally {
@@ -159,22 +152,61 @@ Deno.test({
   },
 });
 
-// ── Test C — already-diarized finding is left untouched ──────────────────────
+// ── Test C — already-diarized transcript is left untouched ───────────────────
 
 Deno.test({
-  name: "stepDiarizeAsync — skips when finding is already diarized",
+  name: "stepDiarizeAsync — skips when the transcript store is already diarized",
   ...kvOpts,
   fn: async () => {
     resetFirestoreCredentials();
     const { orgId, findingId } = uniqueIds();
-    await saveFinding(orgId, { id: findingId, findingStatus: "finished", diarizedTranscript: GOOD_DIARIZED, record: { RecordId: 1 } });
+    await saveFinding(orgId, { id: findingId, findingStatus: "finished", record: { RecordId: 1 } });
+    // Seed the transcript store with a real diarized transcript (distinct from raw).
+    await saveTranscript(orgId, findingId, RAW, GOOD_DIARIZED);
     // No Groq stub installed — if the step tried to diarize it would error out,
     // proving the skip path is taken.
     const res = await stepDiarizeAsync(reqWith({ findingId, orgId, rawTranscript: RAW }));
     assertEquals(res.status, 200);
     const json = await res.json();
     assertEquals(json.skipped, true);
-    const fresh = await getFinding(orgId, findingId);
-    assertEquals(fresh?.diarizedTranscript, GOOD_DIARIZED, "existing diarization must be preserved");
+    const t = await getTranscript(orgId, findingId);
+    assertEquals(t?.diarized, GOOD_DIARIZED, "existing diarization must be preserved");
+  },
+});
+
+// ── Test D — finalize-race fix: diarize-async must NOT touch the finding doc ──
+
+Deno.test({
+  name: "stepDiarizeAsync — does NOT revert a finished finding (status/answers/score preserved)",
+  ...kvOpts,
+  fn: async () => {
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    // Simulate finalize having already completed concurrently: finished + answers + score.
+    await saveFinding(orgId, {
+      id: findingId,
+      findingStatus: "finished",
+      answeredQuestions: [{ question: "Q1", answer: "Yes" }],
+      score: 96,
+      record: { RecordId: 1 },
+    });
+    const undo = installGroqStub({ diarizeOutput: GOOD_DIARIZED, qa: "Yes" });
+    try {
+      const res = await stepDiarizeAsync(reqWith({ findingId, orgId, rawTranscript: RAW }));
+      assertEquals(res.status, 200);
+
+      // The whole point of the fix: diarize-async never writes the finding doc,
+      // so it cannot revert "finished" → "asking-questions" or wipe answers/score.
+      const fresh = await getFinding(orgId, findingId);
+      assertEquals(fresh?.findingStatus, "finished", "must NOT regress the finished status");
+      assertEquals((fresh?.answeredQuestions as unknown[])?.length, 1, "answers must survive");
+      assertEquals(fresh?.score, 96, "score must survive");
+
+      // The diarized transcript lands in the transcript store instead.
+      const t = await getTranscript(orgId, findingId);
+      assertEquals(t?.diarized, GOOD_DIARIZED);
+    } finally {
+      undo();
+    }
   },
 });

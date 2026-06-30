@@ -1,6 +1,5 @@
 /** STEP 2c: Async speaker diarization — runs in parallel with prepare, not on the critical path. */
-import { getFinding, saveFinding, saveTranscript, invalidateFindingCache } from "@audit/domain/data/audit-repository/mod.ts";
-import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
+import { getFinding, saveTranscript, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
 import { diarize } from "@audit/domain/data/groq/mod.ts";
 import { isValidDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
 
@@ -29,7 +28,12 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
     log(`🔍 [TRANSCRIPT-RACE] step=diarize-async fid=${findingId} ${outcome} payloadLen=${typeof payloadRaw === "string" ? payloadRaw.length : 0} findingLen=${finding.rawTranscript?.length ?? 0}`);
   }
 
-  if (finding.diarizedTranscript) {
+  // Idempotency: the transcript store is the durable home for the diarized
+  // transcript (we no longer mirror it onto the finding doc — see the save note
+  // below). If it already holds a real diarized transcript (distinct from raw),
+  // this step ran already — skip.
+  const existing = await getTranscript(orgId, findingId);
+  if (existing?.diarized && existing.diarized !== existing.raw) {
     console.log(`[STEP-DIARIZE] ${findingId}: Already diarized, skipping`);
     return json({ ok: true, skipped: true });
   }
@@ -57,29 +61,17 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
     if (!valid) {
       console.warn(`⚠️ [STEP-DIARIZE] ${findingId}: diarization invalid (refusal/short) — storing raw transcript as fallback`);
     }
-    // CRITICAL: re-fetch the finding right before save. This step runs IN
-    // PARALLEL with prepare → ask-all → finalize on the critical path.
-    // Diarization can take seconds-to-minutes; meanwhile the critical path
-    // may have flipped findingStatus from "asking-questions" → "finished"
-    // and written answeredQuestions. Saving the stale snapshot we captured
-    // before diarize() would regress those updates: status would flip back
-    // to "asking-questions", answeredQuestions would be wiped, and the
-    // audit would appear orphan in Recently Completed while review-queue
-    // rows reference indices that no longer exist. That is the exact bug
-    // that left lTBHV… and NLbvBCPh… stuck for joshk + ashleyk.
-    // Only mutate diarizedTranscript on the fresh read so concurrent
-    // writers on other fields don't lose their work.
-    // Bypass the 30s getFinding cache: without this, the re-fetch returns our
-    // own stale pre-diarize snapshot (this step's first getFinding), so the
-    // save below would revert findingStatus and wipe finalize's answers/score.
-    invalidateFindingCache(orgId, findingId);
-    const fresh = await getFinding(orgId, findingId);
-    if (fresh) {
-      fresh.diarizedTranscript = toStore;
-      await saveFinding(orgId, fresh);
-    } else {
-      console.warn(`⚠️ [STEP-DIARIZE] ${findingId}: finding disappeared between snapshot + diarize result — skipping save`);
-    }
+    // Persist ONLY to the transcript store. We deliberately do NOT write the
+    // diarized transcript back onto the finding doc. This step runs IN PARALLEL
+    // with prepare → ask-all → finalize, and saveFinding is a full-document
+    // overwrite. Even re-reading "fresh" first left a TOCTOU window: if our read
+    // landed before finalize committed "finished" and our save landed after, we
+    // reverted the finished audit back to "asking-questions", wiped answers, and
+    // stranded its review-queue rows — the exact race that lost BofFRUvr…
+    // (reviewed at 96%, then refused as mid-pipeline). Readers get the diarized
+    // transcript from the transcript store: the review queue loads it via
+    // getTranscript, and the audit-report / manager-finding endpoints backfill
+    // finding.diarizedTranscript from it on read.
     await saveTranscript(orgId, findingId, raw, toStore);
     console.log(`[STEP-DIARIZE] ${findingId}: Diarization complete${valid ? "" : " (raw fallback)"}`);
   } catch (err) {

@@ -6,8 +6,12 @@ import {
   recordUrl,
   trimSectionsForEmail,
   weeklyReportSlug,
+  resolveDateRange,
+  queryReportData,
 } from "./mod.ts";
 import type { SectionResult } from "./mod.ts";
+import { writeAuditDoneIndex, _resetQueryAuditDoneIndexCacheForTests } from "@audit/domain/data/stats-repository/mod.ts";
+import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 
 Deno.test("email-report-engine — placeholder test", () => {
   assert(true, "email-report-engine test placeholder");
@@ -88,3 +92,160 @@ Deno.test("recordUrl / findingUrl — point at QuickBase and the audit-report pa
   assert(recordUrl("485817").endsWith("485817"));
   assert(findingUrl("abc").includes("/audit/report?id=abc"));
 });
+
+// ── resolveDateRange — weekly window anchored to Eastern wall-clock (DST-safe) ─
+// Pure function, no live services; asserts the Monday→Sunday window resets at
+// Eastern midnight, not UTC. (Merged from the former date-range.test.ts.)
+
+const WEEKLY = { mode: "weekly", startDay: 1 } as const; // Monday
+
+Deno.test("weekly window — winter (EST, UTC-5): Wed maps to Mon 00:00 → Sun 23:59:59.999 EST", () => {
+  const now = Date.UTC(2026, 0, 7, 14, 0, 0); // Wed 2026-01-07 09:00 EST
+  const { from, to } = resolveDateRange(WEEKLY, now);
+  assertEquals(from, Date.UTC(2026, 0, 5, 5, 0, 0, 0)); // Mon 2026-01-05 00:00 EST
+  assertEquals(to, Date.UTC(2026, 0, 12, 4, 59, 59, 999)); // Sun 2026-01-11 23:59:59.999 EST
+});
+
+Deno.test("weekly window — summer (EDT, UTC-4): DST offset is honored", () => {
+  const now = Date.UTC(2026, 6, 8, 13, 0, 0); // Wed 2026-07-08 09:00 EDT
+  const { from, to } = resolveDateRange(WEEKLY, now);
+  assertEquals(from, Date.UTC(2026, 6, 6, 4, 0, 0, 0)); // Mon 2026-07-06 00:00 EDT
+  assertEquals(to, Date.UTC(2026, 6, 13, 3, 59, 59, 999)); // Sun 2026-07-12 23:59:59.999 EDT
+});
+
+Deno.test("weekly window — Sunday 23:30 EST is still the same (ending) week", () => {
+  const now = Date.UTC(2026, 0, 12, 4, 30, 0); // Sun 2026-01-11 23:30 EST
+  const { from, to } = resolveDateRange(WEEKLY, now);
+  assertEquals(from, Date.UTC(2026, 0, 5, 5, 0, 0, 0)); // still Mon 2026-01-05
+  assertEquals(to, Date.UTC(2026, 0, 12, 4, 59, 59, 999)); // through Sun 2026-01-11
+});
+
+Deno.test("weekly window — Monday 00:30 EST has reset to the new week", () => {
+  const now = Date.UTC(2026, 0, 12, 5, 30, 0); // Mon 2026-01-12 00:30 EST
+  const { from, to } = resolveDateRange(WEEKLY, now);
+  assertEquals(from, Date.UTC(2026, 0, 12, 5, 0, 0, 0)); // Mon 2026-01-12 00:00 EST
+  assertEquals(to, Date.UTC(2026, 0, 19, 4, 59, 59, 999)); // Sun 2026-01-18 23:59:59.999 EST
+});
+
+Deno.test("rolling + fixed modes are unaffected (use the injected now)", () => {
+  const now = 1_700_000_000_000;
+  assertEquals(resolveDateRange({ mode: "rolling", hours: 24 }, now), { from: now - 86_400_000, to: now });
+  assertEquals(resolveDateRange({ mode: "fixed", from: 100, to: 200 }, now), { from: 100, to: 200 });
+});
+
+// ── queryReportData — index-only row building (no finding hydration) ──────────
+// Proves rows are built straight from the audit index (department / shift /
+// score / voName / appealStatus) WITHOUT hydrating the finding — by writing an
+// index row but NO finding doc — and still falls back to hydration when a
+// report needs the guestName column. (Merged from the former index-only.test.ts.)
+
+const IDX_COLUMNS = ["finalizedAt", "voName", "department", "score", "recordId", "findingId"];
+
+Deno.test({ name: "queryReportData — builds rows from the index with NO finding hydration", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-idxonly-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+
+  // A reviewed, completed internal audit on the index — but NO finding doc saved.
+  await writeAuditDoneIndex(ORG as any, {
+    findingId: "f1", completedAt: now, doneAt: now, completed: true, reason: "reviewed",
+    score: 80, recordId: "R1", voName: "Jane Doe", department: "DEPT-A", shift: "AM", isPackage: false,
+  } as any, { assumeFinished: true });
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    reportSections: [{ header: "t", columns: IDX_COLUMNS, criteria: [] }],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+    topLevelFilters: [
+      { field: "auditType", operator: "equals", value: "internal" },
+      { field: "department", operator: "equals", value: "DEPT-A" },
+      { field: "shift", operator: "equals", value: "AM" },
+      { field: "appealStatus", operator: "not_equals", value: "pending" },
+    ],
+  };
+
+  const sections = await queryReportData(ORG as any, config as any);
+  assertEquals(sections.length, 1);
+  assertEquals(sections[0].rows.length, 1, "row built from the index without a finding doc");
+  const row = sections[0].rows[0];
+  assertEquals(row.department, "DEPT-A");
+  assertEquals(row.voName, "Jane Doe");
+  assertEquals(row.score, 80);
+  assertEquals(row.recordId, "R1");
+  assertEquals(row.findingId, "f1");
+}});
+
+Deno.test({ name: "queryReportData — wrong department/shift filters drop the index row (no hydration needed)", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-idxfilter-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+  await writeAuditDoneIndex(ORG as any, {
+    findingId: "f1", completedAt: now, doneAt: now, completed: true, reason: "reviewed",
+    score: 80, recordId: "R1", voName: "Jane", department: "DEPT-A", shift: "AM", isPackage: false,
+  } as any, { assumeFinished: true });
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    reportSections: [{ header: "t", columns: IDX_COLUMNS, criteria: [] }],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+    topLevelFilters: [{ field: "department", operator: "equals", value: "DEPT-B" }],
+  };
+  const sections = await queryReportData(ORG as any, config as any);
+  assertEquals(sections[0].rows.length, 0, "department mismatch filtered out via index fields");
+}});
+
+Deno.test({ name: "queryReportData — shift-criteria sections group audits by shift (the all-shifts report), no hydration", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-shiftsec-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+  // Same department, two shifts — and no finding docs (proves index-only).
+  await writeAuditDoneIndex(ORG as any, {
+    findingId: "fa", completedAt: now, doneAt: now, completed: true, reason: "reviewed",
+    score: 90, recordId: "RA", voName: "Amy", department: "DEPT-A", shift: "AM", isPackage: false,
+  } as any, { assumeFinished: true });
+  await writeAuditDoneIndex(ORG as any, {
+    findingId: "fp", completedAt: now, doneAt: now, completed: true, reason: "reviewed",
+    score: 70, recordId: "RP", voName: "Pat", department: "DEPT-A", shift: "PM", isPackage: false,
+  } as any, { assumeFinished: true });
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    reportSections: [
+      { header: "AM", columns: ["voName", "score"], criteria: [{ field: "shift", operator: "equals", value: "AM" }] },
+      { header: "PM", columns: ["voName", "score"], criteria: [{ field: "shift", operator: "equals", value: "PM" }] },
+    ],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+    topLevelFilters: [{ field: "department", operator: "equals", value: "DEPT-A" }],
+  };
+  const sections = await queryReportData(ORG as any, config as any);
+  assertEquals(sections.map((s) => s.header), ["AM", "PM"]);
+  assertEquals(sections[0].rows.map((r) => r.voName), ["Amy"]);
+  assertEquals(sections[1].rows.map((r) => r.voName), ["Pat"]);
+}});
+
+Deno.test({ name: "queryReportData — guestName column forces finding hydration (row dropped when finding absent)", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-needsfind-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+  await writeAuditDoneIndex(ORG as any, {
+    findingId: "f2", completedAt: now, doneAt: now, completed: true, reason: "reviewed",
+    score: 80, recordId: "R2", voName: "Bob", department: "DEPT-B", isPackage: false,
+  } as any, { assumeFinished: true });
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    reportSections: [{ header: "t", columns: ["guestName", "voName"], criteria: [] }],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+  };
+  const sections = await queryReportData(ORG as any, config as any);
+  // guestName isn't on the index → engine hydrates → finding absent → row skipped.
+  assertEquals(sections[0].rows.length, 0, "guestName report hydrates; no finding → no row");
+}});

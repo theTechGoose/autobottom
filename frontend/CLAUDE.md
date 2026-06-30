@@ -255,6 +255,7 @@ Two review/queue traps that ship wrong audit scores or a dead scrubber:
 | Judge Dashboard | `/judge/dashboard` | Done — stats |
 | Manager Portal | `/manager` | Done — auto-refreshing stat strip + remediation queue + finding-detail / remediate modals (pre-rendered inline so HTMX can toggle them). **Deferred** (handlers exist under `routes/api/manager/`, no UI yet): agent mgmt (`add-agent`/`delete-agent`), backfill, notif settings. |
 | Manager Audit History | `/manager/audits` | Done — date/agent/dept/shift/score/reviewed filters, paginated table, scoped to the manager's team (admins see all) |
+| Manager Queue (admin clear) | Data Maintenance modal → "Manager Queue" tab | Done — admin-only tool to clear pending manager-queue (remediation) items by department / shift / date range (any combo) before onboarding a manager. Preview (dry run) shows matched count + sample, then "Clear N" with confirm. Backend `clearManagerQueue` refuses an empty filter; endpoint `POST /manager/api/queue/clear` is admin-gated in `main.ts`. |
 | Agent Dashboard | `/agent` | Done — stats, trend, audit history |
 | Chat | `/chat` | Done — conversations, thread, send |
 | Question Lab list | `/question-lab` | Done — full-width table, status pill toggle, bulk-delete (with typed-confirm wipe-all), prod parity |

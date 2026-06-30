@@ -6,7 +6,7 @@ import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import { ManagerQueueResponse, ManagerStatsResponse, OkResponse, OkMessageResponse, AgentListResponse, MessageResponse, FindingResponse, ManagerAuditHistoryResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, RemediateRequest, CreateAgentRequest, DeleteEmailRequest, PrefabSubscriptionsRequest } from "@core/dto/requests.ts";
 import { getManagerQueue, submitRemediation, getManagerStats } from "@manager/domain/data/manager-repository/mod.ts";
-import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { getFinding, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
 import { createUser, deleteUser, listUsers } from "@core/business/auth/mod.ts";
 import { getPrefabSubscriptions, savePrefabSubscriptions } from "@events/domain/data/events-repository/mod.ts";
 import { getAuditHistory } from "@manager/domain/business/audit-history/mod.ts";
@@ -36,7 +36,17 @@ export class ManagerController {
   async finding(@Query("findingId") findingId: string) {
     if (!findingId) return { error: "findingId required" };
     const f = await getFinding(ORG(), findingId);
-    return f ?? { error: "not found" };
+    if (!f) return { error: "not found" };
+    // diarize-async no longer mirrors the diarized transcript onto the finding
+    // doc (that full-doc write raced finalize); backfill it from the transcript
+    // store so the finding-detail modal still shows the speaker-labelled view.
+    if (!(f as Record<string, unknown>).diarizedTranscript) {
+      try {
+        const t = await getTranscript(ORG(), findingId);
+        if (t?.diarized) (f as Record<string, unknown>).diarizedTranscript = t.diarized;
+      } catch { /* best-effort display backfill */ }
+    }
+    return f;
   }
 
   @Post("remediate") @ReturnedType(OkResponse) @Description("Submit failure remediation") @BodyType(RemediateRequest)

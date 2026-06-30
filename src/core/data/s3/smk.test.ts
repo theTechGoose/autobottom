@@ -1,7 +1,83 @@
 import { assert, assertEquals } from "#assert";
-import { resolveByteRange, buildAudioResponse } from "./mod.ts";
+import { resolveByteRange, buildAudioResponse, s3FetchWithRetry } from "./mod.ts";
 
 Deno.test("s3 — module loads", () => { assert(true); });
+
+// ── s3FetchWithRetry — transient network retry ───────────────────────────────
+// A ~1s DNS blip at S3 upload time was stranding whole audits (queued steps get
+// no QStash retry + lose their watchdog row). These pin the retry behavior.
+// fetch + setTimeout are stubbed so the backoff doesn't make the test sleep.
+
+/** Run `fn` with fetch + setTimeout stubbed; setTimeout fires instantly. */
+async function withStubs(fetchImpl: () => Promise<Response>, fn: () => Promise<void>) {
+  const realFetch = globalThis.fetch;
+  const realSetTimeout = globalThis.setTimeout;
+  // deno-lint-ignore no-explicit-any
+  globalThis.fetch = (() => fetchImpl()) as any;
+  // deno-lint-ignore no-explicit-any
+  globalThis.setTimeout = ((cb: () => void) => { cb(); return 0; }) as any;
+  try { await fn(); } finally {
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realSetTimeout;
+  }
+}
+
+Deno.test("s3FetchWithRetry — retries a transient throw then succeeds", async () => {
+  let calls = 0;
+  await withStubs(
+    () => {
+      calls++;
+      if (calls === 1) throw new TypeError("error sending request: dns error: Temporary failure in name resolution");
+      return Promise.resolve(new Response("ok", { status: 200 }));
+    },
+    async () => {
+      const res = await s3FetchWithRetry("https://x/y", { method: "PUT" }, "PUT");
+      assertEquals(res.status, 200);
+      assertEquals(calls, 2, "should have retried once after the DNS throw");
+    },
+  );
+});
+
+Deno.test("s3FetchWithRetry — throws after exhausting attempts on persistent failure", async () => {
+  let calls = 0;
+  let threw = false;
+  await withStubs(
+    () => { calls++; throw new TypeError("dns error: Temporary failure in name resolution"); },
+    async () => {
+      try { await s3FetchWithRetry("https://x/y", { method: "PUT" }, "PUT"); }
+      catch { threw = true; }
+    },
+  );
+  assert(threw, "must propagate after all attempts fail");
+  assertEquals(calls, 3, "3 attempts total");
+});
+
+Deno.test("s3FetchWithRetry — retries a 5xx then returns success", async () => {
+  let calls = 0;
+  await withStubs(
+    () => {
+      calls++;
+      return Promise.resolve(calls === 1 ? new Response("slow down", { status: 503 }) : new Response("ok", { status: 200 }));
+    },
+    async () => {
+      const res = await s3FetchWithRetry("https://x/y", { method: "GET" }, "GET");
+      assertEquals(res.status, 200);
+      assertEquals(calls, 2);
+    },
+  );
+});
+
+Deno.test("s3FetchWithRetry — does NOT retry a 404 (returns immediately)", async () => {
+  let calls = 0;
+  await withStubs(
+    () => { calls++; return Promise.resolve(new Response("", { status: 404 })); },
+    async () => {
+      const res = await s3FetchWithRetry("https://x/y", { headers: {} }, "GET");
+      assertEquals(res.status, 404);
+      assertEquals(calls, 1, "404 is terminal — no retry");
+    },
+  );
+});
 
 // ── resolveByteRange — HTTP Range parsing for <audio> seeking ────────────────
 // This is what makes click-to-scrub work: the /audit/recording handler must

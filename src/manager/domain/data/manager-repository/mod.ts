@@ -1,11 +1,12 @@
 /** Manager queue repository. Firestore-backed. */
 
 import {
-  getStored, setStored, listStored, listStoredWithKeys,
+  getStored, setStored, deleteStored, listStored, listStoredWithKeys,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewDecision } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { buildIndexMeta } from "@audit/domain/data/stats-repository/mod.ts";
 
 export interface ManagerQueueItem {
   findingId: string;
@@ -26,6 +27,105 @@ export async function populateManagerQueue(orgId: OrgId, findingId: string): Pro
 
 export async function getManagerQueue(orgId: OrgId): Promise<ManagerQueueItem[]> {
   return await listStored<ManagerQueueItem>("manager-queue", orgId);
+}
+
+// ── Data maintenance: clear queue items by team / date ───────────────────────
+
+export interface ManagerQueueFilter {
+  /** Exact (trimmed) department match, e.g. "2ND". */
+  department?: string;
+  /** Exact (trimmed) shift match, e.g. "AM". */
+  shift?: string;
+  /** Audit-date window (ms). `since` inclusive, `until` exclusive. */
+  since?: number;
+  until?: number;
+}
+
+export interface ManagerQueueClearMatch {
+  findingId: string;
+  owner?: string;
+  department?: string;
+  shift?: string;
+  date?: number;
+}
+
+export interface ManagerQueueClearResult {
+  total: number;
+  matched: number;
+  deleted: number;
+  dryRun: boolean;
+  /** Up to 50 matched items, for an admin preview before committing. */
+  sample: ManagerQueueClearMatch[];
+}
+
+/** Clear manager-queue items matching any combination of department / shift /
+ *  date-range. dept + shift are exact (trimmed) matches resolved from each
+ *  finding (so a stale queue can be scoped to a manager's team before they go
+ *  live); the date is the audit's completion date (`completedAt`, falling back
+ *  to `addedAt`). Pass `{ dryRun: true }` to preview the count + a sample
+ *  without deleting.
+ *
+ *  Requires at least one filter — refuses an unfiltered wipe so an empty admin
+ *  form can never nuke the entire queue. A pure date-range clear reads no
+ *  findings; dept/shift filters resolve each finding once (deduped). */
+export async function clearManagerQueue(
+  orgId: OrgId,
+  filter: ManagerQueueFilter,
+  opts: { dryRun?: boolean } = {},
+): Promise<ManagerQueueClearResult> {
+  const dept = filter.department?.trim() || undefined;
+  const shift = filter.shift?.trim() || undefined;
+  const since = Number.isFinite(filter.since) ? Number(filter.since) : undefined;
+  const until = Number.isFinite(filter.until) ? Number(filter.until) : undefined;
+
+  if (!dept && !shift && since == null && until == null) {
+    throw new Error("clearManagerQueue: at least one filter (department, shift, since, until) is required");
+  }
+
+  const items = await getManagerQueue(orgId);
+  const needDeptShift = !!dept || !!shift;
+  const metaCache = new Map<string, { department?: string; shift?: string }>();
+  const matches: ManagerQueueClearMatch[] = [];
+
+  for (const item of items) {
+    const date = item.completedAt ?? item.addedAt;
+    // Date filter first — cheap, and a pure date clear needs no finding read.
+    if (since != null && (date == null || date < since)) continue;
+    if (until != null && (date == null || date >= until)) continue;
+
+    let itemDept: string | undefined;
+    let itemShift: string | undefined;
+    if (needDeptShift) {
+      if (!metaCache.has(item.findingId)) {
+        let resolved: { department?: string; shift?: string } = {};
+        try {
+          const finding = await getFinding(orgId, item.findingId);
+          if (finding) {
+            const meta = buildIndexMeta(finding);
+            resolved = { department: meta.department, shift: meta.shift };
+          }
+        } catch { /* finding gone — unresolvable; won't match a dept/shift filter */ }
+        metaCache.set(item.findingId, resolved);
+      }
+      const m = metaCache.get(item.findingId)!;
+      itemDept = m.department;
+      itemShift = m.shift;
+      if (dept && itemDept !== dept) continue;
+      if (shift && itemShift !== shift) continue;
+    }
+
+    matches.push({ findingId: item.findingId, owner: item.owner, department: itemDept, shift: itemShift, date });
+  }
+
+  let deleted = 0;
+  if (!opts.dryRun) {
+    for (const m of matches) {
+      await deleteStored("manager-queue", orgId, m.findingId);
+      deleted++;
+    }
+  }
+
+  return { total: items.length, matched: matches.length, deleted, dryRun: !!opts.dryRun, sample: matches.slice(0, 50) };
 }
 
 export async function submitRemediation(orgId: OrgId, findingId: string, notes: string, username: string): Promise<{ ok: boolean }> {

@@ -185,6 +185,31 @@ async function handleManagerAuditHistory(req: Request): Promise<Response> {
   }
 }
 
+/** Admin-only manager-queue maintenance: clear queue items by department /
+ *  shift / date-range (any combo) so a stale queue can be scoped to a manager's
+ *  team before they go live. `dryRun` previews the count + a sample without
+ *  deleting. clearManagerQueue throws on an empty filter → surfaced as 400. */
+async function handleManagerQueueClear(req: Request): Promise<Response> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (auth.role !== "admin") return Response.json({ error: "forbidden" }, { status: 403 });
+  let body: { department?: string; shift?: string; since?: number; until?: number; dryRun?: boolean } = {};
+  try { body = await req.json(); } catch { /* empty/invalid body → empty filter → 400 below */ }
+  const { clearManagerQueue } = await import("@manager/domain/data/manager-repository/mod.ts");
+  try {
+    const result = await clearManagerQueue(auth.orgId, {
+      department: body.department || undefined,
+      shift: body.shift || undefined,
+      since: typeof body.since === "number" ? body.since : undefined,
+      until: typeof body.until === "number" ? body.until : undefined,
+    }, { dryRun: !!body.dryRun });
+    return Response.json(result);
+  } catch (err) {
+    console.error(`❌ [MANAGER-QUEUE-CLEAR] failed:`, err);
+    return Response.json({ error: (err as Error).message }, { status: 400 });
+  }
+}
+
 async function handleAgentDashboard(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -631,6 +656,7 @@ const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>>
   "/agent/api/me": handleMe,
   "/manager/api/game-state": handleGameState,
   "/manager/api/audit-history": handleManagerAuditHistory,
+  "/manager/api/queue/clear": handleManagerQueueClear,
   "/agent/api/game-state": handleGameState,
   "/agent/api/dashboard": handleAgentDashboard,
   "/api/badges": handleGetBadges,

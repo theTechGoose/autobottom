@@ -1,9 +1,33 @@
 /** Smoke tests for manager repository. */
 import { assertEquals, assert } from "#assert";
-import { populateManagerQueue, getManagerQueue, submitRemediation, getManagerStats } from "./mod.ts";
+import { populateManagerQueue, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue } from "./mod.ts";
+import { setStored, resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
+import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
 const ORG = "test-org-" + crypto.randomUUID().slice(0, 8);
+
+/** Seed a manager-queue item dated `completedAt` plus its finding's dept/shift,
+ *  so clearManagerQueue can resolve team scope + audit date. */
+async function seedItem(
+  org: OrgId,
+  findingId: string,
+  o: { completedAt: number; dept?: string; shift?: string; isPackage?: boolean },
+): Promise<void> {
+  await setStored("manager-queue", org, [findingId], {
+    findingId, addedAt: o.completedAt, completedAt: o.completedAt, status: "pending",
+  });
+  await saveFinding(org, {
+    id: findingId,
+    recordingIdField: o.isPackage ? "GenieNumber" : "Recording",
+    record: o.isPackage
+      ? { OfficeName: o.dept ?? "", RecordId: 1 }
+      : { ActivatingOffice: o.dept ?? "", Shift: o.shift ?? "", RecordId: 1 },
+  });
+}
+
+const DAY = 86_400_000;
 
 Deno.test({ name: "manager queue — populate and list", ...kvOpts, fn: async () => {
   await populateManagerQueue(ORG, "f-mgr-1");
@@ -20,4 +44,93 @@ Deno.test({ name: "manager — remediate updates status", ...kvOpts, fn: async (
 Deno.test({ name: "manager stats — counts pending vs remediated", ...kvOpts, fn: async () => {
   const stats = await getManagerStats(ORG);
   assert(stats.total >= 2);
+}});
+
+// ── clearManagerQueue — data maintenance (clear by dept / shift / date) ───────
+
+Deno.test({ name: "clearManagerQueue — refuses an unfiltered wipe", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-cq-empty-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  let threw = false;
+  try { await clearManagerQueue(org, {}); } catch { threw = true; }
+  assert(threw, "empty filter must throw, never clear everything");
+}});
+
+Deno.test({ name: "clearManagerQueue — by date range (no finding reads needed)", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-cq-date-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const now = 1_700_000_000_000;
+  await seedItem(org, "f-old", { completedAt: now - 10 * DAY });
+  await seedItem(org, "f-mid", { completedAt: now - 5 * DAY });
+  await seedItem(org, "f-new", { completedAt: now - 1 * DAY });
+  // Window covers only f-mid (since inclusive, until exclusive).
+  const res = await clearManagerQueue(org, { since: now - 6 * DAY, until: now - 2 * DAY });
+  assertEquals(res.matched, 1);
+  assertEquals(res.deleted, 1);
+  const remaining = (await getManagerQueue(org)).map((i) => i.findingId).sort();
+  assertEquals(remaining, ["f-new", "f-old"]);
+}});
+
+Deno.test({ name: "clearManagerQueue — by department only", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-cq-dept-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const now = 1_700_000_000_000;
+  await seedItem(org, "f-2nd-a", { completedAt: now, dept: "2ND", shift: "AM" });
+  await seedItem(org, "f-2nd-b", { completedAt: now, dept: "2ND", shift: "PM" });
+  await seedItem(org, "f-gsmb", { completedAt: now, dept: "GS MB", shift: "AM" });
+  const res = await clearManagerQueue(org, { department: "2ND" });
+  assertEquals(res.matched, 2);
+  assertEquals(res.deleted, 2);
+  assertEquals((await getManagerQueue(org)).map((i) => i.findingId), ["f-gsmb"]);
+}});
+
+Deno.test({ name: "clearManagerQueue — by department + shift combo", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-cq-combo-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const now = 1_700_000_000_000;
+  await seedItem(org, "f-2nd-am", { completedAt: now, dept: "2ND", shift: "AM" });
+  await seedItem(org, "f-2nd-pm", { completedAt: now, dept: "2ND", shift: "PM" });
+  await seedItem(org, "f-gsmb-am", { completedAt: now, dept: "GS MB", shift: "AM" });
+  const res = await clearManagerQueue(org, { department: "2ND", shift: "AM" });
+  assertEquals(res.matched, 1);
+  assertEquals(res.sample[0].findingId, "f-2nd-am");
+  const remaining = (await getManagerQueue(org)).map((i) => i.findingId).sort();
+  assertEquals(remaining, ["f-2nd-pm", "f-gsmb-am"]);
+}});
+
+Deno.test({ name: "clearManagerQueue — dept + date range together", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-cq-deptdate-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const now = 1_700_000_000_000;
+  await seedItem(org, "f-2nd-old", { completedAt: now - 10 * DAY, dept: "2ND", shift: "AM" });
+  await seedItem(org, "f-2nd-new", { completedAt: now - 1 * DAY, dept: "2ND", shift: "AM" });
+  await seedItem(org, "f-gsmb-new", { completedAt: now - 1 * DAY, dept: "GS MB", shift: "AM" });
+  // 2ND AND recent → only f-2nd-new.
+  const res = await clearManagerQueue(org, { department: "2ND", since: now - 3 * DAY });
+  assertEquals(res.matched, 1);
+  assertEquals(res.sample[0].findingId, "f-2nd-new");
+  assertEquals(res.sample[0].department, "2ND");
+}});
+
+Deno.test({ name: "clearManagerQueue — dryRun previews without deleting", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-cq-dry-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const now = 1_700_000_000_000;
+  await seedItem(org, "f-a", { completedAt: now, dept: "2ND", shift: "AM" });
+  await seedItem(org, "f-b", { completedAt: now, dept: "2ND", shift: "PM" });
+  const res = await clearManagerQueue(org, { department: "2ND" }, { dryRun: true });
+  assertEquals(res.matched, 2);
+  assertEquals(res.deleted, 0, "dry run must not delete");
+  assertEquals(res.dryRun, true);
+  assertEquals((await getManagerQueue(org)).length, 2, "queue untouched on dry run");
+}});
+
+Deno.test({ name: "clearManagerQueue — package items match by OfficeName as department", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-cq-pkg-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const now = 1_700_000_000_000;
+  await seedItem(org, "f-pkg", { completedAt: now, dept: "Orlando Office", isPackage: true });
+  const res = await clearManagerQueue(org, { department: "Orlando Office" });
+  assertEquals(res.matched, 1);
+  assertEquals(res.deleted, 1);
 }});

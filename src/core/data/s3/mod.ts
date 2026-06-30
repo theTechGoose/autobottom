@@ -54,6 +54,44 @@ async function signV4(method: string, bucket: string, key: string, payloadHash: 
   return `https://${host}${encodedKey}`;
 }
 
+const S3_MAX_ATTEMPTS = 3;
+const s3Sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** fetch() that retries transient network failures (DNS/connect/reset blips
+ *  that throw a TypeError from fetch, or 5xx responses from S3). A ~1s DNS
+ *  hiccup at upload time was silently stranding whole audits: a queued step
+ *  that throws gets NO QStash retry (Upstash-Retries:"0") and the dispatcher
+ *  clears its active-tracking row, so the watchdog can't re-drive it either.
+ *  Retrying here — where the blip actually is — closes that gap. S3 PUT/GET on
+ *  a fixed key are idempotent, so re-attempting is safe. Mirrors the genie
+ *  downloader's transient-retry loop (genie/mod.ts). */
+async function s3FetchWithRetry(url: string, init: RequestInit, op: string): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= S3_MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      // 5xx is a transient server-side error worth retrying; 2xx/4xx/404 return.
+      if (res.status >= 500 && attempt < S3_MAX_ATTEMPTS) {
+        lastError = new Error(`S3 ${op} HTTP ${res.status}`);
+        console.warn(`[S3] ⚠️ ${op} attempt ${attempt}/${S3_MAX_ATTEMPTS} → HTTP ${res.status}, retrying`);
+        await s3Sleep(2 ** attempt * 1000);
+        continue;
+      }
+      return res;
+    } catch (err) {
+      // fetch throws (TypeError) on DNS/connect/reset — transient, retry.
+      lastError = err;
+      if (attempt < S3_MAX_ATTEMPTS) {
+        console.warn(`[S3] ⚠️ ${op} attempt ${attempt}/${S3_MAX_ATTEMPTS} threw, retrying:`, err);
+        await s3Sleep(2 ** attempt * 1000);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
 export class S3Ref {
   readonly bucket: string;
   readonly key: string;
@@ -70,7 +108,7 @@ export class S3Ref {
       const payloadHash = await sha256(body);
       const headers: Record<string, string> = { "content-type": "application/octet-stream" };
       const url = await signV4("PUT", this.bucket, this.key, payloadHash, headers);
-      const res = await fetch(url, { method: "PUT", headers, body: body as BodyInit });
+      const res = await s3FetchWithRetry(url, { method: "PUT", headers, body: body as BodyInit }, "PUT");
       if (!res.ok) {
         const text = await res.text();
         throw new Error(`S3 PUT failed: ${res.status} ${text}`);
@@ -84,7 +122,7 @@ export class S3Ref {
       span.setAttributes({ "s3.bucket": this.bucket, "s3.key": this.key });
       const headers: Record<string, string> = {};
       const url = await signV4("GET", this.bucket, this.key, "UNSIGNED-PAYLOAD", headers);
-      const res = await fetch(url, { headers });
+      const res = await s3FetchWithRetry(url, { headers }, "GET");
       if (res.status === 404) { span.setAttribute("s3.found", false); return null; }
       if (!res.ok) {
         const text = await res.text();
@@ -96,6 +134,9 @@ export class S3Ref {
     }, {}, "client");
   }
 }
+
+/** Exported for testing — the transient-retry fetch wrapper. */
+export { s3FetchWithRetry };
 
 /** Resolve an HTTP `Range` request header against a known total byte length.
  *  Pure — used by the /audit/recording direct-dispatch handler (main.ts) so the

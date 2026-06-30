@@ -130,11 +130,11 @@ Steps fire in order via QStash callbacks. Each step is a Deno function in `src/a
 test-by-rid / package-by-rid / appeal/different-recording / appeal/upload-recording
                  │
                  ▼
-1.  init               ← download from genie API, save to S3, retry up to 4×
+1.  init               ← download from genie (retry up to 4×), save to S3 (transient net blips retried 3×)
 2.  transcribe         ← submit to AssemblyAI (with optional snipStart/snipEnd)
 3.  poll-transcript    ← poll AssemblyAI until done
 4.  transcribe-complete← write raw + diarized transcript
-5.  diarize-async      ← speaker label fixup
+5.  diarize-async      ← speaker label fixup (transcript store ONLY — never writes the finding doc; races finalize)
 6.  pinecone-async     ← embed chunks for semantic search
 7.  prepare            ← fetch questions from QuickBase, expand variables
 8.  ask-batch          ← Groq grades each question (parallel batches)
@@ -169,6 +169,10 @@ Every step that reads transcript fields now does `payloadValue ?? findingDocValu
 - `BOTH-MISS` — race fired AND payload-carry didn't catch it. The actual remaining bug. Grep tomorrow's logs for `[TRANSCRIPT-RACE] BOTH-MISS` to surface any stragglers.
 
 Bonus: `🛟 [TRANSCRIPT-RESCUE]` fires from step-prepare specifically when it had to restore `rawTranscript` from the payload onto a stale finding doc — counts how often the destructive-overwrite path would have fired.
+
+**Diarize-after-finalize write race (`BofFRUvr…` incident, fixed 2026-06-30):** `step-diarize-async` runs IN PARALLEL with `prepare → ask-all → finalize`. It used to mirror the diarized transcript onto the finding doc via `saveFinding` (a full-document overwrite). Because `diarize()` takes seconds while ask-all+finalize finish in ~4s on short calls, diarize-async's read-modify-write raced finalize's `findingStatus = "finished"` write — last-write-wins reverted a *finished, already-reviewed* audit back to `"asking-questions"`, tripping the reviewer-finalize refusal guard and stranding it (the reviewer's decision was dropped). **Rule: diarize-async writes ONLY the transcript store (`saveTranscript`), never the finding doc.** Readers get the diarized transcript from the transcript store — the review queue loads it via `getTranscript`, and the audit-report / manager-finding endpoints backfill `finding.diarizedTranscript` from it on read. Same principle as the payload-carry rule: don't let a slow parallel branch full-doc-overwrite the critical path. Regression test in [step-diarize-async/test.ts](src/audit/domain/business/step-diarize-async/test.ts).
+
+**Transient-failure recovery gap (queued steps):** a queued step that *throws* gets NO QStash retry (`Upstash-Retries: "0"` on the queue path) and the dispatcher clears its active-tracking row in `finally`, so the watchdog can't re-drive it either — a 1s DNS blip at the init→S3 upload silently stranded 5 audits in one night. Mitigation lives at the blip: the S3 client ([core/data/s3/mod.ts](src/core/data/s3/mod.ts)) retries transient network failures (DNS/connect/5xx) 3× with backoff; PUT/GET on a fixed key are idempotent. If you add a new un-retried network call inside a queued step, wrap it the same way.
 
 ---
 

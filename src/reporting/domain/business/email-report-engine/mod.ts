@@ -501,8 +501,9 @@ function toBase64Utf8(s: string): string {
 /** Gmail clips the inbox view around ~102 KB. Stay under this with a margin; a
  *  bigger report shows a trimmed table inline + a link to the full page. */
 const EMAIL_INLINE_LIMIT = 90 * 1024;
-/** Rows kept inline when a report is trimmed (the rest live on the linked page). */
-const MAX_INLINE_ROWS = 30;
+/** Rows kept inline when a report is trimmed (the rest live on the linked page).
+ *  50 rows ≈ ~73 KB rendered — comfortably under the 90 KB inline limit. */
+const MAX_INLINE_ROWS = 50;
 
 /** Deterministic, unguessable slug for a report's weekly page — same report +
  *  same week → same slug, so every daily send links to (and overwrites) one

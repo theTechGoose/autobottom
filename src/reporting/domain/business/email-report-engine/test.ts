@@ -2,6 +2,7 @@
 import { assert, assertEquals } from "#assert";
 import {
   buildCsv,
+  dedupeByRecordKeepNewest,
   findingUrl,
   recordUrl,
   trimSectionsForEmail,
@@ -12,6 +13,48 @@ import {
 import type { SectionResult } from "./mod.ts";
 import { writeAuditDoneIndex, _resetQueryAuditDoneIndexCacheForTests } from "@audit/domain/data/stats-repository/mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
+import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
+
+function idxEntry(findingId: string, recordId: string, completedAt: number, score: number): AuditDoneIndexEntry {
+  return { findingId, recordId, completedAt, score, completed: true };
+}
+
+Deno.test("dedupeByRecordKeepNewest — re-audit: keeps the newest finding per record, drops the nullified one", () => {
+  const out = dedupeByRecordKeepNewest([
+    idxEntry("old0pct", "485896", 1000, 0),   // the nullified 0% (older)
+    idxEntry("new96pct", "485896", 2000, 96),  // the re-audit (newer)
+  ]);
+  assertEquals(out.length, 1);
+  assertEquals(out[0].findingId, "new96pct");
+  assertEquals(out[0].score, 96);
+});
+
+Deno.test("dedupeByRecordKeepNewest — distinct records all survive", () => {
+  const out = dedupeByRecordKeepNewest([
+    idxEntry("a", "485800", 1000, 100),
+    idxEntry("b", "485801", 1000, 84),
+    idxEntry("c", "485802", 1000, 72),
+  ]);
+  assertEquals(out.length, 3);
+});
+
+Deno.test("dedupeByRecordKeepNewest — blank/placeholder recordIds are NOT collapsed", () => {
+  const out = dedupeByRecordKeepNewest([
+    idxEntry("x", "", 1000, 0),
+    idxEntry("y", "00000000", 1000, 0),
+    idxEntry("z", "   ", 1000, 0),
+  ]);
+  assertEquals(out.length, 3); // none share a real recordId, so none are dropped
+});
+
+Deno.test("dedupeByRecordKeepNewest — newest wins regardless of input order", () => {
+  const out = dedupeByRecordKeepNewest([
+    idxEntry("new", "R1", 5000, 96),
+    idxEntry("old", "R1", 1000, 0),
+  ]);
+  assertEquals(out.length, 1);
+  assertEquals(out[0].findingId, "new");
+});
 
 Deno.test("email-report-engine — placeholder test", () => {
   assert(true, "email-report-engine test placeholder");

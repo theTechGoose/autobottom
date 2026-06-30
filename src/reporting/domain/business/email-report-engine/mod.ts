@@ -113,6 +113,32 @@ export function resolveDateRange(
   return { from: dateRange.from, to: dateRange.to };
 }
 
+// ── Record-level dedup ────────────────────────────────────────────────────────
+
+/** A real, dedup-able record id, or "" for blank / placeholder ids that must NOT
+ *  be collapsed together (empty, or all-zeros like "00000000"). */
+function normalizeRecordId(recordId: string | undefined): string {
+  const v = String(recordId ?? "").trim();
+  return v === "" || /^0+$/.test(v) ? "" : v;
+}
+
+/** Keep only the newest finding (by completedAt) per REAL recordId; drop the
+ *  rest. Rows with a blank/placeholder recordId pass through untouched (they
+ *  aren't duplicates of one another). This is what removes a nullified audit
+ *  once a re-audit — a newer finding on the same record — exists. Pure +
+ *  exported for unit testing. */
+export function dedupeByRecordKeepNewest(entries: AuditDoneIndexEntry[]): AuditDoneIndexEntry[] {
+  const newestByRecord = new Map<string, AuditDoneIndexEntry>();
+  const passthrough: AuditDoneIndexEntry[] = [];
+  for (const e of entries) {
+    const rid = normalizeRecordId(e.recordId);
+    if (!rid) { passthrough.push(e); continue; }
+    const cur = newestByRecord.get(rid);
+    if (!cur || (e.completedAt ?? 0) > (cur.completedAt ?? 0)) newestByRecord.set(rid, e);
+  }
+  return [...passthrough, ...newestByRecord.values()];
+}
+
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 export async function queryReportData(
@@ -136,6 +162,13 @@ export async function queryReportData(
         (e) => e.completed && e.doneAt !== undefined && e.doneAt >= from && e.doneAt <= to,
       )
     : indexEntries;
+
+  // Collapse re-audited / duplicate rows: keep only the newest finding per real
+  // recordId. This drops a nullified audit (e.g. a 0% later re-submitted with new
+  // audio) once its re-audit — a newer finding on the same record — is present,
+  // so superseded findings don't pollute the report. Runs BEFORE failedOnly so a
+  // record re-audited from fail→pass is judged on its newest result.
+  candidates = dedupeByRecordKeepNewest(candidates);
 
   // Weekly: only failed audits
   if (config.failedOnly) {

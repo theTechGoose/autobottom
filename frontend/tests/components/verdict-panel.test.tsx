@@ -38,6 +38,16 @@ Deno.test("VerdictPanel — judge mode + yes answer shows badge-yes", () => {
   assertContains(html, "badge-yes");
 });
 
+Deno.test("VerdictPanel — judge Uphold is a reason-modal trigger, not a direct decide", () => {
+  const html = renderHTML(<VerdictPanel item={MOCK_ITEM} buffer={[MOCK_ITEM]} currentIndex={0} mode="judge" remaining={5} email="a@b.com" combo={0} />);
+  // Uphold opens the JudgeModals reason prompt (data-action), carrying the
+  // question name so the modal can say "...why they failed the X question".
+  assertContains(html, 'data-action="judge-uphold"');
+  assertContains(html, 'data-question-name="Greeting Check"');
+  // It must NOT post the uphold decision directly (that path skipped the reason).
+  assertNotContains(html, '"decision":"uphold"');
+});
+
 Deno.test("VerdictPanel — answer no shows badge-no", () => {
   const html = renderHTML(<VerdictPanel item={MOCK_ITEM} buffer={[MOCK_ITEM]} currentIndex={0} mode="review" remaining={5} email="a@b.com" combo={0} />);
   assertContains(html, "badge-no");

@@ -3,7 +3,7 @@
  *  (tests/e2e/dashboard.test.ts) so we don't need Postmark in unit tests. */
 
 import { assertEquals } from "#assert";
-import { parseVoName, renderTemplate, buildGreeting } from "./mod.ts";
+import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock } from "./mod.ts";
 
 Deno.test("parseVoName — strips 'VO XX - ' prefix", () => {
   assertEquals(parseVoName("VO MB - Harmony Eason", "h@x.com"), { full: "Harmony Eason", first: "Harmony" });
@@ -46,4 +46,27 @@ Deno.test("renderTemplate — substitutes {{var}} tokens", () => {
 
 Deno.test("renderTemplate — empty string for missing keys", () => {
   assertEquals(renderTemplate("[{{missing}}]", {}), "[]");
+});
+
+Deno.test("renderFailedQuestionsBlock — empty when nothing upheld (all overturned)", () => {
+  assertEquals(renderFailedQuestionsBlock([]), "");
+});
+
+Deno.test("renderFailedQuestionsBlock — one entry per upheld question with name + reason", () => {
+  const html = renderFailedQuestionsBlock([
+    { header: "Greeted the customer", reason: "No greeting in the first 30 seconds." },
+    { header: "Confirmed the booking", reason: "Never read back the dates." },
+  ]);
+  assertEquals(html.includes("Failed Questions"), true);
+  assertEquals(html.includes("Greeted the customer"), true);
+  assertEquals(html.includes("No greeting in the first 30 seconds."), true);
+  assertEquals(html.includes("Confirmed the booking"), true);
+  assertEquals(html.includes("Never read back the dates."), true);
+});
+
+Deno.test("renderFailedQuestionsBlock — escapes HTML in judge-typed reason", () => {
+  const html = renderFailedQuestionsBlock([{ header: "Q<1>", reason: 'said "hi" & <b>bye</b>' }]);
+  assertEquals(html.includes("&lt;b&gt;bye&lt;/b&gt;"), true);
+  assertEquals(html.includes("&amp;"), true);
+  assertEquals(html.includes("<b>bye</b>"), false); // raw tag must not survive
 });

@@ -439,11 +439,12 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
         ) : (
           <>
             <button
+              type="button"
               class="verdict-btn uphold"
-              hx-post="/api/judge/decide"
-              hx-vals={JSON.stringify({ findingId: item.findingId, questionIndex: item.questionIndex, decision: "uphold", judge: email })}
-              hx-target="#queue-content"
-              hx-swap="innerHTML"
+              data-action="judge-uphold"
+              data-finding-id={item.findingId}
+              data-question-index={item.questionIndex}
+              data-question-name={item.header}
             >
               <kbd>Y</kbd> Uphold
             </button>

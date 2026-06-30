@@ -126,7 +126,15 @@ export default function HotkeyHandler({ mode }: HotkeyHandlerProps) {
         }
       } else {
         switch (key) {
-          case "y": triggerDecide("uphold"); break;
+          // Uphold now requires a typed reason. Open the modal (JudgeModals
+          // intercepts the click) instead of committing immediately. Fall back
+          // to a direct decide only if the button isn't present.
+          case "y": {
+            const upBtn = document.querySelector('[data-action="judge-uphold"]') as HTMLElement | null;
+            if (upBtn) upBtn.click();
+            else triggerDecide("uphold");
+            break;
+          }
           case "a": triggerDecide("overturn", "error"); break;
           case "s": triggerDecide("overturn", "logic"); break;
           case "d": triggerDecide("overturn", "fragment"); break;

@@ -137,25 +137,39 @@ function BackfillPanel() {
 
       <PanelCard
         title="Backfill Chargeback Entries (payroll sheet)"
-        subtitle="Repair the chargeback / 'failed VO' sheet. Re-reads every chargeback + wire entry whose audit completed in this window against the finding's CURRENT answers, and REMOVES any entry whose audit now passes (e.g. a reviewer flipped it to 100%) or rewrites it to the reviewed score + remaining fails. Idempotent — safe to re-run."
+        subtitle="Repair the chargeback / 'failed VO' sheet. Re-reads every chargeback + wire entry whose audit completed in this window against the finding's CURRENT answers, and REMOVES any entry whose audit now passes (e.g. a reviewer flipped it to 100%) or rewrites it to the reviewed score + remaining fails. Runs in batches with a live progress bar; idempotent — safe to re-run."
       >
+        {/* Loading state for the kickoff (list) request — HTMX toggles
+            htmx-request on the button while in flight; the progress bar then
+            takes over and self-ticks through the batches. */}
+        <style dangerouslySetInnerHTML={{ __html: `
+          .cbbf-btn .cbbf-loading { display: none; }
+          .cbbf-btn.htmx-request .cbbf-label { display: none; }
+          .cbbf-btn.htmx-request .cbbf-loading { display: inline; }
+          .cbbf-btn.htmx-request, .cbbf-btn:disabled { opacity: 0.7; cursor: wait; }
+        `}} />
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;max-width:420px;">
           <div class="sf"><label class="sf-label">From (audit date)</label><input type="date" name="since" id="cb-since" class="sf-input" /></div>
           <div class="sf"><label class="sf-label">To (inclusive)</label><input type="date" name="until" id="cb-until" class="sf-input" /></div>
         </div>
         <button
-          class="sf-btn primary"
-          style="padding:8px 16px;"
-          hx-post="/api/admin/modal/maintenance/backfill-chargeback"
+          class="sf-btn primary cbbf-btn"
+          style="padding:8px 16px;min-width:210px;"
+          hx-post="/api/admin/modal/maintenance/chargeback-backfill-start"
           hx-include="#cb-since,#cb-until"
-          hx-target="#maint-msg"
+          hx-target="#cb-backfill-msg"
           hx-swap="innerHTML"
+          hx-disabled-elt="this"
           hx-confirm="Reconcile chargeback/wire entries in this date range against current audit results? Removes entries for audits that now pass. Idempotent — safe to re-run."
-        >Run Chargeback Backfill</button>
+        >
+          <span class="cbbf-label">Run Chargeback Backfill</span>
+          <span class="cbbf-loading">Starting…</span>
+        </button>
+        <div id="cb-backfill-msg" style="margin-top:12px;"></div>
         <div style="font-size:10px;color:var(--text-dim);margin-top:8px;line-height:1.4;">
-          Use the audit-completion date range (e.g. the pay period). Large windows re-read every
-          finding in range, so this can take a moment. After it runs, re-run the weekly export to
-          refresh the Google Sheet.
+          Use the audit-completion date range (e.g. the pay period). It processes 25 findings per
+          batch with a live progress bar — leave the modal open until it says complete. After it
+          finishes, re-run the weekly export to refresh the Google Sheet.
         </div>
       </PanelCard>
     </div>

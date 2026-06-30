@@ -17,6 +17,8 @@ import {
   deleteDuplicates,
   diagnoseDuplicates,
   postJudgedAudit,
+  listChargebackBackfillFids,
+  processChargebackBackfillBatch,
   type DedupPlan,
 } from "./mod.ts";
 import {
@@ -33,6 +35,8 @@ import {
   queryAuditDoneIndex,
   markFindingHidden,
   getHiddenFindingIds,
+  saveChargebackEntry,
+  getChargebackEntries,
   _resetHiddenCacheForTesting,
   type AuditHiddenEntry,
 } from "@audit/domain/data/stats-repository/mod.ts";
@@ -662,4 +666,51 @@ Deno.test("postJudgedAudit — all-uphold leaves index unchanged (no write)", as
   assertExists(entry);
   assertEquals(entry!.voName, "PRE-EXISTING-MARKER", "all-uphold path must not rewrite index");
   assert(entry!.score === 0, "score must remain at seeded 0 (no overturns means no score change)");
+});
+
+// ── Chunked payroll/chargeback backfill (list + per-batch process) ───────────
+
+Deno.test("chargeback backfill — list enumerates fids; process deletes a now-passing entry, rewrites a still-failing one", async () => {
+  resetFirestoreCredentials();
+  _resetHiddenCacheForTesting();
+  const org = ("test-cbbf-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const now = 1_700_000_000_000;
+
+  // Finding A — re-audited to all-pass (a reviewer flipped its fail). Its STALE
+  // 50% chargeback entry must be DELETED by the backfill.
+  await saveFinding(org, {
+    id: "A", findingStatus: "finished", recordingIdField: "VoGenie", completedAt: now,
+    record: { RecordId: "rA", VoName: "VO 01 - Amy", ActivatingOffice: "ACT", DestinationDisplay: "HI", "706": "100" },
+    answeredQuestions: [{ header: "Q0", answer: "Yes" }, { header: "Q1", answer: "Yes" }],
+  } as unknown as Parameters<typeof saveFinding>[1]);
+  await saveChargebackEntry(org, {
+    findingId: "A", ts: now, voName: "Amy", destination: "HI", revenue: "100", recordId: "rA",
+    score: 50, failedQHeaders: ["Q0"], egregiousHeaders: [], omissionHeaders: ["Q0"],
+  });
+
+  // Finding B — still failing one question. Its entry must be REWRITTEN to the
+  // recomputed score with only the real remaining fail.
+  await saveFinding(org, {
+    id: "B", findingStatus: "finished", recordingIdField: "VoGenie", completedAt: now,
+    record: { RecordId: "rB", VoName: "VO 02 - Bob", ActivatingOffice: "ACT", DestinationDisplay: "HI", "706": "200" },
+    answeredQuestions: [{ header: "Q0", answer: "Yes" }, { header: "Q1", answer: "No" }],
+  } as unknown as Parameters<typeof saveFinding>[1]);
+  await saveChargebackEntry(org, {
+    findingId: "B", ts: now, voName: "Bob", destination: "HI", revenue: "200", recordId: "rB",
+    score: 0, failedQHeaders: ["Q0", "Q1"], egregiousHeaders: [], omissionHeaders: ["Q0", "Q1"],
+  });
+
+  const fids = (await listChargebackBackfillFids(org, now - 1000, now + 1000)).sort();
+  assertEquals(fids, ["A", "B"], "list enumerates both entries' fids");
+
+  const res = await processChargebackBackfillBatch(org, fids);
+  assertEquals(res.cbDeleted, 1, "the now-passing audit's entry is deleted");
+  assertEquals(res.cbUpdated, 1, "the still-failing audit's entry is rewritten");
+
+  const entries = await getChargebackEntries(org, now - 1000, now + 1000);
+  assertEquals(entries.find((e) => e.findingId === "A"), undefined, "A (now passes) removed from the sheet");
+  const b = entries.find((e) => e.findingId === "B");
+  assertExists(b);
+  assertEquals(b!.score, 50, "B rewritten to the recomputed 50% (1/2 Yes)");
+  assertEquals(b!.failedQHeaders, ["Q1"], "B lists only the real remaining fail (Q1), not the stale Q0");
 });

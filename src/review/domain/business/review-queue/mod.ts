@@ -1071,7 +1071,7 @@ export async function finalizeReviewedAudit(
   // passing / fewer-fails result would otherwise leave a stale FAILING entry on
   // the chargeback sheet for an audit that now passes — the "failed VOs are
   // incorrect" report bug (prod record 483830). See syncChargebackWireToScore.
-  await syncChargebackWireToScore(orgId, findingId, correctedFinding as Record<string, any>, reviewScore);
+  await syncChargebackWireToScore(orgId, findingId, correctedFinding, reviewScore);
 
   // Drain review-decided for this finding. Without this, getReviewStats
   // counts every decision since the table was created as "decided
@@ -1538,69 +1538,87 @@ export async function reconcilePerfectPending(
   return { scanned: pending.size, swept, alreadyFinalized, notPerfect, missing };
 }
 
-/** Resync the chargeback (internal date-leg) / wire (partner package) "payroll"
- *  entry to a finding's CURRENT answers + score. The bot writes these at audit
- *  time from its own grade; ANY later human flip — reviewer finalize or admin
- *  pencil-flip — must call this, or the chargeback/wire sheet shows a stale
- *  failure for an audit that now passes (the "failed VOs are incorrect" bug,
- *  prod record 483830), or misses a newly-created failure on a Yes→No flip.
- *  Mirrors step-finalize, computed from the post-flip answers. The entry ts
- *  stays the original completedAt so the deduction lands in the same pay period.
- *  The chargeback/wire reports filter bypassed offices at read time, so no
- *  bypass check is needed here. `isYes` mirrors the score's yes-count so
- *  "no fails left" ⟺ score 100. Best-effort: the score is already durable at
- *  every call site, so a sync failure only risks a transient stale row that the
- *  next backfill-chargeback-entries run repairs. */
+/** The handful of finding fields the chargeback/wire sync reads. The `record`
+ *  payload is an external CRM blob with hundreds of fields, so we model only
+ *  what's used (incl. the QB raw ids "314" = destination, "706" = revenue). */
+type SyncRecord = {
+  RecordId?: unknown;
+  GuestName?: unknown;
+  DestinationDisplay?: unknown;
+  "314"?: unknown;
+  "706"?: unknown;
+};
+type SyncFinding = {
+  record?: SyncRecord;
+  answeredQuestions?: Array<{ answer?: unknown; header?: unknown; egregious?: unknown }>;
+  completedAt?: number;
+};
+
+/** Resync the chargeback (date-leg) / wire (package) "payroll" entry to a
+ *  finding's CURRENT answers after a human flip (reviewer finalize or admin
+ *  pencil-flip). Without it the entry keeps the bot's PRE-flip grade and a
+ *  now-passing audit lingers on the chargeback sheet (prod bug record 483830).
+ *  A chargeable fail is an explicit "No" header — matching step-finalize, so
+ *  N/A / Error / blank answers never count — and the caller's `score` is the
+ *  authority for pass/fail, so the fail set and the score can't disagree. The
+ *  entry ts stays the original completedAt so the deduction lands in the same
+ *  pay period. Best-effort; a sync failure leaves a stale row the next backfill
+ *  repairs. */
 async function syncChargebackWireToScore(
   orgId: OrgId,
   findingId: string,
-  finding: Record<string, any>,
+  finding: SyncFinding,
   score: number,
 ): Promise<void> {
   try {
-    const rec = (finding.record as Record<string, any>) ?? {};
+    const rec = finding.record ?? {};
     const meta = buildIndexMeta(finding);
     const ts = typeof finding.completedAt === "number" ? finding.completedAt : Date.now();
-    const isYes = (a: unknown) => String(a ?? "").toLowerCase().startsWith("y");
-    const answers = (Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : []) as
-      Array<{ answer?: unknown; header?: unknown; egregious?: unknown }>;
+    const answers = Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : [];
+    const failedQs = answers
+      .map((a) => ({ header: String(a.header ?? ""), egregious: !!a.egregious, answer: String(a.answer ?? "") }))
+      .filter((q) => q.answer === "No" && q.header);
+    // `score` (from the same grader that finalized) is authoritative; an empty
+    // "No" set is the same condition seen from the answers. Either ⇒ no charge.
+    const passing = score >= 100 || failedQs.length === 0;
+
     if (meta.isPackage) {
-      // Partner finding → wire deduction (queryWireReport filters score<100 at read).
-      await saveWireDeductionEntry(orgId, {
-        findingId,
-        ts,
-        score,
-        questionsAudited: answers.length,
-        totalSuccess: answers.filter((a) => isYes(a.answer)).length,
-        recordId: String(rec.RecordId ?? ""),
-        office: meta.department ?? "",
-        excellenceAuditor: meta.voName ?? "",
-        guestName: String(rec.GuestName ?? ""),
-      });
-    } else {
-      // Internal date-leg → chargeback/omission entry.
-      const failedQs = answers
-        .map((a) => ({ header: String(a.header ?? ""), egregious: !!a.egregious, answer: a.answer }))
-        .filter((q) => !isYes(q.answer) && q.header);
-      if (failedQs.length === 0) {
-        // Every fail flipped to pass → no chargeback. Drop any stale entry.
-        await deleteChargebackEntry(orgId, findingId).catch(() => {});
+      // Partner finding → wire deduction. Delete when passing, SYMMETRIC with the
+      // chargeback leg, rather than leaving a hidden 100% row for the report's
+      // score<100 read filter to hide — so a filter change can't resurface it.
+      if (passing) {
+        await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
       } else {
-        await saveChargebackEntry(orgId, {
+        await saveWireDeductionEntry(orgId, {
           findingId,
           ts,
-          voName: meta.voName ?? "",
-          destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
-          revenue: String(rec["706"] ?? ""),
-          recordId: String(rec.RecordId ?? ""),
           score,
-          failedQHeaders: failedQs.map((q) => q.header),
-          egregiousHeaders: failedQs.filter((q) => q.egregious).map((q) => q.header),
-          omissionHeaders: failedQs.filter((q) => !q.egregious).map((q) => q.header),
+          questionsAudited: answers.length,
+          totalSuccess: answers.filter((a) => String(a.answer ?? "") === "Yes").length,
+          recordId: String(rec.RecordId ?? ""),
+          office: meta.department ?? "",
+          excellenceAuditor: meta.voName ?? "",
+          guestName: String(rec.GuestName ?? ""),
         });
       }
+    } else if (passing) {
+      // Internal date-leg, every fail cleared → drop any stale entry.
+      await deleteChargebackEntry(orgId, findingId).catch(() => {});
+    } else {
+      await saveChargebackEntry(orgId, {
+        findingId,
+        ts,
+        voName: meta.voName ?? "",
+        destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
+        revenue: String(rec["706"] ?? ""),
+        recordId: String(rec.RecordId ?? ""),
+        score,
+        failedQHeaders: failedQs.map((q) => q.header),
+        egregiousHeaders: failedQs.filter((q) => q.egregious).map((q) => q.header),
+        omissionHeaders: failedQs.filter((q) => !q.egregious).map((q) => q.header),
+      });
     }
-    console.log(`[CHARGEBACK-SYNC] ${findingId}: 💰 chargeback/wire synced to score=${score}%`);
+    console.log(`[CHARGEBACK-SYNC] ${findingId}: 💰 ${passing ? "cleared" : "rewrote"} entry at score=${score}%`);
   } catch (err) {
     console.error(`[CHARGEBACK-SYNC] ${findingId}: ⚠️ sync failed (sheet may show a stale fail until backfill):`, err);
   }
@@ -1663,7 +1681,7 @@ export async function adminFlipQuestion(
   // a No→Yes pencil-flip that clears the last fail must drop the chargeback
   // entry; a Yes→No flip that creates a fail must add one. Same staleness bug as
   // the reviewer path. score reflects the post-flip answers above.
-  await syncChargebackWireToScore(orgId, findingId, finding as Record<string, any>, score);
+  await syncChargebackWireToScore(orgId, findingId, finding as SyncFinding, score);
 
   // Keep audit-done-idx in sync with the live finding. Without this write,
   // /admin/unreviewed-audits + audit-history queries kept showing the pre-flip

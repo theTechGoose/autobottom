@@ -6,6 +6,32 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
+## 2026-06-30 — Chargeback backfill: chunked + live progress (Deno-Deploy-safe), and review hardening
+
+- **The "Backfill Chargeback Entries" tool now runs in batches with a live
+  progress bar instead of one synchronous request.** A pay-period window re-reads
+  a `getFinding` per entry — hundreds of reads — which blew the Deno Deploy edge
+  request timeout and gave zero feedback (no spinner, no result, nothing in the
+  logs). Rebuilt on the same chunked self-polling pattern as the Cleanup sweep:
+  `/admin/chargeback-backfill-list` enumerates the fids once (cheap index reads),
+  then a progress fragment ticks `/admin/chargeback-backfill-process` 25 findings
+  at a time until done, showing scanned / removed / rewritten counts. Every step
+  logs under `[CB-BACKFILL]`. New backend pair `listChargebackBackfillFids` +
+  `processChargebackBackfillBatch`, frontend job store + progress component +
+  start/tick routes.
+  ([judge-repository/mod.ts](../src/judge/domain/data/judge-repository/mod.ts),
+  [chargeback-backfill-start.tsx](../frontend/routes/api/admin/modal/maintenance/chargeback-backfill-start.tsx))
+- **Chargeback fail predicate aligned to the canonical grader.** The live review
+  sync and the backfill now both treat a chargeable fail as an explicit `=== "No"`
+  (success `=== "Yes"`), matching step-finalize — so `N/A` / `Error` / blank
+  answers never become a fake chargeback, and the caller's `score` and the fail
+  set can't disagree (`passing = score >= 100 || no "No" headers`).
+  ([review-queue/mod.ts](../src/review/domain/business/review-queue/mod.ts))
+- **Wire (partner) entries now delete symmetrically** when an audit flips to
+  passing, instead of leaving a hidden 100% row that a report filter change could
+  resurface. Plus typed `SyncFinding`/`SyncRecord` (no more `as any` laundering),
+  and tests for the wire branch + the chunked list/process path.
+
 ## 2026-06-30 — Chargeback "payroll" sheet: stale failures after a review are now cleared
 
 - **Reviewer / admin flips now resync the chargeback + wire ("payroll") entry.**

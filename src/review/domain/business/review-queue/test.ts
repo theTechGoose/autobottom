@@ -11,6 +11,7 @@ import {
   queryAuditDoneIndex,
   saveChargebackEntry,
   getChargebackEntries,
+  getWireDeductionEntries,
   _resetHiddenCacheForTesting,
 } from "@audit/domain/data/stats-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -90,7 +91,12 @@ function resetForTest() {
   _resetHiddenCacheForTesting();
 }
 
-async function makeFindingFixture(orgId: OrgId, findingId: string, answers: string[]): Promise<number> {
+async function makeFindingFixture(
+  orgId: OrgId,
+  findingId: string,
+  answers: string[],
+  opts: { isPackage?: boolean } = {},
+): Promise<number> {
   const completedAt = Date.now();
   const answeredQuestions = answers.map((answer, i) => ({
     header: `Q${i}`,
@@ -104,9 +110,17 @@ async function makeFindingFixture(orgId: OrgId, findingId: string, answers: stri
     auditJobId: "job-" + findingId,
     findingStatus: "finished",
     recordingId: "rec-" + findingId,
-    recordingIdField: "VoGenie",
+    // buildIndexMeta keys isPackage off recordingIdField === "GenieNumber".
+    recordingIdField: opts.isPackage ? "GenieNumber" : "VoGenie",
     owner: "test@x.com",
-    record: { RecordId: "r-" + findingId, VoName: "VO 01 - Test Person", ActivatingOffice: "ECG", Shift: "Day" },
+    record: {
+      RecordId: "r-" + findingId,
+      VoName: "VO 01 - Test Person",
+      GuestName: "Guest Person",
+      ActivatingOffice: "ECG",
+      OfficeName: "ECG Office",
+      Shift: "Day",
+    },
     answeredQuestions,
     completedAt,
   } as unknown as Parameters<typeof saveFinding>[1]);
@@ -420,4 +434,30 @@ Deno.test("adminFlipQuestion — Yes→No creates a chargeback entry; flipping b
   await adminFlipQuestion(orgId, fid, 0, "admin@x.com");
   entries = await getChargebackEntries(orgId, 0, Date.now() + 10_000);
   assertEquals(entries.find((e) => e.findingId === fid), undefined, "flipping back to 100% removes the chargeback entry");
+});
+
+Deno.test("adminFlipQuestion (package) — wire entry written on fail, DELETED on flip-back-to-100 (symmetric)", async () => {
+  resetForTest();
+  const orgId = ("test-wire-adminflip-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-wire-" + crypto.randomUUID().slice(0, 8);
+  // 4 questions all Yes → 100%, PARTNER (package) finding, clean (no wire entry).
+  const completedAt = await makeFindingFixture(orgId, fid, ["Yes", "Yes", "Yes", "Yes"], { isPackage: true });
+  await writeAuditDoneIndex(orgId, {
+    findingId: fid, completedAt, score: 100, completed: true, reason: "reviewed", isPackage: true,
+  });
+
+  // Flip q0 Yes→No → 75% → a wire entry must appear with the post-flip score.
+  await adminFlipQuestion(orgId, fid, 0, "admin@x.com");
+  let wire = await getWireDeductionEntries(orgId, 0, Date.now() + 10_000);
+  const entry = wire.find((e) => e.findingId === fid);
+  assertExists(entry, "a Yes→No flip on a package finding writes a wire deduction entry");
+  assertEquals(entry!.score, 75);
+  assertEquals(entry!.totalSuccess, 3, "totalSuccess counts the 3 remaining Yes (=== \"Yes\")");
+  assertEquals(entry!.questionsAudited, 4);
+
+  // Flip back No→Yes → 100% → the wire entry is DELETED, not left as a hidden
+  // 100% row (the symmetric-delete fix; otherwise a read-filter change resurfaces it).
+  await adminFlipQuestion(orgId, fid, 0, "admin@x.com");
+  wire = await getWireDeductionEntries(orgId, 0, Date.now() + 10_000);
+  assertEquals(wire.find((e) => e.findingId === fid), undefined, "flipping back to 100% deletes the wire entry");
 });

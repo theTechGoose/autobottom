@@ -700,6 +700,98 @@ export async function backfillChargebackEntries(
   return { scanned, cbUpdated, cbDeleted, wireUpdated };
 }
 
+// ── Chunked payroll/chargeback backfill (Deno-Deploy-safe) ───────────────────
+// The one-shot backfillChargebackEntries re-reads a getFinding per entry, which
+// blows the edge request timeout on a real pay-period window. These two split it
+// so the frontend can drive it in batches: list the fids once (cheap index
+// reads), then process N at a time, each batch a short request.
+
+/** Fast: the union of findingIds with a chargeback (date-leg) or wire (package)
+ *  entry whose audit completed in [since, until]. Index reads only — no
+ *  getFinding — so enumerating the work is one quick request. */
+export async function listChargebackBackfillFids(
+  orgId: OrgId,
+  since: number,
+  until: number,
+): Promise<string[]> {
+  const [cb, wire] = await Promise.all([
+    getChargebackEntries(orgId, since, until),
+    getWireDeductionEntries(orgId, since, until),
+  ]);
+  const ids = new Set<string>();
+  for (const e of cb) ids.add(e.findingId);
+  for (const e of wire) ids.add(e.findingId);
+  const out = [...ids];
+  console.log(`[CB-BACKFILL] 📋 list orgId=${orgId} since=${since} until=${until} → ${out.length} fids (cb=${cb.length} wire=${wire.length})`);
+  return out;
+}
+
+export interface ChargebackBackfillBatchResult {
+  scanned: number;
+  cbUpdated: number;
+  cbDeleted: number;
+  wireUpdated: number;
+  wireDeleted: number;
+}
+
+/** Process one batch of findingIds: re-read each finding's CURRENT answers and
+ *  rewrite/delete its chargeback or wire entry to match — same canonical
+ *  predicates as the live review sync (a fail is `=== "No"`, success `=== "Yes"`),
+ *  so the repair tool and the live path can't drift. A now-passing audit's entry
+ *  is DELETED — the stale "failed VO" row this whole tool exists to clear. */
+export async function processChargebackBackfillBatch(
+  orgId: OrgId,
+  fids: string[],
+): Promise<ChargebackBackfillBatchResult> {
+  let scanned = 0, cbUpdated = 0, cbDeleted = 0, wireUpdated = 0, wireDeleted = 0;
+  for (const fid of fids) {
+    scanned++;
+    const finding = await getFinding(orgId, fid);
+    if (!finding) continue;
+    const answers = ((finding as any).answeredQuestions ?? []) as Array<{ answer?: unknown; header?: unknown; egregious?: unknown }>;
+    if (answers.length === 0) continue;
+    const isPackage = (finding as any).recordingIdField === "GenieNumber";
+    const yes = answers.filter((a) => String(a.answer ?? "") === "Yes").length;
+    const score = Math.round((yes / answers.length) * 100);
+    const failedQs = answers
+      .map((a) => ({ header: String(a.header ?? ""), egregious: !!a.egregious, answer: String(a.answer ?? "") }))
+      .filter((q) => q.answer === "No" && q.header);
+    const passing = score >= 100 || failedQs.length === 0;
+    const rec = ((finding as any).record ?? {}) as Record<string, any>;
+    const ts = typeof (finding as any).completedAt === "number" ? (finding as any).completedAt : Date.now();
+    const meta = buildIndexMeta(finding as any);
+    if (isPackage) {
+      if (passing) {
+        await deleteWireDeductionEntry(orgId, fid).catch(() => {});
+        wireDeleted++;
+      } else {
+        await saveWireDeductionEntry(orgId, {
+          findingId: fid, ts, score, questionsAudited: answers.length, totalSuccess: yes,
+          recordId: String(rec.RecordId ?? ""), office: meta.department ?? "",
+          excellenceAuditor: meta.voName ?? "", guestName: String(rec.GuestName ?? ""),
+        });
+        wireUpdated++;
+      }
+    } else if (passing) {
+      await deleteChargebackEntry(orgId, fid).catch(() => {});
+      cbDeleted++;
+    } else {
+      await saveChargebackEntry(orgId, {
+        findingId: fid, ts, voName: meta.voName ?? "",
+        destination: String(rec.DestinationDisplay ?? rec["314"] ?? ""),
+        revenue: String(rec["706"] ?? ""), recordId: String(rec.RecordId ?? ""),
+        score,
+        failedQHeaders: failedQs.map((q) => q.header),
+        egregiousHeaders: failedQs.filter((q) => q.egregious).map((q) => q.header),
+        omissionHeaders: failedQs.filter((q) => !q.egregious).map((q) => q.header),
+      });
+      cbUpdated++;
+    }
+  }
+  console.log(`[CB-BACKFILL] ⚙️ batch orgId=${orgId} fids=${fids.length} scanned=${scanned} cbUpdated=${cbUpdated} cbDeleted=${cbDeleted} wireUpdated=${wireUpdated} wireDeleted=${wireDeleted}`);
+  return { scanned, cbUpdated, cbDeleted, wireUpdated, wireDeleted };
+}
+
 // ── Find duplicate findings by RecordId ──────────────────────────────────────
 
 export interface DedupCandidate {

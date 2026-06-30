@@ -1002,6 +1002,26 @@ export class AdminConfigController {
     const { backfillChargebackEntriesLegacy: backfill } = await import("@judge/domain/data/judge-repository/mod.ts");
     return runInBackgroundLane(() => backfill(ORG(), since, until));
   }
+
+  // Chunked payroll/chargeback backfill — list once, then process N fids per
+  // request so no single call does the full getFinding loop (Deno-Deploy-safe).
+  @Post("chargeback-backfill-list") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async chargebackBackfillList(@Body() body: GenericBodyRequest) {
+    const { since, until } = body as any;
+    if (!since || !until) return { ok: false, error: "since and until required" };
+    const { listChargebackBackfillFids } = await import("@judge/domain/data/judge-repository/mod.ts");
+    const fids = await runInBackgroundLane(() => listChargebackBackfillFids(ORG(), Number(since), Number(until)));
+    return { ok: true, fids };
+  }
+
+  @Post("chargeback-backfill-process") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async chargebackBackfillProcess(@Body() body: GenericBodyRequest) {
+    const { fids } = body as any;
+    if (!Array.isArray(fids)) return { ok: false, error: "fids array required" };
+    const { processChargebackBackfillBatch } = await import("@judge/domain/data/judge-repository/mod.ts");
+    const r = await runInBackgroundLane(() => processChargebackBackfillBatch(ORG(), fids));
+    return { ok: true, ...r };
+  }
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillPartnerDimensions(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;

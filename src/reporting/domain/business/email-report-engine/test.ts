@@ -191,23 +191,24 @@ Deno.test("startOfTodayEastern — returns Eastern midnight before the given ins
   assertEquals(startOfTodayEastern(now), Date.UTC(2026, 5, 30, 4, 0, 0));
 });
 
-Deno.test("renderWeeklySummaries — daily counts only today's rows; weekly counts all; empty for non-weekly", () => {
+Deno.test("renderWeeklySummaries — daily counts only yesterday's rows; weekly counts all; empty for non-weekly", () => {
   const now = Date.UTC(2026, 5, 30, 18, 50, 0); // Tue Jun 30 2026, 2:50 PM ET
   const todayStart = startOfTodayEastern(now);
+  const yesterdayStart = startOfTodayEastern(todayStart - 1);
   const sections = [{
     header: "GS MB",
     columns: ["score", "finalizedAt"] as const,
     rows: [
-      { score: 100, finalizedAt: todayStart + 3600_000 }, // today
-      { score: 0,   finalizedAt: todayStart + 600_000 },  // today
-      { score: 80,  finalizedAt: todayStart - 5 * 3600_000 }, // yesterday
+      { score: 100, finalizedAt: yesterdayStart + 3600_000 },      // yesterday
+      { score: 0,   finalizedAt: yesterdayStart + 600_000 },       // yesterday
+      { score: 80,  finalizedAt: yesterdayStart - 5 * 3600_000 },  // two days ago
     ],
   }];
 
   const html = renderWeeklySummaries(sections as any, "internal", now);
-  assert(html.includes("Daily Summary") && html.includes("Today's Audits"));
+  assert(html.includes("Daily Summary") && html.includes("Yesterday's Audits"));
   assert(html.includes("Weekly Summary") && html.includes("This week's Audits"));
-  // Daily card sees 2 rows (today); Weekly card sees all 3.
+  // Daily card sees 2 rows (yesterday); Weekly card sees all 3.
   assert(html.includes(">2<"), "daily Total Audits = 2");
   assert(html.includes(">3<"), "weekly Total Audits = 3");
 
@@ -293,32 +294,43 @@ Deno.test("recordUrl / findingUrl — point at QuickBase and the audit-report pa
 
 const WEEKLY = { mode: "weekly", startDay: 1 } as const; // Monday
 
-Deno.test("weekly window — winter (EST, UTC-5): Wed maps to Mon 00:00 → Sun 23:59:59.999 EST", () => {
+// Window ends at the END OF YESTERDAY (Eastern) and the week is anchored on that
+// day — so a 9am send never includes "today", and Monday's send reports the whole
+// week that just finished. See the accumulating Tue→Mon schedule.
+
+Deno.test("weekly window — winter (EST): Wed 9am covers Mon–Tue (through end of yesterday)", () => {
   const now = Date.UTC(2026, 0, 7, 14, 0, 0); // Wed 2026-01-07 09:00 EST
   const { from, to } = resolveDateRange(WEEKLY, now);
   assertEquals(from, Date.UTC(2026, 0, 5, 5, 0, 0, 0)); // Mon 2026-01-05 00:00 EST
-  assertEquals(to, Date.UTC(2026, 0, 12, 4, 59, 59, 999)); // Sun 2026-01-11 23:59:59.999 EST
+  assertEquals(to, Date.UTC(2026, 0, 7, 4, 59, 59, 999)); // Tue 2026-01-06 23:59:59.999 EST
 });
 
-Deno.test("weekly window — summer (EDT, UTC-4): DST offset is honored", () => {
+Deno.test("weekly window — summer (EDT): DST offset is honored, ends at yesterday", () => {
   const now = Date.UTC(2026, 6, 8, 13, 0, 0); // Wed 2026-07-08 09:00 EDT
   const { from, to } = resolveDateRange(WEEKLY, now);
   assertEquals(from, Date.UTC(2026, 6, 6, 4, 0, 0, 0)); // Mon 2026-07-06 00:00 EDT
-  assertEquals(to, Date.UTC(2026, 6, 13, 3, 59, 59, 999)); // Sun 2026-07-12 23:59:59.999 EDT
+  assertEquals(to, Date.UTC(2026, 6, 8, 3, 59, 59, 999)); // Tue 2026-07-07 23:59:59.999 EDT
 });
 
-Deno.test("weekly window — Sunday 23:30 EST is still the same (ending) week", () => {
-  const now = Date.UTC(2026, 0, 12, 4, 30, 0); // Sun 2026-01-11 23:30 EST
+Deno.test("weekly window — Sunday 9am covers Mon–Sat (through end of yesterday, EST)", () => {
+  const now = Date.UTC(2026, 0, 11, 14, 0, 0); // Sun 2026-01-11 09:00 EST
   const { from, to } = resolveDateRange(WEEKLY, now);
-  assertEquals(from, Date.UTC(2026, 0, 5, 5, 0, 0, 0)); // still Mon 2026-01-05
-  assertEquals(to, Date.UTC(2026, 0, 12, 4, 59, 59, 999)); // through Sun 2026-01-11
+  assertEquals(from, Date.UTC(2026, 0, 5, 5, 0, 0, 0)); // Mon 2026-01-05 00:00 EST
+  assertEquals(to, Date.UTC(2026, 0, 11, 4, 59, 59, 999)); // Sat 2026-01-10 23:59:59.999 EST
 });
 
-Deno.test("weekly window — Monday 00:30 EST has reset to the new week", () => {
-  const now = Date.UTC(2026, 0, 12, 5, 30, 0); // Mon 2026-01-12 00:30 EST
+Deno.test("weekly window — Monday 9am reports the whole just-finished week (Mon–Sun)", () => {
+  const now = Date.UTC(2026, 0, 12, 14, 0, 0); // Mon 2026-01-12 09:00 EST
+  const { from, to } = resolveDateRange(WEEKLY, now);
+  assertEquals(from, Date.UTC(2026, 0, 5, 5, 0, 0, 0)); // Mon 2026-01-05 00:00 EST (last week)
+  assertEquals(to, Date.UTC(2026, 0, 12, 4, 59, 59, 999)); // Sun 2026-01-11 23:59:59.999 EST
+});
+
+Deno.test("weekly window — Tuesday 9am resets to a fresh week (just Monday)", () => {
+  const now = Date.UTC(2026, 0, 13, 14, 0, 0); // Tue 2026-01-13 09:00 EST
   const { from, to } = resolveDateRange(WEEKLY, now);
   assertEquals(from, Date.UTC(2026, 0, 12, 5, 0, 0, 0)); // Mon 2026-01-12 00:00 EST
-  assertEquals(to, Date.UTC(2026, 0, 19, 4, 59, 59, 999)); // Sun 2026-01-18 23:59:59.999 EST
+  assertEquals(to, Date.UTC(2026, 0, 13, 4, 59, 59, 999)); // Mon 2026-01-12 23:59:59.999 EST
 });
 
 Deno.test("rolling + fixed modes are unaffected (use the injected now)", () => {

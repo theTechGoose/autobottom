@@ -97,36 +97,44 @@ export function resolveDateRange(
     return { from: nowMs - dateRange.hours * 3_600_000, to: nowMs };
   }
   if (dateRange.mode === "weekly") {
-    // Monday 00:00:00.000 EST → Sunday 23:59:59.999 EST. Compute the calendar
-    // date of the week's start in Eastern, then convert both ends back to epoch.
-    const ny = tzParts(WEEK_TZ, nowMs);
-    const diff = (ny.dow - dateRange.startDay + 7) % 7; // days since the week's start day
-    const startCal = new Date(Date.UTC(ny.year, ny.month - 1, ny.day));
+    // The reporting week is startDay-anchored (Monday), but the window ENDS at the
+    // end of YESTERDAY — not "now". These reports go out each morning at 9am, before
+    // anyone is on the phones, so "today" carries no data worth showing. Anchoring
+    // the week on yesterday (not today) is also what makes the Monday send report the
+    // week that just finished: on Monday, yesterday is Sunday, which still belongs to
+    // last week's Mon→Sun. On Tuesday, yesterday is Monday, so the window resets to a
+    // fresh week (just Monday) and then accumulates day by day through the week.
+    const today = tzParts(WEEK_TZ, nowMs);
+    const to = zonedToMs(WEEK_TZ, today.year, today.month, today.day, 0, 0, 0, 0) - 1; // 23:59:59.999 ET, yesterday
+    const ref = tzParts(WEEK_TZ, to); // the day the window ends on (yesterday)
+    const diff = (ref.dow - dateRange.startDay + 7) % 7; // days from the week's start day up to `ref`
+    const startCal = new Date(Date.UTC(ref.year, ref.month - 1, ref.day));
     startCal.setUTCDate(startCal.getUTCDate() - diff);
-    const endCal = new Date(startCal);
-    endCal.setUTCDate(endCal.getUTCDate() + 6);
     const from = zonedToMs(WEEK_TZ, startCal.getUTCFullYear(), startCal.getUTCMonth() + 1, startCal.getUTCDate(), 0, 0, 0, 0);
-    const to = zonedToMs(WEEK_TZ, endCal.getUTCFullYear(), endCal.getUTCMonth() + 1, endCal.getUTCDate(), 23, 59, 59, 999);
     return { from, to };
   }
   // fixed
   return { from: dateRange.from, to: dateRange.to };
 }
 
-/** The "Week of M/D–M/D" label used in the weekly report subject line. Formats
- *  both ends in Eastern (WEEK_TZ) — the same zone the week boundaries are anchored
- *  to. A naive UTC format rolled the Sunday-23:59 ET end past midnight UTC into the
- *  next day (e.g. "7/6" instead of "7/5"). Pure + exported for unit testing. */
+/** The "Week of M/D–M/D" label used in the weekly report subject line. Always
+ *  names the FULL reporting week (Mon→Sun), even though the body only accumulates
+ *  through yesterday — so the label reads naturally every day and the Monday send
+ *  is titled with the just-finished week's dates. Both ends are derived from the
+ *  week's Monday (resolveDateRange's `from`), NOT the through-yesterday `to`, and
+ *  formatted in Eastern (WEEK_TZ) so neither end rolls a day via UTC. Pure +
+ *  exported for unit testing. */
 export function weeklySubjectRange(
   dateRange: DateRangeConfig | undefined,
   nowMs: number = Date.now(),
 ): string {
-  const { from, to } = resolveDateRange(dateRange, nowMs);
-  const fmt = (ts: number) => {
-    const p = tzParts(WEEK_TZ, ts);
-    return p.month + "/" + p.day;
-  };
-  return "Week of " + fmt(from) + "–" + fmt(to);
+  const { from } = resolveDateRange(dateRange, nowMs);
+  const startP = tzParts(WEEK_TZ, from);
+  const startCal = new Date(Date.UTC(startP.year, startP.month - 1, startP.day));
+  const endCal = new Date(startCal);
+  endCal.setUTCDate(endCal.getUTCDate() + 6);
+  const fmt = (d: Date) => (d.getUTCMonth() + 1) + "/" + d.getUTCDate();
+  return "Week of " + fmt(startCal) + "–" + fmt(endCal);
 }
 
 // ── Record-level dedup ────────────────────────────────────────────────────────
@@ -962,8 +970,9 @@ export function summarizeRows(rows: ReportRow[]): SummaryStats {
 }
 
 /** Build the Daily + Weekly summary cards for a weekly report ("" for other
- *  report types). "Today" = rows completed since Eastern midnight. Shared by the
- *  send path and the admin preview so the two always match. */
+ *  report types). "Daily" = rows completed YESTERDAY (Eastern) — the reports send
+ *  each morning covering through the end of yesterday, so yesterday is the freshest
+ *  full day. Shared by the send path and the admin preview so the two always match. */
 export function renderWeeklySummaries(
   sections: SectionResult[],
   weeklyType: boolean | string | undefined,
@@ -972,9 +981,13 @@ export function renderWeeklySummaries(
   if (!weeklyType) return "";
   const allRows = sections.flatMap((s) => s.rows);
   const todayStart = startOfTodayEastern(nowMs);
-  const todayRows = allRows.filter((r) => (r.finalizedAt ?? 0) >= todayStart);
+  const yesterdayStart = startOfTodayEastern(todayStart - 1); // midnight ET, one day back
+  const yesterdayRows = allRows.filter((r) => {
+    const t = r.finalizedAt ?? 0;
+    return t >= yesterdayStart && t < todayStart;
+  });
   return (
-    renderSummaryBlock("Daily Summary", "Today's Audits", summarizeRows(todayRows)) +
+    renderSummaryBlock("Daily Summary", "Yesterday's Audits", summarizeRows(yesterdayRows)) +
     renderSummaryBlock("Weekly Summary", "This week's Audits", summarizeRows(allRows))
   );
 }

@@ -16,6 +16,7 @@ import {
 import { getEmailTemplate, type EmailTemplate } from "@reporting/domain/data/email-repository/mod.ts";
 import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
 import { signFinding, stampSent } from "@reporting/domain/business/email-engagement/mod.ts";
+import { listUsers } from "@core/business/auth/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { WebhookConfig } from "@core/dto/types.ts";
 
@@ -77,10 +78,19 @@ async function resolveManagerCc(
   const shift = String(rec.Shift ?? "");
   let list: string[] = [];
   try {
-    const scopes = await listManagerScopes(orgId);
-    list = scopedManagerEmails(scopes, dept, shift, isPackage).filter((e) => e.toLowerCase() !== to.toLowerCase());
+    const [scopes, supers] = await Promise.all([
+      listManagerScopes(orgId),
+      listUsers(orgId, "super-manager"),
+    ]);
+    // Super-managers (the president role) oversee every department; exclude them
+    // from per-audit CC so they aren't copied on every single audit — regardless
+    // of how many departments their scope lists. They can still be a deliberate
+    // recipient on the scheduled reports.
+    const superEmails = new Set(supers.map((u) => u.email.toLowerCase()));
+    list = scopedManagerEmails(scopes, dept, shift, isPackage)
+      .filter((e) => !superEmails.has(e.toLowerCase()) && e.toLowerCase() !== to.toLowerCase());
   } catch (err) {
-    console.error(`❌ [email] listManagerScopes failed org=${orgId} — falling back to supervisor:`, err);
+    console.error(`❌ [email] scope / super-manager lookup failed org=${orgId} — falling back to supervisor:`, err);
   }
   if (list.length === 0) {
     // No manager scoped to this dept/shift → fall back to the CRM supervisor field.

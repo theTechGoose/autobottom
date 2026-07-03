@@ -10,12 +10,79 @@
 import {
   registerWebhookEmailHandler,
   getWebhookConfig,
+  listManagerScopes,
+  type ManagerScope,
 } from "@admin/domain/data/admin-repository/mod.ts";
 import { getEmailTemplate, type EmailTemplate } from "@reporting/domain/data/email-repository/mod.ts";
 import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
 import { signFinding, stampSent } from "@reporting/domain/business/email-engagement/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { WebhookConfig } from "@core/dto/types.ts";
+
+/** True for a single, well-formed email address (has @, no spaces). */
+const isEmailAddr = (s: string): boolean =>
+  typeof s === "string" && s.includes("@") && !s.includes(" ");
+
+/** Split a possibly comma-joined address string into validated, de-duped
+ *  addresses, dropping any equal to `exclude`. This is what keeps a multi-manager
+ *  SupervisorEmail ("a@x.com, b@x.com") from being silently rejected as one blob. */
+function parseEmailList(raw: string, exclude = ""): string[] {
+  return [...new Set(
+    String(raw ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => isEmailAddr(s) && s !== exclude),
+  )];
+}
+
+/** Managers whose scope covers this audit's department (and shift). A scope with
+ *  an empty `shifts` list matches every shift. A scope with an empty `departments`
+ *  list is an allow-all / super-manager scope and is EXCLUDED here, so presidents
+ *  and admins are not copied on every single audit. */
+function scopedManagerEmails(
+  scopes: Record<string, ManagerScope>,
+  dept: string,
+  shift: string,
+): string[] {
+  const out: string[] = [];
+  for (const [email, scope] of Object.entries(scopes)) {
+    const depts = scope?.departments ?? [];
+    const shifts = scope?.shifts ?? [];
+    if (depts.length === 0) continue; // allow-all / super-manager → skip per-audit CC
+    if (!dept || !depts.includes(dept)) continue; // department must match
+    if (shift && shifts.length > 0 && !shifts.includes(shift)) continue; // shift must match when scoped
+    if (isEmailAddr(email)) out.push(email);
+  }
+  return [...new Set(out)];
+}
+
+/** Resolve the CC list for a manager-facing audit email. Managers are chosen by
+ *  their configured scope (department + shift). When no scope covers this audit,
+ *  fall back to the CRM SupervisorEmail field (split + validated) so no audit
+ *  goes out with no manager copied. Returns a comma-joined CC string or undefined. */
+async function resolveManagerCc(
+  orgId: OrgId,
+  finding: Record<string, unknown>,
+  to: string,
+): Promise<string | undefined> {
+  const rec = (finding.record ?? {}) as Record<string, unknown>;
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const dept = String((isPackage ? rec.OfficeName : rec.ActivatingOffice) ?? "");
+  const shift = String(rec.Shift ?? "");
+  let list: string[] = [];
+  try {
+    const scopes = await listManagerScopes(orgId);
+    list = scopedManagerEmails(scopes, dept, shift).filter((e) => e !== to);
+  } catch (err) {
+    console.error(`❌ [email] listManagerScopes failed org=${orgId} — falling back to supervisor:`, err);
+  }
+  if (list.length === 0) {
+    // No manager scoped to this dept/shift → fall back to the CRM supervisor field.
+    list = parseEmailList(String(rec.SupervisorEmail ?? ""), to);
+    console.log(`📧 [email] fid=${finding.id ?? "?"} no scope match dept="${dept}" shift="${shift}" → SupervisorEmail fallback (${list.length})`);
+  }
+  return list.length ? list.join(", ") : undefined;
+}
 
 const SELF_URL = (): string => Deno.env.get("SELF_URL") ?? "http://localhost:3000";
 
@@ -232,7 +299,6 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   // isn't a real email (data issue: VO has no email in CRM). Supervisor
   // can then route the audit to the right person. Final fallback is the
   // agent/owner email, which we still validate before using.
-  const isValidEmail = (s: string): boolean => typeof s === "string" && s.includes("@") && !s.includes(" ");
   const chain: Array<{ source: string; value: string }> = [
     { source: "testEmail", value: resolvedTest },
     ...(isPackage
@@ -245,7 +311,7 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   let to = "";
   let toSource = "none";
   for (const { source, value } of chain) {
-    if (isValidEmail(value)) { to = value; toSource = source; break; }
+    if (isEmailAddr(value)) { to = value; toSource = source; break; }
   }
   const chainStr = chain.map((c) => `${c.source}="${c.value}"`).join(", ");
   console.log(`📧 [WEBHOOK:terminate] recipient resolution fid=${findingId} chain={${chainStr}} → ${toSource}=${to || "NONE"}`);
@@ -253,10 +319,10 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
     console.warn(`⚠️ [WEBHOOK:terminate] no valid recipient resolved fid=${findingId} isPackage=${isPackage} — skipping (no source produced an email-shaped value)`);
     return;
   }
-  // CC the supervisor only when they're not already the primary recipient
-  // (e.g. fallback path used supervisorEmail as the to).
-  const supervisorAsCc = supervisorEmail && supervisorEmail !== to && isValidEmail(supervisorEmail);
-  const cc = resolvedTest ? undefined : (supervisorAsCc ? supervisorEmail : undefined);
+  // CC the managers whose scope covers this audit's department + shift, falling
+  // back to the CRM SupervisorEmail when no scope matches. Multi-manager values
+  // are split + validated, so a comma-joined field never silently drops the CC.
+  const cc = resolvedTest ? undefined : await resolveManagerCc(orgId, finding, to);
   const bcc = resolvedTest ? undefined : (cfg?.bcc || undefined);
 
   console.log(`📧 [WEBHOOK:terminate] sending fid=${findingId} to=${to} cc=${cc ?? "none"} bcc=${bcc ?? "none"} score=${scoreVal}%`);
@@ -607,7 +673,7 @@ async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayloa
     console.warn(`⚠️ [WEBHOOK:judge] no recipient resolved fid=${findingId} — skipping`);
     return;
   }
-  const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
+  const cc = resolvedTest ? undefined : await resolveManagerCc(orgId, finding, to);
   const bcc = resolvedTest ? undefined : (cfg?.bcc || undefined);
 
   console.log(`📧 [WEBHOOK:judge] sending fid=${findingId} to=${to} cc=${cc ?? "none"} bcc=${bcc ?? "none"} template=${template.id} ${isDismissal ? "(dismissal)" : ""}`);
@@ -695,7 +761,7 @@ async function sendManagerReviewEmail(orgId: OrgId, payload: ManagerReviewPayloa
     console.warn(`⚠️ [WEBHOOK:manager] no recipient resolved fid=${findingId} — skipping`);
     return;
   }
-  const cc = resolvedTest ? undefined : (supervisorEmail || undefined);
+  const cc = resolvedTest ? undefined : await resolveManagerCc(orgId, finding, to);
   const bcc = resolvedTest ? undefined : (cfg?.bcc || undefined);
 
   console.log(`📧 [WEBHOOK:manager] sending fid=${findingId} to=${to} cc=${cc ?? "none"} bcc=${bcc ?? "none"} template=${template.id}`);

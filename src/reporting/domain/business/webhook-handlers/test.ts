@@ -3,7 +3,56 @@
  *  (tests/e2e/dashboard.test.ts) so we don't need Postmark in unit tests. */
 
 import { assertEquals } from "#assert";
-import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock } from "./mod.ts";
+import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock, resolveManagerCc } from "./mod.ts";
+
+/** Build a minimal finding whose record carries the given SupervisorEmail. */
+const findingWithSupervisor = (supervisorEmail: string) => ({
+  id: "test-fid",
+  record: { SupervisorEmail: supervisorEmail },
+});
+
+Deno.test("resolveManagerCc — reads SupervisorEmail and trims the comma-space (the May 11 bug)", () => {
+  // The CRM formula emits ", "-joined values. The old code fed that straight in
+  // and the space made the whole string an invalid address. parseEmailList now
+  // splits + trims, so both supervisors come back clean.
+  const cc = resolveManagerCc(findingWithSupervisor("haleys@monsterrg.com, keonib@monsterrg.com"), "asantiago@monsterrg.com");
+  assertEquals(cc, "haleys@monsterrg.com, keonib@monsterrg.com");
+});
+
+Deno.test("resolveManagerCc — single supervisor", () => {
+  assertEquals(
+    resolveManagerCc(findingWithSupervisor("gigia@monsterrg.com"), "vo@monsterrg.com"),
+    "gigia@monsterrg.com",
+  );
+});
+
+Deno.test("resolveManagerCc — drops the primary recipient from the CC", () => {
+  // The person the email is going TO must not be CC'd on their own email.
+  const cc = resolveManagerCc(findingWithSupervisor("haleys@monsterrg.com, keonib@monsterrg.com"), "KEONIB@monsterrg.com");
+  assertEquals(cc, "haleys@monsterrg.com");
+});
+
+Deno.test("resolveManagerCc — de-dupes repeated addresses", () => {
+  assertEquals(
+    resolveManagerCc(findingWithSupervisor("haleys@monsterrg.com, haleys@monsterrg.com"), "vo@monsterrg.com"),
+    "haleys@monsterrg.com",
+  );
+});
+
+Deno.test("resolveManagerCc — empty / missing SupervisorEmail yields no CC", () => {
+  assertEquals(resolveManagerCc(findingWithSupervisor(""), "vo@monsterrg.com"), undefined);
+  assertEquals(resolveManagerCc({ id: "x", record: {} }, "vo@monsterrg.com"), undefined);
+  assertEquals(resolveManagerCc({ id: "x" }, "vo@monsterrg.com"), undefined);
+});
+
+Deno.test("resolveManagerCc — drops malformed entries but keeps valid ones", () => {
+  // A blank between commas or a spaceful token isn't a valid address; only the
+  // real one survives.
+  assertEquals(
+    resolveManagerCc(findingWithSupervisor("not an email, haleys@monsterrg.com, "), "vo@monsterrg.com"),
+    "haleys@monsterrg.com",
+  );
+});
 
 Deno.test("parseVoName — strips 'VO XX - ' prefix", () => {
   assertEquals(parseVoName("VO MB - Harmony Eason", "h@x.com"), { full: "Harmony Eason", first: "Harmony" });

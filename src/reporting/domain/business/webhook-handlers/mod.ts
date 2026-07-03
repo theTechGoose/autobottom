@@ -27,11 +27,12 @@ const isEmailAddr = (s: string): boolean =>
  *  addresses, dropping any equal to `exclude`. This is what keeps a multi-manager
  *  SupervisorEmail ("a@x.com, b@x.com") from being silently rejected as one blob. */
 function parseEmailList(raw: string, exclude = ""): string[] {
+  const ex = exclude.toLowerCase();
   return [...new Set(
     String(raw ?? "")
       .split(",")
       .map((s) => s.trim())
-      .filter((s) => isEmailAddr(s) && s !== exclude),
+      .filter((s) => isEmailAddr(s) && s.toLowerCase() !== ex),
   )];
 }
 
@@ -43,14 +44,19 @@ function scopedManagerEmails(
   scopes: Record<string, ManagerScope>,
   dept: string,
   shift: string,
+  isPackage: boolean,
 ): string[] {
+  const norm = (s: unknown): string => String(s ?? "").trim().toLowerCase();
+  const wantDept = norm(dept);
+  const wantShift = norm(shift);
   const out: string[] = [];
   for (const [email, scope] of Object.entries(scopes)) {
-    const depts = scope?.departments ?? [];
-    const shifts = scope?.shifts ?? [];
+    const depts = Array.isArray(scope?.departments) ? scope.departments : [];
+    const shifts = Array.isArray(scope?.shifts) ? scope.shifts : [];
     if (depts.length === 0) continue; // allow-all / super-manager → skip per-audit CC
-    if (!dept || !depts.includes(dept)) continue; // department must match
-    if (shift && shifts.length > 0 && !shifts.includes(shift)) continue; // shift must match when scoped
+    if (!wantDept || !depts.some((d) => norm(d) === wantDept)) continue; // department must match
+    // Shift applies to date-legs only (packages have no shift). Empty scope.shifts = all shifts.
+    if (!isPackage && shifts.length > 0 && !shifts.some((s) => norm(s) === wantShift)) continue;
     if (isEmailAddr(email)) out.push(email);
   }
   return [...new Set(out)];
@@ -72,7 +78,7 @@ async function resolveManagerCc(
   let list: string[] = [];
   try {
     const scopes = await listManagerScopes(orgId);
-    list = scopedManagerEmails(scopes, dept, shift).filter((e) => e !== to);
+    list = scopedManagerEmails(scopes, dept, shift, isPackage).filter((e) => e.toLowerCase() !== to.toLowerCase());
   } catch (err) {
     console.error(`❌ [email] listManagerScopes failed org=${orgId} — falling back to supervisor:`, err);
   }

@@ -78,19 +78,20 @@ async function resolveManagerCc(
   const shift = String(rec.Shift ?? "");
   let list: string[] = [];
   try {
-    const [scopes, supers] = await Promise.all([
+    const [scopes, managers] = await Promise.all([
       listManagerScopes(orgId),
-      listUsers(orgId, "super-manager"),
+      listUsers(orgId, "manager"),
     ]);
-    // Super-managers (the president role) oversee every department; exclude them
-    // from per-audit CC so they aren't copied on every single audit — regardless
-    // of how many departments their scope lists. They can still be a deliberate
-    // recipient on the scheduled reports.
-    const superEmails = new Set(supers.map((u) => u.email.toLowerCase()));
+    // Only CC users who are CURRENTLY managers. A scope doc persists through a
+    // role change (a manager promoted to super-manager keeps their old scope),
+    // and the save endpoint does no role check — so restrict positively to the
+    // live manager role instead of trusting the scope store. This drops
+    // super-managers and any other drifted role automatically.
+    const managerEmails = new Set(managers.map((u) => u.email.toLowerCase()));
     list = scopedManagerEmails(scopes, dept, shift, isPackage)
-      .filter((e) => !superEmails.has(e.toLowerCase()) && e.toLowerCase() !== to.toLowerCase());
+      .filter((e) => managerEmails.has(e.toLowerCase()) && e.toLowerCase() !== to.toLowerCase());
   } catch (err) {
-    console.error(`❌ [email] scope / super-manager lookup failed org=${orgId} — falling back to supervisor:`, err);
+    console.error(`❌ [email] scope / manager lookup failed org=${orgId} — falling back to supervisor:`, err);
   }
   if (list.length === 0) {
     // No manager scoped to this dept/shift → fall back to the CRM supervisor field.

@@ -579,13 +579,16 @@ async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayloa
   }
 
   const isDismissal = !!payload.dismissalReason;
-  // Dismissal uses a separate template id; admin must configure it (no default).
-  // Normal completion falls back to the prod default "Appeal Result" template.
+  // Dismissal uses a dedicated template id when configured, but falls back to
+  // the standard verdict template (emailTemplateId) — and finally the bundled
+  // "Appeal Result" default — so a dismissal always sends even with no dedicated
+  // template set. (Matches the pre-rewrite behavior: dismissalTemplateId || emailTemplateId.)
   const dismissalTemplateId = (cfg as Record<string, unknown> | null)?.dismissalTemplateId as string | undefined;
   let template: EmailTemplate | null = null;
-  if (isDismissal) {
-    template = dismissalTemplateId ? (await getEmailTemplate(orgId, dismissalTemplateId)) : null;
-  } else {
+  if (isDismissal && dismissalTemplateId) {
+    template = await getEmailTemplate(orgId, dismissalTemplateId);
+  }
+  if (!template) {
     template = (await resolveTemplate(orgId, cfg)) ?? DEFAULT_APPEAL_RESULT_TEMPLATE;
   }
   if (!template) {

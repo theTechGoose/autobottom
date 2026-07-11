@@ -72,6 +72,13 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
   const [session, setSession] = useState(0);
   const [game, setGame] = useState<GameState>({});
   const [hasAudio, setHasAudio] = useState(!!initialFindingId);
+  // Multi-genie findings stitch several call legs; the recording endpoint
+  // serves them one at a time by index. recCount (from the audio response's
+  // x-recording-count header) drives the REC 1 / REC 2 tabs; activeRec is the
+  // leg currently loaded. switchRecRef lets the JSX tabs call into the effect.
+  const [recCount, setRecCount] = useState(1);
+  const [activeRec, setActiveRec] = useState(0);
+  const switchRecRef = useRef<((idx: number) => void) | null>(null);
   const [skipTier, setSkipTier] = useState(-1); // -1 = hidden
   const [typeFilter, setTypeFilter] = useState<string>(
     typeof localStorage !== "undefined" ? (localStorage.getItem(TYPE_FILTER_KEY_REVIEW) ?? "") : "",
@@ -127,12 +134,16 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       ctx2d.fillRect(cx - 1, 0, 2, H);
     }
 
-    async function loadWaveform(fid: string) {
+    async function loadWaveform(fid: string, idx = 0) {
       wfData = null;
       draw();
       try {
-        const r = await fetch(`/audit/recording?id=${encodeURIComponent(fid)}`);
+        const r = await fetch(`/audit/recording?id=${encodeURIComponent(fid)}&idx=${idx}`);
         if (!r.ok) throw new Error("HTTP " + r.status);
+        // The endpoint reports the finding's total leg count on every response
+        // (same for any idx) — use it to show/hide the REC tabs.
+        const cnt = parseInt(r.headers.get("x-recording-count") ?? "1");
+        setRecCount(Number.isFinite(cnt) && cnt > 0 ? cnt : 1);
         const buf = await r.arrayBuffer();
         const AC = (globalThis as unknown as { AudioContext: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext ||
           (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -156,11 +167,26 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
     function loadFinding(fid: string | null) {
       if (!fid || fid === currentLoadFid) return;
       currentLoadFid = fid;
+      // New finding → always start on leg 1. loadWaveform re-reads the true
+      // leg count from the response header and shows tabs if there's >1.
+      setActiveRec(0);
+      setRecCount(1);
       audio!.src = `/audit/recording?id=${encodeURIComponent(fid)}&idx=0`;
       audio!.playbackRate = speedRef.current;
       setHasAudio(true);
-      loadWaveform(fid);
+      loadWaveform(fid, 0);
     }
+
+    // Switch which recording leg plays (REC tab click). Same finding, different
+    // idx — reload the audio + waveform and reset the scrubber to the leg start.
+    function switchRec(idx: number) {
+      if (!currentLoadFid) return;
+      audio!.src = `/audit/recording?id=${encodeURIComponent(currentLoadFid)}&idx=${idx}`;
+      audio!.playbackRate = speedRef.current;
+      setActiveRec(idx);
+      loadWaveform(currentLoadFid, idx);
+    }
+    switchRecRef.current = switchRec;
 
     function updateTime() {
       if (!audio || !timeRef.current) return;
@@ -255,7 +281,7 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       const fidInput = document.getElementById("hx-findingId") as HTMLInputElement | null;
       const nextFid = fidInput?.value || null;
       if (nextFid) loadFinding(nextFid);
-      else { setHasAudio(false); wfData = null; draw(); }
+      else { setHasAudio(false); setRecCount(1); setActiveRec(0); wfData = null; draw(); }
     };
 
     // Decide / undo clicks → combo + session
@@ -323,6 +349,7 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("click", onChipClick);
       globalThis.removeEventListener("resize", sizeCanvas);
+      switchRecRef.current = null;
       if (skipDecayTimer != null) clearTimeout(skipDecayTimer);
       if (skipHideTimer != null) clearTimeout(skipHideTimer);
     };
@@ -396,6 +423,22 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       >
         5s ⏭
       </button>
+      {recCount > 1 && (
+        <div class="bb-rec-tabs" role="tablist" title="This call has multiple recordings">
+          {Array.from({ length: recCount }, (_, i) => (
+            <button
+              key={i}
+              type="button"
+              class={`bb-rec-tab ${i === activeRec ? "active" : ""}`}
+              onClick={() => switchRecRef.current?.(i)}
+              aria-pressed={i === activeRec}
+              disabled={!hasAudio}
+            >
+              REC {i + 1}
+            </button>
+          ))}
+        </div>
+      )}
       <canvas class="bb-waveform" ref={canvasRef} style={hasAudio ? "" : "opacity:0.4"} />
       <div class={`bb-skip-indicator ${skipTier >= 0 ? "active" : ""}`}>
         <span class="bb-skip-label">{skipTier >= 0 ? `${SKIP_TIERS[skipTier]}s` : ""}</span>

@@ -346,7 +346,13 @@ async function handleRecordingAudio(req: Request): Promise<Response> {
 
   // 206 Partial Content for a Range request (so the <audio> element can seek),
   // 416 for an out-of-bounds range, else the full 200. Shared, unit-tested.
-  return buildAudioResponse(bytes, req.headers.get("range"));
+  const resp = buildAudioResponse(bytes, req.headers.get("range"));
+  // Surface how many individual recordings (genies) this finding has so the
+  // review/judge queue player can render REC 1 / REC 2 tabs — otherwise a
+  // multi-genie call only ever plays idx=0 while the transcript shows every
+  // leg. Same source the report page uses (finding.s3RecordingKeys.length).
+  resp.headers.set("x-recording-count", String(keys?.length ?? 1));
+  return resp;
 }
 
 // Direct-dispatch: POST /audit/api/appeal/upload-recording accepts a multipart

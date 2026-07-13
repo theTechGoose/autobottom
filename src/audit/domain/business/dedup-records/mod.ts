@@ -30,7 +30,7 @@
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { deleteStored, getStored, listStoredByCompletedAt, listStoredWithKeys } from "@core/data/firestore/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
-import { findAuditsByRecordId, markFindingHidden, pickCanonicalIndexRow } from "@audit/domain/data/stats-repository/mod.ts";
+import { getHiddenFindingIds, markFindingHidden, pickCanonicalIndexRow } from "@audit/domain/data/stats-repository/mod.ts";
 import { cleanupFindingFromIndices } from "@judge/domain/data/judge-repository/mod.ts";
 import { decrementForFinding } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { deleteFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
@@ -136,17 +136,22 @@ function toMember(m: AuditDoneIndexEntry, keep: boolean): RecordDedupMember {
 
 // ── Planner (shared by diagnose + execute so preview == action) ───────────────
 
-/** Scan audit-done-idx over [since, until], group by record id, and for every
- *  record with >1 finding pick the keeper + losers. Records with a pending
- *  appeal are surfaced but left untouched. For each candidate record the FULL
- *  finding set is re-resolved via findAuditsByRecordId so the keeper is chosen
- *  over every finding for that record — even ones whose index row falls outside
- *  the window — never evicting a good keeper we couldn't see.
+/** Scan audit-done-idx over [since, until] ONCE, group every row by record id
+ *  (a finding's rows all share its recordId), and for every record with >1
+ *  finding in range pick the keeper + losers. Already-hidden findings (prior
+ *  runs' losers) are excluded up front. Records with a pending appeal are
+ *  surfaced but left untouched.
  *
- *  Cost note: reuses cleanupFindingFromIndices et al. downstream (each O(N) over
- *  a store) for correctness on the money path; the operator's date window bounds
- *  how many records/losers a run touches. Only records with ≥2 findings whose
- *  rows both fall in the window are detected — widen the range for a full sweep. */
+ *  Single-scan by design: an earlier version re-resolved each candidate record
+ *  via findAuditsByRecordId (a ~90-day scan PER record) and blew Deno Deploy's
+ *  ~30s inline limit on real data. The keeper is chosen from the audits in the
+ *  window, so — like the row pass — a record whose duplicates straddle the range
+ *  is only partly seen; widen the range for a full sweep. Duplicates are created
+ *  within minutes and reviewed within days, so any window covering the cluster
+ *  captures them together.
+ *
+ *  Execute reuses this plan then evicts losers in the background lane (not inline),
+ *  so the per-loser O(N) helper scans are not bound by the inline limit. */
 export async function planDuplicateRecords(orgId: OrgId, since: number, until: number): Promise<RecordDedupPlan> {
   const rows = await listStoredByCompletedAt<AuditDoneIndexEntry>(
     "audit-done-idx",
@@ -157,27 +162,30 @@ export async function planDuplicateRecords(orgId: OrgId, since: number, until: n
   );
   const scannedRows = rows.length;
 
-  // Candidate records: >1 DISTINCT finding within the window.
-  const byRecord = new Map<string, Set<string>>();
-  for (const e of canonicalByFinding(rows)) {
+  // Exclude already-retired (hidden) findings so a re-run never re-evicts a
+  // prior run's losers. One cheap cached read for the whole plan.
+  const hidden = await getHiddenFindingIds(orgId);
+
+  // Group EVERY scanned row by recordId in a single in-memory pass — no
+  // per-record re-scan. A finding's rows all carry the same recordId, so
+  // grouping then canonicalizing per finding yields the record's in-window set.
+  const byRecord = new Map<string, AuditDoneIndexEntry[]>();
+  for (const e of rows) {
+    if (!e?.findingId || hidden.has(e.findingId)) continue;
     const rid = e.recordId ? String(e.recordId) : "";
     if (!rid) continue;
-    const s = byRecord.get(rid) ?? new Set<string>();
-    s.add(e.findingId);
-    byRecord.set(rid, s);
+    const g = byRecord.get(rid) ?? [];
+    g.push(e);
+    byRecord.set(rid, g);
   }
-  const candidateRecordIds = [...byRecord.entries()].filter(([, fids]) => fids.size > 1).map(([rid]) => rid);
 
   const groups: RecordDedupGroup[] = [];
   let losers = 0;
   let appealSkips = 0;
 
-  for (const rid of candidateRecordIds) {
-    // Authoritative full set for the record (index-based, SWR-cached). Drop
-    // already-hidden findings (previously retired) so we don't re-evict them.
-    const full = await findAuditsByRecordId(orgId, rid);
-    const members = canonicalByFinding(full.filter((e) => !e.hidden));
-    if (members.length <= 1) continue; // already deduped / only one live finding
+  for (const [rid, recRows] of byRecord) {
+    const members = canonicalByFinding(recRows);
+    if (members.length <= 1) continue; // only one audit for this record in range
 
     if (members.some((m) => m.appealStatus === "pending")) {
       appealSkips++;

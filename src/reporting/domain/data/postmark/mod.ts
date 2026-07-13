@@ -4,6 +4,10 @@ export interface EmailAttachment {
   name: string;
   content: string; // base64-encoded
   contentType: string;
+  /** When set, the attachment is embedded inline (not a download) and can be
+   *  referenced from the HTML body via `<img src="cid:<contentId>">`. Postmark
+   *  wants the `cid:` prefix on its ContentID field, which we add below. */
+  contentId?: string;
 }
 
 export async function sendEmail(opts: {
@@ -35,6 +39,7 @@ export async function sendEmail(opts: {
       Name: a.name,
       Content: a.content,
       ContentType: a.contentType,
+      ...(a.contentId ? { ContentID: `cid:${a.contentId}` } : {}),
     }));
   }
 

@@ -119,3 +119,17 @@ Deno.test("renderFailedQuestionsBlock — escapes HTML in judge-typed reason", (
   assertEquals(html.includes("&amp;"), true);
   assertEquals(html.includes("<b>bye</b>"), false); // raw tag must not survive
 });
+
+Deno.test("renderFailedQuestionsBlock — embeds inline images via cid content IDs", () => {
+  const html = renderFailedQuestionsBlock([
+    { header: "Greeted the customer", reason: "No greeting.", imageCids: ["shot-abc-0-0", "shot-abc-0-1"] },
+  ]);
+  assertEquals(html.includes('src="cid:shot-abc-0-0"'), true);
+  assertEquals(html.includes('src="cid:shot-abc-0-1"'), true);
+  assertEquals((html.match(/<img /g) ?? []).length, 2);
+});
+
+Deno.test("renderFailedQuestionsBlock — no <img> when a question has no screenshots", () => {
+  const html = renderFailedQuestionsBlock([{ header: "Q", reason: "why", imageCids: [] }]);
+  assertEquals(html.includes("<img "), false);
+});

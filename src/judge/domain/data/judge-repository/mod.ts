@@ -120,6 +120,7 @@ export async function populateJudgeQueue(
 export async function recordJudgeDecision(
   orgId: OrgId, findingId: string, questionIndex: number,
   decision: "uphold" | "overturn", judge: string, reason?: string,
+  screenshotKeys?: string[],
 ): Promise<{ remaining: number }> {
   // Load full item from active (or pending) so decided record preserves context
   const activeVal = await getStored<JudgeItem & { claimedAt?: number }>("judge-active", orgId, judge, findingId, questionIndex);
@@ -139,6 +140,7 @@ export async function recordJudgeDecision(
     decision,
     judge,
     ...(reason ? { reason: reason as JudgeDecision["reason"] } : {}),
+    ...(screenshotKeys?.length ? { screenshotKeys } : {}),
     decidedAt: Date.now(),
   };
   await setStored("judge-decided", orgId, [findingId, questionIndex], decidedRecord);
@@ -309,6 +311,7 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
         decision: d.decision,
         reason: d.reason,
         header: d.header,
+        screenshotKeys: d.screenshotKeys,
       })),
     }).catch((err) => console.error(`[JUDGE] ${findingId} fireWebhook failed:`, err));
 

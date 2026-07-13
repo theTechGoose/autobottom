@@ -12,7 +12,7 @@ import {
   getWebhookConfig,
 } from "@admin/domain/data/admin-repository/mod.ts";
 import { getEmailTemplate, type EmailTemplate } from "@reporting/domain/data/email-repository/mod.ts";
-import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
+import { sendEmail, type EmailAttachment } from "@reporting/domain/data/postmark/mod.ts";
 import { signFinding, stampSent } from "@reporting/domain/business/email-engagement/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { WebhookConfig } from "@core/dto/types.ts";
@@ -521,7 +521,7 @@ interface JudgeDecisionPayload {
   finalScore?: number;
   overturns?: number;
   totalQuestions?: number;
-  decisions?: Array<{ questionIndex: number; decision: string; reason?: string; header?: string }>;
+  decisions?: Array<{ questionIndex: number; decision: string; reason?: string; header?: string; screenshotKeys?: string[] }>;
   /** Set on the dismissal variant — judge clears the appeal without
    *  upholding/overturning each question. */
   dismissalReason?: string;
@@ -550,20 +550,97 @@ function escHtml(s: string): string {
 }
 
 /** The "Failed Questions" block for the appeal-result email — one entry per
- *  UPHELD question, showing the question name and the judge's typed reason.
+ *  UPHELD question, showing the question name, the judge's typed reason, and any
+ *  screenshots the judge attached (embedded inline via `cid:` content IDs).
  *  Returns "" when nothing was upheld (everything overturned → audit back to
  *  100%), so the section simply doesn't appear. Rendered as a table row so it
  *  drops straight into the email's outer layout table. Exported for testing. */
 export function renderFailedQuestionsBlock(
-  upheld: Array<{ header?: string; reason?: string }>,
+  upheld: Array<{ header?: string; reason?: string; imageCids?: string[] }>,
 ): string {
   if (!upheld.length) return "";
   const items = upheld.map((d) => {
     const name = escHtml(d.header || "This question");
     const why = escHtml(d.reason || "");
-    return `<div style="margin-bottom:14px;"><p style="margin:0 0 3px;font-size:13px;font-weight:700;color:#e6edf3;">${name}</p><p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.6;white-space:pre-wrap;">${why}</p></div>`;
+    const imgs = (d.imageCids ?? []).map((cid) =>
+      `<img src="cid:${escHtml(cid)}" alt="Screenshot" style="display:block;max-width:100%;height:auto;margin-top:10px;border:1px solid #30363d;border-radius:6px;" />`
+    ).join("");
+    return `<div style="margin-bottom:14px;"><p style="margin:0 0 3px;font-size:13px;font-weight:700;color:#e6edf3;">${name}</p><p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.6;white-space:pre-wrap;">${why}</p>${imgs}</div>`;
   }).join("");
   return `<tr><td style="padding:20px 28px 0;"><div style="border-left:3px solid #f85149;padding:16px 18px;background:#161b22;border-radius:0 8px 8px 0;"><p style="margin:0 0 12px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#f85149;">Failed Questions</p>${items}</div></td></tr>`;
+}
+
+/** Chunked base64 encoder — safe for multi-MB images (a naive
+ *  `String.fromCharCode(...bytes)` blows the call-stack argument limit). */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/** Map an S3 key's extension to an image content type (default PNG — clipboard
+ *  pastes are PNG). Keeps Postmark's ContentType honest so clients render it. */
+function imageContentTypeForKey(key: string): string {
+  const ext = key.slice(key.lastIndexOf(".") + 1).toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "gif") return "image/gif";
+  if (ext === "webp") return "image/webp";
+  return "image/png";
+}
+
+/** Fetch the judge's uphold screenshots from S3 and turn them into inline email
+ *  attachments (base64 + a `cid:` content ID), returning per-question entries
+ *  ready for renderFailedQuestionsBlock plus the flat attachment list. Any image
+ *  that fails to load is skipped (best-effort) so a missing blob never sinks the
+ *  whole appeal-result email. Total inline payload is capped so we stay well
+ *  under Postmark's 10MB message ceiling. */
+const MAX_INLINE_ATTACH_BYTES = 8 * 1024 * 1024;
+async function buildUpheldScreenshotAssets(
+  findingId: string,
+  upheld: Array<{ header?: string; reason?: string; screenshotKeys?: string[] }>,
+): Promise<{
+  entries: Array<{ header?: string; reason?: string; imageCids: string[] }>;
+  attachments: EmailAttachment[];
+}> {
+  const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
+  const anyKeys = upheld.some((d) => d.screenshotKeys?.length);
+  if (!bucket || !anyKeys) {
+    return { entries: upheld.map((d) => ({ ...d, imageCids: [] })), attachments: [] };
+  }
+  const { S3Ref } = await import("@core/data/s3/mod.ts");
+  const safeId = findingId.replace(/[^a-zA-Z0-9]/g, "");
+  const attachments: EmailAttachment[] = [];
+  let totalBytes = 0;
+  const entries: Array<{ header?: string; reason?: string; imageCids: string[] }> = [];
+
+  for (let qi = 0; qi < upheld.length; qi++) {
+    const d = upheld[qi];
+    const imageCids: string[] = [];
+    for (let si = 0; si < (d.screenshotKeys?.length ?? 0); si++) {
+      const key = d.screenshotKeys![si];
+      try {
+        const bytes = await new S3Ref(bucket, key).get();
+        if (!bytes || bytes.byteLength === 0) continue;
+        if (totalBytes + bytes.byteLength > MAX_INLINE_ATTACH_BYTES) {
+          console.warn(`⚠️ [WEBHOOK:judge] ${findingId}: screenshot budget hit — skipping ${key}`);
+          continue;
+        }
+        totalBytes += bytes.byteLength;
+        const contentType = imageContentTypeForKey(key);
+        const ext = contentType.split("/")[1];
+        const cid = `shot-${safeId}-${qi}-${si}`;
+        attachments.push({ name: `screenshot-${qi + 1}-${si + 1}.${ext}`, content: bytesToBase64(bytes), contentType, contentId: cid });
+        imageCids.push(cid);
+      } catch (err) {
+        console.warn(`⚠️ [WEBHOOK:judge] ${findingId}: screenshot fetch failed key=${key}:`, err);
+      }
+    }
+    entries.push({ header: d.header, reason: d.reason, imageCids });
+  }
+  return { entries, attachments };
 }
 
 async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayload): Promise<void> {
@@ -613,6 +690,12 @@ async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayloa
   // straight to logs without needing to dig through finding records.
   console.log(`📧 [WEBHOOK:judge] vars fid=${findingId} VoName="${finding.record?.VoName ?? ""}" VoEmail="${voEmail}" owner="${agentEmail}" → first="${teamMemberFirst}"`);
 
+  // Upheld questions carry the judge's reason + any screenshots; fetch the
+  // screenshots from S3 and build inline (cid) attachments for the email body.
+  const upheldDecisions = (payload.decisions ?? []).filter((d) => d.decision === "uphold");
+  const { entries: upheldEntries, attachments: screenshotAttachments } =
+    await buildUpheldScreenshotAssets(findingId, upheldDecisions);
+
   const vars: Record<string, string> = {
     findingId,
     agentName: teamMemberFull,
@@ -630,10 +713,9 @@ async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayloa
     totalQuestions: String(payload.totalQuestions ?? 0),
     judgedBy: payload.judgedBy ?? "",
     dismissalReason: payload.dismissalReason ?? "",
-    // Per-upheld-question reasons. Empty (section hidden) when nothing was upheld.
-    failedQuestions: renderFailedQuestionsBlock(
-      (payload.decisions ?? []).filter((d) => d.decision === "uphold"),
-    ),
+    // Per-upheld-question reasons + inline screenshots. Empty (section hidden)
+    // when nothing was upheld.
+    failedQuestions: renderFailedQuestionsBlock(upheldEntries),
     reportUrl: `${SELF_URL()}/audit/report?id=${findingId}`,
     logoUrl: `${SELF_URL()}/logo.png`,
     selfUrl: SELF_URL(),
@@ -656,8 +738,9 @@ async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayloa
       htmlBody: renderTemplate(template.html, vars),
       cc,
       bcc,
+      ...(screenshotAttachments.length ? { attachments: screenshotAttachments } : {}),
     });
-    console.log(`✅ [WEBHOOK:judge] email sent fid=${findingId} → ${to}`);
+    console.log(`✅ [WEBHOOK:judge] email sent fid=${findingId} → ${to}${screenshotAttachments.length ? ` (+${screenshotAttachments.length} screenshot${screenshotAttachments.length > 1 ? "s" : ""})` : ""}`);
   } catch (err) {
     console.error(`❌ [WEBHOOK:judge] sendEmail failed fid=${findingId}:`, err);
   }

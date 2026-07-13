@@ -213,6 +213,9 @@ export interface JudgeDecision {
   decision: "overturn" | "uphold";
   judge: string;
   reason?: "error" | "logic" | "fragment" | "transcript";
+  /** S3 keys for screenshots the judge attached when upholding. Embedded inline
+   *  in the appeal-result email's "Failed Questions" block. */
+  screenshotKeys?: string[];
   decidedAt: number;
 }
 

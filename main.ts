@@ -655,6 +655,54 @@ async function handleUploadSound(req: Request): Promise<Response> {
   }
 }
 
+// Direct-dispatch: POST /judge/api/upload-screenshot stores an uphold screenshot
+// in S3 at judge-screenshots/<orgId>/<findingId>/<questionIndex>/<uuid>.<ext> and
+// returns its key. The key rides along on the judge decision and is fetched back
+// + embedded inline in the appeal-result email. Multipart → bypasses danet
+// (same reason as upload-sound / upload-reaudit).
+async function handleUploadJudgeScreenshot(req: Request): Promise<Response> {
+  if (req.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return Response.json({ error: "multipart/form-data required" }, { status: 400 });
+  }
+  const findingId = String(form.get("findingId") ?? "").trim();
+  const questionIndex = String(form.get("questionIndex") ?? "0").trim();
+  const file = form.get("file");
+  if (!findingId) return Response.json({ error: "findingId required" }, { status: 400 });
+  if (!(file instanceof File)) return Response.json({ error: "file required" }, { status: 400 });
+
+  const typeToExt: Record<string, string> = {
+    "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp",
+  };
+  const ext = typeToExt[file.type];
+  if (!ext) return Response.json({ error: "image file required (png/jpg/gif/webp)" }, { status: 400 });
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.byteLength === 0) return Response.json({ error: "empty file" }, { status: 400 });
+  if (bytes.byteLength > 5 * 1024 * 1024) return Response.json({ error: "image too large (5MB max)" }, { status: 400 });
+
+  try {
+    const orgId = (auth.orgId ?? defaultOrgId()) as OrgId;
+    const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
+    if (!bucket) return Response.json({ error: "S3_BUCKET not configured" }, { status: 500 });
+    const { S3Ref } = await import("@core/data/s3/mod.ts");
+    const safeQ = questionIndex.replace(/[^0-9]/g, "") || "0";
+    const key = `judge-screenshots/${orgId}/${findingId}/${safeQ}/${crypto.randomUUID()}.${ext}`;
+    await new S3Ref(bucket, key).save(bytes);
+    console.log(`📎 [UPLOAD-SCREENSHOT] org=${orgId} fid=${findingId} q=${safeQ} bytes=${bytes.byteLength} → ${key}`);
+    return Response.json({ ok: true, key });
+  } catch (err) {
+    console.error(`❌ [UPLOAD-SCREENSHOT] failed:`, err);
+    return Response.json({ ok: false, error: (err as Error).message }, { status: 500 });
+  }
+}
+
 const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
   "/review/api/me": handleMe,
   "/judge/api/me": handleMe,
@@ -984,6 +1032,12 @@ Deno.serve({ port }, (req, info) => {
     if (path === "/gamification/api/upload-sound") {
       console.log(`[ROUTER] ${req.method} ${path} → direct upload-sound handler`);
       return handleUploadSound(req);
+    }
+
+    // /judge/api/upload-screenshot — direct (multipart; @Req broken)
+    if (path === "/judge/api/upload-screenshot") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct upload-screenshot handler`);
+      return handleUploadJudgeScreenshot(req);
     }
 
     // Audit-email engagement tracking — public, unauthenticated (mail clients

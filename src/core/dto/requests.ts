@@ -22,7 +22,7 @@ export class StepRequest { findingId = ""; orgId = ""; totalBatches = 0; }
 // ── Review/Judge ─────────────────────────────────────────────────────────────
 
 export class ReviewDecideRequest { findingId = ""; questionIndex = 0; decision = ""; reviewer = ""; }
-export class JudgeDecideRequest { findingId = ""; questionIndex = 0; decision = ""; judge = ""; reason = ""; }
+export class JudgeDecideRequest { findingId = ""; questionIndex = 0; decision = ""; judge = ""; reason = ""; screenshotKeys = ""; }
 export class ReviewerConfigRequest { email = ""; config: unknown = {}; }
 export class ReviewBackRequest { findingId = ""; questionIndex = 0; reviewer = ""; }
 

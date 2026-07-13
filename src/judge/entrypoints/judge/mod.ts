@@ -22,6 +22,23 @@ function softFail<T>(ctx: string, err: unknown, fallback: T): T {
   return fallback;
 }
 
+/** The uphold screenshots arrive as a JSON-stringified array of S3 keys (HTMX
+ *  form-encodes values as strings), or as a real array on a JSON post. Parse
+ *  either shape into a clean, capped string[]; never throw on junk input. */
+const MAX_SCREENSHOTS = 6;
+function parseScreenshotKeys(raw: string | string[] | undefined): string[] {
+  let arr: unknown = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try { arr = JSON.parse(trimmed); } catch { return []; }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter((k): k is string => typeof k === "string" && k.length > 0)
+    .slice(0, MAX_SCREENSHOTS);
+}
+
 @SwaggerDescription("Judge — appeal review and reviewer management")
 @Controller("judge/api")
 export class JudgeController {
@@ -38,12 +55,13 @@ export class JudgeController {
   }
 
   @Post("decide") @ReturnedType(DecisionResponse) @Description("Uphold or overturn an appealed question") @BodyType(JudgeDecideRequest)
-  async decide(@Body() body: { findingId: string; questionIndex: number; decision: "uphold" | "overturn"; judge: string; reason?: string }) {
+  async decide(@Body() body: { findingId: string; questionIndex: number; decision: "uphold" | "overturn"; judge: string; reason?: string; screenshotKeys?: string | string[] }) {
     if (!body.findingId || body.questionIndex == null || !body.decision || !body.judge) {
       return { error: "findingId, questionIndex, decision, judge required" };
     }
     try {
-      const result = await recordJudgeDecision(ORG(), body.findingId, body.questionIndex, body.decision, body.judge, body.reason);
+      const screenshotKeys = parseScreenshotKeys(body.screenshotKeys);
+      const result = await recordJudgeDecision(ORG(), body.findingId, body.questionIndex, body.decision, body.judge, body.reason, screenshotKeys);
       return { ok: true, ...result };
     } catch (err) {
       return softFail(`decide ${body.findingId}/${body.questionIndex}`, err, {

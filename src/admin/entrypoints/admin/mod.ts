@@ -1054,7 +1054,9 @@ export class AdminConfigController {
     finishedAt?: number;
     error?: string;
     dryRun: boolean;
+    pass?: "rows" | "records";
     plan?: { scannedRows: number; findingsWithDupes: number; staleRows: number };
+    recordPlan?: { recordsWithDupes: number; losers: number; chargebacksRemoved: number; wiresRemoved: number; appealSkips: number };
   }>();
 
   private static _evictOldDedupJobs() {
@@ -1084,7 +1086,10 @@ export class AdminConfigController {
     // Log the raw values so a "ran but didn't delete" report is diagnosable.
     const execute = b.mode === "execute" ||
       b.execute === true || b.execute === "true" || b.execute === 1 || b.execute === "1" || b.execute === "on";
-    console.log(`[DEDUP] start since=${since} until=${until} raw.mode=${JSON.stringify(b.mode)} raw.execute=${JSON.stringify(b.execute)} → ${execute ? "EXECUTE (delete)" : "DRY RUN"}`);
+    // "rows" (default) collapses duplicate index rows of ONE finding; "records"
+    // retires duplicate AUDITS of the same QB record (keeper rule + full evict).
+    const pass: "rows" | "records" = b.pass === "records" ? "records" : "rows";
+    console.log(`[DEDUP] start pass=${pass} since=${since} until=${until} raw.mode=${JSON.stringify(b.mode)} raw.execute=${JSON.stringify(b.execute)} → ${execute ? "EXECUTE (delete)" : "DRY RUN"}`);
     AdminConfigController._evictOldDedupJobs();
     const jobId = `dedup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     AdminConfigController._dedupJobs.set(jobId, {
@@ -1094,6 +1099,7 @@ export class AdminConfigController {
       failed: 0,
       startedAt: Date.now(),
       dryRun: !execute,
+      pass,
     });
 
     // Fire-and-forget. .catch is mandatory — an unhandled rejection here
@@ -1101,27 +1107,59 @@ export class AdminConfigController {
     // for the dashboard SWR variant of this same trap).
     (async () => {
       try {
-        // Collapse duplicate audit-done-idx ROWS per finding (keep the
-        // reviewed/judged row, else newest; delete the stale rows by key).
-        // NEVER hides a finding — no audit data is lost.
-        const { collapseDuplicateIndexRows } = await import("@audit/domain/data/stats-repository/mod.ts");
-        const res = await runInBackgroundLane(() =>
-          collapseDuplicateIndexRows(ORG(), since, until, {
-            execute,
-            onProgress: (deleted, total) => {
-              const j = AdminConfigController._dedupJobs.get(jobId);
-              if (j) { j.deleted = deleted; j.total = total; j.phase = "deleting"; }
-            },
-          })
-        );
-        const j = AdminConfigController._dedupJobs.get(jobId);
-        if (j) {
-          j.plan = { scannedRows: res.scanned, findingsWithDupes: res.findingsWithDupes, staleRows: res.staleRows };
-          j.total = res.staleRows;
-          j.deleted = res.rowsDeleted;
-          j.failed = res.failed;
-          j.phase = "done";
-          j.finishedAt = Date.now();
+        if (pass === "records") {
+          // Retire duplicate AUDITS of the same QB record: pick the keeper
+          // (100%-on-entry > reviewed > latest) and strip every loser from
+          // payroll + all queues/stats/index, keeping the raw audit body.
+          const { evictDuplicateRecords } = await import("@audit/domain/business/dedup-records/mod.ts");
+          const res = await runInBackgroundLane(() =>
+            evictDuplicateRecords(ORG(), since, until, {
+              execute,
+              hiddenBy: "dedup-records",
+              onProgress: (evicted, total) => {
+                const j = AdminConfigController._dedupJobs.get(jobId);
+                if (j) { j.deleted = evicted; j.total = total; j.phase = "deleting"; }
+              },
+            })
+          );
+          const j = AdminConfigController._dedupJobs.get(jobId);
+          if (j) {
+            j.total = res.losers;
+            j.deleted = res.evicted;
+            j.failed = res.failed;
+            j.recordPlan = {
+              recordsWithDupes: res.recordsWithDupes,
+              losers: res.losers,
+              chargebacksRemoved: res.chargebacksRemoved,
+              wiresRemoved: res.wiresRemoved,
+              appealSkips: res.appealSkips,
+            };
+            j.phase = "done";
+            j.finishedAt = Date.now();
+          }
+        } else {
+          // Collapse duplicate audit-done-idx ROWS per finding (keep the
+          // reviewed/judged row, else newest; delete the stale rows by key).
+          // NEVER hides a finding — no audit data is lost.
+          const { collapseDuplicateIndexRows } = await import("@audit/domain/data/stats-repository/mod.ts");
+          const res = await runInBackgroundLane(() =>
+            collapseDuplicateIndexRows(ORG(), since, until, {
+              execute,
+              onProgress: (deleted, total) => {
+                const j = AdminConfigController._dedupJobs.get(jobId);
+                if (j) { j.deleted = deleted; j.total = total; j.phase = "deleting"; }
+              },
+            })
+          );
+          const j = AdminConfigController._dedupJobs.get(jobId);
+          if (j) {
+            j.plan = { scannedRows: res.scanned, findingsWithDupes: res.findingsWithDupes, staleRows: res.staleRows };
+            j.total = res.staleRows;
+            j.deleted = res.rowsDeleted;
+            j.failed = res.failed;
+            j.phase = "done";
+            j.finishedAt = Date.now();
+          }
         }
       } catch (err) {
         console.error(`[DEDUP:${jobId}] ❌ async run threw:`, err);
@@ -1161,9 +1199,15 @@ export class AdminConfigController {
     const since = parseDateOrMs(b.since, false);
     const until = parseDateOrMs(b.until, true);
     if (since == null || until == null) return { ok: false, error: "since and until required (date YYYY-MM-DD or ms)" };
+    const pass: "rows" | "records" = b.pass === "records" ? "records" : "rows";
+    if (pass === "records") {
+      const { diagnoseDuplicateRecords } = await import("@audit/domain/business/dedup-records/mod.ts");
+      const diagnosis = await runInBackgroundLane(() => diagnoseDuplicateRecords(ORG(), since, until));
+      return { ok: true, pass, diagnosis };
+    }
     const { diagnoseDuplicatesLegacy } = await import("@judge/domain/data/judge-repository/mod.ts");
     const diagnosis = await runInBackgroundLane(() => diagnoseDuplicatesLegacy(ORG(), since, until));
-    return { ok: true, diagnosis };
+    return { ok: true, pass, diagnosis };
   }
 
   /** Surgically restore ONE finding wrongly hidden as a duplicate: un-hide it

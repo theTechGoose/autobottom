@@ -193,22 +193,32 @@ function WirePanel() {
 }
 
 function DedupePanel() {
-  // Diagnose (read-only) posts to /api/admin/dedup-diagnose and renders a
-  // verification table inline — never deletes. Run posts to /api/admin/dedup-start,
-  // which kicks off the job on the backend, returns a jobId immediately, and
-  // swaps in a self-polling progress fragment that updates #maint-msg every 2s
-  // until done. The dedup itself runs fire-and-forget in the background lane.
+  // Two SCOPES over the same scan (explicit <select name="pass">):
+  //  • "rows"    — collapse duplicate audit-done-idx ROWS of ONE finding (keep
+  //                the reviewed/judged row, else newest). Never hides a finding.
+  //  • "records" — retire duplicate AUDITS of the same QB record (booking).
+  //                Keeper = 100%-on-entry > reviewed > latest; losers stripped
+  //                from payroll + every queue/stat/index and marked duplicate,
+  //                raw audit body KEPT (recoverable via restore-finding).
   //
-  // Mode is an explicit <select> (not a checkbox): a select ALWAYS submits its
-  // current value, so the execute/dry-run intent can never be silently dropped
-  // the way an unchecked-but-looks-checked checkbox can. Defaults to Dry run.
+  // Diagnose (read-only) posts to /api/admin/dedup-diagnose and renders a
+  // verification table inline. Run posts to /api/admin/dedup-start (jobId +
+  // self-polling progress fragment in #maint-msg). Mode + Scope are explicit
+  // <select>s so intent can never be silently dropped; both default to safe.
   return (
-    <PanelCard title="Deduplicate Findings" subtitle="Collapse duplicate audit-index rows: each finding keeps ONE row (the reviewed/judged one, else the most recent); stale extra rows are removed. Findings are never hidden. Diagnose (read-only) first to verify exactly what will be removed.">
+    <PanelCard title="Deduplicate" subtitle="Two scopes. 'Index rows — per audit' collapses duplicate index rows of ONE audit (never hides anything). 'Whole audits — per record' retires duplicate AUDITS of the same booking (record ID): keeper is 100%-on-entry, else reviewed, else latest; losers are pulled from payroll + all queues, raw audit kept. Always Diagnose (read-only) first.">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
         <div class="sf"><label class="sf-label">From</label><input type="date" name="since" class="sf-input" id="dedupe-since" /></div>
         <div class="sf"><label class="sf-label">To</label><input type="date" name="until" class="sf-input" id="dedupe-until" /></div>
       </div>
       <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;">
+        <div class="sf">
+          <label class="sf-label">Scope</label>
+          <select name="pass" id="dedupe-pass" class="sf-input" style="min-width:250px;">
+            <option value="rows" selected>Index rows — per audit</option>
+            <option value="records">Whole audits — per record (same booking)</option>
+          </select>
+        </div>
         <div class="sf">
           <label class="sf-label">Mode</label>
           <select name="mode" id="dedupe-mode" class="sf-input" style="min-width:210px;">
@@ -220,19 +230,19 @@ function DedupePanel() {
           class="sf-btn ghost"
           style="padding:8px 16px;"
           hx-post="/api/admin/dedup-diagnose"
-          hx-include="#dedupe-since,#dedupe-until"
+          hx-include="#dedupe-since,#dedupe-until,#dedupe-pass"
           hx-target="#maint-msg"
           hx-swap="innerHTML"
-          title="Read-only. Scans the range and shows exactly which findings would be kept vs removed, under both grouping strategies. Never deletes."
+          title="Read-only. Scans the range and shows exactly what would be kept vs removed for the chosen scope. Never changes anything."
         >Diagnose (read-only)</button>
         <button
           class="sf-btn primary"
           style="padding:8px 16px;"
           hx-post="/api/admin/dedup-start"
-          hx-include="#dedupe-since,#dedupe-until,#dedupe-mode"
+          hx-include="#dedupe-since,#dedupe-until,#dedupe-mode,#dedupe-pass"
           hx-target="#maint-msg"
           hx-swap="innerHTML"
-          hx-confirm="Scan this range for duplicate findings? (deletes only if Mode = Execute)"
+          hx-confirm="Scan this range for duplicates? Nothing changes unless Mode = Execute. With Execute + Scope = Whole audits, losing duplicate audits are retired — payroll rows removed, raw audit kept."
         >Run</button>
       </div>
     </PanelCard>

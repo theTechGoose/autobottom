@@ -1002,17 +1002,17 @@ export function renderSummaryBlock(title: string, subtitle: string, data: Summar
 <div style="margin-bottom:20px;padding:20px 24px;background:${C.cardAlt};border:1px solid ${C.border};border-radius:8px;">
   <p style="margin:0 0 6px 0;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:${C.textMuted};">${esc(title)}</p>
   <p style="margin:0 0 16px 0;font-size:15px;font-weight:600;color:${C.textBright};">${esc(subtitle)}</p>
-  <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+  <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;">
     <tr>
-      <td style="padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Total Audits</td>
+      <td style="width:170px;padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Total Audits</td>
       <td style="padding:6px 0;font-size:13px;font-weight:600;color:${C.textBright};">${data.totalAudits}</td>
     </tr>
     <tr>
-      <td style="padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Average Score</td>
+      <td style="width:170px;padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Average Score</td>
       <td style="padding:6px 0;font-size:13px;font-weight:600;color:${avgColor};">${data.avgScore}%</td>
     </tr>
     <tr>
-      <td style="padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Failed Audits</td>
+      <td style="width:170px;padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Failed Audits</td>
       <td style="padding:6px 0;font-size:13px;font-weight:600;color:${data.failedCount > 0 ? C.red : C.green};">${data.failedCount} (${failedPct}%)</td>
     </tr>
   </table>

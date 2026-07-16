@@ -10,8 +10,12 @@ interface AgentList { agents?: { email: string }[]; }
 export const handler = define.handlers({
   async GET(ctx) {
     try {
+      // Forward `as` so an admin impersonating a manager (?as=<email>) gets
+      // that manager's scoped counts — same convention as audit-history.
+      const asEmail = new URL(ctx.req.url).searchParams.get("as");
+      const qs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
       const [stats, agents] = await Promise.all([
-        apiFetch<ManagerStats>("/manager/api/stats", ctx.req),
+        apiFetch<ManagerStats>(`/manager/api/stats${qs}`, ctx.req),
         apiFetch<AgentList>("/manager/api/agents", ctx.req),
       ]);
       const html = renderToString(

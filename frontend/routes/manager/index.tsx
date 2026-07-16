@@ -7,8 +7,9 @@
  *  has a real element to toggle and a real container to swap detail into —
  *  see frontend/CLAUDE.md Gotcha #1 (HTMX-injected markup never hydrates).
  *
- *  `?as=<email>` is threaded into the Audit-History link only: queue + stats
- *  are org-scoped (not team-scoped), so impersonation doesn't change them. */
+ *  `?as=<email>` is threaded into the Audit-History link AND the queue/stats
+ *  fragment URLs: the queue is team-scoped (manager's department+shift), so
+ *  an admin impersonating a manager must see that manager's queue. */
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 
@@ -16,9 +17,8 @@ export default define.page(function ManagerPortalPage(ctx) {
   const user = ctx.state.user!;
   const url = new URL(ctx.req.url);
   const asEmail = url.searchParams.get("as") ?? "";
-  const auditsHref = asEmail
-    ? `/manager/audits?as=${encodeURIComponent(asEmail)}`
-    : "/manager/audits";
+  const asQs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
+  const auditsHref = `/manager/audits${asQs}`;
 
   return (
     <Layout title="Manager Portal" section="manager" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
@@ -31,14 +31,14 @@ export default define.page(function ManagerPortalPage(ctx) {
       </div>
 
       {/* Stat strip — Total / Pending / Remediated / Agents, refreshed every 10s. */}
-      <div id="manager-stats" hx-get="/api/manager/stats" hx-trigger="load, every 10s" hx-swap="innerHTML" style="margin-bottom:18px;">
+      <div id="manager-stats" hx-get={`/api/manager/stats${asQs}`} hx-trigger="load, every 10s" hx-swap="innerHTML" style="margin-bottom:18px;">
         <div class="stat-grid"><div class="placeholder-card">Loading stats…</div></div>
       </div>
 
       {/* Queue table — initial load + reloaded by the remediate flow's HX-Redirect. */}
       <div class="card" style="padding:14px 18px;">
         <div class="tbl-title" style="margin-bottom:10px;">Remediation Queue</div>
-        <div id="manager-queue" hx-get="/api/manager/queue" hx-trigger="load" hx-swap="innerHTML">
+        <div id="manager-queue" hx-get={`/api/manager/queue${asQs}`} hx-trigger="load" hx-swap="innerHTML">
           <div class="placeholder-card">Loading queue…</div>
         </div>
       </div>

@@ -26,6 +26,10 @@ function softFail<T>(ctx: string, err: unknown, fallback: T): T {
 @Controller("manager/api")
 export class ManagerController {
 
+  /** NOTE: the live route is dispatched from main.ts (AUTH_CONTEXT_HANDLERS →
+   *  handleManagerQueue) — it authenticates the session cookie and scopes the
+   *  queue to the manager's department/shift config. This method is kept for
+   *  swagger discoverability and internal tooling only. */
   @Get("queue") @ReturnedType(ManagerQueueResponse) @Description("List manager queue items")
   async queueList() {
     try {
@@ -63,6 +67,9 @@ export class ManagerController {
     return submitRemediation(ORG(), body.findingId, body.notes, body.username);
   }
 
+  /** NOTE: the live route is dispatched from main.ts (AUTH_CONTEXT_HANDLERS →
+   *  handleManagerStats) — managers get counts over their scoped queue,
+   *  admin/super-manager get org-wide numbers. Kept for swagger/tooling. */
   @Get("stats") @ReturnedType(ManagerStatsResponse) @Description("Manager queue statistics")
   async stats() {
     try {

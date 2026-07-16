@@ -18,7 +18,14 @@ Deno.test("ManagerQueue — empty state renders 'No items in queue'", () => {
 
 Deno.test("ManagerQueue — column headers render", () => {
   const html = renderHTML(renderQueueTable([]));
-  for (const header of ["Finding", "Team Member", "Failed Questions", "Score", "Status", "Action"]) assertContains(html, header);
+  for (const header of ["Finding", "Team Member", "Dept / Shift", "Failed Questions", "Score", "Status", "Action"]) assertContains(html, header);
+});
+
+Deno.test("ManagerQueue — department and shift render, dash when unstamped", () => {
+  const stamped = renderHTML(renderQueueTable([item({ department: "VBA", shift: "PM" })]));
+  assertContains(stamped, "VBA · PM");
+  const unstamped = renderHTML(renderQueueTable([item({})]));
+  assertContains(unstamped, "—");
 });
 
 Deno.test("ManagerQueue — team member shows voName when present", () => {

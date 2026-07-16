@@ -212,6 +212,57 @@ async function handleManagerQueueClear(req: Request): Promise<Response> {
   }
 }
 
+/** Shared auth + scope resolution for /manager/api/queue and /manager/api/stats.
+ *  Managers only ever see their own team's queue (department+shift scope,
+ *  same semantics as audit-history); admins and the super-manager have no
+ *  queue of their own — an admin can impersonate a manager via ?as=<email>
+ *  (same convention as audit-history). Returns a deny Response, or the full
+ *  item list plus the caller's scoped view. */
+async function computeManagerQueueView(req: Request): Promise<
+  Response | { allItems: { status: string }[]; scopedItems: { status: string }[]; orgWide: boolean }
+> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (auth.role !== "manager" && auth.role !== "admin" && auth.role !== "super-manager") {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  const { getManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope } =
+    await import("@manager/domain/data/manager-repository/mod.ts");
+  const allItems = await getManagerQueue(auth.orgId);
+  // Piggyback the bounded lazy enrichment (10 findings/call) so legacy items
+  // converge — NEVER unbounded hydration on an auto-polling path.
+  try { await enrichManagerQueueBatch(auth.orgId, allItems, 10); }
+  catch (err) { console.warn("⚠️ [MANAGER] queue enrichment skipped:", err); }
+  const asEmail = new URL(req.url).searchParams.get("as");
+  const isImpersonating = Boolean(asEmail) && auth.role === "admin";
+  if (auth.role === "manager" || isImpersonating) {
+    const { getManagerScope } = await import("@admin/domain/data/admin-repository/mod.ts");
+    const scope = await getManagerScope(auth.orgId, isImpersonating ? asEmail! : auth.email);
+    return { allItems, scopedItems: filterQueueToManagerScope(allItems, scope), orgWide: false };
+  }
+  // Admin / super-manager without impersonation: no queue of their own.
+  return { allItems, scopedItems: [], orgWide: true };
+}
+
+async function handleManagerQueue(req: Request): Promise<Response> {
+  const view = await computeManagerQueueView(req);
+  if (view instanceof Response) return view;
+  return Response.json({ items: view.scopedItems });
+}
+
+async function handleManagerStats(req: Request): Promise<Response> {
+  const view = await computeManagerQueueView(req);
+  if (view instanceof Response) return view;
+  // Managers get counts over THEIR scoped queue (matches their table);
+  // admin/super-manager get the org-wide remediation numbers.
+  const base = view.orgWide ? view.allItems : view.scopedItems;
+  return Response.json({
+    total: base.length,
+    pending: base.filter((i) => i.status === "pending").length,
+    remediated: base.filter((i) => i.status === "remediated").length,
+  });
+}
+
 async function handleAgentDashboard(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -712,6 +763,8 @@ const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>>
   "/agent/api/me": handleMe,
   "/manager/api/game-state": handleGameState,
   "/manager/api/audit-history": handleManagerAuditHistory,
+  "/manager/api/queue": handleManagerQueue,
+  "/manager/api/stats": handleManagerStats,
   "/manager/api/queue/clear": handleManagerQueueClear,
   "/agent/api/game-state": handleGameState,
   "/agent/api/dashboard": handleAgentDashboard,

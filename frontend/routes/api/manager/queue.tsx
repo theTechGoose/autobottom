@@ -19,6 +19,9 @@ export interface QueueItem {
   failedQuestions?: string[];
   wgs?: boolean;
   mcc?: boolean;
+  department?: string;
+  shift?: string;
+  isPackage?: boolean;
 }
 
 /** Team member display name: enriched voName first, then a real owner email's
@@ -52,10 +55,10 @@ function scoreOf(item: QueueItem): number | null {
 export function renderQueueTable(items: QueueItem[]): JSX.Element {
   return (
     <table class="data-table">
-      <thead><tr><th>Finding</th><th>Team Member</th><th>Failed Questions</th><th>Sale</th><th>Score</th><th>Status</th><th>Action</th></tr></thead>
+      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th><th>Status</th><th>Action</th></tr></thead>
       <tbody>
         {items.length === 0 ? (
-          <tr class="empty-row"><td colSpan={7}>No items in queue</td></tr>
+          <tr class="empty-row"><td colSpan={8}>No items in queue</td></tr>
         ) : items.map((item) => {
           const score = scoreOf(item);
           // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
@@ -96,6 +99,9 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
           >
             <td class="mono">{item.findingId?.slice(0, 8)}</td>
             <td>{teamMemberLabel(item)}</td>
+            <td style="font-size:11px;color:var(--text-muted);white-space:nowrap;">
+              {item.department || "—"}{item.shift ? ` · ${item.shift}` : ""}
+            </td>
             <td>{failsCell}</td>
             <td>{saleCell}</td>
             <td>{scoreCell}</td>
@@ -121,7 +127,11 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
 export const handler = define.handlers({
   async GET(ctx) {
     try {
-      const { items } = await apiFetch<{ items: QueueItem[] }>("/manager/api/queue", ctx.req);
+      // Forward `as` so an admin impersonating a manager (?as=<email>) gets
+      // that manager's scoped queue — same convention as audit-history.
+      const asEmail = new URL(ctx.req.url).searchParams.get("as");
+      const qs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
+      const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${qs}`, ctx.req);
       const html = renderToString(renderQueueTable(items ?? []));
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch {

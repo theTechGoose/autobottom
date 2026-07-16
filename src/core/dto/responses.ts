@@ -106,6 +106,7 @@ export class ManagerAuditHistoryResponse {
   wgsCount = 0;
   mccCount = 0;
   saleUnknownCount = 0;
+  topMissed: unknown[] = [];
   pages = 0;
   page = 0;
   owners: string[] = [];

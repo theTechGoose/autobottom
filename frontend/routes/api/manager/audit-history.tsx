@@ -39,6 +39,8 @@ export interface AuditHistoryData {
   wgsCount?: number;
   mccCount?: number;
   saleUnknownCount?: number;
+  /** Most-missed questions across the filtered window (top 3). */
+  topMissed?: Array<{ header: string; count: number }>;
   pages: number;
   page: number;
   owners: string[];
@@ -89,9 +91,10 @@ function saleTags(item: AuditHistoryItem) {
 /** Render the table + stats + pagination. Used both for SSR (page initial
  *  load) and for HTMX swap on filter change. */
 export function renderAuditHistoryTable(data: AuditHistoryData) {
-  const { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, pages, page } = data;
+  const { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, topMissed, pages, page } = data;
   const filtered = items.length;
   const saleHint = (saleUnknownCount ?? 0) > 0 ? `${saleUnknownCount} pending` : null;
+  const missed = topMissed ?? [];
   return (
     <div>
       <div class="stat-grid" style="margin-bottom:12px;">
@@ -122,6 +125,20 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
           <div class="stat-card-label">Page</div>
         </div>
       </div>
+      {missed.length > 0 && (
+        <div class="card" style="margin-bottom:12px;padding:12px 16px;">
+          <div class="tbl-title" style="margin-bottom:8px;">Most Missed Questions (filtered window)</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            {missed.map((m, i) => (
+              <div key={m.header} style="display:flex;align-items:center;gap:10px;font-size:13px;">
+                <span class="mono" style="color:var(--text-muted);width:18px;">{i + 1}.</span>
+                <span style="flex:1;">{m.header}</span>
+                <span class="pill pill-red">{m.count} {m.count === 1 ? "miss" : "misses"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div class="tbl">
         <table class="data-table">
           <thead>

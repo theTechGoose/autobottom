@@ -44,6 +44,25 @@ Deno.test("ManagerAudits — sale-pending hint renders when legacy rows lack fla
   assertContains(html, "9 pending");
 });
 
+Deno.test("ManagerAudits — most-missed panel renders top questions with counts", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({
+    total: 12,
+    topMissed: [
+      { header: "Confirmed travel dates", count: 7 },
+      { header: "Active Bankruptcy", count: 1 },
+    ],
+  })));
+  assertContains(html, "Most Missed Questions");
+  assertContains(html, "Confirmed travel dates");
+  assertContains(html, "7 misses");
+  assertContains(html, "1 miss");
+});
+
+Deno.test("ManagerAudits — most-missed panel hidden when there are no misses", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 5, topMissed: [] })));
+  assertNotContains(html, "Most Missed Questions");
+});
+
 Deno.test("ManagerAudits — sale tags render per row (WGS + MCC pills)", () => {
   const html = renderHTML(renderAuditHistoryTable(fixture({
     total: 1, page: 1, pages: 1,

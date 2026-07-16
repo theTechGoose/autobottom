@@ -8,6 +8,7 @@
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 import { queryAuditDoneIndex, backfillSaleFlags } from "@audit/domain/data/stats-repository/mod.ts";
+import { queryFailedFindings } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import { withTiming } from "@core/data/firestore/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
@@ -67,6 +68,9 @@ export interface AuditHistoryResult {
   mccCount: number;
   /** Filtered audits whose sale flags aren't backfilled yet (legacy rows). */
   saleUnknownCount: number;
+  /** Most-missed questions across the filtered window (top 3, from
+   *  failed-finding-idx, restricted to the same finding set as total). */
+  topMissed: Array<{ header: string; count: number }>;
   pages: number;
   page: number;
   owners: string[];
@@ -245,6 +249,25 @@ async function _getAuditHistoryRaw(
   const wgsCount = filtered.filter((c) => c.wgs === true).length;
   const mccCount = filtered.filter((c) => c.mcc === true).length;
   const saleUnknownCount = filtered.filter((c) => c.wgs === undefined).length;
+
+  // Most-missed questions: one failed-finding-idx row per failed question per
+  // audit, counted only for findings in the SAME filtered set as total /
+  // avgScore — so the team-member/dept/shift/sale/score filters all apply.
+  let topMissed: Array<{ header: string; count: number }> = [];
+  try {
+    const failedRows = await queryFailedFindings(orgId, since, until);
+    const inSet = new Set(filtered.map((c) => c.findingId));
+    const counts = new Map<string, { header: string; count: number }>();
+    for (const r of failedRows) {
+      if (!inSet.has(r.findingId)) continue;
+      const cur = counts.get(r.questionKey) ?? { header: r.header, count: 0 };
+      cur.count++;
+      counts.set(r.questionKey, cur);
+    }
+    topMissed = [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 3);
+  } catch (err) {
+    console.warn("⚠️ [MANAGER-AUDITS] top-missed query skipped:", err);
+  }
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageSlice = filtered.slice((page - 1) * limit, page * limit);
   const hydratedPage = await hydrateMissing(orgId, pageSlice);
@@ -257,5 +280,5 @@ async function _getAuditHistoryRaw(
 
   console.log(`🔍 [MANAGER-AUDITS] ${email} role=${role} → ${total}/${inWindow.length} in window, page=${page}/${pages}`);
 
-  return { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, pages, page, owners, shifts, departments };
+  return { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, topMissed, pages, page, owners, shifts, departments };
 }

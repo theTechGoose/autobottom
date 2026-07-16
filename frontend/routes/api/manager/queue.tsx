@@ -22,6 +22,9 @@ export interface QueueItem {
   department?: string;
   shift?: string;
   isPackage?: boolean;
+  remediatedBy?: string;
+  remediatedAt?: number;
+  notes?: string;
 }
 
 /** Team member display name: enriched voName first, then a real owner email's
@@ -49,16 +52,22 @@ function scoreOf(item: QueueItem): number | null {
   return Math.max(0, Math.min(100, Math.round((1 - failed / item.totalQuestions) * 100)));
 }
 
+const fmtWhen = (ms?: number) =>
+  ms ? new Date(ms).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+
 /** Pure render of the queue table. Team Member = enriched voName (never the
  *  raw "api" owner token); Failed Questions = first two + a "+N more" hint;
- *  Score = derived pass-rate (or a "N failed" fallback when totals are unknown). */
-export function renderQueueTable(items: QueueItem[]): JSX.Element {
+ *  Score = derived pass-rate (or a "N failed" fallback when totals are unknown).
+ *  `completed` mode (the Completed tab) swaps Status/Action for who
+ *  remediated the item and when. */
+export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean } = {}): JSX.Element {
+  const completed = !!opts.completed;
   return (
     <table class="data-table">
-      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th><th>Status</th><th>Action</th></tr></thead>
+      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th>{completed ? <><th>Remediated By</th><th>When</th></> : <><th>Status</th><th>Action</th></>}</tr></thead>
       <tbody>
         {items.length === 0 ? (
-          <tr class="empty-row"><td colSpan={8}>No items in queue</td></tr>
+          <tr class="empty-row"><td colSpan={8}>{completed ? "No completed remediations" : "No items in queue"}</td></tr>
         ) : items.map((item) => {
           const score = scoreOf(item);
           // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
@@ -105,6 +114,10 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
             <td>{failsCell}</td>
             <td>{saleCell}</td>
             <td>{scoreCell}</td>
+            {completed ? <>
+              <td style="font-size:12px;">{item.remediatedBy || "\u2014"}</td>
+              <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtWhen(item.remediatedAt)}</td>
+            </> : <>
             <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>
             <td {...{ "hx-on:click": "event.stopPropagation()" }}>
               {/* Carry the id on a data-attribute (Preact attribute-escapes it)
@@ -116,6 +129,7 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
                 {...{ "hx-on:click": "event.stopPropagation();document.getElementById('remediate-modal')?.classList.add('open');document.getElementById('rem-findingId').value=this.dataset.findingId" }}
               >Remediate</button>
             </td>
+            </>}
           </tr>
           );
         })}
@@ -132,7 +146,10 @@ export const handler = define.handlers({
       const asEmail = new URL(ctx.req.url).searchParams.get("as");
       const qs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
       const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${qs}`, ctx.req);
-      const html = renderToString(renderQueueTable(items ?? []));
+      // The Queue tab shows open work only — completed (remediated) items
+      // live on the /manager/completed tab.
+      const pending = (items ?? []).filter((i) => i.status !== "remediated");
+      const html = renderToString(renderQueueTable(pending));
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch {
       return new Response(

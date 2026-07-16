@@ -125,3 +125,30 @@ Deno.test("ManagerQueue — remediated item shows green pill", () => {
   assertContains(html, "pill-green");
   assertContains(html, "remediated");
 });
+
+// ── Completed mode (the /manager/completed tab) ───────────────────────────────
+
+Deno.test("ManagerQueue completed — swaps Status/Action for Remediated By/When", () => {
+  const html = renderHTML(renderQueueTable([], { completed: true }));
+  assertContains(html, "Remediated By");
+  assertContains(html, "When");
+  assertNotContains(html, "Status");
+  assertNotContains(html, "Action");
+  assertContains(html, "No completed remediations");
+});
+
+Deno.test("ManagerQueue completed — shows who remediated and when, no Remediate button", () => {
+  const html = renderHTML(renderQueueTable(
+    [item({ status: "remediated", remediatedBy: "haleys@monsterrg.com", remediatedAt: Date.UTC(2026, 6, 15, 14, 30) })],
+    { completed: true },
+  ));
+  assertContains(html, "haleys@monsterrg.com");
+  assertContains(html, "Jul 15");
+  assertNotContains(html, "Remediate<");
+  assertNotContains(html, "remediate-modal");
+});
+
+Deno.test("ManagerQueue completed — dash when remediation metadata is missing", () => {
+  const html = renderHTML(renderQueueTable([item({ status: "remediated" })], { completed: true }));
+  assertContains(html, "—");
+});

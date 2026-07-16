@@ -21,6 +21,9 @@ interface SbItem {
   iconColor?: string;   // icon foreground (var)
   href?: string;        // navigation link
   modalId?: string;     // modal trigger
+  /** HTMX fragment URL for a live badge (e.g. pending-count chip) rendered
+   *  after the label. Polled every 10s, same cadence as the stat cards. */
+  badgeUrl?: string;
 }
 
 interface SbSection {
@@ -41,6 +44,9 @@ function SbLink({ item, pathname }: { item: SbItem; section: string; pathname?: 
       <a href={item.href} class={`sb-link ${isActive ? "active" : ""}`}>
         <div style={iconStyle}>{item.icon(15)}</div>
         <span class="sb-link-label">{item.label}</span>
+        {item.badgeUrl && (
+          <span hx-get={item.badgeUrl} hx-trigger="load, every 10s" hx-swap="innerHTML" style="display:inline-flex;margin-left:auto;"></span>
+        )}
         <span class="sb-link-arrow">{Icon.chevronRight(12)}</span>
       </a>
     );
@@ -129,7 +135,8 @@ const JUDGE_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
 ]}];
 
 const MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
-  { label: "Queue", icon: Icon.clipboardList, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager" },
+  { label: "Queue", icon: Icon.clipboardList, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager", badgeUrl: "/api/manager/queue-badge" },
+  { label: "Completed", icon: Icon.checkCircle, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/completed" },
   { label: "Audit History", icon: Icon.barChart, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/audits" },
 ]}];
 

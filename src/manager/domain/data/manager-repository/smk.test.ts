@@ -163,8 +163,10 @@ Deno.test({ name: "populateManagerQueue — enriches from the finding (voName + 
 Deno.test({ name: "enrichManagerQueueBatch — backfills stale items and marks missing findings checked", ...kvOpts, fn: async () => {
   resetFirestoreCredentials();
   const org = ("test-enrich-batch-" + crypto.randomUUID().slice(0, 8)) as OrgId;
-  // Two pre-enrichment items (no voName field at all); one finding is gone.
-  await setStored("manager-queue", org, ["f-e1"], { findingId: "f-e1", addedAt: 1, status: "pending", owner: "api" });
+  // A legacy item that already carries voName (old write path) but no
+  // failedQuestions — staleness must key off failedQuestions, not voName —
+  // plus one whose finding is gone.
+  await setStored("manager-queue", org, ["f-e1"], { findingId: "f-e1", addedAt: 1, status: "pending", owner: "api", voName: "Stale Cached" });
   await setStored("manager-queue", org, ["f-gone"], { findingId: "f-gone", addedAt: 2, status: "pending", owner: "api" });
   await saveFinding(org, {
     id: "f-e1",
@@ -178,7 +180,7 @@ Deno.test({ name: "enrichManagerQueueBatch — backfills stale items and marks m
   assertEquals(e1.voName, "John Smith");
   assertEquals(e1.failedQuestions, ["Q1"]);
   const gone = after.find((i) => i.findingId === "f-gone")!;
-  assertEquals(gone.voName, "", "missing finding must be marked checked so it isn't retried forever");
+  assertEquals(gone.failedQuestions, [], "missing finding must be marked checked so it isn't retried forever");
   // Second pass: everything enriched — nothing left to do.
   assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 10), 0);
 }});

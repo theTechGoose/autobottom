@@ -62,21 +62,25 @@ export async function getManagerQueue(orgId: OrgId): Promise<ManagerQueueItem[]>
   return await listStored<ManagerQueueItem>("manager-queue", orgId);
 }
 
-/** Lazily enrich queue items that predate voName/failedQuestions, at most
+/** Lazily enrich queue items that predate the failedQuestions denorm, at most
  *  `max` per call so an auto-refreshing dashboard can never trigger unbounded
- *  finding hydration (that pattern has crashed prod before). Mutates the
- *  passed items in place AND persists, so the queue converges one poll at a
- *  time. Items whose finding is gone get voName="" to stop re-tries. */
+ *  finding hydration (that pattern has crashed prod before). Staleness keys
+ *  off `failedQuestions` — many legacy items already carry voName (an old
+ *  write path stored it), but ONLY enrichment writes failedQuestions. Mutates
+ *  the passed items in place AND persists, so the queue converges one poll at
+ *  a time. Items whose finding is gone get an empty marker to stop re-tries. */
 export async function enrichManagerQueueBatch(orgId: OrgId, items: ManagerQueueItem[], max = 10): Promise<number> {
-  const stale = items.filter((i) => i.voName === undefined && i.findingId).slice(0, max);
+  const stale = items.filter((i) => i.failedQuestions === undefined && i.findingId).slice(0, max);
   if (stale.length === 0) return 0;
   await Promise.all(stale.map(async (item) => {
     try {
       const finding = await getFinding(orgId, item.findingId);
-      // Finding truly gone → persist voName="" so it stops matching the
-      // filter; a transient read/write error throws and leaves the item
-      // untouched, so the next poll retries it.
-      const patch = finding ? enrichmentFromFinding(finding) : { voName: "" };
+      // Finding truly gone → persist an empty marker (keeping any existing
+      // voName) so it stops matching the filter; a transient read/write error
+      // throws and leaves the item untouched, so the next poll retries it.
+      const patch = finding
+        ? enrichmentFromFinding(finding)
+        : { voName: item.voName ?? "", failedQuestions: [] };
       Object.assign(item, patch);
       await setStored("manager-queue", orgId, [item.findingId], { ...item });
     } catch { /* transient — retried on the next poll */ }

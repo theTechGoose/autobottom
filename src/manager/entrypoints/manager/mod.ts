@@ -5,7 +5,7 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import { ManagerQueueResponse, ManagerStatsResponse, OkResponse, OkMessageResponse, AgentListResponse, MessageResponse, FindingResponse, ManagerAuditHistoryResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, RemediateRequest, CreateAgentRequest, DeleteEmailRequest, PrefabSubscriptionsRequest } from "@core/dto/requests.ts";
-import { getManagerQueue, submitRemediation, getManagerStats } from "@manager/domain/data/manager-repository/mod.ts";
+import { getManagerQueue, submitRemediation, enrichManagerQueueBatch } from "@manager/domain/data/manager-repository/mod.ts";
 import { getFinding, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
 import { createUser, deleteUser, listUsers } from "@core/business/auth/mod.ts";
 import { getPrefabSubscriptions, savePrefabSubscriptions } from "@events/domain/data/events-repository/mod.ts";
@@ -28,7 +28,15 @@ export class ManagerController {
 
   @Get("queue") @ReturnedType(ManagerQueueResponse) @Description("List manager queue items")
   async queueList() {
-    try { return { items: await getManagerQueue(ORG()) }; }
+    try {
+      const items = await getManagerQueue(ORG());
+      // Lazy display backfill: pre-enrichment items lack voName/failedQuestions.
+      // Bounded to 10 findings per poll (auto-refresh drives convergence) —
+      // NEVER unbounded hydration on an auto-loading endpoint.
+      try { await enrichManagerQueueBatch(ORG(), items, 10); }
+      catch (err) { console.warn("⚠️ [MANAGER] queue enrichment skipped:", err); }
+      return { items };
+    }
     catch (err) { return softFail("queueList", err, { items: [], retry: true }); }
   }
 
@@ -57,7 +65,20 @@ export class ManagerController {
 
   @Get("stats") @ReturnedType(ManagerStatsResponse) @Description("Manager queue statistics")
   async stats() {
-    try { return await getManagerStats(ORG()); }
+    try {
+      const items = await getManagerQueue(ORG());
+      // Piggyback the lazy queue enrichment on the stats poller (every 10s
+      // while a manager dashboard is open) so pre-enrichment items converge
+      // even though the queue table itself only loads once per page view.
+      // Bounded batch — never unbounded hydration on an auto-loading path.
+      try { await enrichManagerQueueBatch(ORG(), items, 10); }
+      catch (err) { console.warn("⚠️ [MANAGER] stats enrichment skipped:", err); }
+      return {
+        total: items.length,
+        pending: items.filter((i) => i.status === "pending").length,
+        remediated: items.filter((i) => i.status === "remediated").length,
+      };
+    }
     catch (err) { return softFail("stats", err, { pending: 0, decided: 0, total: 0, retry: true }); }
   }
 

@@ -1,6 +1,6 @@
 /** Smoke tests for manager repository. */
 import { assertEquals, assert } from "#assert";
-import { populateManagerQueue, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue } from "./mod.ts";
+import { populateManagerQueue, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue, enrichManagerQueueBatch } from "./mod.ts";
 import { setStored, resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -133,4 +133,61 @@ Deno.test({ name: "clearManagerQueue — package items match by OfficeName as de
   const res = await clearManagerQueue(org, { department: "Orlando Office" });
   assertEquals(res.matched, 1);
   assertEquals(res.deleted, 1);
+}});
+
+// ── Queue enrichment (voName + failed questions for the queue table) ─────────
+
+Deno.test({ name: "populateManagerQueue — enriches from the finding (voName + failed questions)", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-enrich-pop-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await saveFinding(org, {
+    id: "f-rich",
+    owner: "api",
+    recordingId: "27501909",
+    record: { VoName: "PUJ - Jane Doe", RecordId: 460304 },
+    answeredQuestions: [
+      { header: "Greeted the guest", answer: "Yes" },
+      { header: "Confirmed travel dates", answer: "No" },
+      { header: "Mentioned resort fees", answer: "No" },
+    ],
+  });
+  await populateManagerQueue(org, "f-rich");
+  const [item] = await getManagerQueue(org);
+  assertEquals(item.voName, "Jane Doe");
+  assertEquals(item.failedQuestions, ["Confirmed travel dates", "Mentioned resort fees"]);
+  assertEquals(item.failedCount, 2);
+  assertEquals(item.totalQuestions, 3);
+  assertEquals(item.recordId, "460304");
+}});
+
+Deno.test({ name: "enrichManagerQueueBatch — backfills stale items and marks missing findings checked", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-enrich-batch-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  // Two pre-enrichment items (no voName field at all); one finding is gone.
+  await setStored("manager-queue", org, ["f-e1"], { findingId: "f-e1", addedAt: 1, status: "pending", owner: "api" });
+  await setStored("manager-queue", org, ["f-gone"], { findingId: "f-gone", addedAt: 2, status: "pending", owner: "api" });
+  await saveFinding(org, {
+    id: "f-e1",
+    record: { VoName: "MBJ - John Smith", RecordId: 1 },
+    answeredQuestions: [{ header: "Q1", answer: "No" }],
+  });
+  const n = await enrichManagerQueueBatch(org, await getManagerQueue(org), 10);
+  assertEquals(n, 2);
+  const after = await getManagerQueue(org);
+  const e1 = after.find((i) => i.findingId === "f-e1")!;
+  assertEquals(e1.voName, "John Smith");
+  assertEquals(e1.failedQuestions, ["Q1"]);
+  const gone = after.find((i) => i.findingId === "f-gone")!;
+  assertEquals(gone.voName, "", "missing finding must be marked checked so it isn't retried forever");
+  // Second pass: everything enriched — nothing left to do.
+  assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 10), 0);
+}});
+
+Deno.test({ name: "enrichManagerQueueBatch — respects the max bound", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-enrich-max-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  for (let i = 0; i < 5; i++) {
+    await setStored("manager-queue", org, [`f-m${i}`], { findingId: `f-m${i}`, addedAt: i, status: "pending" });
+  }
+  assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 2), 2);
 }});

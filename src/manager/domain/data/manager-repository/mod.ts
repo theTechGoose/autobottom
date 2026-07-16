@@ -13,20 +13,75 @@ export interface ManagerQueueItem {
   addedAt: number;
   status: string;
   owner?: string;
+  /** Team member display name (VoName minus the "DEST - " prefix). Empty
+   *  string means "enriched, but the record has no VoName" — undefined means
+   *  the item predates enrichment and is still pending a lazy backfill. */
+  voName?: string;
   recordId?: string;
   recordingId?: string;
   totalQuestions?: number;
   failedCount?: number;
+  /** Headers of the currently-failing (answer "No") questions, denormalized
+   *  so the queue table can list them without hydrating findings per render. */
+  failedQuestions?: string[];
   completedAt?: number;
   jobTimestamp?: string;
 }
 
+/** Queue-display fields derivable from the finding doc. Always sets voName
+ *  (possibly "") so enriched items stop matching the lazy-backfill filter. */
+function enrichmentFromFinding(finding: Record<string, unknown>): Partial<ManagerQueueItem> {
+  const rec = (finding.record ?? {}) as Record<string, unknown>;
+  const rawVo = String(rec.VoName ?? "");
+  const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
+  const answered = (finding.answeredQuestions ?? []) as Array<{ header?: string; answer?: string }>;
+  const failed = answered.filter((q) => String(q.answer ?? "").trim().toLowerCase() === "no");
+  return {
+    owner: (finding.owner as string | undefined) ?? "",
+    voName,
+    recordId: String(rec.RecordId ?? rec.id ?? ""),
+    recordingId: (finding.recordingId as string | undefined) ?? "",
+    totalQuestions: answered.length,
+    failedQuestions: failed.map((q) => String(q.header ?? "")).filter(Boolean),
+  };
+}
+
 export async function populateManagerQueue(orgId: OrgId, findingId: string): Promise<void> {
-  await setStored("manager-queue", orgId, [findingId], { findingId, addedAt: Date.now(), status: "pending" });
+  const item: ManagerQueueItem = { findingId, addedAt: Date.now(), status: "pending" };
+  try {
+    const finding = await getFinding(orgId, findingId);
+    if (finding) {
+      const enrich = enrichmentFromFinding(finding);
+      Object.assign(item, enrich, { failedCount: enrich.failedQuestions?.length ?? 0 });
+    }
+  } catch { /* enrichment is display-only — queue the item regardless */ }
+  await setStored("manager-queue", orgId, [findingId], item);
 }
 
 export async function getManagerQueue(orgId: OrgId): Promise<ManagerQueueItem[]> {
   return await listStored<ManagerQueueItem>("manager-queue", orgId);
+}
+
+/** Lazily enrich queue items that predate voName/failedQuestions, at most
+ *  `max` per call so an auto-refreshing dashboard can never trigger unbounded
+ *  finding hydration (that pattern has crashed prod before). Mutates the
+ *  passed items in place AND persists, so the queue converges one poll at a
+ *  time. Items whose finding is gone get voName="" to stop re-tries. */
+export async function enrichManagerQueueBatch(orgId: OrgId, items: ManagerQueueItem[], max = 10): Promise<number> {
+  const stale = items.filter((i) => i.voName === undefined && i.findingId).slice(0, max);
+  if (stale.length === 0) return 0;
+  await Promise.all(stale.map(async (item) => {
+    try {
+      const finding = await getFinding(orgId, item.findingId);
+      // Finding truly gone → persist voName="" so it stops matching the
+      // filter; a transient read/write error throws and leaves the item
+      // untouched, so the next poll retries it.
+      const patch = finding ? enrichmentFromFinding(finding) : { voName: "" };
+      Object.assign(item, patch);
+      await setStored("manager-queue", orgId, [item.findingId], { ...item });
+    } catch { /* transient — retried on the next poll */ }
+  }));
+  return stale.length;
 }
 
 // ── Data maintenance: clear queue items by team / date ───────────────────────
@@ -201,18 +256,13 @@ export async function backfillManagerQueue(orgId: OrgId): Promise<{ added: numbe
     const finding = await getFinding(orgId, findingId);
     if (!finding) continue;
 
-    const totalQuestions = finding.answeredQuestions?.length ?? 0;
     const completedAt = decisions.reduce((max, d) => Math.max(max, d.decidedAt), 0);
-    const rec = (finding.record as Record<string, unknown> | undefined) ?? {};
 
     const queueItem: ManagerQueueItem = {
       findingId,
       addedAt: Date.now(),
       status: "pending",
-      owner: (finding.owner as string | undefined) ?? "",
-      recordId: (rec.RecordId as string | undefined) ?? (rec.id as string | undefined) ?? "",
-      recordingId: (finding.recordingId as string | undefined) ?? "",
-      totalQuestions,
+      ...enrichmentFromFinding(finding),
       failedCount: confirmedFailures.length,
       completedAt,
       jobTimestamp: (finding.job as { timestamp?: string } | undefined)?.timestamp ?? "",

@@ -12,9 +12,19 @@ import type { JSX } from "preact";
 export interface QueueItem {
   findingId: string;
   owner?: string;
+  voName?: string;
   status?: string;
   failedCount?: number;
   totalQuestions?: number;
+  failedQuestions?: string[];
+}
+
+/** Team member display name: enriched voName first, then a real owner email's
+ *  local-part — never the "api" placeholder the pipeline writes for API audits. */
+function teamMemberLabel(item: QueueItem): string {
+  if (item.voName) return item.voName;
+  if (item.owner && item.owner !== "api") return item.owner.split("@")[0];
+  return "—";
 }
 
 function pillColor(score: number | null) {
@@ -34,15 +44,16 @@ function scoreOf(item: QueueItem): number | null {
   return Math.max(0, Math.min(100, Math.round((1 - failed / item.totalQuestions) * 100)));
 }
 
-/** Pure render of the queue table. Agent column = `owner`; Score = derived
- *  pass-rate (or a "N failed" fallback when totals are unknown). */
+/** Pure render of the queue table. Team Member = enriched voName (never the
+ *  raw "api" owner token); Failed Questions = first two + a "+N more" hint;
+ *  Score = derived pass-rate (or a "N failed" fallback when totals are unknown). */
 export function renderQueueTable(items: QueueItem[]): JSX.Element {
   return (
     <table class="data-table">
-      <thead><tr><th>Finding</th><th>Agent</th><th>Score</th><th>Status</th><th>Action</th></tr></thead>
+      <thead><tr><th>Finding</th><th>Team Member</th><th>Failed Questions</th><th>Score</th><th>Status</th><th>Action</th></tr></thead>
       <tbody>
         {items.length === 0 ? (
-          <tr class="empty-row"><td colSpan={5}>No items in queue</td></tr>
+          <tr class="empty-row"><td colSpan={6}>No items in queue</td></tr>
         ) : items.map((item) => {
           const score = scoreOf(item);
           // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
@@ -52,6 +63,17 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
             : item.failedCount != null
               ? <span class="pill pill-red">{item.failedCount} failed</span>
               : "\u2014";
+          const fails = item.failedQuestions ?? [];
+          const failsCell = fails.length === 0
+            ? <span style="color:var(--text-dim);font-size:11px;">\u2014</span>
+            : (
+              <div style="font-size:11px;color:var(--text-muted);max-width:420px;">
+                {fails.slice(0, 2).map((q) => (
+                  <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{q}</div>
+                ))}
+                {fails.length > 2 && <div style="color:var(--text-dim);">+{fails.length - 2} more</div>}
+              </div>
+            );
           return (
           <tr
             key={item.findingId}
@@ -63,7 +85,8 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
             {...{ "hx-on:click": "document.getElementById('finding-detail-modal')?.classList.add('open')" }}
           >
             <td class="mono">{item.findingId?.slice(0, 8)}</td>
-            <td>{item.owner ?? "\u2014"}</td>
+            <td>{teamMemberLabel(item)}</td>
+            <td>{failsCell}</td>
             <td>{scoreCell}</td>
             <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>
             <td {...{ "hx-on:click": "event.stopPropagation()" }}>

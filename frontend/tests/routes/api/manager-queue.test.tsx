@@ -18,12 +18,32 @@ Deno.test("ManagerQueue — empty state renders 'No items in queue'", () => {
 
 Deno.test("ManagerQueue — column headers render", () => {
   const html = renderHTML(renderQueueTable([]));
-  for (const header of ["Finding", "Agent", "Score", "Status", "Action"]) assertContains(html, header);
+  for (const header of ["Finding", "Team Member", "Failed Questions", "Score", "Status", "Action"]) assertContains(html, header);
 });
 
-Deno.test("ManagerQueue — agent column shows owner (not blank)", () => {
+Deno.test("ManagerQueue — team member shows voName when present", () => {
+  const html = renderHTML(renderQueueTable([item({ owner: "api", voName: "Jane Doe" })]));
+  assertContains(html, "Jane Doe");
+});
+
+Deno.test("ManagerQueue — falls back to owner email local-part when voName missing", () => {
   const html = renderHTML(renderQueueTable([item({ owner: "jane@team.com" })]));
-  assertContains(html, "jane@team.com");
+  assertContains(html, "jane");
+});
+
+Deno.test("ManagerQueue — 'api' owner with no voName renders an em-dash, never 'api'", () => {
+  const html = renderHTML(renderQueueTable([item({ owner: "api" })]));
+  assertNotContains(html, ">api<");
+});
+
+Deno.test("ManagerQueue — failed questions list shows first two + more-count", () => {
+  const html = renderHTML(renderQueueTable([item({
+    failedCount: 3, failedQuestions: ["Q one", "Q two", "Q three"],
+  })]));
+  assertContains(html, "Q one");
+  assertContains(html, "Q two");
+  assertNotContains(html, "Q three");
+  assertContains(html, "+1 more");
 });
 
 Deno.test("ManagerQueue — score derived from failed/total", () => {

@@ -205,12 +205,11 @@ async function _getAuditHistoryRaw(
   const owners = [...new Set(inWindow.map((c) => c.voName || c.owner).filter(Boolean))].sort() as string[];
   const shifts = [...new Set(inWindow.map((c) => c.shift).filter(Boolean))].sort() as string[];
   const departments = [...new Set(inWindow.map((c) => c.department).filter(Boolean))].sort() as string[];
-  // "Failures first" sort: any score below 100% floats to the top, most
-  // recent first within each group. Sorts the WHOLE filtered window before
-  // pagination so failures land on page 1 no matter how big the window is.
+  // "Lowest score first" sort: worst scores at the top, unscored rows at the
+  // bottom, most recent first on ties. Sorts the WHOLE filtered window before
+  // pagination so the worst audits land on page 1 no matter the window size.
   if (filters.sort === "fails") {
-    const isFail = (c: AuditHistoryRow) => c.score != null && c.score < 100;
-    filtered.sort((a, b) => (Number(isFail(b)) - Number(isFail(a))) || (b.ts - a.ts));
+    filtered.sort((a, b) => ((a.score ?? Infinity) - (b.score ?? Infinity)) || (b.ts - a.ts));
   }
 
   const total = filtered.length;

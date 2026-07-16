@@ -223,7 +223,7 @@ export default define.page(async function ManagerAuditsPage(ctx) {
           <label>Sort</label>
           <select name="sort">
             <option value="" selected={sort === ""}>Most recent</option>
-            <option value="fails" selected={sort === "fails"}>Failures first</option>
+            <option value="fails" selected={sort === "fails"}>Lowest score first</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0;">

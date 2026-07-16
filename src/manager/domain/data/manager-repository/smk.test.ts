@@ -1,6 +1,7 @@
 /** Smoke tests for manager repository. */
 import { assertEquals, assert } from "#assert";
-import { populateManagerQueue, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue, enrichManagerQueueBatch } from "./mod.ts";
+import { populateManagerQueue, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope } from "./mod.ts";
+import type { ManagerQueueItem } from "./mod.ts";
 import { setStored, resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
@@ -144,7 +145,7 @@ Deno.test({ name: "populateManagerQueue — enriches from the finding (voName + 
     id: "f-rich",
     owner: "api",
     recordingId: "27501909",
-    record: { VoName: "PUJ - Jane Doe", RecordId: 460304 },
+    record: { VoName: "PUJ - Jane Doe", RecordId: 460304, ActivatingOffice: "PUJ", Shift: "AM" },
     answeredQuestions: [
       { header: "Greeted the guest", answer: "Yes" },
       { header: "Confirmed travel dates", answer: "No" },
@@ -158,6 +159,25 @@ Deno.test({ name: "populateManagerQueue — enriches from the finding (voName + 
   assertEquals(item.failedCount, 2);
   assertEquals(item.totalQuestions, 3);
   assertEquals(item.recordId, "460304");
+  assertEquals(item.department, "PUJ");
+  assertEquals(item.shift, "AM");
+  assertEquals(item.isPackage, false);
+}});
+
+Deno.test({ name: "populateManagerQueue — package finding stamps OfficeName as department, no shift", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-enrich-pkg-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await saveFinding(org, {
+    id: "f-pkg-stamp",
+    recordingIdField: "GenieNumber",
+    record: { VoName: "ORL - Pat Kim", RecordId: 7, OfficeName: "Orlando Office", Shift: "AM" },
+    answeredQuestions: [],
+  });
+  await populateManagerQueue(org, "f-pkg-stamp");
+  const [item] = await getManagerQueue(org);
+  assertEquals(item.department, "Orlando Office");
+  assertEquals(item.shift, "");
+  assertEquals(item.isPackage, true);
 }});
 
 Deno.test({ name: "enrichManagerQueueBatch — backfills stale items and marks missing findings checked", ...kvOpts, fn: async () => {
@@ -181,9 +201,73 @@ Deno.test({ name: "enrichManagerQueueBatch — backfills stale items and marks m
   assertEquals(e1.failedQuestions, ["Q1"]);
   const gone = after.find((i) => i.findingId === "f-gone")!;
   assertEquals(gone.failedQuestions, [], "missing finding must be marked checked so it isn't retried forever");
+  assertEquals(gone.department, "", "missing finding must get the empty department marker too");
   // Second pass: everything enriched — nothing left to do.
   assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 10), 0);
 }});
+
+Deno.test({ name: "enrichManagerQueueBatch — re-enriches items missing only department (scoping backfill)", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-enrich-dept-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  // Fully enriched under the OLD marker (failedQuestions + wgs set) but no
+  // department — must count as stale so scoping data converges.
+  await setStored("manager-queue", org, ["f-d1"], {
+    findingId: "f-d1", addedAt: 1, status: "pending", owner: "api",
+    voName: "Old Enriched", failedQuestions: ["Q1"], wgs: false, mcc: false,
+  });
+  await saveFinding(org, {
+    id: "f-d1",
+    record: { VoName: "VBA - Old Enriched", RecordId: 2, ActivatingOffice: "VBA", Shift: "PM" },
+    answeredQuestions: [{ header: "Q1", answer: "No" }],
+  });
+  assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 10), 1);
+  const [item] = await getManagerQueue(org);
+  assertEquals(item.department, "VBA");
+  assertEquals(item.shift, "PM");
+  assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 10), 0);
+}});
+
+// ── Scope filter (manager queue visibility) ───────────────────────────────────
+
+const qi = (o: Partial<ManagerQueueItem>): ManagerQueueItem =>
+  ({ findingId: "f", addedAt: 0, status: "pending", ...o });
+
+Deno.test("filterQueueToManagerScope — department + shift scoping", () => {
+  const items = [
+    qi({ findingId: "vba-pm", department: "VBA", shift: "PM" }),
+    qi({ findingId: "vba-am", department: "VBA", shift: "AM" }),
+    qi({ findingId: "dsmb-am", department: "DS MB", shift: "AM" }),
+  ];
+  const out = filterQueueToManagerScope(items, { departments: ["VBA"], shifts: ["PM"] });
+  assertEquals(out.map((i) => i.findingId), ["vba-pm"]);
+});
+
+Deno.test("filterQueueToManagerScope — unstamped items are hidden", () => {
+  const items = [
+    qi({ findingId: "stamped", department: "VBA", shift: "PM" }),
+    qi({ findingId: "unstamped" }),
+  ];
+  const out = filterQueueToManagerScope(items, { departments: [], shifts: [] });
+  assertEquals(out.map((i) => i.findingId), ["stamped"]);
+});
+
+Deno.test("filterQueueToManagerScope — packages skip the shift check", () => {
+  const items = [
+    qi({ findingId: "pkg", department: "VBA", shift: "", isPackage: true }),
+    qi({ findingId: "leg-wrong-shift", department: "VBA", shift: "AM" }),
+  ];
+  const out = filterQueueToManagerScope(items, { departments: ["VBA"], shifts: ["PM"] });
+  assertEquals(out.map((i) => i.findingId), ["pkg"]);
+});
+
+Deno.test("filterQueueToManagerScope — empty scope lists mean no restriction on that axis", () => {
+  const items = [
+    qi({ findingId: "a", department: "VBA", shift: "PM" }),
+    qi({ findingId: "b", department: "DS MB", shift: "AM" }),
+  ];
+  const out = filterQueueToManagerScope(items, { departments: [], shifts: [] });
+  assertEquals(out.length, 2);
+});
 
 Deno.test({ name: "enrichManagerQueueBatch — respects the max bound", ...kvOpts, fn: async () => {
   resetFirestoreCredentials();

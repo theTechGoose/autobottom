@@ -27,6 +27,13 @@ export interface ManagerQueueItem {
   /** WGS/MCC sale flags (saleFlagsFromFinding); undefined until enriched. */
   wgs?: boolean;
   mcc?: boolean;
+  /** Department (ActivatingOffice, or OfficeName for packages) + shift,
+   *  denormalized so the queue can be scoped to a manager's team without
+   *  hydrating findings per request. Empty string means "enriched, but the
+   *  record has no value" — undefined means pending the lazy backfill. */
+  department?: string;
+  shift?: string;
+  isPackage?: boolean;
   completedAt?: number;
   jobTimestamp?: string;
 }
@@ -39,6 +46,11 @@ function enrichmentFromFinding(finding: Record<string, unknown>): Partial<Manage
   const voName = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
   const answered = (finding.answeredQuestions ?? []) as Array<{ header?: string; answer?: string }>;
   const failed = answered.filter((q) => String(q.answer ?? "").trim().toLowerCase() === "no");
+  // Same department/shift derivation as audit-history hydrateMissing():
+  // packages carry OfficeName and have no shift; date legs carry
+  // ActivatingOffice + Shift. Always set (possibly "") so enriched items
+  // stop matching the lazy-backfill staleness filter.
+  const isPackage = finding.recordingIdField === "GenieNumber";
   return {
     owner: (finding.owner as string | undefined) ?? "",
     voName,
@@ -46,6 +58,9 @@ function enrichmentFromFinding(finding: Record<string, unknown>): Partial<Manage
     recordingId: (finding.recordingId as string | undefined) ?? "",
     totalQuestions: answered.length,
     failedQuestions: failed.map((q) => String(q.header ?? "")).filter(Boolean),
+    department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")),
+    shift: isPackage ? "" : String(rec.Shift ?? ""),
+    isPackage,
     ...saleFlagsFromFinding(finding),
   };
 }
@@ -66,15 +81,34 @@ export async function getManagerQueue(orgId: OrgId): Promise<ManagerQueueItem[]>
   return await listStored<ManagerQueueItem>("manager-queue", orgId);
 }
 
-/** Lazily enrich queue items that predate the failedQuestions denorm, at most
- *  `max` per call so an auto-refreshing dashboard can never trigger unbounded
- *  finding hydration (that pattern has crashed prod before). Staleness keys
- *  off `failedQuestions` — many legacy items already carry voName (an old
- *  write path stored it), but ONLY enrichment writes failedQuestions. Mutates
- *  the passed items in place AND persists, so the queue converges one poll at
+/** Restrict queue items to a manager's department+shift scope — same
+ *  semantics as the audit-history scope filter: an empty scope list means
+ *  "no restriction on that axis", and packages skip the shift check (they
+ *  have no shift). Items not yet stamped with a department (undefined —
+ *  pending the lazy backfill) are HIDDEN, so a manager never sees a row
+ *  that might belong to another team. */
+export function filterQueueToManagerScope(
+  items: ManagerQueueItem[],
+  scope: { departments: string[]; shifts: string[] },
+): ManagerQueueItem[] {
+  return items.filter((i) => {
+    if (i.department === undefined) return false;
+    if (scope.departments.length > 0 && !scope.departments.includes(i.department)) return false;
+    if (scope.shifts.length > 0 && !i.isPackage && !scope.shifts.includes(i.shift ?? "")) return false;
+    return true;
+  });
+}
+
+/** Lazily enrich queue items that predate the failedQuestions/department
+ *  denorms, at most `max` per call so an auto-refreshing dashboard can never
+ *  trigger unbounded finding hydration (that pattern has crashed prod
+ *  before). Staleness keys off fields ONLY enrichment writes —
+ *  failedQuestions, wgs, and now department (added for manager scoping, so
+ *  previously-enriched items re-enrich once to pick it up). Mutates the
+ *  passed items in place AND persists, so the queue converges one poll at
  *  a time. Items whose finding is gone get an empty marker to stop re-tries. */
 export async function enrichManagerQueueBatch(orgId: OrgId, items: ManagerQueueItem[], max = 10): Promise<number> {
-  const stale = items.filter((i) => (i.failedQuestions === undefined || i.wgs === undefined) && i.findingId).slice(0, max);
+  const stale = items.filter((i) => (i.failedQuestions === undefined || i.wgs === undefined || i.department === undefined) && i.findingId).slice(0, max);
   if (stale.length === 0) return 0;
   await Promise.all(stale.map(async (item) => {
     try {
@@ -84,7 +118,7 @@ export async function enrichManagerQueueBatch(orgId: OrgId, items: ManagerQueueI
       // throws and leaves the item untouched, so the next poll retries it.
       const patch = finding
         ? enrichmentFromFinding(finding)
-        : { voName: item.voName ?? "", failedQuestions: item.failedQuestions ?? [], wgs: false, mcc: false };
+        : { voName: item.voName ?? "", failedQuestions: item.failedQuestions ?? [], wgs: false, mcc: false, department: "", shift: "", isPackage: false };
       Object.assign(item, patch);
       await setStored("manager-queue", orgId, [item.findingId], { ...item });
     } catch { /* transient — retried on the next poll */ }

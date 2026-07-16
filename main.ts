@@ -171,6 +171,7 @@ async function handleManagerAuditHistory(req: Request): Promise<Response> {
       shift: q.get("shift") || undefined,
       department: q.get("department") || undefined,
       reviewed: q.get("reviewed") || undefined,
+      sort: q.get("sort") || undefined,
       scoreMin: intOr("scoreMin", undefined),
       scoreMax: intOr("scoreMax", undefined),
       page: intOr("page", undefined),

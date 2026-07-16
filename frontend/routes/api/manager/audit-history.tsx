@@ -29,6 +29,9 @@ export interface AuditHistoryItem {
 export interface AuditHistoryData {
   items: AuditHistoryItem[];
   total: number;
+  /** Average score across all filtered audits in the window (backend-computed;
+   *  null/absent when no audit has a score). */
+  avgScore?: number | null;
   pages: number;
   page: number;
   owners: string[];
@@ -67,7 +70,7 @@ function appealBadge(item: AuditHistoryItem) {
 /** Render the table + stats + pagination. Used both for SSR (page initial
  *  load) and for HTMX swap on filter change. */
 export function renderAuditHistoryTable(data: AuditHistoryData) {
-  const { items, total, pages, page } = data;
+  const { items, total, avgScore, pages, page } = data;
   const filtered = items.length;
   return (
     <div>
@@ -75,6 +78,12 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
         <div class="stat-card">
           <div class="stat-card-value">{total}</div>
           <div class="stat-card-label">Total in window</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-value" style={avgScore != null ? `color:var(--${pillColor(avgScore)})` : undefined}>
+            {avgScore != null ? `${avgScore}%` : "—"}
+          </div>
+          <div class="stat-card-label">Avg score in window</div>
         </div>
         <div class="stat-card">
           <div class="stat-card-value">{filtered}</div>
@@ -156,7 +165,7 @@ export const handler = define.handlers({
     // Include `as` so backend manager-scope lookup uses the impersonated
     // manager's email when an admin is viewing via ?as=<email>. Without
     // this the backend would default to the admin's email (empty scope).
-    for (const k of ["since", "until", "owner", "department", "shift", "reviewed", "scoreMin", "scoreMax", "page", "limit", "as"]) {
+    for (const k of ["since", "until", "owner", "department", "shift", "reviewed", "sort", "scoreMin", "scoreMax", "page", "limit", "as"]) {
       const v = url.searchParams.get(k);
       if (v != null && v !== "") params.set(k, v);
     }

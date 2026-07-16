@@ -43,6 +43,7 @@ export interface AuditHistoryFilters {
   shift?: string;
   department?: string;
   reviewed?: string;          // "" | "yes" | "no" | "auto" | "invalid_genie"
+  sort?: string;              // "" (most recent, default) | "fails" (score < 100 first)
   scoreMin?: number;
   scoreMax?: number;
   page?: number;
@@ -54,6 +55,9 @@ export interface AuditHistoryFilters {
 export interface AuditHistoryResult {
   items: AuditHistoryRow[];
   total: number;
+  /** Average score across ALL filtered audits in the window (not just the
+   *  current page), rounded to one decimal. Null when no audit has a score. */
+  avgScore: number | null;
   pages: number;
   page: number;
   owners: string[];
@@ -201,7 +205,21 @@ async function _getAuditHistoryRaw(
   const owners = [...new Set(inWindow.map((c) => c.voName || c.owner).filter(Boolean))].sort() as string[];
   const shifts = [...new Set(inWindow.map((c) => c.shift).filter(Boolean))].sort() as string[];
   const departments = [...new Set(inWindow.map((c) => c.department).filter(Boolean))].sort() as string[];
+  // "Failures first" sort: any score below 100% floats to the top, most
+  // recent first within each group. Sorts the WHOLE filtered window before
+  // pagination so failures land on page 1 no matter how big the window is.
+  if (filters.sort === "fails") {
+    const isFail = (c: AuditHistoryRow) => c.score != null && c.score < 100;
+    filtered.sort((a, b) => (Number(isFail(b)) - Number(isFail(a))) || (b.ts - a.ts));
+  }
+
   const total = filtered.length;
+  // Average score over every filtered audit in the window — the whole result
+  // set, not just the page slice — so the stat matches "Total in window".
+  const scores = filtered.map((c) => c.score).filter((s): s is number => typeof s === "number" && Number.isFinite(s));
+  const avgScore = scores.length > 0
+    ? Math.round((scores.reduce((sum, s) => sum + s, 0) / scores.length) * 10) / 10
+    : null;
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageSlice = filtered.slice((page - 1) * limit, page * limit);
   const hydratedPage = await hydrateMissing(orgId, pageSlice);
@@ -214,5 +232,5 @@ async function _getAuditHistoryRaw(
 
   console.log(`🔍 [MANAGER-AUDITS] ${email} role=${role} → ${total}/${inWindow.length} in window, page=${page}/${pages}`);
 
-  return { items, total, pages, page, owners, shifts, departments };
+  return { items, total, avgScore, pages, page, owners, shifts, departments };
 }

@@ -102,6 +102,7 @@ export class AgentListResponse { agents: unknown[] = []; }
 export class ManagerAuditHistoryResponse {
   items: unknown[] = [];
   total = 0;
+  avgScore: number | null = null;
   pages = 0;
   page = 0;
   owners: string[] = [];

@@ -34,10 +34,22 @@ Deno.test("ManagerAudits — table renders all expected column headers", () => {
 Deno.test("ManagerAudits — stats cards render counts and page indicator", () => {
   const html = renderHTML(renderAuditHistoryTable(fixture({ total: 42, page: 2, pages: 5 })));
   assertContains(html, "Total in window");
+  assertContains(html, "Avg score in window");
   assertContains(html, "On this page");
   assertContains(html, "Page");
   assertContains(html, "42");
   assertContains(html, "2 / 5");
+});
+
+Deno.test("ManagerAudits — avg score card shows the window average with a % sign", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 11, avgScore: 97.3 })));
+  assertContains(html, "97.3%");
+});
+
+Deno.test("ManagerAudits — avg score card shows an em-dash when no scores exist", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 0, avgScore: null })));
+  assertContains(html, "Avg score in window");
+  assertNotContains(html, "null%");
 });
 
 Deno.test("ManagerAudits — items render with finding link to /audit/report", () => {

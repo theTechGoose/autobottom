@@ -62,6 +62,7 @@ export default define.page(async function ManagerAuditsPage(ctx) {
   const department = url.searchParams.get("department") ?? "";
   const shift = url.searchParams.get("shift") ?? "";
   const reviewed = url.searchParams.get("reviewed") ?? "";
+  const sale = url.searchParams.get("sale") ?? "";
   const sort = url.searchParams.get("sort") ?? "";
   const scoreMin = url.searchParams.get("scoreMin") ?? "0";
   const scoreMax = url.searchParams.get("scoreMax") ?? "100";
@@ -74,7 +75,7 @@ export default define.page(async function ManagerAuditsPage(ctx) {
   const asEmail = url.searchParams.get("as") ?? "";
 
   const qsInit: Record<string, string> = {
-    since, until, owner, department, shift, reviewed, sort, scoreMin, scoreMax, page, limit: "50",
+    since, until, owner, department, shift, reviewed, sale, sort, scoreMin, scoreMax, page, limit: "50",
   };
   if (asEmail) qsInit.as = asEmail;
   const qs = new URLSearchParams(qsInit);
@@ -217,6 +218,15 @@ export default define.page(async function ManagerAuditsPage(ctx) {
             <option value="no" selected={reviewed === "no"}>Not reviewed</option>
             <option value="auto" selected={reviewed === "auto"}>Auto-pass</option>
             <option value="invalid_genie" selected={reviewed === "invalid_genie"}>Invalid Genie</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Sale</label>
+          <select name="sale">
+            <option value="" selected={sale === ""}>Any</option>
+            <option value="wgs" selected={sale === "wgs"}>WGS</option>
+            <option value="mcc" selected={sale === "mcc"}>MCC</option>
+            <option value="none" selected={sale === "none"}>Neither</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0;">

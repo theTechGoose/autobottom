@@ -178,15 +178,22 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
     date: formatAuditDate(finding.job?.timestamp),
   };
 
-  // Date-leg guest fields (ignored when isPackage)
+  // Date-leg guest fields (ignored when isPackage). WGS/MCC fields (460/594)
+  // hold a dollar amount (e.g. "169") or "yes" when sold — the old `=== "yes"`
+  // check misread amount-valued records as not-sold. Same truthy semantic as
+  // the review queue's VerdictPanel chk().
+  const soldFlag = (v: unknown): boolean => {
+    const s = String(v ?? "").trim().toLowerCase();
+    return s !== "" && s !== "0" && s !== "no" && s !== "false";
+  };
   const guest = {
     guestName: record.GuestName ?? record["32"] ?? "—",
     spouseName: record["33"] ?? "—",
     maritalStatus: record["49"] ?? "—",
     arrival: record["8"] ?? "—",
     departure: record["10"] ?? "—",
-    wgs: record["460"] === "yes",
-    mcc: record["594"] === "yes",
+    wgs: soldFlag(record["460"]),
+    mcc: soldFlag(record["594"]),
   };
 
   // Package fields (ignored when !isPackage) — field IDs per prod main:controller.ts
@@ -195,8 +202,8 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
     maritalStatus: record["67"] ?? "—",
     office: record.OfficeName ?? record["314"] ?? "—",
     totalAmount: record["145"] ? `$${record["145"]}` : "—",
-    mcc: record["345"] === "yes" || record["345"] === true,
-    msp: record["306"] === "yes" || record["306"] === true,
+    mcc: soldFlag(record["345"]),
+    msp: soldFlag(record["306"]),
   };
 
   // Score badge color + label

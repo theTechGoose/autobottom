@@ -24,6 +24,9 @@ export interface AuditHistoryItem {
   reviewed?: boolean;
   reviewedBy?: string;
   appealStatus?: string | null;
+  /** WGS/MCC sale flags; undefined = legacy row not yet backfilled. */
+  wgs?: boolean;
+  mcc?: boolean;
 }
 
 export interface AuditHistoryData {
@@ -32,6 +35,10 @@ export interface AuditHistoryData {
   /** Average score across all filtered audits in the window (backend-computed;
    *  null/absent when no audit has a score). */
   avgScore?: number | null;
+  /** WGS / MCC sale counts across all filtered audits in the window. */
+  wgsCount?: number;
+  mccCount?: number;
+  saleUnknownCount?: number;
   pages: number;
   page: number;
   owners: string[];
@@ -67,11 +74,24 @@ function appealBadge(item: AuditHistoryItem) {
   return <span style="color:var(--text-dim);font-size:11px;">—</span>;
 }
 
+/** WGS/MCC tags. Legacy rows without backfilled flags render a dim dash —
+ *  they fill in as the lazy backfill converges. */
+function saleTags(item: AuditHistoryItem) {
+  if (item.wgs === undefined) return <span style="color:var(--text-dim);font-size:11px;">—</span>;
+  const tags = [
+    ...(item.wgs ? ["WGS"] : []),
+    ...(item.mcc ? ["MCC"] : []),
+  ];
+  if (tags.length === 0) return <span style="color:var(--text-dim);font-size:11px;">—</span>;
+  return <span>{tags.map((t) => <span class={`pill pill-${t === "WGS" ? "green" : "blue"}`} style="margin-right:4px;">{t}</span>)}</span>;
+}
+
 /** Render the table + stats + pagination. Used both for SSR (page initial
  *  load) and for HTMX swap on filter change. */
 export function renderAuditHistoryTable(data: AuditHistoryData) {
-  const { items, total, avgScore, pages, page } = data;
+  const { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, pages, page } = data;
   const filtered = items.length;
+  const saleHint = (saleUnknownCount ?? 0) > 0 ? `${saleUnknownCount} pending` : null;
   return (
     <div>
       <div class="stat-grid" style="margin-bottom:12px;">
@@ -84,6 +104,14 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
             {avgScore != null ? `${avgScore}%` : "—"}
           </div>
           <div class="stat-card-label">Avg score in window</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-value">{wgsCount ?? "—"}</div>
+          <div class="stat-card-label">WGS sales{saleHint ? ` (${saleHint})` : ""}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-value">{mccCount ?? "—"}</div>
+          <div class="stat-card-label">MCC sales{saleHint ? ` (${saleHint})` : ""}</div>
         </div>
         <div class="stat-card">
           <div class="stat-card-value">{filtered}</div>
@@ -103,6 +131,7 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
               <th>Office / Dept</th>
               <th>Shift</th>
               <th>Score</th>
+              <th>Sale</th>
               <th>Reviewed</th>
               <th>Appeal</th>
               <th>Started</th>
@@ -110,7 +139,7 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
           </thead>
           <tbody>
             {items.length === 0 ? (
-              <tr class="empty-row"><td colSpan={8}>No audits match the current filters</td></tr>
+              <tr class="empty-row"><td colSpan={9}>No audits match the current filters</td></tr>
             ) : items.map((item) => (
               <tr key={item.findingId}>
                 <td>
@@ -122,6 +151,7 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
                 <td class="mono" style="font-size:11px;color:var(--text-muted);">{item.department ?? "\u2014"}</td>
                 <td class="mono" style="font-size:11px;color:var(--text-muted);">{item.shift ?? "\u2014"}</td>
                 <td>{item.score != null ? <span class={`pill pill-${pillColor(item.score)}`}>{item.score}%</span> : "\u2014"}</td>
+                <td>{saleTags(item)}</td>
                 <td>{reviewedBadge(item)}</td>
                 <td>{appealBadge(item)}</td>
                 <td class="time-ago">{item.startedAt ? timeAgo(item.startedAt) : timeAgo(item.ts)}</td>
@@ -165,7 +195,7 @@ export const handler = define.handlers({
     // Include `as` so backend manager-scope lookup uses the impersonated
     // manager's email when an admin is viewing via ?as=<email>. Without
     // this the backend would default to the admin's email (empty scope).
-    for (const k of ["since", "until", "owner", "department", "shift", "reviewed", "sort", "scoreMin", "scoreMax", "page", "limit", "as"]) {
+    for (const k of ["since", "until", "owner", "department", "shift", "reviewed", "sale", "sort", "scoreMin", "scoreMax", "page", "limit", "as"]) {
       const v = url.searchParams.get(k);
       if (v != null && v !== "") params.set(k, v);
     }

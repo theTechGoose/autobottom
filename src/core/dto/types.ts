@@ -63,6 +63,10 @@ export interface AuditDoneIndexEntry {
   shift?: string;
   startedAt?: number;
   durationMs?: number;       // BOT pipeline duration (not human review time)
+  /** WGS/MCC sale flags (saleFlagsFromFinding). Written on every index
+   *  (re)write since 2026-07; older rows lack them until lazily backfilled. */
+  wgs?: boolean;
+  mcc?: boolean;
   reviewedBy?: string;
   /** Human review handle time: Σ active time over the audit's reviewed questions,
    *  excluding idle-discarded ones (set at finalize). Forward-only. */

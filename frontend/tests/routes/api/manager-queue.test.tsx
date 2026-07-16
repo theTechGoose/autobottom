@@ -36,6 +36,15 @@ Deno.test("ManagerQueue — 'api' owner with no voName renders an em-dash, never
   assertNotContains(html, ">api<");
 });
 
+Deno.test("ManagerQueue — sale tags render for WGS/MCC items, dash otherwise", () => {
+  const tagged = renderHTML(renderQueueTable([item({ wgs: true, mcc: true })]));
+  assertContains(tagged, ">WGS<");
+  assertContains(tagged, ">MCC<");
+  const untagged = renderHTML(renderQueueTable([item({})]));
+  assertNotContains(untagged, ">WGS<");
+  assertNotContains(untagged, ">MCC<");
+});
+
 Deno.test("ManagerQueue — failed questions list shows first two + more-count", () => {
   const html = renderHTML(renderQueueTable([item({
     failedCount: 3, failedQuestions: ["Q one", "Q two", "Q three"],

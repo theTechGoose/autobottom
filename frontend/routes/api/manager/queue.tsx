@@ -17,6 +17,8 @@ export interface QueueItem {
   failedCount?: number;
   totalQuestions?: number;
   failedQuestions?: string[];
+  wgs?: boolean;
+  mcc?: boolean;
 }
 
 /** Team member display name: enriched voName first, then a real owner email's
@@ -50,10 +52,10 @@ function scoreOf(item: QueueItem): number | null {
 export function renderQueueTable(items: QueueItem[]): JSX.Element {
   return (
     <table class="data-table">
-      <thead><tr><th>Finding</th><th>Team Member</th><th>Failed Questions</th><th>Score</th><th>Status</th><th>Action</th></tr></thead>
+      <thead><tr><th>Finding</th><th>Team Member</th><th>Failed Questions</th><th>Sale</th><th>Score</th><th>Status</th><th>Action</th></tr></thead>
       <tbody>
         {items.length === 0 ? (
-          <tr class="empty-row"><td colSpan={6}>No items in queue</td></tr>
+          <tr class="empty-row"><td colSpan={7}>No items in queue</td></tr>
         ) : items.map((item) => {
           const score = scoreOf(item);
           // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
@@ -74,6 +76,14 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
                 {fails.length > 2 && <div style="color:var(--text-dim);">+{fails.length - 2} more</div>}
               </div>
             );
+          // WGS/MCC sale tags; dim dash for none-sold or not-yet-enriched rows.
+          const saleTags = [
+            ...(item.wgs ? ["WGS"] : []),
+            ...(item.mcc ? ["MCC"] : []),
+          ];
+          const saleCell = saleTags.length === 0
+            ? <span style="color:var(--text-dim);font-size:11px;">—</span>
+            : <span>{saleTags.map((t) => <span class={`pill pill-${t === "WGS" ? "green" : "blue"}`} style="margin-right:4px;">{t}</span>)}</span>;
           return (
           <tr
             key={item.findingId}
@@ -87,6 +97,7 @@ export function renderQueueTable(items: QueueItem[]): JSX.Element {
             <td class="mono">{item.findingId?.slice(0, 8)}</td>
             <td>{teamMemberLabel(item)}</td>
             <td>{failsCell}</td>
+            <td>{saleCell}</td>
             <td>{scoreCell}</td>
             <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>
             <td {...{ "hx-on:click": "event.stopPropagation()" }}>

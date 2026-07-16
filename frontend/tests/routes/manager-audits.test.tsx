@@ -26,9 +26,40 @@ Deno.test("ManagerAudits — empty state renders 'No audits match the current fi
 
 Deno.test("ManagerAudits — table renders all expected column headers", () => {
   const html = renderHTML(renderAuditHistoryTable(fixture()));
-  for (const header of ["Finding", "Team Member", "Office / Dept", "Shift", "Score", "Reviewed", "Appeal", "Started"]) {
+  for (const header of ["Finding", "Team Member", "Office / Dept", "Shift", "Score", "Sale", "Reviewed", "Appeal", "Started"]) {
     assertContains(html, header);
   }
+});
+
+Deno.test("ManagerAudits — WGS/MCC stat cards render window counts", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 20, wgsCount: 7, mccCount: 4, saleUnknownCount: 0 })));
+  assertContains(html, "WGS sales");
+  assertContains(html, "MCC sales");
+  assertContains(html, "7");
+  assertContains(html, "4");
+});
+
+Deno.test("ManagerAudits — sale-pending hint renders when legacy rows lack flags", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 20, wgsCount: 2, mccCount: 1, saleUnknownCount: 9 })));
+  assertContains(html, "9 pending");
+});
+
+Deno.test("ManagerAudits — sale tags render per row (WGS + MCC pills)", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({
+    total: 1, page: 1, pages: 1,
+    items: [{ findingId: "fid-sale", ts: Date.now(), score: 100, wgs: true, mcc: true }],
+  })));
+  assertContains(html, ">WGS<");
+  assertContains(html, ">MCC<");
+});
+
+Deno.test("ManagerAudits — unknown sale flags render a dash, not tags", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({
+    total: 1, page: 1, pages: 1,
+    items: [{ findingId: "fid-nosale", ts: Date.now(), score: 100 }],
+  })));
+  assertNotContains(html, ">WGS<");
+  assertNotContains(html, ">MCC<");
 });
 
 Deno.test("ManagerAudits — stats cards render counts and page indicator", () => {

@@ -41,7 +41,28 @@ export interface IndexMeta {
   department?: string;
   shift?: string;
   startedAt?: number;
+  wgs?: boolean;
+  mcc?: boolean;
 }
+
+/** WGS/MCC sale flags from the finding record. Date-legs: QB field 460
+ *  ("Total WGS") and 594 ("Total MCC") — hold a dollar amount (e.g. "169") or
+ *  "yes" when sold, empty/"0"/"no" when not. Packages: field 345 is the MCC
+ *  flag; WGS doesn't exist on packages. (The review queue's VerdictPanel uses
+ *  this amount semantic; the report page's old `=== "yes"` check misread
+ *  amount-valued records as not-sold.) */
+export function saleFlagsFromFinding(finding: Record<string, any> | null | undefined): { wgs: boolean; mcc: boolean } {
+  const rec = ((finding as any)?.record as Record<string, any>) ?? {};
+  const isPackage = (finding as any)?.recordingIdField === "GenieNumber";
+  const sold = (v: unknown): boolean => {
+    const s = String(v ?? "").trim().toLowerCase();
+    return s !== "" && s !== "0" && s !== "no" && s !== "false";
+  };
+  return isPackage
+    ? { wgs: false, mcc: sold(rec["345"]) }
+    : { wgs: sold(rec["460"]), mcc: sold(rec["594"]) };
+}
+
 export function buildIndexMeta(finding: Record<string, any> | null | undefined): IndexMeta {
   const rec = ((finding as any)?.record as Record<string, any>) ?? {};
   const isPackage = (finding as any)?.recordingIdField === "GenieNumber";
@@ -59,6 +80,7 @@ export function buildIndexMeta(finding: Record<string, any> | null | undefined):
     department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
     shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
     startedAt: (finding as any)?.startedAt as number | undefined,
+    ...saleFlagsFromFinding(finding),
   };
 }
 
@@ -447,6 +469,32 @@ export async function writeAuditDoneIndex(
   const toWrite = appealStatus !== undefined ? { ...entry, appealStatus } : { ...entry };
   await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], toWrite);
   return true;
+}
+
+/** Lazily backfill WGS/MCC sale flags onto audit-done-idx entries that predate
+ *  them, at most `max` findings per call — bounded, so a read path can never
+ *  trigger unbounded hydration (that pattern has crashed prod before). Mutates
+ *  the passed entries in place (so the caller's SWR-cached array converges
+ *  too) AND persists each patched row under its own [padTs, findingId] key.
+ *  Entries whose finding is gone get {wgs:false, mcc:false} to stop re-tries;
+ *  transient errors leave the entry untouched for the next call. */
+export async function backfillSaleFlags(orgId: OrgId, entries: AuditDoneIndexEntry[], max = 20): Promise<number> {
+  const stale = entries.filter((e) => e.wgs === undefined && e.findingId).slice(0, max);
+  if (stale.length === 0) return 0;
+  // One finding read per unique findingId (dup index rows share the fetch).
+  const findings = new Map<string, Promise<Record<string, any> | null>>();
+  for (const e of stale) {
+    if (!findings.has(e.findingId)) findings.set(e.findingId, getFinding(orgId, e.findingId));
+  }
+  await Promise.all(stale.map(async (entry) => {
+    try {
+      const finding = await findings.get(entry.findingId)!;
+      const flags = finding ? saleFlagsFromFinding(finding) : { wgs: false, mcc: false };
+      Object.assign(entry, flags);
+      await setStored("audit-done-idx", orgId, [padTs(entry.completedAt), entry.findingId], { ...entry });
+    } catch { /* transient — retried on a later call */ }
+  }));
+  return stale.length;
 }
 
 /** Deterministically (re)write the record-search index rows for a finished

@@ -103,6 +103,9 @@ export class ManagerAuditHistoryResponse {
   items: unknown[] = [];
   total = 0;
   avgScore: number | null = null;
+  wgsCount = 0;
+  mccCount = 0;
+  saleUnknownCount = 0;
   pages = 0;
   page = 0;
   owners: string[] = [];

@@ -6,7 +6,7 @@ import {
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewDecision } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
-import { buildIndexMeta } from "@audit/domain/data/stats-repository/mod.ts";
+import { buildIndexMeta, saleFlagsFromFinding } from "@audit/domain/data/stats-repository/mod.ts";
 
 export interface ManagerQueueItem {
   findingId: string;
@@ -24,6 +24,9 @@ export interface ManagerQueueItem {
   /** Headers of the currently-failing (answer "No") questions, denormalized
    *  so the queue table can list them without hydrating findings per render. */
   failedQuestions?: string[];
+  /** WGS/MCC sale flags (saleFlagsFromFinding); undefined until enriched. */
+  wgs?: boolean;
+  mcc?: boolean;
   completedAt?: number;
   jobTimestamp?: string;
 }
@@ -43,6 +46,7 @@ function enrichmentFromFinding(finding: Record<string, unknown>): Partial<Manage
     recordingId: (finding.recordingId as string | undefined) ?? "",
     totalQuestions: answered.length,
     failedQuestions: failed.map((q) => String(q.header ?? "")).filter(Boolean),
+    ...saleFlagsFromFinding(finding),
   };
 }
 
@@ -70,7 +74,7 @@ export async function getManagerQueue(orgId: OrgId): Promise<ManagerQueueItem[]>
  *  the passed items in place AND persists, so the queue converges one poll at
  *  a time. Items whose finding is gone get an empty marker to stop re-tries. */
 export async function enrichManagerQueueBatch(orgId: OrgId, items: ManagerQueueItem[], max = 10): Promise<number> {
-  const stale = items.filter((i) => i.failedQuestions === undefined && i.findingId).slice(0, max);
+  const stale = items.filter((i) => (i.failedQuestions === undefined || i.wgs === undefined) && i.findingId).slice(0, max);
   if (stale.length === 0) return 0;
   await Promise.all(stale.map(async (item) => {
     try {
@@ -80,7 +84,7 @@ export async function enrichManagerQueueBatch(orgId: OrgId, items: ManagerQueueI
       // throws and leaves the item untouched, so the next poll retries it.
       const patch = finding
         ? enrichmentFromFinding(finding)
-        : { voName: item.voName ?? "", failedQuestions: [] };
+        : { voName: item.voName ?? "", failedQuestions: item.failedQuestions ?? [], wgs: false, mcc: false };
       Object.assign(item, patch);
       await setStored("manager-queue", orgId, [item.findingId], { ...item });
     } catch { /* transient — retried on the next poll */ }

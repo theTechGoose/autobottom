@@ -7,7 +7,7 @@
 
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
-import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
+import { queryAuditDoneIndex, backfillSaleFlags } from "@audit/domain/data/stats-repository/mod.ts";
 import { withTiming } from "@core/data/firestore/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
@@ -36,6 +36,9 @@ export interface AuditHistoryRow {
   reason?: string;
   reviewed?: boolean;
   appealStatus?: string | null;
+  /** WGS/MCC sale flags. Undefined = legacy index row not yet backfilled. */
+  wgs?: boolean;
+  mcc?: boolean;
 }
 
 export interface AuditHistoryFilters {
@@ -43,6 +46,7 @@ export interface AuditHistoryFilters {
   shift?: string;
   department?: string;
   reviewed?: string;          // "" | "yes" | "no" | "auto" | "invalid_genie"
+  sale?: string;              // "" | "wgs" | "mcc" | "none" (neither sold)
   sort?: string;              // "" (most recent, default) | "fails" (score < 100 first)
   scoreMin?: number;
   scoreMax?: number;
@@ -58,6 +62,11 @@ export interface AuditHistoryResult {
   /** Average score across ALL filtered audits in the window (not just the
    *  current page), rounded to one decimal. Null when no audit has a score. */
   avgScore: number | null;
+  /** WGS / MCC sale counts across ALL filtered audits in the window. */
+  wgsCount: number;
+  mccCount: number;
+  /** Filtered audits whose sale flags aren't backfilled yet (legacy rows). */
+  saleUnknownCount: number;
   pages: number;
   page: number;
   owners: string[];
@@ -106,6 +115,8 @@ function toRow(e: AuditDoneIndexEntry): AuditHistoryRow {
     startedAt: e.startedAt,
     durationMs: e.durationMs,
     reason: e.reason,
+    wgs: e.wgs,
+    mcc: e.mcc,
   };
 }
 
@@ -134,6 +145,7 @@ async function _getAuditHistoryRaw(
   const shift = filters.shift ?? "";
   const department = filters.department ?? "";
   const reviewed = filters.reviewed ?? "";
+  const sale = filters.sale ?? "";
   const scoreMin = Number.isFinite(filters.scoreMin) ? Number(filters.scoreMin) : 0;
   const scoreMax = Number.isFinite(filters.scoreMax) ? Number(filters.scoreMax) : 100;
   const page = Math.max(1, Number(filters.page) || 1);
@@ -144,6 +156,11 @@ async function _getAuditHistoryRaw(
     : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
 
   const indexEntries = await queryAuditDoneIndex(orgId, since, until);
+  // Lazy WGS/MCC backfill on legacy index rows — bounded to 20 findings per
+  // request (this endpoint is user-triggered, not auto-polling); mutates the
+  // cached entries in place and persists, converging one request at a time.
+  try { await backfillSaleFlags(orgId, indexEntries, 20); }
+  catch (err) { console.warn("⚠️ [MANAGER-AUDITS] sale-flag backfill skipped:", err); }
   const windowEntries: AuditHistoryRow[] = indexEntries.map(toRow).sort((a, b) => b.ts - a.ts);
 
   // Hydrate entries with missing department BEFORE scope filtering — old index
@@ -198,6 +215,11 @@ async function _getAuditHistoryRaw(
     if (reviewed === "no" && (reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie")) return false;
     if (reviewed === "auto" && c.reason !== "perfect_score" && c.reason !== "invalid_genie") return false;
     if (reviewed === "invalid_genie" && c.reason !== "invalid_genie") return false;
+    // Sale-type filter: rows with unknown flags (legacy, not yet backfilled)
+    // never match a specific sale filter — they converge via backfillSaleFlags.
+    if (sale === "wgs" && c.wgs !== true) return false;
+    if (sale === "mcc" && c.mcc !== true) return false;
+    if (sale === "none" && (c.wgs !== false || c.mcc !== false)) return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
     return true;
   });
@@ -219,6 +241,10 @@ async function _getAuditHistoryRaw(
   const avgScore = scores.length > 0
     ? Math.round((scores.reduce((sum, s) => sum + s, 0) / scores.length) * 10) / 10
     : null;
+  // WGS/MCC sale counts over the same filtered window as total/avgScore.
+  const wgsCount = filtered.filter((c) => c.wgs === true).length;
+  const mccCount = filtered.filter((c) => c.mcc === true).length;
+  const saleUnknownCount = filtered.filter((c) => c.wgs === undefined).length;
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageSlice = filtered.slice((page - 1) * limit, page * limit);
   const hydratedPage = await hydrateMissing(orgId, pageSlice);
@@ -231,5 +257,5 @@ async function _getAuditHistoryRaw(
 
   console.log(`🔍 [MANAGER-AUDITS] ${email} role=${role} → ${total}/${inWindow.length} in window, page=${page}/${pages}`);
 
-  return { items, total, avgScore, pages, page, owners, shifts, departments };
+  return { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, pages, page, owners, shifts, departments };
 }

@@ -49,6 +49,19 @@ function stripVoNamePrefix(raw: string): string {
   return raw.includes(" - ") ? raw.split(" - ").slice(1).join(" - ").trim() : raw.trim();
 }
 
+/** WGS/MCC sale flags — same semantic as the backend's saleFlagsFromFinding:
+ *  date-legs use QB 460/594 (amount or "yes"), packages use 345 (MCC only). */
+function saleFlagsOf(f: Finding): { wgs: boolean; mcc: boolean } {
+  const rec = (f.record ?? {}) as Record<string, unknown>;
+  const sold = (v: unknown): boolean => {
+    const s = String(v ?? "").trim().toLowerCase();
+    return s !== "" && s !== "0" && s !== "no" && s !== "false";
+  };
+  return f.recordingIdField === "GenieNumber"
+    ? { wgs: false, mcc: sold(rec["345"]) }
+    : { wgs: sold(rec["460"]), mcc: sold(rec["594"]) };
+}
+
 /** Team member display name: VoName (minus the "DEST - " prefix), falling
  *  back to the owner email when it's a real email — never the "api" token. */
 function teamMemberOf(f: Finding): string {
@@ -127,6 +140,18 @@ export const handler = define.handlers({
           </div>
           <div><div style="color:var(--text-muted);font-size:11px;">Recording</div><div class="mono" style="font-size:12px;">{f.recordingId ?? "—"}</div></div>
           <div><div style="color:var(--text-muted);font-size:11px;">Type</div><div><span class={`pill ${isPackage ? "pill-purple" : "pill-blue"}`}>{isPackage ? "partner" : "internal"}</span> <span style="font-size:11px;color:var(--text-muted);">{f.findingStatus ?? ""}</span></div></div>
+          <div>
+            <div style="color:var(--text-muted);font-size:11px;">Sale</div>
+            <div>
+              {(() => {
+                const flags = saleFlagsOf(f!);
+                const tags = [...(flags.wgs ? ["WGS"] : []), ...(flags.mcc ? ["MCC"] : [])];
+                return tags.length === 0
+                  ? <span style="color:var(--text-dim);">—</span>
+                  : <span>{tags.map((t) => <span class={`pill pill-${t === "WGS" ? "green" : "blue"}`} style="margin-right:4px;">{t}</span>)}</span>;
+              })()}
+            </div>
+          </div>
         </div>
 
         <div style="margin-bottom:14px;">

@@ -3,7 +3,7 @@
 import { assertEquals, assert } from "#assert";
 import {
   trackActive, trackCompleted, trackError, trackErrorOnce, clearErrors, trackRetry,
-  writeAuditDoneIndex, writeSoleAuditDoneIndex, buildIndexMeta, queryAuditDoneIndex, findAuditsByRecordId,
+  writeAuditDoneIndex, writeSoleAuditDoneIndex, buildIndexMeta, saleFlagsFromFinding, queryAuditDoneIndex, findAuditsByRecordId,
   saveChargebackEntry, getChargebackEntry, getChargebackEntries, deleteChargebackEntry,
   saveWireDeductionEntry, getWireDeductionEntry, getWireDeductionEntries, deleteWireDeductionEntry,
   getStats, terminateFinding, terminateAllActive,
@@ -466,3 +466,21 @@ Deno.test({ name: "getStats — errors array is genuine-only; counts split recov
   assertEquals(stats.genuineErrors24h, 1, "genuineErrors24h counts the stuck finding only");
   assertEquals(stats.recoveredErrors24h, 1, "recoveredErrors24h counts the finished finding only");
 }});
+
+// ── saleFlagsFromFinding — WGS/MCC sale-flag extraction ──────────────────────
+
+Deno.test("saleFlagsFromFinding — date-leg amounts count as sold", () => {
+  const f = { recordingIdField: "Recording", record: { "460": 169, "594": "169" } };
+  assertEquals(saleFlagsFromFinding(f), { wgs: true, mcc: true });
+});
+
+Deno.test("saleFlagsFromFinding — 'yes' counts as sold; empty/0/no do not", () => {
+  assertEquals(saleFlagsFromFinding({ record: { "460": "yes", "594": "" } }), { wgs: true, mcc: false });
+  assertEquals(saleFlagsFromFinding({ record: { "460": "0", "594": "no" } }), { wgs: false, mcc: false });
+  assertEquals(saleFlagsFromFinding({ record: {} }), { wgs: false, mcc: false });
+});
+
+Deno.test("saleFlagsFromFinding — packages use field 345 for MCC, never WGS", () => {
+  const f = { recordingIdField: "GenieNumber", record: { "345": "yes", "460": "169" } };
+  assertEquals(saleFlagsFromFinding(f), { wgs: false, mcc: true });
+});

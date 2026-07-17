@@ -1,6 +1,6 @@
 /** Auth types, role-based routing, user resolution. */
 
-export type Role = "admin" | "super-manager" | "judge" | "manager" | "reviewer" | "user";
+export type Role = "admin" | "super-manager" | "operations-manager" | "judge" | "manager" | "reviewer" | "user";
 
 export interface User {
   email: string;
@@ -35,6 +35,10 @@ export const ROLE_REDIRECTS: Record<Role, string> = {
   // Super-manager has no remediation queue — land on the all-departments
   // Audit History, not the queue at /manager.
   "super-manager": "/manager/audits",
+  // Operations manager oversees several department managers. Interim landing:
+  // the manager queue, scoped to all their departments. Swap to the dedicated
+  // /operations portal when that UI ships.
+  "operations-manager": "/manager",
   judge: "/judge",
   manager: "/manager",
   reviewer: "/review/dashboard",

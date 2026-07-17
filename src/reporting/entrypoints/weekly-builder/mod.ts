@@ -28,19 +28,20 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { defaultOrgId, listUsers } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
 
-/** Manager scopes with super-managers (the president role) removed, so the
- *  Weekly Builder never auto-adds an all-departments super-manager to every
- *  department's report. Their address can still be added deliberately via the
- *  global "every report" field on the page. */
+/** Manager scopes with broad oversight roles (president + operations manager)
+ *  removed, so the Weekly Builder never auto-adds an all-/many-departments
+ *  recipient to every department's report. Their address can still be added
+ *  deliberately via the global "every report" field on the page. */
 async function managerScopesNoSuper(org: OrgId): Promise<Awaited<ReturnType<typeof listManagerScopes>>> {
-  const [scopes, supers] = await Promise.all([
+  const [scopes, supers, ops] = await Promise.all([
     listManagerScopes(org),
     listUsers(org, "super-manager"),
+    listUsers(org, "operations-manager"),
   ]);
-  const superEmails = new Set(supers.map((u) => u.email.toLowerCase()));
+  const excludeEmails = new Set([...supers, ...ops].map((u) => u.email.toLowerCase()));
   const out: Awaited<ReturnType<typeof listManagerScopes>> = {};
   for (const [email, scope] of Object.entries(scopes)) {
-    if (!superEmails.has(email.toLowerCase())) out[email] = scope;
+    if (!excludeEmails.has(email.toLowerCase())) out[email] = scope;
   }
   return out;
 }

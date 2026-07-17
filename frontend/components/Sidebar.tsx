@@ -156,6 +156,10 @@ const ROLE_SECTION_MAP: Record<Role, SbSection[]> = {
   reviewer: REVIEWER_SECTIONS,
   judge: JUDGE_SECTIONS,
   manager: MANAGER_SECTIONS,
+  // Operations manager — interim: reuses the manager nav (Queue/Completed/
+  // Audit History), all scoped to their departments. Swapped for the dedicated
+  // per-department Operations portal when that UI ships.
+  "operations-manager": MANAGER_SECTIONS,
   // Super-manager gets a queue-less nav (Audit History only).
   "super-manager": SUPER_MANAGER_SECTIONS,
   user: USER_SECTIONS,

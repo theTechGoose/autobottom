@@ -81,7 +81,7 @@ export default define.middleware(async (ctx) => {
     ctx.state.user = {
       email: auth.email,
       orgId: auth.orgId,
-      role: auth.role as "admin" | "super-manager" | "judge" | "manager" | "reviewer" | "user",
+      role: auth.role as "admin" | "super-manager" | "operations-manager" | "judge" | "manager" | "reviewer" | "user",
     };
 
     // /super-admin/* is gated to a single email. Super Admin bypasses the org

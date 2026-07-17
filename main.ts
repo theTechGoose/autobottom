@@ -136,7 +136,7 @@ async function handleGetBadges(req: Request): Promise<Response> {
 async function handleManagerAuditHistory(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
-  if (auth.role !== "manager" && auth.role !== "admin" && auth.role !== "super-manager") {
+  if (auth.role !== "manager" && auth.role !== "admin" && auth.role !== "super-manager" && auth.role !== "operations-manager") {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   const url = new URL(req.url);
@@ -223,7 +223,7 @@ async function computeManagerQueueView(req: Request): Promise<
 > {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
-  if (auth.role !== "manager" && auth.role !== "admin" && auth.role !== "super-manager") {
+  if (auth.role !== "manager" && auth.role !== "admin" && auth.role !== "super-manager" && auth.role !== "operations-manager") {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   const { getManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope } =
@@ -235,7 +235,7 @@ async function computeManagerQueueView(req: Request): Promise<
   catch (err) { console.warn("⚠️ [MANAGER] queue enrichment skipped:", err); }
   const asEmail = new URL(req.url).searchParams.get("as");
   const isImpersonating = Boolean(asEmail) && auth.role === "admin";
-  if (auth.role === "manager" || isImpersonating) {
+  if (auth.role === "manager" || auth.role === "operations-manager" || isImpersonating) {
     const { getManagerScope } = await import("@admin/domain/data/admin-repository/mod.ts");
     const scope = await getManagerScope(auth.orgId, isImpersonating ? asEmail! : auth.email);
     return { allItems, scopedItems: filterQueueToManagerScope(allItems, scope), orgWide: false };

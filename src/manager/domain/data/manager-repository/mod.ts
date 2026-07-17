@@ -77,6 +77,39 @@ export async function populateManagerQueue(orgId: OrgId, findingId: string): Pro
   await setStored("manager-queue", orgId, [findingId], item);
 }
 
+/** Live enqueue for a just-finalized review: add the finding to the manager
+ *  remediation queue IFF it still has confirmed failures. Idempotent (skips a
+ *  finding that's already in the queue, so it never clobbers a remediated item
+ *  or resets addedAt) and a no-op for audits that passed after review. Stamps
+ *  completedAt (the review-finalize time) + jobTimestamp so the queue's
+ *  Timestamp column and date window reflect the audit — same item shape as
+ *  backfillManagerQueue, just for one finding. Called from finalizeReviewedAudit.
+ *
+ *  This wiring was dropped in the 2026-05-06 danet refactor (populateManagerQueue
+ *  went call-less), so nothing landed in the queue automatically after that. */
+export async function enqueueRemediationForFinding(
+  orgId: OrgId, findingId: string, opts: { completedAt?: number } = {},
+): Promise<{ enqueued: boolean; reason?: string }> {
+  const existing = await getStored<ManagerQueueItem>("manager-queue", orgId, findingId);
+  if (existing) return { enqueued: false, reason: "already-queued" };
+  const finding = await getFinding(orgId, findingId);
+  if (!finding) return { enqueued: false, reason: "no-finding" };
+  const enrich = enrichmentFromFinding(finding);
+  const failedCount = enrich.failedQuestions?.length ?? 0;
+  if (failedCount === 0) return { enqueued: false, reason: "no-failures" };
+  const item: ManagerQueueItem = {
+    findingId,
+    addedAt: Date.now(),
+    status: "pending",
+    ...enrich,
+    failedCount,
+    completedAt: opts.completedAt ?? Date.now(),
+    jobTimestamp: (finding.job as { timestamp?: string } | undefined)?.timestamp ?? "",
+  };
+  await setStored("manager-queue", orgId, [findingId], item);
+  return { enqueued: true };
+}
+
 export async function getManagerQueue(orgId: OrgId): Promise<ManagerQueueItem[]> {
   return await listStored<ManagerQueueItem>("manager-queue", orgId);
 }

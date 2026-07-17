@@ -1008,6 +1008,23 @@ export async function finalizeReviewedAudit(
     console.warn(`[REVIEW] ${findingId}: ⚠️ failed-finding index rebuild failed:`, err));
 
   await setStored("review-done", orgId, [findingId], { reviewedAt: new Date(reviewedAt).toISOString(), reviewScore, reviewedBy: reviewer });
+
+  // Auto-enqueue confirmed failures into the manager remediation queue. This
+  // wiring was dropped in the 2026-05-06 danet refactor, so nothing has landed
+  // in the queue automatically since; re-attach it at the finalize point.
+  // completedAt = reviewedAt so the queue Timestamp/date-window reflect the
+  // audit. Best-effort + idempotent — a queue-write failure must never strand
+  // the finalize, and the helper no-ops for a pass-after-review or an item
+  // that's already queued. Dynamic import to avoid a review→manager cycle.
+  try {
+    const { enqueueRemediationForFinding } = await import(
+      "@manager/domain/data/manager-repository/mod.ts"
+    );
+    const res = await enqueueRemediationForFinding(orgId, findingId, { completedAt: reviewedAt });
+    if (res.enqueued) console.log(`📋 [REVIEW] ${findingId}: enqueued into manager remediation queue`);
+  } catch (err) {
+    console.warn(`[REVIEW] ${findingId}: ⚠️ manager-queue enqueue failed (non-fatal):`, err);
+  }
   // Defensive sweep: drop any lingering locks for this finding. Per-question
   // locks should already be released by recordDecision, but if a question was
   // committed via a path that bypassed recordDecision (e.g. legacy backfill)

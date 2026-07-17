@@ -1,6 +1,6 @@
 /** Smoke tests for manager repository. */
 import { assertEquals, assert } from "#assert";
-import { populateManagerQueue, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope } from "./mod.ts";
+import { populateManagerQueue, enqueueRemediationForFinding, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope } from "./mod.ts";
 import type { ManagerQueueItem } from "./mod.ts";
 import { setStored, resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -178,6 +178,64 @@ Deno.test({ name: "populateManagerQueue — package finding stamps OfficeName as
   assertEquals(item.department, "Orlando Office");
   assertEquals(item.shift, "");
   assertEquals(item.isPackage, true);
+}});
+
+// ── enqueueRemediationForFinding — the live finalize hook ─────────────────────
+
+Deno.test({ name: "enqueueRemediationForFinding — enqueues a confirmed-failure audit, stamps completedAt + jobTimestamp", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-enq-fail-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await saveFinding(org, {
+    id: "f-enq",
+    owner: "api",
+    record: { VoName: "PUJ - Jane Doe", RecordId: 1, ActivatingOffice: "PUJ", Shift: "AM" },
+    answeredQuestions: [
+      { header: "Greeted", answer: "Yes" },
+      { header: "Confirmed dates", answer: "No" },
+    ],
+    job: { timestamp: "2026-07-01T10:00:00Z" },
+  });
+  const res = await enqueueRemediationForFinding(org, "f-enq", { completedAt: 1234 });
+  assertEquals(res.enqueued, true);
+  const [item] = await getManagerQueue(org);
+  assertEquals(item.status, "pending");
+  assertEquals(item.failedCount, 1);
+  assertEquals(item.failedQuestions, ["Confirmed dates"]);
+  assertEquals(item.completedAt, 1234);
+  assertEquals(item.jobTimestamp, "2026-07-01T10:00:00Z");
+}});
+
+Deno.test({ name: "enqueueRemediationForFinding — no-op when the audit passed after review (no failures)", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-enq-pass-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await saveFinding(org, {
+    id: "f-pass",
+    record: { RecordId: 1, ActivatingOffice: "PUJ", Shift: "AM" },
+    answeredQuestions: [{ header: "Greeted", answer: "Yes" }],
+  });
+  const res = await enqueueRemediationForFinding(org, "f-pass");
+  assertEquals(res.enqueued, false);
+  assertEquals(res.reason, "no-failures");
+  assertEquals((await getManagerQueue(org)).length, 0);
+}});
+
+Deno.test({ name: "enqueueRemediationForFinding — idempotent: never clobbers a finding already in the queue", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-enq-idem-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await saveFinding(org, {
+    id: "f-idem",
+    record: { RecordId: 1, ActivatingOffice: "PUJ", Shift: "AM" },
+    answeredQuestions: [{ header: "Q", answer: "No" }],
+  });
+  // Pre-seed as already remediated — re-finalize must not reset it to pending.
+  await setStored("manager-queue", org, ["f-idem"], {
+    findingId: "f-idem", addedAt: 1, status: "remediated", remediatedBy: "m@x.com", completedAt: 1,
+  });
+  const res = await enqueueRemediationForFinding(org, "f-idem");
+  assertEquals(res.enqueued, false);
+  assertEquals(res.reason, "already-queued");
+  const [item] = await getManagerQueue(org);
+  assertEquals(item.status, "remediated");
 }});
 
 Deno.test({ name: "enrichManagerQueueBatch — backfills stale items and marks missing findings checked", ...kvOpts, fn: async () => {

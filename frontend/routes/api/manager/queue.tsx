@@ -14,6 +14,7 @@ export interface QueueItem {
   owner?: string;
   voName?: string;
   status?: string;
+  addedAt?: number;
   failedCount?: number;
   totalQuestions?: number;
   failedQuestions?: string[];
@@ -138,18 +139,93 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
   );
 }
 
+// ── Filtering / sorting (all in-memory over the already-loaded queue) ─────────
+// Every field these touch (team member, failed questions, WGS/MCC, fail counts,
+// addedAt) is already on each queue row, so filtering/sorting adds ZERO extra
+// Firestore/KV reads — it's pure work on the single list the queue loads anyway.
+
+export interface QueueFilterParams {
+  member?: string;
+  q?: string;
+  wgs?: boolean;
+  mcc?: boolean;
+  sort?: string; // "recent" (default) | "oldest" | "failpct"
+}
+
+/** Read the queue filter/sort selections off a query string. Shared by the
+ *  page (initial render) and this fragment (filter refresh) so both parse
+ *  identically. */
+export function readQueueFilterParams(sp: URLSearchParams): QueueFilterParams {
+  return {
+    member: sp.get("member") ?? "",
+    q: sp.get("q") ?? "",
+    wgs: sp.get("wgs") === "1",
+    mcc: sp.get("mcc") === "1",
+    sort: sp.get("sort") ?? "recent",
+  };
+}
+
+/** Distinct team-member labels + failed-question texts present in the queue,
+ *  used to populate the filter bar's autosuggest + question dropdown. Derived
+ *  from the loaded list — no extra reads. */
+export function queueFacets(items: QueueItem[]): { members: string[]; questions: string[] } {
+  const members = new Set<string>();
+  const questions = new Set<string>();
+  for (const it of items) {
+    const label = teamMemberLabel(it);
+    if (label && label !== "—") members.add(label);
+    for (const q of it.failedQuestions ?? []) if (q) questions.add(q);
+  }
+  return {
+    members: [...members].sort((a, b) => a.localeCompare(b)),
+    questions: [...questions].sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+/** Percentage of questions failed (failed ÷ total). Rows with an unknown total
+ *  return -1 so they sink to the bottom of a "highest % failed" sort instead of
+ *  masquerading as 0% or 100%. */
+function failPct(it: QueueItem): number {
+  if (it.totalQuestions == null || it.totalQuestions <= 0) return -1;
+  return (it.failedCount ?? 0) / it.totalQuestions;
+}
+
+export function filterAndSortQueue(items: QueueItem[], params: QueueFilterParams): QueueItem[] {
+  const member = (params.member ?? "").trim().toLowerCase();
+  const q = (params.q ?? "").trim();
+  const wgs = !!params.wgs;
+  const mcc = !!params.mcc;
+  const sort = params.sort || "recent";
+
+  const out = items.filter((it) => {
+    if (member && !teamMemberLabel(it).toLowerCase().includes(member)) return false;
+    if (q && !(it.failedQuestions ?? []).includes(q)) return false;
+    // Sale union: no box checked → no restriction; otherwise keep a row that
+    // sold ANY of the checked sale types (WGS and/or MCC).
+    if ((wgs || mcc) && !((wgs && it.wgs) || (mcc && it.mcc))) return false;
+    return true;
+  });
+
+  if (sort === "failpct") out.sort((a, b) => failPct(b) - failPct(a));
+  else if (sort === "oldest") out.sort((a, b) => (a.addedAt ?? 0) - (b.addedAt ?? 0));
+  else out.sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0)); // recent (default)
+  return out;
+}
+
 export const handler = define.handlers({
   async GET(ctx) {
     try {
+      const url = new URL(ctx.req.url);
       // Forward `as` so an admin impersonating a manager (?as=<email>) gets
       // that manager's scoped queue — same convention as audit-history.
-      const asEmail = new URL(ctx.req.url).searchParams.get("as");
+      const asEmail = url.searchParams.get("as");
       const qs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
       const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${qs}`, ctx.req);
       // The Queue tab shows open work only — completed (remediated) items
       // live on the /manager/completed tab.
       const pending = (items ?? []).filter((i) => i.status !== "remediated");
-      const html = renderToString(renderQueueTable(pending));
+      const rows = filterAndSortQueue(pending, readQueueFilterParams(url.searchParams));
+      const html = renderToString(renderQueueTable(rows));
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch {
       return new Response(

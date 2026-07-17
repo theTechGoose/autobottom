@@ -4,8 +4,11 @@
  *  the backend `ManagerQueueItem` shape (`owner` + `failedCount`/
  *  `totalQuestions`), NOT the never-populated `agentEmail`/`score` it used to
  *  reference — those rendered as em-dashes for every row. */
+import { assertEquals } from "@std/assert";
 import { renderHTML, assertContains, assertNotContains } from "../../helpers/render.ts";
-import { renderQueueTable, type QueueItem } from "../../../routes/api/manager/queue.tsx";
+import {
+  renderQueueTable, queueFacets, filterAndSortQueue, readQueueFilterParams, type QueueItem,
+} from "../../../routes/api/manager/queue.tsx";
 
 function item(over: Partial<QueueItem> = {}): QueueItem {
   return { findingId: "abc12345xyz", owner: "agent@team.com", status: "pending", totalQuestions: 10, failedCount: 2, ...over };
@@ -151,4 +154,78 @@ Deno.test("ManagerQueue completed — shows who remediated and when, no Remediat
 Deno.test("ManagerQueue completed — dash when remediation metadata is missing", () => {
   const html = renderHTML(renderQueueTable([item({ status: "remediated" })], { completed: true }));
   assertContains(html, "—");
+});
+
+// ── Filter / sort helpers (in-memory, zero extra reads) ───────────────────────
+
+const ids = (items: QueueItem[]) => items.map((i) => i.findingId);
+
+Deno.test("queueFacets — distinct members (excludes 'api'/dash) + questions, sorted", () => {
+  const facets = queueFacets([
+    item({ findingId: "a", voName: "Zoe" }),
+    item({ findingId: "b", owner: "amy@team.com" }),
+    item({ findingId: "c", owner: "api" }),                                  // no label → excluded
+    item({ findingId: "d", voName: "Zoe" }),                                 // dup → collapsed
+    item({ findingId: "e", owner: "api", failedQuestions: ["Age", "Confirmation"] }),
+    item({ findingId: "f", owner: "api", failedQuestions: ["Age"] }),        // dup question
+  ]);
+  // localeCompare orders case-insensitively (a before Z).
+  assertEquals(facets.members, ["amy", "Zoe"]);
+  assertEquals(facets.questions, ["Age", "Confirmation"]);
+});
+
+Deno.test("filterAndSortQueue — member filter is case-insensitive substring", () => {
+  const rows = filterAndSortQueue([
+    item({ findingId: "a", voName: "Jane Doe" }),
+    item({ findingId: "b", voName: "John Smith" }),
+  ], { member: "jane" });
+  assertEquals(ids(rows), ["a"]);
+});
+
+Deno.test("filterAndSortQueue — failed-question filter matches exact membership", () => {
+  const rows = filterAndSortQueue([
+    item({ findingId: "a", failedQuestions: ["Age", "Pets"] }),
+    item({ findingId: "b", failedQuestions: ["Confirmation"] }),
+  ], { q: "Age" });
+  assertEquals(ids(rows), ["a"]);
+});
+
+Deno.test("filterAndSortQueue — WGS/MCC union: either box keeps rows with that sale", () => {
+  const rows = [
+    item({ findingId: "w", wgs: true, mcc: false }),
+    item({ findingId: "m", wgs: false, mcc: true }),
+    item({ findingId: "n", wgs: false, mcc: false }),
+  ];
+  assertEquals(ids(filterAndSortQueue(rows, { wgs: true })), ["w"]);
+  assertEquals(ids(filterAndSortQueue(rows, { mcc: true })), ["m"]);
+  // Both checked → union (WGS OR MCC), never requires both.
+  assertEquals(ids(filterAndSortQueue(rows, { wgs: true, mcc: true })).sort(), ["m", "w"]);
+  // Neither checked → no sale restriction.
+  assertEquals(ids(filterAndSortQueue(rows, {})).length, 3);
+});
+
+Deno.test("filterAndSortQueue — sort by % failed, unknown total sinks to the bottom", () => {
+  const rows = filterAndSortQueue([
+    item({ findingId: "low", totalQuestions: 20, failedCount: 4 }),   // 20%
+    item({ findingId: "high", totalQuestions: 5, failedCount: 3 }),   // 60%
+    item({ findingId: "unk", totalQuestions: undefined, failedCount: 9 }), // unknown → last
+  ], { sort: "failpct" });
+  assertEquals(ids(rows), ["high", "low", "unk"]);
+});
+
+Deno.test("filterAndSortQueue — recent (default) is newest addedAt first; oldest flips it", () => {
+  const rows = [
+    item({ findingId: "old", addedAt: 1000 }),
+    item({ findingId: "new", addedAt: 3000 }),
+    item({ findingId: "mid", addedAt: 2000 }),
+  ];
+  assertEquals(ids(filterAndSortQueue(rows, { sort: "recent" })), ["new", "mid", "old"]);
+  assertEquals(ids(filterAndSortQueue(rows, { sort: "oldest" })), ["old", "mid", "new"]);
+});
+
+Deno.test("readQueueFilterParams — parses checkboxes + defaults sort to recent", () => {
+  assertEquals(
+    readQueueFilterParams(new URLSearchParams("member=jane&q=Age&wgs=1")),
+    { member: "jane", q: "Age", wgs: true, mcc: false, sort: "recent" },
+  );
 });

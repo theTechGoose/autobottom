@@ -12,13 +12,31 @@
  *  an admin impersonating a manager must see that manager's queue. */
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
+import { apiFetch } from "../../lib/api.ts";
+import {
+  renderQueueTable, queueFacets, filterAndSortQueue, readQueueFilterParams, type QueueItem,
+} from "../api/manager/queue.tsx";
 
-export default define.page(function ManagerPortalPage(ctx) {
+export default define.page(async function ManagerPortalPage(ctx) {
   const user = ctx.state.user!;
   const url = new URL(ctx.req.url);
   const asEmail = url.searchParams.get("as") ?? "";
   const asQs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
   const auditsHref = `/manager/audits${asQs}`;
+
+  // Load the queue once here (single read — same cost as the old lazy load) so
+  // we can build the filter bar's autosuggest lists and server-render the first
+  // (sorted) table. Filter changes re-fetch only the table via /api/manager/queue.
+  const params = readQueueFilterParams(url.searchParams);
+  let pending: QueueItem[] = [];
+  try {
+    const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${asQs}`, ctx.req);
+    pending = (items ?? []).filter((i) => i.status !== "remediated");
+  } catch (e) {
+    console.error("Manager queue load error:", e);
+  }
+  const facets = queueFacets(pending);
+  const rows = filterAndSortQueue(pending, params);
 
   return (
     <Layout title="Manager Portal" section="manager" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
@@ -35,11 +53,59 @@ export default define.page(function ManagerPortalPage(ctx) {
         <div class="stat-grid"><div class="placeholder-card">Loading stats…</div></div>
       </div>
 
-      {/* Queue table — initial load + reloaded by the remediate flow's HX-Redirect. */}
+      {/* Queue table — server-rendered here (sorted newest-first by default);
+          the filter bar re-fetches ONLY the table via /api/manager/queue. All
+          filtering/sorting is in-memory over the already-loaded list (no extra
+          Firestore reads). The queue table does not auto-poll, so filter state
+          isn't clobbered mid-use. */}
       <div class="card" style="padding:14px 18px;">
         <div class="tbl-title" style="margin-bottom:10px;">Remediation Queue</div>
-        <div id="manager-queue" hx-get={`/api/manager/queue${asQs}`} hx-trigger="load" hx-swap="innerHTML">
-          <div class="placeholder-card">Loading queue…</div>
+
+        <form
+          id="queue-filters"
+          style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;"
+          hx-get="/api/manager/queue"
+          hx-target="#manager-queue-table"
+          hx-swap="innerHTML"
+          hx-trigger="change, keyup changed delay:350ms, submit"
+        >
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Team Member</label>
+            <input type="text" name="member" list="queue-members" value={params.member} placeholder="Search name…" autocomplete="off" />
+            <datalist id="queue-members">{facets.members.map((m) => <option key={m} value={m} />)}</datalist>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Failed Question</label>
+            <select name="q">
+              <option value="">All questions</option>
+              {facets.questions.map((q) => <option key={q} value={q} selected={q === params.q}>{q}</option>)}
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Sale</label>
+            <div style="display:flex;gap:12px;align-items:center;height:34px;">
+              <label style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;">
+                <input type="checkbox" name="wgs" value="1" checked={params.wgs} /> WGS
+              </label>
+              <label style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;">
+                <input type="checkbox" name="mcc" value="1" checked={params.mcc} /> MCC
+              </label>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Sort</label>
+            <select name="sort">
+              <option value="recent" selected={params.sort === "recent"}>Newest first</option>
+              <option value="oldest" selected={params.sort === "oldest"}>Oldest first</option>
+              <option value="failpct" selected={params.sort === "failpct"}>Highest % failed</option>
+            </select>
+          </div>
+          {asEmail && <input type="hidden" name="as" value={asEmail} />}
+          <a href={`/manager${asQs}`} class="btn btn-ghost btn-sm">Clear</a>
+        </form>
+
+        <div id="manager-queue-table">
+          {renderQueueTable(rows)}
         </div>
       </div>
 

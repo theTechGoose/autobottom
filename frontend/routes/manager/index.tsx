@@ -14,8 +14,30 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import {
-  renderQueueTable, queueFacets, filterAndSortQueue, readQueueFilterParams, type QueueItem,
+  renderQueueResults, queueFacets, filterAndSortQueue, readQueueFilterParams, type QueueItem,
 } from "../api/manager/queue.tsx";
+
+/** Format a ms timestamp as the `YYYY-MM-DDTHH:MM` string a datetime-local
+ *  input expects (browser-local; the filter itself always uses the absolute ms
+ *  stored in the hidden input, so the picker's display tz is cosmetic). */
+function toLocalInput(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** Inline click handler for a window preset: set the hidden since/until (ms) +
+ *  the calendar display, then refetch just the table. n=0 → all time. */
+function winHandler(n: number): string {
+  const sExpr = n === 0 ? "0" : `u-${n}*86400000`;
+  const sDisp = n === 0 ? "''" : "f(s)";
+  return `(()=>{var u=Date.now(),s=${sExpr};` +
+    `document.getElementById('q-since').value=s;document.getElementById('q-until').value=u;` +
+    `var sd=document.getElementById('q-since-display'),ud=document.getElementById('q-until-display');` +
+    `var p=function(x){return String(x).padStart(2,'0')},f=function(m){var d=new Date(m);return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())};` +
+    `if(sd)sd.value=${sDisp};if(ud)ud.value=f(u);` +
+    `htmx.ajax('GET','/api/manager/queue',{source:'#queue-filters',target:'#manager-queue-table',swap:'innerHTML'});})()`;
+}
 
 export default define.page(async function ManagerPortalPage(ctx) {
   const user = ctx.state.user!;
@@ -37,6 +59,8 @@ export default define.page(async function ManagerPortalPage(ctx) {
   }
   const facets = queueFacets(pending);
   const rows = filterAndSortQueue(pending, params);
+  const sinceDisplay = params.since && params.since > 0 ? toLocalInput(params.since) : "";
+  const untilDisplay = params.until ? toLocalInput(params.until) : "";
 
   return (
     <Layout title="Manager Portal" section="manager" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
@@ -69,6 +93,25 @@ export default define.page(async function ManagerPortalPage(ctx) {
           hx-swap="innerHTML"
           hx-trigger="change, keyup changed delay:350ms, submit"
         >
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Window</label>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              {[7, 14, 30, 60, 90].map((n) => (
+                <button key={n} type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": winHandler(n) }}>{n}D</button>
+              ))}
+              <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": winHandler(0) }}>All</button>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Since</label>
+            <input type="datetime-local" id="q-since-display" value={sinceDisplay} {...{ "hx-on:change": "document.getElementById('q-since').value=(this.value?new Date(this.value).getTime():0)" }} />
+            <input type="hidden" name="since" id="q-since" value={String(params.since)} />
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Until</label>
+            <input type="datetime-local" id="q-until-display" value={untilDisplay} {...{ "hx-on:change": "document.getElementById('q-until').value=(this.value?new Date(this.value).getTime():Date.now())" }} />
+            <input type="hidden" name="until" id="q-until" value={String(params.until)} />
+          </div>
           <div class="form-group" style="margin-bottom:0;">
             <label>Team Member</label>
             <input type="text" name="member" list="queue-members" value={params.member} placeholder="Search name…" autocomplete="off" />
@@ -105,7 +148,7 @@ export default define.page(async function ManagerPortalPage(ctx) {
         </form>
 
         <div id="manager-queue-table">
-          {renderQueueTable(rows)}
+          {renderQueueResults(rows)}
         </div>
       </div>
 

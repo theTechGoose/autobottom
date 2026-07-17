@@ -4,10 +4,11 @@
  *  the backend `ManagerQueueItem` shape (`owner` + `failedCount`/
  *  `totalQuestions`), NOT the never-populated `agentEmail`/`score` it used to
  *  reference — those rendered as em-dashes for every row. */
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { renderHTML, assertContains, assertNotContains } from "../../helpers/render.ts";
 import {
-  renderQueueTable, queueFacets, filterAndSortQueue, readQueueFilterParams, type QueueItem,
+  renderQueueTable, renderQueueResults, queueTimestamp, queueFacets,
+  filterAndSortQueue, readQueueFilterParams, type QueueItem,
 } from "../../../routes/api/manager/queue.tsx";
 
 function item(over: Partial<QueueItem> = {}): QueueItem {
@@ -223,9 +224,74 @@ Deno.test("filterAndSortQueue — recent (default) is newest addedAt first; olde
   assertEquals(ids(filterAndSortQueue(rows, { sort: "oldest" })), ["old", "mid", "new"]);
 });
 
-Deno.test("readQueueFilterParams — parses checkboxes + defaults sort to recent", () => {
+Deno.test("readQueueFilterParams — parses fields + an explicit window", () => {
   assertEquals(
-    readQueueFilterParams(new URLSearchParams("member=jane&q=Age&wgs=1")),
-    { member: "jane", q: "Age", wgs: true, mcc: false, sort: "recent" },
+    readQueueFilterParams(new URLSearchParams("member=jane&q=Age&wgs=1&since=1000&until=2000")),
+    { member: "jane", q: "Age", wgs: true, mcc: false, sort: "recent", since: 1000, until: 2000 },
   );
+});
+
+Deno.test("readQueueFilterParams — defaults to the last ~7 days", () => {
+  const before = Date.now();
+  const p = readQueueFilterParams(new URLSearchParams(""));
+  const after = Date.now();
+  assert(p.until! >= before && p.until! <= after, "until ≈ now");
+  const sevenDays = 7 * 86_400_000;
+  assert(p.since! >= before - sevenDays - 50 && p.since! <= after - sevenDays + 50, "since ≈ now-7d");
+});
+
+Deno.test("readQueueFilterParams — since=0 means all time (not the 7-day default)", () => {
+  assertEquals(readQueueFilterParams(new URLSearchParams("since=0")).since, 0);
+});
+
+Deno.test("queueTimestamp — prefers completedAt (audit time) over addedAt, falls back", () => {
+  assertEquals(queueTimestamp(item({ completedAt: 5000, addedAt: 1000 })), 5000);
+  assertEquals(queueTimestamp(item({ addedAt: 1000 })), 1000);
+  assertEquals(queueTimestamp(item({})), 0);
+});
+
+Deno.test("filterAndSortQueue — date window keeps only rows whose audit time is in range", () => {
+  const rows = [
+    item({ findingId: "old", completedAt: 1000 }),
+    item({ findingId: "mid", completedAt: 5000 }),
+    item({ findingId: "new", completedAt: 9000 }),
+  ];
+  assertEquals(ids(filterAndSortQueue(rows, { since: 4000, until: 6000, sort: "oldest" })), ["mid"]);
+  // since=0 → all time (the All button).
+  assertEquals(ids(filterAndSortQueue(rows, { since: 0, sort: "oldest" })).length, 3);
+  // No window params → no date restriction.
+  assertEquals(ids(filterAndSortQueue(rows, { sort: "oldest" })).length, 3);
+});
+
+Deno.test("filterAndSortQueue — recent sort ranks by audit time (completedAt beats a later addedAt)", () => {
+  const rows = [
+    item({ findingId: "a", completedAt: 9000, addedAt: 1 }),
+    item({ findingId: "b", completedAt: 1000, addedAt: 999999 }),
+  ];
+  assertEquals(ids(filterAndSortQueue(rows, { sort: "recent", since: 0 })), ["a", "b"]);
+});
+
+Deno.test("ManagerQueue — pending table shows a Timestamp column in Eastern time", () => {
+  // 18:30 UTC on Jul 15 = 2:30 PM ET (EDT in summer).
+  const html = renderHTML(renderQueueTable([item({ completedAt: Date.UTC(2026, 6, 15, 18, 30) })]));
+  assertContains(html, "Timestamp");
+  assertContains(html, "Jul 15");
+  assertContains(html, "2:30");
+  assertContains(html, "ET");
+});
+
+Deno.test("ManagerQueue completed — has no Timestamp column (keeps When)", () => {
+  const html = renderHTML(renderQueueTable([], { completed: true }));
+  assertNotContains(html, "Timestamp");
+  assertContains(html, "When");
+});
+
+Deno.test("renderQueueResults — shows the window total above the table", () => {
+  const many = renderHTML(renderQueueResults([item({ findingId: "a" }), item({ findingId: "b" })]));
+  assertContains(many, "Window total:");
+  assertContains(many, "2");
+  assertContains(many, "failures");
+  const one = renderHTML(renderQueueResults([item({ findingId: "a" })]));
+  assertContains(one, "failure");
+  assertNotContains(one, "failures");
 });

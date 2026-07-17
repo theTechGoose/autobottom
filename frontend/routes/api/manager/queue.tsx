@@ -15,6 +15,7 @@ export interface QueueItem {
   voName?: string;
   status?: string;
   addedAt?: number;
+  completedAt?: number;
   failedCount?: number;
   totalQuestions?: number;
   failedQuestions?: string[];
@@ -56,6 +57,23 @@ function scoreOf(item: QueueItem): number | null {
 const fmtWhen = (ms?: number) =>
   ms ? new Date(ms).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
 
+/** Best available "audit time" for a queue row: the audit's review-completion
+ *  time (completedAt), falling back to when it entered the queue (addedAt) for
+ *  the newest rows that don't carry completedAt yet — the same convention the
+ *  repository uses. No per-row hydration, so no extra reads. */
+export function queueTimestamp(it: QueueItem): number {
+  return it.completedAt ?? it.addedAt ?? 0;
+}
+
+/** Date + time in US Eastern (auto-handles EST/EDT), labeled ET. */
+const fmtTsEastern = (ms?: number) =>
+  ms
+    ? new Date(ms).toLocaleString("en-US", {
+      timeZone: "America/New_York", month: "short", day: "numeric",
+      year: "numeric", hour: "numeric", minute: "2-digit",
+    }) + " ET"
+    : "—";
+
 /** Pure render of the queue table. Team Member = enriched voName (never the
  *  raw "api" owner token); Failed Questions = first two + a "+N more" hint;
  *  Score = derived pass-rate (or a "N failed" fallback when totals are unknown).
@@ -65,10 +83,10 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
   const completed = !!opts.completed;
   return (
     <table class="data-table">
-      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th>{completed ? <><th>Remediated By</th><th>When</th></> : <><th>Status</th><th>Action</th></>}</tr></thead>
+      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th>{completed ? <><th>Remediated By</th><th>When</th></> : <><th>Timestamp</th><th>Status</th><th>Action</th></>}</tr></thead>
       <tbody>
         {items.length === 0 ? (
-          <tr class="empty-row"><td colSpan={8}>{completed ? "No completed remediations" : "No items in queue"}</td></tr>
+          <tr class="empty-row"><td colSpan={completed ? 8 : 9}>{completed ? "No completed remediations" : "No items in queue"}</td></tr>
         ) : items.map((item) => {
           const score = scoreOf(item);
           // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
@@ -119,6 +137,7 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
               <td style="font-size:12px;">{item.remediatedBy || "\u2014"}</td>
               <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtWhen(item.remediatedAt)}</td>
             </> : <>
+            <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtTsEastern(queueTimestamp(item))}</td>
             <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>
             <td {...{ "hx-on:click": "event.stopPropagation()" }}>
               {/* Carry the id on a data-attribute (Preact attribute-escapes it)
@@ -144,24 +163,38 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
 // addedAt) is already on each queue row, so filtering/sorting adds ZERO extra
 // Firestore/KV reads — it's pure work on the single list the queue loads anyway.
 
+const DAY_MS = 86_400_000;
+export const DEFAULT_WINDOW_DAYS = 7;
+
 export interface QueueFilterParams {
   member?: string;
   q?: string;
   wgs?: boolean;
   mcc?: boolean;
   sort?: string; // "recent" (default) | "oldest" | "failpct"
+  since?: number; // window start (ms); rows are kept by queueTimestamp()
+  until?: number; // window end (ms)
 }
 
 /** Read the queue filter/sort selections off a query string. Shared by the
  *  page (initial render) and this fragment (filter refresh) so both parse
- *  identically. */
+ *  identically. The date window defaults to the last 7 days when absent;
+ *  since=0 means "all time" (the All button). */
 export function readQueueFilterParams(sp: URLSearchParams): QueueFilterParams {
+  const now = Date.now();
+  const ms = (v: string | null): number | undefined => {
+    if (v == null || v === "") return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
   return {
     member: sp.get("member") ?? "",
     q: sp.get("q") ?? "",
     wgs: sp.get("wgs") === "1",
     mcc: sp.get("mcc") === "1",
     sort: sp.get("sort") ?? "recent",
+    since: ms(sp.get("since")) ?? (now - DEFAULT_WINDOW_DAYS * DAY_MS),
+    until: ms(sp.get("until")) ?? now,
   };
 }
 
@@ -196,8 +229,16 @@ export function filterAndSortQueue(items: QueueItem[], params: QueueFilterParams
   const wgs = !!params.wgs;
   const mcc = !!params.mcc;
   const sort = params.sort || "recent";
+  const since = typeof params.since === "number" ? params.since : undefined;
+  const until = typeof params.until === "number" ? params.until : undefined;
 
   const out = items.filter((it) => {
+    // Date window over the audit time (queueTimestamp). since=0 keeps everything.
+    if (since != null || until != null) {
+      const ts = queueTimestamp(it);
+      if (since != null && ts < since) return false;
+      if (until != null && ts > until) return false;
+    }
     if (member && !teamMemberLabel(it).toLowerCase().includes(member)) return false;
     if (q && !(it.failedQuestions ?? []).includes(q)) return false;
     // Sale union: no box checked → no restriction; otherwise keep a row that
@@ -207,9 +248,25 @@ export function filterAndSortQueue(items: QueueItem[], params: QueueFilterParams
   });
 
   if (sort === "failpct") out.sort((a, b) => failPct(b) - failPct(a));
-  else if (sort === "oldest") out.sort((a, b) => (a.addedAt ?? 0) - (b.addedAt ?? 0));
-  else out.sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0)); // recent (default)
+  else if (sort === "oldest") out.sort((a, b) => queueTimestamp(a) - queueTimestamp(b));
+  else out.sort((a, b) => queueTimestamp(b) - queueTimestamp(a)); // recent (default)
   return out;
+}
+
+/** The queue table plus a small "window total" caption above it. Rendered by
+ *  both the page (initial) and the fragment (filter refresh) so the count and
+ *  table always swap together and agree. */
+export function renderQueueResults(rows: QueueItem[]): JSX.Element {
+  return (
+    <>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">
+        Window total:{" "}
+        <strong style="color:var(--text-muted);">{rows.length}</strong>{" "}
+        {rows.length === 1 ? "failure" : "failures"} in the selected date range
+      </div>
+      <div style="overflow-x:auto;">{renderQueueTable(rows)}</div>
+    </>
+  );
 }
 
 export const handler = define.handlers({
@@ -225,7 +282,7 @@ export const handler = define.handlers({
       // live on the /manager/completed tab.
       const pending = (items ?? []).filter((i) => i.status !== "remediated");
       const rows = filterAndSortQueue(pending, readQueueFilterParams(url.searchParams));
-      const html = renderToString(renderQueueTable(rows));
+      const html = renderToString(renderQueueResults(rows));
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch {
       return new Response(

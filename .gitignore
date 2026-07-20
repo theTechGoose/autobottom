@@ -1,4 +1,11 @@
 .env
+autobottom.env
+.token
 seed-data.json
 _fresh
 frontend/_fresh
+
+# Local secrets & scratch output
+.DS_Store
+.playwright-mcp/
+fixtures/json/

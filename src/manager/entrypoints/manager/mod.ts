@@ -49,15 +49,22 @@ export class ManagerController {
     if (!findingId) return { error: "findingId required" };
     const f = await getFinding(ORG(), findingId);
     if (!f) return { error: "not found" };
-    // diarize-async no longer mirrors the diarized transcript onto the finding
-    // doc (that full-doc write raced finalize); backfill it from the transcript
-    // store so the finding-detail modal still shows the speaker-labelled view.
-    if (!(f as Record<string, unknown>).diarizedTranscript) {
-      try {
-        const t = await getTranscript(ORG(), findingId);
-        if (t?.diarized) (f as Record<string, unknown>).diarizedTranscript = t.diarized;
-      } catch { /* best-effort display backfill */ }
-    }
+    // Attach the transcript store's raw + diarized + per-line utteranceTimes so
+    // the remediation scrub view can seek the audio to a clicked line. raw and
+    // utteranceTimes are a matched pair (the times are indexed to the raw
+    // transcript's lines), so always take BOTH from the store — never mix the
+    // finding doc's raw with the store's times. diarize-async no longer mirrors
+    // the diarized transcript onto the finding doc (that full-doc write raced
+    // finalize), so backfill that too when it's missing.
+    try {
+      const t = await getTranscript(ORG(), findingId);
+      if (t) {
+        const rec = f as Record<string, unknown>;
+        if (!rec.diarizedTranscript && t.diarized) rec.diarizedTranscript = t.diarized;
+        if (t.raw) rec.rawTranscript = t.raw;
+        if (t.utteranceTimes) rec.utteranceTimes = t.utteranceTimes;
+      }
+    } catch { /* best-effort display backfill */ }
     return f;
   }
 

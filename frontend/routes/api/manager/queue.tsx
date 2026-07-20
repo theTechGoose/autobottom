@@ -119,11 +119,9 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
           <tr
             key={item.findingId}
             style="cursor:pointer;"
-            hx-get={`/api/manager/finding?findingId=${encodeURIComponent(item.findingId)}`}
-            hx-target="#finding-detail-content"
-            hx-swap="innerHTML"
-            hx-trigger="click"
-            {...{ "hx-on:click": "document.getElementById('finding-detail-modal')?.classList.add('open')" }}
+            data-finding-id={item.findingId}
+            title="Open remediation detail"
+            {...{ "hx-on:click": "var a=new URLSearchParams(location.search).get('as');location.href='/manager/remediate/'+encodeURIComponent(this.dataset.findingId)+(a?('?as='+encodeURIComponent(a)):'')" }}
           >
             <td class="mono">{item.findingId?.slice(0, 8)}</td>
             <td>{teamMemberLabel(item)}</td>

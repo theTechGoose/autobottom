@@ -1736,3 +1736,33 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   .queue-left { width: 100%; min-width: 0; border-right: none; border-bottom: 1px solid var(--border); max-height: 50vh; }
   .queue-right { max-height: none; }
 }
+
+/* ── Manager remediation detail (/manager/remediate/[findingId]) ───────────
+   Full-page scrub view: reuses .queue-layout + .queue-audio-bar. The audio bar
+   is normally offset by the 280px sidebar; this page hides the sidebar, so pull
+   it back to the left edge. */
+#rem-detail .queue-audio-bar { left: 0; }
+.rem-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.rem-topbar-main { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.rem-tm { font-weight: 700; font-size: 15px; }
+.rem-sub { font-size: 12px; color: var(--text-muted); }
+.rem-hint { font-size: 11px; color: var(--text-dim); font-weight: 400; }
+.rem-meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.rem-meta-label { color: var(--text-muted); font-size: 11px; margin-bottom: 2px; }
+.rem-q-list { display: flex; flex-direction: column; gap: 6px; }
+.rem-q-row { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.rem-q-failed { cursor: pointer; border-left: 3px solid #f85149; background: rgba(248,81,73,0.06); }
+.rem-q-failed:hover { background: rgba(248,81,73,0.12); }
+.rem-q-active { outline: 2px solid #fab005; background: rgba(250,176,5,0.1); }
+.rem-q-head { display: flex; align-items: center; gap: 8px; }
+.rem-q-num { color: var(--text-dim); font-size: 11px; min-width: 20px; }
+.rem-q-name { flex: 1; font-size: 12px; min-width: 0; }
+.rem-q-reason { margin-top: 4px; font-size: 11px; color: var(--text-muted); line-height: 1.4; }

@@ -147,7 +147,17 @@ export default define.page(async function ManagerPortalPage(ctx) {
           <a href={`/manager${asQs}`} class="btn btn-ghost btn-sm">Clear</a>
         </form>
 
-        <div id="manager-queue-table">
+        {/* Keep the page URL in sync with the filter state after every table
+            refresh (form filter changes AND the window-preset buttons both swap
+            #manager-queue-table). replaceState — not push — so the queue stays a
+            single history entry whose URL tracks the latest filters. This is what
+            makes Back from a remediation detail page restore the exact view
+            (filters / date window / sort) instead of resetting to the default
+            window: the page's SSR reads these same params back out. */}
+        <div
+          id="manager-queue-table"
+          {...{ "hx-on::after-swap": "history.replaceState(null,'','/manager?'+new URLSearchParams(new FormData(document.getElementById('queue-filters'))).toString())" }}
+        >
           {renderQueueResults(rows)}
         </div>
       </div>

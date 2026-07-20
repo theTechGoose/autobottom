@@ -145,7 +145,11 @@ export default define.page(async function RemediationDetail(ctx) {
       <div id="rem-detail">
         {/* Top bar: back + who / score / links */}
         <div class="rem-topbar">
-          <a href={backHref} class="btn btn-ghost btn-sm">&larr; Queue</a>
+          {/* Prefer a real Back when we came from the queue: the queue entry's
+              URL now carries the filter state, so Back restores that exact view
+              (bfcache, or SSR re-reads the params). Fall back to a plain link
+              for a direct/deep link with no history. */}
+          <a href={backHref} class="btn btn-ghost btn-sm" {...{ "hx-on:click": "if(history.length>1){event.preventDefault();history.back()}" }}>&larr; Queue</a>
           <div class="rem-topbar-main">
             <span class="rem-tm">{teamMember}</span>
             <span class={`pill pill-${pct >= 90 ? "green" : pct >= 70 ? "yellow" : "red"}`}>{pct}%</span>

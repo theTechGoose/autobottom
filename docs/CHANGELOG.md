@@ -6,6 +6,47 @@ full history and [README.md](../README.md) for how each subsystem works.
 
 ---
 
+## 2026-07-21 — Diarization: stop model commentary reaching the transcript
+
+- **Audit `4oL3fw_Coxvzpx7El_qip` rendered a markdown critique instead of a
+  transcript** — a "Review of the original transcription" table, a summary of
+  problems, a `## Corrected transcription` heading with the real transcript in a
+  code fence, and a changelog. Stored as `audit-transcript.diarized`; a reviewer
+  graded off it two minutes later. Grading itself was never affected —
+  `step-ask-all` reads `rawTranscript`.
+- **Cause: the repair loop had become a critique dialogue.** `diarize()` kept one
+  growing conversation (each attempt pushed as an `assistant` turn, manager
+  feedback as a `user` turn), so by attempt 2 the model was answering a critique
+  rather than transcribing. Every attempt is now a fresh two-message
+  conversation with the output contract re-asserted.
+  ([groq/mod.ts](../src/audit/domain/data/groq/mod.ts))
+- **Cause: the validator only knew refusals.** A critique quotes the speaker
+  labels dozens of times, has no refusal phrasing, and is *longer* than the raw
+  transcript — so it passed every check. Added `looksLikeCommentary` (markdown
+  structure + phrasings) and a labeled-line-ratio floor.
+- **Cause: a free-text QA "Yes" was the gate**, and the reply closed by asserting
+  it satisfied the required format. A QA pass now only counts when the output
+  classifies `clean`, so it can't short-circuit past a good attempt.
+- **Cause: five read surfaces had no guard at all** (review queue, judge queue,
+  manager remediation, evidence excerpts, question lab). All now route through a
+  single `safeDiarized()` chokepoint, so stored-bad rows render clean even before
+  any repair runs.
+- **Salvage instead of discard.** `extractDiarizedTranscript` cuts the real
+  transcript back out — `clean` → lift from a code fence → drop non-turn lines —
+  each candidate gated on bidirectional word-overlap fidelity against the raw
+  text. A scan of 1,092 production audits found 3, one per shape, all now
+  regression fixtures. The third is why the fidelity gate exists: a how-to essay
+  on speaker labelling whose example fence held a *fabricated* conversation.
+  ([diarization-validation/mod.ts](../src/core/business/diarization-validation/mod.ts))
+- **New: Data Maintenance → Transcript Repair.** Scan (read-only) then a separate
+  Repair button that appears only on the scan result, beside the impacted-audit
+  table and a sample of what's stored. Chunked list-then-tick like the chargeback
+  backfill; writes the transcript doc only, never the finding.
+  ([transcript-repair/mod.ts](../src/audit/domain/business/transcript-repair/mod.ts))
+- Fixed an adjacent display bug: the report emitted a literal `:` after the
+  speaker badge while `slice()` already kept the line's own separator, rendering
+  `[TEAM MEMBER] :: All right…`.
+
 ## 2026-06-30 — Chargeback backfill: batch-resilience fix + tests
 
 - **A single thrown save no longer aborts a whole batch (or the run).** The

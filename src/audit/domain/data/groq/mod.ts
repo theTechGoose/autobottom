@@ -1,6 +1,6 @@
 /** Groq LLM adapter for QA, diarization, feedback. Ported from providers/groq.ts. */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
-import { isValidDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
+import { extractDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
 import Groq from "#groq-sdk";
 import type { ChatCompletion } from "#groq-sdk/resources/chat/completions";
 
@@ -95,7 +95,12 @@ Format the entire transcription strictly as follows:
 [AGENT]: [Text spoken by the agent]
 
 ### Critical Instruction ###
-It is imperative that the entirety of the provided transcription is processed and included in the formatted output. Do not summarize, condense, or omit any portion of the original text.`;
+It is imperative that the entirety of the provided transcription is processed and included in the formatted output. Do not summarize, condense, or omit any portion of the original text.
+
+### Absolute Output Rules ###
+Your ENTIRE reply must be transcript lines and nothing else. Every line must begin with "[CUSTOMER]:" or "[AGENT]:".
+Never write: a preamble or sign-off, commentary or analysis, a review of a previous attempt, a list of problems or changes, markdown headings, markdown tables, bullet or numbered lists, bold text, or code fences.
+If you are given feedback about a previous attempt, do NOT discuss it — silently produce the corrected transcript and nothing more.`;
 
 const DIARIZATION_MANAGER = `You are a speaker-identifier bot manager. Your job is to review transcriptions and make sure that the customer and agent labels are placed correctly. Your output should be a json object with three keys: "isCorrect" (boolean), "thinking" (string explaining your reasoning), and "feedback" (null if isCorrect is true, otherwise detailed feedback string).`;
 
@@ -254,36 +259,81 @@ async function groqCallWithRetry(params: Parameters<ReturnType<typeof getClient>
 export async function diarize(rawTranscript: string, maxAttempts = 4): Promise<string> {
   return withSpan("groq.diarize", async (span) => {
     span.setAttribute("groq.max_attempts", maxAttempts);
-    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-      { role: "system", content: DIARIZATION_SYSTEM },
-      { role: "user", content: rawTranscript },
-    ];
-    // Keep the first structurally-valid attempt so that, if the QA bot never
-    // confirms one, we still return a real transcript rather than the raw text.
-    let firstValid: string | null = null;
+
+    // Every attempt is a FRESH two-message conversation.
+    //
+    // The old loop accumulated each attempt as an `assistant` turn and the
+    // manager bot's critique as a `user` turn, which silently changed the task
+    // from "transcribe this" to "respond to this critique" — and the model
+    // answered in kind: a markdown review table, a "## Corrected transcription"
+    // heading, the transcript in a code fence, and a "what was changed"
+    // changelog. All of it was stored as the audit transcript and shown to the
+    // reviewer (report 4oL3fw_Coxvzpx7El_qip). Feedback now rides INSIDE the
+    // user message together with a re-assertion of the output contract, so
+    // every attempt is still a transcription request.
+    let feedback: string | null = null;
+    // First attempt that came back as a real transcript, and the best salvage
+    // we managed to carve out of a commentary reply. Both are captured BEFORE
+    // the QA round-trip so a QA flake can never lose a good attempt.
+    let firstClean: string | null = null;
+    let bestSalvage: string | null = null;
+
     for (let j = 0; j < maxAttempts; j++) {
-      const diarized = await groqCallWithRetry({ model: MODEL, messages, max_tokens: 8000 }, "diarize");
-      messages.push({ role: "assistant", content: diarized });
-      const structurallyValid = isValidDiarizedTranscript(diarized, rawTranscript);
+      const userContent = feedback
+        ? `${rawTranscript}\n\n### Problems with the previous attempt ###\n${feedback}\n\n` +
+          `Produce the corrected transcription. Output ONLY the labeled transcript lines — ` +
+          `no preamble, no commentary, no markdown, no code fences, no summary of changes.`
+        : rawTranscript;
+
+      const diarized = await groqCallWithRetry({
+        model: MODEL,
+        messages: [{ role: "system", content: DIARIZATION_SYSTEM }, { role: "user", content: userContent }],
+        max_tokens: 8000,
+      }, "diarize");
+
+      const { text: candidate, method } = extractDiarizedTranscript(diarized, rawTranscript);
+      if (method === "clean" && firstClean === null) firstClean = candidate;
+      if (method === "fenced" || method === "filtered") {
+        if (bestSalvage === null) bestSalvage = candidate;
+        console.warn(`⚠️ [DIARIZE-COMMENTARY] attempt ${j + 1}/${maxAttempts} returned commentary — salvaged via ${method}`);
+        metric("autobottom.groq.diarize.commentary", 1);
+      }
+
+      // The manager/QA round-trip on the final attempt can't influence anything
+      // (there is no next attempt to feed, and a clean candidate is already
+      // captured in firstClean) — skip it and save two Groq calls.
+      if (j === maxAttempts - 1) break;
+
       const [managerText, qaAnswer] = await Promise.all([
-        groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_MANAGER }, { role: "user", content: diarized }], response_format: { type: "json_object" }, max_tokens: 8000 }, "diarize-manager"),
-        groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_QA }, { role: "user", content: diarized }], max_tokens: 100 }, "diarize-qa"),
+        groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_MANAGER }, { role: "user", content: candidate }], response_format: { type: "json_object" }, max_tokens: 8000 }, "diarize-manager"),
+        groqCallWithRetry({ model: MODEL, messages: [{ role: "system", content: DIARIZATION_QA }, { role: "user", content: candidate }], max_tokens: 100 }, "diarize-qa"),
       ]);
-      // Require BOTH a QA pass AND a structurally-valid transcript: a refusal/
-      // meta reply can slip a "Yes" past the QA bot, and that must never ship.
-      if (qaAnswer.trim() === "Yes" && structurallyValid) { metric("autobottom.groq.diarize", 1); return diarized; }
-      if (structurallyValid && firstValid === null) firstValid = diarized;
+      // A "Yes" from the QA bot is NOT sufficient on its own. The commentary
+      // reply closed by asserting it "satisfied the required transcription
+      // format" — precisely what talks a free-text QA bot into "Yes" — and the
+      // old code let that short-circuit past a clean attempt already sitting in
+      // firstValid. Only a `clean` classification may short-circuit.
+      if (qaAnswer.trim() === "Yes" && method === "clean") { metric("autobottom.groq.diarize", 1); return candidate; }
+
       const manager = parseLlmJson<{ isCorrect: boolean; thinking: string; feedback: string | null }>(managerText, { isCorrect: true, thinking: "", feedback: null });
-      if (manager.feedback) messages.push({ role: "user", content: manager.feedback });
+      feedback = manager.feedback ?? null;
     }
+
     metric("autobottom.groq.diarize", 1);
     // Never return a QA-rejected attempt (regression: 76UGB0… returned the
-    // refusal itself). Prefer a structurally-valid but QA-unconfirmed attempt; a
-    // distinct counter makes this path visible — a rising first_valid rate flags
-    // the QA bot mis-rejecting good output before it degrades into raw fallbacks.
-    if (firstValid !== null) {
+    // refusal itself). Prefer a clean but QA-unconfirmed attempt; a distinct
+    // counter makes this path visible — a rising first_valid rate flags the QA
+    // bot mis-rejecting good output before it degrades into raw fallbacks.
+    if (firstClean !== null) {
       metric("autobottom.groq.diarize.first_valid", 1);
-      return firstValid;
+      return firstClean;
+    }
+    // Then a transcript salvaged out of a commentary reply — labels preserved,
+    // commentary stripped, and already fidelity-checked against the raw text.
+    if (bestSalvage !== null) {
+      console.warn(`[GROQ-DIARIZE] all ${maxAttempts} attempts returned commentary — using salvaged transcript`);
+      metric("autobottom.groq.diarize.salvaged", 1);
+      return bestSalvage;
     }
     // Otherwise fall back to the raw transcript — readable, label-free, the
     // report's existing fallback path.

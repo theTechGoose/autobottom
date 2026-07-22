@@ -1,7 +1,7 @@
 /** STEP 2c: Async speaker diarization — runs in parallel with prepare, not on the critical path. */
 import { getFinding, saveTranscript, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
 import { diarize } from "@audit/domain/data/groq/mod.ts";
-import { isValidDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
+import { extractDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -52,14 +52,14 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
 
   try {
     const diarized = await diarize(raw);
-    // Defense-in-depth: never persist a non-diarized string even though diarize()
-    // already falls back to raw. If invalid, store raw so the canonical
-    // audit-transcript never holds a refusal (76UGB0…). The warn below is the
-    // only signal that this second guard actually fired.
-    const valid = isValidDiarizedTranscript(diarized, raw);
-    const toStore = valid ? diarized : raw;
-    if (!valid) {
-      console.warn(`⚠️ [STEP-DIARIZE] ${findingId}: diarization invalid (refusal/short) — storing raw transcript as fallback`);
+    // Defense-in-depth: never persist anything but a transcript, even though
+    // diarize() already classifies and falls back. If the reply is a refusal
+    // (76UGB0…) we store raw; if it is commentary wrapping a transcript
+    // (4oL3fw…) we store the extracted transcript, never the commentary. The
+    // warn below is the only signal that this second guard actually fired.
+    const { text: toStore, method } = extractDiarizedTranscript(diarized, raw);
+    if (method !== "clean") {
+      console.warn(`⚠️ [STEP-DIARIZE] ${findingId}: diarization not clean (method=${method}) — storing ${method === "none" ? "raw transcript as fallback" : "salvaged transcript"}`);
     }
     // Persist ONLY to the transcript store. We deliberately do NOT write the
     // diarized transcript back onto the finding doc. This step runs IN PARALLEL
@@ -73,7 +73,7 @@ export async function stepDiarizeAsync(req: Request): Promise<Response> {
     // getTranscript, and the audit-report / manager-finding endpoints backfill
     // finding.diarizedTranscript from it on read.
     await saveTranscript(orgId, findingId, raw, toStore);
-    console.log(`[STEP-DIARIZE] ${findingId}: Diarization complete${valid ? "" : " (raw fallback)"}`);
+    console.log(`[STEP-DIARIZE] ${findingId}: Diarization complete (method=${method})`);
   } catch (err) {
     console.error(`[STEP-DIARIZE] ${findingId}: Diarization failed:`, err);
   }

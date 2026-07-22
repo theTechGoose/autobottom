@@ -1022,6 +1022,32 @@ export class AdminConfigController {
     const r = await runInBackgroundLane(() => processChargebackBackfillBatch(ORG(), fids));
     return { ok: true, ...r };
   }
+  // Transcript Repair — findings whose stored `diarized` transcript is model
+  // output (a refusal, or a markdown critique with the transcript in a code
+  // fence) rather than speech. Same chunked list-then-process shape as the
+  // chargeback backfill. `scan` mode NEVER writes; it exists so "how many are
+  // impacted" can be answered before anything changes.
+  @Post("transcript-repair-list") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async transcriptRepairList(@Body() body: GenericBodyRequest) {
+    const { since, until } = body as any;
+    if (!since || !until) return { ok: false, error: "since and until required" };
+    const { listTranscriptRepairFids } = await import("@audit/domain/business/transcript-repair/mod.ts");
+    const candidates = await runInBackgroundLane(() => listTranscriptRepairFids(ORG(), Number(since), Number(until)));
+    return { ok: true, candidates };
+  }
+
+  @Post("transcript-repair-process") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async transcriptRepairProcess(@Body() body: GenericBodyRequest) {
+    const { fids, mode } = body as any;
+    if (!Array.isArray(fids)) return { ok: false, error: "fids array required" };
+    // Anything that isn't an explicit "repair" is treated as a dry scan — a
+    // dropped or mistyped field must never cause an unintended write.
+    const safeMode = mode === "repair" ? "repair" : "scan";
+    const { processTranscriptRepairBatch } = await import("@audit/domain/business/transcript-repair/mod.ts");
+    const r = await runInBackgroundLane(() => processTranscriptRepairBatch(ORG(), fids, safeMode));
+    return { ok: true, ...r };
+  }
+
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillPartnerDimensions(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;

@@ -8,10 +8,11 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp" | "manager-queue";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp" | "manager-queue" | "transcript-repair";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
+  { key: "transcript-repair", label: "Transcript Repair" },
   { key: "wire", label: "Wire Cleanup" },
   { key: "dedupe", label: "Deduplicate" },
   { key: "purge", label: "Purge Old Audits", danger: true },
@@ -45,6 +46,7 @@ export const handler = define.handlers({
 
         <div style="margin-top:14px;">
           {active === "backfill" && <BackfillPanel />}
+          {active === "transcript-repair" && <TranscriptRepairPanel />}
           {active === "wire" && <WirePanel />}
           {active === "dedupe" && <DedupePanel />}
           {active === "purge" && <PurgePanel />}
@@ -173,6 +175,60 @@ function BackfillPanel() {
         </div>
       </PanelCard>
     </div>
+  );
+}
+
+// ── Transcript Repair tab ────────────────────────────────────────────────────
+//
+// Finds audits whose stored transcript is model OUTPUT rather than speech — a
+// refusal ("Please share the audio file…", report 76UGB0…) or a markdown
+// critique with the real transcript buried in a code fence (report 4oL3fw…,
+// which a reviewer graded off mid-decision).
+//
+// Deliberately two buttons. Scan answers "how many are impacted" and writes
+// NOTHING; the Repair button only appears on the scan's result card, next to
+// the table of impacted audits and a sample of what is actually stored. So
+// looking and changing are never the same click.
+
+function TranscriptRepairPanel() {
+  return (
+    <PanelCard
+      title="Transcript Repair"
+      subtitle="Scans stored transcripts for model output masquerading as speech — a diarization refusal, or a markdown critique with the real transcript inside a code fence. Repair strips the commentary and KEEPS the speaker turns (falling back to the raw transcript only when nothing is salvageable). The raw transcript is never modified, and repair is idempotent."
+    >
+      <style dangerouslySetInnerHTML={{ __html: `
+        .tr-btn .tr-loading { display: none; }
+        .tr-btn.htmx-request .tr-label { display: none; }
+        .tr-btn.htmx-request .tr-loading { display: inline; }
+        .tr-btn.htmx-request, .tr-btn:disabled { opacity: 0.7; cursor: wait; }
+      `}} />
+      <form
+        hx-post="/api/admin/modal/maintenance/transcript-repair-start"
+        hx-target="#transcript-repair-msg"
+        hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find button[type='submit']"
+      >
+        {/* Explicit — the backend also defaults anything non-"repair" to a dry
+            scan, so a dropped field can never become a write. */}
+        <input type="hidden" name="mode" value="scan" />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;max-width:420px;">
+          <div class="sf"><label class="sf-label">From (audit date)</label><input type="date" name="since" class="sf-input" required /></div>
+          <div class="sf"><label class="sf-label">To (inclusive)</label><input type="date" name="until" class="sf-input" required /></div>
+        </div>
+        <button type="submit" class="sf-btn primary tr-btn" style="padding:8px 16px;min-width:230px;">
+          <span class="tr-label">Scan for impacted audits</span>
+          <span class="tr-loading">Scanning…</span>
+        </button>
+      </form>
+      <div id="transcript-repair-msg" style="margin-top:12px;"></div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:8px;line-height:1.4;">
+        Scanning is read-only — run it as wide as you like. It processes 100 audits per batch with a live
+        progress bar; leave the modal open until it finishes. The result lists every impacted audit (flagging
+        the ones a human already reviewed) and only then offers the Repair button. Reports and queues also
+        sanitize on read, so a contaminated row renders clean even before it is repaired.
+      </div>
+    </PanelCard>
   );
 }
 

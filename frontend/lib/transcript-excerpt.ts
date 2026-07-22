@@ -18,6 +18,8 @@
  *  change — the bot still grades against the raw transcript; only the display of
  *  the supporting context changes. */
 
+import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
+
 export type Speaker = "team" | "guest" | null;
 
 export interface ExcerptTurn {
@@ -218,8 +220,12 @@ export function buildFocusedExcerpt(opts: {
   maxCharWindow?: number;
 }): FocusedExcerpt {
   const contextTurns = opts.contextTurns ?? 1;
-  const diarized = (opts.diarized ?? "").trim();
   const raw = (opts.raw ?? "").trim();
+  // Sanitized before anything else: a stored refusal/commentary reply is
+  // label-rich, so it would win the hasLabels() preference below and become the
+  // evidence excerpt under every failed question. safeDiarized() returns the
+  // real transcript (cut out of the commentary) or falls back to raw.
+  const diarized = safeDiarized(opts.diarized, raw).trim();
   const snippet = (opts.snippet ?? "").trim();
   const defense = (opts.defense ?? "").trim();
 

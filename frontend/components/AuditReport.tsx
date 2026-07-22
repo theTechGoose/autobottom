@@ -12,7 +12,7 @@
 import AudioPlayer from "../islands/AudioPlayer.tsx";
 import AppealModal from "../islands/AppealModal.tsx";
 import { buildFocusedExcerpt, type ExcerptSegment } from "../lib/transcript-excerpt.ts";
-import { isValidDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
+import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 
 /** Render a focused excerpt's segments: speaker-labeled turns + `⋯` gap markers
  *  between elided windows. Shared shape with the top transcript / TranscriptPanel. */
@@ -146,11 +146,13 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
   const isPackage = finding.recordingIdField === "GenieNumber";
   const crmUrl = recordId ? (isPackage ? QB_PKG_URL : QB_DATE_URL) + recordId : null;
 
-  // Prefer diarized only when it's a real diarization; validate to avoid the
-  // 76UGB0… refusal-as-transcript bug. Also neutralizes already-stored bad data.
-  const diarized = finding.diarizedTranscript ?? "";
+  // Prefer diarized only when it's a real diarization. Guards both stored-bad
+  // shapes: the 76UGB0… refusal-as-transcript (falls back to raw) and the
+  // 4oL3fw… commentary-as-transcript (the transcript is cut back out of the
+  // critique). Also neutralizes already-stored bad data at render time, so a
+  // report reads clean even before the Transcript Repair sweep runs.
   const rawText = finding.rawTranscript ?? "";
-  const transcriptText = isValidDiarizedTranscript(diarized, rawText) ? diarized : rawText;
+  const transcriptText = safeDiarized(finding.diarizedTranscript, rawText);
 
   // Team member: prod strips the "DEST - " prefix from VoName, falling back to
   // the finding owner if VoName is missing (main:controller.ts:1253).
@@ -321,8 +323,10 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
             ? formatTranscript(transcriptText).split(/\r?\n/).map((line, i) => {
                 const tm = line.startsWith("[TEAM MEMBER]");
                 const gu = line.startsWith("[GUEST]");
-                if (tm) return <div key={i} style="margin-bottom:8px;"><span class="rpt-speaker team">[TEAM MEMBER]</span>:{line.slice(13)}</div>;
-                if (gu) return <div key={i} style="margin-bottom:8px;"><span class="rpt-speaker guest">[GUEST]</span>:{line.slice(7)}</div>;
+                // slice() already keeps the line's own ":" separator — emitting
+                // another one here is what rendered "[TEAM MEMBER] :: All right…".
+                if (tm) return <div key={i} style="margin-bottom:8px;"><span class="rpt-speaker team">[TEAM MEMBER]</span>{line.slice(13)}</div>;
+                if (gu) return <div key={i} style="margin-bottom:8px;"><span class="rpt-speaker guest">[GUEST]</span>{line.slice(7)}</div>;
                 return <div key={i} style="margin-bottom:4px;">{line}</div>;
               })
             : <em style="color:var(--text-dim);">No transcript available</em>
@@ -342,7 +346,7 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
             // which for short calls was the whole (often un-segmented) transcript —
             // the brick wall. See lib/transcript-excerpt.ts.
             const excerpt = q.snippet
-              ? buildFocusedExcerpt({ diarized, raw: finding.rawTranscript, snippet: q.snippet, defense: q.defense })
+              ? buildFocusedExcerpt({ diarized: transcriptText, raw: rawText, snippet: q.snippet, defense: q.defense })
               : null;
             const stateClass = errored ? "error" : (yes ? "pass" : "fail");
             const verdictClass = errored ? "error" : (yes ? "yes" : "no");

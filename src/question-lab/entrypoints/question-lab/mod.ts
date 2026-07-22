@@ -189,8 +189,11 @@ export class QuestionLabController {
   async getSnippet(@Query("findingId") findingId: string) {
     if (!findingId) return { error: "findingId required" };
     const { getTranscript } = await import("@audit/domain/data/audit-repository/mod.ts");
+    const { safeDiarized } = await import("@core/business/diarization-validation/mod.ts");
     const transcript = await getTranscript(ORG(), findingId);
-    return { snippet: transcript?.diarized?.slice(0, 2000) ?? transcript?.raw?.slice(0, 2000) ?? "" };
+    // Sanitized: a stored refusal/commentary reply must never become the snippet
+    // a question is authored and simulated against.
+    return { snippet: safeDiarized(transcript?.diarized, transcript?.raw).slice(0, 2000) };
   }
 
   @Post("qlab/test-audit") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)

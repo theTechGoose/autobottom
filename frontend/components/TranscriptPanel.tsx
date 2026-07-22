@@ -2,6 +2,7 @@
  *  timestamp chips. Multi-column layout matches prod's `.transcript-body`.
  *  Plain SSR output; interactivity (click-to-seek, search, evidence highlight)
  *  is hydrated by a later TranscriptInteractive island. */
+import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 
 export interface TranscriptData {
   raw: string;
@@ -34,6 +35,14 @@ function parseLine(line: string): { speaker: "team" | "guest" | null; content: s
 }
 
 export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
+  // Never render a stored diarization we can't vouch for. This panel backs BOTH
+  // the review and judge queues — the surfaces a human actually grades from —
+  // and until this guard existed it read `transcript.diarized` unfiltered, which
+  // is how the 4oL3fw… commentary reply (markdown critique + "## Corrected
+  // transcription" + changelog) reached a reviewer mid-decision.
+  const rawText = transcript?.raw ?? "";
+  const diarizedText = safeDiarized(transcript?.diarized, rawText);
+
   // Prefer raw when utteranceTimes are present — prod does this because
   // the times array is indexed to the raw transcript lines, not the
   // diarized one. Fall back to diarized for older audits without times.
@@ -43,10 +52,10 @@ export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
   // failed to separate speakers — the "brick wall"), the times can't align to
   // anything anyway and rendering raw gives one giant line. Prefer the
   // speaker-split diarized transcript in that case.
-  const rawSegmented = (transcript?.raw ?? "").split(/\r?\n/).filter((l) => l.trim()).length > 1;
+  const rawSegmented = rawText.split(/\r?\n/).filter((l) => l.trim()).length > 1;
   const text = hasTimes && rawSegmented
-    ? (transcript?.raw || transcript?.diarized || "")
-    : (transcript?.diarized || transcript?.raw || snippet || "");
+    ? (rawText || diarizedText || "")
+    : (diarizedText || rawText || snippet || "");
 
   if (!text) {
     return (

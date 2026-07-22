@@ -9,6 +9,7 @@
 import { define } from "../../../lib/define.ts";
 import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
+import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 
 interface AnsweredQuestion {
   header?: string;
@@ -103,7 +104,7 @@ export const handler = define.handlers({
 
     const qs = f.answeredQuestions ?? [];
     const failedCount = qs.filter((q) => !isYes(q.answer) && !isErrorAnswer(q.answer)).length;
-    const transcriptText = f.diarizedTranscript ?? f.rawTranscript ?? "";
+    const transcriptText = safeDiarized(f.diarizedTranscript, f.rawTranscript);
     const transcriptSnippet = transcriptText.length > 600 ? transcriptText.slice(0, 600) + "…" : transcriptText;
     const record = (f.record ?? {}) as Record<string, unknown>;
     const recordId = String(record.RecordId ?? "");

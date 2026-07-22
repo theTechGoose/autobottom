@@ -18,6 +18,7 @@ import { define } from "../../../lib/define.ts";
 import { Layout } from "../../../components/Layout.tsx";
 import { TranscriptPanel } from "../../../components/TranscriptPanel.tsx";
 import { apiFetch } from "../../../lib/api.ts";
+import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 import QueueAudioPlayer from "../../../islands/QueueAudioPlayer.tsx";
 import RemediationInteractive from "../../../islands/RemediationInteractive.tsx";
 
@@ -135,7 +136,9 @@ export default define.page(async function RemediationDetail(ctx) {
 
   const transcript = {
     raw: f.rawTranscript ?? "",
-    diarized: f.diarizedTranscript ?? "",
+    // Sanitized on read so a stored refusal/commentary can never reach the
+    // manager's remediation view — see @core/business/diarization-validation.
+    diarized: safeDiarized(f.diarizedTranscript, f.rawTranscript),
     utteranceTimes: f.utteranceTimes ?? [],
   };
   const hasTimes = (f.utteranceTimes?.length ?? 0) > 0;

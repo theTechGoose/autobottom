@@ -7,7 +7,8 @@
  *    Left     → dept (with shifts) + office trees, each row stageable
  *    Right    → staged list with auto-derived recipients, preview, trash */
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { WeeklyEditView, type ReportConfig } from "./EmailReportEditor.tsx";
+import { deptsOfConfig, WeeklyEditView, type ReportConfig } from "./EmailReportEditor.tsx";
+export { deptsOfConfig };
 
 interface ManagerScope { departments: string[]; shifts: string[] }
 interface PartnerDims { offices: Record<string, string[]> }
@@ -546,14 +547,6 @@ export default function WeeklyBuilderEditor() {
 
 /** Standard columns for a weekly report section. */
 export const WEEKLY_COLS = ["finalizedAt", "voName", "department", "score", "recordId", "findingId"];
-
-/** Departments a saved/existing config covers — unifies the single- and
- *  multi-department shapes (`weeklyDepartments` wins; falls back to the lone
- *  `weeklyDepartment`). */
-export function deptsOfConfig(c: { weeklyDepartment?: string; weeklyDepartments?: string[] }): string[] {
-  if (c.weeklyDepartments?.length) return c.weeklyDepartments;
-  return c.weeklyDepartment ? [c.weeklyDepartment] : [];
-}
 
 /** Departments a staged item covers (multi or single). */
 export function deptsOfStaged(s: { department?: string; departments?: string[] }): string[] {

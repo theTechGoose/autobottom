@@ -1089,6 +1089,14 @@ function SectionCard(
 
 // ── Weekly editor ─────────────────────────────────────────────────────────────
 
+/** Departments a saved/existing config covers — unifies the single- and
+ *  multi-department shapes (`weeklyDepartments` wins; falls back to the lone
+ *  `weeklyDepartment`). Re-exported by WeeklyBuilderEditor. */
+export function deptsOfConfig(c: { weeklyDepartment?: string; weeklyDepartments?: string[] }): string[] {
+  if (c.weeklyDepartments?.length) return c.weeklyDepartments;
+  return c.weeklyDepartment ? [c.weeklyDepartment] : [];
+}
+
 export function WeeklyEditView(props: {
   config: ReportConfig;
   isNew: boolean;
@@ -1149,12 +1157,17 @@ export function WeeklyEditView(props: {
     return out;
   }, [scopes]);
 
+  /** Departments this report covers — a multi-department report carries the
+   *  list in `weeklyDepartments` and leaves `weeklyDepartment` unset. */
+  const weeklyDepts = deptsOfConfig(c);
+  const isMultiDept = weeklyDepts.length > 1;
+
   function autoName(): string {
     if (!c.weeklyType) return "";
     if (c.weeklyType === "both") return "All Audits";
     if (c.weeklyType === "partner") return c.weeklyOffice ?? "Partner";
     const parts: string[] = [];
-    if (c.weeklyDepartment) parts.push(c.weeklyDepartment);
+    if (weeklyDepts.length) parts.push(weeklyDepts.join(" + "));
     if (c.weeklyShift) parts.push(c.weeklyShift);
     return parts.length ? parts.join(" — ") : "Internal";
   }
@@ -1164,6 +1177,7 @@ export function WeeklyEditView(props: {
       ...c,
       weeklyType: t,
       weeklyDepartment: undefined,
+      weeklyDepartments: undefined,
       weeklyShift: undefined,
       weeklyOffice: undefined,
     };
@@ -1193,7 +1207,7 @@ export function WeeklyEditView(props: {
 
   const showSecondStep = c.weeklyType === "internal" || c.weeklyType === "partner";
   const showEditForm = c.weeklyType === "both"
-    || (c.weeklyType === "internal" && !!c.weeklyDepartment)
+    || (c.weeklyType === "internal" && weeklyDepts.length > 0)
     || (c.weeklyType === "partner" && !!c.weeklyOffice);
 
   return (
@@ -1250,15 +1264,31 @@ export function WeeklyEditView(props: {
         <div style="margin-bottom:20px;">
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin-bottom:10px;">Department &amp; Shift</div>
           <div style="display:flex;gap:10px;">
-            <select
-              class="sf-input"
-              style="flex:1;"
-              value={c.weeklyDepartment ?? ""}
-              onChange={(e) => selectDept((e.target as HTMLSelectElement).value)}
-            >
-              <option value="">{auditDims ? "Select department..." : "Loading..."}</option>
-              {(auditDims?.departments ?? []).map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
+            {isMultiDept
+              ? (
+                <div
+                  style="flex:1;display:flex;flex-wrap:wrap;gap:5px;padding:6px 8px;min-height:38px;background:var(--bg);border:1px solid var(--border);border-radius:6px;align-items:center;"
+                  title="Multi-department report — change the department set in the Weekly Builder"
+                >
+                  {weeklyDepts.map((d) => (
+                    <span
+                      key={d}
+                      style="display:inline-flex;align-items:center;padding:3px 9px;background:var(--blue-bg);border:1px solid rgba(88,166,255,0.35);border-radius:14px;font-size:11px;color:var(--blue);font-family:var(--mono);"
+                    >{d}</span>
+                  ))}
+                </div>
+              )
+              : (
+                <select
+                  class="sf-input"
+                  style="flex:1;"
+                  value={c.weeklyDepartment ?? ""}
+                  onChange={(e) => selectDept((e.target as HTMLSelectElement).value)}
+                >
+                  <option value="">{auditDims ? "Select department..." : "Loading..."}</option>
+                  {(auditDims?.departments ?? []).map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              )}
             <select
               class="sf-input"
               style="flex:1;"

@@ -213,6 +213,44 @@ Deno.test("EmailReportEditor.WeeklyEditView — internal type shows dept dropdow
   assertContains(html, "Cancel");
 });
 
+Deno.test("EmailReportEditor.WeeklyEditView — multi-dept config (weeklyDepartments only) opens the form, not a blank one", () => {
+  // Regression: the form used to gate on the singular `weeklyDepartment`, so a
+  // multi-department report (WST Inbound, VBA, Downstream…) opened with an
+  // empty "Select department..." dropdown and no editable fields at all.
+  const cfg = {
+    name: "WST Inbound",
+    recipients: ["ops@example.com"],
+    reportSections: [],
+    enabled: true,
+    weeklyType: "internal" as const,
+    weeklyDepartments: ["IDS A3N", "GS WST"],
+    failedOnly: false,
+    dateRange: { mode: "weekly" as const, startDay: 1 },
+  };
+  const html = renderHTML(
+    <WeeklyEditView
+      config={cfg}
+      isNew={false}
+      templates={[]}
+      busy={false}
+      msg={null}
+      onChange={noop}
+      onCancel={noop}
+      onSave={noop}
+      onPreview={noop}
+    />,
+  );
+  // Covered departments render read-only (no single-select can hold two)
+  assertContains(html, "IDS A3N");
+  assertContains(html, "GS WST");
+  assertNotContains(html, "Select department...");
+  // The editable form is present: recipients, name, sections, save
+  assertContains(html, "Recipients");
+  assertContains(html, "ops@example.com");
+  assertContains(html, "Report Name");
+  assertContains(html, "Save Report");
+});
+
 Deno.test("EmailReportEditor.WeeklyEditView — partner type shows office dropdown", () => {
   const cfg = {
     name: "",

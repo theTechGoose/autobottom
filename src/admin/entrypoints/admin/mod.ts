@@ -1062,6 +1062,38 @@ export class AdminConfigController {
     return { ok: true, ...r };
   }
 
+  // ── Bulk Genie Retry ──────────────────────────────────────────────────
+  // Re-runs audits that finalized as "Invalid Genie" after the recording
+  // database they search comes back healthy. Three endpoints, so the caller
+  // owns the pacing and can hold a fixed number of audits in flight rather
+  // than dumping a whole window onto Genie/AssemblyAI at once.
+  @Post("genie-retry-list") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async genieRetryList(@Body() body: GenericBodyRequest) {
+    const { since, until } = body as any;
+    if (!since || !until) return { ok: false, error: "since and until required" };
+    const { listInvalidGenieFindings } = await import("@audit/domain/business/genie-retry/mod.ts");
+    const candidates = await runInBackgroundLane(() => listInvalidGenieFindings(ORG(), Number(since), Number(until)));
+    return { ok: true, candidates };
+  }
+
+  @Post("genie-retry-requeue") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async genieRetryRequeue(@Body() body: GenericBodyRequest) {
+    const { fids } = body as any;
+    if (!Array.isArray(fids)) return { ok: false, error: "fids array required" };
+    const { requeueGenieRetryBatch } = await import("@audit/domain/business/genie-retry/mod.ts");
+    const r = await runInBackgroundLane(() => requeueGenieRetryBatch(ORG(), fids));
+    return { ok: true, ...r };
+  }
+
+  @Post("genie-retry-status") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async genieRetryStatus(@Body() body: GenericBodyRequest) {
+    const { fids } = body as any;
+    if (!Array.isArray(fids)) return { ok: false, error: "fids array required" };
+    const { checkGenieRetryOutcomes } = await import("@audit/domain/business/genie-retry/mod.ts");
+    const outcomes = await runInBackgroundLane(() => checkGenieRetryOutcomes(ORG(), fids));
+    return { ok: true, outcomes };
+  }
+
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillPartnerDimensions(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;

@@ -8,10 +8,11 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp" | "manager-queue" | "transcript-repair";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp" | "manager-queue" | "transcript-repair" | "genie-retry";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
+  { key: "genie-retry", label: "Genie Retry" },
   { key: "transcript-repair", label: "Transcript Repair" },
   { key: "wire", label: "Wire Cleanup" },
   { key: "dedupe", label: "Deduplicate" },
@@ -46,6 +47,7 @@ export const handler = define.handlers({
 
         <div style="margin-top:14px;">
           {active === "backfill" && <BackfillPanel />}
+          {active === "genie-retry" && <GenieRetryPanel />}
           {active === "transcript-repair" && <TranscriptRepairPanel />}
           {active === "wire" && <WirePanel />}
           {active === "dedupe" && <DedupePanel />}
@@ -175,6 +177,63 @@ function BackfillPanel() {
         </div>
       </PanelCard>
     </div>
+  );
+}
+
+// ── Genie Retry tab ──────────────────────────────────────────────────────────
+//
+// When the recording database is temporarily wrong, step-init can't find the
+// audio, burns its retries, and finalizes the audit at 0% with the transcript
+// "Invalid Genie". Once the database is healthy those recordings ARE there, but
+// nothing re-drives the audits — and re-running them one row at a time from
+// /admin/audits doesn't scale.
+//
+// This runs the whole window, 5 audits at a time. It is a WRITE from the first
+// click (unlike Transcript Repair's scan-then-repair pair) because there is no
+// useful dry run: whether a genie is really invalid can only be learned by
+// asking Genie for the recording again. Guarded by hx-confirm instead.
+
+function GenieRetryPanel() {
+  return (
+    <PanelCard
+      title="Genie Retry"
+      subtitle="Re-runs every audit in the window that failed with 'Invalid Genie'. Each one is fully reset (old transcript, questions, score, and payroll rows dropped) and sent back through the pipeline from the start, 5 at a time. Audits whose recording is now findable come back with a real transcript and score; the rest stay marked invalid. Safe to re-run — an audit that recovers is no longer a candidate."
+    >
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+        .gr-btn .gr-loading { display: none; }
+        .gr-btn.htmx-request .gr-label { display: none; }
+        .gr-btn.htmx-request .gr-loading { display: inline; }
+        .gr-btn.htmx-request, .gr-btn:disabled { opacity: 0.7; cursor: wait; }
+      `,
+        }}
+      />
+      <form
+        hx-post="/api/admin/modal/maintenance/genie-retry-start"
+        hx-target="#genie-retry-msg"
+        hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find button[type='submit']"
+        hx-confirm="Re-run every Invalid Genie audit in this window? Each audit's existing 0% result, transcript, and chargeback/wire rows are cleared before it re-enters the pipeline. Audits that still have no recording end up right back where they are now."
+      >
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;max-width:420px;">
+          <div class="sf"><label class="sf-label">From (audit date)</label><input type="date" name="since" class="sf-input" required /></div>
+          <div class="sf"><label class="sf-label">To (inclusive)</label><input type="date" name="until" class="sf-input" required /></div>
+        </div>
+        <button type="submit" class="sf-btn primary gr-btn" style="padding:8px 16px;min-width:230px;">
+          <span class="gr-label">Find &amp; re-run invalid genies</span>
+          <span class="gr-loading">Finding…</span>
+        </button>
+      </form>
+      <div id="genie-retry-msg" style="margin-top:12px;"></div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:8px;line-height:1.4;">
+        Only 5 audits run at once, and each takes a minute or two, so a big window takes a while — the bar
+        tracks audits that have actually finished, not ones merely queued. Leave the modal open: closing it
+        stops new audits being queued, though anything already in flight finishes on its own. Re-open the
+        tool on the same window to pick up where it left off.
+      </div>
+    </PanelCard>
   );
 }
 

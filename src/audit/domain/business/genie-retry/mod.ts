@@ -154,7 +154,10 @@ export async function requeueGenieRetryBatch(
   const results = await mapPooled(fids, BATCH_CONCURRENCY, async (fid) => {
     try {
       await resetFindingDerivedState(orgId, fid);
-      const existed = await clearFindingRunState(orgId, fid);
+      // skipGenieRetry: one download attempt, not the 10-min × 4 ladder — the
+      // recording DB is healthy by now, so a miss is a real miss and 40 min of
+      // waiting would just clog a concurrency slot (see clearFindingRunState).
+      const existed = await clearFindingRunState(orgId, fid, { skipGenieRetry: true });
       if (!existed) {
         console.warn(`[GENIE-RETRY] ⚠️ ${fid}: finding doc missing — not requeued`);
         return { fid, ok: false };

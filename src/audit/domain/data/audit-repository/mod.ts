@@ -106,8 +106,18 @@ const RUN_STATE_FIELDS = [
  *  string, and finalize re-writes the identical 0% result. `genieAttempts`
  *  matters too — left at MAX_GENIE_RETRIES, a re-run gets zero retries.
  *
+ *  `skipGenieRetry`: bulk Genie Retry passes true so step-init finalizes a
+ *  still-missing recording on the first miss instead of climbing the 10-min × 4
+ *  ladder (which would clog the run's 5 concurrency slots for ~40 min each).
+ *  The single-audit re-run path passes nothing, so the flag is cleared and
+ *  fresh retries are restored.
+ *
  *  Idempotent. Returns false if the finding doesn't exist. */
-export async function clearFindingRunState(orgId: OrgId, findingId: string): Promise<boolean> {
+export async function clearFindingRunState(
+  orgId: OrgId,
+  findingId: string,
+  opts?: { skipGenieRetry?: boolean },
+): Promise<boolean> {
   const finding = await getFinding(orgId, findingId);
   if (!finding) return false;
   const cleared: string[] = [];
@@ -117,6 +127,10 @@ export async function clearFindingRunState(orgId: OrgId, findingId: string): Pro
     cleared.push(field);
   }
   finding.findingStatus = "pending";
+  // Set-or-clear (never leave a stale flag): the single-audit path must get its
+  // normal retry ladder back even if a prior bulk run stamped this finding.
+  if (opts?.skipGenieRetry) finding.skipGenieRetry = true;
+  else delete finding.skipGenieRetry;
   await saveFinding(orgId, finding);
   // saveTranscript merges rather than replaces (it preserves an existing
   // `diarized`), and step-diarize-async skips when the store already holds a

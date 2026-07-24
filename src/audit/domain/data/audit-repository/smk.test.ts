@@ -222,3 +222,16 @@ Deno.test({ name: "clearFindingRunState — idempotent, and false for a missing 
   assertEquals((await getFinding(ORG, "f-clear-5"))!.findingStatus, "pending");
   assertEquals(await clearFindingRunState(ORG, "f-clear-missing"), false);
 }});
+
+Deno.test({ name: "clearFindingRunState — {skipGenieRetry:true} stamps the flag step-init reads", ...kvOpts, fn: async () => {
+  await saveFinding(ORG, invalidGenieFinding("f-skip-1"));
+  await clearFindingRunState(ORG, "f-skip-1", { skipGenieRetry: true });
+  assertEquals((await getFinding(ORG, "f-skip-1"))!.skipGenieRetry, true);
+}});
+
+Deno.test({ name: "clearFindingRunState — default run CLEARS a prior skip flag (single-audit retries restored)", ...kvOpts, fn: async () => {
+  // A bulk run stamped it; the single-audit re-run must not inherit one-shot behavior.
+  await saveFinding(ORG, { ...invalidGenieFinding("f-skip-2"), skipGenieRetry: true });
+  await clearFindingRunState(ORG, "f-skip-2");
+  assertEquals((await getFinding(ORG, "f-skip-2"))!.skipGenieRetry, undefined);
+}});

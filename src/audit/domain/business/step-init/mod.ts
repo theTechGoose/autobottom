@@ -67,6 +67,13 @@ export async function stepInit(req: Request): Promise<Response> {
   finding.findingStatus = "getting-recording";
   await saveFinding(orgId, finding);
 
+  // Bulk Genie Retry sets this so a still-missing recording finalizes on the
+  // FIRST miss instead of climbing the 10-min × 4 retry ladder below. That
+  // ladder exists for live audits whose recording may not be ingested yet; a
+  // bulk re-run happens AFTER the recording DB is healthy, so a miss means the
+  // audio genuinely isn't there and 40 minutes of waiting only clogs a slot.
+  const skipGenieRetry = (finding as Record<string, unknown>).skipGenieRetry === true;
+
   // Multi-genie path: download all genies in parallel
   if (finding.genieIds && finding.genieIds.length > 0) {
     const validIds = finding.genieIds
@@ -100,7 +107,7 @@ export async function stepInit(req: Request): Promise<Response> {
     if (keys.length === 0) {
       const retryableIds = validIds.filter(isRetryableGenie);
       const attempts = (finding.genieAttempts ?? 0) + 1;
-      if (retryableIds.length > 0 && attempts < MAX_GENIE_RETRIES) {
+      if (!skipGenieRetry && retryableIds.length > 0 && attempts < MAX_GENIE_RETRIES) {
         const retryAt = Date.now() + GENIE_RETRY_DELAY_SEC * 1000;
         finding.genieAttempts = attempts;
         finding.genieRetryAt = retryAt;
@@ -183,7 +190,7 @@ export async function stepInit(req: Request): Promise<Response> {
   const bytes = await downloadRecording(Number(rid), findingId, orgId);
   if (!bytes) {
     const attempts = (finding.genieAttempts ?? 0) + 1;
-    if (isRetryableGenie(rid) && attempts < MAX_GENIE_RETRIES) {
+    if (!skipGenieRetry && isRetryableGenie(rid) && attempts < MAX_GENIE_RETRIES) {
       const retryAt = Date.now() + GENIE_RETRY_DELAY_SEC * 1000;
       finding.genieAttempts = attempts;
       finding.genieRetryAt = retryAt;

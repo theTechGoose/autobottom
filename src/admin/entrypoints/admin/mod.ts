@@ -259,11 +259,18 @@ export class AdminConfigController {
   // the review queue kept un-decided rows pointing at a finding whose
   // answeredQuestions had been wiped by step-prepare. Drain-then-re-publish
   // guarantees the next run rebuilds derived state from clean inputs.
+  // A full re-run (step === "init") ALSO clears the finding doc's own run
+  // state. Restarting from a later step deliberately does not — resuming at
+  // e.g. "finalize" needs the transcript and answers the earlier steps wrote.
   @Post("retry-finding") @ReturnedType(OkResponse) @BodyType(GenericBodyRequest)
   async retryFinding(@Body() body: { findingId: string; step?: string }) {
     const step = body.step ?? "init";
     const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
     await resetFindingDerivedState(ORG(), body.findingId);
+    if (step === "init") {
+      const { clearFindingRunState } = await import("@audit/domain/data/audit-repository/mod.ts");
+      await clearFindingRunState(ORG(), body.findingId);
+    }
     await publishStep(step, { findingId: body.findingId, orgId: ORG() });
     return { ok: true, step };
   }
@@ -271,6 +278,10 @@ export class AdminConfigController {
   async retryFindingGet(@Query("findingId") findingId: string, @Query("step") step: string) {
     const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
     await resetFindingDerivedState(ORG(), findingId);
+    if ((step || "init") === "init") {
+      const { clearFindingRunState } = await import("@audit/domain/data/audit-repository/mod.ts");
+      await clearFindingRunState(ORG(), findingId);
+    }
     await publishStep(step || "init", { findingId, orgId: ORG() });
     return { ok: true };
   }
@@ -296,6 +307,9 @@ export class AdminConfigController {
     if (!b.findingId) return { error: "findingId required" };
     const { resetFindingDerivedState } = await import("@review/domain/business/review-queue/mod.ts");
     await resetFindingDerivedState(ORG(), b.findingId);
+    const { clearFindingRunState } = await import("@audit/domain/data/audit-repository/mod.ts");
+    const existed = await clearFindingRunState(ORG(), b.findingId);
+    if (!existed) return { error: `finding not found: ${b.findingId}` };
     const { publishStep: pub } = await import("@core/data/qstash/mod.ts");
     await pub("init", { findingId: b.findingId, orgId: ORG() });
     return { ok: true, message: "Finding re-queued for re-audit" };

@@ -8,6 +8,7 @@ import {
   savePopulatedQuestions, getPopulatedQuestions,
   cacheAnswer, getCachedAnswer, cacheQuestions, getCachedQuestions, getLastGoodQuestions,
   saveTranscript, getTranscript,
+  clearFindingRunState,
 } from "./mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
@@ -123,4 +124,101 @@ Deno.test({ name: "transcript — save preserves existing diarized", ...kvOpts, 
   const result = await getTranscript(ORG, "f-tx2");
   assertEquals(result!.raw, "raw2");
   assertEquals(result!.diarized, "dia1"); // preserved from first save
+}});
+
+// ── clearFindingRunState ────────────────────────────────────────────────────
+// Regression: re-running an audit that finished as "Invalid Genie" was a
+// silent no-op. reset-finding drained the derived stores but left the finding
+// doc alone, so the stale rawTranscript sentinel survived — step-transcribe's
+// `if (finding.rawTranscript) → skip` never called AssemblyAI, transcribe-cb
+// and prepare both bailed on the same string, and finalize re-wrote the same
+// 0% result even though step-init had downloaded the recording fine.
+
+/** A finding shaped like one that finalized as Invalid Genie. */
+function invalidGenieFinding(id: string): Record<string, unknown> {
+  return {
+    id,
+    findingStatus: "finished",
+    rawTranscript: "Invalid Genie",
+    diarizedTranscript: "Invalid Genie",
+    utteranceTimes: [0, 100],
+    populatedQuestions: [],
+    unpopulatedQuestions: [],
+    answeredQuestions: [{ header: "Q1", answer: "No" }],
+    feedback: { heading: "Audit Failed", text: "could not be located" },
+    completedAt: 1_700_000_000_000,
+    reviewScore: 0,
+    assemblyAiUploadUrl: "https://cdn.assemblyai.com/upload/stale",
+    assemblyAiTranscriptId: "tx-stale",
+    assemblyAiSubmittedAt: 1_700_000_000_000,
+    genieAttempts: 4,
+    genieRetryAt: 1_700_000_600_000,
+    // Inputs the re-run rebuilds *from* — must survive.
+    record: { RecordId: "493900" },
+    recordingId: "27624059",
+    auditJobId: "job-1",
+    owner: "agent@example.com",
+    // Recording fields deliberately kept so the report's audio player still
+    // works while the re-run is in flight; step-init overwrites them anyway.
+    s3RecordingKey: "recordings/job-1/27624059.mp3",
+    recordingPath: "recordings/job-1/27624059.mp3",
+  };
+}
+
+Deno.test({ name: "clearFindingRunState — drops the stale Invalid Genie transcript that made re-runs no-op", ...kvOpts, fn: async () => {
+  await saveFinding(ORG, invalidGenieFinding("f-clear-1"));
+  assertEquals(await clearFindingRunState(ORG, "f-clear-1"), true);
+  const after = await getFinding(ORG, "f-clear-1");
+  assert(after !== null);
+  // The exact condition step-transcribe/mod.ts:51 guards on.
+  assertEquals(after!.rawTranscript, undefined, "stale sentinel must be gone or transcribe skips again");
+  // And the one that left a re-run with zero download retries.
+  assertEquals(after!.genieAttempts, undefined);
+  assertEquals(after!.genieRetryAt, undefined);
+  assertEquals(after!.findingStatus, "pending");
+}});
+
+Deno.test({ name: "clearFindingRunState — clears every field the pipeline writes", ...kvOpts, fn: async () => {
+  await saveFinding(ORG, invalidGenieFinding("f-clear-2"));
+  await clearFindingRunState(ORG, "f-clear-2");
+  const after = (await getFinding(ORG, "f-clear-2"))!;
+  for (
+    const field of [
+      "diarizedTranscript", "utteranceTimes",
+      "populatedQuestions", "unpopulatedQuestions", "answeredQuestions",
+      "feedback", "completedAt", "reviewScore",
+      "assemblyAiUploadUrl", "assemblyAiTranscriptId", "assemblyAiSubmittedAt",
+    ]
+  ) {
+    assertEquals(after[field], undefined, `${field} must be cleared before a re-run`);
+  }
+}});
+
+Deno.test({ name: "clearFindingRunState — keeps the inputs the re-run rebuilds from", ...kvOpts, fn: async () => {
+  await saveFinding(ORG, invalidGenieFinding("f-clear-3"));
+  await clearFindingRunState(ORG, "f-clear-3");
+  const after = (await getFinding(ORG, "f-clear-3"))!;
+  assertEquals(after.id, "f-clear-3");
+  assertEquals((after.record as { RecordId: string }).RecordId, "493900");
+  assertEquals(after.recordingId, "27624059");
+  assertEquals(after.auditJobId, "job-1");
+  assertEquals(after.owner, "agent@example.com");
+  // Kept on purpose — the report page's audio keeps playing mid-re-run.
+  assertEquals(after.s3RecordingKey, "recordings/job-1/27624059.mp3");
+  assertEquals(after.recordingPath, "recordings/job-1/27624059.mp3");
+}});
+
+Deno.test({ name: "clearFindingRunState — drops the transcript row so diarize can't inherit stale text", ...kvOpts, fn: async () => {
+  await saveFinding(ORG, invalidGenieFinding("f-clear-4"));
+  await saveTranscript(ORG, "f-clear-4", "old raw", "old diarized");
+  await clearFindingRunState(ORG, "f-clear-4");
+  assertEquals(await getTranscript(ORG, "f-clear-4"), null, "saveTranscript merges, so a stale diarized would survive");
+}});
+
+Deno.test({ name: "clearFindingRunState — idempotent, and false for a missing finding", ...kvOpts, fn: async () => {
+  await saveFinding(ORG, invalidGenieFinding("f-clear-5"));
+  await clearFindingRunState(ORG, "f-clear-5");
+  assertEquals(await clearFindingRunState(ORG, "f-clear-5"), true, "second pass is a safe no-op");
+  assertEquals((await getFinding(ORG, "f-clear-5"))!.findingStatus, "pending");
+  assertEquals(await clearFindingRunState(ORG, "f-clear-missing"), false);
 }});

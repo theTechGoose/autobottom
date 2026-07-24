@@ -3,7 +3,7 @@
 
 import {
   getStored, setStored, setStoredIfAbsent,
-  getStoredChunked, setStoredChunked,
+  getStoredChunked, setStoredChunked, deleteStoredChunked,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
@@ -80,6 +80,50 @@ export async function saveFinding(orgId: OrgId, finding: Record<string, any>): P
 export function invalidateFindingCache(orgId?: OrgId, id?: string): void {
   if (orgId && id) { _findingCache.delete(cacheFindingKey(orgId, id)); return; }
   _findingCache.clear();
+}
+
+/** Everything the pipeline writes onto the finding doc during a run. Recording
+ *  fields (s3RecordingKey/s3RecordingKeys/recordingPath) are deliberately NOT
+ *  in this list — step-init overwrites them anyway, and keeping them means the
+ *  report page's audio player still works while the re-run is in flight. */
+const RUN_STATE_FIELDS = [
+  "rawTranscript", "diarizedTranscript", "utteranceTimes",
+  "populatedQuestions", "unpopulatedQuestions", "answeredQuestions",
+  "feedback", "completedAt", "reviewScore",
+  "assemblyAiUploadUrl", "assemblyAiTranscriptId", "assemblyAiSubmittedAt",
+  "genieAttempts", "genieRetryAt",
+];
+
+/** Reset the finding doc itself to its pre-pipeline shape so a re-run rebuilds
+ *  it from scratch. Companion to resetFindingDerivedState, which clears the
+ *  *outside* stores (review queue, audit-done-idx, chargeback/wire) but
+ *  explicitly leaves audit-finding alone.
+ *
+ *  Without this, re-running an audit that finished as "Invalid Genie" is a
+ *  no-op: step-init downloads the recording fine, then step-transcribe's
+ *  `if (finding.rawTranscript) → skip` sees the stale sentinel and never calls
+ *  AssemblyAI, step-transcribe-cb and step-prepare both bail on the same
+ *  string, and finalize re-writes the identical 0% result. `genieAttempts`
+ *  matters too — left at MAX_GENIE_RETRIES, a re-run gets zero retries.
+ *
+ *  Idempotent. Returns false if the finding doesn't exist. */
+export async function clearFindingRunState(orgId: OrgId, findingId: string): Promise<boolean> {
+  const finding = await getFinding(orgId, findingId);
+  if (!finding) return false;
+  const cleared: string[] = [];
+  for (const field of RUN_STATE_FIELDS) {
+    if (finding[field] === undefined) continue;
+    delete finding[field];
+    cleared.push(field);
+  }
+  finding.findingStatus = "pending";
+  await saveFinding(orgId, finding);
+  // saveTranscript merges rather than replaces (it preserves an existing
+  // `diarized`), and step-diarize-async skips when the store already holds a
+  // diarized transcript — so drop the row or the re-run inherits stale text.
+  await deleteStoredChunked("audit-transcript", orgId, findingId).catch(() => {});
+  console.log(`🧽 [RESET-RUN-STATE] ${findingId}: cleared ${cleared.length ? cleared.join(",") : "(nothing)"} → findingStatus=pending`);
+  return true;
 }
 
 // ── Audit Deduplication ─────────────────────────────────────────────────────

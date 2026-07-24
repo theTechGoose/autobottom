@@ -1076,22 +1076,27 @@ export class AdminConfigController {
     return { ok: true, candidates };
   }
 
-  @Post("genie-retry-requeue") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
-  async genieRetryRequeue(@Body() body: GenericBodyRequest) {
-    const { fids } = body as any;
-    if (!Array.isArray(fids)) return { ok: false, error: "fids array required" };
-    const { requeueGenieRetryBatch } = await import("@audit/domain/business/genie-retry/mod.ts");
-    const r = await runInBackgroundLane(() => requeueGenieRetryBatch(ORG(), fids));
-    return { ok: true, ...r };
+  // Job lifecycle. The job lives in Firestore (see the module header) so a run
+  // survives isolate swaps and deploys — the whole reason the first in-memory
+  // version failed with "job not found" on every tick. Start creates it; each
+  // advance does one bounded tick (poll ≤5 in-flight, requeue ≤5 more).
+  @Post("genie-retry-start") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async genieRetryStart(@Body() body: GenericBodyRequest) {
+    const { since, until } = body as any;
+    if (!since || !until) return { ok: false, error: "since and until required" };
+    const { startGenieRetryJob } = await import("@audit/domain/business/genie-retry/mod.ts");
+    const snapshot = await runInBackgroundLane(() => startGenieRetryJob(ORG(), Number(since), Number(until)));
+    return { ok: true, snapshot };
   }
 
-  @Post("genie-retry-status") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
-  async genieRetryStatus(@Body() body: GenericBodyRequest) {
-    const { fids } = body as any;
-    if (!Array.isArray(fids)) return { ok: false, error: "fids array required" };
-    const { checkGenieRetryOutcomes } = await import("@audit/domain/business/genie-retry/mod.ts");
-    const outcomes = await runInBackgroundLane(() => checkGenieRetryOutcomes(ORG(), fids));
-    return { ok: true, outcomes };
+  @Post("genie-retry-advance") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async genieRetryAdvance(@Body() body: GenericBodyRequest) {
+    const { jobId } = body as any;
+    if (!jobId) return { ok: false, error: "jobId required" };
+    const { advanceGenieRetryJob } = await import("@audit/domain/business/genie-retry/mod.ts");
+    const snapshot = await runInBackgroundLane(() => advanceGenieRetryJob(ORG(), String(jobId)));
+    if (!snapshot) return { ok: false, error: "job not found" };
+    return { ok: true, snapshot };
   }
 
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)

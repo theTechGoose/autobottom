@@ -1,17 +1,17 @@
 /** Progress + result fragment for the "Genie Retry" bulk re-run.
  *
- *  Rendered by /genie-retry-start (initial) and /genie-retry-tick (per poll).
- *  Self-replaces via HTMX: while done=false it re-triggers the next tick; when
- *  done=true the trigger is dropped and this becomes the terminal result card.
- *  Mirrors components/TranscriptRepairProgress.tsx.
+ *  Rendered by /genie-retry-start (initial) and /genie-retry-tick (per poll),
+ *  straight from the backend's snapshot — the frontend keeps no run state.
+ *  Self-replaces via HTMX: while not done it re-triggers the next tick; when
+ *  done the trigger is dropped and this becomes the terminal result card.
  *
- *  The bar tracks VERDICTS, not requeues — an audit only counts as processed
- *  once the pipeline has finished with it, so the bar reflects real work done
- *  rather than messages posted to a queue. */
+ *  The bar tracks VERDICTS, not requeues — an audit counts as processed once
+ *  the pipeline has finished with it, so the bar reflects real work done rather
+ *  than messages posted to a queue. */
 
 import type { VNode } from "preact";
 import {
-  type GenieRetryJob,
+  type GenieRetrySnapshot,
   MAX_IN_FLIGHT,
   processedCount,
 } from "../lib/genie-retry-job-store.ts";
@@ -43,21 +43,20 @@ function Stat(props: { dot: string; label: string; value: number; hint?: string 
 }
 
 export function GenieRetryProgress(props: {
-  jobId: string;
-  job: GenieRetryJob;
-  done: boolean;
+  snap: GenieRetrySnapshot;
   elapsedMs: number;
 }): VNode {
-  const { jobId, job, done, elapsedMs } = props;
-  const processed = processedCount(job);
-  const progress = job.total === 0 ? 100 : Math.round((processed / job.total) * 100);
-  const recovered = job.valid > 0;
+  const { snap, elapsedMs } = props;
+  const done = snap.done;
+  const processed = processedCount(snap);
+  const progress = snap.total === 0 ? 100 : Math.round((processed / snap.total) * 100);
+  const recovered = snap.valid > 0;
 
   const accent = !done ? "var(--text-bright)" : recovered ? "var(--green)" : "var(--yellow)";
   const headerLabel = !done
-    ? `Re-running audits… ${job.inFlight.size} in flight`
+    ? `Re-running audits… ${snap.inFlightCount} in flight`
     : recovered
-    ? `✓ Recovered ${job.valid} audit${job.valid === 1 ? "" : "s"}`
+    ? `✓ Recovered ${snap.valid} audit${snap.valid === 1 ? "" : "s"}`
     : "Finished — no recordings recovered";
 
   return (
@@ -67,7 +66,7 @@ export function GenieRetryProgress(props: {
         : {
           // 4s between polls: an audit takes a minute or two, so anything
           // faster is just Firestore reads that can't have changed yet.
-          "hx-post": `/api/admin/modal/maintenance/genie-retry-tick?jobId=${jobId}`,
+          "hx-post": `/api/admin/modal/maintenance/genie-retry-tick?jobId=${snap.jobId}`,
           "hx-target": "#genie-retry-msg",
           "hx-swap": "innerHTML",
           "hx-trigger": "load delay:4s",
@@ -79,7 +78,7 @@ export function GenieRetryProgress(props: {
           {headerLabel}
         </div>
         <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);white-space:nowrap;">
-          {processed} / {job.total} ({progress}%) · {fmtElapsed(elapsedMs)}
+          {processed} / {snap.total} ({progress}%) · {fmtElapsed(elapsedMs)}
         </div>
       </div>
 
@@ -91,31 +90,31 @@ export function GenieRetryProgress(props: {
         <Stat
           dot="var(--blue)"
           label="Queued"
-          value={job.queued}
-          hint={job.pending.length > 0 ? `${job.pending.length} waiting` : undefined}
+          value={snap.queued}
+          hint={snap.pendingCount > 0 ? `${snap.pendingCount} waiting` : undefined}
         />
         <Stat
           dot="var(--text-dim)"
           label="Ran through"
           value={processed}
-          hint={job.inFlight.size > 0 ? `${job.inFlight.size} in flight` : undefined}
+          hint={snap.inFlightCount > 0 ? `${snap.inFlightCount} in flight` : undefined}
         />
-        <Stat dot="var(--green)" label="Genie valid" value={job.valid} hint="recording found" />
-        <Stat dot="var(--red)" label="Still invalid" value={job.invalid} hint="no recording" />
-        {job.stalled > 0 && <Stat dot="var(--yellow)" label="Stalled" value={job.stalled} hint="gave up waiting" />}
-        {job.missing > 0 && <Stat dot="var(--yellow)" label="Missing" value={job.missing} hint="audit deleted" />}
-        {job.failed > 0 && <Stat dot="var(--red)" label="Failed" value={job.failed} hint="never queued" />}
+        <Stat dot="var(--green)" label="Genie valid" value={snap.valid} hint="recording found" />
+        <Stat dot="var(--red)" label="Still invalid" value={snap.invalid} hint="no recording" />
+        {snap.stalled > 0 && <Stat dot="var(--yellow)" label="Stalled" value={snap.stalled} hint="gave up waiting" />}
+        {snap.missing > 0 && <Stat dot="var(--yellow)" label="Missing" value={snap.missing} hint="audit deleted" />}
+        {snap.failed > 0 && <Stat dot="var(--red)" label="Failed" value={snap.failed} hint="never queued" />}
       </div>
 
       {!done && (
         <div style="font-size:10px;color:var(--text-dim);margin-top:12px;line-height:1.4;">
           Running {MAX_IN_FLIGHT} at a time — each audit downloads, transcribes, and re-grades, so expect
-          roughly a minute or two per audit. Keep this modal open; closing it stops the re-queueing (audits
-          already in flight still finish on their own).
+          roughly a minute or two per audit. The run lives on the server now, so you can safely close this
+          modal and re-open the tool on the same window to check back in.
         </div>
       )}
 
-      {done && job.results.length > 0 && (
+      {done && snap.results.length > 0 && (
         <>
           <div style="margin-top:14px;max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:4px;">
             <table style="width:100%;border-collapse:collapse;font-size:11px;">
@@ -131,8 +130,7 @@ export function GenieRetryProgress(props: {
                 </tr>
               </thead>
               <tbody>
-                {job.results.map((r) => {
-                  const m = job.meta.get(r.findingId);
+                {snap.results.map((r) => {
                   const label = r.state === "valid"
                     ? "Recording found"
                     : r.state === "invalid"
@@ -150,10 +148,10 @@ export function GenieRetryProgress(props: {
                       <td style="padding:5px 8px;font-family:var(--mono);">
                         <a href={`/audit/report?id=${encodeURIComponent(r.findingId)}`} target="_blank" style="color:var(--blue);text-decoration:none;">{r.findingId}</a>
                       </td>
-                      <td style="padding:5px 8px;color:var(--text-dim);font-family:var(--mono);">{m?.recordId ?? "—"}</td>
-                      <td style="padding:5px 8px;color:var(--text-dim);font-family:var(--mono);">{m?.recordingId ?? "—"}</td>
-                      <td style="padding:5px 8px;color:var(--text-dim);">{m?.voName ?? "—"}</td>
-                      <td style="padding:5px 8px;color:var(--text-dim);">{fmtDate(m?.completedAt)}</td>
+                      <td style="padding:5px 8px;color:var(--text-dim);font-family:var(--mono);">{r.recordId ?? "—"}</td>
+                      <td style="padding:5px 8px;color:var(--text-dim);font-family:var(--mono);">{r.recordingId ?? "—"}</td>
+                      <td style="padding:5px 8px;color:var(--text-dim);">{r.voName ?? "—"}</td>
+                      <td style="padding:5px 8px;color:var(--text-dim);">{fmtDate(r.completedAt)}</td>
                       <td style={`padding:5px 8px;color:${color};`}>{label}</td>
                       <td style="padding:5px 8px;text-align:right;color:var(--text-bright);">{r.score == null ? "—" : `${r.score}%`}</td>
                     </tr>
@@ -162,7 +160,7 @@ export function GenieRetryProgress(props: {
               </tbody>
             </table>
           </div>
-          {job.results.length >= 500 && (
+          {snap.results.length >= 500 && (
             <div style="font-size:10px;color:var(--text-dim);margin-top:6px;">
               Table caps at 500 rows — the counters above cover the whole run.
             </div>

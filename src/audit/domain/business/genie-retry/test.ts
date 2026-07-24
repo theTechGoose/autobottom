@@ -10,9 +10,12 @@
 
 import { assert, assertEquals } from "#assert";
 import {
+  advanceGenieRetryJob,
   checkGenieRetryOutcomes,
   listInvalidGenieFindings,
+  MAX_IN_FLIGHT,
   requeueGenieRetryBatch,
+  startGenieRetryJob,
 } from "./mod.ts";
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { setStored } from "@core/data/firestore/mod.ts";
@@ -215,4 +218,113 @@ Deno.test({ name: "checkGenieRetryOutcomes — preserves input order and handles
   const out = await checkGenieRetryOutcomes(orgId, ["f-a", "f-b", "f-c"]);
   assertEquals(out.map((o) => o.findingId), ["f-a", "f-b", "f-c"]);
   assertEquals(out.map((o) => o.state), ["valid", "running", "invalid"]);
+}});
+
+// ── Persisted job (start / advance) ─────────────────────────────────────────
+// The whole point of persisting is that a run survives an isolate swap. In
+// these tests each advance() is a fresh call that only touches Firestore — no
+// in-memory job is threaded between them, exactly as separate isolates would
+// behave. A run that advances to done through independent calls proves the
+// old "job not found on the next tick" failure is gone.
+
+Deno.test({ name: "startGenieRetryJob — persists a job with every candidate pending, nothing in flight", ...kvOpts, fn: async () => {
+  setupEnv();
+  const orgId = uniqueOrg("start");
+  for (let i = 0; i < 3; i++) {
+    await idxRow(orgId, { findingId: `f-s${i}`, completedAt: 1_000 + i, reason: "invalid_genie", recordingId: "27624059" });
+    await saveFinding(orgId, { id: `f-s${i}`, findingStatus: "finished", rawTranscript: "Invalid Genie", recordingId: "27624059" });
+  }
+  const snap = await startGenieRetryJob(orgId, 500, 5_000);
+  assertEquals(snap.total, 3);
+  assertEquals(snap.pendingCount, 3);
+  assertEquals(snap.inFlightCount, 0);
+  assertEquals(snap.queued, 0, "start persists the job but requeues nothing — the first advance does");
+  assertEquals(snap.done, false);
+  assert(snap.jobId.length > 0);
+}});
+
+Deno.test({ name: "startGenieRetryJob — an empty window yields a done, zero-total snapshot", ...kvOpts, fn: async () => {
+  const orgId = uniqueOrg("start-empty");
+  const snap = await startGenieRetryJob(orgId, 500, 5_000);
+  assertEquals(snap.total, 0);
+  assertEquals(snap.done, true, "nothing to do reads as done so the UI shows the empty state");
+}});
+
+Deno.test({ name: "advanceGenieRetryJob — returns null for an unknown job (expired / never existed)", ...kvOpts, fn: async () => {
+  const orgId = uniqueOrg("advance-missing");
+  assertEquals(await advanceGenieRetryJob(orgId, "nope1234"), null);
+}});
+
+Deno.test({ name: "advanceGenieRetryJob — first tick requeues up to MAX_IN_FLIGHT and no more", ...kvOpts, fn: async () => {
+  setupEnv();
+  const orgId = uniqueOrg("advance-gate");
+  const stub = installFetchStub();
+  try {
+    const n = MAX_IN_FLIGHT + 3;
+    for (let i = 0; i < n; i++) {
+      await idxRow(orgId, { findingId: `f-g${i}`, completedAt: 1_000 + i, reason: "invalid_genie", recordingId: "27624059" });
+      await saveFinding(orgId, { id: `f-g${i}`, findingStatus: "finished", rawTranscript: "Invalid Genie", recordingId: "27624059" });
+    }
+    const start = await startGenieRetryJob(orgId, 500, 5_000);
+
+    // Fresh call, as a different isolate would make it — the job is loaded from
+    // Firestore, not memory.
+    const t1 = await advanceGenieRetryJob(orgId, start.jobId);
+    assert(t1 !== null, "the job must be found on the next tick — the bug we fixed");
+    assertEquals(t1!.inFlightCount, MAX_IN_FLIGHT, "never more than 5 audits in the pipeline at once");
+    assertEquals(t1!.queued, MAX_IN_FLIGHT);
+    assertEquals(t1!.pendingCount, 3, "the rest wait their turn");
+    assertEquals(t1!.done, false);
+  } finally {
+    stub.restore();
+  }
+}});
+
+Deno.test({ name: "advanceGenieRetryJob — a run drives to done across independent ticks and classifies each audit", ...kvOpts, fn: async () => {
+  setupEnv();
+  const orgId = uniqueOrg("advance-done");
+  const stub = installFetchStub();
+  try {
+    // Two audits: one will 'recover' (real transcript), one stays invalid.
+    await idxRow(orgId, { findingId: "f-ok", completedAt: 1_000, reason: "invalid_genie", recordingId: "27624059", voName: "Recovers" });
+    await idxRow(orgId, { findingId: "f-bad", completedAt: 1_001, reason: "invalid_genie", recordingId: "27624060", voName: "StaysBad" });
+    await saveFinding(orgId, { id: "f-ok", findingStatus: "finished", rawTranscript: "Invalid Genie" });
+    await saveFinding(orgId, { id: "f-bad", findingStatus: "finished", rawTranscript: "Invalid Genie" });
+
+    const start = await startGenieRetryJob(orgId, 500, 5_000);
+
+    // Tick 1: requeues both (clearFindingRunState resets them to pending).
+    const t1 = await advanceGenieRetryJob(orgId, start.jobId);
+    assertEquals(t1!.inFlightCount, 2);
+    assertEquals(t1!.queued, 2);
+
+    // The pipeline "runs": simulate each finding's finished state.
+    await saveFinding(orgId, {
+      id: "f-ok",
+      findingStatus: "finished",
+      rawTranscript: "Agent: hi there, thanks for calling today.",
+      answeredQuestions: [{ answer: "Yes" }, { answer: "Yes" }],
+    });
+    await saveFinding(orgId, { id: "f-bad", findingStatus: "finished", rawTranscript: "Invalid Genie" });
+
+    // Tick 2: polls, retires both, nothing left → done.
+    const t2 = await advanceGenieRetryJob(orgId, start.jobId);
+    assert(t2 !== null);
+    assertEquals(t2!.done, true);
+    assertEquals(t2!.valid, 1);
+    assertEquals(t2!.invalid, 1);
+    assertEquals(t2!.inFlightCount, 0);
+
+    const byId = new Map(t2!.results.map((r) => [r.findingId, r]));
+    assertEquals(byId.get("f-ok")!.state, "valid");
+    assertEquals(byId.get("f-ok")!.score, 100);
+    assertEquals(byId.get("f-ok")!.voName, "Recovers", "display metadata rides along into the result row");
+    assertEquals(byId.get("f-bad")!.state, "invalid");
+
+    // Done deletes the doc — a late tick can't resurrect it, and the terminal
+    // fragment has stopped polling anyway.
+    assertEquals(await advanceGenieRetryJob(orgId, start.jobId), null);
+  } finally {
+    stub.restore();
+  }
 }});

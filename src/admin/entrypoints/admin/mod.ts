@@ -1099,6 +1099,29 @@ export class AdminConfigController {
     return { ok: true, snapshot };
   }
 
+  // Force every invalid-genie audit in a window to a 100% reviewed pass — the
+  // conscious override of Bulk Flip's refusal to touch un-listened calls. Same
+  // start/advance job shape as Genie Retry, persisted in Firestore.
+  @Post("force-hundred-start") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async forceHundredStart(@Body() body: GenericBodyRequest) {
+    const { since, until, flippedBy } = body as any;
+    if (!since || !until) return { ok: false, error: "since and until required" };
+    const { startForceHundredJob } = await import("@audit/domain/business/genie-retry/mod.ts");
+    const by = (typeof flippedBy === "string" && flippedBy.trim()) ? flippedBy.trim() : "admin";
+    const snapshot = await runInBackgroundLane(() => startForceHundredJob(ORG(), Number(since), Number(until), by));
+    return { ok: true, snapshot };
+  }
+
+  @Post("force-hundred-advance") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async forceHundredAdvance(@Body() body: GenericBodyRequest) {
+    const { jobId } = body as any;
+    if (!jobId) return { ok: false, error: "jobId required" };
+    const { advanceForceHundredJob } = await import("@audit/domain/business/genie-retry/mod.ts");
+    const snapshot = await runInBackgroundLane(() => advanceForceHundredJob(ORG(), String(jobId)));
+    if (!snapshot) return { ok: false, error: "job not found" };
+    return { ok: true, snapshot };
+  }
+
   @Post("backfill-partner-dimensions") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
   async backfillPartnerDimensions(@Body() body: GenericBodyRequest) {
     const { cursor } = body as any;

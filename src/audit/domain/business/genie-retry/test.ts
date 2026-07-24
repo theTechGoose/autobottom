@@ -10,11 +10,13 @@
 
 import { assert, assertEquals } from "#assert";
 import {
+  advanceForceHundredJob,
   advanceGenieRetryJob,
   checkGenieRetryOutcomes,
   listInvalidGenieFindings,
   MAX_IN_FLIGHT,
   requeueGenieRetryBatch,
+  startForceHundredJob,
   startGenieRetryJob,
 } from "./mod.ts";
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -140,6 +142,24 @@ Deno.test({ name: "requeueGenieRetryBatch — clears the stale sentinel so the r
     assertEquals(after.findingStatus, "pending");
     // Inputs the re-run needs must survive.
     assertEquals(after.recordingId, "27624059");
+  } finally {
+    stub.restore();
+  }
+}});
+
+Deno.test({ name: "requeueGenieRetryBatch — stamps skipGenieRetry so a still-missing genie finalizes fast, not on a 40-min ladder", ...kvOpts, fn: async () => {
+  setupEnv();
+  const orgId = uniqueOrg("skip");
+  const stub = installFetchStub();
+  try {
+    await saveFinding(orgId, {
+      id: "f-skip",
+      findingStatus: "finished",
+      rawTranscript: "Invalid Genie",
+      recordingId: "27624059",
+    });
+    await requeueGenieRetryBatch(orgId, ["f-skip"]);
+    assertEquals((await getFinding(orgId, "f-skip"))!.skipGenieRetry, true);
   } finally {
     stub.restore();
   }
@@ -327,4 +347,61 @@ Deno.test({ name: "advanceGenieRetryJob — a run drives to done across independ
   } finally {
     stub.restore();
   }
+}});
+
+// ── Force-to-100 job (start / advance) ──────────────────────────────────────
+// Forces invalid-genie audits to a 100% reviewed pass via adminFlipFinding.
+// Same persisted-job discipline as the recovery job: independent advance()
+// calls, all state in Firestore.
+
+Deno.test({ name: "startForceHundredJob — lists the same invalid-genie audits, nothing flipped yet", ...kvOpts, fn: async () => {
+  const orgId = uniqueOrg("fh-start");
+  for (let i = 0; i < 3; i++) {
+    await idxRow(orgId, { findingId: `f-fh${i}`, completedAt: 1_000 + i, reason: "invalid_genie", recordingId: "27624059", voName: `VO${i}` });
+    await saveFinding(orgId, { id: `f-fh${i}`, findingStatus: "finished", rawTranscript: "Invalid Genie", answeredQuestions: [{ header: "Q1", answer: "No" }] });
+  }
+  await idxRow(orgId, { findingId: "f-ok", completedAt: 1_100, reason: "reviewed" }); // not a candidate
+  const snap = await startForceHundredJob(orgId, 500, 5_000, "admin@x.com");
+  assertEquals(snap.total, 3);
+  assertEquals(snap.pendingCount, 3);
+  assertEquals(snap.flipped, 0);
+  assertEquals(snap.done, false);
+}});
+
+Deno.test({ name: "advanceForceHundredJob — flips a batch to 100% and reaches done, with the audit graded 100", ...kvOpts, fn: async () => {
+  const orgId = uniqueOrg("fh-advance");
+  await idxRow(orgId, { findingId: "f-flip", completedAt: 1_000, reason: "invalid_genie", recordingId: "27624059", voName: "Jordan Price" });
+  await saveFinding(orgId, {
+    id: "f-flip",
+    findingStatus: "finished",
+    rawTranscript: "Invalid Genie",
+    answeredQuestions: [{ header: "Q1", answer: "No" }, { header: "Q2", answer: "No" }],
+    record: { RecordId: "493900" },
+  });
+
+  const start = await startForceHundredJob(orgId, 500, 5_000, "admin@x.com");
+  const t1 = await advanceForceHundredJob(orgId, start.jobId);
+  assert(t1 !== null);
+  assertEquals(t1!.done, true);
+  assertEquals(t1!.flipped, 1);
+  assertEquals(t1!.failed, 0);
+  assertEquals(t1!.results[0].findingId, "f-flip");
+  assertEquals(t1!.results[0].ok, true);
+  assertEquals(t1!.results[0].voName, "Jordan Price", "metadata rides into the result row");
+
+  // The finding is now a 100% reviewed pass: answers flipped, reviewScore set,
+  // and the admin stamped as the reviewer on each flipped question.
+  const after = (await getFinding(orgId, "f-flip"))!;
+  assertEquals(after.reviewScore, 100);
+  const qs = after.answeredQuestions as Array<{ answer: string; reviewedBy?: string }>;
+  assertEquals(qs.every((q) => q.answer === "Yes"), true);
+  assertEquals(qs[0].reviewedBy, "admin@x.com");
+
+  // Done deletes the doc.
+  assertEquals(await advanceForceHundredJob(orgId, start.jobId), null);
+}});
+
+Deno.test({ name: "advanceForceHundredJob — returns null for an unknown job", ...kvOpts, fn: async () => {
+  const orgId = uniqueOrg("fh-missing");
+  assertEquals(await advanceForceHundredJob(orgId, "nope1234"), null);
 }});

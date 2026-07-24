@@ -419,6 +419,47 @@ function BulkFlipPanel() {
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   return (
     <PanelCard title="Bulk Flip" subtitle="Pull unreviewed audits matching your filters and flip all answers to Yes (100% score). This removes them from the review queue.">
+      {/* Force Invalid-Genie to 100%. Regular Bulk Flip below can't see these —
+          Invalid Genie audits never enter the review queue (no recording to
+          review) and the flip guard refuses them. This is the deliberate
+          override: mark un-recoverable calls as a 100% pass so the agent isn't
+          stuck with a 0% the broken recording DB caused. Same flip as below
+          (answers→Yes, score 100, 0% payroll rows dropped), just reaching the
+          audits the queue-driven pull can't. */}
+      <div style="border:1px solid var(--yellow);border-radius:6px;padding:12px;background:var(--bg-2);margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:700;color:var(--yellow);margin-bottom:4px;">Force Invalid-Genie audits to 100%</div>
+        <div style="font-size:11px;color:var(--text-dim);line-height:1.5;margin-bottom:10px;">
+          The regular pull below can't reach "Invalid Genie" 0% audits — no recording ever entered the review
+          queue. This forces every Invalid-Genie audit in the window to a 100% reviewed pass (answers → Yes,
+          0% chargeback/wire rows dropped), attributed to you. Use it for calls whose recording is
+          unrecoverable so the agent isn't left with a 0%. Safe to re-run — a flipped audit drops off the list.
+        </div>
+        <style dangerouslySetInnerHTML={{ __html: `
+          .fh-btn .fh-loading { display: none; }
+          .fh-btn.htmx-request .fh-label { display: none; }
+          .fh-btn.htmx-request .fh-loading { display: inline; }
+          .fh-btn.htmx-request, .fh-btn:disabled { opacity: 0.7; cursor: wait; }
+        `}} />
+        <form
+          hx-post="/api/admin/modal/maintenance/force-hundred-start"
+          hx-target="#force-hundred-msg"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']"
+          hx-indicator="find button[type='submit']"
+          hx-confirm="Force every Invalid Genie audit in this window to a 100% reviewed pass? This changes agent scores and removes their 0% payroll deductions. It does not restore a recording — use Genie Retry first if you still want to recover the real audio."
+        >
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:10px;max-width:420px;">
+            <div class="sf"><label class="sf-label">From (audit date)</label><input type="date" name="since" class="sf-input" required /></div>
+            <div class="sf"><label class="sf-label">To (inclusive)</label><input type="date" name="until" class="sf-input" required /></div>
+          </div>
+          <button type="submit" class="sf-btn primary fh-btn" style="padding:8px 16px;min-width:250px;">
+            <span class="fh-label">Force Invalid-Genie audits to 100%</span>
+            <span class="fh-loading">Flipping…</span>
+          </button>
+        </form>
+        <div id="force-hundred-msg" style="margin-top:12px;"></div>
+      </div>
+
       {/* Reconcile sweep — finalizes any pending findings whose live score
           is already 100. Cleans up drift from pencil-flips that reached
           100% but never had review-pending / review-active entries

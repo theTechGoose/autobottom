@@ -439,3 +439,163 @@ export async function advanceGenieRetryJob(
   }
   return snap;
 }
+
+// ── Force-to-100 job ────────────────────────────────────────────────────────
+//
+// Forces every invalid-genie audit in a window to a 100% reviewed PASS. Bulk
+// Flip deliberately refuses these — they never enter the review queue (no
+// recording to review) and it guards against marking an un-listened call 100%.
+// This is the conscious override: the operator has decided the recording is
+// unrecoverable and the agent should not carry a 0% for a call the broken
+// database lost.
+//
+// It reuses adminFlipFinding, the SAME function the normal Bulk Flip runs, so
+// the outcome is identical to a human flipping every answer to Yes: score 100,
+// answers → Yes, reviewedBy stamped, the 0% chargeback/wire payroll rows
+// dropped, and a "reviewed" audit-done-idx row written. That last write is why
+// a flipped audit stops being an invalid-genie candidate — the tool is
+// naturally idempotent and safe to re-run.
+
+const FLIP_BATCH = 20;
+const FLIP_POOL = 10;
+const FLIP_JOB_STORE = "genie-flip-job";
+
+/** One audit the force-100 run touched, for the result table. */
+export interface ForceHundredResultRow {
+  findingId: string;
+  ok: boolean;
+  recordId?: string;
+  recordingId?: string;
+  voName?: string;
+  completedAt?: number;
+}
+
+interface StoredForceHundredJob {
+  jobId: string;
+  since: number;
+  until: number;
+  pending: string[];
+  meta: Record<string, GenieRetryCandidate>;
+  /** Email stamped as the reviewer on every flipped audit. */
+  flippedBy: string;
+  total: number;
+  flipped: number;
+  failed: number;
+  results: ForceHundredResultRow[];
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface ForceHundredSnapshot {
+  jobId: string;
+  since: number;
+  until: number;
+  total: number;
+  flipped: number;
+  failed: number;
+  pendingCount: number;
+  results: ForceHundredResultRow[];
+  startedAt: number;
+  done: boolean;
+}
+
+function flipSnapshot(job: StoredForceHundredJob): ForceHundredSnapshot {
+  return {
+    jobId: job.jobId,
+    since: job.since,
+    until: job.until,
+    total: job.total,
+    flipped: job.flipped,
+    failed: job.failed,
+    pendingCount: job.pending.length,
+    results: job.results,
+    startedAt: job.startedAt,
+    done: job.pending.length === 0,
+  };
+}
+
+async function saveFlipJob(orgId: OrgId, job: StoredForceHundredJob): Promise<void> {
+  job.updatedAt = Date.now();
+  await setStored(FLIP_JOB_STORE, orgId, [job.jobId], job, { expireInMs: JOB_TTL_MS });
+}
+
+/** Create a force-to-100 job for every invalid-genie audit in the window. */
+export async function startForceHundredJob(
+  orgId: OrgId,
+  since: number,
+  until: number,
+  flippedBy: string,
+): Promise<ForceHundredSnapshot> {
+  const candidates = await listInvalidGenieFindings(orgId, since, until);
+  const meta: Record<string, GenieRetryCandidate> = {};
+  for (const c of candidates) meta[c.findingId] = c;
+  const now = Date.now();
+  const job: StoredForceHundredJob = {
+    jobId: crypto.randomUUID().slice(0, 8),
+    since,
+    until,
+    pending: candidates.map((c) => c.findingId),
+    meta,
+    flippedBy: flippedBy || "admin",
+    total: candidates.length,
+    flipped: 0,
+    failed: 0,
+    results: [],
+    startedAt: now,
+    updatedAt: now,
+  };
+  await saveFlipJob(orgId, job);
+  console.log(`🚀 [FORCE-100] job start orgId=${orgId} jobId=${job.jobId} total=${job.total} by=${job.flippedBy} since=${since} until=${until}`);
+  return flipSnapshot(job);
+}
+
+/** Advance a force-to-100 job by one batch: flip up to FLIP_BATCH audits to
+ *  100% and record each outcome. Returns null if the job is gone (TTL expired).
+ *
+ *  Flipping is fast and synchronous (no pipeline wait), so unlike the recovery
+ *  job there is no in-flight gate — a batch either flips or reports the failure. */
+export async function advanceForceHundredJob(
+  orgId: OrgId,
+  jobId: string,
+): Promise<ForceHundredSnapshot | null> {
+  const job = await getStored<StoredForceHundredJob>(FLIP_JOB_STORE, orgId, jobId);
+  if (!job) return null;
+
+  const batch = job.pending.splice(0, FLIP_BATCH);
+  if (batch.length > 0) {
+    const { adminFlipFinding } = await import("@review/domain/business/review-queue/mod.ts");
+    const outcomes = await mapPooled(batch, FLIP_POOL, async (findingId) => {
+      try {
+        const r = await adminFlipFinding(orgId, findingId, job.flippedBy);
+        return { findingId, ok: r.success };
+      } catch (err) {
+        console.warn(`[FORCE-100] ❌ ${findingId} flip failed:`, err);
+        return { findingId, ok: false };
+      }
+    });
+    for (const o of outcomes) {
+      if (o.ok) job.flipped++;
+      else job.failed++;
+      if (job.results.length < MAX_TRACKED_RESULTS) {
+        const m = job.meta[o.findingId] ?? {};
+        job.results.push({
+          findingId: o.findingId,
+          ok: o.ok,
+          recordId: m.recordId,
+          recordingId: m.recordingId,
+          voName: m.voName,
+          completedAt: m.completedAt,
+        });
+      }
+    }
+  }
+
+  await saveFlipJob(orgId, job);
+  const snap = flipSnapshot(job);
+  console.log(`📊 [FORCE-100] tick jobId=${jobId} flipped=${job.flipped} failed=${job.failed} pending=${snap.pendingCount} done=${snap.done}`);
+  if (snap.done) {
+    console.log(`✅ [FORCE-100] job done jobId=${jobId} total=${job.total} flipped=${job.flipped} failed=${job.failed} elapsed=${Math.round((Date.now() - job.startedAt) / 1000)}s`);
+    await deleteStored(FLIP_JOB_STORE, orgId, jobId).catch(() => {});
+  }
+  return snap;
+}

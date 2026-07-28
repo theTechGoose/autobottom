@@ -112,11 +112,8 @@ export const OPS_STYLES = `
     font-weight:600; color:var(--text-muted); border:1px solid var(--border);
     border-bottom:none; border-radius:8px 8px 0 0; background:var(--bg-card); }
   .ops-tab.is-active{ color:var(--text-bright); border-color:var(--accent); background:var(--accent-bg); }
-  /* Overview: one card per department. 420px min keeps it to two columns at
-     the usual window width — question text is long, and three columns
-     truncated most of it to an ellipsis. auto-fill still collapses to one
-     column on a narrow screen and spreads on a very wide one. */
-  .ops-cards{ display:grid; grid-template-columns:repeat(auto-fill,minmax(420px,1fr)); gap:14px; }
+  /* Overview: one department per row, full width. */
+  .ops-cards{ display:grid; grid-template-columns:1fr; gap:14px; }
   .ops-card{ display:block; padding:14px 16px; text-decoration:none; color:inherit;
     transition:border-color .12s, background .12s; }
   .ops-card:hover{ border-color:var(--accent); background:var(--accent-bg); }
@@ -130,7 +127,9 @@ export const OPS_STYLES = `
   .ops-card-detail{ display:flex; gap:10px; font-size:12px; margin-top:8px; }
   .ops-card-label{ width:74px; flex-shrink:0; font-size:10px; font-weight:700;
     letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim); padding-top:2px; }
-  .ops-miss{ display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+  /* Capped so the miss count stays beside its question instead of being
+     flung to the far edge of a full-width card. */
+  .ops-miss{ display:flex; align-items:center; gap:6px; margin-bottom:3px; max-width:820px; }
   .ops-miss-text{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap; color:var(--text-muted); }
   .ah-update .ah-update-spin{ display:none; }

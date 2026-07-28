@@ -172,6 +172,12 @@ export interface QueueFilterParams {
   sort?: string; // "recent" (default) | "oldest" | "failpct"
   since?: number; // window start (ms); rows are kept by queueTimestamp()
   until?: number; // window end (ms)
+  /** Single-department narrowing for the Operations Portal's department rail.
+   *  Empty = every department in the caller's scope (the manager default).
+   *  This is a NARROWING filter over an already scope-filtered list — the
+   *  backend has stripped out-of-scope rows before we ever see them, so it
+   *  can't be used to reach another team's queue. */
+  dept?: string;
 }
 
 /** Read the queue filter/sort selections off a query string. Shared by the
@@ -193,6 +199,7 @@ export function readQueueFilterParams(sp: URLSearchParams): QueueFilterParams {
     sort: sp.get("sort") ?? "recent",
     since: ms(sp.get("since")) ?? (now - DEFAULT_WINDOW_DAYS * DAY_MS),
     until: ms(sp.get("until")) ?? now,
+    dept: sp.get("dept") ?? "",
   };
 }
 
@@ -229,8 +236,12 @@ export function filterAndSortQueue(items: QueueItem[], params: QueueFilterParams
   const sort = params.sort || "recent";
   const since = typeof params.since === "number" ? params.since : undefined;
   const until = typeof params.until === "number" ? params.until : undefined;
+  const dept = (params.dept ?? "").trim();
 
   const out = items.filter((it) => {
+    // Exact department match — department names are stored whole ("ODS WFH"
+    // is one department, not dept+shift), so no substring matching here.
+    if (dept && (it.department ?? "") !== dept) return false;
     // Date window over the audit time (queueTimestamp). since=0 keeps everything.
     if (since != null || until != null) {
       const ts = queueTimestamp(it);

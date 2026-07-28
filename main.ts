@@ -263,6 +263,34 @@ async function handleManagerStats(req: Request): Promise<Response> {
   });
 }
 
+/** The caller's own manager scope (departments + shifts). The Operations
+ *  Portal needs this to build its department rail — a department the ops
+ *  manager owns must appear even when its queue is currently empty, which
+ *  can't be derived from the queue itself.
+ *
+ *  Honors `?as=<email>` for admin impersonation, same convention as
+ *  audit-history / queue. Nobody can read another user's scope: the `as`
+ *  branch is admin-only, everyone else always reads their own. */
+async function handleManagerScope(req: Request): Promise<Response> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (auth.role !== "manager" && auth.role !== "admin" && auth.role !== "super-manager" && auth.role !== "operations-manager") {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  const asEmail = new URL(req.url).searchParams.get("as");
+  const scopeEmail = (asEmail && auth.role === "admin") ? asEmail : auth.email;
+  const { getManagerScope } = await import("@admin/domain/data/admin-repository/mod.ts");
+  try {
+    const scope = await getManagerScope(auth.orgId, scopeEmail);
+    return Response.json({ departments: scope.departments ?? [], shifts: scope.shifts ?? [] });
+  } catch (err) {
+    // Soft fallback — an empty scope degrades the rail to "departments seen
+    // in the queue" rather than 500ing the whole Operations page.
+    console.warn(`⚠️ [MANAGER-SCOPE] failed for ${scopeEmail} — soft fallback:`, err);
+    return Response.json({ departments: [], shifts: [], retry: true });
+  }
+}
+
 async function handleAgentDashboard(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -765,6 +793,7 @@ const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>>
   "/manager/api/audit-history": handleManagerAuditHistory,
   "/manager/api/queue": handleManagerQueue,
   "/manager/api/stats": handleManagerStats,
+  "/manager/api/scope": handleManagerScope,
   "/manager/api/queue/clear": handleManagerQueueClear,
   "/agent/api/game-state": handleGameState,
   "/agent/api/dashboard": handleAgentDashboard,

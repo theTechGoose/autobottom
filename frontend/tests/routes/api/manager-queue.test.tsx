@@ -224,11 +224,48 @@ Deno.test("filterAndSortQueue — recent (default) is newest addedAt first; olde
   assertEquals(ids(filterAndSortQueue(rows, { sort: "oldest" })), ["old", "mid", "new"]);
 });
 
+Deno.test("filterAndSortQueue — dept narrows to one department; empty keeps all", () => {
+  const rows = [
+    item({ findingId: "a", department: "ODS WFH" }),
+    item({ findingId: "b", department: "GS WFH" }),
+    item({ findingId: "c", department: "ODS WFH" }),
+  ];
+  assertEquals(ids(filterAndSortQueue(rows, { dept: "ODS WFH" })).sort(), ["a", "c"]);
+  assertEquals(ids(filterAndSortQueue(rows, { dept: "" })).sort(), ["a", "b", "c"]);
+});
+
+Deno.test("filterAndSortQueue — dept match is exact, never a prefix or substring", () => {
+  // 'ODS WFH' is one whole department name, so selecting it must not sweep in
+  // a differently-named department that merely starts with the same token.
+  const rows = [
+    item({ findingId: "exact", department: "ODS WFH" }),
+    item({ findingId: "other", department: "ODS WFH 2" }),
+    item({ findingId: "bare", department: "ODS" }),
+  ];
+  assertEquals(ids(filterAndSortQueue(rows, { dept: "ODS WFH" })), ["exact"]);
+});
+
+Deno.test("filterAndSortQueue — dept drops rows with no stamped department", () => {
+  // Legacy unstamped rows can't be attributed to a department, so a selected
+  // department must not silently inherit them.
+  const rows = [
+    item({ findingId: "stamped", department: "GS WFH" }),
+    item({ findingId: "unstamped" }),
+  ];
+  assertEquals(ids(filterAndSortQueue(rows, { dept: "GS WFH" })), ["stamped"]);
+});
+
 Deno.test("readQueueFilterParams — parses fields + an explicit window", () => {
   assertEquals(
     readQueueFilterParams(new URLSearchParams("member=jane&q=Age&wgs=1&since=1000&until=2000")),
-    { member: "jane", q: "Age", wgs: true, mcc: false, sort: "recent", since: 1000, until: 2000 },
+    { member: "jane", q: "Age", wgs: true, mcc: false, sort: "recent", since: 1000, until: 2000, dept: "" },
   );
+});
+
+Deno.test("readQueueFilterParams — reads the Operations Portal's department selection", () => {
+  assertEquals(readQueueFilterParams(new URLSearchParams("dept=ODS%20WFH")).dept, "ODS WFH");
+  // Absent → empty, i.e. every department in scope (the manager default).
+  assertEquals(readQueueFilterParams(new URLSearchParams("")).dept, "");
 });
 
 Deno.test("readQueueFilterParams — defaults to the last ~7 days", () => {

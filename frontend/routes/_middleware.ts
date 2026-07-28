@@ -106,7 +106,7 @@ export default define.middleware(async (ctx) => {
           ctx.state.user = {
             email: target.email,
             orgId: auth.orgId,
-            role: target.role as "admin" | "super-manager" | "judge" | "manager" | "reviewer" | "user",
+            role: target.role as "admin" | "super-manager" | "operations-manager" | "judge" | "manager" | "reviewer" | "user",
           };
         }
       } catch (e) {
@@ -128,6 +128,23 @@ export default define.middleware(async (ctx) => {
     // Manager Portal (the queue page) to the all-departments Audit History.
     if (ctx.state.user.role === "super-manager" && (path === "/manager" || path === "/manager/")) {
       return authRedirect(ctx.req, "/manager/audits");
+    }
+
+    // The Operations Portal is the operations manager's own view. Admins keep
+    // access (support + `?as=` impersonation); everyone else goes to their own
+    // home rather than an empty department rail.
+    if (path === "/operations" || path === "/operations/") {
+      const opsRole = ctx.state.user.role;
+      if (opsRole !== "operations-manager" && opsRole !== "admin") {
+        return authRedirect(ctx.req, roleRedirect(opsRole));
+      }
+    }
+
+    // An operations manager's bare Manager Portal is the org-wide merge of
+    // every department they own — the exact view the per-department portal
+    // replaces. Send them to the portal instead.
+    if (ctx.state.user.role === "operations-manager" && (path === "/manager" || path === "/manager/")) {
+      return authRedirect(ctx.req, "/operations");
     }
 
     // Prefetch game-state for page renders so Sidebar can show equipped

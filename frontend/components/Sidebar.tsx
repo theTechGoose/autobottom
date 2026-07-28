@@ -140,6 +140,15 @@ const MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
   { label: "Audit History", icon: Icon.barChart, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/audits" },
 ]}];
 
+// Operations manager works department-by-department inside the Operations
+// Portal, so the queue and audit history are TABS in that page rather than
+// separate nav entries — a flat "Queue" link would mean the org-wide merge of
+// every department, which is the view this role is meant to replace.
+const OPERATIONS_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
+  { label: "Departments", icon: Icon.clipboardList, color: "rgba(129,140,248,0.12)", iconColor: "#818cf8", href: "/operations", badgeUrl: "/api/manager/queue-badge" },
+  { label: "Completed", icon: Icon.checkCircle, color: "rgba(129,140,248,0.12)", iconColor: "#818cf8", href: "/manager/completed" },
+]}];
+
 // Super-manager (president) has no remediation queue — Audit History only.
 const SUPER_MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
   { label: "Audit History", icon: Icon.barChart, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/audits" },
@@ -156,10 +165,7 @@ const ROLE_SECTION_MAP: Record<Role, SbSection[]> = {
   reviewer: REVIEWER_SECTIONS,
   judge: JUDGE_SECTIONS,
   manager: MANAGER_SECTIONS,
-  // Operations manager — interim: reuses the manager nav (Queue/Completed/
-  // Audit History), all scoped to their departments. Swapped for the dedicated
-  // per-department Operations portal when that UI ships.
-  "operations-manager": MANAGER_SECTIONS,
+  "operations-manager": OPERATIONS_SECTIONS,
   // Super-manager gets a queue-less nav (Audit History only).
   "super-manager": SUPER_MANAGER_SECTIONS,
   user: USER_SECTIONS,
@@ -183,6 +189,10 @@ export function Sidebar({ user, section, pathname, gameState }: SidebarProps) {
   // Super-manager has no queue — force its queue-less nav even on the
   // section="manager" pages (Audit History), which would otherwise show Queue.
   if (user.role === "super-manager") viewRole = "super-manager";
+  // Same for the operations manager: their work happens per-department inside
+  // the Operations Portal, so the shared section="manager" pages (Completed,
+  // the remediation detail view) must not hand them the single-team nav.
+  if (user.role === "operations-manager") viewRole = "operations-manager";
   const baseSections = ROLE_SECTION_MAP[viewRole] ?? USER_SECTIONS;
   const isAdmin = user.role === "admin";
   const isSuperAdmin = isAdmin && user.email === SUPER_ADMIN_EMAIL;

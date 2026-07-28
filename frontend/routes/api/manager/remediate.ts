@@ -13,7 +13,14 @@ export const handler = define.handlers({
         return new Response(`<span class="error-text">Finding ID and notes required</span>`, { headers: { "content-type": "text/html" } });
       }
       await apiPost("/manager/api/remediate", ctx.req, { findingId, notes, username });
-      return new Response(null, { status: 200, headers: { "HX-Redirect": "/manager" } });
+      // Land back where the remediation started. The Operations Portal posts a
+      // returnTo so an ops manager returns to the department they were working,
+      // not the org-wide manager queue. Only same-origin absolute paths are
+      // honored ("//host" and "https://…" are rejected) so a crafted form can't
+      // turn this into an open redirect.
+      const returnTo = form.get("returnTo")?.toString() ?? "";
+      const safeReturn = returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/manager";
+      return new Response(null, { status: 200, headers: { "HX-Redirect": safeReturn } });
     } catch (e) {
       return new Response(`<span class="error-text">${e}</span>`, { headers: { "content-type": "text/html" } });
     }

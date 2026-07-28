@@ -10,6 +10,9 @@ export const ROLE_THEMES: Record<string, AccentTheme> = {
   review:   { accent: "#8b5cf6", accentBg: "rgba(139,92,246,0.10)" },
   judge:    { accent: "#14b8a6", accentBg: "rgba(20,184,166,0.10)" },
   manager:  { accent: "#bc8cff", accentBg: "rgba(139,92,246,0.12)" },
+  // Operations portal — indigo, deliberately distinct from manager's lighter
+  // purple so an ops manager can tell at a glance which view they're in.
+  operations: { accent: "#818cf8", accentBg: "rgba(129,140,248,0.12)" },
   agent:    { accent: "#f97316", accentBg: "rgba(249,115,22,0.10)" },
   chat:     { accent: "#39d0d8", accentBg: "rgba(57,208,216,0.10)" },
 };

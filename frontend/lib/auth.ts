@@ -35,10 +35,9 @@ export const ROLE_REDIRECTS: Record<Role, string> = {
   // Super-manager has no remediation queue — land on the all-departments
   // Audit History, not the queue at /manager.
   "super-manager": "/manager/audits",
-  // Operations manager oversees several department managers. Interim landing:
-  // the manager queue, scoped to all their departments. Swap to the dedicated
-  // /operations portal when that UI ships.
-  "operations-manager": "/manager",
+  // Operations manager oversees several department managers — lands on the
+  // Operations Portal, which is the manager view repeated per department.
+  "operations-manager": "/operations",
   judge: "/judge",
   manager: "/manager",
   reviewer: "/review/dashboard",

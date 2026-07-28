@@ -83,38 +83,128 @@ export interface AuditHistoryResult {
    *  already walked the whole window — the alternative (one audit-history
    *  call per department) is a read per department on a page load, the
    *  pattern that has taken prod down before. */
-  deptRollup: Array<{ department: string; count: number; avgScore: number | null }>;
+  deptRollup: DeptRollupRow[];
 }
 
-/** Bucket audits by department, counting each and averaging the scores that
- *  exist. Pure, so the Operations Portal's overview can be tested without a
- *  Firestore round-trip.
+/** An audit "passes" only at a perfect score. That's this system's rule
+ *  everywhere else (the terminate email prints Passed/Failed off
+ *  `score === 100`, and the chargeback report treats `score < 100` as the
+ *  failing set), so the Operations Portal must not invent a softer bar. */
+const PASS_SCORE = 100;
+
+/** Display name for an auditee, matching the queue's convention: the enriched
+ *  voName first, else a real owner email's local-part. The pipeline writes the
+ *  literal "api" as owner for API-triggered audits — that's not a person, so
+ *  it can never be named the weakest team member. */
+function auditeeLabel(row: { voName?: string; owner?: string }): string | null {
+  if (row.voName) return row.voName;
+  if (row.owner && row.owner !== "api") return row.owner.split("@")[0];
+  return null;
+}
+
+export interface DeptRollupRow {
+  department: string;
+  /** Every audit in the window for this department, scored or not. */
+  count: number;
+  /** Audits that scored a perfect 100 / scored below it. Unscored audits are
+   *  in `count` but in neither of these — they aren't yet a pass or a fail. */
+  passed: number;
+  failed: number;
+  /** failed ÷ (passed + failed), as a percentage. Null when nothing is scored,
+   *  so "no data" can't render as a reassuring 0% fail rate. */
+  failPct: number | null;
+  avgScore: number | null;
+  /** Lowest-scoring auditee in this department. `audits` is carried so a
+   *  one-bad-call outlier is visible rather than silently branded the
+   *  weakest performer. Null when nobody has a scored audit. */
+  worstMember: { name: string; avgScore: number; audits: number } | null;
+  /** This department's three most-missed questions in the window. */
+  topMissed: Array<{ header: string; count: number }>;
+}
+
+/** Bucket audits by department for the Operations Portal's overview. Pure, so
+ *  it's testable without a Firestore round-trip.
  *
  *  Rows with no department are skipped rather than bucketed under "" — an
- *  audit we can't attribute must not invent a department row in the overview.
- *  A department whose audits are all unscored gets `avgScore: null`, never 0,
- *  so "no data yet" can't read as "scored zero". */
+ *  audit we can't attribute must not invent a department row.
+ *
+ *  `failedRows` is the failed-question index for the same window (one row per
+ *  failed question per audit). It's already fetched for the org-wide
+ *  most-missed list, so reusing it here adds no reads. */
 export function rollupByDepartment(
-  rows: Array<{ department?: string; score?: number | null }>,
-): Array<{ department: string; count: number; avgScore: number | null }> {
-  const buckets = new Map<string, { sum: number; scored: number; count: number }>();
+  rows: Array<{ findingId?: string; department?: string; score?: number | null; voName?: string; owner?: string }>,
+  failedRows: Array<{ findingId: string; questionKey: string; header: string }> = [],
+): DeptRollupRow[] {
+  interface Bucket {
+    sum: number; scored: number; count: number; passed: number; failed: number;
+    members: Map<string, { sum: number; audits: number }>;
+    missed: Map<string, { header: string; count: number }>;
+  }
+  const buckets = new Map<string, Bucket>();
+  const deptOfFinding = new Map<string, string>();
+
   for (const row of rows) {
     const name = row.department ?? "";
     if (!name) continue;
-    const bucket = buckets.get(name) ?? { sum: 0, scored: 0, count: 0 };
+    if (row.findingId) deptOfFinding.set(row.findingId, name);
+    const bucket = buckets.get(name) ?? {
+      sum: 0, scored: 0, count: 0, passed: 0, failed: 0,
+      members: new Map(), missed: new Map(),
+    };
     bucket.count++;
     if (typeof row.score === "number" && Number.isFinite(row.score)) {
       bucket.sum += row.score;
       bucket.scored++;
+      if (row.score >= PASS_SCORE) bucket.passed++;
+      else bucket.failed++;
+      const member = auditeeLabel(row);
+      if (member) {
+        const m = bucket.members.get(member) ?? { sum: 0, audits: 0 };
+        m.sum += row.score;
+        m.audits++;
+        bucket.members.set(member, m);
+      }
     }
     buckets.set(name, bucket);
   }
+
+  // Attribute each failed question to its audit's department.
+  for (const fr of failedRows) {
+    const name = deptOfFinding.get(fr.findingId);
+    if (!name) continue;
+    const bucket = buckets.get(name);
+    if (!bucket) continue;
+    const cur = bucket.missed.get(fr.questionKey) ?? { header: fr.header, count: 0 };
+    cur.count++;
+    bucket.missed.set(fr.questionKey, cur);
+  }
+
   return [...buckets.entries()]
-    .map(([department, b]) => ({
-      department,
-      count: b.count,
-      avgScore: b.scored > 0 ? Math.round((b.sum / b.scored) * 10) / 10 : null,
-    }))
+    .map(([department, b]) => {
+      // Weakest = lowest average. Ties break toward the person with MORE
+      // audits (the better-evidenced case), then by name for stability.
+      let worstMember: DeptRollupRow["worstMember"] = null;
+      for (const [name, m] of b.members) {
+        const avg = Math.round((m.sum / m.audits) * 10) / 10;
+        if (
+          !worstMember || avg < worstMember.avgScore ||
+          (avg === worstMember.avgScore && m.audits > worstMember.audits) ||
+          (avg === worstMember.avgScore && m.audits === worstMember.audits && name.localeCompare(worstMember.name) < 0)
+        ) {
+          worstMember = { name, avgScore: avg, audits: m.audits };
+        }
+      }
+      return {
+        department,
+        count: b.count,
+        passed: b.passed,
+        failed: b.failed,
+        failPct: b.scored > 0 ? Math.round((b.failed / b.scored) * 1000) / 10 : null,
+        avgScore: b.scored > 0 ? Math.round((b.sum / b.scored) * 10) / 10 : null,
+        worstMember,
+        topMissed: [...b.missed.values()].sort((x, y) => y.count - x.count).slice(0, 3),
+      };
+    })
     .sort((a, b) => a.department.localeCompare(b.department));
 }
 
@@ -294,8 +384,12 @@ async function _getAuditHistoryRaw(
   // audit, counted only for findings in the SAME filtered set as total /
   // avgScore — so the team-member/dept/shift/sale/score filters all apply.
   let topMissed: Array<{ header: string; count: number }> = [];
+  // Hoisted so the per-department rollup can reuse the SAME rows for its own
+  // top-3 — one failed-question query serves both. On failure it stays empty
+  // and every top-3 list is simply absent; the rest of the rollup is fine.
+  let failedRows: Array<{ findingId: string; questionKey: string; header: string }> = [];
   try {
-    const failedRows = await queryFailedFindings(orgId, since, until);
+    failedRows = await queryFailedFindings(orgId, since, until);
     const inSet = new Set(filtered.map((c) => c.findingId));
     const counts = new Map<string, { header: string; count: number }>();
     for (const r of failedRows) {
@@ -308,7 +402,10 @@ async function _getAuditHistoryRaw(
   } catch (err) {
     console.warn("⚠️ [MANAGER-AUDITS] top-missed query skipped:", err);
   }
-  const deptRollup = rollupByDepartment(filtered);
+  // rollupByDepartment only counts failed rows whose finding is in `filtered`
+  // (it maps findingId → department from those rows), so the same filters
+  // apply here as to topMissed.
+  const deptRollup = rollupByDepartment(filtered, failedRows);
 
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageSlice = filtered.slice((page - 1) * limit, page * limit);

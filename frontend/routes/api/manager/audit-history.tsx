@@ -29,6 +29,21 @@ export interface AuditHistoryItem {
   mcc?: boolean;
 }
 
+/** Mirrors `DeptRollupRow` in src/manager/domain/business/audit-history/mod.ts.
+ *  An audit counts as passed only at a perfect 100 — this app's rule
+ *  everywhere. Unscored audits land in `count` but in neither passed nor
+ *  failed, so `failPct` is null (not 0) when nothing is scored yet. */
+export interface DeptRollup {
+  department: string;
+  count: number;
+  passed: number;
+  failed: number;
+  failPct: number | null;
+  avgScore: number | null;
+  worstMember: { name: string; avgScore: number; audits: number } | null;
+  topMissed: Array<{ header: string; count: number }>;
+}
+
 export interface AuditHistoryData {
   items: AuditHistoryItem[];
   total: number;
@@ -49,7 +64,7 @@ export interface AuditHistoryData {
   /** Per-department aggregates over the filtered window — backend-computed
    *  in one pass (see audit-history/mod.ts). Feeds the Operations Portal's
    *  all-departments overview. Absent on older responses. */
-  deptRollup?: Array<{ department: string; count: number; avgScore: number | null }>;
+  deptRollup?: DeptRollup[];
 }
 
 function pillColor(score: number | null | undefined): string {

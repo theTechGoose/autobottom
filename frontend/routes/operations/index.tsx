@@ -33,7 +33,7 @@ import {
   renderQueueResults, renderQueueTable, queueFacets, filterAndSortQueue,
   readQueueFilterParams, queueTimestamp, type QueueItem,
 } from "../api/manager/queue.tsx";
-import { renderAuditHistoryTable, type AuditHistoryData } from "../api/manager/audit-history.tsx";
+import { renderAuditHistoryTable, type AuditHistoryData, type DeptRollup } from "../api/manager/audit-history.tsx";
 
 interface ManagerScope {
   departments: string[];
@@ -103,6 +103,128 @@ export function deptStats(items: QueueItem[], deptNames: string[]): DeptStat[] {
   // Busiest first, so the department needing attention is at the top; ties
   // fall back to alphabetical for a stable order across refreshes.
   return [...byName.values()].sort((a, b) => b.pending - a.pending || a.name.localeCompare(b.name));
+}
+
+/** Page-scoped CSS. Exported so a rendering test can mount OverviewCard with
+ *  the same styles the page uses. */
+export const OPS_STYLES = `
+  .ops-tab{ display:inline-block; padding:8px 16px; text-decoration:none; font-size:13px;
+    font-weight:600; color:var(--text-muted); border:1px solid var(--border);
+    border-bottom:none; border-radius:8px 8px 0 0; background:var(--bg-card); }
+  .ops-tab.is-active{ color:var(--text-bright); border-color:var(--accent); background:var(--accent-bg); }
+  /* Overview: one card per department. 420px min keeps it to two columns at
+     the usual window width — question text is long, and three columns
+     truncated most of it to an ellipsis. auto-fill still collapses to one
+     column on a narrow screen and spreads on a very wide one. */
+  .ops-cards{ display:grid; grid-template-columns:repeat(auto-fill,minmax(420px,1fr)); gap:14px; }
+  .ops-card{ display:block; padding:14px 16px; text-decoration:none; color:inherit;
+    transition:border-color .12s, background .12s; }
+  .ops-card:hover{ border-color:var(--accent); background:var(--accent-bg); }
+  .ops-card-head{ display:flex; align-items:center; justify-content:space-between;
+    gap:12px; padding-bottom:10px; border-bottom:1px solid var(--border); margin-bottom:10px; }
+  .ops-card-name{ font-size:15px; font-weight:700; color:var(--text-bright);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ops-card-stats{ display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+    font-size:12px; color:var(--text-muted); margin-bottom:12px; }
+  .ops-dot{ color:var(--text-dim); }
+  .ops-card-detail{ display:flex; gap:10px; font-size:12px; margin-top:8px; }
+  .ops-card-label{ width:74px; flex-shrink:0; font-size:10px; font-weight:700;
+    letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim); padding-top:2px; }
+  .ops-miss{ display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+  .ops-miss-text{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; color:var(--text-muted); }
+  .ah-update .ah-update-spin{ display:none; }
+  .ah-update.is-loading .ah-update-text{ display:none; }
+  .ah-update.is-loading .ah-update-spin{ display:inline-block; }
+  .ah-update:disabled{ opacity:0.4; cursor:default; box-shadow:none; }
+  .ah-update.is-dirty{ opacity:1; box-shadow:0 0 0 2px rgba(129,140,248,0.55); }
+`;
+
+/** One department's card in the all-departments overview: live queue state in
+ *  the header, then the window's audit numbers, weakest auditee, and the
+ *  three questions this department misses most.
+ *
+ *  Exported (and pure) so its populated states are testable — locally the
+ *  queue is always empty, so the rich version never renders in dev. */
+export function OverviewCard(
+  { stat, audit, href }: { stat: DeptStat; audit: DeptRollup | null; href: string },
+) {
+  const scored = audit ? audit.passed + audit.failed : 0;
+  return (
+    <a href={href} class="card ops-card" title={`Open ${stat.name}`}>
+      <div class="ops-card-head">
+        <div class="ops-card-name">{stat.name}</div>
+        <div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
+          <span class={`pill pill-${stat.pending > 0 ? "yellow" : "green"}`}>{stat.pending} pending</span>
+          {stat.oldestPendingTs > 0
+            ? <span style={`font-size:11px;color:${ageColor(stat.oldestPendingTs)};`}>&#9201; {shortAge(stat.oldestPendingTs)}</span>
+            : <span style="font-size:11px;color:var(--text-dim);">clear</span>}
+        </div>
+      </div>
+
+      {/* Headline numbers. An unscored window shows a plain sentence rather
+          than zeros — "no audits yet" must not read as "0% fail". */}
+      <div class="ops-card-stats">
+        <span><strong>{audit?.count ?? 0}</strong> audits</span>
+        <span class="ops-dot">·</span>
+        {audit && scored > 0 ? (
+          <>
+            <span><strong style="color:var(--green);">{audit.passed}</strong> pass</span>
+            <span class="ops-dot">/</span>
+            <span><strong style="color:var(--red);">{audit.failed}</strong> fail</span>
+            <span class="ops-dot">·</span>
+            <span class={`pill pill-${(audit.failPct ?? 0) >= 30 ? "red" : (audit.failPct ?? 0) >= 10 ? "yellow" : "green"}`}>
+              {audit.failPct}% fail
+            </span>
+            <span class="ops-dot">·</span>
+            <span>
+              avg{" "}
+              {audit.avgScore != null
+                ? <span class={`pill pill-${scorePillColor(audit.avgScore)}`}>{audit.avgScore}%</span>
+                : <span style="color:var(--text-dim);">—</span>}
+            </span>
+          </>
+        ) : (
+          <span style="color:var(--text-dim);">no scored audits in this window</span>
+        )}
+      </div>
+
+      <div class="ops-card-detail">
+        <div class="ops-card-label">Weakest</div>
+        <div>
+          {audit?.worstMember
+            ? (
+              <>
+                <span style="color:var(--text-bright);font-weight:600;">{audit.worstMember.name}</span>
+                {" — "}
+                <span class={`pill pill-${scorePillColor(audit.worstMember.avgScore)}`}>{audit.worstMember.avgScore}%</span>
+                {/* Audit count is shown so a single bad call isn't mistaken
+                    for a persistent problem. */}
+                <span style="color:var(--text-dim);font-size:11px;">
+                  {" "}({audit.worstMember.audits} {audit.worstMember.audits === 1 ? "audit" : "audits"})
+                </span>
+              </>
+            )
+            : <span style="color:var(--text-dim);">—</span>}
+        </div>
+      </div>
+
+      <div class="ops-card-detail">
+        <div class="ops-card-label">Top misses</div>
+        <div style="flex:1;min-width:0;">
+          {audit && audit.topMissed.length > 0
+            ? audit.topMissed.map((m, i) => (
+              <div key={m.header} class="ops-miss">
+                <span class="mono" style="color:var(--text-dim);width:14px;flex-shrink:0;">{i + 1}.</span>
+                <span class="ops-miss-text" title={m.header}>{m.header}</span>
+                <span class="pill pill-red" style="flex-shrink:0;">{m.count}</span>
+              </div>
+            ))
+            : <span style="color:var(--text-dim);">No failed questions in this window</span>}
+        </div>
+      </div>
+    </a>
+  );
 }
 
 function safeMs(v: string | null, dflt: number): number {
@@ -276,15 +398,11 @@ export default define.page(async function OperationsPortalPage(ctx) {
     }
   }
 
-  // Overview rows: queue numbers (pending / oldest) joined to the audit-side
-  // average for the same window. A department with no audits in the window
-  // still gets a row — it just has no average yet.
+  // Overview cards: live queue numbers (pending / oldest / remediated) joined
+  // to the audit-side aggregates for the window. A department with no audits
+  // in the window still gets a card — it just has nothing to report yet.
   const rollupByDept = new Map((auditData.deptRollup ?? []).map((r) => [r.department, r]));
-  const overviewRows = stats.map((s) => ({
-    ...s,
-    audits: rollupByDept.get(s.name)?.count ?? 0,
-    avgScore: rollupByDept.get(s.name)?.avgScore ?? null,
-  }));
+  const overviewRows = stats.map((s) => ({ stat: s, audit: rollupByDept.get(s.name) ?? null }));
 
   const heading = dept || "All Departments";
 
@@ -297,19 +415,7 @@ export default define.page(async function OperationsPortalPage(ctx) {
       pathname={url.pathname}
       depts={deptNames.length > 0 ? sidebarDepts : undefined}
     >
-      <style>{`
-        .ops-tab{ display:inline-block; padding:8px 16px; text-decoration:none; font-size:13px;
-          font-weight:600; color:var(--text-muted); border:1px solid var(--border);
-          border-bottom:none; border-radius:8px 8px 0 0; background:var(--bg-card); }
-        .ops-tab.is-active{ color:var(--text-bright); border-color:var(--accent); background:var(--accent-bg); }
-        .ops-row{ cursor:pointer; }
-        .ops-row:hover{ background:var(--accent-bg); }
-        .ah-update .ah-update-spin{ display:none; }
-        .ah-update.is-loading .ah-update-text{ display:none; }
-        .ah-update.is-loading .ah-update-spin{ display:inline-block; }
-        .ah-update:disabled{ opacity:0.4; cursor:default; box-shadow:none; }
-        .ah-update.is-dirty{ opacity:1; box-shadow:0 0 0 2px rgba(129,140,248,0.55); }
-      `}</style>
+      <style>{OPS_STYLES}</style>
 
       {deptNames.length === 0 ? (
         <>
@@ -349,57 +455,23 @@ export default define.page(async function OperationsPortalPage(ctx) {
           </div>
 
           {isOverview ? (
-            /* ── All-departments roll-up ───────────────────────────────── */
-            <div class="card" style="padding:14px 18px;">
-              <div class="tbl-title" style="margin-bottom:4px;">Department overview</div>
+            /* ── All-departments roll-up: one card per department ───────── */
+            <>
               <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px;">
-                Pending work is live; audits and average score cover the last 7 days. Click a row to open that department.
+                Pending work is live; audits, scores and misses cover the last 7 days.
+                An audit counts as passed only at 100%. Click a card to open that department.
               </div>
-              <div style="overflow-x:auto;">
-                <table class="data-table">
-                  <thead>
-                    <tr>
-                      <th>Department</th>
-                      <th>Pending</th>
-                      <th>Oldest waiting</th>
-                      <th>Remediated</th>
-                      <th>Audits (7d)</th>
-                      <th>Avg score (7d)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {overviewRows.length === 0 ? (
-                      <tr class="empty-row"><td colSpan={6}>No departments</td></tr>
-                    ) : overviewRows.map((r) => (
-                      <tr
-                        key={r.name}
-                        class="ops-row"
-                        title={`Open ${r.name}`}
-                        data-href={hrefFor(r.name, "outstanding")}
-                        {...{ "hx-on:click": "location.href=this.dataset.href" }}
-                      >
-                        <td style="font-weight:600;color:var(--text-bright);">{r.name}</td>
-                        <td>
-                          <span class={`pill pill-${r.pending > 0 ? "yellow" : "green"}`}>{r.pending}</span>
-                        </td>
-                        <td style="white-space:nowrap;">
-                          {r.oldestPendingTs > 0
-                            ? <span style={`color:${ageColor(r.oldestPendingTs)};`}>&#9201; {shortAge(r.oldestPendingTs)}</span>
-                            : <span style="color:var(--text-dim);font-size:11px;">clear</span>}
-                        </td>
-                        <td style="color:var(--text-muted);">{r.remediated}</td>
-                        <td style="color:var(--text-muted);">{r.audits}</td>
-                        <td>
-                          {r.avgScore != null
-                            ? <span class={`pill pill-${scorePillColor(r.avgScore)}`}>{r.avgScore}%</span>
-                            : <span style="color:var(--text-dim);font-size:11px;">—</span>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div class="ops-cards">
+                {overviewRows.map(({ stat, audit }) => (
+                  <OverviewCard
+                    key={stat.name}
+                    stat={stat}
+                    audit={audit}
+                    href={hrefFor(stat.name, "outstanding")}
+                  />
+                ))}
               </div>
-            </div>
+            </>
           ) : (
             /* ── One department: three tabs ────────────────────────────── */
             <>

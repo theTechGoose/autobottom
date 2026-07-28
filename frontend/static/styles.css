@@ -1795,3 +1795,5 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .rem-q-name { flex: 1; font-size: 12px; min-width: 0; }
 .rem-q-reason { margin-top: 4px; font-size: 11px; color: var(--text-muted); line-height: 1.4; }
 .rem-q-nomatch { margin-top: 4px; font-size: 11px; color: var(--text-dim); font-style: italic; }
+/* Already-closed failure: a stamp where the Remediate button would be. */
+.rem-done { font-size: 12px; color: #3fb950; white-space: nowrap; }

@@ -1,4 +1,4 @@
-/** Frontend tests for the manager remediation detail page's questions list.
+/** Frontend tests for the manager remediation detail page.
  *
  *  THE BUG THESE PIN: clicking a failed question jumped to a transcript line
  *  with nothing to do with it. The jump used to be a client-side guess — first
@@ -7,10 +7,12 @@
  *  ABSENT, some unrelated line near the top always cleared that bar.
  *
  *  We exercise `renderQuestionList` directly: it's what the SSR page calls, and
- *  it owns both the evidence lookup and the markup the island reads. */
+ *  it owns both the evidence lookup and the markup the island reads. The second
+ *  half covers `renderRemediateAction` — the close-out control this page now
+ *  carries so a manager can finish the job without going back to the queue. */
 import { assertEquals } from "@std/assert";
 import { assertContains, assertNotContains, renderHTML } from "../helpers/render.ts";
-import { renderQuestionList } from "../../routes/manager/remediate/[findingId].tsx";
+import { renderQuestionList, renderRemediateAction } from "../../routes/manager/remediate/[findingId].tsx";
 import { emitTranscriptLines } from "../../components/TranscriptPanel.tsx";
 
 const RAW = [
@@ -118,4 +120,60 @@ Deno.test("renderQuestionList — Error answers are not treated as failures", ()
   assertNotContains(html, "rem-q-failed");
   assertNotContains(html, "No matching moment");
   assertContains(html, "pill-blue");
+});
+
+// ── Remediate action (close the failure from the detail page) ────────────────
+//
+// Remediation status lives on the QUEUE ITEM, not the finding, so these pin the
+// three states off that. The button and modal are returned together on purpose:
+// a modal with no button is unreachable, a button with no modal is dead.
+
+
+const ACTION_ARGS = {
+  findingId: "fid-123",
+  userEmail: "manager@monsterrg.com",
+  teamMember: "Jordan Reyes",
+  returnTo: "/manager?as=ops%40monsterrg.com",
+};
+
+Deno.test("renderRemediateAction — pending item gets a button AND its modal", () => {
+  const { action, modal } = renderRemediateAction({
+    ...ACTION_ARGS,
+    queueItem: { findingId: "fid-123", status: "pending" },
+  });
+  const actionHtml = renderHTML(action);
+  assertContains(actionHtml, "Remediate");
+  assertContains(actionHtml, "remediate-modal");
+
+  const modalHtml = renderHTML(modal);
+  assertContains(modalHtml, 'hx-post="/api/manager/remediate"');
+  // findingId is baked in — the queue's modal needs JS to set it, this one doesn't.
+  assertContains(modalHtml, 'value="fid-123"');
+  assertContains(modalHtml, 'value="manager@monsterrg.com"');
+  // returnTo carries the ?as= view back, instead of dumping them on /manager.
+  assertContains(modalHtml, "as=ops%40monsterrg.com");
+  assertContains(modalHtml, "Jordan Reyes");
+});
+
+Deno.test("renderRemediateAction — already remediated shows who, and NO modal", () => {
+  const { action, modal } = renderRemediateAction({
+    ...ACTION_ARGS,
+    queueItem: {
+      findingId: "fid-123",
+      status: "remediated",
+      remediatedBy: "lead@monsterrg.com",
+      notes: "Coached on tax disclosure.",
+    },
+  });
+  const html = renderHTML(action);
+  assertContains(html, "Remediated by lead@monsterrg.com");
+  assertNotContains(html, "<button");
+  // Re-submitting would re-fire the manager webhook and re-award XP.
+  assertEquals(modal, null);
+});
+
+Deno.test("renderRemediateAction — no queue item means nothing to close", () => {
+  const { action, modal } = renderRemediateAction({ ...ACTION_ARGS, queueItem: null });
+  assertEquals(action, null);
+  assertEquals(modal, null);
 });

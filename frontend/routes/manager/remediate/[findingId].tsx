@@ -9,6 +9,9 @@
  *     seeks the audio to that moment.
  *   - Bottom: the audio player (QueueAudioPlayer), which consumes the
  *     `queue:jump-to-audio` events both click paths dispatch.
+ *   - Topbar: the same Remediate close-out the queue row offers, so a manager
+ *     who opened the audit to scrub it can finish here instead of navigating
+ *     back to record what they did.
  *
  *  A full page (not an HTMX fragment) so the islands actually hydrate — see
  *  frontend/CLAUDE.md Gotcha #1. The finding is fetched from the manager
@@ -19,6 +22,7 @@ import { Layout } from "../../../components/Layout.tsx";
 import { emitTranscriptLines, TranscriptPanel, type TranscriptData } from "../../../components/TranscriptPanel.tsx";
 import { findEvidenceLine } from "../../../lib/transcript-excerpt.ts";
 import { apiFetch } from "../../../lib/api.ts";
+import type { QueueItem } from "../../api/manager/queue.tsx";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 import QueueAudioPlayer from "../../../islands/QueueAudioPlayer.tsx";
 import RemediationInteractive from "../../../islands/RemediationInteractive.tsx";
@@ -85,6 +89,83 @@ function score(qs: AnsweredQuestion[]): number {
   if (qs.length === 0) return 0;
   const yes = qs.filter((q) => isYes(q.answer)).length;
   return Math.round((yes / qs.length) * 100);
+}
+
+/** The Remediate action for this audit — the same close-out the queue row
+ *  offers, so a manager who opened the audit to scrub it doesn't have to go back
+ *  to the queue to record what they did.
+ *
+ *  Returns BOTH halves together (the topbar control and the modal it opens)
+ *  because they share one condition: a modal with no button is unreachable, and
+ *  a button with no modal is dead. Deciding once keeps them from drifting apart.
+ *
+ *  Three states, driven by the QUEUE ITEM (remediation status lives there, not
+ *  on the finding):
+ *    - pending          → button + modal
+ *    - already handled  → a stamp of who closed it, no modal. Re-submitting
+ *                         would re-fire the manager webhook and re-award XP.
+ *    - not in the queue → nothing; there's no queue item to close. */
+export function renderRemediateAction(opts: {
+  queueItem: QueueItem | null;
+  findingId: string;
+  userEmail: string;
+  teamMember: string;
+  returnTo: string;
+}) {
+  const { queueItem, findingId, userEmail, teamMember, returnTo } = opts;
+  if (!queueItem) return { action: null, modal: null };
+
+  if (queueItem.status === "remediated") {
+    return {
+      action: (
+        <span class="rem-done" title={queueItem.notes ?? ""}>
+          Remediated{queueItem.remediatedBy ? ` by ${queueItem.remediatedBy}` : ""}
+        </span>
+      ),
+      modal: null,
+    };
+  }
+
+  return {
+    action: (
+      <button
+        type="button"
+        class="btn btn-primary btn-sm"
+        {...{ "hx-on:click": "document.getElementById('remediate-modal')?.classList.add('open')" }}
+      >Remediate</button>
+    ),
+    // Mirrors the queue's modal. findingId is baked in (no JS to set it — there's
+    // only one audit on this page), and returnTo sends the manager back to the
+    // queue view they came from, ?as= and all.
+    modal: (
+      <div id="remediate-modal" class="modal-overlay">
+        <div class="modal" style="width:min(520px,92vw);">
+          <div class="modal-title">Remediate Failure</div>
+          <div class="modal-sub" style="margin-bottom:14px;">
+            Record how this failure was addressed with {teamMember}.
+          </div>
+          <form hx-post="/api/manager/remediate" hx-swap="none">
+            <input type="hidden" name="findingId" value={findingId} />
+            {/* username → remediatedBy on the queue item + gamification credit */}
+            <input type="hidden" name="username" value={userEmail} />
+            <input type="hidden" name="returnTo" value={returnTo} />
+            <div class="form-group">
+              <label>Remediation notes</label>
+              <textarea name="notes" rows={5} required placeholder="What was discussed / corrected with the agent…"></textarea>
+            </div>
+            <div class="modal-actions">
+              <button
+                type="button"
+                class="btn btn-ghost"
+                {...{ "hx-on:click": "this.closest('.modal-overlay').classList.remove('open')" }}
+              >Cancel</button>
+              <button type="submit" class="btn btn-primary">Submit</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    ),
+  };
 }
 
 /** The questions list, failures first, each failure carrying the transcript
@@ -208,6 +289,28 @@ export default define.page(async function RemediationDetail(ctx) {
   const flags = saleFlagsOf(f);
   const saleTags = [...(flags.wgs ? ["WGS"] : []), ...(flags.mcc ? ["MCC"] : [])];
 
+  // The queue item — NOT the finding — is where remediation state lives
+  // (submitRemediation writes status/remediatedBy/remediatedAt onto it). Read it
+  // so this page can offer the same Remediate action the queue row does, and so
+  // an already-handled failure shows who closed it instead of a button that
+  // would re-fire the manager webhook and re-award XP. Same single-read cost as
+  // the queue page itself; best-effort, since a missing queue item just means
+  // there is nothing here to remediate.
+  let queueItem: QueueItem | null = null;
+  try {
+    const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${asQs}`, ctx.req);
+    queueItem = (items ?? []).find((i) => i.findingId === findingId) ?? null;
+  } catch (e) {
+    console.error("Remediation detail — queue lookup failed:", e);
+  }
+  const remediate = renderRemediateAction({
+    queueItem,
+    findingId,
+    userEmail: user.email,
+    teamMember,
+    returnTo: backHref,
+  });
+
   const transcript = {
     raw: f.rawTranscript ?? "",
     // Sanitized on read so a stored refusal/commentary can never reach the
@@ -234,7 +337,8 @@ export default define.page(async function RemediationDetail(ctx) {
               <span key={t} class={`pill pill-${t === "WGS" ? "green" : "blue"}`}>{t}</span>
             ))}
           </div>
-          <a href={reportUrl} class="btn btn-primary btn-sm" target="_blank" rel="noopener">Open Full Report &#8599;</a>
+          <a href={reportUrl} class="btn btn-ghost btn-sm" target="_blank" rel="noopener">Open Full Report &#8599;</a>
+          {remediate.action}
         </div>
 
         <div class="queue-layout" data-mode="review" style="height:calc(100vh - 52px);">
@@ -269,6 +373,8 @@ export default define.page(async function RemediationDetail(ctx) {
         <QueueAudioPlayer initialFindingId={findingId} />
         <RemediationInteractive />
       </div>
+
+      {remediate.modal}
     </Layout>
   );
 });

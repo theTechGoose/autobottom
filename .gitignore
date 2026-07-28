@@ -9,3 +9,4 @@ frontend/_fresh
 .DS_Store
 .playwright-mcp/
 fixtures/json/
+alex-refactor/

@@ -76,6 +76,46 @@ export interface AuditHistoryResult {
   owners: string[];
   shifts: string[];
   departments: string[];
+  /** Per-department aggregates over the SAME filtered window as total /
+   *  avgScore. Powers the Operations Portal's all-departments overview.
+   *
+   *  Computed here rather than by the caller because this function has
+   *  already walked the whole window — the alternative (one audit-history
+   *  call per department) is a read per department on a page load, the
+   *  pattern that has taken prod down before. */
+  deptRollup: Array<{ department: string; count: number; avgScore: number | null }>;
+}
+
+/** Bucket audits by department, counting each and averaging the scores that
+ *  exist. Pure, so the Operations Portal's overview can be tested without a
+ *  Firestore round-trip.
+ *
+ *  Rows with no department are skipped rather than bucketed under "" — an
+ *  audit we can't attribute must not invent a department row in the overview.
+ *  A department whose audits are all unscored gets `avgScore: null`, never 0,
+ *  so "no data yet" can't read as "scored zero". */
+export function rollupByDepartment(
+  rows: Array<{ department?: string; score?: number | null }>,
+): Array<{ department: string; count: number; avgScore: number | null }> {
+  const buckets = new Map<string, { sum: number; scored: number; count: number }>();
+  for (const row of rows) {
+    const name = row.department ?? "";
+    if (!name) continue;
+    const bucket = buckets.get(name) ?? { sum: 0, scored: 0, count: 0 };
+    bucket.count++;
+    if (typeof row.score === "number" && Number.isFinite(row.score)) {
+      bucket.sum += row.score;
+      bucket.scored++;
+    }
+    buckets.set(name, bucket);
+  }
+  return [...buckets.entries()]
+    .map(([department, b]) => ({
+      department,
+      count: b.count,
+      avgScore: b.scored > 0 ? Math.round((b.sum / b.scored) * 10) / 10 : null,
+    }))
+    .sort((a, b) => a.department.localeCompare(b.department));
 }
 
 /** Hydrate rows with missing voName/owner/department/shift via getFinding(). */
@@ -268,6 +308,8 @@ async function _getAuditHistoryRaw(
   } catch (err) {
     console.warn("⚠️ [MANAGER-AUDITS] top-missed query skipped:", err);
   }
+  const deptRollup = rollupByDepartment(filtered);
+
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageSlice = filtered.slice((page - 1) * limit, page * limit);
   const hydratedPage = await hydrateMissing(orgId, pageSlice);
@@ -280,5 +322,5 @@ async function _getAuditHistoryRaw(
 
   console.log(`🔍 [MANAGER-AUDITS] ${email} role=${role} → ${total}/${inWindow.length} in window, page=${page}/${pages}`);
 
-  return { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, topMissed, pages, page, owners, shifts, departments };
+  return { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, topMissed, pages, page, owners, shifts, departments, deptRollup };
 }

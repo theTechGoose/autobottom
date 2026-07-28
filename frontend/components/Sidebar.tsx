@@ -4,6 +4,22 @@ import { Icon } from "./Icons.tsx";
 import { resolveCosmetics } from "../lib/cosmetics.ts";
 import type { ComponentChildren } from "preact";
 
+/** One department entry in the Operations Portal's sidebar. The ops manager
+ *  navigates by department, so these REPLACE the role's nav links rather than
+ *  sitting alongside them. */
+export interface SbDept {
+  name: string;
+  href: string;
+  pending: number;
+  /** Compact age of the oldest pending item ("9d"), or null when clear. */
+  oldestLabel: string | null;
+  /** Colour for oldestLabel — ages past a week should look wrong. */
+  oldestColor?: string;
+  active: boolean;
+  /** The all-departments roll-up, pinned above the list and styled apart. */
+  isAll?: boolean;
+}
+
 interface SidebarProps {
   user: User;
   section: string;
@@ -11,6 +27,10 @@ interface SidebarProps {
   pathname?: string;
   /** Prefetched game-state used to render equipped cosmetics on the avatar. */
   gameState?: GameStateLite;
+  /** When present, the nav is replaced by these department cards (Operations
+   *  Portal). Only that page supplies them; every other page an ops manager
+   *  can reach either hides the sidebar or falls back to the plain nav. */
+  depts?: SbDept[];
 }
 
 // Sidebar item: either a link (href) or a modal trigger (data-modal)
@@ -29,6 +49,24 @@ interface SbItem {
 interface SbSection {
   label: string;
   items: SbItem[];
+}
+
+function SbDeptCard({ dept }: { dept: SbDept }) {
+  return (
+    <a
+      href={dept.href}
+      class={`sb-dept${dept.isAll ? " sb-dept-all" : ""}${dept.active ? " active" : ""}`}
+      title={dept.name}
+    >
+      <div class="sb-dept-name">{dept.name}</div>
+      <div class="sb-dept-meta">
+        <span class={`pill pill-${dept.pending > 0 ? "yellow" : "green"}`}>{dept.pending} pending</span>
+        {dept.oldestLabel
+          ? <span style={`color:${dept.oldestColor ?? "var(--text-dim)"};white-space:nowrap;`}>&#9201; {dept.oldestLabel}</span>
+          : <span style="color:var(--text-dim);">clear</span>}
+      </div>
+    </a>
+  );
 }
 
 function SbLink({ item, pathname }: { item: SbItem; section: string; pathname?: string }) {
@@ -140,13 +178,12 @@ const MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
   { label: "Audit History", icon: Icon.barChart, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/audits" },
 ]}];
 
-// Operations manager works department-by-department inside the Operations
-// Portal, so the queue and audit history are TABS in that page rather than
-// separate nav entries — a flat "Queue" link would mean the org-wide merge of
-// every department, which is the view this role is meant to replace.
+// Fallback nav for an operations manager on a page that doesn't supply the
+// department cards. The portal itself passes `depts` and this is replaced;
+// outstanding / completed / audit history are all TABS inside it, so there is
+// nothing else to link to.
 const OPERATIONS_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
   { label: "Departments", icon: Icon.clipboardList, color: "rgba(129,140,248,0.12)", iconColor: "#818cf8", href: "/operations", badgeUrl: "/api/manager/queue-badge" },
-  { label: "Completed", icon: Icon.checkCircle, color: "rgba(129,140,248,0.12)", iconColor: "#818cf8", href: "/manager/completed" },
 ]}];
 
 // Super-manager (president) has no remediation queue — Audit History only.
@@ -182,7 +219,7 @@ const SECTION_ROLE_MAP: Record<string, Role> = {
   agent: "user",
 };
 
-export function Sidebar({ user, section, pathname, gameState }: SidebarProps) {
+export function Sidebar({ user, section, pathname, gameState, depts }: SidebarProps) {
   let viewRole: Role = SECTION_ROLE_MAP[section] ?? user.role;
   // Defense in depth: non-admin must never render admin nav even if section="admin"
   if (viewRole === "admin" && user.role !== "admin") viewRole = user.role;
@@ -211,7 +248,14 @@ export function Sidebar({ user, section, pathname, gameState }: SidebarProps) {
       </div>
 
       <nav class="sb-nav">
-        {sections.map((sec) => (
+        {depts && depts.length > 0 ? (
+          <div class="sb-section">
+            <div class="sb-label">Departments</div>
+            {depts.filter((d) => d.isAll).map((d) => <SbDeptCard key={d.href} dept={d} />)}
+            {depts.some((d) => d.isAll) && depts.some((d) => !d.isAll) && <div class="sb-dept-divider"></div>}
+            {depts.filter((d) => !d.isAll).map((d) => <SbDeptCard key={d.href} dept={d} />)}
+          </div>
+        ) : sections.map((sec) => (
           <div key={sec.label} class="sb-section">
             <div class="sb-label">{sec.label}</div>
             {sec.items.map((item) => <SbLink key={item.label} item={item} section={section} pathname={pathname} />)}

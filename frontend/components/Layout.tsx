@@ -2,7 +2,7 @@
 import type { ComponentChildren } from "preact";
 import type { User, GameStateLite } from "../lib/auth.ts";
 import { getTheme } from "../lib/theme.ts";
-import { Sidebar } from "./Sidebar.tsx";
+import { Sidebar, type SbDept } from "./Sidebar.tsx";
 import ImpersonationBanner from "../islands/ImpersonationBanner.tsx";
 import ModalController from "../islands/ModalController.tsx";
 import EventToaster from "../islands/EventToaster.tsx";
@@ -19,9 +19,11 @@ interface LayoutProps {
   /** Prefetched game-state for the current user (from middleware). When
    *  present, Sidebar renders equipped cosmetics on the avatar block. */
   gameState?: GameStateLite;
+  /** Department cards that replace the sidebar nav (Operations Portal only). */
+  depts?: SbDept[];
 }
 
-export function Layout({ title, section, user, children, hideSidebar, pathname, gameState }: LayoutProps) {
+export function Layout({ title, section, user, children, hideSidebar, pathname, gameState, depts }: LayoutProps) {
   const theme = getTheme(section ?? "admin");
   const pageTitle = title ? `${title} — Auto-Bot` : "Auto-Bot";
 
@@ -43,7 +45,7 @@ export function Layout({ title, section, user, children, hideSidebar, pathname, 
         <ImpersonationBanner />
         <ModalController />
         {user && <EventToaster />}
-        {!hideSidebar && user && <Sidebar user={user} section={section ?? ""} pathname={pathname} gameState={gameState} />}
+        {!hideSidebar && user && <Sidebar user={user} section={section ?? ""} pathname={pathname} gameState={gameState} depts={depts} />}
         <main class={hideSidebar ? "main-full" : "main"}>
           {children}
         </main>

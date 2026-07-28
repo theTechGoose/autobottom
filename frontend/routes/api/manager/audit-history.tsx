@@ -46,6 +46,10 @@ export interface AuditHistoryData {
   owners: string[];
   shifts: string[];
   departments: string[];
+  /** Per-department aggregates over the filtered window — backend-computed
+   *  in one pass (see audit-history/mod.ts). Feeds the Operations Portal's
+   *  all-departments overview. Absent on older responses. */
+  deptRollup?: Array<{ department: string; count: number; avgScore: number | null }>;
 }
 
 function pillColor(score: number | null | undefined): string {

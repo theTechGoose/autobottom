@@ -153,6 +153,31 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .sb-link-label { font-size: 12px; font-weight: 600; color: var(--text-bright); flex: 1; }
 .sb-link-arrow { color: var(--text-dim); flex-shrink: 0; }
 
+/* Operations Portal — department cards that replace the nav links in the
+   sidebar. The ops manager switches departments here, so these are the
+   primary navigation, not decoration. */
+.sb-dept {
+  display: block; padding: 9px 12px; margin-bottom: 5px; border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--border);
+  text-decoration: none; color: var(--text); transition: border-color 0.15s, background 0.15s;
+}
+.sb-dept:hover { border-color: var(--border-hover); }
+.sb-dept.active { border-color: rgba(129,140,248,0.55); background: rgba(129,140,248,0.12); }
+.sb-dept-name {
+  font-size: 12px; font-weight: 600; color: var(--text-bright);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sb-dept-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 4px; font-size: 10px; color: var(--text-muted);
+}
+/* The all-departments roll-up sits above the list and reads as a summary,
+   not as one more department: dashed outline + its own tint. */
+.sb-dept-all { border-style: dashed; border-color: rgba(129,140,248,0.4); background: rgba(129,140,248,0.05); }
+.sb-dept-all.active { border-style: solid; }
+.sb-dept-all .sb-dept-name { letter-spacing: 0.04em; text-transform: uppercase; font-size: 11px; }
+.sb-dept-divider { height: 1px; background: var(--border); margin: 10px 2px; }
+
 /* Role Views flyout */
 .sb-rv-wrap { position: relative; }
 .sb-rv-flyout { position: fixed; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; z-index: 9999; }

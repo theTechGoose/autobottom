@@ -1,5 +1,7 @@
+import { assert, assertEquals } from "@std/assert";
 import { renderHTML, assertContains, assertNotContains } from "../helpers/render.ts";
-import { TranscriptPanel } from "../../components/TranscriptPanel.tsx";
+import { emitTranscriptLines, TranscriptPanel } from "../../components/TranscriptPanel.tsx";
+import { findEvidenceLine } from "../../lib/transcript-excerpt.ts";
 
 Deno.test("TranscriptPanel — empty snippet renders empty state", () => {
   const html = renderHTML(<TranscriptPanel snippet="" />);
@@ -56,4 +58,48 @@ Deno.test("TranscriptPanel — properly-segmented raw with times still uses raw"
   // raw is segmented → keep raw (times align to it).
   assertContains(html, "line one");
   assertNotContains(html, "different one");
+});
+
+// ── Index alignment with the remediation evidence jump ───────────────────────
+//
+// The remediation page resolves a failed question's evidence to a line index
+// server-side (findEvidenceLine) and the island then looks that index up as
+// `data-line-idx` in this panel's DOM. Blank-line skipping, consecutive-dupe
+// suppression and raw-vs-diarized source selection all shift those indices, so
+// both sides MUST walk the same list. These pin that contract.
+
+Deno.test("emitTranscriptLines — matches the rendered data-line-idx positions", () => {
+  const transcript = {
+    // Blank line + a consecutive duplicate: both shift naive indices.
+    raw: "[AGENT]: Hello there, this is Matthew.\n\n[CUSTOMER]: Okay.\n[CUSTOMER]: Okay.\n[AGENT]: The refundable deposit is returned on arrival.",
+    diarized: "",
+    utteranceTimes: [0, 1000, 2000, 3000],
+  };
+  const emitted = emitTranscriptLines(transcript);
+  const html = renderHTML(<TranscriptPanel transcript={transcript} />);
+  emitted.forEach(({ line }, idx) => {
+    assertContains(html, `data-line-idx="${idx}"`);
+    // The line at index N in the emitted list is the line rendered at N.
+    const content = line.replace(/^\[[A-Z ]+\]:\s*/, "");
+    assertContains(html, content);
+  });
+  // The duplicate "Okay." collapsed, so 5 raw lines render as 3.
+  assertEquals(emitted.length, 3);
+});
+
+Deno.test("findEvidenceLine index resolves to the right rendered line", () => {
+  const transcript = {
+    raw: "[AGENT]: Hello there, this is Matthew.\n\n[CUSTOMER]: Okay.\n[CUSTOMER]: Okay.\n[AGENT]: The refundable deposit is returned on arrival.",
+    diarized: "",
+    utteranceTimes: [0, 1000, 2000, 3000],
+  };
+  const lines = emitTranscriptLines(transcript).map((e) => e.line);
+  const idx = findEvidenceLine({
+    lines,
+    defense: 'The agent says "the refundable deposit is returned on arrival".',
+  });
+  // Index 2 in the RENDERED list — index 4 in the raw text. A naive raw-line
+  // index would scroll the manager to the wrong line (or off the end).
+  assertEquals(idx, 2);
+  assert(lines[idx!].includes("refundable deposit"));
 });

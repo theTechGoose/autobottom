@@ -108,20 +108,34 @@ const DEFENSE_PROSE_STOP = [
 
 const STOPWORDS = new Set([...ENGLISH_STOP, ...DEFENSE_PROSE_STOP]);
 
+/** Verbatim spans the bot put in quote marks — straight and smart, ≥6 chars
+ *  between marks to skip stray apostrophes.
+ *
+ *  Each alternative excludes its own OPENING mark, not just the closing one —
+ *  otherwise a run of opening quotes triggers O(n²) backtracking (pinned by the
+ *  ReDoS test).
+ *
+ *  The curly-double branch must NOT exclude `’`: a transcript quote is speech,
+ *  so it is full of curly apostrophes ("we’re", "don’t"). Lumping `’` into the
+ *  curly-double exclusion silently dropped every such quote — a real
+ *  "Attending Presentation Together?" failure quoted “We’re married, yes,” and
+ *  the only span that survived extraction was a stray “time chair.”, which sent
+ *  the evidence jump to an unrelated line. Curly SINGLE quotes still have to
+ *  exclude `’` (it's their own terminator), but they're rare as quote marks. */
+function quotedSpans(text: string): string[] {
+  const out: string[] = [];
+  const quoteRe = /“([^“”]{6,})”|‘([^‘’]{6,})’|"([^"]{6,})"|'([^']{6,})'/g;
+  let m: RegExpExecArray | null;
+  while ((m = quoteRe.exec(text)) !== null) out.push(m[1] ?? m[2] ?? m[3] ?? m[4] ?? "");
+  return out;
+}
+
 /** Pull distinctive content tokens out of a defense string. Quoted spans are
  *  the verbatim transcript excerpts the bot cited, so prefer them; fall back to
  *  the whole defense when nothing is quoted. */
 export function extractDefenseTokens(defense: string): string[] {
   if (!defense) return [];
-  const quoted: string[] = [];
-  // Straight and smart quotes, ≥6 chars between marks to skip stray apostrophes.
-  // The smart-quote class excludes the OPENING marks too (`“‘`), not just the
-  // closing ones — otherwise a run of opening quotes triggers O(n²) backtracking.
-  const quoteRe = /[“‘]([^“‘”’]{6,})[”’]|"([^"]{6,})"|'([^']{6,})'/g;
-  let m: RegExpExecArray | null;
-  while ((m = quoteRe.exec(defense)) !== null) {
-    quoted.push(m[1] ?? m[2] ?? m[3] ?? "");
-  }
+  const quoted = quotedSpans(defense);
   const basis = quoted.length ? quoted.join(" ") : defense;
   const seen = new Set<string>();
   const tokens: string[] = [];
@@ -329,4 +343,112 @@ export function buildFocusedExcerpt(opts: {
   });
 
   return { segments, focused: true, text: textParts.join("\n"), empty: false };
+}
+
+// ── Evidence line lookup (remediation jump) ──────────────────────────────────
+
+/** A rendered transcript line is too short to be evidence on its own. Kills the
+ *  "Okay." / "Yeah" problem: a one-word line is a substring of nearly any quote,
+ *  so before this floor the jump reliably landed on the first filler line. */
+const MIN_EVIDENCE_LINE_CHARS = 15;
+
+/** Strip a leading speaker tag from one rendered transcript line. */
+function stripSpeakerTag(line: string): string {
+  return line.trim().replace(TEAM_TAG, "").replace(GUEST_TAG, "").trim();
+}
+
+/** Locate the ONE transcript line a failed question's evidence points at.
+ *
+ *  WHY THIS EXISTS — the remediation jump used to guess client-side against the
+ *  whole call: first line sharing any 3 substrings (not words) of the bot's
+ *  reasoning prose won. On a "this was never mentioned" failure the reasoning
+ *  describes what is ABSENT, so there is nothing real to match and that bar is
+ *  low enough that some unrelated line near the top always cleared it — the
+ *  manager clicked a failure and landed somewhere with no bearing on it.
+ *
+ *  Two things make this honest instead:
+ *   1. `snippet` — the exact context the model actually graded against
+ *      (step-ask-all stores it per question) — narrows the candidates, so a
+ *      RAG-chunked long call can only match inside the chunks it was shown.
+ *   2. It returns null rather than a weak guess. "No matching moment" is the
+ *      correct answer for a question that failed because nothing was said.
+ *
+ *  `lines` must be the RENDERED line list (see emitTranscriptLines) so the
+ *  returned index addresses the same `data-line-idx` the DOM carries. */
+export function findEvidenceLine(opts: {
+  lines: string[];
+  defense?: string;
+  thinking?: string;
+  snippet?: string;
+}): number | null {
+  const lines = opts.lines ?? [];
+  if (lines.length === 0) return null;
+  // Prefer `defense` — it's the field the model is told to quote the transcript
+  // in. `thinking` is reasoning prose and only stands in when defense is empty.
+  const evidence = (opts.defense ?? "").trim() || (opts.thinking ?? "").trim();
+  if (!evidence) return null;
+
+  const texts = lines.map(stripSpeakerTag);
+  const norms = texts.map(normalize);
+
+  // Candidate set: only lines the model was actually shown. A snippet that is
+  // the whole transcript (short calls) or one that no longer aligns with the
+  // stored transcript both fall back to every line — narrowing is a bonus here,
+  // never a precondition.
+  const snippetNorm = normalize(opts.snippet ?? "");
+  const shown = norms.flatMap((n, i) => (snippetNorm.includes(n.trim()) ? [i] : []));
+  const candidates = shown.length ? shown : norms.map((_, i) => i);
+
+  const tokens = extractDefenseTokens(evidence);
+
+  // Pass 1 — a verbatim quote the bot cited. Highest confidence, so it wins
+  // outright. Matches either direction: the quote inside the line, or a line
+  // wholly inside a longer quote (diarization splits an utterance mid-sentence).
+  //
+  // A defense routinely cites SEVERAL quotes landing on different lines ("I have
+  // you arriving in Nashville…", "I have your address…", "I have your primary
+  // number…"). First-quote-wins would pick by nothing but citation order, so
+  // score every quote-matched line and take the best-supported one.
+  const quoteHits = new Set<number>();
+  for (const span of quotedSpans(evidence)) {
+    const spanNorm = normalize(span).trim();
+    if (spanNorm.length < MIN_EVIDENCE_LINE_CHARS) continue;
+    for (const i of candidates) {
+      const lineNorm = norms[i].trim();
+      if (lineNorm.length < MIN_EVIDENCE_LINE_CHARS) continue;
+      if (lineNorm.includes(spanNorm) || spanNorm.includes(lineNorm)) quoteHits.add(i);
+    }
+  }
+  if (quoteHits.size) {
+    let bestHit = -1;
+    let bestHitScore = -1;
+    for (const i of [...quoteHits].sort((a, b) => a - b)) {
+      const s = scoreTurn(norms[i], tokens);
+      if (s > bestHitScore) { bestHit = i; bestHitScore = s; }
+    }
+    return bestHit;
+  }
+
+  // Pass 2 — distinctive-token scoring, the same shape buildFocusedExcerpt uses:
+  // drop tokens that recur across too many lines, then take the best-scoring
+  // line above a threshold. Earliest line wins ties (evidence usually lands on
+  // the first time something was said).
+  if (!tokens.length) return null;
+  const dfCap = Math.max(2, Math.floor(candidates.length * MAX_DOC_FREQ));
+  const distinctive = tokens.filter((t) => {
+    let df = 0;
+    for (const i of candidates) if (norms[i].includes(` ${t} `)) df++;
+    return df > 0 && df <= dfCap;
+  });
+  if (!distinctive.length) return null;
+
+  const threshold = distinctive.length >= 3 ? 2 : 1;
+  let best = -1;
+  let bestScore = 0;
+  for (const i of candidates) {
+    if (norms[i].trim().length < MIN_EVIDENCE_LINE_CHARS) continue;
+    const s = scoreTurn(norms[i], distinctive);
+    if (s >= threshold && s > bestScore) { best = i; bestScore = s; }
+  }
+  return best >= 0 ? best : null;
 }

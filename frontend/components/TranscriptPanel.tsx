@@ -34,7 +34,23 @@ function parseLine(line: string): { speaker: "team" | "guest" | null; content: s
   return { speaker: null, content: raw };
 }
 
-export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
+export interface EmittedLine {
+  line: string;
+  ts: number | null;
+}
+
+/** The exact line list this panel renders, in render order: non-empty lines
+ *  with consecutive duplicates suppressed and timestamps kept aligned to the
+ *  raw transcript position.
+ *
+ *  Exported because a caller that wants to point at a rendered line by its
+ *  `data-line-idx` (the remediation evidence jump) MUST compute the same index
+ *  space the DOM uses — source selection, blank-line skipping and dupe
+ *  suppression all shift the indices, so re-deriving them by hand desyncs. */
+export function emitTranscriptLines(
+  transcript?: TranscriptData | null,
+  snippet?: string,
+): EmittedLine[] {
   // Never render a stored diarization we can't vouch for. This panel backs BOTH
   // the review and judge queues — the surfaces a human actually grades from —
   // and until this guard existed it read `transcript.diarized` unfiltered, which
@@ -57,13 +73,7 @@ export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
     ? (rawText || diarizedText || "")
     : (diarizedText || rawText || snippet || "");
 
-  if (!text) {
-    return (
-      <div class="transcript-panel">
-        <div class="transcript-empty">No transcript available</div>
-      </div>
-    );
-  }
+  if (!text) return [];
 
   const rawLines = text.split(/\r?\n/);
   // Non-empty lines WITH consecutive-duplicate suppression. Prod skips any
@@ -82,6 +92,20 @@ export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
     if (trimmed === lastTrim) continue;
     lastTrim = trimmed;
     emitted.push({ line: l, ts });
+  }
+  return emitted;
+}
+
+export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
+  const emitted = emitTranscriptLines(transcript, snippet);
+  const utteranceTimes = transcript?.utteranceTimes ?? [];
+
+  if (emitted.length === 0) {
+    return (
+      <div class="transcript-panel">
+        <div class="transcript-empty">No transcript available</div>
+      </div>
+    );
   }
 
   return (

@@ -16,7 +16,8 @@
  *  audits with no per-line times still render, just without click-to-seek. */
 import { define } from "../../../lib/define.ts";
 import { Layout } from "../../../components/Layout.tsx";
-import { TranscriptPanel } from "../../../components/TranscriptPanel.tsx";
+import { emitTranscriptLines, TranscriptPanel, type TranscriptData } from "../../../components/TranscriptPanel.tsx";
+import { findEvidenceLine } from "../../../lib/transcript-excerpt.ts";
 import { apiFetch } from "../../../lib/api.ts";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 import QueueAudioPlayer from "../../../islands/QueueAudioPlayer.tsx";
@@ -28,6 +29,9 @@ interface AnsweredQuestion {
   answer?: string;
   thinking?: string;
   defense?: string;
+  /** The exact context the model graded this question against (step-ask-all
+   *  stores it). Narrows the evidence-line lookup on a RAG-chunked long call. */
+  snippet?: string;
 }
 interface Finding {
   findingId?: string;
@@ -83,6 +87,82 @@ function score(qs: AnsweredQuestion[]): number {
   return Math.round((yes / qs.length) * 100);
 }
 
+/** The questions list, failures first, each failure carrying the transcript
+ *  line its evidence points at.
+ *
+ *  The lookup happens HERE, on the server, against the same rendered line list
+ *  TranscriptPanel emits — so a row's `data-rem-line-idx` addresses the exact
+ *  `data-line-idx` the island will query. It used to happen client-side at
+ *  click time against the whole call, which is how a failure whose evidence
+ *  describes what was NEVER said still jumped somewhere (see findEvidenceLine).
+ *  A failure with no confident match gets no attribute and says so in place. */
+export function renderQuestionList(qs: AnsweredQuestion[], transcript: TranscriptData) {
+  const failedCount = qs.filter((q) => !isYes(q.answer) && !isErrorAnswer(q.answer)).length;
+  const hasTimes = (transcript.utteranceTimes?.length ?? 0) > 0;
+
+  // Failures first (preserving each question's original number), then the rest.
+  const indexed = qs.map((q, i) => ({ q, num: i + 1 }));
+  const failedRows = indexed.filter(({ q }) => !isYes(q.answer) && !isErrorAnswer(q.answer));
+  const passRows = indexed.filter(({ q }) => isYes(q.answer) || isErrorAnswer(q.answer));
+  const ordered = [...failedRows, ...passRows];
+
+  // Only worth resolving when the transcript can actually be seeked to.
+  const renderedLines = hasTimes ? emitTranscriptLines(transcript).map((e) => e.line) : [];
+  const evidenceLines = new Map<number, number>();
+  for (const { q, num } of failedRows) {
+    if (!renderedLines.length) break;
+    const idx = findEvidenceLine({
+      lines: renderedLines,
+      defense: q.defense,
+      thinking: q.thinking,
+      snippet: q.snippet,
+    });
+    if (idx != null) evidenceLines.set(num, idx);
+  }
+
+  return (
+    <>
+      <div class="tbl-title" style="margin:16px 0 8px;">
+        Questions ({qs.length}{failedCount > 0 ? ` · ${failedCount} failed` : ""})
+        {evidenceLines.size > 0 && (
+          <span class="rem-hint">
+            {" "}· click a highlighted failure to jump to it ({evidenceLines.size} of {failedCount})
+          </span>
+        )}
+      </div>
+      <div class="rem-q-list">
+        {ordered.map(({ q, num }) => {
+          const yes = isYes(q.answer);
+          const errored = isErrorAnswer(q.answer);
+          const failed = !yes && !errored;
+          const pill = errored ? "blue" : yes ? "green" : "red";
+          const label = errored ? "Error" : yes ? "Yes" : "No";
+          const reason = failed ? (q.defense || q.thinking || "") : "";
+          const lineIdx = evidenceLines.get(num);
+          const jumpable = lineIdx != null;
+          return (
+            <div
+              key={num}
+              class={`rem-q-row ${failed ? "rem-q-failed" : ""} ${jumpable ? "rem-q-jumpable" : ""}`}
+              {...(jumpable ? { "data-rem-line-idx": String(lineIdx), title: "Jump to this failure in the transcript" } : {})}
+            >
+              <div class="rem-q-head">
+                <span class="rem-q-num mono">{num}</span>
+                <span class="rem-q-name">{q.header || q.populated || "—"}</span>
+                <span class={`pill pill-${pill}`}>{label}</span>
+              </div>
+              {reason && <div class="rem-q-reason">{reason}</div>}
+              {failed && hasTimes && !jumpable && (
+                <div class="rem-q-nomatch">No matching moment in the call — nothing to jump to.</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 export default define.page(async function RemediationDetail(ctx) {
   const user = ctx.state.user!;
   const url = new URL(ctx.req.url);
@@ -128,12 +208,6 @@ export default define.page(async function RemediationDetail(ctx) {
   const flags = saleFlagsOf(f);
   const saleTags = [...(flags.wgs ? ["WGS"] : []), ...(flags.mcc ? ["MCC"] : [])];
 
-  // Failures first (preserving each question's original number), then the rest.
-  const indexed = qs.map((q, i) => ({ q, num: i + 1 }));
-  const failedRows = indexed.filter(({ q }) => !isYes(q.answer) && !isErrorAnswer(q.answer));
-  const passRows = indexed.filter(({ q }) => isYes(q.answer) || isErrorAnswer(q.answer));
-  const ordered = [...failedRows, ...passRows];
-
   const transcript = {
     raw: f.rawTranscript ?? "",
     // Sanitized on read so a stored refusal/commentary can never reach the
@@ -141,7 +215,6 @@ export default define.page(async function RemediationDetail(ctx) {
     diarized: safeDiarized(f.diarizedTranscript, f.rawTranscript),
     utteranceTimes: f.utteranceTimes ?? [],
   };
-  const hasTimes = (f.utteranceTimes?.length ?? 0) > 0;
 
   return (
     <Layout title="Remediation" section="manager" user={user} pathname={url.pathname} hideSidebar>
@@ -182,38 +255,7 @@ export default define.page(async function RemediationDetail(ctx) {
                   </div></div>
                 </div>
 
-                <div class="tbl-title" style="margin:16px 0 8px;">
-                  Questions ({qs.length}{failedCount > 0 ? ` · ${failedCount} failed` : ""})
-                  {hasTimes && <span class="rem-hint"> · click a failed question to jump to it</span>}
-                </div>
-
-                <div class="rem-q-list">
-                  {ordered.map(({ q, num }) => {
-                    const yes = isYes(q.answer);
-                    const errored = isErrorAnswer(q.answer);
-                    const failed = !yes && !errored;
-                    const pill = errored ? "blue" : yes ? "green" : "red";
-                    const label = errored ? "Error" : yes ? "Yes" : "No";
-                    const reason = failed ? (q.defense || q.thinking || "") : "";
-                    // Failed rows carry their evidence so the island can locate
-                    // the matching transcript line on click.
-                    const evidence = failed ? `${q.defense ?? ""}\n${q.thinking ?? ""}`.trim() : "";
-                    return (
-                      <div
-                        key={num}
-                        class={`rem-q-row ${failed ? "rem-q-failed" : ""}`}
-                        {...(failed ? { "data-rem-evidence": evidence, title: "Jump to this failure in the transcript" } : {})}
-                      >
-                        <div class="rem-q-head">
-                          <span class="rem-q-num mono">{num}</span>
-                          <span class="rem-q-name">{q.header || q.populated || "—"}</span>
-                          <span class={`pill pill-${pill}`}>{label}</span>
-                        </div>
-                        {reason && <div class="rem-q-reason">{reason}</div>}
-                      </div>
-                    );
-                  })}
-                </div>
+                {renderQuestionList(qs, transcript)}
               </div>
             </div>
           </div>

@@ -3,55 +3,28 @@
  *  document level so no per-node hydration is needed:
  *
  *   1. Click a transcript line  → seek the audio to that line's timestamp.
- *   2. Click a FAILED question  → find the transcript line that best matches
- *      that question's evidence (the bot's defense/reasoning quotes), scroll it
- *      into view, highlight it, and seek the audio there.
+ *   2. Click a FAILED question  → scroll to the transcript line the page
+ *      resolved as that failure's evidence, highlight it, and seek there.
  *
  *  Both paths dispatch `queue:jump-to-audio`, which the QueueAudioPlayer island
- *  on the same page consumes to move the playhead. The evidence-matching mirrors
- *  the reviewer/judge TranscriptInteractive heuristic, but is keyed off a
- *  clicked question's data-attributes instead of the single "current" question
- *  in the VerdictPanel DOM. Renders nothing — this is a plain full page (no HTMX
- *  swaps of the transcript), so one mount for the page lifetime is enough. */
+ *  on the same page consumes to move the playhead.
+ *
+ *  WHY THERE'S NO MATCHING LOGIC HERE ANYMORE: this island used to locate the
+ *  evidence itself at click time, scanning the whole transcript for a line that
+ *  shared a few substrings with the bot's reasoning prose. On a failure whose
+ *  reasoning describes what was NEVER said there is nothing real to match, and
+ *  the bar was low enough that an unrelated line always cleared it — clicking a
+ *  failure jumped somewhere with no bearing on it. The page now resolves the
+ *  line on the server (findEvidenceLine, against the snippet the model actually
+ *  graded) and emits `data-rem-line-idx`; a row with no attribute is not
+ *  clickable and says so. This island just follows the pointer.
+ *
+ *  Renders nothing — this is a plain full page (no HTMX swaps of the
+ *  transcript), so one mount for the page lifetime is enough. */
 import { useEffect } from "preact/hooks";
 
 export default function RemediationInteractive() {
   useEffect(() => {
-    // Normalize smart quotes → ASCII so quote extraction is consistent.
-    function normalize(s: string): string {
-      return s
-        .replace(/[“”„‟]/g, '"')
-        .replace(/[‘’‚‛]/g, "'");
-    }
-    // Pull quoted substrings (≥10 chars) the bot cited as evidence.
-    function extractQuotes(sourceRaw: string): string[] {
-      const source = normalize(sourceRaw);
-      const out: string[] = [];
-      const re = /"([^"]{10,})"|'([^']{10,})'/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(source))) out.push((m[1] ?? m[2] ?? "").toLowerCase());
-      return out;
-    }
-    // Fallback: does a transcript line share ≥min meaningful words with evidence?
-    function wordOverlap(line: string, words: string[], min: number): boolean {
-      if (!line) return false;
-      const lower = line.toLowerCase();
-      let hits = 0;
-      for (const w of words) {
-        if (w.length < 3) continue;
-        if (lower.includes(w)) { hits++; if (hits >= min) return true; }
-      }
-      return false;
-    }
-
-    function transcriptLines(): HTMLElement[] {
-      const body = document.getElementById("transcript-body");
-      if (!body) return [];
-      return Array.from(body.querySelectorAll<HTMLElement>(".t-line"));
-    }
-    function textOf(line: HTMLElement): string {
-      return line.querySelector<HTMLElement>(".t-text")?.textContent ?? "";
-    }
     function seekToLine(line: HTMLElement) {
       const ms = line.dataset.tsMs ?? line.querySelector<HTMLElement>(".t-timestamp")?.dataset.seekMs;
       const n = Number(ms);
@@ -60,36 +33,19 @@ export default function RemediationInteractive() {
       }
     }
 
-    function jumpToEvidence(qEl: HTMLElement) {
-      const evidence = qEl.dataset.remEvidence ?? "";
-      const all = transcriptLines();
+    function jumpToLine(qEl: HTMLElement) {
+      const idx = qEl.dataset.remLineIdx;
+      if (idx == null) return;
+      const body = document.getElementById("transcript-body");
+      const target = body?.querySelector<HTMLElement>(`.t-line[data-line-idx="${CSS.escape(idx)}"]`);
+      if (!target) return;
       // Reset any prior highlight + active-question state.
-      for (const l of all) l.classList.remove("t-evidence");
+      body?.querySelectorAll(".t-evidence").forEach((n) => n.classList.remove("t-evidence"));
       document.querySelectorAll(".rem-q-active").forEach((n) => n.classList.remove("rem-q-active"));
       qEl.classList.add("rem-q-active");
-      if (all.length === 0) return;
-
-      const quotes = extractQuotes(evidence);
-      const words = evidence.toLowerCase().split(/\W+/).filter((w) => w.length >= 4);
-
-      // Prefer an exact-ish quote match; fall back to word overlap.
-      let match: HTMLElement | null = null;
-      for (const line of all) {
-        const lower = textOf(line).toLowerCase();
-        if (quotes.some((q) => q && (lower.includes(q) || q.includes(lower.slice(0, 40))))) {
-          match = line;
-          break;
-        }
-      }
-      if (!match) {
-        for (const line of all) {
-          if (wordOverlap(textOf(line), words, 3)) { match = line; break; }
-        }
-      }
-      if (!match) return; // no locatable evidence (e.g. paraphrased/legacy) — no-op
-      match.classList.add("t-evidence");
-      match.scrollIntoView({ block: "center", behavior: "smooth" });
-      seekToLine(match);
+      target.classList.add("t-evidence");
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+      seekToLine(target);
     }
 
     function onDocClick(e: Event) {
@@ -99,9 +55,9 @@ export default function RemediationInteractive() {
       // a question row, never both.)
       const lineEl = target.closest<HTMLElement>("#transcript-body .t-line");
       if (lineEl) { seekToLine(lineEl); return; }
-      // Failed question row → jump to its evidence.
-      const qEl = target.closest<HTMLElement>("[data-rem-evidence]");
-      if (qEl) jumpToEvidence(qEl);
+      // Failed question row with resolved evidence → jump to that line.
+      const qEl = target.closest<HTMLElement>("[data-rem-line-idx]");
+      if (qEl) jumpToLine(qEl);
     }
 
     document.addEventListener("click", onDocClick);

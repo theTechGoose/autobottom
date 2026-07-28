@@ -2,6 +2,7 @@ import { assert, assertEquals } from "@std/assert";
 import {
   buildFocusedExcerpt,
   extractDefenseTokens,
+  findEvidenceLine,
   parseTranscriptTurns,
 } from "../../lib/transcript-excerpt.ts";
 
@@ -266,4 +267,128 @@ Deno.test("buildFocusedExcerpt — two distant matches → two windows with a ga
   assert(ex.text.includes("cancellation policy"));
   assert(ex.text.includes("confirmation number"));
   assert(!ex.text.includes("opening pleasantries"));
+});
+
+// ── findEvidenceLine (remediation jump) ──────────────────────────────────────
+//
+// The bug these pin: a failure whose reasoning describes what was NEVER said
+// used to jump to an unrelated line, because the old client-side heuristic took
+// the first line sharing any 3 substrings of the reasoning prose.
+
+const JUMP_LINES = [
+  "[AGENT]: Okay.",
+  "[AGENT]: All righty, I'm back. So my name is Matthew, doing your verification.",
+  "[CUSTOMER]: That's correct.",
+  "[AGENT]: The refundable deposit of two hundred dollars is returned to you upon arrival at the resort.",
+  "[CUSTOMER]: Okay.",
+  "[AGENT]: We do abide by all state and federal laws. Welcome aboard.",
+];
+
+Deno.test("findEvidenceLine — verbatim quote wins outright", () => {
+  const idx = findEvidenceLine({
+    lines: JUMP_LINES,
+    defense: 'The agent says: "the refundable deposit of two hundred dollars is returned to you upon arrival".',
+  });
+  assertEquals(idx, 3);
+});
+
+Deno.test("findEvidenceLine — 'never mentioned' failure returns null, not a wrong line", () => {
+  // The real shape of the reported bug: the reasoning is a summary of ABSENCE.
+  // Its only quoted span ("Monster Cruise Club") is by definition not in the
+  // call, and its prose words are all stopwords or non-distinctive.
+  const idx = findEvidenceLine({
+    lines: JUMP_LINES,
+    defense:
+      'There is no mention of "Monster Cruise Club", membership fees, or any statement indicating a recurring yearly charge.',
+  });
+  assertEquals(idx, null);
+});
+
+Deno.test("findEvidenceLine — short filler lines can never be the match", () => {
+  // "Okay." is a substring of almost any long quote — the old heuristic landed
+  // on line 0 constantly. Nothing under the char floor may win.
+  const idx = findEvidenceLine({
+    lines: JUMP_LINES,
+    defense: 'The agent asks and the guest replies "Okay." right away.',
+  });
+  assert(idx === null || JUMP_LINES[idx].length >= 15);
+});
+
+Deno.test("findEvidenceLine — snippet narrows the candidates", () => {
+  // Both line 3 and line 5 carry distinctive tokens, but the model was only
+  // shown line 5, so line 3 must not win.
+  const idx = findEvidenceLine({
+    lines: JUMP_LINES,
+    defense: "The team member covers the deposit and the state and federal laws disclosure.",
+    snippet: "[AGENT]: We do abide by all state and federal laws. Welcome aboard.",
+  });
+  assertEquals(idx, 5);
+});
+
+Deno.test("findEvidenceLine — a snippet that doesn't align falls back to every line", () => {
+  // Stored snippet from a re-transcribed call: no line matches it. Narrowing is
+  // a bonus, never a precondition — the quote match must still land.
+  const idx = findEvidenceLine({
+    lines: JUMP_LINES,
+    defense: '"the refundable deposit of two hundred dollars is returned to you upon arrival"',
+    snippet: "totally unrelated stored context from an older transcript version",
+  });
+  assertEquals(idx, 3);
+});
+
+Deno.test("findEvidenceLine — index addresses the rendered line list", () => {
+  // Guards the contract with emitTranscriptLines: the returned index is a
+  // position in `lines` as given, tags and all.
+  const idx = findEvidenceLine({
+    lines: JUMP_LINES,
+    defense: '"my name is Matthew, doing your verification"',
+  });
+  assertEquals(idx, 1);
+  assert(JUMP_LINES[idx!].startsWith("[AGENT]"));
+});
+
+Deno.test("findEvidenceLine — falls back to thinking when defense is empty", () => {
+  const idx = findEvidenceLine({
+    lines: JUMP_LINES,
+    defense: "",
+    thinking: 'The line "we do abide by all state and federal laws" covers it.',
+  });
+  assertEquals(idx, 5);
+});
+
+Deno.test("findEvidenceLine — no transcript or no evidence → null", () => {
+  assertEquals(findEvidenceLine({ lines: [], defense: "anything" }), null);
+  assertEquals(findEvidenceLine({ lines: JUMP_LINES, defense: "" }), null);
+});
+
+// A transcript quote is speech, so it's full of curly apostrophes. Lumping `’`
+// into the curly-double exclusion dropped the whole quote — the real defect
+// behind a "Attending Presentation Together?" failure jumping to an unrelated
+// "Do you currently own a time chair?" line.
+Deno.test("extractDefenseTokens — curly apostrophe inside a curly quote doesn't drop it", () => {
+  const tokens = extractDefenseTokens('The customer confirms, “We’re married, yes,” establishing status.');
+  assert(tokens.includes("married"), `expected "married" in ${JSON.stringify(tokens)}`);
+});
+
+Deno.test("findEvidenceLine — curly-quoted speech resolves to its line", () => {
+  const lines = [
+    "[AGENT]: Do you currently own a timeshare property anywhere in the world?",
+    "[AGENT]: And are you and your significant other legally married or cohabiting?",
+    "[CUSTOMER]: We’re married, yes, going on twelve years now.",
+  ];
+  const idx = findEvidenceLine({
+    lines,
+    defense: 'The customer confirms, “We’re married, yes,” establishing the marital status.',
+  });
+  assertEquals(idx, 2);
+});
+
+// Same guard as the curly-double run, for the branch that was split out.
+Deno.test("extractDefenseTokens — pathological curly-apostrophe run stays fast", () => {
+  const evil = "’".repeat(40000);
+  const start = performance.now();
+  const tokens = extractDefenseTokens(evil);
+  const elapsed = performance.now() - start;
+  assert(elapsed < 250, `expected <250ms, took ${elapsed.toFixed(0)}ms`);
+  assertEquals(tokens, []);
 });

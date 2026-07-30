@@ -276,6 +276,54 @@ export default define.page(async function OperationsPortalPage(ctx) {
   const tab: Tab = (TABS as readonly string[]).includes(rawTab) ? rawTab as Tab : "outstanding";
   const requestedDept = url.searchParams.get("dept") ?? "";
 
+  // ── Audit-history query params (URL-only — no dependency on scope/queue) ──
+  const ahSinceMs = safeMs(url.searchParams.get("since"), Date.now() - 7 * DAY_MS);
+  const ahUntilMs = safeMs(url.searchParams.get("until"), Date.now());
+  const ahOwner = url.searchParams.get("owner") ?? "";
+  const ahShift = url.searchParams.get("shift") ?? "";
+  const ahReviewed = url.searchParams.get("reviewed") ?? "";
+  const ahSale = url.searchParams.get("sale") ?? "";
+  const ahSort = url.searchParams.get("sort") ?? "";
+  const ahScoreMin = url.searchParams.get("scoreMin") ?? "0";
+  const ahScoreMax = url.searchParams.get("scoreMax") ?? "100";
+  const ahPage = url.searchParams.get("page") ?? "1";
+
+  const auditHistoryQs = (deptValue: string, overview: boolean): string => {
+    const qsInit: Record<string, string> = {
+      since: String(ahSinceMs), until: String(ahUntilMs), owner: ahOwner,
+      department: deptValue, shift: ahShift, reviewed: ahReviewed, sale: ahSale,
+      sort: ahSort, scoreMin: ahScoreMin, scoreMax: ahScoreMax, page: ahPage,
+      // The overview only needs the backend's per-department aggregate, not a
+      // page of rows — ask for the smallest page the API allows.
+      limit: overview ? "10" : "50",
+    };
+    if (asEmail) qsInit.as = asEmail;
+    return new URLSearchParams(qsInit).toString();
+  };
+
+  // Audit history is by far the slowest read on this page, and it used to run
+  // AFTER scope+queue finished — so the two waits stacked and an ops manager's
+  // login sat on a blank page for both.
+  //
+  // With no `dept` in the URL — the default landing case, i.e. exactly what
+  // you hit right after logging in — every input to this query is already
+  // known: `dept` can only resolve to "" (deptNames never contains an empty
+  // string), so isOverview is true and the limit is 10. Nothing below can
+  // change that, so start the fetch NOW and let it run alongside scope+queue.
+  //
+  // When a dept IS requested we can't presume: it's only valid once checked
+  // against the manager's scope, and an unrecognised one falls back to the
+  // overview with a different limit. That path stays sequential — it's a
+  // sidebar click, not a login.
+  const presumeOverview = requestedDept === "";
+  const earlyAuditData = presumeOverview
+    ? apiFetch<AuditHistoryData>(`/manager/api/audit-history?${auditHistoryQs("", true)}`, ctx.req)
+      .catch((e) => {
+        console.error("Operations audit-history load error:", e);
+        return null;
+      })
+    : null;
+
   // Scope and queue in parallel — both soft-fail so one bad read degrades the
   // page instead of 500ing it.
   const [scope, allItems] = await Promise.all([
@@ -363,38 +411,26 @@ export default define.page(async function OperationsPortalPage(ctx) {
   const qUntilDisplay = queueParams.until ? toLocalInput(queueParams.until) : "";
 
   // ── Audit-history read (overview roll-up, or the Audit History tab) ───────
-  const ahSinceMs = safeMs(url.searchParams.get("since"), Date.now() - 7 * DAY_MS);
-  const ahUntilMs = safeMs(url.searchParams.get("until"), Date.now());
-  const ahOwner = url.searchParams.get("owner") ?? "";
-  const ahShift = url.searchParams.get("shift") ?? "";
-  const ahReviewed = url.searchParams.get("reviewed") ?? "";
-  const ahSale = url.searchParams.get("sale") ?? "";
-  const ahSort = url.searchParams.get("sort") ?? "";
-  const ahScoreMin = url.searchParams.get("scoreMin") ?? "0";
-  const ahScoreMax = url.searchParams.get("scoreMax") ?? "100";
-  const ahPage = url.searchParams.get("page") ?? "1";
-
+  // Params + query-string builder are hoisted to the top of the handler so the
+  // no-dept case can start this fetch before scope/queue resolve.
   let auditData: AuditHistoryData = {
     items: [], total: 0, pages: 1, page: 1, owners: [], shifts: [], departments: [],
   };
   const needsAudits = isOverview || tab === "audits";
   if (needsAudits) {
-    const qsInit: Record<string, string> = {
-      since: String(ahSinceMs), until: String(ahUntilMs), owner: ahOwner,
-      department: dept, shift: ahShift, reviewed: ahReviewed, sale: ahSale,
-      sort: ahSort, scoreMin: ahScoreMin, scoreMax: ahScoreMax, page: ahPage,
-      // The overview only needs the backend's per-department aggregate, not a
-      // page of rows — ask for the smallest page the API allows.
-      limit: isOverview ? "10" : "50",
-    };
-    if (asEmail) qsInit.as = asEmail;
-    try {
-      auditData = await apiFetch<AuditHistoryData>(
-        `/manager/api/audit-history?${new URLSearchParams(qsInit)}`, ctx.req,
-      );
-    } catch (e) {
-      console.error("Operations audit-history load error:", e);
-    }
+    // `earlyAuditData` is only non-null when no dept was requested, which
+    // forces dept="" and isOverview=true — the exact query it was fired with.
+    // Awaiting it here is a no-op wait: it has been in flight the whole time
+    // scope+queue were loading.
+    const result = earlyAuditData
+      ? await earlyAuditData
+      : await apiFetch<AuditHistoryData>(
+        `/manager/api/audit-history?${auditHistoryQs(dept, isOverview)}`, ctx.req,
+      ).catch((e) => {
+        console.error("Operations audit-history load error:", e);
+        return null;
+      });
+    if (result) auditData = result;
   }
 
   // Overview cards: live queue numbers (pending / oldest / remediated) joined

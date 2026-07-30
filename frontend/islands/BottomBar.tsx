@@ -99,8 +99,12 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
     // Skip-tier accelerating seek state
     let tier = -1;
     let lastSkipPress = 0;
-    let skipDecayTimer: number | null = null;
-    let skipHideTimer: number | null = null;
+    // ReturnType<typeof setTimeout>, not number: Deno's typings return a
+    // Timeout object, and hardcoding `number` (the browser's return type)
+    // fails to compile. The value is only ever passed back to clearTimeout,
+    // so the opaque type is all we need.
+    let skipDecayTimer: ReturnType<typeof setTimeout> | null = null;
+    let skipHideTimer: ReturnType<typeof setTimeout> | null = null;
 
     function sizeCanvas() {
       const rect = canvas!.getBoundingClientRect();

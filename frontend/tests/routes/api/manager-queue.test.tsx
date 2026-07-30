@@ -101,25 +101,31 @@ Deno.test("ManagerQueue — falls back to 'N failed' when total unknown", () => 
   assertNotContains(html, "%");
 });
 
-Deno.test("ManagerQueue — row wires finding-detail + remediate modal triggers", () => {
+Deno.test("ManagerQueue — row opens the remediation page, button still opens the modal", () => {
+  // The row used to hx-get a finding-detail modal. Commit 2cb7ef98 replaced
+  // that with a full-page click-to-scrub view at /manager/remediate/<id>; the
+  // per-row Remediate button still drives the modal.
   const html = renderHTML(renderQueueTable([item({ findingId: "fid-001" })]));
-  assertContains(html, "/api/manager/finding?findingId=fid-001");
-  assertContains(html, "finding-detail-modal");
+  assertContains(html, `data-finding-id="fid-001"`);
+  assertContains(html, "location.href='/manager/remediate/'");
   assertContains(html, "remediate-modal");
   assertContains(html, "rem-findingId");
+  // The old modal fragment is gone — if it comes back, it needs its own test.
+  assertNotContains(html, "finding-detail-modal");
 });
 
-Deno.test("ManagerQueue — quote-bearing findingId can't break out of URL or JS", () => {
+Deno.test("ManagerQueue — quote-bearing findingId can't break out of the URL or JS", () => {
   // A `'` in the id used to close the inlined JS string early (DOM-XSS-prone).
   const html = renderHTML(renderQueueTable([item({ findingId: "x';alert(1)//" })]));
-  // (1) hx-get encodes the query-significant separators (`;` and `/`) so the
-  //     id can't corrupt or truncate the findingId param. The raw, unencoded
-  //     separator form must not appear in the URL.
-  assertContains(html, "findingId=x'%3Balert(1)%2F%2F");
-  assertNotContains(html, "findingId=x';alert");
-  // (2) Remediate handler reads the id off the data-attribute — never inlined
-  //     into a single-quoted JS string, so there is no `value='…'` to escape out of.
-  //     (The raw id living inside the double-quoted data-attribute is safe.)
+  // (1) The id is carried on a data-attribute, which Preact attribute-escapes.
+  //     A `'` inside a double-quoted attribute is inert.
+  assertContains(html, `data-finding-id="x';alert(1)//"`);
+  // (2) Navigation reads it back through encodeURIComponent — so it can never
+  //     be concatenated raw into the URL, nor truncate the path with its `/`.
+  assertContains(html, "encodeURIComponent(this.dataset.findingId)");
+  assertNotContains(html, "remediate/x';alert");
+  // (3) Same rule for the Remediate button: read off the dataset, never
+  //     inlined into a single-quoted JS string there is something to escape out of.
   assertContains(html, "this.dataset.findingId");
   assertNotContains(html, "value='");
 });

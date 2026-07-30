@@ -8,7 +8,9 @@ import { useEffect } from "preact/hooks";
 export default function DecideEffects() {
   useEffect(() => {
     let combo = 0;
-    let comboTimeout: number | undefined;
+    // ReturnType<typeof setTimeout>, not number — Deno's setTimeout returns a
+    // Timeout object. Only ever handed back to clearTimeout.
+    let comboTimeout: ReturnType<typeof setTimeout> | undefined;
     let confirms = 0;
     let flips = 0;
 

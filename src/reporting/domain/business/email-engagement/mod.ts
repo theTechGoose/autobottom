@@ -26,7 +26,9 @@ const MARK_TYPE = "audit-email-mark";
 export const OPEN_PREFETCH_WINDOW_MS = 10_000;
 
 /** 1×1 fully-transparent GIF. Returned by the open-pixel route. */
-export const TRANSPARENT_GIF: Uint8Array = Uint8Array.from(
+// Uint8Array<ArrayBuffer> so it can be a Response body under TS 5.7+ typing
+// (a bare Uint8Array widens to ArrayBufferLike, which BodyInit rejects).
+export const TRANSPARENT_GIF: Uint8Array<ArrayBuffer> = Uint8Array.from(
   atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"),
   (c) => c.charCodeAt(0),
 );

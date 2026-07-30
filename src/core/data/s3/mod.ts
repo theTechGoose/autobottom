@@ -121,7 +121,13 @@ export class S3Ref {
     }, {}, "client");
   }
 
-  async get(): Promise<Uint8Array | null> {
+  // Uint8Array<ArrayBuffer>, not a bare Uint8Array: TypeScript 5.7+ made
+  // Uint8Array generic over its backing buffer, and `new Response(body)`
+  // only accepts a view over a real ArrayBuffer — a bare Uint8Array widens
+  // to ArrayBufferLike, which also admits SharedArrayBuffer, and is refused.
+  // The body below returns a genuine ArrayBuffer-backed array, so declaring
+  // the narrow type is accurate rather than a cast papering over a lie.
+  async get(): Promise<Uint8Array<ArrayBuffer> | null> {
     return withSpan("s3.get", async (span) => {
       span.setAttributes({ "s3.bucket": this.bucket, "s3.key": this.key });
       const headers: Record<string, string> = {};
@@ -177,7 +183,8 @@ export function resolveByteRange(
  *  range, or a full 200 otherwise. This is the seekable response a browser
  *  <audio> element needs. Pure — used by the /audit/recording handler (main.ts). */
 export function buildAudioResponse(
-  bytes: Uint8Array,
+  // Narrow view type so the Response bodies below typecheck — see S3Ref.get().
+  bytes: Uint8Array<ArrayBuffer>,
   rangeHeader: string | null | undefined,
   contentType = "audio/mpeg",
 ): Response {

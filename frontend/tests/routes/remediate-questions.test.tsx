@@ -10,7 +10,7 @@
  *  it owns both the evidence lookup and the markup the island reads. The second
  *  half covers `renderRemediateAction` — the close-out control this page now
  *  carries so a manager can finish the job without going back to the queue. */
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { assertContains, assertNotContains, renderHTML } from "../helpers/render.ts";
 import { renderQuestionList, renderRemediateAction } from "../../routes/manager/remediate/[findingId].tsx";
 import { emitTranscriptLines } from "../../components/TranscriptPanel.tsx";
@@ -141,6 +141,11 @@ Deno.test("renderRemediateAction — pending item gets a button AND its modal", 
     ...ACTION_ARGS,
     queueItem: { findingId: "fid-123", status: "pending" },
   });
+  // renderRemediateAction returns nulls for an item with nothing to close out,
+  // so narrow before rendering — and pin that a pending item yields both.
+  assert(action, "a pending item must render an action control");
+  assert(modal, "a pending item must render its remediate modal");
+
   const actionHtml = renderHTML(action);
   assertContains(actionHtml, "Remediate");
   assertContains(actionHtml, "remediate-modal");
@@ -165,6 +170,7 @@ Deno.test("renderRemediateAction — already remediated shows who, and NO modal"
       notes: "Coached on tax disclosure.",
     },
   });
+  assert(action, "a remediated item still renders who closed it out");
   const html = renderHTML(action);
   assertContains(html, "Remediated by lead@monsterrg.com");
   assertNotContains(html, "<button");

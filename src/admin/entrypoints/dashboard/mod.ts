@@ -11,7 +11,7 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, Description } from "#danet/swagger-decorators";
 import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, EmailTemplateListResponse, DashboardDataResponse, AuditsDataResponse, ReviewStatsResponse, EmailEngagementResponse, EmailEngagementDetailResponse, ReviewerThroughputResponse, ReviewerAuditsResponse, ReviewerQualityResponse, ReviewerQualityDetailResponse } from "@core/dto/responses.ts";
 import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId, writeAuditDoneIndex, inspectRecordIndex } from "@audit/domain/data/stats-repository/mod.ts";
-import { getReviewStats, getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
+import { getReviewStats, getReviewedFindingIdsCached } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig, isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
 import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -280,11 +280,14 @@ export class DashboardController {
       throw err;
     }
     try {
-      console.log(`[AUDIT-HISTORY] calling getReviewedFindingIds...`);
-      reviewedIds = await getReviewedFindingIds(orgId);
-      console.log(`[AUDIT-HISTORY] getReviewedFindingIds returned ${reviewedIds.size} ids`);
+      // Display read (Reviewed column) — cached variant. The payroll-gating
+      // callers (chargeback / wire / weekly Sheets export) deliberately stay
+      // on the exact uncached scan.
+      console.log(`[AUDIT-HISTORY] calling getReviewedFindingIdsCached...`);
+      reviewedIds = await getReviewedFindingIdsCached(orgId);
+      console.log(`[AUDIT-HISTORY] getReviewedFindingIdsCached returned ${reviewedIds.size} ids`);
     } catch (err) {
-      console.error(`[AUDIT-HISTORY] ❌ getReviewedFindingIds threw: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[AUDIT-HISTORY] ❌ getReviewedFindingIdsCached threw: ${err instanceof Error ? err.message : String(err)}`);
       console.error(`[AUDIT-HISTORY] ❌ stack: ${err instanceof Error && err.stack ? err.stack : "<no stack>"}`);
       throw err;
     }

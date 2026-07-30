@@ -1008,6 +1008,7 @@ export async function finalizeReviewedAudit(
     console.warn(`[REVIEW] ${findingId}: ⚠️ failed-finding index rebuild failed:`, err));
 
   await setStored("review-done", orgId, [findingId], { reviewedAt: new Date(reviewedAt).toISOString(), reviewScore, reviewedBy: reviewer });
+  noteFindingReviewed(orgId, findingId);
 
   // Auto-enqueue confirmed failures into the manager remediation queue. This
   // wiring was dropped in the 2026-05-06 danet refactor, so nothing has landed
@@ -1391,6 +1392,7 @@ export async function adminFlipFinding(
     reviewScore: score,
     reviewedBy: flippedBy,
   });
+  noteFindingReviewed(orgId, findingId);
 
   try {
     await writeSoleAuditDoneIndex(orgId, finding, {
@@ -1458,6 +1460,7 @@ export async function finalizePerfectFinding(
   const reviewedAt = new Date().toISOString();
   const reviewScore = typeof (finding as any).reviewScore === "number" ? (finding as any).reviewScore : 100;
   await setStored("review-done", orgId, [findingId], { reviewedAt, reviewScore, reviewedBy: reviewer });
+  noteFindingReviewed(orgId, findingId);
 
   try {
     await writeSoleAuditDoneIndex(orgId, finding, {
@@ -1496,6 +1499,7 @@ export async function drainReviewStoresForFinding(orgId: OrgId, findingId: strin
   }
   await deleteStored("review-audit-pending", orgId, findingId); cleared++;
   await deleteStored("review-done", orgId, findingId); cleared++;
+  noteFindingUnreviewed(orgId, findingId);
   await releaseLocksForFinding(orgId, findingId);
   return cleared;
 }
@@ -2039,6 +2043,85 @@ export async function getReviewedFindingIds(orgId: OrgId): Promise<Set<string>> 
   const rows = await listStoredWithKeysAll<{ reviewedAt: string }>("review-done", orgId);
   for (const { key } of rows) ids.add(String(key[0]));
   return ids;
+}
+
+/** Per-isolate SWR cache over getReviewedFindingIds. Same shape as the
+ *  `queryAuditDoneIndex` cache in stats-repository.
+ *
+ *  WHY: the scan above has no date window — it reads every audit ever
+ *  reviewed, and it grew to ~6s of fixed cost on EVERY audit-history page
+ *  load (measured on prod 2026-07-30: a 1-hour window cost 6.0-6.8s warm
+ *  against a 0.15s network baseline, and intermittently 500'd). It only
+ *  gets slower: ~9.2k audits complete every 30 days.
+ *
+ *  DO NOT point the money paths at this. The chargeback / wire-deduction
+ *  reports and the weekly Sheets export gate payroll rows on this set —
+ *  a stale entry there adds or drops someone's deduction. They call the
+ *  exact `getReviewedFindingIds` above and are cron/report jobs where the
+ *  scan cost doesn't matter. This cached variant is for DISPLAY reads
+ *  (audit-history pages) where a bounded staleness window is fine.
+ *
+ *  Staleness is bounded three ways: the 60s TTL, the background refresh,
+ *  and `noteFindingReviewed` / `noteFindingUnreviewed` below, which keep
+ *  the cache correct for reviews finalized by THIS isolate immediately.
+ *  Cross-isolate writes converge within one TTL.
+ *
+ *  The background refresh NEVER rejects — an unhandled rejection tears
+ *  down the isolate (same failure mode as the dashboard SWR bug at
+ *  6fc28ee and the session-cache refresh in core/business/auth). */
+const REVIEWED_IDS_TTL_MS = 60_000;
+const _reviewedIdsCache = new Map<string, { ids: Set<string>; expiresAt: number }>();
+const _reviewedIdsRefreshing = new Set<string>();
+
+function refreshReviewedIdsInBackground(orgId: OrgId): void {
+  if (_reviewedIdsRefreshing.has(orgId)) return;
+  _reviewedIdsRefreshing.add(orgId);
+  getReviewedFindingIds(orgId)
+    .then((ids) => {
+      _reviewedIdsCache.set(orgId, { ids, expiresAt: Date.now() + REVIEWED_IDS_TTL_MS });
+    })
+    .catch((err) => {
+      console.warn(`⚠️ [REVIEWED-IDS] background refresh failed org=${orgId}:`, err);
+    })
+    .finally(() => {
+      _reviewedIdsRefreshing.delete(orgId);
+    });
+}
+
+export async function getReviewedFindingIdsCached(orgId: OrgId): Promise<Set<string>> {
+  const now = Date.now();
+  const cached = _reviewedIdsCache.get(orgId);
+  if (cached) {
+    // Past TTL: serve the stale set NOW and refresh behind the request. A
+    // reviewed-flag that's up to a minute stale is not worth a 6s page.
+    if (cached.expiresAt <= now) refreshReviewedIdsInBackground(orgId);
+    return cached.ids;
+  }
+  // Cold isolate — must block on the real scan.
+  const ids = await getReviewedFindingIds(orgId);
+  _reviewedIdsCache.set(orgId, { ids, expiresAt: now + REVIEWED_IDS_TTL_MS });
+  return ids;
+}
+
+/** Write-through: keep the cached set correct the instant this isolate
+ *  finalizes a review, so a reviewer never sees their own just-finished
+ *  audit render as "Not reviewed". No-op when nothing is cached yet. */
+function noteFindingReviewed(orgId: OrgId, findingId: string): void {
+  _reviewedIdsCache.get(orgId)?.ids.add(findingId);
+}
+
+/** Write-through counterpart for the discard path, which deletes the
+ *  `review-done` row. Without this the cache would keep claiming a
+ *  discarded review still counts as reviewed until the TTL rolled. */
+function noteFindingUnreviewed(orgId: OrgId, findingId: string): void {
+  _reviewedIdsCache.get(orgId)?.ids.delete(findingId);
+}
+
+/** Test-only — drop the per-isolate cache so a test can observe a fresh
+ *  scan. Mirrors `_resetHiddenCacheForTesting` in stats-repository. */
+export function _resetReviewedIdsCacheForTesting(): void {
+  _reviewedIdsCache.clear();
+  _reviewedIdsRefreshing.clear();
 }
 
 /** Distinct findingIds currently in the review queue. Unions

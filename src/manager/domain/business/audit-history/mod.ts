@@ -11,7 +11,7 @@ import { queryAuditDoneIndex, backfillSaleFlags } from "@audit/domain/data/stats
 import { queryFailedFindings } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import { withTiming } from "@core/data/firestore/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
-import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
+import { getReviewedFindingIdsCached } from "@review/domain/business/review-queue/mod.ts";
 import { getManagerScope, getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
@@ -37,6 +37,10 @@ export interface AuditHistoryRow {
   reason?: string;
   reviewed?: boolean;
   appealStatus?: string | null;
+  /** Appeal state copied off the audit-done-idx row, when that row has it.
+   *  Internal to this module — stripped before the response is built, which
+   *  keeps `appealStatus` the single field the frontend reads. */
+  indexAppealStatus?: "none" | "pending" | "complete";
   /** WGS/MCC sale flags. Undefined = legacy index row not yet backfilled. */
   wgs?: boolean;
   mcc?: boolean;
@@ -208,6 +212,22 @@ export function rollupByDepartment(
     .sort((a, b) => a.department.localeCompare(b.department));
 }
 
+/** Decide whether the audit-done-idx row can answer "what's this audit's
+ *  appeal state?" on its own, and what that answer renders as.
+ *
+ *  Pure + exported because this is the one spot where reading the cheap index
+ *  instead of the live appeal doc could silently change a badge. `"none"` must
+ *  map to null — the frontend renders a pill only for "pending"/"complete", so
+ *  turning "none" into a truthy value would paint an appeal badge on audits
+ *  that were never appealed. `undefined` means the row predates the stamped
+ *  field and the caller must fall back to getAppeal(). */
+export function appealStatusFromIndex(
+  indexStatus: "none" | "pending" | "complete" | undefined,
+): { resolved: true; status: "pending" | "complete" | null } | { resolved: false } {
+  if (indexStatus === undefined) return { resolved: false };
+  return { resolved: true, status: indexStatus === "none" ? null : indexStatus };
+}
+
 /** Hydrate rows with missing voName/owner/department/shift via getFinding(). */
 async function hydrateMissing(orgId: OrgId, rows: AuditHistoryRow[]): Promise<AuditHistoryRow[]> {
   const needsHydration = rows.filter((r) => r.voName === undefined && r.owner === undefined);
@@ -251,6 +271,10 @@ function toRow(e: AuditDoneIndexEntry): AuditHistoryRow {
     reason: e.reason,
     wgs: e.wgs,
     mcc: e.mcc,
+    // Carried so the page slice can skip a per-row getAppeal() read. Stays
+    // undefined on index rows written before appealStatus was stamped —
+    // those still fall back to the live appeal doc. See `appeals` below.
+    indexAppealStatus: e.appealStatus,
   };
 }
 
@@ -333,7 +357,10 @@ async function _getAuditHistoryRaw(
     );
   }
 
-  const reviewedIds = await getReviewedFindingIds(orgId);
+  // Cached variant: this is a display read (the Reviewed column + the
+  // manager "reviewed audits only" gate), not a payroll gate, so a bounded
+  // staleness window beats paying the ~6s uncached scan on every page load.
+  const reviewedIds = await getReviewedFindingIdsCached(orgId);
   const isReviewed = (c: AuditHistoryRow) =>
     reviewedIds.has(c.findingId) || c.reason === "perfect_score" || c.reason === "invalid_genie";
 
@@ -410,12 +437,25 @@ async function _getAuditHistoryRaw(
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageSlice = filtered.slice((page - 1) * limit, page * limit);
   const hydratedPage = await hydrateMissing(orgId, pageSlice);
-  const appeals = await Promise.all(hydratedPage.map((c) => getAppeal(orgId, c.findingId)));
-  const items: AuditHistoryRow[] = hydratedPage.map((c, i) => ({
-    ...c,
-    reviewed: reviewedIds.has(c.findingId),
-    appealStatus: appeals[i] ? appeals[i]!.status : null,
+  // Appeal state comes off the index row when it's stamped there — filing an
+  // appeal re-stamps the row (file-appeal/mod.ts), as do completion, review,
+  // judge and flip, so the index is kept current. Only rows written before
+  // that field existed pay a live getAppeal() read, and they self-heal as the
+  // window rolls forward. Same index-only pattern as the email report engine.
+  const appeals = await Promise.all(hydratedPage.map(async (c) => {
+    const fromIndex = appealStatusFromIndex(c.indexAppealStatus);
+    if (fromIndex.resolved) return fromIndex.status;
+    const live = await getAppeal(orgId, c.findingId);
+    return live ? live.status : null;
   }));
+  const items: AuditHistoryRow[] = hydratedPage.map((c, i) => {
+    const { indexAppealStatus: _dropped, ...row } = c;
+    return {
+      ...row,
+      reviewed: reviewedIds.has(c.findingId),
+      appealStatus: appeals[i] ?? null,
+    };
+  });
 
   console.log(`🔍 [MANAGER-AUDITS] ${email} role=${role} → ${total}/${inWindow.length} in window, page=${page}/${pages}`);
 

@@ -6,10 +6,32 @@
  *  belongs in an int.test.ts when we add one. This file pins the exported surface
  *  so renames or signature drift fail fast. */
 import { assert, assertEquals } from "#assert";
-import { getAuditHistory, rollupByDepartment } from "./mod.ts";
+import { appealStatusFromIndex, getAuditHistory, rollupByDepartment } from "./mod.ts";
 
 Deno.test("audit-history — getAuditHistory is exported and callable", () => {
   assert(typeof getAuditHistory === "function");
+});
+
+// appealStatusFromIndex decides whether the page slice can skip a per-row
+// getAppeal() read. Getting it wrong shows the wrong appeal badge (or hides a
+// real appeal), so each case is pinned.
+
+Deno.test("appealStatusFromIndex — 'none' resolves to null, never a badge", () => {
+  // The frontend renders a pill for any truthy status, so "none" leaking
+  // through as a string would paint an appeal badge on un-appealed audits.
+  assertEquals(appealStatusFromIndex("none"), { resolved: true, status: null });
+});
+
+Deno.test("appealStatusFromIndex — pending and complete pass through unchanged", () => {
+  // These two strings are exactly what the queue/table renderer matches on.
+  assertEquals(appealStatusFromIndex("pending"), { resolved: true, status: "pending" });
+  assertEquals(appealStatusFromIndex("complete"), { resolved: true, status: "complete" });
+});
+
+Deno.test("appealStatusFromIndex — an unstamped row falls back to the live appeal", () => {
+  // Index rows written before appealStatus existed have no opinion; the caller
+  // MUST read the appeal doc for these or old audits lose their badge.
+  assertEquals(appealStatusFromIndex(undefined), { resolved: false });
 });
 
 // rollupByDepartment IS unit-testable (pure), and it feeds the Operations

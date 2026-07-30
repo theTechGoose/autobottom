@@ -2,6 +2,7 @@
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 import { extractDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
 import Groq from "#groq-sdk";
+import OpenAI from "#openai";
 import type { ChatCompletion } from "#groq-sdk/resources/chat/completions";
 
 /** Test seam: when set, the Groq client routes requests through this fetch
@@ -21,14 +22,55 @@ function getClient() {
   return new Groq({ apiKey: Deno.env.get("GROQ_API_KEY") });
 }
 
-const FALLBACK_MODELS = [
-  "openai/gpt-oss-120b",
-  "meta-llama/llama-4-scout-17b-16e-instruct",
-  "llama-3.3-70b-versatile",
-] as const;
+function getOpenAiClient() {
+  // deno-lint-ignore no-explicit-any
+  if (_testFetch) return new OpenAI({ apiKey: Deno.env.get("OPEN_AI_KEY") ?? "test", fetch: _testFetch as any });
+  return new OpenAI({ apiKey: Deno.env.get("OPEN_AI_KEY") });
+}
 
-type GroqModel = typeof FALLBACK_MODELS[number];
-const MODEL = FALLBACK_MODELS[0];
+/** Both SDKs are OpenAI-shaped for `chat.completions.create`, and every request
+ *  we send (messages / response_format / max_tokens / temperature) is accepted
+ *  verbatim by both — verified against gpt-4.1-mini before it was added below.
+ *  So the OpenAI client is widened to the Groq client's type at this ONE seam
+ *  and every call site keeps the types it already had. */
+function clientFor(provider: Provider): ReturnType<typeof getClient> {
+  return provider === "openai"
+    ? getOpenAiClient() as unknown as ReturnType<typeof getClient>
+    : getClient();
+}
+
+// Each Groq model carries its OWN 300k TPM budget, so the chain is really a
+// series of separate quota pools — but only if every entry is a live model.
+// `meta-llama/llama-4-scout-17b-16e-instruct` sat here until 2026-07-30 after
+// Groq removed it: it 404'd instantly, so the chain was silently only two deep
+// (logs 07-23→07-30: 14,579 fallbacks INTO scout, 14,574 straight back out) and
+// 858 questions died on a 429 with the raw error stored as their reasoning.
+//
+// The last entry is deliberately a DIFFERENT VENDOR. Groq's TPM ceiling is
+// org-wide, so a busy enough hour throttles every Groq model at once and no
+// amount of in-Groq fallback helps; OpenAI is the only rung with a quota that
+// can't be exhausted by our own Groq traffic. It is last because it is the only
+// metered-by-the-token rung — it should fire rarely, and a spike in
+// `[LLM-FALLBACK] … → openai:*` lines means the Groq tier needs raising.
+//
+// Adding an entry: check Groq ids against GET api.groq.com/openai/v1/models,
+// and confirm an OpenAI id accepts `max_tokens` (the gpt-5.x models do NOT —
+// they require `max_completion_tokens`, so they are not drop-ins here).
+type Provider = "groq" | "openai";
+const FALLBACK_MODELS = [
+  { provider: "groq", model: "openai/gpt-oss-120b" },
+  { provider: "groq", model: "openai/gpt-oss-20b" },
+  { provider: "groq", model: "llama-3.3-70b-versatile" },
+  { provider: "openai", model: "gpt-4.1-mini" },
+] as const satisfies readonly { provider: Provider; model: string }[];
+
+/** Log/label form. Worth the noise because `openai/gpt-oss-120b` is a GROQ-hosted
+ *  model whose id starts with "openai/" — without the tag the logs are unreadable. */
+function tagOf(entry: { provider: Provider; model: string }): string {
+  return `${entry.provider}:${entry.model}`;
+}
+
+const MODEL = FALLBACK_MODELS[0].model;
 const LLM_TIMEOUT_MS = 25_000;
 
 // ── Token tracking ───────────────────────────────────────────────────────────
@@ -131,7 +173,11 @@ function isRateLimitError(msg: string): boolean {
 
 function isModelDeadError(msg: string): boolean {
   return msg.includes("503") || msg.includes("404") || msg.includes("model_not_found")
-    || msg.includes("json_validate_failed");
+    || msg.includes("json_validate_failed")
+    // OpenAI returns "out of credit" and "key revoked" as a 429 and a 401, and
+    // isRateLimitError() would otherwise burn the full retry budget sleeping on
+    // a condition no amount of waiting fixes. Dead, not throttled.
+    || msg.includes("insufficient_quota") || msg.includes("invalid_api_key");
 }
 
 /** Per-question rate-limit retry budget. TPM 429s are usually <250ms windows;
@@ -146,12 +192,14 @@ async function askQuestionInner(
   temperature = 0.8,
   rateLimitRetries = 0,
 ): Promise<LlmAnswer> {
-  const model: GroqModel = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
-  const client = getClient();
+  const entry = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
+  const { model } = entry;
+  const tag = tagOf(entry);
+  const client = clientFor(entry.provider);
   const userPrompt = makeUserPrompt(question, transcript);
 
   let timerId: ReturnType<typeof setTimeout>;
-  const timeoutP = new Promise<never>((_, reject) => { timerId = setTimeout(() => reject(new Error(`LLM timed out after ${LLM_TIMEOUT_MS / 1000}s (model=${model})`)), LLM_TIMEOUT_MS); });
+  const timeoutP = new Promise<never>((_, reject) => { timerId = setTimeout(() => reject(new Error(`LLM timed out after ${LLM_TIMEOUT_MS / 1000}s (model=${tag})`)), LLM_TIMEOUT_MS); });
 
   try {
     const res = await Promise.race([
@@ -179,15 +227,15 @@ async function askQuestionInner(
     // with the raw 429 JSON as the question's reasoning text.
     if (isRateLimit && !isModelDead && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
       const waitMs = parseGroqRetryMs(msg);
-      console.warn(`[LLM-RATE-LIMIT] ${model} retry ${rateLimitRetries + 1}/${MAX_RATE_LIMIT_RETRIES} after ${waitMs}ms — TPM throttle, will not fall back yet`);
+      console.warn(`[LLM-RATE-LIMIT] ${tag} retry ${rateLimitRetries + 1}/${MAX_RATE_LIMIT_RETRIES} after ${waitMs}ms — TPM throttle, will not fall back yet`);
       await new Promise((r) => setTimeout(r, waitMs));
       return askQuestionInner(question, transcript, modelIndex, temperature, rateLimitRetries + 1);
     }
 
-    if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${model} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
+    if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${tag} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
     const nextIndex = modelIndex + 1;
     if ((isRateLimit || isModelDead) && nextIndex < FALLBACK_MODELS.length) {
-      console.warn(`[LLM-FALLBACK] ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
+      console.warn(`[LLM-FALLBACK] ${tag} → trying ${tagOf(FALLBACK_MODELS[nextIndex])}`);
       await new Promise((r) => setTimeout(r, 1000));
       return askQuestionInner(question, transcript, nextIndex, temperature, 0);
     }
@@ -221,10 +269,12 @@ export async function summarize(texts: string[]): Promise<string> {
 }
 
 async function groqCallWithRetry(params: Parameters<ReturnType<typeof getClient>["chat"]["completions"]["create"]>[0], trackLabel: string, modelIndex = 0, rateLimitRetries = 0): Promise<string> {
-  const model = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
-  const client = getClient();
+  const entry = FALLBACK_MODELS[modelIndex] ?? FALLBACK_MODELS[0];
+  const { model } = entry;
+  const tag = tagOf(entry);
+  const client = clientFor(entry.provider);
   let timerId: ReturnType<typeof setTimeout>;
-  const timeoutP = new Promise<never>((_, reject) => { timerId = setTimeout(() => reject(new Error(`LLM timed out after ${LLM_TIMEOUT_MS / 1000}s (${trackLabel}/${model})`)), LLM_TIMEOUT_MS); });
+  const timeoutP = new Promise<never>((_, reject) => { timerId = setTimeout(() => reject(new Error(`LLM timed out after ${LLM_TIMEOUT_MS / 1000}s (${trackLabel}/${tag})`)), LLM_TIMEOUT_MS); });
   try {
     const res = await Promise.race([client.chat.completions.create({ ...params, model }), timeoutP]) as ChatCompletion;
     clearTimeout(timerId!);
@@ -240,15 +290,15 @@ async function groqCallWithRetry(params: Parameters<ReturnType<typeof getClient>
     // Same intra-model retry as askQuestionInner — see comment there.
     if (isRateLimit && !isModelDead && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
       const waitMs = parseGroqRetryMs(msg);
-      console.warn(`[LLM-RATE-LIMIT] ${trackLabel}/${model} retry ${rateLimitRetries + 1}/${MAX_RATE_LIMIT_RETRIES} after ${waitMs}ms`);
+      console.warn(`[LLM-RATE-LIMIT] ${trackLabel}/${tag} retry ${rateLimitRetries + 1}/${MAX_RATE_LIMIT_RETRIES} after ${waitMs}ms`);
       await new Promise((r) => setTimeout(r, waitMs));
       return groqCallWithRetry(params, trackLabel, modelIndex, rateLimitRetries + 1);
     }
 
-    if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${trackLabel}/${model} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
+    if (isTimeout) console.error(`[LLM-TIMEOUT] ⚠️ ${trackLabel}/${tag} no response after ${LLM_TIMEOUT_MS / 1000}s — trying next model`);
     const nextIndex = modelIndex + 1;
     if ((isRateLimit || isModelDead) && nextIndex < FALLBACK_MODELS.length) {
-      console.warn(`[LLM-FALLBACK] ${trackLabel}: ${model} → trying ${FALLBACK_MODELS[nextIndex]}`);
+      console.warn(`[LLM-FALLBACK] ${trackLabel}: ${tag} → trying ${tagOf(FALLBACK_MODELS[nextIndex])}`);
       await new Promise((r) => setTimeout(r, 1000));
       return groqCallWithRetry(params, trackLabel, nextIndex, 0);
     }

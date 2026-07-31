@@ -56,6 +56,10 @@ export interface ReportConfig {
   weeklyDepartments?: string[];
   weeklyShift?: string;
   weeklyOffice?: string;
+  /** Weekly digest grouping — unset/true splits a department into its shifts. */
+  weeklySplitByShift?: boolean;
+  /** VO-manager emails whose unmapped-office audits belong to this report. */
+  weeklyManagers?: string[];
   /** HH:mm in EST — UI-only preference, persisted as-is. */
   sendTimeEst?: string;
   createdAt?: number;
@@ -584,6 +588,27 @@ export function EditView(props: {
         onChange={(v) => set("onlyCompleted", v)}
         label={c.onlyCompleted !== false ? "Completed audits only" : "All audits — in-review rows labeled"}
       />
+
+      {/* VO managers whose off-code audits belong here — weekly reports only */}
+      {c.weeklyType && (
+        <ChipInput
+          label="VO managers (catches audits whose office code no report covers)"
+          value={c.weeklyManagers ?? []}
+          onChange={(v) => set("weeklyManagers", v.length ? v : undefined)}
+          placeholder="manager@monsterrg.com"
+        />
+      )}
+
+      {/* Weekly digest grouping — only meaningful on a weekly report */}
+      {c.weeklyType && (
+        <GreenToggle
+          checked={c.weeklySplitByShift !== false}
+          onChange={(v) => set("weeklySplitByShift", v)}
+          label={c.weeklySplitByShift !== false
+            ? "Split each department into its shifts (AM, PM, WW, WFH)"
+            : "One group per department — shifts combined"}
+        />
+      )}
 
       {/* Date range card */}
       <DateRangeCard value={c.dateRange ?? { mode: "rolling", hours: 24 }} onChange={(dr) => set("dateRange", dr)} />

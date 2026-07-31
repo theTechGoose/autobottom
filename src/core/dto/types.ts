@@ -284,6 +284,15 @@ export interface EmailReportConfig {
   weeklyDepartments?: string[];
   weeklyShift?: string;
   weeklyOffice?: string;
+  /** Weekly digest grouping. Default (unset/true) gives a card group per shift
+   *  whenever a department runs more than one; false keeps one group per
+   *  department, shifts merged. */
+  weeklySplitByShift?: boolean;
+  /** VO-manager emails (QB "VO - Supervisor Email") that belong to this report.
+   *  Audits whose ActivatingOffice no weekly report claims are routed here when
+   *  their manager is on this list — so a new//unmapped office code follows its
+   *  people instead of going unreported. Claimed offices are untouched. */
+  weeklyManagers?: string[];
   templateId?: string;
   /** Cron expression + IANA timezone. The matcher (cron-presets/mod.ts) projects
    *  Date.now() into `tz` via Intl and matches wall-clock fields — so a "Daily

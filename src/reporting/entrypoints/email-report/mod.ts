@@ -56,10 +56,9 @@ export class EmailReportController {
     try {
       const config = await repo.getEmailReportConfig(ORG(), configId);
       if (!config) return { error: "config not found" };
-      const { queryReportData, renderSections, renderFullEmail, renderWeeklySummaries } = await import("@reporting/domain/business/email-report-engine/mod.ts");
+      const { queryReportData, renderReportEmailHtml } = await import("@reporting/domain/business/email-report-engine/mod.ts");
       const sections = await queryReportData(ORG(), config);
-      const summaryHtml = renderWeeklySummaries(sections, config.weeklyType) || undefined;
-      const html = renderFullEmail(null, renderSections(sections, !!config.weeklyType), config.name, summaryHtml);
+      const html = await renderReportEmailHtml(ORG(), config, sections);
       await repo.saveEmailReportPreview(ORG(), configId, html);
       return { html };
     } catch (err) {
@@ -87,10 +86,9 @@ export class EmailReportController {
       templateId: b.templateId ?? undefined,
     };
     try {
-      const { queryReportData, renderSections, renderFullEmail, renderWeeklySummaries } = await import("@reporting/domain/business/email-report-engine/mod.ts");
+      const { queryReportData, renderReportEmailHtml } = await import("@reporting/domain/business/email-report-engine/mod.ts");
       const sections = await queryReportData(ORG(), config as any);
-      const summaryHtml = renderWeeklySummaries(sections, config.weeklyType) || undefined;
-      const html = renderFullEmail(null, renderSections(sections, !!config.weeklyType), config.name, summaryHtml);
+      const html = await renderReportEmailHtml(ORG(), config as any, sections);
       return { html };
     } catch (err) {
       return softFail("previewInline", err, { html: "", retry: true, error: "Server busy, please retry" });

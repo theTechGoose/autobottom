@@ -747,6 +747,23 @@ export default define.page(async function OperationsPortalPage(ctx) {
           </form>
         </div>
       </div>
+
+      {/* Appeal detail — same plain modal shell as /manager/audits; the audit
+          history fragment's APPEAL pill targets it by id. */}
+      <div id="appeal-detail-modal" class="modal-overlay">
+        <div class="modal" style="width:min(760px,92vw);max-height:88vh;overflow-y:auto;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div class="modal-title">Appeal Result</div>
+            <button
+              class="btn btn-ghost btn-sm"
+              {...{ "hx-on:click": "this.closest('.modal-overlay').classList.remove('open')" }}
+            >&times;</button>
+          </div>
+          <div id="appeal-detail-content">
+            <div class="placeholder-card">Loading…</div>
+          </div>
+        </div>
+      </div>
     </Layout>
   );
 });

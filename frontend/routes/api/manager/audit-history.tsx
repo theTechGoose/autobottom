@@ -93,9 +93,25 @@ function reviewedBadge(item: AuditHistoryItem) {
   return <span style="color:var(--text-dim);font-size:11px;">—</span>;
 }
 
+/** A decided appeal is clickable — it opens the appeal-detail modal (what was
+ *  appealed, what the judge overturned or upheld, and why). The modal shell
+ *  lives on the page, not in this fragment, so it survives every table swap. */
 function appealBadge(item: AuditHistoryItem) {
   if (item.appealStatus === "pending") return <span class="pill pill-yellow">Pending</span>;
-  if (item.appealStatus === "complete") return <span class="pill pill-blue">Complete</span>;
+  if (item.appealStatus === "complete") {
+    return (
+      <button
+        type="button"
+        class="pill pill-blue"
+        style="border:0;cursor:pointer;font:inherit;"
+        title="See what the judge decided"
+        hx-get={`/api/manager/appeal?findingId=${encodeURIComponent(item.findingId)}`}
+        hx-target="#appeal-detail-content"
+        hx-swap="innerHTML"
+        {...{ "hx-on:click": "document.getElementById('appeal-detail-modal').classList.add('open')" }}
+      >Complete</button>
+    );
+  }
   return <span style="color:var(--text-dim);font-size:11px;">—</span>;
 }
 

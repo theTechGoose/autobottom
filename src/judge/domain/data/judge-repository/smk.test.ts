@@ -17,6 +17,8 @@ import {
   deleteDuplicates,
   diagnoseDuplicates,
   postJudgedAudit,
+  getAppeal,
+  saveAppeal,
   listChargebackBackfillFids,
   processChargebackBackfillBatch,
   reconcileChargebackForFinding,
@@ -847,4 +849,225 @@ Deno.test("processChargebackBackfillBatch — folds totals across >1 concurrency
   assertEquals(res.cbUpdated, 8);
   assertEquals(res.wireDeleted, 3);
   assertEquals(res.wireUpdated, 2);
+});
+
+// ─── repeat-submission guard (one decrement, one completion, per question) ──
+// Prod incident (finding cEs2p0IYZXJbHugyqZgt5, 2026-07-30): the judge hotkeys
+// fire htmx.ajax with no in-flight lock, so a second keypress during the ~1.2s
+// round-trip resubmits the SAME question. recordJudgeDecision decremented the
+// audit counter on every submission, so an 11-question appeal hit 0 after 7
+// unique decisions — postJudgedAudit fired early, then again on each remaining
+// decision (Math.max(0, 0-1) is still 0), mailing the auditor 5 "appeal
+// complete" emails with partial scores (56%→84%, 84%→88% … 96%→100%).
+
+/** Poll for the judgeAction stamp postJudgedAudit writes — it's fired
+ *  fire-and-forget from recordJudgeDecision, so it can't be awaited directly. */
+async function stampedAfter(orgId: OrgId, findingId: string, ms = 150): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    const f = await getFinding(orgId, findingId) as { answeredQuestions?: Array<{ judgeAction?: string }> } | null;
+    if (f?.answeredQuestions?.some((q) => q.judgeAction)) return true;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return false;
+}
+
+Deno.test({ name: "judge — resubmitting the same question decrements the counter only once", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-judge-dup-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "f-judge-dup";
+  await makeFindingWith4Nos(org, fid);
+  await populateJudgeQueue(org, fid, [0, 1, 2].map((i) => ({
+    _origIdx: i, header: `Q${i}`, populated: `populated ${i}`, thinking: "T", defense: "D", answer: "No",
+  })), "redo");
+  // Claim like the real queue does — pending rows move to judge-active, so a
+  // repeat submission finds the question in neither store (as it did in prod).
+  await claimNextItem(org, "j@test.com");
+
+  assertEquals((await recordJudgeDecision(org, fid, 0, "overturn", "j@test.com", "error")).remaining, 2);
+  // The double-tap. Before the fix this returned 1 and the audit "completed"
+  // two questions early.
+  assertEquals(
+    (await recordJudgeDecision(org, fid, 0, "overturn", "j@test.com", "error")).remaining, 2,
+    "a repeat submission of an already-decided question must not decrement again",
+  );
+  assertEquals((await recordJudgeDecision(org, fid, 1, "overturn", "j@test.com", "error")).remaining, 1);
+  assertEquals(
+    await stampedAfter(org, fid), false,
+    "postJudgedAudit must NOT run while question 2 is still undecided (no early appeal-result email)",
+  );
+
+  assertEquals((await recordJudgeDecision(org, fid, 2, "overturn", "j@test.com", "error")).remaining, 0);
+  assertEquals(await stampedAfter(org, fid), true, "postJudgedAudit runs once the last question is decided");
+}});
+
+Deno.test({ name: "judge — a repeat submission keeps the question's context", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-judge-dup-ctx-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "f-judge-dup-ctx";
+  await makeFindingWith4Nos(org, fid);
+  await populateJudgeQueue(org, fid, [{
+    _origIdx: 0, header: "Q0", populated: "populated 0", thinking: "T", defense: "D", answer: "No",
+  }], "redo");
+  await claimNextItem(org, "j@test.com"); // pending → active, so the repeat finds neither
+
+  await recordJudgeDecision(org, fid, 0, "overturn", "j@test.com", "error");
+  await recordJudgeDecision(org, fid, 0, "overturn", "j@test.com", "error");
+
+  // On the repeat, judge-active and judge-pending are both drained. Falling
+  // back to a blank stub would erase the header postJudgedAudit keys its
+  // appealed/denied sets off (and reviewer-quality buckets overturns by).
+  const decided = await getStored<{ header?: string; populated?: string }>("judge-decided", org, fid, 0);
+  assertEquals(decided?.header, "Q0", "header must survive a repeat submission");
+  assertEquals(decided?.populated, "populated 0", "prompt must survive a repeat submission");
+}});
+
+Deno.test({ name: "judge — a decision arriving after the counter hit 0 does not re-run postJudgedAudit", ...kvOpts, fn: async () => {
+  reset();
+  const org = ("test-judge-late-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "f-judge-late";
+  await makeFindingWith4Nos(org, fid);
+  await populateJudgeQueue(org, fid, [{
+    _origIdx: 0, header: "Q0", populated: "P", thinking: "T", defense: "D", answer: "No",
+  }], "redo");
+  await setStored("judge-audit-pending", org, [fid], 0); // already exhausted
+
+  assertEquals((await recordJudgeDecision(org, fid, 0, "overturn", "j@test.com", "error")).remaining, 0);
+  assertEquals(
+    await stampedAfter(org, fid), false,
+    "0 → 0 is not a transition to zero — no second post-judge write, no duplicate email",
+  );
+}});
+
+// ─── postJudgedAudit — chargeback/wire ("payroll") resync ───────────────────
+// The review path resyncs the deduction entry on finalize; the judge path never
+// did. So an audit that failed review (entry written) and was then overturned
+// back to a pass on appeal kept its deduction row forever — a real pay hit for
+// an auditor who WON. Found in prod on 3 findings (33WsgrD4mM0fh-vk1YNtS,
+// JoCmLpmpVGSb4sKfIJqah, Z1_xHjHoLviagqoXjOomV), all sitting at 100% with a
+// live chargeback row.
+
+Deno.test("postJudgedAudit — full overturn clears the chargeback entry", async () => {
+  reset();
+  const org = ("test-judge-cb-clear-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-cb-clear";
+  await seedCbFinding(org, fid, [{ answer: "No", header: "Q0" }, { answer: "Yes", header: "Q1" }]);
+  await saveChargebackEntry(org, {
+    findingId: fid, ts: CB_NOW, voName: "T", destination: "HI", revenue: "100", recordId: "r-" + fid,
+    score: 50, failedQHeaders: ["Q0"], egregiousHeaders: [], omissionHeaders: ["Q0"],
+  });
+  assertEquals((await getChargebackEntries(org, 0, Number.MAX_SAFE_INTEGER)).length, 1, "deduction exists pre-appeal");
+
+  await seedJudgeDecisions(org, fid, [{ questionIndex: 0, decision: "overturn" }]);
+  await postJudgedAudit(org, fid, "judge@x.com");
+
+  assertEquals(
+    (await getChargebackEntries(org, 0, Number.MAX_SAFE_INTEGER)).length, 0,
+    "audit is back to 100% — the deduction must be gone, not left on the payroll sheet",
+  );
+});
+
+Deno.test("postJudgedAudit — partial overturn rewrites the entry to the remaining fails", async () => {
+  reset();
+  const org = ("test-judge-cb-part-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-cb-part";
+  await seedCbFinding(org, fid, [
+    { answer: "No", header: "Q0" }, { answer: "No", header: "Q1" },
+    { answer: "Yes", header: "Q2" }, { answer: "Yes", header: "Q3" },
+  ]);
+  await saveChargebackEntry(org, {
+    findingId: fid, ts: CB_NOW, voName: "T", destination: "HI", revenue: "100", recordId: "r-" + fid,
+    score: 50, failedQHeaders: ["Q0", "Q1"], egregiousHeaders: [], omissionHeaders: ["Q0", "Q1"],
+  });
+
+  // Judge overturns Q0, upholds Q1 → still failing at 75%.
+  await seedJudgeDecisions(org, fid, [
+    { questionIndex: 0, decision: "overturn" },
+    { questionIndex: 1, decision: "uphold" },
+  ]);
+  await postJudgedAudit(org, fid, "judge@x.com");
+
+  const entries = await getChargebackEntries(org, 0, Number.MAX_SAFE_INTEGER);
+  assertEquals(entries.length, 1, "still failing — the deduction stays");
+  assertEquals(entries[0].score, 75, "score must be the post-judge score, not the pre-appeal 50%");
+  assertEquals(entries[0].failedQHeaders, ["Q1"], "only the upheld question is still chargeable");
+  assertEquals(entries[0].ts, CB_NOW, "ts stays the original completedAt so it lands in the same pay period");
+});
+
+Deno.test("postJudgedAudit — full overturn clears a package finding's wire deduction", async () => {
+  reset();
+  const org = ("test-judge-wire-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-wire";
+  await seedCbFinding(org, fid, [{ answer: "No", header: "Q0" }], { isPackage: true });
+  await saveWireDeductionEntry(org, {
+    findingId: fid, ts: CB_NOW, score: 0, questionsAudited: 1, totalSuccess: 0,
+    recordId: "r-" + fid, office: "ACT", excellenceAuditor: "T", guestName: "G",
+  });
+
+  await seedJudgeDecisions(org, fid, [{ questionIndex: 0, decision: "overturn" }]);
+  await postJudgedAudit(org, fid, "judge@x.com");
+
+  assertEquals(
+    (await getWireDeductionEntries(org, 0, Number.MAX_SAFE_INTEGER)).length, 0,
+    "package audit back to 100% — the wire deduction must be cleared too",
+  );
+});
+
+// ─── postJudgedAudit — appeal record resolution ─────────────────────────────
+// The appeal doc was written status:"pending" at file time and nothing ever
+// moved it, so every judged appeal read "Appeal Pending" forever on admin /
+// manager / operations-portal / super-manager audit history (all four render
+// off the same audit-done-idx appealStatus), and record-dedup skipped those
+// records permanently.
+
+Deno.test("postJudgedAudit — resolves the appeal and flips the index badge to complete", async () => {
+  reset();
+  const org = ("test-judge-appeal-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-appeal";
+  const completedAt = await makeFindingWith4Nos(org, fid);
+  await saveAppeal(org, {
+    findingId: fid, appealedAt: completedAt, status: "pending",
+    auditor: "vo@x.com", comment: "bot errored", appealedQuestions: ["0"],
+  });
+  await writeAuditDoneIndex(org, {
+    findingId: fid, completedAt, score: 0, completed: false, isPackage: false, voName: "VO 02 - Judge Test",
+  });
+  assertEquals(
+    (await idxRowsFor(org, fid))[0]?.appealStatus,
+    "pending", "badge reads Appeal Pending while the judge still has it",
+  );
+
+  await seedJudgeDecisions(org, fid, [{ questionIndex: 0, decision: "overturn" }]);
+  await postJudgedAudit(org, fid, "judge@x.com");
+
+  const appeal = await getAppeal(org, fid);
+  assertEquals(appeal?.status, "complete", "appeal record must be resolved once the judge decides");
+  assertEquals(appeal?.judgedBy, "judge@x.com");
+  assertEquals(appeal?.comment, "bot errored", "resolving must not drop the auditor's appeal comment");
+  assertEquals(
+    (await idxRowsFor(org, fid))[0]?.appealStatus,
+    "complete", "every audit-history surface reads this field — it must say complete",
+  );
+});
+
+Deno.test("postJudgedAudit — an all-uphold appeal still closes (badge flips, score does not)", async () => {
+  reset();
+  const org = ("test-judge-appeal-up-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-appeal-up";
+  const completedAt = await makeFindingWith4Nos(org, fid);
+  await saveAppeal(org, {
+    findingId: fid, appealedAt: completedAt, status: "pending", auditor: "vo@x.com", appealedQuestions: ["0"],
+  });
+  await writeAuditDoneIndex(org, {
+    findingId: fid, completedAt, score: 42, completed: false, isPackage: false, voName: "VO 02 - Judge Test",
+  });
+
+  // Judge upholds everything — the appeal is decided, the score is not.
+  await seedJudgeDecisions(org, fid, [{ questionIndex: 0, decision: "uphold" }]);
+  await postJudgedAudit(org, fid, "judge@x.com");
+
+  assertEquals((await getAppeal(org, fid))?.status, "complete", "a denied appeal is still a closed appeal");
+  const entry = (await idxRowsFor(org, fid))[0];
+  assertEquals(entry?.appealStatus, "complete", "badge must flip even when nothing was overturned");
+  assertEquals(entry?.score, 42, "an upheld appeal must NOT move the score");
 });

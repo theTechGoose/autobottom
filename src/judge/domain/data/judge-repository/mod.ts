@@ -122,6 +122,20 @@ export async function recordJudgeDecision(
   decision: "uphold" | "overturn", judge: string, reason?: string,
   screenshotKeys?: string[],
 ): Promise<{ remaining: number }> {
+  // The audit-pending counter must be decremented exactly ONCE per question —
+  // on its FIRST decision. A repeat submission of the same question (the judge
+  // hotkeys fire htmx.ajax with no in-flight lock, so a second keypress during
+  // the ~1.2s round-trip resends the same findingId/questionIndex) must NOT
+  // decrement again: the counter then hits 0 while questions are still
+  // undecided, postJudgedAudit fires early, and — because newCount can't go
+  // below 0 — it fires AGAIN on every remaining decision, mailing the auditor
+  // one "appeal complete" email per question with partial scores (prod:
+  // cEs2p0IYZXJbHugyqZgt5 sent 5 emails, 56%→84%…96%→100%). Mirrors the same
+  // guard on the review side (review-queue/mod.ts recordDecision).
+  // Captured BEFORE the judge-decided overwrite below.
+  const priorDecision = await getStored<JudgeDecision>("judge-decided", orgId, findingId, questionIndex);
+  const isRedecision = priorDecision != null;
+
   // Load full item from active (or pending) so decided record preserves context
   const activeVal = await getStored<JudgeItem & { claimedAt?: number }>("judge-active", orgId, judge, findingId, questionIndex);
   let baseItem: JudgeItem | null = null;
@@ -130,6 +144,15 @@ export async function recordJudgeDecision(
     baseItem = rest as JudgeItem;
   } else {
     baseItem = await getStored<JudgeItem>("judge-pending", orgId, findingId, questionIndex);
+  }
+  if (!baseItem && priorDecision) {
+    // Re-decision: active/pending are both gone (claim moved it, the first
+    // decision drained it). Carry the prior record's context forward rather
+    // than blanking it — postJudgedAudit keys its appealed/denied sets off
+    // `header`, and reviewer-quality buckets overturns by header, so a blank
+    // stub silently drops the question from both.
+    const { decision: _d, judge: _j, reason: _r, decidedAt: _t, screenshotKeys: _s, ...rest } = priorDecision;
+    baseItem = rest as JudgeItem;
   }
   if (!baseItem) {
     baseItem = { findingId, questionIndex, header: "", populated: "", thinking: "", defense: "", answer: "No" };
@@ -147,10 +170,13 @@ export async function recordJudgeDecision(
   await deleteStored("judge-active", orgId, judge, findingId, questionIndex);
 
   const counter = (await getStored<number>("judge-audit-pending", orgId, findingId)) ?? 1;
-  const newCount = Math.max(0, counter - 1);
+  const newCount = isRedecision ? counter : Math.max(0, counter - 1);
   await setStored("judge-audit-pending", orgId, [findingId], newCount);
 
-  if (newCount === 0) {
+  // Fire on the TRANSITION to zero only. `counter > 0` is what stops a stray
+  // decision recorded after the audit already completed from re-running the
+  // post-judge write + re-sending the appeal-result email.
+  if (counter > 0 && newCount === 0) {
     postJudgedAudit(orgId, findingId, judge).catch((err) =>
       console.error(`[JUDGE] ${findingId}: postJudgedAudit failed:`, err));
   }
@@ -236,7 +262,8 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
 
     // Always persist the stamped/corrected questions (even on all-uphold) so the
     // judgeAction stamps stick for failure-source attribution.
-    await saveFinding(orgId, { ...finding, answeredQuestions: corrected });
+    const correctedFinding = { ...finding, answeredQuestions: corrected };
+    await saveFinding(orgId, correctedFinding);
 
     // Rebuild the failed-finding index from the judged finding. Every decided
     // question was appealed and judged; upheld ones mark the row appealDenied
@@ -249,11 +276,30 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
       const deniedKeys = new Set(
         decisions.filter((d) => d.decision === "uphold" && d.header).map((d) => normalizeQuestionKey(String(d.header))),
       );
-      await writeFailedFindingRows(orgId, { ...finding, answeredQuestions: corrected }, {
+      await writeFailedFindingRows(orgId, correctedFinding, {
         appealedQuestionKeys: appealedKeys, deniedQuestionKeys: deniedKeys,
       });
     } catch (err) {
       console.warn(`⚠️ [JUDGE] ${findingId} failed-finding index rebuild failed (best-effort):`, err);
+    }
+
+    // Resolve the appeal record. It is written status:"pending" at file time and
+    // nothing ever moved it off that, so every judged appeal stayed "pending"
+    // forever: audit history (admin + manager + operations portal + super-
+    // manager all render off the same audit-done-idx appealStatus) showed
+    // "Appeal Pending" on a decided appeal, and record-dedup skipped those
+    // records permanently. MUST run before the index writes below — they
+    // recompute appealStatus from this record (stats-repository writeAuditDoneIndex).
+    let appealResolved = false;
+    try {
+      const appeal = await getAppeal(orgId, findingId);
+      if (appeal && appeal.status !== "complete") {
+        await saveAppeal(orgId, { ...appeal, status: "complete", judgedBy: judge });
+        appealResolved = true;
+        console.log(`[JUDGE] ${findingId}: appeal marked complete (judge=${judge})`);
+      }
+    } catch (err) {
+      console.warn(`⚠️ [JUDGE] ${findingId} appeal resolve failed (best-effort):`, err);
     }
 
     if (overturns > 0) {
@@ -294,6 +340,38 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
         await updateCompletedStatScore(orgId, findingId, finalScore);
       } catch (err) {
         console.warn(`⚠️ [JUDGE] ${findingId} updateCompletedStatScore failed (best-effort):`, err);
+      }
+
+      // Resync the chargeback (date-leg) / wire (package) "payroll" entry to the
+      // judged answers. The review path does this on finalize
+      // (review-queue/mod.ts syncChargebackWireToScore) but the judge path never
+      // did, so an audit a judge took back to 100% kept the deduction row written
+      // when it failed review — a real pay hit for an auditor who WON their
+      // appeal. Same reconcile the Backfill Chargeback Entries tool runs, fed the
+      // corrected answers directly. Best-effort: a failure leaves a stale row
+      // that the backfill repairs.
+      try {
+        const r = await reconcileChargebackForFinding(orgId, findingId, correctedFinding);
+        if (r.cbDeleted || r.wireDeleted) {
+          console.log(`[JUDGE] ${findingId}: 💰 cleared ${r.cbDeleted ? "chargeback" : "wire"} entry at score=${finalScore}%`);
+        } else if (r.cbUpdated || r.wireUpdated) {
+          console.log(`[JUDGE] ${findingId}: 💰 rewrote ${r.cbUpdated ? "chargeback" : "wire"} entry at score=${finalScore}%`);
+        }
+      } catch (err) {
+        console.warn(`⚠️ [JUDGE] ${findingId} chargeback resync failed (best-effort, backfill repairs):`, err);
+      }
+    } else if (appealResolved) {
+      // All-uphold: the score didn't move, so none of the score-carrying writes
+      // above apply — but the appeal still just closed, and the badge reads off
+      // the index row. Same appealStatus-only stamp fileJudgeAppeal uses when it
+      // opens the appeal; writeSoleAuditDoneIndex's merge preserves the existing
+      // score / completed / doneAt.
+      try {
+        await writeSoleAuditDoneIndex(orgId, correctedFinding as Record<string, any>, {
+          findingId, ...buildIndexMeta(correctedFinding as Record<string, any>),
+        } as Parameters<typeof writeSoleAuditDoneIndex>[2]);
+      } catch (err) {
+        console.warn(`⚠️ [JUDGE] ${findingId} appealStatus index stamp failed (best-effort):`, err);
       }
     }
 
@@ -345,7 +423,10 @@ export async function claimNextItem(
           await deleteStored("judge-pending", orgId, ...key);
           if (newCount <= 0) await deleteStored("judge-audit-pending", orgId, skipFid);
           else await setStored("judge-audit-pending", orgId, [skipFid], newCount);
-          if (newCount <= 0) {
+          // Transition-to-zero only, same as recordJudgeDecision — draining a
+          // stray skip row on an already-completed audit must not re-fire the
+          // post-judge write and re-send the appeal-result email.
+          if (counterVal > 0 && newCount <= 0) {
             postJudgedAudit(orgId, skipFid, "system").catch((err) =>
               console.error(`[JUDGE] ${skipFid}: ❌ SKIP completion failed:`, err));
           }
@@ -757,10 +838,19 @@ type CbFinding = {
  *  its CURRENT answers — same canonical predicates as the live review sync (a
  *  fail is `=== "No"`, success `=== "Yes"`). A now-passing audit's entry is
  *  DELETED (the stale "failed VO" row this tool exists to clear); otherwise it's
- *  rewritten to the recomputed score + remaining fails. Exported for unit tests. */
-export async function reconcileChargebackForFinding(orgId: OrgId, fid: string): Promise<CbOne> {
+ *  rewritten to the recomputed score + remaining fails. Exported for unit tests.
+ *
+ *  `finding` lets a caller that just wrote the corrected answers pass them in
+ *  directly — postJudgedAudit does, so a cross-isolate read-after-write lag
+ *  can't make the reconcile grade the PRE-judge answers and re-save the very
+ *  deduction it's meant to clear. */
+export async function reconcileChargebackForFinding(
+  orgId: OrgId,
+  fid: string,
+  finding?: Record<string, unknown>,
+): Promise<CbOne> {
   const none: CbOne = { cbUpdated: false, cbDeleted: false, wireUpdated: false, wireDeleted: false };
-  const raw = await getFinding(orgId, fid);
+  const raw = finding ?? await getFinding(orgId, fid);
   if (!raw) return none;
   const f = raw as unknown as CbFinding;
   const answers = f.answeredQuestions ?? [];

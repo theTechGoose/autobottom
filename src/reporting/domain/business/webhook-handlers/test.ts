@@ -3,7 +3,7 @@
  *  (tests/e2e/dashboard.test.ts) so we don't need Postmark in unit tests. */
 
 import { assertEquals } from "#assert";
-import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock, resolveManagerCc } from "./mod.ts";
+import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock, resolveManagerCc, overturnPhraseFor } from "./mod.ts";
 
 /** Build a minimal finding whose record carries the given SupervisorEmail. */
 const findingWithSupervisor = (supervisorEmail: string) => ({
@@ -132,4 +132,24 @@ Deno.test("renderFailedQuestionsBlock — embeds inline images via cid content I
 Deno.test("renderFailedQuestionsBlock — no <img> when a question has no screenshots", () => {
   const html = renderFailedQuestionsBlock([{ header: "Q", reason: "why", imageCids: [] }]);
   assertEquals(html.includes("<img "), false);
+});
+
+// The appeal-result email pairs this with "{{overturns}} of {{totalQuestions}}".
+// totalQuestions counts the questions in the APPEAL, not the audit — prod sent
+// "7 of 7 questions were overturned" on a 25-question audit (fid
+// cEs2p0IYZXJbHugyqZgt5), which reads as if the audit had 7 questions.
+Deno.test("overturnPhraseFor — names the scope as the appeal, not the audit", () => {
+  assertEquals(
+    `11 of 11 ${overturnPhraseFor(11)}`,
+    "11 of 11 appealed questions were overturned",
+  );
+  assertEquals(
+    `7 of 11 ${overturnPhraseFor(11)}`,
+    "7 of 11 appealed questions were overturned",
+  );
+});
+
+Deno.test("overturnPhraseFor — a one-question appeal reads as singular", () => {
+  assertEquals(`1 of 1 ${overturnPhraseFor(1)}`, "1 of 1 appealed question was overturned");
+  assertEquals(`0 of 1 ${overturnPhraseFor(1)}`, "0 of 1 appealed question was overturned");
 });

@@ -44,6 +44,8 @@ Deno.test("shortQuestionLabel — shortens known headers, passes anything else t
   assertEquals(shortQuestionLabel("9% Service Fee"), "11% Service Fee");
   assertEquals(shortQuestionLabel("Understand Reschedule Process"), "WGS Disclosure");
   assertEquals(shortQuestionLabel("Credit Card Number is Not Read on VO?"), "CC# Read");
+  assertEquals(shortQuestionLabel("Preview 15 Months"), "Previous Presentation");
+  assertEquals(shortQuestionLabel("Attending Presentation Together?"), "Presentation Disclosure");
   assertEquals(shortQuestionLabel("Guest Name"), "Guest Name");
   assertEquals(shortQuestionLabel("Some Question We Never Renamed"), "Some Question We Never Renamed");
 });

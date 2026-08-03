@@ -24,6 +24,7 @@ import { findEvidenceLine } from "../../../lib/transcript-excerpt.ts";
 import { apiFetch } from "../../../lib/api.ts";
 import type { QueueItem } from "../../api/manager/queue.tsx";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
+import { questionLabel } from "@core/business/question-labels/mod.ts";
 import QueueAudioPlayer from "../../../islands/QueueAudioPlayer.tsx";
 import RemediationInteractive from "../../../islands/RemediationInteractive.tsx";
 
@@ -229,7 +230,7 @@ export function renderQuestionList(qs: AnsweredQuestion[], transcript: Transcrip
             >
               <div class="rem-q-head">
                 <span class="rem-q-num mono">{num}</span>
-                <span class="rem-q-name">{q.header || q.populated || "—"}</span>
+                <span class="rem-q-name">{questionLabel(q) || "—"}</span>
                 <span class={`pill pill-${pill}`}>{label}</span>
               </div>
               {reason && <div class="rem-q-reason">{reason}</div>}

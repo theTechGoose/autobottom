@@ -10,6 +10,7 @@ import { define } from "../../../lib/define.ts";
 import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
+import { questionLabel } from "@core/business/question-labels/mod.ts";
 
 interface AnsweredQuestion {
   header?: string;
@@ -195,7 +196,7 @@ export const handler = define.handlers({
                 return (
                   <tr key={i} style={!yes && !errored ? "background:rgba(248,81,73,0.07);" : undefined}>
                     <td class="mono" style="width:28px;">{i + 1}</td>
-                    <td style="font-size:12px;">{q.header || q.populated || "—"}</td>
+                    <td style="font-size:12px;">{questionLabel(q) || "—"}</td>
                     <td><span class={`pill pill-${pill}`}>{label}</span></td>
                     <td style="font-size:11px;color:var(--text-muted);max-width:340px;">{reason}</td>
                   </tr>

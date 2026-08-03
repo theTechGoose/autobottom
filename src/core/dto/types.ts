@@ -2,11 +2,17 @@
 
 export type { OrgId } from "@core/data/deno-kv/mod.ts";
 export type { Role, AuthContext, OrgRecord, UserRecord } from "@core/business/auth/mod.ts";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 // ── Audit types ──────────────────────────────────────────────────────────────
 
 export interface IQuestion {
   header: string;
+  /** How this question is NAMED to a human (see @core/business/question-labels).
+   *  Stamped at createQuestion time; `header` stays the identity every index,
+   *  stat bucket and report filter keys off. Absent on pre-2026-08 findings —
+   *  render with questionLabel(q), which recomputes it from the header. */
+  displayHeader?: string;
   unpopulated?: string;
   populated: string;
   autoYes?: string;
@@ -361,6 +367,9 @@ export interface IAstResults {
 export function createQuestion(seed: any): IQuestion {
   return {
     header: seed.header,
+    // Stamped once, here, so every downstream surface (report, email, review,
+    // manager) names the question the same way without re-deriving it.
+    displayHeader: shortQuestionLabel(String(seed.header ?? "")),
     unpopulated: seed.unpopulated,
     populated: seed.populated,
     autoYesExp: seed.autoYesExp,

@@ -2,6 +2,7 @@
 import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 export function computeReviewRate(decided: number, hours: number): number {
   return hours > 0 ? Math.round(decided / hours) : 0;
@@ -361,7 +362,7 @@ export async function getQuestionTiming(
     if (filter && !header.toLowerCase().includes(filter)) continue;
     const total = acc.samples.reduce((s, x) => s + x, 0);
     rows.push({
-      header,
+      header: shortQuestionLabel(header),
       samples: acc.samples.length,
       avgMs: acc.samples.length ? Math.round(total / acc.samples.length) : 0,
       medianMs: median(acc.samples),

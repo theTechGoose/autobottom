@@ -22,6 +22,7 @@
  *  endpoint reads N month buckets in a loop. */
 import { getStored, setStored, listStoredWithKeys, deleteStored } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 export interface QuestionFailStat {
   configKey: string;
@@ -168,7 +169,7 @@ export async function readQuestionFailRange(
     const cur = agg.get(k) ?? {
       configKey: value.configKey,
       questionKey: value.questionKey,
-      headerSample: value.headerSample,
+      headerSample: shortQuestionLabel(value.headerSample),
       failed: 0, flippedToPass: 0, flippedToFail: 0, netFailRate: 0,
       sampleFindingIds: [],
       lastFailedAt: null,
@@ -189,7 +190,7 @@ export async function readQuestionFailRange(
     if (!cur.months.includes(value.yyyymm)) cur.months.push(value.yyyymm);
     // Header sample: prefer the bucket with the most recent activity. Keep
     // the latest non-empty value.
-    if (value.headerSample) cur.headerSample = value.headerSample;
+    if (value.headerSample) cur.headerSample = shortQuestionLabel(value.headerSample);
     agg.set(k, cur);
   }
   const rows = [...agg.values()];

@@ -18,6 +18,7 @@ import { listStoredByCompletedAt, withTiming } from "@core/data/firestore/mod.ts
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { computeOverturnRate } from "@judge/domain/business/judge-analytics/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 import type { JudgeDecision } from "@core/dto/types.ts";
 
 const MS_DAY = 86_400_000;
@@ -71,7 +72,7 @@ function normalizeDecided(raw: Partial<JudgeDecision>): DecidedRow | null {
   return {
     findingId: raw.findingId,
     questionIndex: typeof raw.questionIndex === "number" ? raw.questionIndex : -1,
-    header: String(raw.header ?? "").trim() || "(untitled)",
+    header: shortQuestionLabel(String(raw.header ?? "")).trim() || "(untitled)",
     decision: raw.decision,
     judge: raw.judge,
     decidedAt: raw.decidedAt,

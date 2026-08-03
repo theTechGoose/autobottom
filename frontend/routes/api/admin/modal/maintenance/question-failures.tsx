@@ -8,6 +8,8 @@ import { define } from "../../../../../lib/define.ts";
 import { apiFetch } from "../../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
+
 interface Row {
   configKey: string;
   questionKey: string;
@@ -100,7 +102,7 @@ export const handler = define.handlers({
             <tbody>
               {rows.slice(0, 200).map((row) => (
                 <tr key={`${row.configKey}::${row.questionKey}`} style="border-top:1px solid var(--border);">
-                  <td style="padding:6px 8px;color:var(--text-bright);">{row.headerSample || row.questionKey}</td>
+                  <td style="padding:6px 8px;color:var(--text-bright);">{shortQuestionLabel(row.headerSample) || row.questionKey}</td>
                   <td style="padding:6px 8px;color:var(--text-dim);font-family:var(--mono);">{row.configKey}</td>
                   <td style="padding:6px 8px;color:var(--red);font-weight:600;">{fmt(row.failed)}</td>
                   <td style="padding:6px 8px;color:var(--green);">{fmt(row.flippedToPass)}</td>

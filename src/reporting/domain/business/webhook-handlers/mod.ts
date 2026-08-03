@@ -16,6 +16,7 @@ import { sendEmail, type EmailAttachment } from "@reporting/domain/data/postmark
 import { signFinding, stampSent } from "@reporting/domain/business/email-engagement/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { WebhookConfig } from "@core/dto/types.ts";
+import { questionLabel } from "@core/business/question-labels/mod.ts";
 
 /** True for a single, well-formed email address (has @, no spaces). */
 const isEmailAddr = (s: string): boolean =>
@@ -207,7 +208,7 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
 
   const missedQuestionsRows = missedQs.length
     ? missedQs.map((q: any, i: number) =>
-        `<tr><td style="padding:8px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:12px;width:32px;text-align:center;">${i + 1}</td><td style="padding:8px 12px;border-bottom:1px solid #21262d;color:#e6edf3;font-size:13px;">${q.header ?? q.question ?? "Unknown"}</td></tr>`
+        `<tr><td style="padding:8px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:12px;width:32px;text-align:center;">${i + 1}</td><td style="padding:8px 12px;border-bottom:1px solid #21262d;color:#e6edf3;font-size:13px;">${questionLabel(q) || q.question || "Unknown"}</td></tr>`
       ).join("")
     : `<tr><td colspan="2" style="padding:8px 12px;color:#6e7681;font-size:13px;font-style:italic;">No missed questions — perfect score!</td></tr>`;
 
@@ -573,7 +574,7 @@ export function renderFailedQuestionsBlock(
 ): string {
   if (!upheld.length) return "";
   const items = upheld.map((d) => {
-    const name = escHtml(d.header || "This question");
+    const name = escHtml(questionLabel(d) || "This question");
     const why = escHtml(d.reason || "");
     const imgs = (d.imageCids ?? []).map((cid) =>
       `<img src="cid:${escHtml(cid)}" alt="Screenshot" style="display:block;max-width:100%;height:auto;margin-top:10px;border:1px solid #30363d;border-radius:6px;" />`

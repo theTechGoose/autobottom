@@ -7,6 +7,7 @@
  *  source of truth for the display shape (CSV / XLSX / Sheets all project
  *  from the same raw entries). */
 import { useEffect, useRef, useState } from "preact/hooks";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 type Tab = "cb" | "wire";
 
@@ -87,7 +88,7 @@ function cbToRows(entries: CbEntry[], type: "Chargeback" | "Omission"): (string 
     cbCrm(e),
     e.findingId ? `${globalThis.location?.origin ?? ""}/audit/report?id=${e.findingId}` : "",
     type,
-    (e.failedQHeaders ?? []).join("; "),
+    (e.failedQHeaders ?? []).map(shortQuestionLabel).join("; "),
   ]);
   return [header, ...body];
 }
@@ -388,7 +389,7 @@ function BodyRenderer({ tab, cbs, omissions, wires, loaded }: { tab: Tab; cbs: C
         <td style="padding:6px 10px;">${e.recordId ? `<a href="${escapeHtml(cbCrm(e))}" target="_blank" class="tbl-link" style="color:var(--blue);text-decoration:none;">CRM</a>` : "—"}</td>
         <td style="padding:6px 10px;">${e.findingId ? `<a href="/audit/report?id=${encodeURIComponent(e.findingId)}" target="_blank" class="tbl-link" style="color:var(--blue);text-decoration:none;">Audit</a>` : "—"}</td>
         <td style="padding:6px 10px;font-weight:600;color:${type === "Chargeback" ? "var(--red)" : "var(--yellow)"};">${type}</td>
-        <td style="padding:6px 10px;color:var(--text-dim);">${escapeHtml((e.failedQHeaders ?? []).join(", "))}</td>
+        <td style="padding:6px 10px;color:var(--text-dim);">${escapeHtml((e.failedQHeaders ?? []).map(shortQuestionLabel).join(", "))}</td>
       </tr>`;
       const cbRows = cbs.map((e) => renderRow(e, "Chargeback")).join("");
       const omRows = omissions.map((e) => renderRow(e, "Omission")).join("");

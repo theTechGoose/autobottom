@@ -13,6 +13,7 @@ import {
 import { MiniStat } from "../../components/EngagementCards.tsx";
 import { MatrixTable, ByQuestionTable } from "../../components/FailedAuditsMatrix.tsx";
 import type { MatrixData, QuestionCount } from "../../components/FailedAuditsMatrix.tsx";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 interface FailRow {
   findingId: string; questionKey: string; header: string; completedAt: number;
@@ -186,7 +187,7 @@ export default define.page(async function FailedAuditsPage(ctx) {
         {topFail && topFail.rows.length > 0 && (
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:12px 14px;border:1px solid var(--border);border-left:3px solid var(--red);border-radius:8px;background:var(--bg-2);">
             <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">#1 fail</div>
-            <div style="font-size:16px;font-weight:800;color:var(--text-bright);">{topFail.rows[0].header}</div>
+            <div style="font-size:16px;font-weight:800;color:var(--text-bright);">{shortQuestionLabel(topFail.rows[0].header)}</div>
             <div style="font-size:13px;color:var(--red);font-weight:700;">{topFail.rows[0].count.toLocaleString()} failures</div>
             <div style="font-size:11px;color:var(--text-dim);margin-left:auto;">scope: {topFail.scope}</div>
           </div>
@@ -241,7 +242,7 @@ export default define.page(async function FailedAuditsPage(ctx) {
                             {r.recordingId || r.recordId || r.findingId.slice(0, 8)}
                           </a>
                         </td>
-                        <td style="padding:6px 8px;color:var(--text-bright);">{r.header}</td>
+                        <td style="padding:6px 8px;color:var(--text-bright);">{shortQuestionLabel(r.header)}</td>
                         <td style="padding:6px 8px;"><SourceBadge source={r.failureSource} /></td>
                         <td style="padding:6px 8px;color:var(--text);">{r.voName || "—"}</td>
                         <td style="padding:6px 8px;color:var(--text-dim);">{r.department || "—"}</td>

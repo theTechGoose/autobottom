@@ -4,6 +4,7 @@ import {
   getStored, setStored, deleteStored, listStored, listStoredWithKeys,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { questionLabel } from "@core/business/question-labels/mod.ts";
 import type { ReviewDecision } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { buildIndexMeta, saleFlagsFromFinding } from "@audit/domain/data/stats-repository/mod.ts";
@@ -57,7 +58,7 @@ function enrichmentFromFinding(finding: Record<string, unknown>): Partial<Manage
     recordId: String(rec.RecordId ?? rec.id ?? ""),
     recordingId: (finding.recordingId as string | undefined) ?? "",
     totalQuestions: answered.length,
-    failedQuestions: failed.map((q) => String(q.header ?? "")).filter(Boolean),
+    failedQuestions: failed.map((q) => questionLabel(q)).filter(Boolean),
     department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")),
     shift: isPackage ? "" : String(rec.Shift ?? ""),
     isPackage,

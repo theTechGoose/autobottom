@@ -13,6 +13,7 @@ import AudioPlayer from "../islands/AudioPlayer.tsx";
 import AppealModal from "../islands/AppealModal.tsx";
 import { buildFocusedExcerpt, type ExcerptSegment } from "../lib/transcript-excerpt.ts";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
+import { questionLabel, shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 /** Render a focused excerpt's segments: speaker-labeled turns + `⋯` gap markers
  *  between elided windows. Shared shape with the top transcript / TranscriptPanel. */
@@ -272,7 +273,7 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
             reAuditedAt={finding.reAuditedAt}
             reAuditedTo={finding.reAuditedTo}
             failedQuestions={questions
-              .map((q, i) => ({ index: i, header: q.header ?? "Untitled question", answer: q.answer ?? "" }))
+              .map((q, i) => ({ index: i, header: questionLabel(q) || "Untitled question", answer: q.answer ?? "" }))
               .filter((q) => !isYes(q.answer))}
           />
         </div>
@@ -357,7 +358,7 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
               <details key={i} class={`rpt-q ${stateClass}`} id={`rpt-q-${i}`}>
                 <summary>
                   <span class="rpt-q-num">{i + 1}</span>
-                  <span class="rpt-q-title">{q.header ?? "Untitled question"}</span>
+                  <span class="rpt-q-title">{questionLabel(q) || "Untitled question"}</span>
                   {isAdmin && (q.reviewDiscarded ? (
                     <span title="Reviewer went idle (>60s) — excluded from handle-time stats"
                       style="font-size:10px;color:var(--text-dim);font-variant-numeric:tabular-nums;margin-right:6px;">⏱ idle-discarded</span>

@@ -14,6 +14,7 @@ export interface MatrixData {
 }
 
 export interface QuestionCount { header: string; questionKey: string; count: number }
+import { questionLabel, shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 const TH = "text-align:right;padding:6px 8px;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.5px;";
 const TD = "text-align:right;padding:6px 8px;font-variant-numeric:tabular-nums;";
@@ -56,7 +57,7 @@ export function MatrixTable({ matrix }: { matrix: MatrixData }) {
         <tbody>
           {matrix.questions.map((qk) => (
             <tr key={qk} style="border-top:1px solid var(--border);">
-              <td style="text-align:left;padding:6px 12px;color:var(--text-bright);position:sticky;left:0;background:var(--bg);">{matrix.headerByKey[qk] ?? qk}</td>
+              <td style="text-align:left;padding:6px 12px;color:var(--text-bright);position:sticky;left:0;background:var(--bg);">{shortQuestionLabel(matrix.headerByKey[qk] ?? qk)}</td>
               {matrix.departments.map((d) => {
                 const c = matrix.cells[qk]?.[d] ?? 0;
                 return <td key={d} style={cellStyle(c, max)}>{c || "—"}</td>;
@@ -107,7 +108,7 @@ export function ByQuestionTable({ rows, total }: { rows: QuestionCount[]; total:
         {rows.map((r, i) => (
           <tr key={r.questionKey} style="border-top:1px solid var(--border);font-variant-numeric:tabular-nums;">
             <td style="padding:6px 12px;color:var(--text-dim);">{i + 1}</td>
-            <td style="padding:6px 8px;color:var(--text-bright);">{r.header}</td>
+            <td style="padding:6px 8px;color:var(--text-bright);">{shortQuestionLabel(r.header)}</td>
             <td style={`${TD}font-weight:700;`}>{r.count.toLocaleString()}</td>
             <td style="padding:6px 12px;">
               <div style="height:8px;border-radius:4px;background:var(--bg-raised);overflow:hidden;">

@@ -5,6 +5,7 @@
 
 const QB_DATE_URL = "https://monsterrg.quickbase.com/db/bpb28qsnn?a=dr&rid=";
 const QB_PKG_URL = "https://monsterrg.quickbase.com/db/bttffb64u?a=dr&rid=";
+import { questionLabel, shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 /** Matches the backend BufferItem shape returned by /review/api/next and /judge/api/next. */
 export interface ReviewItem {
@@ -245,7 +246,7 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
       {/* Question header */}
       <div class="verdict-question">
         <div class="verdict-section-label">Question</div>
-        <div class="verdict-question-header">{item.header}</div>
+        <div class="verdict-question-header">{questionLabel(item)}</div>
       </div>
 
       {/* Defense */}
@@ -317,11 +318,11 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
                       hx-target="#queue-content"
                       hx-swap="innerHTML"
                       disabled={isCurrent}
-                      title={isCurrent ? "Currently viewing" : `Switch to: ${bi.header}`}
+                      title={isCurrent ? "Currently viewing" : `Switch to: ${shortQuestionLabel(bi.header)}`}
                     >
                       <span class="failed-q-num">{idx + 1}</span>
                       <span class={dotClass} />
-                      <span class="failed-q-name">{truncate(bi.header, 40)}</span>
+                      <span class="failed-q-name">{truncate(shortQuestionLabel(bi.header), 40)}</span>
                     </button>
                   </li>
                 );

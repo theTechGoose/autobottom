@@ -10,6 +10,7 @@
 import { queryFailedFindings } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import type { FailedFilters } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 import type { FailedFindingIndexEntry } from "@core/dto/types.ts";
 
 const MATRIX_QUESTION_CAP = 40;
@@ -59,7 +60,7 @@ export async function getFailureByQuestion(
   const rows = await queryFailedFindings(orgId, from, to, filters);
   const by = new Map<string, QuestionCount>();
   for (const r of rows) {
-    const cur = by.get(r.questionKey) ?? { header: r.header, questionKey: r.questionKey, count: 0 };
+    const cur = by.get(r.questionKey) ?? { header: shortQuestionLabel(r.header), questionKey: r.questionKey, count: 0 };
     cur.count++;
     by.set(r.questionKey, cur);
   }
@@ -94,7 +95,7 @@ export async function getFailureMatrix(
   for (const r of rows) {
     const dep = (r.department ?? "").trim() || UNSET;
     deptSet.add(dep);
-    headerByKey[r.questionKey] = r.header;
+    headerByKey[r.questionKey] = shortQuestionLabel(r.header);
     (cells[r.questionKey] ??= {})[dep] = (cells[r.questionKey][dep] ?? 0) + 1;
     rowTotals[r.questionKey] = (rowTotals[r.questionKey] ?? 0) + 1;
     colTotals[dep] = (colTotals[dep] ?? 0) + 1;

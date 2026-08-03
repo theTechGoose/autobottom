@@ -205,3 +205,21 @@ Deno.test("AuditReport — a real diarized transcript still renders with speaker
   assertContains(html, "[TEAM MEMBER]");
   assertContains(html, "arriving to Myrtle Beach");
 });
+
+Deno.test("AuditReport — questions render under their display name, not the raw header", () => {
+  const html = renderHTML(<AuditReport
+    finding={baseFinding({
+      answeredQuestions: [
+        { header: "9% Service Fee", answer: "No" },
+        { header: "Preview 15 Months", answer: "No" },
+        { header: "Guest Name", answer: "Yes" },
+      ],
+    })}
+    id="fid-test"
+  />);
+  assertContains(html, "11% Service Fee");
+  assertContains(html, "Previous Presentation");
+  assertContains(html, "Guest Name");          // unmapped headers are untouched
+  assertNotContains(html, "9% Service Fee");
+  assertNotContains(html, "Preview 15 Months");
+});

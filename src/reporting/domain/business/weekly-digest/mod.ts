@@ -15,29 +15,11 @@ import type { ReportRow, SectionResult } from "@reporting/domain/business/email-
 
 // ── Labels ────────────────────────────────────────────────────────────────────
 
-/** Verbatim question headers shortened for the report. Every key is a header
- *  audits actually carry (verified against the failed-question index); an
- *  unknown header passes through unchanged rather than being dropped. */
-export const QUESTION_LABELS: Record<string, string> = {
-  "Correct Days & Nights": "Travel Dates",
-  "9% Service Fee": "11% Service Fee",
-  "# in Room": "Occupancy",
-  "Credit Card Number is Not Read on VO?": "CC# Read",
-  "US or Canadian Citizen?": "Citizenship",
-  "MCC Recurring Charges Disclosed?": "MCC Disclosed",
-  "MCC Not Egregious?": "MCC Egregious",
-  "Understand Reschedule Process": "WGS Disclosure",
-  "Confirmation Expectations": "Conf Email",
-  "Attending Presentation Together?": "Presentation",
-  "No Pets": "Pet Policy",
-  "No Group Travel": "Group Travel",
-};
-
-/** Short label for a question header (identity for anything unmapped). */
-export function shortQuestionLabel(header: string): string {
-  const h = String(header ?? "").trim();
-  return QUESTION_LABELS[h] ?? h;
-}
+/** The question-name map moved to @core so every surface (audit report, review,
+ *  manager, admin, the webhook emails) names a question the same way the weekly
+ *  report does. Re-exported here because the report engine imports it from this
+ *  module. */
+export { QUESTION_LABELS, questionLabel, shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 /** Shift values relabelled for the report — the audits carry "Weekend", the
  *  floor calls it WW. */

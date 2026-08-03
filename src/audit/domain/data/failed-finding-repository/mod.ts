@@ -18,6 +18,7 @@ import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod
 import { getHiddenFindingIds } from "@audit/domain/data/stats-repository/mod.ts";
 import { normalizeQuestionKey, configKeyForFinding, yyyymm } from "@audit/domain/data/question-stats-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 import type { FailedFindingIndexEntry, FailureSource, IAnsweredQuestion } from "@core/dto/types.ts";
 
 const COLL = "failed-finding-idx";
@@ -146,7 +147,13 @@ export async function queryFailedFindings(
     if (v && !(r.voName ?? "").toLowerCase().includes(v)) return false;
     if (dep && (r.department ?? "").toLowerCase() !== dep) return false;
     if (sh && (r.shift ?? "").toLowerCase() !== sh) return false;
-    if (hd && !(r.header ?? "").toLowerCase().includes(hd)) return false;
+    // Match the stored header OR the name it displays under, so searching
+    // "11% Service Fee" finds rows whose header is still "9% Service Fee".
+    if (hd) {
+      const raw = String(r.header ?? "");
+      const shown = shortQuestionLabel(raw);
+      if (!raw.toLowerCase().includes(hd) && !shown.toLowerCase().includes(hd)) return false;
+    }
     if (src && r.failureSource !== src) return false;
     if (filters.appealedOnly && !(r.appealed && r.appealDenied)) return false;
     return true;

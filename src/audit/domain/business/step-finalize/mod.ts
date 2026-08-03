@@ -11,6 +11,7 @@ import { enqueueCleanup } from "@core/data/qstash/mod.ts";
 
 import { generateFeedback } from "@audit/domain/data/groq/mod.ts";
 import { answerQuestion } from "@core/dto/types.ts";
+import { questionLabel } from "@core/business/question-labels/mod.ts";
 import type { IAnsweredQuestion } from "@core/dto/types.ts";
 import { populateReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { populateJudgeQueue, getAppeal, saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
@@ -547,7 +548,7 @@ async function sendTestAuditEmail(finding: Record<string, any>, score: number | 
   const qRows = qs.map((q: any) => {
     const pass = q.answer === "Yes";
     return `<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #30363d;font-size:13px;">${pass ? "✅" : "❌"} ${escHtml(q.header ?? q.populated ?? "")}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #30363d;font-size:13px;">${pass ? "✅" : "❌"} ${escHtml(questionLabel(q))}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #30363d;font-size:13px;color:${pass ? "#3fb950" : "#f85149"};">${escHtml(q.answer)}</td>
     </tr>`}).join("");
 

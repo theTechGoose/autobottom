@@ -3,6 +3,8 @@
  *  full-page report (routes/admin/question-failures.tsx) so the table lives in
  *  one place. Pure presentational Preact. */
 
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
+
 export interface QfRow {
   configKey: string;
   questionKey: string;
@@ -71,7 +73,7 @@ export function QuestionFailuresStatsAndTable(
             {rows.slice(0, rowCap).map((row) => (
               <tr key={`${row.configKey}::${row.questionKey}`} style="border-top:1px solid var(--border);">
                 <td style="padding:6px 8px;color:var(--text-bright);">
-                  {row.headerSample || row.questionKey}
+                  {shortQuestionLabel(row.headerSample) || row.questionKey}
                   {row.sampleFindingIds.length > 0 && (
                     <details style="margin-top:4px;">
                       <summary style="font-size:10px;color:var(--text-dim);cursor:pointer;">{row.sampleFindingIds.length} sample(s)</summary>

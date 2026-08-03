@@ -6,6 +6,7 @@
  *  filters/paginates and decorates each row with reviewed + appeal status. */
 
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 import { queryAuditDoneIndex, backfillSaleFlags } from "@audit/domain/data/stats-repository/mod.ts";
 import { queryFailedFindings } from "@audit/domain/data/failed-finding-repository/mod.ts";
@@ -178,7 +179,7 @@ export function rollupByDepartment(
     if (!name) continue;
     const bucket = buckets.get(name);
     if (!bucket) continue;
-    const cur = bucket.missed.get(fr.questionKey) ?? { header: fr.header, count: 0 };
+    const cur = bucket.missed.get(fr.questionKey) ?? { header: shortQuestionLabel(fr.header), count: 0 };
     cur.count++;
     bucket.missed.set(fr.questionKey, cur);
   }
@@ -421,7 +422,7 @@ async function _getAuditHistoryRaw(
     const counts = new Map<string, { header: string; count: number }>();
     for (const r of failedRows) {
       if (!inSet.has(r.findingId)) continue;
-      const cur = counts.get(r.questionKey) ?? { header: r.header, count: 0 };
+      const cur = counts.get(r.questionKey) ?? { header: shortQuestionLabel(r.header), count: 0 };
       cur.count++;
       counts.set(r.questionKey, cur);
     }

@@ -16,6 +16,15 @@ import type {
 } from "@core/dto/types.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
+import { queryFailedFindings } from "@audit/domain/data/failed-finding-repository/mod.ts";
+import {
+  claimedDepartments, normalizeDept, normalizeEmail, parseManagers, sectionForAbsorbed,
+} from "@reporting/domain/business/manager-routing/mod.ts";
+import { listEmailReportConfigs } from "@reporting/domain/data/email-repository/mod.ts";
+import {
+  buildDigest, renderDigestEmail, renderDigestPage, shortQuestionLabel,
+} from "@reporting/domain/business/weekly-digest/mod.ts";
+import type { DigestGroup } from "@reporting/domain/business/weekly-digest/mod.ts";
 import {
   getReservationRidsForDateLegs,
   getReservationRidsForPackages,
@@ -23,6 +32,64 @@ import {
 } from "@audit/domain/data/quickbase/mod.ts";
 
 export type AppealStatus = "none" | "pending" | "complete";
+
+// ── Manager routing lookups (cached; see manager-routing/mod.ts for the rules) ─
+
+/** Which office codes some weekly report already claims. Cached briefly: all
+ *  eleven reports fire in the same cron minute and ask the same question. */
+let _claimedCache: { value: Set<string>; expiresAt: number } | null = null;
+const CLAIMED_TTL_MS = 5 * 60_000;
+
+export function _resetManagerRoutingCachesForTests(): void {
+  _claimedCache = null;
+  _managerCache.clear();
+}
+
+async function claimedDepartmentCodes(orgId: OrgId): Promise<Set<string>> {
+  if (_claimedCache && _claimedCache.expiresAt > Date.now()) return _claimedCache.value;
+  const configs = await listEmailReportConfigs(orgId);
+  const value = claimedDepartments(configs);
+  _claimedCache = { value, expiresAt: Date.now() + CLAIMED_TTL_MS };
+  return value;
+}
+
+/** findingId → its VO managers. Only ever asked for audits in UNCLAIMED office
+ *  codes (~10% of a week), so this never becomes the per-finding crawl that
+ *  wedges prod — and the cache is keyed per finding, so the first report to run
+ *  pays for the reads and the other ten hit memory. */
+const _managerCache = new Map<string, { value: string[]; expiresAt: number }>();
+const MANAGER_TTL_MS = 30 * 60_000;
+/** Hard stop, so an unexpected flood of unmapped office codes can't turn a send
+ *  into thousands of document reads. */
+const MAX_MANAGER_LOOKUPS = 1500;
+
+async function managersForFindings(orgId: OrgId, findingIds: string[]): Promise<Map<string, string[]>> {
+  const now = Date.now();
+  const out = new Map<string, string[]>();
+  const misses: string[] = [];
+  for (const id of findingIds) {
+    const hit = _managerCache.get(id);
+    if (hit && hit.expiresAt > now) out.set(id, hit.value);
+    else misses.push(id);
+  }
+  if (misses.length > MAX_MANAGER_LOOKUPS) {
+    console.warn(`[EMAIL-REPORT] manager lookup capped at ${MAX_MANAGER_LOOKUPS} of ${misses.length} — some audits will not be routed by manager`);
+    misses.length = MAX_MANAGER_LOOKUPS;
+  }
+  const BATCH = 20;
+  for (let i = 0; i < misses.length; i += BATCH) {
+    const batch = misses.slice(i, i + BATCH);
+    const found = await Promise.all(batch.map(async (id) => {
+      const finding = await getFinding(orgId, id) as Record<string, any> | null;
+      return [id, parseManagers((finding?.record as any)?.SupervisorEmail)] as const;
+    }));
+    for (const [id, managers] of found) {
+      _managerCache.set(id, { value: managers, expiresAt: now + MANAGER_TTL_MS });
+      out.set(id, managers);
+    }
+  }
+  return out;
+}
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -37,6 +104,11 @@ export interface ReportRow {
   finalizedAt?: number;
   markedForReview?: boolean;
   mostRecentActiveMccId?: string;
+  /** Always populated (not column-driven) — the weekly digest groups by shift
+   *  and counts invalid genies, and neither is ever a report column. Tables and
+   *  CSV render `columns`, so carrying these costs nothing there. */
+  shift?: string;
+  invalidGenie?: boolean;
 }
 
 export interface SectionResult {
@@ -137,6 +209,23 @@ export function weeklySubjectRange(
   return "Week of " + fmt(startCal) + "–" + fmt(endCal);
 }
 
+/** The long-form week label at the top of a weekly report body:
+ *  "Week of Jul 13 – Jul 19, 2026". Names the same full Mon→Sun week as the
+ *  subject line, just spelled out for a header rather than a subject. */
+export function weeklyHeadline(
+  dateRange: DateRangeConfig | undefined,
+  nowMs: number = Date.now(),
+): string {
+  const { from } = resolveDateRange(dateRange, nowMs);
+  const startP = tzParts(WEEK_TZ, from);
+  const startCal = new Date(Date.UTC(startP.year, startP.month - 1, startP.day));
+  const endCal = new Date(startCal);
+  endCal.setUTCDate(endCal.getUTCDate() + 6);
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const fmt = (d: Date) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  return `Week of ${fmt(startCal)} – ${fmt(endCal)}, ${endCal.getUTCFullYear()}`;
+}
+
 // ── Record-level dedup ────────────────────────────────────────────────────────
 
 /** A real, dedup-able record id, or "" for blank / placeholder ids that must NOT
@@ -223,6 +312,16 @@ export async function queryReportData(
     rows: [],
   }));
 
+  // A weekly report renders the digest, not the columns the config happens to
+  // list, so extract everything the digest needs even when a section omits it.
+  // `columns` (what tables and the CSV render) is untouched.
+  const DIGEST_FIELDS: ReportColumnKey[] = ["voName", "score", "recordId", "findingId", "finalizedAt"];
+  const extractColumns: ReportColumnKey[][] = sections.map((s) =>
+    config.weeklyType
+      ? [...new Set([...(s.columns as ReportColumnKey[]), ...DIGEST_FIELDS])]
+      : (s.columns as ReportColumnKey[]),
+  );
+
   const needsMcc = sections.some((s) => s.columns.includes("mostRecentActiveMccId"));
   const mccRowMeta: { sectionIdx: number; rowIdx: number; recordId: string; isPackage: boolean }[] = [];
 
@@ -257,6 +356,26 @@ export async function queryReportData(
   }
 
   const topFilters = (config as any).topLevelFilters ?? [];
+
+  // Manager routing: audits whose office code NO weekly report claims follow
+  // their VO manager into this report. Claimed office codes are untouched, so a
+  // manager who spans reports stays split exactly as the department rule has
+  // them. Absorbed rows are placed after the main pass, once we know which
+  // section already holds each manager's work.
+  const routeByManager = !!config.weeklyManagers?.length;
+  const claimed = routeByManager ? await claimedDepartmentCodes(orgId) : new Set<string>();
+  const myManagers = new Set((config.weeklyManagers ?? []).map(normalizeEmail));
+  // The manager lives on the audit document, not the index row, so it is read
+  // ONLY for the unclaimed office codes — the audits that actually need routing.
+  const managersByFinding = routeByManager
+    ? await managersForFindings(
+      orgId,
+      candidates.filter((e) => !claimed.has(normalizeDept(e.department))).map((e) => e.findingId),
+    )
+    : new Map<string, string[]>();
+  /** manager email → section index → rows already routed there by department. */
+  const managerSectionCounts = new Map<string, Map<number, number>>();
+  const pendingAbsorbed: { finding: Record<string, any>; stat: Record<string, any>; appealStatus: AppealStatus; markedForReview: boolean; managers: string[] }[] = [];
 
   for (const { entry, finding, appealRecord } of hydrated) {
     if (!finding) continue;
@@ -297,16 +416,49 @@ export async function queryReportData(
     }
 
     const markedForReview = !onlyCompleted && !entry.completed && entry.score > 0;
+    const managers = routeByManager
+      ? (managersByFinding.get(entry.findingId) ?? parseManagers((finding.record as any)?.SupervisorEmail))
+      : [];
 
+    let placed = false;
     for (let i = 0; i < sections.length; i++) {
       if (evaluateRules(finding, stat, appealStatus, reviewed, sections[i].criteria)) {
+        placed = true;
         const rowIdx = results[i].rows.length;
-        results[i].rows.push(extractRow(finding, stat, appealStatus, sections[i].columns as ReportColumnKey[], markedForReview));
+        results[i].rows.push(extractRow(finding, stat, appealStatus, extractColumns[i], markedForReview));
         if (needsMcc && sections[i].columns.includes("mostRecentActiveMccId") && stat.recordId) {
           mccRowMeta.push({ sectionIdx: i, rowIdx, recordId: stat.recordId, isPackage });
         }
+        for (const m of managers) {
+          const counts = managerSectionCounts.get(m) ?? new Map<number, number>();
+          counts.set(i, (counts.get(i) ?? 0) + 1);
+          managerSectionCounts.set(m, counts);
+        }
       }
     }
+
+    // No section wanted it. If nobody claims its office code and one of its
+    // managers is ours, hold it for placement below.
+    if (
+      !placed && routeByManager &&
+      !claimed.has(normalizeDept(stat.department)) &&
+      managers.some((m) => myManagers.has(m))
+    ) {
+      pendingAbsorbed.push({ finding, stat, appealStatus, markedForReview, managers });
+    }
+  }
+
+  for (const p of pendingAbsorbed) {
+    const i = sectionForAbsorbed(p.managers, managerSectionCounts, results.map((r: any) => r.rows.length));
+    if (i < 0) continue;
+    const rowIdx = results[i].rows.length;
+    results[i].rows.push(extractRow(p.finding, p.stat, p.appealStatus, extractColumns[i], p.markedForReview));
+    if (needsMcc && sections[i].columns.includes("mostRecentActiveMccId") && p.stat.recordId) {
+      mccRowMeta.push({ sectionIdx: i, rowIdx, recordId: p.stat.recordId, isPackage: p.stat.isPackage });
+    }
+  }
+  if (pendingAbsorbed.length > 0) {
+    console.log(`[EMAIL-REPORT] "${config.name}" absorbed ${pendingAbsorbed.length} audit(s) by manager (office code claimed by no report)`);
   }
 
   if (needsMcc && mccRowMeta.length > 0) {
@@ -487,6 +639,10 @@ function extractRow(
   const row: ReportRow = {};
   if (markedForReview) row.markedForReview = true;
 
+  // Digest fields — set regardless of the configured columns (see ReportRow).
+  row.shift = stat.shift || undefined;
+  row.invalidGenie = stat.reason === "invalid_genie";
+
   for (const col of columns) {
     switch (col) {
       case "recordId":
@@ -593,11 +749,8 @@ function toBase64Utf8(s: string): string {
 // ── "View full report" page: slug + size-aware email body ─────────────────────
 
 /** Gmail clips the inbox view around ~102 KB. Stay under this with a margin; a
- *  bigger report shows a trimmed table inline + a link to the full page. */
+ *  bigger report trims what it shows inline and links to the full page. */
 const EMAIL_INLINE_LIMIT = 90 * 1024;
-/** Rows kept inline when a report is trimmed (the rest live on the linked page).
- *  50 rows ≈ ~73 KB rendered — comfortably under the 90 KB inline limit. */
-const MAX_INLINE_ROWS = 50;
 
 /** Deterministic, unguessable slug for a report's weekly page — same report +
  *  same week → same slug, so every daily send links to (and overwrites) one
@@ -608,46 +761,145 @@ export async function weeklyReportSlug(orgId: string, configId: string, weekFrom
   return [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Spread a `maxRows` row budget ACROSS the sections that have rows (round-robin),
- *  so every department with audits shows some — a section must never render an
- *  empty "No records" just because an earlier section used up the whole budget.
- *  Genuinely empty sections (no audits this window) still show "No records".
- *  Reports shown vs total so the email can say "showing X of Y". */
-export function trimSectionsForEmail(
-  sections: SectionResult[],
-  maxRows: number,
-): { sections: SectionResult[]; shown: number; total: number } {
-  const total = sections.reduce((n, s) => n + s.rows.length, 0);
-  const caps = sections.map(() => 0);
-  const withRows = sections.map((s, i) => (s.rows.length > 0 ? i : -1)).filter((i) => i >= 0);
-  let budget = Math.min(maxRows, total);
-  let progressed = true;
-  while (budget > 0 && progressed) {
-    progressed = false;
-    for (const i of withRows) {
-      if (budget <= 0) break;
-      if (caps[i] < sections[i].rows.length) {
-        caps[i]++;
-        budget--;
-        progressed = true;
-      }
-    }
-  }
-  let shown = 0;
-  const trimmed = sections.map((s, i) => {
-    shown += caps[i];
-    return { ...s, rows: s.rows.slice(0, caps[i]) };
-  });
-  return { sections: trimmed, shown, total };
+/** "View full report" button block — inline-styled so it survives Gmail. */
+function renderLightViewLinkBlock(url: string, note?: string): string {
+  return `
+<div style="margin:8px 0 20px 0;text-align:center;">
+  ${note ? `<p style="margin:0 0 12px 0;font-size:13px;color:#59636e;">${esc(note)}</p>` : ""}
+  <a href="${url}" style="display:inline-block;padding:12px 28px;background:#0969da;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;">View full report</a>
+</div>`.trim();
 }
 
-/** "View full report" button block — inline-styled so it survives Gmail. */
-function renderViewLinkBlock(url: string, note?: string): string {
-  return `
-<div style="margin:24px 0 8px 0;text-align:center;">
-  ${note ? `<p style="margin:0 0 12px 0;font-size:13px;color:${C.textMuted};">${esc(note)}</p>` : ""}
-  <a href="${url}" style="display:inline-block;padding:12px 28px;background:${C.blue};color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;">View full report</a>
-</div>`.trim();
+// ── Weekly digest ─────────────────────────────────────────────────────────────
+
+/** The failed-question index scan is the one extra read a weekly report makes.
+ *  Every weekly report fires in the same cron minute and shares the same
+ *  (org, week) window, so the first one pays for the scan and the rest read
+ *  memory — the same trick queryAuditDoneIndex uses for the audit index. */
+const _failScanCache = new Map<string, { value: Map<string, string[]>; expiresAt: number }>();
+const _failScanPending = new Map<string, Promise<Map<string, string[]>>>();
+const FAIL_SCAN_TTL_MS = 10 * 60_000;
+
+/** How far BEFORE the report window to scan for failed questions.
+ *
+ *  The two indexes are filed under different dates: a report includes an audit
+ *  by `doneAt` (when a person finished reviewing it), while the failed-question
+ *  index range-scans on `completedAt` (when the bot graded it). Sunday's work
+ *  reviewed on Monday is in the report but its question rows sit in the previous
+ *  week's range — which showed up as cards reading "4 Failed / Categories: None".
+ *  Measured on one week: 103 of 461 failed audits lost their categories this way.
+ *
+ *  Scanning wider cannot pull in audits the report doesn't contain: the result
+ *  is joined by findingId, so extra rows simply find no match. Two weeks covers
+ *  any realistic review backlog. */
+const FAIL_SCAN_LOOKBACK_MS = 14 * 86_400_000;
+
+/** Test-only: clear the failed-question scan cache. */
+export function _resetFailScanCacheForTests(): void {
+  _failScanCache.clear();
+  _failScanPending.clear();
+}
+
+/** findingId → the short labels for every question it failed, for the window. */
+export async function failedCategoriesByFinding(
+  orgId: OrgId, from: number, to: number,
+): Promise<Map<string, string[]>> {
+  const scanFrom = from - FAIL_SCAN_LOOKBACK_MS;
+  const key = `${orgId}|${scanFrom}|${to}`;
+  const hit = _failScanCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  const pending = _failScanPending.get(key);
+  if (pending) return pending;
+
+  const run = (async () => {
+    const rows = await queryFailedFindings(orgId, scanFrom, to);
+    const map = new Map<string, string[]>();
+    for (const r of rows) {
+      const label = shortQuestionLabel(r.header);
+      const cur = map.get(r.findingId);
+      if (cur) { if (!cur.includes(label)) cur.push(label); }
+      else map.set(r.findingId, [label]);
+    }
+    _failScanCache.set(key, { value: map, expiresAt: Date.now() + FAIL_SCAN_TTL_MS });
+    return map;
+  })().finally(() => _failScanPending.delete(key));
+
+  _failScanPending.set(key, run);
+  return run;
+}
+
+/** Team-member cards kept per group when the digest email would otherwise clip
+ *  in Gmail — tried in order until one fits. Every group keeps its summary card
+ *  at every step; only the tail of the member cards moves to the linked full
+ *  report, and the email says how many it held back. */
+const INLINE_MEMBER_CAPS = [20, 12, 8, 5, 3];
+
+export interface WeeklyRender {
+  /** Light, flat digest — the email body. */
+  emailHtml: string;
+  /** Dark, expandable, itemised digest — the /r/<slug> page. */
+  pageHtml: string;
+  groups: DigestGroup[];
+}
+
+/** Query-free: turns already-queried sections into the two weekly renderings.
+ *  `viewUrl` omitted (preview) simply leaves out the full-report button. */
+export function renderWeeklyDigest(
+  sections: SectionResult[],
+  config: EmailReportConfig,
+  failsByFinding: Map<string, string[]>,
+  viewUrl?: string,
+  nowMs: number = Date.now(),
+): WeeklyRender {
+  const groups = buildDigest(sections, failsByFinding, config.weeklySplitByShift !== false);
+  const opts = {
+    title: config.name,
+    weekLabel: weeklyHeadline(config.dateRange, nowMs),
+    generatedAt: formatEst(nowMs),
+  };
+
+  const pageHtml = renderDigestPage(groups, opts, { recordUrl, findingUrl });
+
+  const withLink = (maxMembers: number, note?: string) =>
+    renderDigestEmail(
+      groups,
+      { ...opts, footerHtml: viewUrl ? renderLightViewLinkBlock(viewUrl, note) : undefined },
+      maxMembers,
+    );
+
+  const total = groups.reduce((n, g) => n + g.members.length, 0);
+  let emailHtml = withLink(Number.POSITIVE_INFINITY);
+  for (const cap of INLINE_MEMBER_CAPS) {
+    if (emailHtml.length <= EMAIL_INLINE_LIMIT) break;
+    const shown = groups.reduce((n, g) => n + Math.min(g.members.length, cap), 0);
+    if (shown === total) continue; // this cap trims nothing — try a tighter one
+    emailHtml = withLink(
+      cap,
+      `Showing ${shown} of ${total} team members — open the full report for all of them.`,
+    );
+  }
+
+  return { emailHtml, pageHtml, groups };
+}
+
+/** Query the week's failed questions, then render both weekly views. Shared by
+ *  the send path and the admin preview so the two can never drift; a preview
+ *  passes no `viewUrl` and simply omits the full-report button. */
+export async function buildWeeklyRender(
+  orgId: OrgId, config: EmailReportConfig, sections: SectionResult[], viewUrl?: string,
+): Promise<WeeklyRender> {
+  const { from, to } = resolveDateRange(config.dateRange);
+  const failsByFinding = await failedCategoriesByFinding(orgId, from, to);
+  return renderWeeklyDigest(sections, config, failsByFinding, viewUrl);
+}
+
+/** The email body for any report: the weekly digest, or the classic section
+ *  tables for every other report type. */
+export async function renderReportEmailHtml(
+  orgId: OrgId, config: EmailReportConfig, sections: SectionResult[], templateHtml: string | null = null,
+): Promise<string> {
+  if (config.weeklyType) return (await buildWeeklyRender(orgId, config, sections)).emailHtml;
+  return renderFullEmail(templateHtml, renderSections(sections), config.name);
 }
 
 // ── Run report ────────────────────────────────────────────────────────────────
@@ -686,40 +938,27 @@ export async function prepareReport(orgId: OrgId, config: EmailReportConfig): Pr
     ? await getEmailTemplate(orgId, config.templateId)
     : null;
 
-  // Two summary cards on weekly reports: today's audits (since Eastern midnight)
-  // and the whole week. "Today" relies on the finalizedAt timestamp, which the
-  // weekly reports all carry as a column; rows without it fall outside the daily
-  // count. Shared with the admin preview so the two render identically.
-  const weekly = !!config.weeklyType;
-  const summaryHtml = renderWeeklySummaries(sections, config.weeklyType) || undefined;
-
   console.log(`${label} — [3/3] rendering HTML...`);
-  const sectionsHtml = renderSections(sections, weekly);
-  // The complete report — every row — is what we store at the public page and
-  // what the email shows when it's small enough.
-  const fullHtml = renderFullEmail(template?.html ?? null, sectionsHtml, config.name, summaryHtml);
 
-  let htmlBody = fullHtml;
-  // Weekly reports get a public "View full report" page: store the full HTML
-  // once per (report, week) — keyed by a deterministic slug so the daily sends
-  // overwrite one record (latest wins) — link to it, and fall back to a trimmed
-  // inline table when the email would otherwise clip in Gmail.
+  let htmlBody: string;
   if (config.weeklyType) {
+    // Weekly reports render the digest: a summary card and a card per team
+    // member for each shift/department, with the itemised failures living on
+    // the public "View full report" page. That page is stored once per
+    // (report, week) under a deterministic slug, so the daily sends overwrite
+    // one record (latest wins) instead of piling up a copy per send.
     const { from } = resolveDateRange(config.dateRange);
     const slug = await weeklyReportSlug(orgId, config.id, from);
+    const viewUrl = `${selfUrl()}/r/${slug}`;
+    const { emailHtml, pageHtml } = await buildWeeklyRender(orgId, config, sections, viewUrl);
     try {
-      await saveWeeklyReportView(slug, fullHtml);
+      await saveWeeklyReportView(slug, pageHtml);
     } catch (err) {
       console.error(`${label} — failed to store view page:`, err);
     }
-    const viewUrl = `${selfUrl()}/r/${slug}`;
-    if (fullHtml.length <= EMAIL_INLINE_LIMIT) {
-      htmlBody = renderFullEmail(template?.html ?? null, sectionsHtml + renderViewLinkBlock(viewUrl), config.name, summaryHtml);
-    } else {
-      const { sections: trimmed, shown, total } = trimSectionsForEmail(sections, MAX_INLINE_ROWS);
-      const note = `Showing ${shown} of ${total} audits — open the full report for all of them.`;
-      htmlBody = renderFullEmail(template?.html ?? null, renderSections(trimmed, weekly) + renderViewLinkBlock(viewUrl, note), config.name, summaryHtml);
-    }
+    htmlBody = emailHtml;
+  } else {
+    htmlBody = renderFullEmail(template?.html ?? null, renderSections(sections), config.name);
   }
 
   let subject = config.name;
@@ -820,14 +1059,6 @@ const COLUMN_LABELS: Record<ReportColumnKey, string> = {
   mostRecentActiveMccId: "MCC ID",
 };
 
-/** Weekly reports relabel a couple of columns (and the finding cell shows a
- *  plain "Click Here" link instead of the raw id — see renderCell). Other report
- *  types keep the defaults above. */
-const WEEKLY_COLUMN_LABELS: Partial<Record<ReportColumnKey, string>> = {
-  recordId:  "Dateleg Link",
-  findingId: "View Full Audit",
-};
-
 const APPEAL_LABELS: Record<AppealStatus, string> = {
   none:     "None",
   pending:  "Pending",
@@ -858,7 +1089,7 @@ function formatEst(ts: number): string {
 
 // ── Cell renderer ─────────────────────────────────────────────────────────────
 
-function renderCell(col: ReportColumnKey, row: ReportRow, weekly = false): string {
+function renderCell(col: ReportColumnKey, row: ReportRow): string {
   switch (col) {
     case "recordId": {
       if (!row.recordId) return `<span style="color:${C.textDim};">&mdash;</span>`;
@@ -866,11 +1097,7 @@ function renderCell(col: ReportColumnKey, row: ReportRow, weekly = false): strin
     }
     case "findingId": {
       if (!row.findingId) return `<span style="color:${C.textDim};">&mdash;</span>`;
-      // Weekly reports show a friendly "Click Here" link; other reports show the
-      // raw finding id (monospace) for operators who scan ids directly.
-      const linkText = weekly ? "Click Here" : esc(row.findingId);
-      const idStyle = weekly ? "" : "font-family:monospace;font-size:11px;";
-      return `<a href="${findingUrl(row.findingId)}" style="color:${C.blue};text-decoration:none;${idStyle}">${linkText}</a>`;
+      return `<a href="${findingUrl(row.findingId)}" style="color:${C.blue};text-decoration:none;font-family:monospace;font-size:11px;">${esc(row.findingId)}</a>`;
     }
     case "score": {
       if (row.score == null) return `<span style="color:${C.textDim};">&mdash;</span>`;
@@ -901,12 +1128,12 @@ function renderCell(col: ReportColumnKey, row: ReportRow, weekly = false): strin
 
 // ── Section renderer ──────────────────────────────────────────────────────────
 
-function renderSection(section: SectionResult, weekly = false): string {
+function renderSection(section: SectionResult): string {
   const thStyle = `padding:8px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${C.textMuted};border-bottom:1px solid ${C.border};white-space:nowrap;`;
   const tdBase  = `padding:10px 14px;border-bottom:1px solid ${C.border};vertical-align:top;font-size:13px;`;
 
   const headerCells = section.columns
-    .map((col) => `<th style="${thStyle}">${(weekly && WEEKLY_COLUMN_LABELS[col]) || COLUMN_LABELS[col]}</th>`)
+    .map((col) => `<th style="${thStyle}">${COLUMN_LABELS[col]}</th>`)
     .join("");
 
   let bodyRows: string;
@@ -922,7 +1149,7 @@ function renderSection(section: SectionResult, weekly = false): string {
     bodyRows = section.rows.map((row, i) => {
       const bg = i % 2 === 0 ? C.card : C.cardAlt;
       const cells = section.columns
-        .map((col) => `<td style="${tdBase}background:${bg};">${renderCell(col, row, weekly)}</td>`)
+        .map((col) => `<td style="${tdBase}background:${bg};">${renderCell(col, row)}</td>`)
         .join("");
       return `<tr>${cells}</tr>`;
     }).join("");
@@ -943,80 +1170,8 @@ function renderSection(section: SectionResult, weekly = false): string {
 
 // ── Public: render all sections ───────────────────────────────────────────────
 
-export function renderSections(sections: SectionResult[], weekly = false): string {
-  return sections.map((s) => renderSection(s, weekly)).join("\n");
-}
-
-// ── Weekly summary block ───────────────────────────────────────────────────────
-
-export interface SummaryStats {
-  totalAudits: number;
-  avgScore: number;
-  failedCount: number;
-}
-
-/** Midnight today in Eastern, as epoch ms — the start of "today's audits". */
-export function startOfTodayEastern(nowMs: number = Date.now()): number {
-  const p = tzParts(WEEK_TZ, nowMs);
-  return zonedToMs(WEEK_TZ, p.year, p.month, p.day, 0, 0, 0, 0);
-}
-
-/** Total / average-score / failed-count over a set of report rows. */
-export function summarizeRows(rows: ReportRow[]): SummaryStats {
-  const scores = rows.map((r) => r.score ?? 0);
-  const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
-  const failedCount = scores.filter((s) => s < 100).length;
-  return { totalAudits: rows.length, avgScore, failedCount };
-}
-
-/** Build the Daily + Weekly summary cards for a weekly report ("" for other
- *  report types). "Daily" = rows completed YESTERDAY (Eastern) — the reports send
- *  each morning covering through the end of yesterday, so yesterday is the freshest
- *  full day. Shared by the send path and the admin preview so the two always match. */
-export function renderWeeklySummaries(
-  sections: SectionResult[],
-  weeklyType: boolean | string | undefined,
-  nowMs: number = Date.now(),
-): string {
-  if (!weeklyType) return "";
-  const allRows = sections.flatMap((s) => s.rows);
-  const todayStart = startOfTodayEastern(nowMs);
-  const yesterdayStart = startOfTodayEastern(todayStart - 1); // midnight ET, one day back
-  const yesterdayRows = allRows.filter((r) => {
-    const t = r.finalizedAt ?? 0;
-    return t >= yesterdayStart && t < todayStart;
-  });
-  return (
-    renderSummaryBlock("Daily Summary", "Yesterday's Audits", summarizeRows(yesterdayRows)) +
-    renderSummaryBlock("Weekly Summary", "This week's Audits", summarizeRows(allRows))
-  );
-}
-
-/** One summary card: an uppercase title, a plain-language subtitle, and the
- *  three stats. Used for both the Daily and Weekly blocks on weekly reports. */
-export function renderSummaryBlock(title: string, subtitle: string, data: SummaryStats): string {
-  const failedPct = data.totalAudits > 0 ? Math.round((data.failedCount / data.totalAudits) * 100) : 0;
-  const avgColor = data.avgScore === 100 ? C.green : data.avgScore >= 80 ? C.blue : data.avgScore >= 60 ? C.yellow : C.red;
-
-  return `
-<div style="margin-bottom:20px;padding:20px 24px;background:${C.cardAlt};border:1px solid ${C.border};border-radius:8px;">
-  <p style="margin:0 0 6px 0;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:${C.textMuted};">${esc(title)}</p>
-  <p style="margin:0 0 16px 0;font-size:15px;font-weight:600;color:${C.textBright};">${esc(subtitle)}</p>
-  <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;">
-    <tr>
-      <td style="width:170px;padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Total Audits</td>
-      <td style="padding:6px 0;font-size:13px;font-weight:600;color:${C.textBright};">${data.totalAudits}</td>
-    </tr>
-    <tr>
-      <td style="width:170px;padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Average Score</td>
-      <td style="padding:6px 0;font-size:13px;font-weight:600;color:${avgColor};">${data.avgScore}%</td>
-    </tr>
-    <tr>
-      <td style="width:170px;padding:6px 24px 6px 0;font-size:13px;color:${C.textMuted};white-space:nowrap;">Failed Audits</td>
-      <td style="padding:6px 0;font-size:13px;font-weight:600;color:${data.failedCount > 0 ? C.red : C.green};">${data.failedCount} (${failedPct}%)</td>
-    </tr>
-  </table>
-</div>`.trim();
+export function renderSections(sections: SectionResult[]): string {
+  return sections.map((s) => renderSection(s)).join("\n");
 }
 
 // ── Public: render full email ─────────────────────────────────────────────────
@@ -1025,7 +1180,6 @@ export function renderFullEmail(
   templateHtml: string | null,
   sectionsHtml: string,
   reportName?: string,
-  summaryHtml?: string,
 ): string {
   if (templateHtml) {
     return templateHtml.replace("{{sections}}", sectionsHtml);
@@ -1061,9 +1215,6 @@ export function renderFullEmail(
           <tr>
             <td style="padding:0 0 28px 0;border-top:1px solid ${C.border};"></td>
           </tr>
-
-          <!-- Weekly summary (optional) -->
-          ${summaryHtml ? `<tr><td style="padding:0 0 0 0;">${summaryHtml}</td></tr>` : ""}
 
           <!-- Sections -->
           <tr>

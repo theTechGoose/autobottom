@@ -57,6 +57,8 @@ export async function saveEmailReportConfig(
     ...(config.weeklyDepartments?.length ? { weeklyDepartments: config.weeklyDepartments } : {}),
     ...(config.weeklyShift ? { weeklyShift: config.weeklyShift } : {}),
     ...(config.weeklyOffice ? { weeklyOffice: config.weeklyOffice } : {}),
+    ...(config.weeklySplitByShift !== undefined ? { weeklySplitByShift: config.weeklySplitByShift } : {}),
+    ...(config.weeklyManagers?.length ? { weeklyManagers: config.weeklyManagers } : {}),
     ...(config.templateId ? { templateId: config.templateId } : {}),
     ...(config.schedule ? { schedule: config.schedule } : {}),
     ...(config.enabled !== undefined ? { enabled: config.enabled } : {}),

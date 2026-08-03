@@ -5,15 +5,12 @@ import {
   dedupeByRecordKeepNewest,
   findingUrl,
   recordUrl,
-  trimSectionsForEmail,
   weeklyReportSlug,
   resolveDateRange,
   weeklySubjectRange,
   sortRowsFailsFirst,
-  summarizeRows,
-  startOfTodayEastern,
+  weeklyHeadline,
   renderSections,
-  renderWeeklySummaries,
   queryReportData,
 } from "./mod.ts";
 import type { ReportRow } from "./mod.ts";
@@ -152,6 +149,11 @@ Deno.test("weeklySubjectRange — formats both week ends in Eastern (no UTC off-
   assert(!label.includes("7/6"), "must not roll the ET Sunday end into Monday via UTC");
 });
 
+Deno.test("weeklyHeadline — spells out the same week the subject line names", () => {
+  const now = Date.UTC(2026, 5, 30, 18, 50, 0); // Tue Jun 30 2026, 2:50 PM ET
+  assertEquals(weeklyHeadline({ mode: "weekly", startDay: 1 }, now), "Week of Jun 29 – Jul 5, 2026");
+});
+
 Deno.test("sortRowsFailsFirst — worst score on top (0% → 100%), ties newest-first", () => {
   const rows: ReportRow[] = [
     { findingId: "a", score: 100, finalizedAt: 10 },
@@ -172,71 +174,16 @@ Deno.test("sortRowsFailsFirst — missing score sinks to the bottom", () => {
   assertEquals(rows.map((r) => r.findingId), ["fail", "noScore"]);
 });
 
-Deno.test("summarizeRows — total, average score, and failed (<100) count", () => {
-  const s = summarizeRows([
-    { score: 100 }, { score: 100 }, { score: 80 }, { score: 0 },
-  ]);
-  assertEquals(s.totalAudits, 4);
-  assertEquals(s.avgScore, 70); // (100+100+80+0)/4
-  assertEquals(s.failedCount, 2); // 80 and 0 are < 100
-});
-
-Deno.test("summarizeRows — empty set is all zeros (no divide-by-zero)", () => {
-  assertEquals(summarizeRows([]), { totalAudits: 0, avgScore: 0, failedCount: 0 });
-});
-
-Deno.test("startOfTodayEastern — returns Eastern midnight before the given instant", () => {
-  // Tue Jun 30 2026, 2:50 PM ET == 18:50 UTC. Midnight ET that day == 04:00 UTC.
-  const now = Date.UTC(2026, 5, 30, 18, 50, 0);
-  assertEquals(startOfTodayEastern(now), Date.UTC(2026, 5, 30, 4, 0, 0));
-});
-
-Deno.test("renderWeeklySummaries — daily counts only yesterday's rows; weekly counts all; empty for non-weekly", () => {
-  const now = Date.UTC(2026, 5, 30, 18, 50, 0); // Tue Jun 30 2026, 2:50 PM ET
-  const todayStart = startOfTodayEastern(now);
-  const yesterdayStart = startOfTodayEastern(todayStart - 1);
-  const sections = [{
-    header: "GS MB",
-    columns: ["score", "finalizedAt"] as const,
-    rows: [
-      { score: 100, finalizedAt: yesterdayStart + 3600_000 },      // yesterday
-      { score: 0,   finalizedAt: yesterdayStart + 600_000 },       // yesterday
-      { score: 80,  finalizedAt: yesterdayStart - 5 * 3600_000 },  // two days ago
-    ],
-  }];
-
-  const html = renderWeeklySummaries(sections as any, "internal", now);
-  assert(html.includes("Daily Summary") && html.includes("Yesterday's Audits"));
-  assert(html.includes("Weekly Summary") && html.includes("This week's Audits"));
-  // Daily card sees 2 rows (yesterday); Weekly card sees all 3.
-  assert(html.includes(">2<"), "daily Total Audits = 2");
-  assert(html.includes(">3<"), "weekly Total Audits = 3");
-
-  // Non-weekly reports get nothing.
-  assertEquals(renderWeeklySummaries(sections as any, undefined, now), "");
-});
-
-Deno.test("renderSections weekly flag — relabels columns and shows 'Click Here' for the finding link", () => {
+Deno.test("renderSections — the finding cell links to the audit report by id", () => {
   const sections = [{
     header: "GS MB",
     columns: ["recordId", "findingId"] as const,
     rows: [{ recordId: "486321", findingId: "lBGpfZ-s3BWh6vSjYJTS4" }],
   }];
-
-  // The finding id always appears inside the link href (?id=...); what changes
-  // is the VISIBLE cell text — ">Click Here<" vs ">lBGpfZ...<".
-  const weeklyHtml = renderSections(sections as any, true);
-  assert(weeklyHtml.includes("Dateleg Link"), "weekly header renames Record ID → Dateleg Link");
-  assert(weeklyHtml.includes("View Full Audit"), "weekly header renames Audit Report → View Full Audit");
-  assert(weeklyHtml.includes(">Click Here<"), "weekly finding cell shows Click Here");
-  assert(weeklyHtml.includes(">486321<"), "weekly still shows the record number as the dateleg link");
-  assert(!weeklyHtml.includes(">lBGpfZ-s3BWh6vSjYJTS4<"), "weekly hides the raw finding id from the visible cell");
-  assert(weeklyHtml.includes("id=lBGpfZ-s3BWh6vSjYJTS4"), "the link still targets the finding id");
-
-  const normalHtml = renderSections(sections as any, false);
-  assert(normalHtml.includes("Record ID") && normalHtml.includes("Audit Report"), "non-weekly keeps default headers");
-  assert(normalHtml.includes(">lBGpfZ-s3BWh6vSjYJTS4<"), "non-weekly shows the raw finding id as the cell text");
-  assert(!normalHtml.includes(">Click Here<"), "non-weekly does not show Click Here");
+  const html = renderSections(sections as any);
+  assert(html.includes("Record ID") && html.includes("Audit Report"), "default column headers");
+  assert(html.includes(">486321<"), "record number shown");
+  assert(html.includes("id=lBGpfZ-s3BWh6vSjYJTS4"), "the link targets the finding id");
 });
 
 Deno.test("buildCsv — clean id columns + appended URL columns", () => {
@@ -256,30 +203,6 @@ Deno.test("buildCsv — no URL columns when those id columns aren't in the repor
   const csv = buildCsv([{ header: "x", columns: ["voName", "score"], rows: [{ voName: "A", score: 100 }] }]);
   assert(!csv.includes("Record ID URL"));
   assert(!csv.includes("Audit Report URL"));
-});
-
-Deno.test("trimSectionsForEmail — spreads the budget across sections (even split)", () => {
-  const { sections, shown, total } = trimSectionsForEmail([section("A", 25), section("B", 25)], 30);
-  assertEquals(total, 50);
-  assertEquals(shown, 30);
-  assertEquals(sections[0].rows.length, 15); // 30 split across 2 sections → 15 each
-  assertEquals(sections[1].rows.length, 15);
-});
-
-Deno.test("trimSectionsForEmail — a section with audits NEVER shows as empty (the WST Inbound bug)", () => {
-  // 74 + 107 = 181, budget 30 → both sections must show rows, neither starved to 0.
-  const { sections, shown } = trimSectionsForEmail([section("IDS A3N", 74), section("GS WST", 107)], 30);
-  assertEquals(shown, 30);
-  assert(sections[0].rows.length > 0, "IDS A3N shows rows");
-  assert(sections[1].rows.length > 0, "GS WST shows rows (not a false 'No records')");
-});
-
-Deno.test("trimSectionsForEmail — small sections fill fully, only truly-empty stay empty", () => {
-  const { sections, shown } = trimSectionsForEmail([section("tiny", 2), section("empty", 0), section("big", 100)], 10);
-  assertEquals(sections[0].rows.length, 2); // tiny shows all it has
-  assertEquals(sections[1].rows.length, 0); // genuinely empty → stays empty (correct "No records")
-  assertEquals(sections[2].rows.length, 8); // big gets the rest
-  assertEquals(shown, 10);
 });
 
 Deno.test("recordUrl / findingUrl — point at QuickBase and the audit-report page", () => {

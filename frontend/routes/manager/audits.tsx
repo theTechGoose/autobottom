@@ -267,7 +267,7 @@ export default define.page(async function ManagerAuditsPage(ctx) {
           <span class="ah-loading-text">Loading…</span>
         </div>
         <div id="audit-history-table">
-          {renderAuditHistoryTable(data)}
+          {renderAuditHistoryTable(data, { since: sinceMs, until: untilMs })}
         </div>
       </div>
     </Layout>

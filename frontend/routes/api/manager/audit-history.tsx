@@ -50,6 +50,10 @@ export interface AuditHistoryData {
   /** Average score across all filtered audits in the window (backend-computed;
    *  null/absent when no audit has a score). */
   avgScore?: number | null;
+  /** Scored audits in the window and how many were perfect — the summary
+   *  line's pass rate counts AUDITS, not points. */
+  scoredCount?: number;
+  passedCount?: number;
   /** WGS / MCC sale counts across all filtered audits in the window. */
   wgsCount?: number;
   mccCount?: number;
@@ -109,41 +113,65 @@ function saleTags(item: AuditHistoryItem) {
 
 /** Render the table + stats + pagination. Used both for SSR (page initial
  *  load) and for HTMX swap on filter change. */
-export function renderAuditHistoryTable(data: AuditHistoryData) {
-  const { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, topMissed, pages, page } = data;
-  const filtered = items.length;
-  const saleHint = (saleUnknownCount ?? 0) > 0 ? `${saleUnknownCount} pending` : null;
+/** Short date for the window summary — no year unless the window crosses one. */
+function fmtWindowDay(ms: number, showYear: boolean): string {
+  return new Date(ms).toLocaleDateString(undefined, {
+    month: "short", day: "numeric", ...(showYear ? { year: "numeric" } : {}),
+  });
+}
+
+/** "105 audits from Jul 27 to Aug 2 | 61.9% passing - 38.1% failing | 83 WGS - 22 MCC"
+ *
+ *  One line instead of six stat cards. Pass rate counts audits at a perfect
+ *  score (this app's rule everywhere), so passing + failing always sum to 100
+ *  over the SCORED audits; anything unscored is in the audit count but neither
+ *  rate. Exported for tests. */
+export function renderSummaryLine(data: AuditHistoryData, window?: { since: number; until: number }) {
+  const { total, scoredCount, passedCount, wgsCount, mccCount, saleUnknownCount } = data;
+  const scored = scoredCount ?? 0;
+  const passed = passedCount ?? 0;
+  const passPct = scored > 0 ? Math.round((passed / scored) * 1000) / 10 : null;
+  const failPct = passPct == null ? null : Math.round((100 - passPct) * 10) / 10;
+  const crossesYear = window
+    ? new Date(window.since).getFullYear() !== new Date(window.until).getFullYear()
+    : false;
+  const range = window
+    ? (window.since === 0
+      ? `all time to ${fmtWindowDay(window.until, true)}`
+      : `${fmtWindowDay(window.since, crossesYear)} to ${fmtWindowDay(window.until, crossesYear)}`)
+    : null;
+  const saleHint = (saleUnknownCount ?? 0) > 0 ? ` (${saleUnknownCount} pending)` : "";
+  return (
+    <div class="ah-summary">
+      <span>
+        <strong>{total.toLocaleString()}</strong> {total === 1 ? "audit" : "audits"}
+        {range ? ` from ${range}` : ""}
+      </span>
+      <span class="ah-summary-sep">|</span>
+      {passPct == null ? <span class="ah-summary-dim">no scored audits</span> : (
+        <span>
+          <strong style={`color:var(--${pillColor(passPct)});`}>{passPct}%</strong> passing
+          {" - "}
+          <strong style="color:var(--red);">{failPct}%</strong> failing
+        </span>
+      )}
+      <span class="ah-summary-sep">|</span>
+      <span>
+        <strong>{wgsCount ?? 0}</strong> WGS <span class="ah-summary-dim">-</span>{" "}
+        <strong>{mccCount ?? 0}</strong> MCC{saleHint}
+      </span>
+    </div>
+  );
+}
+
+/** Render the summary + table + pagination. Used both for SSR (page initial
+ *  load) and for HTMX swap on filter change. */
+export function renderAuditHistoryTable(data: AuditHistoryData, window?: { since: number; until: number }) {
+  const { items, pages, page, topMissed } = data;
   const missed = topMissed ?? [];
   return (
     <div>
-      <div class="stat-grid" style="margin-bottom:12px;">
-        <div class="stat-card">
-          <div class="stat-card-value">{total}</div>
-          <div class="stat-card-label">Total in window</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card-value" style={avgScore != null ? `color:var(--${pillColor(avgScore)})` : undefined}>
-            {avgScore != null ? `${avgScore}%` : "—"}
-          </div>
-          <div class="stat-card-label">Avg score in window</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card-value">{wgsCount ?? "—"}</div>
-          <div class="stat-card-label">WGS sales{saleHint ? ` (${saleHint})` : ""}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card-value">{mccCount ?? "—"}</div>
-          <div class="stat-card-label">MCC sales{saleHint ? ` (${saleHint})` : ""}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card-value">{filtered}</div>
-          <div class="stat-card-label">On this page</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card-value">{page} / {pages}</div>
-          <div class="stat-card-label">Page</div>
-        </div>
-      </div>
+      {renderSummaryLine(data, window)}
       {missed.length > 0 && (
         <div class="card" style="margin-bottom:12px;padding:12px 16px;">
           <div class="tbl-title" style="margin-bottom:8px;">Most Missed Questions (filtered window)</div>
@@ -302,9 +330,13 @@ export const handler = define.handlers({
       department: url.searchParams.get("department") ?? "",
       shift: url.searchParams.get("shift") ?? "",
     };
+    const win = {
+      since: Number(url.searchParams.get("since") ?? 0) || 0,
+      until: Number(url.searchParams.get("until") ?? Date.now()) || Date.now(),
+    };
     const html = renderToString(
       <>
-        {renderAuditHistoryTable(data)}
+        {renderAuditHistoryTable(data, win)}
         {renderFilterSelects(data, current, { oob: true, only: parseOobSelects(url.searchParams.get("oob")) })}
       </>,
     );

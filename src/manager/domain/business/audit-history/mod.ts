@@ -68,6 +68,12 @@ export interface AuditHistoryResult {
   /** Average score across ALL filtered audits in the window (not just the
    *  current page), rounded to one decimal. Null when no audit has a score. */
   avgScore: number | null;
+  /** Scored audits in the window, and how many of them hit PASS_SCORE.
+   *  The filter bar reports the pass RATE off these (audits counted, not
+   *  points averaged) — an audit passes only at a perfect score. Unscored
+   *  audits are in `total` but in neither, so the two rates still sum to 100. */
+  scoredCount: number;
+  passedCount: number;
   /** WGS / MCC sale counts across ALL filtered audits in the window. */
   wgsCount: number;
   mccCount: number;
@@ -400,6 +406,7 @@ async function _getAuditHistoryRaw(
   // Average score over every filtered audit in the window — the whole result
   // set, not just the page slice — so the stat matches "Total in window".
   const scores = filtered.map((c) => c.score).filter((s): s is number => typeof s === "number" && Number.isFinite(s));
+  const passedCount = scores.filter((s) => s >= PASS_SCORE).length;
   const avgScore = scores.length > 0
     ? Math.round((scores.reduce((sum, s) => sum + s, 0) / scores.length) * 10) / 10
     : null;
@@ -460,5 +467,5 @@ async function _getAuditHistoryRaw(
 
   console.log(`🔍 [MANAGER-AUDITS] ${email} role=${role} → ${total}/${inWindow.length} in window, page=${page}/${pages}`);
 
-  return { items, total, avgScore, wgsCount, mccCount, saleUnknownCount, topMissed, pages, page, owners, shifts, departments, deptRollup };
+  return { items, total, avgScore, scoredCount: scores.length, passedCount, wgsCount, mccCount, saleUnknownCount, topMissed, pages, page, owners, shifts, departments, deptRollup };
 }

@@ -1797,3 +1797,15 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .rem-q-nomatch { margin-top: 4px; font-size: 11px; color: var(--text-dim); font-style: italic; }
 /* Already-closed failure: a stamp where the Remediate button would be. */
 .rem-done { font-size: 12px; color: #3fb950; white-space: nowrap; }
+
+/* Audit-history window summary — one line replacing the old stat-card grid.
+   Used by the manager Audit History page and the Operations portal. */
+.ah-summary {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 12px; padding: 10px 14px;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px;
+  font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums;
+}
+.ah-summary strong { color: var(--text-bright); font-weight: 700; }
+.ah-summary-sep { color: var(--border-hover); }
+.ah-summary-dim { color: var(--text-muted); }

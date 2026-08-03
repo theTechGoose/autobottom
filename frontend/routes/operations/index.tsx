@@ -709,7 +709,7 @@ export default define.page(async function OperationsPortalPage(ctx) {
                     </form>
 
                     <div id="audit-history-table">
-                      {renderAuditHistoryTable(auditData)}
+                      {renderAuditHistoryTable(auditData, { since: ahSinceMs, until: ahUntilMs })}
                     </div>
                   </>
                 )}

@@ -34,10 +34,10 @@ Deno.test("ManagerAudits — table renders all expected column headers", () => {
   }
 });
 
-Deno.test("ManagerAudits — WGS/MCC stat cards render window counts", () => {
+Deno.test("ManagerAudits — summary line carries the WGS/MCC counts", () => {
   const html = renderHTML(renderAuditHistoryTable(fixture({ total: 20, wgsCount: 7, mccCount: 4, saleUnknownCount: 0 })));
-  assertContains(html, "WGS sales");
-  assertContains(html, "MCC sales");
+  assertContains(html, "WGS");
+  assertContains(html, "MCC");
   assertContains(html, "7");
   assertContains(html, "4");
 });
@@ -84,25 +84,53 @@ Deno.test("ManagerAudits — unknown sale flags render a dash, not tags", () => 
   assertNotContains(html, ">MCC<");
 });
 
-Deno.test("ManagerAudits — stats cards render counts and page indicator", () => {
-  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 42, page: 2, pages: 5 })));
-  assertContains(html, "Total in window");
-  assertContains(html, "Avg score in window");
-  assertContains(html, "On this page");
-  assertContains(html, "Page");
-  assertContains(html, "42");
-  assertContains(html, "2 / 5");
+Deno.test("ManagerAudits — summary line: audit count, window dates, pass/fail split, sales", () => {
+  const html = renderHTML(renderAuditHistoryTable(
+    fixture({ total: 105, scoredCount: 105, passedCount: 65, wgsCount: 83, mccCount: 22, page: 2, pages: 5 }),
+    { since: new Date(2026, 6, 27).getTime(), until: new Date(2026, 7, 2).getTime() },
+  ));
+  assertContains(html, "105");
+  assertContains(html, "audits");
+  assertContains(html, "Jul 27");
+  assertContains(html, "Aug 2");
+  assertContains(html, ">61.9%</strong> passing");   // 65 of 105 perfect
+  assertContains(html, ">38.1%</strong> failing");
+  assertContains(html, "83");
+  assertContains(html, "22");
+  // The stat-card grid is gone — including the "on this page" / page cards.
+  assertNotContains(html, "Total in window");
+  assertNotContains(html, "On this page");
+  assertNotContains(html, "stat-card");
 });
 
-Deno.test("ManagerAudits — avg score card shows the window average with a % sign", () => {
-  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 11, avgScore: 97.3 })));
-  assertContains(html, "97.3%");
+Deno.test("ManagerAudits — passing and failing always sum to 100", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 3, scoredCount: 3, passedCount: 1 })));
+  assertContains(html, ">33.3%</strong> passing");
+  assertContains(html, ">66.7%</strong> failing");
 });
 
-Deno.test("ManagerAudits — avg score card shows an em-dash when no scores exist", () => {
-  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 0, avgScore: null })));
-  assertContains(html, "Avg score in window");
-  assertNotContains(html, "null%");
+Deno.test("ManagerAudits — no scored audits says so instead of printing NaN%", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({ total: 0, scoredCount: 0, passedCount: 0 })));
+  assertContains(html, "no scored audits");
+  assertNotContains(html, "NaN");
+});
+
+Deno.test("ManagerAudits — an all-time window reads 'all time', not the epoch", () => {
+  const html = renderHTML(renderAuditHistoryTable(
+    fixture({ total: 9, scoredCount: 9, passedCount: 9 }),
+    { since: 0, until: new Date(2026, 7, 2).getTime() },
+  ));
+  assertContains(html, "all time to");
+  assertNotContains(html, "Jan 1, 1970");
+});
+
+Deno.test("ManagerAudits — a window spanning years shows the year on both ends", () => {
+  const html = renderHTML(renderAuditHistoryTable(
+    fixture({ total: 4, scoredCount: 4, passedCount: 2 }),
+    { since: new Date(2025, 11, 28).getTime(), until: new Date(2026, 0, 4).getTime() },
+  ));
+  assertContains(html, "Dec 28, 2025");
+  assertContains(html, "Jan 4, 2026");
 });
 
 Deno.test("ManagerAudits — items render with finding link to /audit/report", () => {

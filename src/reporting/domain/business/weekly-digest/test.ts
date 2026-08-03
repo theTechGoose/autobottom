@@ -263,9 +263,33 @@ Deno.test("renderDigestPage — expandable per member, with links out to the rec
   assert(html.includes("<details"), "the page collapses each team member");
   assert(html.includes('id="tm-garrey-sumter"'));
   assert(html.includes("https://qb.example/490811"), "record id links to QuickBase");
-  assert(html.includes("audit/report?id=f1"), "score links to the audit report");
+  assert(html.includes("audit/report?id=f1"), "finding id links to the audit report");
   assert(html.includes("Failed Audits (1)"));
   assert(html.includes("click a name to expand"));
+});
+
+Deno.test("failed audits list — shows BOTH the record id and the finding id, each linked to its own system", () => {
+  const groups = buildDigest([section("GS MB", [
+    row({ findingId: "khswSh2OhOFJ1sfJL3a8P", recordId: "496508", voName: "Ashley Wilson", score: 96 }),
+  ])], new Map([["khswSh2OhOFJ1sfJL3a8P", ["Taxes"]]]));
+
+  const html = renderDigestPage(groups, OPTS, LINKS);
+  assert(html.includes(">496508</a>"), "record id is shown");
+  assert(html.includes(">khswSh2OhOFJ1sfJL3a8P</a>"), "finding id is shown, not just linked behind the score");
+  assert(html.includes("https://qb.example/496508"), "record id → QuickBase");
+  assert(html.includes("audit/report?id=khswSh2OhOFJ1sfJL3a8P"), "finding id → the audit report");
+  // Two id columns are unreadable unlabelled.
+  assert(html.includes("Record ID") && html.includes("Audit ID"), "columns are labelled");
+  assert(html.includes(">96%<"), "score still shown");
+});
+
+Deno.test("failed audits list — a missing id renders a dash, not a broken link", () => {
+  const groups = buildDigest([section("GS MB", [
+    row({ findingId: "f1", recordId: undefined, voName: "X", score: 92 }),
+  ])], new Map([["f1", ["Age"]]]));
+  const html = renderDigestPage(groups, OPTS, LINKS);
+  assert(html.includes("&mdash;"), "blank record id shows a dash");
+  assert(html.includes("audit/report?id=f1"), "the finding id is still linked");
 });
 
 Deno.test("renderDigest — a name with HTML in it is escaped, not rendered", () => {

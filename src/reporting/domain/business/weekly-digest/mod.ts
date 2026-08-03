@@ -472,17 +472,24 @@ function pageFailedAudits(member: DigestMember, links: PageLinks): string {
   if (shown === 0) {
     return `<p style="margin:0 0 6px 0;font-size:13px;font-weight:600;color:${D.bright};">${heading}</p>`;
   }
+  const dash = `<span style="color:${D.dim};">&mdash;</span>`;
+  const idCell = `padding:6px 10px 6px 0;font-size:12px;font-family:monospace;white-space:nowrap;`;
   const rows = member.failedAudits.map((a) => {
+    // Record id → QuickBase; finding id → the audit report. Both shown, because
+    // the two systems are searched by different ids.
     const rid = a.recordId
       ? `<a href="${links.recordUrl(a.recordId)}" style="color:${D.blue};text-decoration:none;">${esc(a.recordId)}</a>`
-      : `<span style="color:${D.dim};">&mdash;</span>`;
+      : dash;
+    const fid = a.findingId
+      ? `<a href="${links.findingUrl(a.findingId)}" style="color:${D.blue};text-decoration:none;">${esc(a.findingId)}</a>`
+      : dash;
     const score = a.score != null ? `${a.score}%` : "&mdash;";
-    const scoreCell = a.findingId
-      ? `<a href="${links.findingUrl(a.findingId)}" style="color:${D.red};text-decoration:none;">${score}</a>`
-      : score;
-    return `<tr><td style="padding:6px 10px 6px 0;font-size:12px;color:${D.blue};font-family:monospace;white-space:nowrap;">${rid}</td><td style="padding:6px 10px 6px 0;font-size:12px;font-weight:700;color:${D.red};white-space:nowrap;">${scoreCell}</td><td style="padding:6px 0;font-size:12px;color:${D.text};line-height:1.5;">${esc(a.categories.join(", "))}</td></tr>`;
+    return `<tr><td style="${idCell}color:${D.blue};">${rid}</td><td style="${idCell}color:${D.blue};">${fid}</td><td style="padding:6px 10px 6px 0;font-size:12px;font-weight:700;color:${D.red};white-space:nowrap;">${score}</td><td style="padding:6px 0;font-size:12px;color:${D.text};line-height:1.5;">${esc(a.categories.join(", "))}</td></tr>`;
   }).join("");
-  return `<p style="margin:0 0 6px 0;font-size:13px;font-weight:600;color:${D.bright};">${heading}</p><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">${rows}</table>`;
+  // Two id columns side by side need labelling or they read as one number.
+  const th = `padding:0 10px 4px 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${D.muted};text-align:left;white-space:nowrap;`;
+  const header = `<tr><th style="${th}">Record ID</th><th style="${th}">Audit ID</th><th style="${th}">Score</th><th style="${th}">Categories</th></tr>`;
+  return `<p style="margin:0 0 6px 0;font-size:13px;font-weight:600;color:${D.bright};">${heading}</p><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">${header}${rows}</table>`;
 }
 
 function pageMemberCard(member: DigestMember, links: PageLinks): string {

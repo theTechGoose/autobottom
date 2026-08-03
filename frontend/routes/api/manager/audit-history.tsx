@@ -224,6 +224,58 @@ export function renderAuditHistoryTable(data: AuditHistoryData) {
   );
 }
 
+/** The three filter dropdowns, re-rendered from the CURRENT window.
+ *
+ *  They live in the filter form, outside the swapped table, so without this
+ *  they'd keep whatever options the page was first loaded with — a team member
+ *  who only has audits in the newly-chosen window would be missing from the
+ *  Team Member list even while their rows show in the table below.
+ *
+ *  `hx-swap-oob` replaces each <select> by id wherever it sits in the DOM.
+ *  A selection that no longer exists in the window is kept as an option (and
+ *  stays selected) so the filter the user is looking at doesn't silently reset. */
+export const FILTER_SELECT_IDS = { owner: "ah-owner", department: "ah-department", shift: "ah-shift" } as const;
+
+export function renderFilterSelect(
+  props: { name: "owner" | "department" | "shift"; values: string[]; selected: string; oob?: boolean },
+) {
+  const { name, values, selected, oob } = props;
+  // Keep a selection that no longer exists in the window as an option, so the
+  // filter the user is looking at doesn't silently reset under them.
+  const options = selected && !values.includes(selected) ? [selected, ...values] : values;
+  return (
+    <select name={name} id={FILTER_SELECT_IDS[name]} {...(oob ? { "hx-swap-oob": "true" } : {})}>
+      <option value="">All</option>
+      {options.map((v) => <option key={v} value={v} selected={v === selected}>{v}</option>)}
+    </select>
+  );
+}
+
+/** Which selects to send back, named by the form's hidden `oob` input — an
+ *  out-of-band swap whose id isn't on the page just raises an htmx error, and
+ *  the Operations portal has no Department select (its sidebar is the switcher).
+ *  Absent/blank means all three. */
+export function parseOobSelects(raw: string | null): Array<"owner" | "department" | "shift"> {
+  const all = ["owner", "department", "shift"] as const;
+  const asked = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (asked.length === 0) return [...all];
+  return all.filter((n) => asked.includes(n));
+}
+
+export function renderFilterSelects(
+  data: AuditHistoryData,
+  current: { owner: string; department: string; shift: string },
+  opts: { oob?: boolean; only?: Array<"owner" | "department" | "shift"> } = {},
+) {
+  const only = opts.only ?? ["owner", "department", "shift"];
+  const values = { owner: data.owners ?? [], department: data.departments ?? [], shift: data.shifts ?? [] };
+  return (
+    <>
+      {only.map((name) => renderFilterSelect({ name, values: values[name], selected: current[name], oob: opts.oob }))}
+    </>
+  );
+}
+
 export const handler = define.handlers({
   async GET(ctx) {
     const url = new URL(ctx.req.url);
@@ -245,7 +297,17 @@ export const handler = define.handlers({
         { headers: { "content-type": "text/html" } },
       );
     }
-    const html = renderToString(renderAuditHistoryTable(data));
+    const current = {
+      owner: url.searchParams.get("owner") ?? "",
+      department: url.searchParams.get("department") ?? "",
+      shift: url.searchParams.get("shift") ?? "",
+    };
+    const html = renderToString(
+      <>
+        {renderAuditHistoryTable(data)}
+        {renderFilterSelects(data, current, { oob: true, only: parseOobSelects(url.searchParams.get("oob")) })}
+      </>,
+    );
     return new Response(html, { headers: { "content-type": "text/html" } });
   },
 });

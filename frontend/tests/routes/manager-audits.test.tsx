@@ -4,7 +4,10 @@
  *  fixture data — that's what both the SSR page and the HTMX wrapper call,
  *  so it's the right unit to assert against. */
 import { renderHTML, assertContains, assertNotContains } from "../helpers/render.ts";
-import { renderAuditHistoryTable, type AuditHistoryData } from "../../routes/api/manager/audit-history.tsx";
+import { assertEquals } from "@std/assert";
+import {
+  renderAuditHistoryTable, renderFilterSelects, parseOobSelects, type AuditHistoryData,
+} from "../../routes/api/manager/audit-history.tsx";
 
 function fixture(over: Partial<AuditHistoryData> = {}): AuditHistoryData {
   return {
@@ -180,4 +183,36 @@ Deno.test("ManagerAudits — unreviewed items render em-dash placeholders for ba
   assertNotContains(html, "pill-yellow\">Pending");
   assertNotContains(html, "pill-blue\">Complete");
   assertNotContains(html, "pill-green\">Auto");
+});
+
+// ── Filter dropdowns ────────────────────────────────────────────────────────
+// They sit in the filter form, outside the swapped table, so the HTMX fragment
+// has to send them back out-of-band or they keep the first load's names.
+
+Deno.test("filter selects — options come from the current window, with the selection kept", () => {
+  const html = renderHTML(renderFilterSelects(
+    fixture({ owners: ["Andrew Torsiello", "Destiny Peterson"], departments: ["ODR"], shifts: ["AM"] }),
+    { owner: "Destiny Peterson", department: "", shift: "" },
+    { oob: true },
+  ));
+  assertContains(html, "Destiny Peterson");
+  assertContains(html, 'id="ah-owner"');
+  assertContains(html, 'hx-swap-oob="true"');
+});
+
+Deno.test("filter selects — a selection missing from the window is still offered, not dropped", () => {
+  const html = renderHTML(renderFilterSelects(
+    fixture({ owners: ["Andrew Torsiello"] }),
+    { owner: "Someone With No Audits This Week", department: "", shift: "" },
+  ));
+  assertContains(html, "Someone With No Audits This Week");
+  assertNotContains(html, "hx-swap-oob");
+});
+
+Deno.test("parseOobSelects — blank means all three; a list narrows it", () => {
+  assertEquals(parseOobSelects(null), ["owner", "department", "shift"]);
+  assertEquals(parseOobSelects(""), ["owner", "department", "shift"]);
+  // The Operations portal has no Department select — swapping one would error.
+  assertEquals(parseOobSelects("owner,shift"), ["owner", "shift"]);
+  assertEquals(parseOobSelects("bogus"), []);
 });

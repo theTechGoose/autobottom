@@ -33,7 +33,7 @@ import {
   renderQueueResults, renderQueueTable, queueFacets, filterAndSortQueue,
   readQueueFilterParams, queueTimestamp, type QueueItem,
 } from "../api/manager/queue.tsx";
-import { renderAuditHistoryTable, type AuditHistoryData, type DeptRollup } from "../api/manager/audit-history.tsx";
+import { renderAuditHistoryTable, renderFilterSelect, type AuditHistoryData, type DeptRollup } from "../api/manager/audit-history.tsx";
 
 interface ManagerScope {
   departments: string[];
@@ -653,17 +653,11 @@ export default define.page(async function OperationsPortalPage(ctx) {
                       </div>
                       <div class="form-group" style="margin-bottom:0;">
                         <label>Team Member</label>
-                        <select name="owner">
-                          <option value="">All</option>
-                          {auditData.owners.map((o) => <option key={o} value={o} selected={o === ahOwner}>{o}</option>)}
-                        </select>
+                        {renderFilterSelect({ name: "owner", values: auditData.owners, selected: ahOwner })}
                       </div>
                       <div class="form-group" style="margin-bottom:0;">
                         <label>Shift</label>
-                        <select name="shift">
-                          <option value="">All</option>
-                          {auditData.shifts.map((s) => <option key={s} value={s} selected={s === ahShift}>{s}</option>)}
-                        </select>
+                        {renderFilterSelect({ name: "shift", values: auditData.shifts, selected: ahShift })}
                       </div>
                       <div class="form-group" style="margin-bottom:0;">
                         <label>Reviewed</label>
@@ -704,6 +698,8 @@ export default define.page(async function OperationsPortalPage(ctx) {
                       <input type="hidden" name="department" value={dept} />
                       <input type="hidden" name="page" value={ahPage} id="ah-page" />
                       <input type="hidden" name="limit" value="50" />
+                      {/* No Department select here — the sidebar is the switcher. */}
+                      <input type="hidden" name="oob" value="owner,shift" />
                       {asEmail && <input type="hidden" name="as" value={asEmail} />}
                       <button type="submit" id="ah-update" class="btn btn-primary btn-sm ah-update" disabled>
                         <span class="ah-update-text">Update</span>

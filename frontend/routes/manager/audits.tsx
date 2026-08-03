@@ -7,7 +7,7 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { GameStateRow } from "../../components/GameStateRow.tsx";
 import { apiFetch } from "../../lib/api.ts";
-import { renderAuditHistoryTable, type AuditHistoryData } from "../api/manager/audit-history.tsx";
+import { renderAuditHistoryTable, renderFilterSelect, type AuditHistoryData } from "../api/manager/audit-history.tsx";
 
 interface MyStateResp {
   gameState?: { totalXp?: number; level?: number; dayStreak?: number } | null;
@@ -191,24 +191,15 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         </div>
         <div class="form-group" style="margin-bottom:0;">
           <label>Team Member</label>
-          <select name="owner">
-            <option value="">All</option>
-            {data.owners.map((o) => <option key={o} value={o} selected={o === owner}>{o}</option>)}
-          </select>
+          {renderFilterSelect({ name: "owner", values: data.owners, selected: owner })}
         </div>
         <div class="form-group" style="margin-bottom:0;">
           <label>Department</label>
-          <select name="department">
-            <option value="">All</option>
-            {data.departments.map((d) => <option key={d} value={d} selected={d === department}>{d}</option>)}
-          </select>
+          {renderFilterSelect({ name: "department", values: data.departments, selected: department })}
         </div>
         <div class="form-group" style="margin-bottom:0;">
           <label>Shift</label>
-          <select name="shift">
-            <option value="">All</option>
-            {data.shifts.map((s) => <option key={s} value={s} selected={s === shift}>{s}</option>)}
-          </select>
+          {renderFilterSelect({ name: "shift", values: data.shifts, selected: shift })}
         </div>
         <div class="form-group" style="margin-bottom:0;">
           <label>Reviewed</label>
@@ -246,6 +237,8 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         </div>
         <input type="hidden" name="page" value={page} id="ah-page" />
         <input type="hidden" name="limit" value="50" />
+        {/* Which filter dropdowns the fragment should refresh out-of-band. */}
+        <input type="hidden" name="oob" value="owner,department,shift" />
         {/* Propagate ?as=<email> through filter refreshes so backend
             scope lookup uses the impersonated manager's email, not the
             admin's. Without this hidden field, HTMX filter changes drop

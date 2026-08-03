@@ -72,7 +72,7 @@ function normalizeDecided(raw: Partial<JudgeDecision>): DecidedRow | null {
   return {
     findingId: raw.findingId,
     questionIndex: typeof raw.questionIndex === "number" ? raw.questionIndex : -1,
-    header: shortQuestionLabel(String(raw.header ?? "")).trim() || "(untitled)",
+    header: String(raw.header ?? "").trim() || "(untitled)",
     decision: raw.decision,
     judge: raw.judge,
     decidedAt: raw.decidedAt,
@@ -190,7 +190,10 @@ async function _computeRaw(orgId: OrgId, from: number, to: number): Promise<Revi
   const rows: ReviewerOverturnRow[] = [];
   for (const [email, acc] of by) {
     const byHeader: HeaderOverturn[] = [...acc.byHeader.entries()]
-      .map(([header, v]) => ({ header, judged: v.judged, overturns: v.overturns, rate: computeOverturnRate(v.overturns, v.judged) }))
+      // Group on the raw header (two audit types can share a display name —
+      // "Attending Presentation Together?" and "Presentation Disclosure" both
+      // show as the latter), and relabel only on the way out.
+      .map(([header, v]) => ({ header: shortQuestionLabel(header), judged: v.judged, overturns: v.overturns, rate: computeOverturnRate(v.overturns, v.judged) }))
       .sort((a, b) => b.overturns - a.overturns || b.judged - a.judged);
     rows.push({
       email,

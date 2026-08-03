@@ -8,6 +8,7 @@ import { Layout } from "../../components/Layout.tsx";
 import { GameStateRow } from "../../components/GameStateRow.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import { renderAuditHistoryTable, renderFilterSelect, type AuditHistoryData } from "../api/manager/audit-history.tsx";
+import DateRangePicker from "../../islands/DateRangePicker.tsx";
 
 interface MyStateResp {
   gameState?: { totalXp?: number; level?: number; dayStreak?: number } | null;
@@ -29,16 +30,6 @@ function safeMs(v: string | null, dflt: number): number {
   if (v == null || v === "") return dflt;
   const n = Number(v);
   return Number.isFinite(n) ? n : dflt;
-}
-
-/** Format a ms timestamp as a `YYYY-MM-DDTHH:MM` string in LOCAL time —
- *  what `<input type="datetime-local">` expects. The previous code used
- *  `new Date(ms).toISOString().slice(0,16)` which returns UTC and shifts
- *  the displayed time by the user's offset (~5h in EST). */
-function toLocalInputValue(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export default define.page(async function ManagerAuditsPage(ctx) {
@@ -106,6 +97,38 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         .ah-loading.htmx-request{ display:flex; gap:10px; align-items:center; justify-content:center; position:absolute; inset:0; z-index:5; background:rgba(13,17,23,0.55); border-radius:8px; }
         .ah-loading-spinner{ width:20px; height:20px; border-width:3px; }
         .ah-loading-text{ color:var(--text-bright); font-size:13px; font-weight:600; }
+
+        /* Window control (DateRangePicker island). */
+        .drp{ position:relative; display:flex; flex-direction:column; gap:6px; }
+        .drp-presets{ display:flex; gap:4px; flex-wrap:wrap; }
+        .drp-preset-on{ background:var(--accent); color:#0b0f15; font-weight:700; border-color:var(--accent); }
+        .drp-trigger{
+          display:flex; align-items:center; gap:8px; min-width:260px;
+          background:var(--bg); border:1px solid var(--border); border-radius:8px;
+          color:var(--text-bright); font-size:13px; padding:8px 12px; cursor:pointer;
+          font-variant-numeric:tabular-nums;
+        }
+        .drp-trigger:hover{ border-color:var(--border-hover); }
+        .drp-pop{
+          position:absolute; top:100%; left:0; margin-top:6px; z-index:200;
+          background:var(--bg-surface); border:1px solid var(--border-hover); border-radius:12px;
+          padding:14px 16px; box-shadow:0 16px 40px rgba(0,0,0,0.7);
+        }
+        .drp-head{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:10px; }
+        .drp-hint{ font-size:11px; color:var(--text-muted); }
+        .drp-nav{ display:flex; gap:4px; }
+        .drp-months{ display:flex; gap:24px; }
+        .drp-month-title{ font-size:12px; font-weight:700; color:var(--text-bright); text-align:center; margin-bottom:8px; }
+        .drp-grid{ display:grid; grid-template-columns:repeat(7, 32px); gap:2px; }
+        .drp-dow{ font-size:10px; color:var(--text-dim); text-align:center; padding-bottom:4px; }
+        .drp-day{
+          height:30px; border:0; border-radius:6px; background:transparent;
+          color:var(--text); font-size:12px; cursor:pointer; font-variant-numeric:tabular-nums;
+        }
+        .drp-day:hover{ background:var(--border-hover); color:var(--text-bright); }
+        .drp-day.in-range{ background:var(--accent-bg); color:var(--text-bright); }
+        .drp-day.edge{ background:var(--accent); color:#0b0f15; font-weight:700; }
+        .drp-day.today{ box-shadow:inset 0 0 0 1px var(--border-hover); }
       `}</style>
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
         <div>
@@ -162,33 +185,15 @@ export default define.page(async function ManagerAuditsPage(ctx) {
           "hx-on:htmx:after-request": "var b=document.getElementById('ah-update'); if(b){b.classList.remove('is-loading','is-dirty'); b.disabled=true;}",
         }}
       >
+        {/* Window control — one calendar for both ends of the range, plus the
+            preset row. Writes epoch-ms into the hidden inputs below, which are
+            what actually get submitted. */}
         <div class="form-group" style="margin-bottom:0;">
-          <label>Since</label>
-          <input
-            type="datetime-local" name="since-display" id="ah-since-display"
-            value={toLocalInputValue(sinceMs)}
-            {...{ "hx-on:change": `(()=>{const t=new Date(this.value).getTime();document.getElementById('ah-since').value=Number.isFinite(t)?t:'0';})()` }}
-          />
-          <input type="hidden" name="since" id="ah-since" value={since} />
+          <label>Window</label>
+          <DateRangePicker since={sinceMs} until={untilMs} />
         </div>
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Until</label>
-          <input
-            type="datetime-local" name="until-display" id="ah-until-display"
-            value={toLocalInputValue(untilMs)}
-            {...{ "hx-on:change": `(()=>{const t=new Date(this.value).getTime();document.getElementById('ah-until').value=Number.isFinite(t)?t:String(Date.now());})()` }}
-          />
-          <input type="hidden" name="until" id="ah-until" value={until} />
-        </div>
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Quick</label>
-          <div style="display:flex;gap:4px;">
-            <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": `(()=>{const d=new Date();d.setHours(0,0,0,0);document.getElementById('ah-since').value=d.getTime();document.getElementById('ah-until').value=Date.now();document.getElementById('ah-since-display').value=new Date(d).toISOString().slice(0,16);document.getElementById('ah-until-display').value=new Date().toISOString().slice(0,16);htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'});})()` }}>Today</button>
-            <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": `(()=>{const u=Date.now();const s=u-7*86400000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('ah-since-display').value=new Date(s).toISOString().slice(0,16);document.getElementById('ah-until-display').value=new Date(u).toISOString().slice(0,16);htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'});})()` }}>7D</button>
-            <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": `(()=>{const u=Date.now();const s=u-30*86400000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('ah-since-display').value=new Date(s).toISOString().slice(0,16);document.getElementById('ah-until-display').value=new Date(u).toISOString().slice(0,16);htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'});})()` }}>30D</button>
-            <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": `(()=>{document.getElementById('ah-since').value='0';document.getElementById('ah-until').value=Date.now();htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'});})()` }}>All</button>
-          </div>
-        </div>
+        <input type="hidden" name="since" id="ah-since" value={since} />
+        <input type="hidden" name="until" id="ah-until" value={until} />
         <div class="form-group" style="margin-bottom:0;">
           <label>Team Member</label>
           {renderFilterSelect({ name: "owner", values: data.owners, selected: owner })}

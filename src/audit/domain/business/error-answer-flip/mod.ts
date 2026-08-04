@@ -81,11 +81,12 @@ export interface ErrorFlipBatchResult {
  *  the samples carry question headers, so they get a tighter cap. */
 const MAX_SAMPLES_PER_BATCH = 10;
 const MAX_HEADERS_PER_SAMPLE = 6;
-/** Concurrency is a MEMORY budget here, not just a rate limit. Every finding
- *  read pulls the whole audit document, transcript included, so peak memory is
- *  roughly concurrency × finding size. Prod died at "Isolate terminated: memory
- *  limit exceeded" on 2026-08-04 running this at 20 wide with the finding cache
- *  on. Keep these low, and keep the `cache: false` on getFinding below. */
+/** Concurrency is a MEMORY budget here, not just a rate limit. A finding
+ *  averages 282 KB on prod (up to 453 KB) — mostly the per-question `snippet`
+ *  copies — so peak memory is roughly concurrency × 300 KB. At 8 that is ~2.5 MB
+ *  in flight, which is fine; the killer was never the fan-out but the finding
+ *  CACHE retaining 1000 of them (see getFinding). Keep these low AND keep the
+ *  `cache: false` below — either one alone is not enough. */
 const SCAN_CONCURRENCY = 8;
 const FLIP_CONCURRENCY = 6;
 

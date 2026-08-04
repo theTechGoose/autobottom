@@ -54,12 +54,19 @@ function trimFindingCache(): void {
 /** Read a finding.
  *
  *  `opts.cache: false` still SERVES a warm entry but never POPULATES the cache.
- *  Bulk sweeps must pass it. The cache holds up to FINDING_CACHE_MAX (1000)
- *  whole findings, and a finding carries its transcript inline — so a scan that
- *  walks thousands of findings pins ~1000 full audit documents in memory and
- *  kills the isolate with "memory limit exceeded" (prod, 2026-08-04: the
- *  Error-Answer Cleanup scan died at 2000/4008 doing exactly this). Interactive
- *  callers, which re-read the same handful of findings, still want the cache. */
+ *  Bulk sweeps must pass it.
+ *
+ *  Findings are FAT: measured on prod 2026-08-04, average 282 KB and up to
+ *  453 KB each. ~85% of that is `answeredQuestions`, and almost all of THAT is
+ *  the per-question `snippet` — every question stores its own copy of the
+ *  relevant transcript text (25 questions × ~11 KB = ~285 KB), so the 9 KB
+ *  transcript is effectively duplicated 25 times. The cache holds up to
+ *  FINDING_CACHE_MAX (1000) of these = 276-442 MB, which on its own exceeds a
+ *  Deno Deploy isolate's budget. That is how the Error-Answer Cleanup scan
+ *  killed prod at 2000/4008 with "Isolate terminated: memory limit exceeded".
+ *
+ *  Interactive callers re-read the same handful of findings and still want the
+ *  cache; anything that walks a date range must not populate it. */
 export async function getFinding(
   orgId: OrgId,
   id: string,

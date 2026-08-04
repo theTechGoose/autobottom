@@ -52,6 +52,12 @@ export function ErrorFlipProgress(props: {
           "hx-target": "#error-flip-msg",
           "hx-swap": "innerHTML",
           "hx-trigger": "load delay:300ms",
+          // A failed tick is NOT swapped in by HTMX, so without this the card
+          // just freezes on its last good numbers and looks like it is still
+          // working — which is exactly how the 2026-08-04 OOM presented. Reveal
+          // the stall notice instead of lying about progress.
+          "hx-on::response-error": "this.querySelector('#ef-stall').style.display='block'",
+          "hx-on::send-error": "this.querySelector('#ef-stall').style.display='block'",
         })}
       style={`padding:14px 16px;border:1px solid ${done && !nothingFound && isScan ? "var(--yellow)" : done ? "var(--green)" : "var(--border)"};border-radius:6px;background:var(--bg);`}
     >
@@ -80,6 +86,25 @@ export function ErrorFlipProgress(props: {
         {job.errors > 0 && <span style="color:var(--red);">Errors: {job.errors}</span>}
         {!done && <span><span style="color:var(--text-dim);">●</span> Remaining: <strong style="color:var(--text-bright);">{job.remaining.length}</strong></span>}
       </div>
+
+      {/* Hidden until a tick actually fails (see hx-on::response-error above). */}
+      {!done && (
+        <div id="ef-stall" style="display:none;margin-top:12px;padding:8px 12px;border:1px solid var(--red);border-radius:4px;background:var(--bg-2);font-size:11px;color:var(--text-dim);line-height:1.5;">
+          <strong style="color:var(--red);">This run stopped.</strong> The server didn't answer the last
+          batch — usually it restarted under load. The counts above are frozen where it got to; nothing was
+          written (scanning only reads). Click Resume to carry on, or just run the scan again — it's safe to
+          re-run.
+          <div style="margin-top:8px;">
+            <button
+              class="sf-btn ghost"
+              style="padding:6px 14px;font-size:11px;"
+              hx-post={`/api/admin/modal/maintenance/error-flip-tick?jobId=${jobId}`}
+              hx-target="#error-flip-msg"
+              hx-swap="innerHTML"
+            >Resume</button>
+          </div>
+        </div>
+      )}
 
       {done && job.impacted > 0 && (
         <>

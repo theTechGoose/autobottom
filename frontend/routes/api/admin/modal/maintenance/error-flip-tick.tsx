@@ -17,12 +17,13 @@ import {
 } from "../../../../../lib/error-flip-job-store.ts";
 import { ErrorFlipProgress } from "../../../../../components/ErrorFlipProgress.tsx";
 
-/** Scanning is a bounded per-finding read fanned out ~20-concurrent, so 100
- *  findings/request finishes in a few seconds. Flipping runs a full
- *  adminFlipFinding per impacted audit (queue scans + several writes), so it
- *  takes a much smaller bite to stay inside the request budget. */
-const SCAN_BATCH = 100;
-const FLIP_BATCH = 25;
+/** Batch sizes are deliberately small. Each scanned finding is a whole audit
+ *  document (transcript inline), so a big batch means a long request AND a big
+ *  memory spike — prod hit "Isolate terminated: memory limit exceeded" at
+ *  100/batch on 2026-08-04. Smaller batches keep each request short and the
+ *  isolate alive; the loop just runs more of them. */
+const SCAN_BATCH = 50;
+const FLIP_BATCH = 15;
 
 interface ProcessResp {
   ok?: boolean;

@@ -51,15 +51,30 @@ function trimFindingCache(): void {
   }
 }
 
-export async function getFinding(orgId: OrgId, id: string): Promise<Record<string, any> | null> {
+/** Read a finding.
+ *
+ *  `opts.cache: false` still SERVES a warm entry but never POPULATES the cache.
+ *  Bulk sweeps must pass it. The cache holds up to FINDING_CACHE_MAX (1000)
+ *  whole findings, and a finding carries its transcript inline — so a scan that
+ *  walks thousands of findings pins ~1000 full audit documents in memory and
+ *  kills the isolate with "memory limit exceeded" (prod, 2026-08-04: the
+ *  Error-Answer Cleanup scan died at 2000/4008 doing exactly this). Interactive
+ *  callers, which re-read the same handful of findings, still want the cache. */
+export async function getFinding(
+  orgId: OrgId,
+  id: string,
+  opts: { cache?: boolean } = {},
+): Promise<Record<string, any> | null> {
   const key = cacheFindingKey(orgId, id);
   const now = Date.now();
   const cached = _findingCache.get(key);
   if (cached && cached.expiresAt > now) return cached.value;
 
   const value = await getStoredChunked<Record<string, any>>("audit-finding", orgId, id);
-  _findingCache.set(key, { value, expiresAt: now + FINDING_CACHE_TTL_MS });
-  trimFindingCache();
+  if (opts.cache !== false) {
+    _findingCache.set(key, { value, expiresAt: now + FINDING_CACHE_TTL_MS });
+    trimFindingCache();
+  }
   return value;
 }
 

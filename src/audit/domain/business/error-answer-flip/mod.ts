@@ -81,11 +81,13 @@ export interface ErrorFlipBatchResult {
  *  the samples carry question headers, so they get a tighter cap. */
 const MAX_SAMPLES_PER_BATCH = 10;
 const MAX_HEADERS_PER_SAMPLE = 6;
-/** Scanning is read-only, so it can fan out wide. Flipping runs a full
- *  adminFlipFinding per audit (queue scans + several writes), so it goes
- *  narrower to stay inside the request budget. */
-const SCAN_CONCURRENCY = 20;
-const FLIP_CONCURRENCY = 10;
+/** Concurrency is a MEMORY budget here, not just a rate limit. Every finding
+ *  read pulls the whole audit document, transcript included, so peak memory is
+ *  roughly concurrency × finding size. Prod died at "Isolate terminated: memory
+ *  limit exceeded" on 2026-08-04 running this at 20 wide with the finding cache
+ *  on. Keep these low, and keep the `cache: false` on getFinding below. */
+const SCAN_CONCURRENCY = 8;
+const FLIP_CONCURRENCY = 6;
 
 function emptyResult(): ErrorFlipBatchResult {
   return {
@@ -169,7 +171,10 @@ async function inspectOne(
   mode: ErrorFlipMode,
   flippedBy: string,
 ): Promise<{ sample: ErrorFlipSample | null; wrote: boolean } | null> {
-  const finding = await getFinding(orgId, findingId);
+  // cache:false — this walks thousands of findings and each one carries its
+  // transcript inline. Populating the finding cache here pins ~1000 whole audit
+  // documents in the isolate and OOMs it (see getFinding's comment).
+  const finding = await getFinding(orgId, findingId, { cache: false });
   if (!finding) return null;
 
   const answers = Array.isArray(finding.answeredQuestions) ? finding.answeredQuestions : [];

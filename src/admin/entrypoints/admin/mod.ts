@@ -1062,6 +1062,34 @@ export class AdminConfigController {
     return { ok: true, ...r };
   }
 
+  // ── Error-Answer Cleanup ──────────────────────────────────────────────
+  // Finds audits carrying an ungraded "Error" answer (every Groq fallback
+  // exhausted its retries) and forces each to a 100% reviewed pass. Same
+  // list/process chunking as Transcript Repair — whether an audit has an Error
+  // answer is only knowable from its answeredQuestions, so the per-finding pass
+  // has to be batched or it blows the Deno Deploy request budget.
+  @Post("error-flip-list") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async errorFlipList(@Body() body: GenericBodyRequest) {
+    const { since, until } = body as any;
+    if (!since || !until) return { ok: false, error: "since and until required" };
+    const { listErrorFlipFids } = await import("@audit/domain/business/error-answer-flip/mod.ts");
+    const candidates = await runInBackgroundLane(() => listErrorFlipFids(ORG(), Number(since), Number(until)));
+    return { ok: true, candidates };
+  }
+
+  @Post("error-flip-process") @ReturnedType(OkMessageResponse) @BodyType(GenericBodyRequest)
+  async errorFlipProcess(@Body() body: GenericBodyRequest) {
+    const { fids, mode, flippedBy } = body as any;
+    if (!Array.isArray(fids)) return { ok: false, error: "fids array required" };
+    // Anything that isn't an explicit "flip" is treated as a dry scan — a
+    // dropped or mistyped field must never cause an unintended write.
+    const safeMode = mode === "flip" ? "flip" : "scan";
+    const by = (typeof flippedBy === "string" && flippedBy.trim()) ? flippedBy.trim() : "admin";
+    const { processErrorFlipBatch } = await import("@audit/domain/business/error-answer-flip/mod.ts");
+    const r = await runInBackgroundLane(() => processErrorFlipBatch(ORG(), fids, safeMode, by));
+    return { ok: true, ...r };
+  }
+
   // ── Bulk Genie Retry ──────────────────────────────────────────────────
   // Re-runs audits that finalized as "Invalid Genie" after the recording
   // database they search comes back healthy. Three endpoints, so the caller

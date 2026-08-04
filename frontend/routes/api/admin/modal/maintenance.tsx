@@ -460,6 +460,49 @@ function BulkFlipPanel() {
         <div id="force-hundred-msg" style="margin-top:12px;"></div>
       </div>
 
+      {/* Error-Answer Cleanup. "Error" is what step-ask-all writes when every
+          Groq fallback model exhausted its retries — the question was never
+          graded, but it renders as "Bot Error — Could Not Grade" and drags the
+          score down. Scan-then-flip (two buttons, like Transcript Repair) so
+          the operator sees the blast radius first: forcing the whole audit to
+          100 also passes any GENUINE fails on it and drops their payroll rows,
+          which is why the scan card counts those before offering the button. */}
+      <div style="border:1px solid var(--yellow);border-radius:6px;padding:12px;background:var(--bg-2);margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:700;color:var(--yellow);margin-bottom:4px;">Clear "Error" answers — force those audits to 100%</div>
+        <div style="font-size:11px;color:var(--text-dim);line-height:1.5;margin-bottom:10px;">
+          Finds every audit in the window with at least one question the bot could not grade (shown as
+          "Bot Error — Could Not Grade", usually a Groq rate-limit) and forces each one to a 100% reviewed
+          pass attributed to you. Scanning is read-only — you get a list, a count of the genuine failures the
+          flip would also erase, and only then the Flip button. Safe to re-run; a flipped audit drops off the list.
+        </div>
+        <style dangerouslySetInnerHTML={{ __html: `
+          .ef-btn .ef-loading { display: none; }
+          .ef-btn.htmx-request .ef-label { display: none; }
+          .ef-btn.htmx-request .ef-loading { display: inline; }
+          .ef-btn.htmx-request, .ef-btn:disabled { opacity: 0.7; cursor: wait; }
+        `}} />
+        <form
+          hx-post="/api/admin/modal/maintenance/error-flip-start"
+          hx-target="#error-flip-msg"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']"
+          hx-indicator="find button[type='submit']"
+        >
+          {/* Explicit — the backend also defaults anything non-"flip" to a dry
+              scan, so a dropped field can never become a write. */}
+          <input type="hidden" name="mode" value="scan" />
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:10px;max-width:420px;">
+            <div class="sf"><label class="sf-label">From (audit date)</label><input type="date" name="since" class="sf-input" required /></div>
+            <div class="sf"><label class="sf-label">To (inclusive)</label><input type="date" name="until" class="sf-input" required /></div>
+          </div>
+          <button type="submit" class="sf-btn primary ef-btn" style="padding:8px 16px;min-width:250px;">
+            <span class="ef-label">Scan for error answers</span>
+            <span class="ef-loading">Scanning…</span>
+          </button>
+        </form>
+        <div id="error-flip-msg" style="margin-top:12px;"></div>
+      </div>
+
       {/* Reconcile sweep — finalizes any pending findings whose live score
           is already 100. Cleans up drift from pencil-flips that reached
           100% but never had review-pending / review-active entries

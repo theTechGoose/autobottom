@@ -1312,6 +1312,7 @@ export async function adminFlipFinding(
   orgId: OrgId,
   findingId: string,
   flippedBy: string = "admin",
+  opts: { includeErrors?: boolean } = {},
 ): Promise<{ success: boolean; score: number }> {
   const finding = await getFinding(orgId, findingId);
   if (!finding) return { success: false, score: 0 };
@@ -1334,10 +1335,25 @@ export async function adminFlipFinding(
   // bulk-flipped audits — see judge enrich's fallback path.
   const flippedAt = Date.now();
   const flippedHeaders: string[] = [];
+  // "Error" is not a verdict — step-ask-all writes it when every Groq fallback
+  // exhausted its retries, so the question was never graded at all. Left alone
+  // it keeps rendering "Bot Error — Could Not Grade" on the report even though
+  // the score below claims 100. `includeErrors` sweeps those to Yes too; only
+  // the Error-Answer Cleanup tool passes it, so every existing caller keeps the
+  // No-only behaviour.
+  //
+  // Deliberately NOT added to flippedHeaders: step-finalize only counts
+  // `answer === "No"` into the per-question `failed` counter, so an Error never
+  // incremented it. incrFlipToPass DECREMENTS that counter, so counting an
+  // Error flip here would silently delete a different audit's genuine failure
+  // from the month's bucket and under-report the Question Failures report.
   const corrected = answers.map((a: any) => {
     if (a.answer === "No") {
       if (a.header) flippedHeaders.push(String(a.header));
       return { ...a, answer: "Yes", reviewAction: "admin-flip", reviewedBy: flippedBy, reviewedAt: flippedAt };
+    }
+    if (opts.includeErrors && String(a.answer ?? "").trim().toLowerCase() === "error") {
+      return { ...a, answer: "Yes", reviewAction: "admin-flip-error", reviewedBy: flippedBy, reviewedAt: flippedAt };
     }
     return a;
   });

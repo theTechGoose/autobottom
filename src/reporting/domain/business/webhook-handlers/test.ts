@@ -3,7 +3,7 @@
  *  (tests/e2e/dashboard.test.ts) so we don't need Postmark in unit tests. */
 
 import { assertEquals } from "#assert";
-import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock, resolveManagerCc, overturnPhraseFor } from "./mod.ts";
+import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock, resolveManagerCc, overturnPhraseFor, envFlagEnabled } from "./mod.ts";
 
 /** Build a minimal finding whose record carries the given SupervisorEmail. */
 const findingWithSupervisor = (supervisorEmail: string) => ({
@@ -152,4 +152,25 @@ Deno.test("overturnPhraseFor — names the scope as the appeal, not the audit", 
 Deno.test("overturnPhraseFor — a one-question appeal reads as singular", () => {
   assertEquals(`1 of 1 ${overturnPhraseFor(1)}`, "1 of 1 appealed question was overturned");
   assertEquals(`0 of 1 ${overturnPhraseFor(1)}`, "0 of 1 appealed question was overturned");
+});
+
+// envFlagEnabled gates remediation emails. Its failure mode is emailing real
+// team members, so anything it doesn't clearly recognise must read as OFF.
+
+Deno.test("envFlagEnabled — an unset var is OFF, so a fresh deploy never mails", () => {
+  assertEquals(envFlagEnabled(undefined), false);
+  assertEquals(envFlagEnabled(""), false);
+  assertEquals(envFlagEnabled("   "), false);
+});
+
+Deno.test("envFlagEnabled — explicit affirmatives turn it on, case and spacing forgiven", () => {
+  for (const raw of ["true", "TRUE", " True ", "1", "yes", "on"]) {
+    assertEquals(envFlagEnabled(raw), true, `${raw} should enable`);
+  }
+});
+
+Deno.test("envFlagEnabled — negatives and typos stay OFF", () => {
+  for (const raw of ["false", "0", "no", "off", "ture", "enabled", "maybe"]) {
+    assertEquals(envFlagEnabled(raw), false, `${raw} must not enable`);
+  }
 });

@@ -60,6 +60,9 @@ export interface AuditHistoryData {
   saleUnknownCount?: number;
   /** Most-missed questions across the filtered window (top 3). */
   topMissed?: Array<{ header: string; count: number }>;
+  /** The three team members with the most misses in the window, each with the
+   *  single question they miss most. Same filtered set as topMissed. */
+  topMissers?: Array<{ member: string; misses: number; worstQuestion: string; worstCount: number }>;
   pages: number;
   page: number;
   owners: string[];
@@ -185,21 +188,44 @@ export function renderSummaryLine(data: AuditHistoryData, window?: { since: numb
 export function renderAuditHistoryTable(data: AuditHistoryData, window?: { since: number; until: number }) {
   const { items, pages, page, topMissed } = data;
   const missed = topMissed ?? [];
+  const missers = data.topMissers ?? [];
   return (
     <div>
       {renderSummaryLine(data, window)}
       {missed.length > 0 && (
-        <div class="card" style="margin-bottom:12px;padding:12px 16px;">
-          <div class="tbl-title" style="margin-bottom:8px;">Most Missed Questions (filtered window)</div>
-          <div style="display:flex;flex-direction:column;gap:6px;">
-            {missed.map((m, i) => (
-              <div key={m.header} style="display:flex;align-items:center;gap:10px;font-size:13px;">
-                <span class="mono" style="color:var(--text-muted);width:18px;">{i + 1}.</span>
-                <span style="flex:1;">{m.header}</span>
-                <span class="pill pill-red">{m.count} {m.count === 1 ? "miss" : "misses"}</span>
-              </div>
-            ))}
+        /* Two halves of the same question: WHAT the team misses (left) and WHO
+           misses most, on which question (right). The right half is dropped
+           when no audit in the window has a nameable auditee, so the card
+           collapses back to the single list rather than showing an empty rail. */
+        <div class="card" style="margin-bottom:12px;padding:12px 16px;display:flex;gap:24px;flex-wrap:wrap;">
+          <div style="flex:1 1 320px;min-width:0;">
+            <div class="tbl-title" style="margin-bottom:8px;">Most Missed Questions (filtered window)</div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              {missed.map((m, i) => (
+                <div key={m.header} style="display:flex;align-items:center;gap:10px;font-size:13px;">
+                  <span class="mono" style="color:var(--text-muted);width:18px;">{i + 1}.</span>
+                  <span style="flex:1;">{m.header}</span>
+                  <span class="pill pill-red">{m.count} {m.count === 1 ? "miss" : "misses"}</span>
+                </div>
+              ))}
+            </div>
           </div>
+          {missers.length > 0 && (
+            <div style="flex:1 1 320px;min-width:0;border-left:1px solid var(--border);padding-left:24px;">
+              <div class="tbl-title" style="margin-bottom:8px;">Most Misses by Team Member</div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                {missers.map((m, i) => (
+                  <div key={m.member} style="display:flex;align-items:center;gap:10px;font-size:13px;">
+                    <span class="mono" style="color:var(--text-muted);width:18px;">{i + 1}.</span>
+                    <span style="color:var(--text-bright);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;" title={m.member}>{m.member}</span>
+                    <span style="color:var(--text-dim);">|</span>
+                    <span style="flex:1;min-width:0;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title={m.worstQuestion}>{m.worstQuestion}</span>
+                    <span class="pill pill-red">{m.misses} {m.misses === 1 ? "miss" : "misses"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <div class="tbl">

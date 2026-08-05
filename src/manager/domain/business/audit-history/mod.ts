@@ -82,6 +82,11 @@ export interface AuditHistoryResult {
   /** Most-missed questions across the filtered window (top 3, from
    *  failed-finding-idx, restricted to the same finding set as total). */
   topMissed: Array<{ header: string; count: number }>;
+  /** The three team members with the MOST missed questions in the filtered
+   *  window, each with the single question they miss most — "who needs
+   *  coaching, and on what" beside the "what does the team miss" list.
+   *  Same finding set as topMissed, so every filter applies. */
+  topMissers: Array<{ member: string; misses: number; worstQuestion: string; worstCount: number }>;
   pages: number;
   page: number;
   owners: string[];
@@ -142,6 +147,51 @@ export interface DeptRollupRow {
  *  `failedRows` is the failed-question index for the same window (one row per
  *  failed question per audit). It's already fetched for the org-wide
  *  most-missed list, so reusing it here adds no reads. */
+/** The three team members with the most missed questions in this window, each
+ *  with the one question they miss most often.
+ *
+ *  Pure in-memory work over data the caller already holds: the filtered rows
+ *  supply findingId → team member, the failed-question rows supply the misses.
+ *  No extra reads — deliberately, this runs on a page load.
+ *
+ *  Only findings present in `rows` count, so every active filter (department,
+ *  shift, score, sale, team member) narrows this list exactly as it narrows the
+ *  table. Audits with no nameable auditee (`owner: "api"`, no VoName) are
+ *  skipped rather than bucketed under a fake name. */
+export function rankTopMissers(
+  rows: Array<{ findingId?: string; voName?: string; owner?: string }>,
+  failedRows: Array<{ findingId: string; questionKey: string; header: string }>,
+): Array<{ member: string; misses: number; worstQuestion: string; worstCount: number }> {
+  const memberOfFinding = new Map<string, string>();
+  for (const row of rows) {
+    const member = auditeeLabel(row);
+    if (row.findingId && member) memberOfFinding.set(row.findingId, member);
+  }
+
+  const byMember = new Map<string, { misses: number; questions: Map<string, { header: string; count: number }> }>();
+  for (const fr of failedRows) {
+    const member = memberOfFinding.get(fr.findingId);
+    if (!member) continue;
+    const bucket = byMember.get(member) ?? { misses: 0, questions: new Map() };
+    bucket.misses++;
+    const q = bucket.questions.get(fr.questionKey) ?? { header: shortQuestionLabel(fr.header), count: 0 };
+    q.count++;
+    bucket.questions.set(fr.questionKey, q);
+    byMember.set(member, bucket);
+  }
+
+  return [...byMember.entries()]
+    // Most misses first; ties break by name so the list is stable across
+    // refreshes rather than reshuffling on every load.
+    .sort((a, b) => b[1].misses - a[1].misses || a[0].localeCompare(b[0]))
+    .slice(0, 3)
+    .map(([member, b]) => {
+      const worst = [...b.questions.values()]
+        .sort((x, y) => y.count - x.count || x.header.localeCompare(y.header))[0];
+      return { member, misses: b.misses, worstQuestion: worst.header, worstCount: worst.count };
+    });
+}
+
 export function rollupByDepartment(
   rows: Array<{ findingId?: string; department?: string; score?: number | null; voName?: string; owner?: string }>,
   failedRows: Array<{ findingId: string; questionKey: string; header: string }> = [],
@@ -419,6 +469,7 @@ async function _getAuditHistoryRaw(
   // audit, counted only for findings in the SAME filtered set as total /
   // avgScore — so the team-member/dept/shift/sale/score filters all apply.
   let topMissed: Array<{ header: string; count: number }> = [];
+  let topMissers: AuditHistoryResult["topMissers"] = [];
   // Hoisted so the per-department rollup can reuse the SAME rows for its own
   // top-3 — one failed-question query serves both. On failure it stays empty
   // and every top-3 list is simply absent; the rest of the rollup is fine.
@@ -434,6 +485,7 @@ async function _getAuditHistoryRaw(
       counts.set(r.questionKey, cur);
     }
     topMissed = [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 3);
+    topMissers = rankTopMissers(filtered, failedRows);
   } catch (err) {
     console.warn("⚠️ [MANAGER-AUDITS] top-missed query skipped:", err);
   }
@@ -467,5 +519,5 @@ async function _getAuditHistoryRaw(
 
   console.log(`🔍 [MANAGER-AUDITS] ${email} role=${role} → ${total}/${inWindow.length} in window, page=${page}/${pages}`);
 
-  return { items, total, avgScore, scoredCount: scores.length, passedCount, wgsCount, mccCount, saleUnknownCount, topMissed, pages, page, owners, shifts, departments, deptRollup };
+  return { items, total, avgScore, scoredCount: scores.length, passedCount, wgsCount, mccCount, saleUnknownCount, topMissed, topMissers, pages, page, owners, shifts, departments, deptRollup };
 }

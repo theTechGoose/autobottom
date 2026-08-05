@@ -6,7 +6,7 @@
  *  belongs in an int.test.ts when we add one. This file pins the exported surface
  *  so renames or signature drift fail fast. */
 import { assert, assertEquals } from "#assert";
-import { appealStatusFromIndex, getAuditHistory, rollupByDepartment } from "./mod.ts";
+import { appealStatusFromIndex, getAuditHistory, rankTopMissers, rollupByDepartment } from "./mod.ts";
 
 Deno.test("audit-history — getAuditHistory is exported and callable", () => {
   assert(typeof getAuditHistory === "function");
@@ -204,4 +204,68 @@ Deno.test("rollupByDepartment — average is rounded to one decimal", () => {
 
 Deno.test("rollupByDepartment — empty input yields no rows", () => {
   assertEquals(rollupByDepartment([]), []);
+});
+
+// rankTopMissers powers the "Most Misses by Team Member" half of the
+// most-missed card: who to coach, and on what.
+
+Deno.test("rankTopMissers — ranks by total misses and names each member's worst question", () => {
+  const rows = [
+    { findingId: "f1", voName: "Ann Lee" },
+    { findingId: "f2", voName: "Ann Lee" },
+    { findingId: "f3", voName: "Bob Ray" },
+  ];
+  const failed = [
+    { findingId: "f1", questionKey: "taxes", header: "Taxes" },
+    { findingId: "f1", questionKey: "9-service-fee", header: "9% Service Fee" },
+    { findingId: "f2", questionKey: "taxes", header: "Taxes" },
+    { findingId: "f3", questionKey: "age", header: "Age" },
+  ];
+  const [first, second] = rankTopMissers(rows, failed);
+  assertEquals(first.member, "Ann Lee");
+  assertEquals(first.misses, 3);
+  // Taxes twice beats the fee question's one.
+  assertEquals(first.worstQuestion, "Taxes");
+  assertEquals(first.worstCount, 2);
+  assertEquals(second.member, "Bob Ray");
+  assertEquals(second.misses, 1);
+});
+
+Deno.test("rankTopMissers — displays the renamed question label, not the raw header", () => {
+  const [top] = rankTopMissers(
+    [{ findingId: "f1", voName: "Ann Lee" }],
+    [{ findingId: "f1", questionKey: "9-service-fee", header: "9% Service Fee" }],
+  );
+  assertEquals(top.worstQuestion, "11% Service Fee");
+});
+
+Deno.test("rankTopMissers — caps at three members", () => {
+  const rows = ["a", "b", "c", "d"].map((n) => ({ findingId: n, voName: `TM ${n}` }));
+  const failed = rows.map((r) => ({ findingId: r.findingId, questionKey: "taxes", header: "Taxes" }));
+  assertEquals(rankTopMissers(rows, failed).length, 3);
+});
+
+Deno.test("rankTopMissers — a miss on a finding outside the filtered rows is ignored", () => {
+  // The failed-question index covers the whole window; only findings that
+  // survived the caller's filters may count, or the card would contradict
+  // the table beside it.
+  const result = rankTopMissers(
+    [{ findingId: "f1", voName: "Ann Lee" }],
+    [{ findingId: "f9", questionKey: "taxes", header: "Taxes" }],
+  );
+  assertEquals(result, []);
+});
+
+Deno.test("rankTopMissers — API-owned audits have no auditee and are skipped", () => {
+  // finding.owner is the literal "api" for pipeline-triggered audits; that is
+  // not a person and must never be listed as a team member needing coaching.
+  const result = rankTopMissers(
+    [{ findingId: "f1", owner: "api" }, { findingId: "f2", owner: "jane@monsterrg.com" }],
+    [
+      { findingId: "f1", questionKey: "taxes", header: "Taxes" },
+      { findingId: "f2", questionKey: "taxes", header: "Taxes" },
+    ],
+  );
+  assertEquals(result.length, 1);
+  assertEquals(result[0].member, "jane");
 });

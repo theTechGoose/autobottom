@@ -3,7 +3,7 @@
 import { assertEquals, assert } from "#assert";
 import {
   trackActive, trackCompleted, trackError, trackErrorOnce, clearErrors, trackRetry,
-  writeAuditDoneIndex, writeSoleAuditDoneIndex, buildIndexMeta, saleFlagsFromFinding, queryAuditDoneIndex, findAuditsByRecordId,
+  writeAuditDoneIndex, writeSoleAuditDoneIndex, pruneStaleDoneIdxRows, buildIndexMeta, saleFlagsFromFinding, queryAuditDoneIndex, findAuditsByRecordId,
   saveChargebackEntry, getChargebackEntry, getChargebackEntries, deleteChargebackEntry,
   saveWireDeductionEntry, getWireDeductionEntry, getWireDeductionEntries, deleteWireDeductionEntry,
   getStats, terminateFinding, terminateAllActive,
@@ -256,6 +256,67 @@ Deno.test({ name: "writeSoleAuditDoneIndex — appeal re-stamp marks pending + p
   assertEquals(after?.appealStatus, "pending", "appeal filing marks the index row pending");
   assertEquals(after?.score, 80, "finalized score preserved through the appeal re-stamp");
   assertEquals(after?.completed, true, "completed preserved");
+}});
+
+Deno.test({ name: "writeSoleAuditDoneIndex — an ISO-string reviewedAt still collapses to ONE row", ...kvOpts, fn: async () => {
+  // Reproduces the prod split: a reviewer finalizes (reviewedAt as a ms
+  // NUMBER → row keyed at review time, score 96), then an admin pencil-flips
+  // a question, which rewrites reviewedAt as an ISO STRING. Number(iso) is
+  // NaN, so the flip used to key its row at completedAt AND skip the sibling
+  // cleanup — leaving two rows, 96 and 100, while the report said 100.
+  const ORG = "test-iso-reviewedat-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-iso-" + crypto.randomUUID().slice(0, 8);
+  const completedAt = Date.now() - 600_000;
+  const reviewedAtMs = completedAt + 300_000;
+
+  const reviewed = {
+    id: fid, findingStatus: "finished", completedAt, reviewedAt: reviewedAtMs,
+    record: { RecordId: "R-ISO", ActivatingOffice: "DEPT-A" },
+  };
+  await saveFinding(ORG, reviewed);
+  await writeSoleAuditDoneIndex(ORG, reviewed, {
+    findingId: fid, score: 96, completed: true, reason: "reviewed",
+    doneAt: reviewedAtMs, ...buildIndexMeta(reviewed),
+  } as Omit<AuditDoneIndexEntry, "completedAt">);
+
+  // The admin flip: same finding, reviewedAt now an ISO string, score 100.
+  const flipped = { ...reviewed, reviewedAt: new Date(reviewedAtMs + 60_000).toISOString(), reviewScore: 100 };
+  await saveFinding(ORG, flipped);
+  await writeSoleAuditDoneIndex(ORG, flipped, {
+    findingId: fid, score: 100, completed: true, reason: "reviewed",
+    doneAt: Date.now(), ...buildIndexMeta(flipped),
+  } as Omit<AuditDoneIndexEntry, "completedAt">);
+
+  _resetQueryAuditDoneIndexCacheForTests();
+  const rows = (await queryAuditDoneIndex(ORG, completedAt - 10_000, Date.now() + 10_000))
+    .filter((e) => e.findingId === fid);
+
+  assertEquals(rows.length, 1, "one finding must leave exactly one index row");
+  assertEquals(rows[0].score, 100, "the surviving row carries the post-flip score the report shows");
+}});
+
+Deno.test({ name: "pruneStaleDoneIdxRows — a re-finalize at a new completedAt replaces the row, not adds one", ...kvOpts, fn: async () => {
+  // The completion writer keys on the completedAt it was handed. A retry /
+  // re-run finalizes the same finding a second later, so the key moves and the
+  // first row is stranded — two rows for one audit, seconds apart.
+  const ORG = "test-refinalize-" + crypto.randomUUID().slice(0, 8);
+  const fid = "f-rf-" + crypto.randomUUID().slice(0, 8);
+  const first = Date.now() - 60_000;
+  const second = first + 1523; // the real gap seen in prod
+
+  await saveFinding(ORG, { id: fid, findingStatus: "finished", completedAt: second, record: { RecordId: "R-RF" } });
+  for (const ts of [first, second]) {
+    await writeAuditDoneIndex(ORG, {
+      findingId: fid, completedAt: ts, score: 80, completed: false, recordId: "R-RF",
+    } as AuditDoneIndexEntry, { assumeFinished: true });
+    await pruneStaleDoneIdxRows(ORG, fid, ts);
+  }
+
+  _resetQueryAuditDoneIndexCacheForTests();
+  const rows = (await queryAuditDoneIndex(ORG, first - 10_000, Date.now() + 10_000))
+    .filter((e) => e.findingId === fid);
+  assertEquals(rows.length, 1, "re-finalizing must move the row, not duplicate it");
+  assertEquals(rows[0].completedAt, second, "the surviving row is the latest finalize");
 }});
 
 Deno.test({ name: "findAuditsByRecordId — dedup-hidden findings are surfaced flagged, not dropped", ...kvOpts, fn: async () => {

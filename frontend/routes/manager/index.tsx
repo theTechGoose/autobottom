@@ -77,8 +77,8 @@ export default define.page(async function ManagerPortalPage(ctx) {
           <div class="form-group" style="margin-bottom:0;">
             <label>Window</label>
             <DateRangePicker
-              since={params.since}
-              until={params.until}
+              since={params.since ?? 0}
+              until={params.until ?? Date.now()}
               sinceInputId="q-since"
               untilInputId="q-until"
               pageInputId=""

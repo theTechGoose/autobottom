@@ -1,6 +1,6 @@
 /** STEP 5: Finalize - collect answers, webhook, save to external Deno KV. */
 import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
-import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, saveWireDeductionEntry, buildIndexMeta } from "@audit/domain/data/stats-repository/mod.ts";
+import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, pruneStaleDoneIdxRows, saveWireDeductionEntry, buildIndexMeta } from "@audit/domain/data/stats-repository/mod.ts";
 import { getOfficeBypassConfig, getBonusPointsConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFailed as incrQuestionFailed, configKeyForFinding, markCounted as markQuestionFailCounted } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { writeFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
@@ -206,6 +206,11 @@ export async function stepFinalize(req: Request): Promise<Response> {
     console.log(wrote
       ? `[STEP-FINALIZE] ${findingId}: 📇 audit-done-idx written — completed=${isAutoComplete} reason=${reason ?? "pending-review"}`
       : `[STEP-FINALIZE] ${findingId}: ⚠️ audit-done-idx write skipped by status guard`);
+    // A finding finalized twice (retry / re-run) arrives here with a DIFFERENT
+    // completedAt, and the row key embeds that timestamp — so the second pass
+    // added a row instead of replacing one. Same finding, two rows, seconds
+    // apart. Drop whatever the previous pass left behind.
+    if (wrote) await pruneStaleDoneIdxRows(orgId, findingId, completedAt);
   } catch (err) {
     console.error(`[STEP-FINALIZE] ${findingId}: ❌ audit-done-idx write failed:`, err);
   }

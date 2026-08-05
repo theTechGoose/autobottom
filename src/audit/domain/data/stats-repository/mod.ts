@@ -851,13 +851,38 @@ export async function deleteAuditDoneIdxByFindingId(orgId: OrgId, findingId: str
   return removed;
 }
 
+/** Epoch-ms from a timestamp field that may be stored either way. Findings are
+ *  NOT consistent here: reviewer-finalize writes `reviewedAt` as a ms number,
+ *  the two admin pencil-flip paths write it as an ISO string. A bare
+ *  `Number(isoString)` is NaN, which silently (a) keyed the flip's row at
+ *  completedAt instead of review time and (b) made the sibling cleanup below
+ *  skip the reviewer's row — leaving one finding with two rows at two
+ *  different scores, so audit-history disagreed with the report. Parse both. */
+function toEpochMs(v: unknown): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string" && v !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : Date.parse(v);
+  }
+  return NaN;
+}
+
+/** Where this finding's index row was last written. The row key embeds a
+ *  MUTABLE timestamp (`reviewedAt`), so a second review action moves the key
+ *  and orphans the previous row — and the old key is not recoverable from the
+ *  finding, which now only carries the NEW reviewedAt. This pointer is that
+ *  missing breadcrumb: one tiny doc per finding, read+written alongside the
+ *  row, so the writer can always point-delete exactly where it last wrote. */
+const DONE_IDX_KEY_PTR = "audit-done-idx-key";
+
 /** Write a finding's audit-done-idx row AND guarantee it is the ONLY row for
  *  that finding. Canonical key = `reviewedAt ?? completedAt`: a reviewed
  *  finding indexes at its review time (reviewer-throughput buckets on that),
- *  everything else at audit-completion time. Any sibling row at the other
- *  timestamp is point-deleted, so a reviewed finding can never accumulate the
- *  (audit-row + review-row) duplicate pair. Use in every post-completion writer
- *  (review / judge / flips) instead of bare writeAuditDoneIndex.
+ *  everything else at audit-completion time. Every OTHER row for the finding is
+ *  point-deleted — the sibling at the other timestamp, plus wherever the last
+ *  write left one (see DONE_IDX_KEY_PTR) — so a finding can never accumulate
+ *  rows at two scores. Use in every post-completion writer (review / judge /
+ *  flips) instead of bare writeAuditDoneIndex.
  *
  *  Pass the finding doc reflecting the post-action state (e.g. the corrected
  *  finding with reviewedAt set) so the canonical timestamp resolves correctly. */
@@ -867,8 +892,8 @@ export async function writeSoleAuditDoneIndex(
   entry: Omit<AuditDoneIndexEntry, "completedAt">,
   opts?: { assumeFinished?: boolean },
 ): Promise<boolean> {
-  const completedAt = Number(finding?.completedAt);
-  const reviewedAt = Number(finding?.reviewedAt);
+  const completedAt = toEpochMs(finding?.completedAt);
+  const reviewedAt = toEpochMs(finding?.reviewedAt);
   const canonicalTs = Number.isFinite(reviewedAt) ? reviewedAt
     : Number.isFinite(completedAt) ? completedAt
     : NaN;
@@ -886,19 +911,47 @@ export async function writeSoleAuditDoneIndex(
   // score but not the reviewer attribution).
   const existing = await getStored<AuditDoneIndexEntry>("audit-done-idx", orgId, padTs(canonicalTs), entry.findingId)
     .catch(() => null);
+  const lastKey = await getStored<{ ts: number }>(DONE_IDX_KEY_PTR, orgId, entry.findingId).catch(() => null);
   const wrote = await writeAuditDoneIndex(
     orgId,
     { ...(existing ?? {}), ...entry, completedAt: canonicalTs } as AuditDoneIndexEntry,
     opts,
   );
-  // Remove the sibling row at the other timestamp so exactly one row survives.
-  for (const ts of [completedAt, reviewedAt]) {
-    if (Number.isFinite(ts) && ts !== canonicalTs) {
-      await deleteAuditDoneIndexEntry(orgId, entry.findingId, ts).catch((e) =>
-        console.warn(`[DONE-IDX] ${entry.findingId}: sibling row cleanup failed (non-fatal): ${(e as Error).message}`));
+  // Only prune once the new row is actually down — a skipped write (status
+  // guard) must not leave the finding with no row at all.
+  if (!wrote) return wrote;
+  // Every place a row for this finding could be: the two timestamps the finding
+  // still carries, plus wherever the previous write put one.
+  await pruneStaleDoneIdxRows(orgId, entry.findingId, canonicalTs, [completedAt, reviewedAt, lastKey?.ts]);
+  return wrote;
+}
+
+/** Delete every audit-done-idx row for `findingId` that is NOT at `canonicalTs`,
+ *  then stamp the key pointer at `canonicalTs`.
+ *
+ *  A row's key embeds a timestamp, so "the same finding, written again under a
+ *  different timestamp" silently becomes a SECOND row rather than an overwrite.
+ *  Candidate keys come from two places: whatever timestamps the caller still
+ *  knows about (passed in), and the pointer — the only record of where the
+ *  LAST write landed once the finding's own timestamps have moved on.
+ *
+ *  Best-effort by design: a failed delete leaves a duplicate for the dedup
+ *  sweep to collect, which is strictly better than failing the caller's write. */
+export async function pruneStaleDoneIdxRows(
+  orgId: OrgId,
+  findingId: string,
+  canonicalTs: number,
+  candidates: Array<number | undefined> = [],
+): Promise<void> {
+  const pointer = await getStored<{ ts: number }>(DONE_IDX_KEY_PTR, orgId, findingId).catch(() => null);
+  for (const ts of new Set([...candidates, pointer?.ts])) {
+    if (typeof ts === "number" && Number.isFinite(ts) && ts !== canonicalTs) {
+      await deleteAuditDoneIndexEntry(orgId, findingId, ts).catch((e) =>
+        console.warn(`[DONE-IDX] ${findingId}: stale row cleanup failed (non-fatal): ${(e as Error).message}`));
     }
   }
-  return wrote;
+  await setStored(DONE_IDX_KEY_PTR, orgId, [findingId], { ts: canonicalTs }).catch((e) =>
+    console.warn(`[DONE-IDX] ${findingId}: key-pointer write failed (non-fatal): ${(e as Error).message}`));
 }
 
 /** Among multiple audit-done-idx rows for ONE finding, pick the index of the

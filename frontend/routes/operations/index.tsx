@@ -499,8 +499,8 @@ export default define.page(async function OperationsPortalPage(ctx) {
                       <div class="form-group" style="margin-bottom:0;">
                         <label>Window</label>
                         <DateRangePicker
-                          since={queueParams.since}
-                          until={queueParams.until}
+                          since={queueParams.since ?? 0}
+                          until={queueParams.until ?? Date.now()}
                           sinceInputId="q-since"
                           untilInputId="q-until"
                           pageInputId=""

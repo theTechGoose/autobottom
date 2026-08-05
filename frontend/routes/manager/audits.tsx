@@ -97,38 +97,6 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         .ah-loading.htmx-request{ display:flex; gap:10px; align-items:center; justify-content:center; position:absolute; inset:0; z-index:5; background:rgba(13,17,23,0.55); border-radius:8px; }
         .ah-loading-spinner{ width:20px; height:20px; border-width:3px; }
         .ah-loading-text{ color:var(--text-bright); font-size:13px; font-weight:600; }
-
-        /* Window control (DateRangePicker island). */
-        .drp{ position:relative; display:flex; flex-direction:column; gap:6px; }
-        .drp-presets{ display:flex; gap:4px; flex-wrap:wrap; }
-        .drp-preset-on{ background:var(--accent); color:#0b0f15; font-weight:700; border-color:var(--accent); }
-        .drp-trigger{
-          display:flex; align-items:center; gap:8px; min-width:260px;
-          background:var(--bg); border:1px solid var(--border); border-radius:8px;
-          color:var(--text-bright); font-size:13px; padding:8px 12px; cursor:pointer;
-          font-variant-numeric:tabular-nums;
-        }
-        .drp-trigger:hover{ border-color:var(--border-hover); }
-        .drp-pop{
-          position:absolute; top:100%; left:0; margin-top:6px; z-index:200;
-          background:var(--bg-surface); border:1px solid var(--border-hover); border-radius:12px;
-          padding:14px 16px; box-shadow:0 16px 40px rgba(0,0,0,0.7);
-        }
-        .drp-head{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:10px; }
-        .drp-hint{ font-size:11px; color:var(--text-muted); }
-        .drp-nav{ display:flex; gap:4px; }
-        .drp-months{ display:flex; gap:24px; }
-        .drp-month-title{ font-size:12px; font-weight:700; color:var(--text-bright); text-align:center; margin-bottom:8px; }
-        .drp-grid{ display:grid; grid-template-columns:repeat(7, 32px); gap:2px; }
-        .drp-dow{ font-size:10px; color:var(--text-dim); text-align:center; padding-bottom:4px; }
-        .drp-day{
-          height:30px; border:0; border-radius:6px; background:transparent;
-          color:var(--text); font-size:12px; cursor:pointer; font-variant-numeric:tabular-nums;
-        }
-        .drp-day:hover{ background:var(--border-hover); color:var(--text-bright); }
-        .drp-day.in-range{ background:var(--accent-bg); color:var(--text-bright); }
-        .drp-day.edge{ background:var(--accent); color:#0b0f15; font-weight:700; }
-        .drp-day.today{ box-shadow:inset 0 0 0 1px var(--border-hover); }
       `}</style>
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
         <div>

@@ -10,9 +10,10 @@
  *    - All departments → a roll-up comparing every department they own
  *                      (pending, oldest waiting item, average score)
  *
- *  Everything is server-rendered; departments and tabs are plain links, so
- *  there is no island here (see frontend/CLAUDE.md — islands only when the UI
- *  physically can't work without client JS).
+ *  Everything is server-rendered; departments and tabs are plain links. The
+ *  only island is the shared DateRangePicker on the two filter bars — a
+ *  two-month calendar genuinely can't work without client JS, and it is the
+ *  same control every other audit-listing view uses.
  *
  *  Data cost is deliberately flat. ONE queue read serves the sidebar counts,
  *  the header, the Outstanding tab and the Completed tab. The roll-up and the
@@ -29,6 +30,7 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import type { SbDept } from "../../components/Sidebar.tsx";
 import { apiFetch } from "../../lib/api.ts";
+import DateRangePicker from "../../islands/DateRangePicker.tsx";
 import {
   renderQueueResults, renderQueueTable, queueFacets, filterAndSortQueue,
   readQueueFilterParams, queueTimestamp, type QueueItem,
@@ -232,41 +234,6 @@ function safeMs(v: string | null, dflt: number): number {
   return Number.isFinite(n) ? n : dflt;
 }
 
-function toLocalInput(ms: number): string {
-  const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-/** Inline click handler for a queue window preset: set the hidden since/until
- *  (ms) + the calendar display, then refetch just the table. n=0 → all time.
- *  Mirrors the same helper on /manager — the queue fragment reads the same
- *  ids, so the markup has to agree. */
-function queueWinHandler(n: number): string {
-  const sExpr = n === 0 ? "0" : `u-${n}*86400000`;
-  const sDisp = n === 0 ? "''" : "f(s)";
-  return `(()=>{var u=Date.now(),s=${sExpr};` +
-    `document.getElementById('q-since').value=s;document.getElementById('q-until').value=u;` +
-    `var sd=document.getElementById('q-since-display'),ud=document.getElementById('q-until-display');` +
-    `var p=function(x){return String(x).padStart(2,'0')},f=function(m){var d=new Date(m);return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())};` +
-    `if(sd)sd.value=${sDisp};if(ud)ud.value=f(u);` +
-    `htmx.ajax('GET','/api/manager/queue',{source:'#queue-filters',target:'#manager-queue-table',swap:'innerHTML'});})()`;
-}
-
-/** Audit-history window preset. Same contract as /manager/audits: set the
- *  hidden ms inputs then refresh the table through the shared fragment. */
-function auditWinHandler(days: number): string {
-  const refresh = `htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'})`;
-  if (days === 0) {
-    return `(()=>{document.getElementById('ah-since').value='0';document.getElementById('ah-until').value=Date.now();document.getElementById('ah-page').value='1';${refresh};})()`;
-  }
-  return `(()=>{var u=Date.now(),s=u-${days}*86400000;` +
-    `document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;` +
-    `var p=function(x){return String(x).padStart(2,'0')},f=function(m){var d=new Date(m);return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())};` +
-    `document.getElementById('ah-since-display').value=f(s);document.getElementById('ah-until-display').value=f(u);` +
-    `document.getElementById('ah-page').value='1';${refresh};})()`;
-}
-
 export default define.page(async function OperationsPortalPage(ctx) {
   const user = ctx.state.user!;
   const url = new URL(ctx.req.url);
@@ -407,8 +374,6 @@ export default define.page(async function OperationsPortalPage(ctx) {
   const completedRows = allItems
     .filter((i) => i.status === "remediated" && inDept(i))
     .sort((a, b) => (b.remediatedAt ?? 0) - (a.remediatedAt ?? 0));
-  const qSinceDisplay = queueParams.since && queueParams.since > 0 ? toLocalInput(queueParams.since) : "";
-  const qUntilDisplay = queueParams.until ? toLocalInput(queueParams.until) : "";
 
   // ── Audit-history read (overview roll-up, or the Audit History tab) ───────
   // Params + query-string builder are hoisted to the top of the handler so the
@@ -530,25 +495,22 @@ export default define.page(async function OperationsPortalPage(ctx) {
                       hx-swap="innerHTML"
                       hx-trigger="change, keyup changed delay:350ms, submit"
                     >
+                      {/* Same window control as every other audit view. */}
                       <div class="form-group" style="margin-bottom:0;">
                         <label>Window</label>
-                        <div style="display:flex;gap:4px;flex-wrap:wrap;">
-                          {[7, 14, 30, 60, 90].map((n) => (
-                            <button key={n} type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": queueWinHandler(n) }}>{n}D</button>
-                          ))}
-                          <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": queueWinHandler(0) }}>All</button>
-                        </div>
+                        <DateRangePicker
+                          since={queueParams.since}
+                          until={queueParams.until}
+                          sinceInputId="q-since"
+                          untilInputId="q-until"
+                          pageInputId=""
+                          formId="queue-filters"
+                          targetId="manager-queue-table"
+                          endpoint="/api/manager/queue"
+                        />
                       </div>
-                      <div class="form-group" style="margin-bottom:0;">
-                        <label>Since</label>
-                        <input type="datetime-local" id="q-since-display" value={qSinceDisplay} {...{ "hx-on:change": "document.getElementById('q-since').value=(this.value?new Date(this.value).getTime():0)" }} />
-                        <input type="hidden" name="since" id="q-since" value={String(queueParams.since)} />
-                      </div>
-                      <div class="form-group" style="margin-bottom:0;">
-                        <label>Until</label>
-                        <input type="datetime-local" id="q-until-display" value={qUntilDisplay} {...{ "hx-on:change": "document.getElementById('q-until').value=(this.value?new Date(this.value).getTime():Date.now())" }} />
-                        <input type="hidden" name="until" id="q-until" value={String(queueParams.until)} />
-                      </div>
+                      <input type="hidden" name="since" id="q-since" value={String(queueParams.since)} />
+                      <input type="hidden" name="until" id="q-until" value={String(queueParams.until)} />
                       <div class="form-group" style="margin-bottom:0;">
                         <label>Team Member</label>
                         <input type="text" name="member" list="queue-members" value={queueParams.member} placeholder="Search name…" autocomplete="off" />
@@ -624,33 +586,23 @@ export default define.page(async function OperationsPortalPage(ctx) {
                         "hx-on:htmx:after-request": "var b=document.getElementById('ah-update'); if(b){b.classList.remove('is-loading','is-dirty'); b.disabled=true;}",
                       }}
                     >
+                      {/* Same window control as /manager/audits — presets plus
+                          one calendar covering both ends of the range. */}
                       <div class="form-group" style="margin-bottom:0;">
-                        <label>Since</label>
-                        <input
-                          type="datetime-local" name="since-display" id="ah-since-display"
-                          value={toLocalInput(ahSinceMs)}
-                          {...{ "hx-on:change": "(()=>{const t=new Date(this.value).getTime();document.getElementById('ah-since').value=Number.isFinite(t)?t:'0';})()" }}
+                        <label>Window</label>
+                        <DateRangePicker
+                          since={ahSinceMs}
+                          until={ahUntilMs}
+                          sinceInputId="ah-since"
+                          untilInputId="ah-until"
+                          pageInputId="ah-page"
+                          formId="audit-history-filters"
+                          targetId="audit-history-table"
+                          endpoint="/api/manager/audit-history"
                         />
-                        <input type="hidden" name="since" id="ah-since" value={String(ahSinceMs)} />
                       </div>
-                      <div class="form-group" style="margin-bottom:0;">
-                        <label>Until</label>
-                        <input
-                          type="datetime-local" name="until-display" id="ah-until-display"
-                          value={toLocalInput(ahUntilMs)}
-                          {...{ "hx-on:change": "(()=>{const t=new Date(this.value).getTime();document.getElementById('ah-until').value=Number.isFinite(t)?t:String(Date.now());})()" }}
-                        />
-                        <input type="hidden" name="until" id="ah-until" value={String(ahUntilMs)} />
-                      </div>
-                      <div class="form-group" style="margin-bottom:0;">
-                        <label>Quick</label>
-                        <div style="display:flex;gap:4px;">
-                          <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": auditWinHandler(7) }}>7D</button>
-                          <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": auditWinHandler(30) }}>30D</button>
-                          <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": auditWinHandler(90) }}>90D</button>
-                          <button type="button" class="btn btn-ghost btn-sm" {...{ "hx-on:click": auditWinHandler(0) }}>All</button>
-                        </div>
-                      </div>
+                      <input type="hidden" name="since" id="ah-since" value={String(ahSinceMs)} />
+                      <input type="hidden" name="until" id="ah-until" value={String(ahUntilMs)} />
                       <div class="form-group" style="margin-bottom:0;">
                         <label>Team Member</label>
                         {renderFilterSelect({ name: "owner", values: auditData.owners, selected: ahOwner })}

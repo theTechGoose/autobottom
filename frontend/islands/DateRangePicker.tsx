@@ -13,6 +13,11 @@
  *  htmx.ajax refresh every other control on the bar uses. That keeps the form
  *  the single source of truth for query params.
  *
+ *  Its CSS travels WITH it (the `<style>` block below) rather than living in
+ *  each host page — every audit-listing view (manager audit history, the
+ *  operations audit tab, both remediation queues) mounts the same control, and
+ *  a page that forgot to copy the styles would render a broken calendar.
+ *
  *  All boundaries are the VIEWER's local day, not UTC — a manager filtering
  *  "today" means their today. */
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -104,6 +109,41 @@ function monthGrid(year: number, month: number): Array<Date | null> {
   for (let d = 1; d <= days; d++) cells.push(new Date(year, month, d));
   return cells;
 }
+
+/** Styles for the control. Shipped inside the island (see the header note) so
+ *  mounting it is a one-liner on any page. */
+const DRP_STYLES = `
+  .drp{ position:relative; display:flex; flex-direction:column; gap:6px; }
+  .drp-presets{ display:flex; gap:4px; flex-wrap:wrap; }
+  .drp-preset-on{ background:var(--accent); color:#0b0f15; font-weight:700; border-color:var(--accent); }
+  .drp-trigger{
+    display:flex; align-items:center; gap:8px; min-width:260px;
+    background:var(--bg); border:1px solid var(--border); border-radius:8px;
+    color:var(--text-bright); font-size:13px; padding:8px 12px; cursor:pointer;
+    font-variant-numeric:tabular-nums;
+  }
+  .drp-trigger:hover{ border-color:var(--border-hover); }
+  .drp-pop{
+    position:absolute; top:100%; left:0; margin-top:6px; z-index:200;
+    background:var(--bg-surface); border:1px solid var(--border-hover); border-radius:12px;
+    padding:14px 16px; box-shadow:0 16px 40px rgba(0,0,0,0.7);
+  }
+  .drp-head{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:10px; }
+  .drp-hint{ font-size:11px; color:var(--text-muted); }
+  .drp-nav{ display:flex; gap:4px; }
+  .drp-months{ display:flex; gap:24px; }
+  .drp-month-title{ font-size:12px; font-weight:700; color:var(--text-bright); text-align:center; margin-bottom:8px; }
+  .drp-grid{ display:grid; grid-template-columns:repeat(7, 32px); gap:2px; }
+  .drp-dow{ font-size:10px; color:var(--text-dim); text-align:center; padding-bottom:4px; }
+  .drp-day{
+    height:30px; border:0; border-radius:6px; background:transparent;
+    color:var(--text); font-size:12px; cursor:pointer; font-variant-numeric:tabular-nums;
+  }
+  .drp-day:hover{ background:var(--border-hover); color:var(--text-bright); }
+  .drp-day.in-range{ background:var(--accent-bg); color:var(--text-bright); }
+  .drp-day.edge{ background:var(--accent); color:#0b0f15; font-weight:700; }
+  .drp-day.today{ box-shadow:inset 0 0 0 1px var(--border-hover); }
+`;
 
 export default function DateRangePicker(props: Props) {
   const {
@@ -218,6 +258,7 @@ export default function DateRangePicker(props: Props) {
 
   return (
     <div class="drp" ref={rootRef}>
+      <style>{DRP_STYLES}</style>
       <div class="drp-presets">
         {PRESETS.map((p) => (
           <button

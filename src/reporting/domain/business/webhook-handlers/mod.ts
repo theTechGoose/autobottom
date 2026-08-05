@@ -779,7 +779,23 @@ const DEFAULT_MANAGER_REVIEW_TEMPLATE: EmailTemplate = {
   html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Manager Review Notes</title></head><body style="margin:0;padding:0;background:#070d18;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#070d18;min-height:100vh;"><tr><td align="center" style="padding:40px 16px;"><table width="580" cellpadding="0" cellspacing="0" style="max-width:100%;width:580px;background:#0d1520;border:1px solid #1e2d45;border-radius:16px;overflow:hidden;"><tr><td style="padding:24px 28px 22px;border-bottom:1px solid #1a2840;"><div style="margin-bottom:8px;"><span style="display:inline-block;background:#bc8cff;color:#0a0a0a;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;padding:2px 6px;border-radius:3px;">Manager</span><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#8b949e;margin-left:5px;">Review</span></div><h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#e6edf3;line-height:1.2;">Your Manager Has Reviewed Your Audit</h1><p style="margin:0;font-size:13px;color:#8b949e;line-height:1.6;">Hi <strong style="color:#c9d1d9;">{{teamMemberFirst}}</strong>, here are the notes from <strong style="color:#c9d1d9;">{{addressedBy}}</strong>.</p></td></tr><tr><td style="padding:24px 28px 0;"><div style="border-left:3px solid #bc8cff;padding:14px 18px;background:#161b22;border-radius:0 8px 8px 0;"><p style="margin:0 0 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#bc8cff;">Manager Notes</p><p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.7;white-space:pre-wrap;">{{managerNotes}}</p></div></td></tr><tr><td style="padding:18px 28px 0;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#111d2e;border:1px solid #1e2d45;border-radius:10px;overflow:hidden;"><tr><td style="padding:14px 18px;border-bottom:1px solid #1a2840;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:4px;">Record</div><div style="font-size:16px;font-weight:600;color:#e6edf3;">{{recordId}} &nbsp;·&nbsp; {{guestName}}</div></td></tr><tr><td style="padding:14px 18px;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:4px;">Reviewed By</div><div style="font-size:13px;color:#c9d1d9;font-family:monospace;">{{addressedBy}}</div></td></tr></table></td></tr><tr><td style="padding:22px 28px 28px;text-align:center;"><a href="{{reportUrl}}" style="display:inline-block;padding:12px 32px;background:#bc8cff;color:#0a0a0a;text-decoration:none;border-radius:8px;font-size:14px;font-weight:700;border:1px solid #a370ff;">View Audit Report</a></td></tr><tr><td style="background:#080f1a;border-top:1px solid #1a2840;padding:14px 28px;text-align:center;"><p style="margin:0;font-size:10px;color:#3a5070;font-family:monospace;">Audit ID: {{findingId}}</p></td></tr></table></td></tr></table></body></html>`,
 };
 
+/** Remediation emails are PAUSED — the manager rollout is not live yet, and a
+ *  manager submitting a remediation must not email the team member.
+ *
+ *  Deliberately a code switch, not config: the manager webhook config has no
+ *  enable flag (fireWebhook always calls the registered email handler), and a
+ *  `testEmail` override only REDIRECTS the mail, it doesn't stop it.
+ *
+ *  Everything else about remediation is untouched — the queue item still flips
+ *  to remediated, notes are still saved, gamification still credits the
+ *  manager. Only the outbound email is suppressed. Set to false to go live. */
+const MANAGER_REVIEW_EMAIL_PAUSED = true;
+
 async function sendManagerReviewEmail(orgId: OrgId, payload: ManagerReviewPayload): Promise<void> {
+  if (MANAGER_REVIEW_EMAIL_PAUSED) {
+    console.log(`🔇 [WEBHOOK:manager] remediation email PAUSED — not sending fid=${String(payload.findingId ?? payload.finding?.id ?? "")}`);
+    return;
+  }
   const cfg = await getWebhookConfig(orgId, "manager").catch((err) => {
     console.error(`❌ [WEBHOOK:manager] getWebhookConfig failed:`, err);
     return null;

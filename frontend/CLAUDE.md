@@ -277,7 +277,7 @@ Two review/queue traps that ship wrong audit scores or a dead scrubber:
 - `ChatInput.tsx` — message input with submit
 - `CsvImportWizard.tsx` — 5-step QLab CSV import (upload → map → preview → run → done)
 - `EmailReportEditor.tsx` — full Email Reports editor (rule builder + sections + preview iframe). **Mounted on a page route, never a modal swap** (see Gotcha #1).
-- `HotkeyHandler.tsx` — keyboard shortcuts for review/judge queue pages
+- `HotkeyHandler.tsx` — keyboard shortcuts for review/judge queue pages. `mode="audio"` binds only the transport keys (Space/P, ←/→, ↑/↓) for pages that host a `QueueAudioPlayer` but have no queue to decide on — the manager remediation detail view uses this.
 - `ImpersonationBanner.tsx` — golden "ADMIN VIEW" bar; auto-shows for admin on non-admin pages. `EXCLUDED_PREFIXES` suppresses it on admin-tool pages: `/admin`, `/audit`, `/login`, `/register`, `/question-lab`, `/manager`. (Managers ARE administrators of their team — admins on `/manager` are doing admin work, not impersonating.) Explicit `?as=<email>` overrides the exclusion.
 - `ModalController.tsx` — opens/closes admin modals on `data-modal` clicks; emits `modal-open` event for HTMX `hx-trigger="modal-open"`
 - `PipelineActivityChart.tsx` — canvas chart on the admin dashboard

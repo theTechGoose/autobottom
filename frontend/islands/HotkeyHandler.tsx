@@ -1,9 +1,15 @@
 /** Island: keyboard shortcuts for review/judge queue pages.
- *  Reads hidden inputs for current item data, triggers HTMX requests programmatically. */
+ *  Reads hidden inputs for current item data, triggers HTMX requests programmatically.
+ *
+ *  `mode: "audio"` binds ONLY the transport keys (space/P, ←/→, ↑/↓) and stops
+ *  there — for pages that host a QueueAudioPlayer but have no decide/undo
+ *  actions and no queue search, e.g. the manager remediation detail view. The
+ *  decide shortcuts would fire htmx.ajax at #queue-content, which doesn't exist
+ *  on those pages. */
 import { useEffect } from "preact/hooks";
 
 interface HotkeyHandlerProps {
-  mode: "review" | "judge";
+  mode: "review" | "judge" | "audio";
 }
 
 export default function HotkeyHandler({ mode }: HotkeyHandlerProps) {
@@ -90,6 +96,13 @@ export default function HotkeyHandler({ mode }: HotkeyHandlerProps) {
           e.preventDefault();
           dispatch("queue:speed", { delta: -0.5 });
           return;
+      }
+
+      // Transport keys are all an audio-only host wants; everything below
+      // targets #queue-content or the queue search, neither of which exists.
+      if (mode === "audio") return;
+
+      switch (e.key) {
         case "/":
         case "\\":
           // `\` is the documented review-queue search hotkey; `/` is kept as

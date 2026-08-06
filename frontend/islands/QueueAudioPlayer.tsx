@@ -1,7 +1,7 @@
 /** Island: audio player bar for /review and /judge. Mirrors prod's
  *  shared/queue-page.ts audio section — single <audio> element, waveform
- *  canvas, play/pause + back-5s/forward-5s buttons, time display, speed
- *  multiplier shown when ≠1×. Reloads on HTMX swap so the audio follows
+ *  canvas, play/pause + back-5s/forward-5s buttons, time display, and a
+ *  −/1.0×/+ speed group. Reloads on HTMX swap so the audio follows
  *  the currently-displayed question's finding. Also listens for:
  *    - queue:play-toggle  (P / Space)
  *    - queue:seek  (←/→, skip by 5s)
@@ -57,7 +57,11 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
     let currentLoadFid: string | null = null;
 
     function sizeCanvas() {
-      const w = Math.max(200, Math.floor(container!.clientWidth - 320));
+      // Measure the canvas itself — CSS (`flex:1`) already sized it against the
+      // real control widths. The old `container.clientWidth - 320` hard-coded
+      // how much furniture sat beside it, so adding the speed buttons would
+      // have stretched the waveform bitmap past its box.
+      const w = Math.max(200, Math.floor(canvas!.clientWidth || container!.clientWidth - 420));
       canvas!.width = w;
       canvas!.height = 48;
       draw();
@@ -163,11 +167,12 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
       speedRef.current = next;
       audio!.playbackRate = next;
       // Update display imperatively — no re-render, no audio reload.
+      // Always visible: it doubles as the label for the −/+ buttons, and a
+      // hidden readout left "what speed am I on?" unanswerable mid-call.
       const el = speedDisplayRef.current;
       if (el) {
         el.textContent = `${next.toFixed(1)}×`;
-        el.style.visibility = Math.abs(next - 1.0) > 0.001 ? "visible" : "hidden";
-        el.style.color = next > 1 ? "var(--blue)" : "var(--yellow)";
+        el.style.color = Math.abs(next - 1.0) < 0.001 ? "" : next > 1 ? "var(--blue)" : "var(--yellow)";
       }
     }
 
@@ -271,10 +276,10 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
   return (
     <div class="queue-audio-bar" ref={containerRef} style={hasFinding ? "" : "visibility:hidden"}>
       <audio ref={audioRef} preload="metadata" style="display:none" />
-      <button class="qap-back" type="button" title="Back 5s" onClick={() => document.dispatchEvent(new CustomEvent("queue:seek", { detail: { delta: -SEEK_STEP } }))}>
+      <button class="qap-back" type="button" title="Back 5s (←)" onClick={() => document.dispatchEvent(new CustomEvent("queue:seek", { detail: { delta: -SEEK_STEP } }))}>
         ⏮ 5s
       </button>
-      <button class="qap-play" type="button" title="Play/Pause" onClick={() => document.dispatchEvent(new CustomEvent("queue:play-toggle"))}>
+      <button class="qap-play" type="button" title="Play/Pause (Space)" onClick={() => document.dispatchEvent(new CustomEvent("queue:play-toggle"))}>
         <span ref={iconPlayRef}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2l11 6-11 6z" /></svg>
         </span>
@@ -282,14 +287,21 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2h3v12H3zM10 2h3v12h-3z" /></svg>
         </span>
       </button>
-      <button class="qap-fwd" type="button" title="Forward 5s" onClick={() => document.dispatchEvent(new CustomEvent("queue:seek", { detail: { delta: SEEK_STEP } }))}>
+      <button class="qap-fwd" type="button" title="Forward 5s (→)" onClick={() => document.dispatchEvent(new CustomEvent("queue:seek", { detail: { delta: SEEK_STEP } }))}>
         5s ⏭
       </button>
       <canvas class="qap-waveform" ref={canvasRef} />
       <span class="qap-time" ref={timeRef}>0:00 / 0:00</span>
-      <span class="qap-speed" ref={speedDisplayRef} style="visibility:hidden">
-        1.0×
-      </span>
+      {/* Speed: −/+ mirror the ↑/↓ keys so it works without a keyboard at all. */}
+      <div class="qap-speed-group">
+        <button class="qap-speed-btn" type="button" title="Slower (↓)" aria-label="Slower" onClick={() => document.dispatchEvent(new CustomEvent("queue:speed", { detail: { delta: -SPEED_STEP } }))}>
+          −
+        </button>
+        <span class="qap-speed" ref={speedDisplayRef}>1.0×</span>
+        <button class="qap-speed-btn" type="button" title="Faster (↑)" aria-label="Faster" onClick={() => document.dispatchEvent(new CustomEvent("queue:speed", { detail: { delta: SPEED_STEP } }))}>
+          +
+        </button>
+      </div>
     </div>
   );
 }

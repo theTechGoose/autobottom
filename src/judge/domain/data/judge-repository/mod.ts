@@ -7,6 +7,7 @@ import {
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
+import { buildRecordMeta } from "@core/business/record-meta/mod.ts";
 import { getFinding, getTranscript, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { incrFlipToPass, configKeyForFinding, normalizeQuestionKey } from "@audit/domain/data/question-stats-repository/mod.ts";
@@ -486,25 +487,7 @@ export async function claimNextItem(
     if (finding) {
       const rec = (finding as any).record as Record<string, unknown> ?? {};
       recordId = String(rec.RecordId ?? "") || undefined;
-      const isPackage = item.recordingIdField === "GenieNumber";
-      recordMeta = isPackage ? {
-        guestName: rec.GuestName ? String(rec.GuestName) : undefined,
-        maritalStatus: rec["67"] ? String(rec["67"]) : undefined,
-        officeName: rec.OfficeName ? String(rec.OfficeName) : undefined,
-        totalAmountPaid: rec["145"] ? String(rec["145"]) : undefined,
-        hasMCC: rec["345"] ? String(rec["345"]) : undefined,
-        mspSubscription: rec["306"] ? String(rec["306"]) : undefined,
-      } : {
-        guestName: rec.GuestName ? String(rec.GuestName) : (rec["32"] ? String(rec["32"]) : undefined),
-        spouseName: rec["33"] ? String(rec["33"]) : undefined,
-        maritalStatus: rec["49"] ? String(rec["49"]) : undefined,
-        roomTypeMaxOccupancy: rec["297"] ? String(rec["297"]) : undefined,
-        destination: rec.DestinationDisplay ? String(rec.DestinationDisplay) : (rec["314"] ? String(rec["314"]) : undefined),
-        arrivalDate: rec["8"] ? String(rec["8"]) : undefined,
-        departureDate: rec["10"] ? String(rec["10"]) : undefined,
-        totalWGS: rec["460"] ? String(rec["460"]) : undefined,
-        totalMCC: rec["594"] ? String(rec["594"]) : undefined,
-      };
+      recordMeta = buildRecordMeta(rec, item.recordingIdField);
     }
     return {
       ...item,

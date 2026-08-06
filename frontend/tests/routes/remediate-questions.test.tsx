@@ -12,7 +12,7 @@
  *  carries so a manager can finish the job without going back to the queue. */
 import { assert, assertEquals } from "@std/assert";
 import { assertContains, assertNotContains, renderHTML } from "../helpers/render.ts";
-import { renderQuestionList, renderRemediateAction } from "../../routes/manager/remediate/[findingId].tsx";
+import { renderQuestionList, renderRecordDetails, renderRemediateAction } from "../../routes/manager/remediate/[findingId].tsx";
 import { emitTranscriptLines } from "../../components/TranscriptPanel.tsx";
 
 const RAW = [
@@ -182,4 +182,53 @@ Deno.test("renderRemediateAction — no queue item means nothing to close", () =
   const { action, modal } = renderRemediateAction({ ...ACTION_ARGS, queueItem: null });
   assertEquals(action, null);
   assertEquals(modal, null);
+});
+
+/* ── Record Details ───────────────────────────────────────────────────────
+   Managers had no way to tell WHICH booking a failed call was about — the page
+   showed record ID, recording ID and type and nothing else, while the review
+   and judge queues both carry a full Record Details grid. These pin that the
+   remediation view now renders the same grid, off the same shared builder. */
+
+Deno.test("renderRecordDetails — date-leg shows guest, destination and travel dates", () => {
+  const html = renderHTML(renderRecordDetails({
+    record: {
+      GuestName: "Sam Guest",
+      "33": "Pat Guest",
+      "49": "Married",
+      DestinationDisplay: "Cancun",
+      "8": "2026-09-01",
+      "10": "2026-09-08",
+      "297": "Suite / 4",
+      "460": "1200",
+    },
+    recordingIdField: "RecordingId",
+  }));
+  assertContains(html, "Record Details");
+  assertContains(html, "Sam Guest");
+  assertContains(html, "Pat Guest");
+  assertContains(html, "Cancun");
+  assertContains(html, "2026-09-01");
+  assertContains(html, "Suite / 4");
+  // WGS sold (fid 460 populated), MCC not (594 absent).
+  assertContains(html, "☑ WGS");
+  assertContains(html, "☐ MCC");
+});
+
+Deno.test("renderRecordDetails — package uses the partner field set", () => {
+  const html = renderHTML(renderRecordDetails({
+    record: { GuestName: "Sam Guest", OfficeName: "ODS WFH", "145": "3499.00", "345": "1" },
+    recordingIdField: "GenieNumber",
+  }));
+  assertContains(html, "ODS WFH");
+  assertContains(html, "$3499.00");
+  assertContains(html, "☑ MCC");
+  // Date-leg-only labels must not appear on a package.
+  assertNotContains(html, "Departure");
+  assertNotContains(html, "Spouse Name");
+});
+
+Deno.test("renderRecordDetails — an empty record renders nothing, not a grid of dashes", () => {
+  assertEquals(renderRecordDetails({ record: {}, recordingIdField: "RecordingId" }), null);
+  assertEquals(renderRecordDetails({}), null);
 });

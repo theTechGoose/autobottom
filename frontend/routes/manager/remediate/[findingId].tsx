@@ -8,7 +8,9 @@
  *   - Right: the click-to-scrub transcript (TranscriptPanel) — clicking any line
  *     seeks the audio to that moment.
  *   - Bottom: the audio player (QueueAudioPlayer), which consumes the
- *     `queue:jump-to-audio` events both click paths dispatch.
+ *     `queue:jump-to-audio` events both click paths dispatch. HotkeyHandler is
+ *     mounted in audio-only mode so Space/P, ←/→ and ↑/↓ drive it here exactly
+ *     as they do in the review and judge queues.
  *   - Topbar: the same Remediate close-out the queue row offers, so a manager
  *     who opened the audit to scrub it can finish here instead of navigating
  *     back to record what they did.
@@ -25,8 +27,11 @@ import { apiFetch } from "../../../lib/api.ts";
 import type { QueueItem } from "../../api/manager/queue.tsx";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 import { questionLabel } from "@core/business/question-labels/mod.ts";
+import { buildRecordMeta } from "@core/business/record-meta/mod.ts";
+import { RecordDetails } from "../../../components/VerdictPanel.tsx";
 import QueueAudioPlayer from "../../../islands/QueueAudioPlayer.tsx";
 import RemediationInteractive from "../../../islands/RemediationInteractive.tsx";
+import HotkeyHandler from "../../../islands/HotkeyHandler.tsx";
 
 interface AnsweredQuestion {
   header?: string;
@@ -167,6 +172,29 @@ export function renderRemediateAction(opts: {
       </div>
     ),
   };
+}
+
+/** Record Details — the same grid the review and judge queues show, built from
+ *  the finding's raw QuickBase record via the shared buildRecordMeta.
+ *
+ *  Managers were coaching a rep on a failed call with no idea WHICH booking it
+ *  was: the page carried only record ID, recording ID and type. Guest name,
+ *  destination and travel dates are the context that makes a failure legible.
+ *
+ *  Open by default here, unlike review/judge. There the accordion is one of
+ *  five competing for the panel and the reviewer is heads-down on one question;
+ *  here it is the only one and the manager is reading for context before a
+ *  conversation. Renders nothing when the record is empty rather than a grid of
+ *  em-dashes. */
+export function renderRecordDetails(f: { record?: Record<string, unknown>; recordingIdField?: string }) {
+  const meta = buildRecordMeta(f.record, f.recordingIdField);
+  if (Object.keys(meta).length === 0) return null;
+  return (
+    <details class="verdict-accordion" open>
+      <summary>Record Details</summary>
+      <RecordDetails meta={meta} isPackage={f.recordingIdField === "GenieNumber"} />
+    </details>
+  );
 }
 
 /** The questions list, failures first, each failure carrying the transcript
@@ -360,6 +388,8 @@ export default define.page(async function RemediationDetail(ctx) {
                   </div></div>
                 </div>
 
+                {renderRecordDetails(f)}
+
                 {renderQuestionList(qs, transcript)}
               </div>
             </div>
@@ -373,6 +403,9 @@ export default define.page(async function RemediationDetail(ctx) {
 
         <QueueAudioPlayer initialFindingId={findingId} />
         <RemediationInteractive />
+        {/* Transport keys only (Space/P, ←/→, ↑/↓) — this page has no queue
+            content to decide on, so the review/judge shortcuts stay off. */}
+        <HotkeyHandler mode="audio" />
       </div>
 
       {remediate.modal}

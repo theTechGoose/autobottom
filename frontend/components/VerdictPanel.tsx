@@ -69,8 +69,10 @@ function truncate(s: string | undefined, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
-function RecordDetails({ item, isPackage }: { item: ReviewItem; isPackage: boolean }) {
-  const meta = item.recordMeta ?? {};
+/** The Record Details grid. Takes the meta map directly (not a ReviewItem) so
+ *  the manager remediation view — which has a finding, not a queue item — can
+ *  render the identical grid instead of growing its own copy. */
+export function RecordDetails({ meta, isPackage }: { meta: Record<string, string | undefined>; isPackage: boolean }) {
   const chk = (v: string | undefined) =>
     v && String(v) !== "0" && String(v).toLowerCase() !== "false" ? "☑" : "☐";
 
@@ -280,7 +282,7 @@ export function VerdictPanel({ item, buffer, currentIndex, mode, remaining, emai
       {item.recordMeta && Object.keys(item.recordMeta).length > 0 && (
         <details class="verdict-accordion">
           <summary>Record Details</summary>
-          <RecordDetails item={item} isPackage={isPackage} />
+          <RecordDetails meta={item.recordMeta ?? {}} isPackage={isPackage} />
         </details>
       )}
 

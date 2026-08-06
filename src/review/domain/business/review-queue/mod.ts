@@ -9,6 +9,7 @@ import {
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { ReviewItem, ReviewDecision } from "@core/dto/types.ts";
+import { buildRecordMeta } from "@core/business/record-meta/mod.ts";
 import {
   getFinding,
   saveFinding,
@@ -337,27 +338,7 @@ async function rehydrateItemFromFinding(orgId: OrgId, item: ReviewItem): Promise
     const reviewIndexFromFinding = q ? noOnly.findIndex((x) => x.header === q.header) + 1 : 0;
 
     const rec = (finding.record ?? {}) as Record<string, unknown>;
-    const isPackage = finding.recordingIdField === "GenieNumber";
-    const builtMeta = isPackage ? {
-      voName: rec.VoName ? String(rec.VoName) : undefined,
-      guestName: rec.GuestName ? String(rec.GuestName) : undefined,
-      maritalStatus: rec["67"] ? String(rec["67"]) : undefined,
-      officeName: rec.OfficeName ? String(rec.OfficeName) : undefined,
-      totalAmountPaid: rec["145"] ? String(rec["145"]) : undefined,
-      hasMCC: rec["345"] ? String(rec["345"]) : undefined,
-      mspSubscription: rec["306"] ? String(rec["306"]) : undefined,
-    } : {
-      voName: rec.VoName ? String(rec.VoName) : undefined,
-      guestName: rec.GuestName ? String(rec.GuestName) : (rec["32"] ? String(rec["32"]) : undefined),
-      spouseName: rec["33"] ? String(rec["33"]) : undefined,
-      maritalStatus: rec["49"] ? String(rec["49"]) : undefined,
-      roomTypeMaxOccupancy: rec["297"] ? String(rec["297"]) : undefined,
-      destination: rec.DestinationDisplay ? String(rec.DestinationDisplay) : (rec["314"] ? String(rec["314"]) : undefined),
-      arrivalDate: rec["8"] ? String(rec["8"]) : undefined,
-      departureDate: rec["10"] ? String(rec["10"]) : undefined,
-      totalWGS: rec["460"] ? String(rec["460"]) : undefined,
-      totalMCC: rec["594"] ? String(rec["594"]) : undefined,
-    };
+    const builtMeta = buildRecordMeta(rec, finding.recordingIdField as string | undefined);
 
     const recordIdFromFinding = String(rec.RecordId ?? rec.RelatedDestinationId ?? rec.GenieNumber ?? "");
 

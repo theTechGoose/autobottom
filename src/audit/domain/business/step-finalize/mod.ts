@@ -12,6 +12,7 @@ import { enqueueCleanup } from "@core/data/qstash/mod.ts";
 import { generateFeedback } from "@audit/domain/data/groq/mod.ts";
 import { answerQuestion } from "@core/dto/types.ts";
 import { questionLabel } from "@core/business/question-labels/mod.ts";
+import { buildRecordMeta } from "@core/business/record-meta/mod.ts";
 import type { IAnsweredQuestion } from "@core/dto/types.ts";
 import { populateReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { populateJudgeQueue, getAppeal, saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
@@ -321,28 +322,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
   if (!isInvalid && !isOfficeBypassed && finding.answeredQuestions?.length) {
     try {
       const recordId = String(finding.record?.RecordId ?? "") || undefined;
-      const rec = finding.record as any ?? {};
-      const isPackage = finding.recordingIdField === "GenieNumber";
-      const recordMeta = isPackage ? {
-        voName: rec.VoName ? String(rec.VoName) : undefined,
-        guestName: rec.GuestName ? String(rec.GuestName) : undefined,
-        maritalStatus: rec["67"] ? String(rec["67"]) : undefined,
-        officeName: rec.OfficeName ? String(rec.OfficeName) : undefined,
-        totalAmountPaid: rec["145"] ? String(rec["145"]) : undefined,
-        hasMCC: rec["345"] ? String(rec["345"]) : undefined,
-        mspSubscription: rec["306"] ? String(rec["306"]) : undefined,
-      } : {
-        voName: rec.VoName ? String(rec.VoName) : undefined,
-        guestName: rec.GuestName ? String(rec.GuestName) : (rec["32"] ? String(rec["32"]) : undefined),
-        spouseName: rec["33"] ? String(rec["33"]) : undefined,
-        maritalStatus: rec["49"] ? String(rec["49"]) : undefined,
-        roomTypeMaxOccupancy: rec["297"] ? String(rec["297"]) : undefined,
-        destination: rec.DestinationDisplay ? String(rec.DestinationDisplay) : (rec["314"] ? String(rec["314"]) : undefined),
-        arrivalDate: rec["8"] ? String(rec["8"]) : undefined,
-        departureDate: rec["10"] ? String(rec["10"]) : undefined,
-        totalWGS: rec["460"] ? String(rec["460"]) : undefined,
-        totalMCC: rec["594"] ? String(rec["594"]) : undefined,
-      };
+      const recordMeta = buildRecordMeta(
+        finding.record as Record<string, unknown> | undefined,
+        finding.recordingIdField as string | undefined,
+      );
       await populateReviewQueue(orgId, findingId, finding.answeredQuestions as any[], finding.recordingIdField as string | undefined, recordId, recordMeta, completedAt);
       console.log(`[STEP-FINALIZE] ${findingId}: → review queue${isRecordingReAudit ? ` (recording re-audit: ${appealType})` : ""}`);
     } catch (err) {

@@ -9,7 +9,7 @@
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 import { setStoredIfAbsent } from "@core/data/firestore/mod.ts";
-import { queryChargebackReport, queryWireReport } from "@reporting/domain/business/chargeback-report/mod.ts";
+import { queryAuditDoneIndex, queryChargebackReport, queryWireReport } from "@reporting/domain/business/chargeback-report/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { loadSheetsCredentials, appendSheetRows } from "@core/data/google-sheets/mod.ts";
@@ -55,10 +55,37 @@ export async function exportChargebacksToSheet(
     getOfficeBypassConfig(orgId),
   ]);
   // Column schemas (must match prod's existing tabs exactly):
-  //   Chargebacks / Omissions (7): Date, Team Member, Revenue, CRM Link,
-  //     Destination, Failed Questions, Score
+  //   Chargebacks / Omissions (8): Date, Team Member, Revenue, CRM Link,
+  //     Destination, Failed Questions, Score, Activating Office
   //   Wire Deductions (10): Date, Score, Questions Audited, Total Success,
   //     CRM Link, Audit Link, Office, Excellence Auditor, (empty), Guest Name
+  //
+  // Activating Office is APPENDED as column H, never inserted mid-schema —
+  // existing sheet rows have only A:G, so inserting would misalign all history.
+  //
+  // A ChargebackEntry stores no department, so the office is joined in from
+  // audit-done-idx by findingId. Both are keyed on `completedAt`, so the same
+  // window lines up; the ±7d pad only guards against a re-audit shifting the
+  // timestamp, and can never pull in an audit the report doesn't already list
+  // (the lookup is by id). Fetched once, lazily — the cb and om tabs share it,
+  // and a wire-only export never pays for it.
+  const DEPT_PAD_MS = 7 * 24 * 60 * 60 * 1000;
+  let deptMapPromise: Promise<Map<string, string>> | null = null;
+  const loadDeptMap = (): Promise<Map<string, string>> => {
+    deptMapPromise ??= queryAuditDoneIndex(orgId, since - DEPT_PAD_MS, until + DEPT_PAD_MS)
+      .then((rows) => {
+        const m = new Map<string, string>();
+        for (const r of rows) if (r.findingId && r.department) m.set(r.findingId, r.department);
+        console.log(`📊 [POST-TO-SHEET] office lookup built from ${rows.length} index rows → ${m.size} findings`);
+        return m;
+      })
+      .catch((err) => {
+        // The office column is additive — never fail the whole export over it.
+        console.error(`⚠️ [POST-TO-SHEET] office lookup failed, column will be blank:`, err);
+        return new Map<string, string>();
+      });
+    return deptMapPromise;
+  };
   const QB_REALM = Deno.env.get("QB_REALM") ?? "monsterrg";
   const cbCrm = (recordId: string) => recordId ? `https://${QB_REALM}.quickbase.com/db/bpb28qsnn?a=dr&rid=${recordId}` : "";
   const wireCrm = (recordId: string) => recordId ? `https://${QB_REALM}.quickbase.com/nav/app/bmhvhc7sk/table/bttffb64u/action/dr?rid=${recordId}` : "";
@@ -72,6 +99,7 @@ export async function exportChargebacksToSheet(
         const report = await queryChargebackReport(orgId, since, until, reviewedIds);
         const source = tab === "cb" ? (report.chargebacks ?? []) : (report.omissions ?? []);
         if (!source.length) continue;
+        const deptMap = await loadDeptMap();
         const rows = source.map((e) => [
           fmtDate(e.ts),
           e.voName ?? "",
@@ -80,6 +108,7 @@ export async function exportChargebacksToSheet(
           e.destination ?? "",
           (e.failedQHeaders ?? []).join(", "),
           typeof e.score === "number" ? `${e.score}%` : "",
+          deptMap.get(e.findingId) ?? "",
         ] as (string | number)[]);
         const res = await appendSheetRows(creds, tab === "cb" ? "Chargebacks" : "Omissions", rows);
         appended += res.appended;

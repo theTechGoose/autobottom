@@ -27,18 +27,28 @@ export interface ChargebackReportResult {
   omissions: ChargebackEntry[];
 }
 
-/** Query chargebacks for a date range, filtering by reviewed + bypass. */
+/** Query chargebacks for a date range, filtering by reviewed.
+ *
+ *  No office-bypass filter here, deliberately. A ChargebackEntry stores no
+ *  department, so the only office-ish field to match was `destination` — the
+ *  RESORT ("SMD - Gatlinburg, TN"), not the selling office. That dropped
+ *  legitimate rows from non-bypassed offices whenever the guest happened to be
+ *  booked at a resort whose code collides with a bypass pattern (and the match
+ *  is a loose substring, so "Gatlinburg" also hits the "INB" pattern).
+ *
+ *  Filtering on office here is redundant anyway: step-finalize skips the review
+ *  queue for bypassed offices (step-finalize/mod.ts), so their findings are
+ *  never reviewed, and the `reviewedIds` filter below already excludes them.
+ *  Verified against prod for the week of 2026-07-27: 72 failed findings across
+ *  all 10 bypassed offices, 0 of them present in the report. */
 export async function queryChargebackReport(
   orgId: OrgId,
   since: number,
   until: number,
   reviewedIds: Set<string>,
-  bypassPatterns: string[],
 ): Promise<ChargebackReportResult> {
   const entries = await getChargebackEntries(orgId, since, until);
-  const reviewed = entries.filter(
-    (e) => reviewedIds.has(e.findingId) && !isOfficeBypassed(e.destination ?? "", bypassPatterns),
-  );
+  const reviewed = entries.filter((e) => reviewedIds.has(e.findingId));
   return classifyChargebacks(reviewed);
 }
 

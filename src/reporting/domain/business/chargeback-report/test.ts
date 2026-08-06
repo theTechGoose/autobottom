@@ -3,13 +3,13 @@
 import { assertEquals } from "#assert";
 import type { ChargebackEntry, WireDeductionEntry } from "@core/dto/types.ts";
 
-// Inline the pure filtering logic to test without KV
+// Inline the pure filtering logic to test without KV.
+// Mirrors queryChargebackReport: reviewed-only, NO office bypass. See the
+// comment on that function for why the bypass filter was removed.
 function filterReviewedChargebacks(
-  entries: ChargebackEntry[], reviewedIds: Set<string>, bypassPatterns: string[],
+  entries: ChargebackEntry[], reviewedIds: Set<string>,
 ): ChargebackEntry[] {
-  const isBypassed = (dept: string) =>
-    bypassPatterns.length > 0 && bypassPatterns.some((p) => dept.toLowerCase().includes(p.toLowerCase()));
-  return entries.filter((e) => reviewedIds.has(e.findingId) && !isBypassed(e.destination ?? ""));
+  return entries.filter((e) => reviewedIds.has(e.findingId));
 }
 
 function filterWire(
@@ -40,13 +40,22 @@ function wire(id: string, score: number, office = "Sales"): WireDeductionEntry {
 Deno.test("chargeback filter — excludes unreviewed", () => {
   const entries = [cb("f1", ["Income"]), cb("f2", ["Income"])];
   const reviewed = new Set(["f1"]);
-  assertEquals(filterReviewedChargebacks(entries, reviewed, []).length, 1);
+  assertEquals(filterReviewedChargebacks(entries, reviewed).length, 1);
 });
 
-Deno.test("chargeback filter — excludes bypassed offices", () => {
-  const entries = [cb("f1", ["Income"], "JAY Resort"), cb("f2", ["Income"], "Sales")];
+// Regression: `destination` is the RESORT, not the selling office. Bypassing on
+// it dropped real fails from non-bypassed offices whenever a guest was booked
+// at a resort whose code collides with a bypass pattern. Bypassed offices are
+// already excluded upstream — they skip the review queue, so they are never
+// reviewed. Prod case: record 496199, office "GS WST", resort
+// "SMD - Gatlinburg, TN" (matches both the "SMD" and "INB" patterns).
+Deno.test("chargeback filter — keeps rows whose RESORT collides with a bypass code", () => {
+  const entries = [
+    cb("f1", ["Income"], "SMD - Gatlinburg, TN"),
+    cb("f2", ["Income"], "WYN - Austin, TX"),
+  ];
   const reviewed = new Set(["f1", "f2"]);
-  assertEquals(filterReviewedChargebacks(entries, reviewed, ["jay"]).length, 1);
+  assertEquals(filterReviewedChargebacks(entries, reviewed).length, 2);
 });
 
 Deno.test("classify — Income is chargeback", () => {

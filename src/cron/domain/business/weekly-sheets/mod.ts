@@ -69,7 +69,7 @@ export async function exportChargebacksToSheet(
   try {
     for (const tab of tabList) {
       if (tab === "cb" || tab === "om") {
-        const report = await queryChargebackReport(orgId, since, until, reviewedIds, bypassCfg.patterns);
+        const report = await queryChargebackReport(orgId, since, until, reviewedIds);
         const source = tab === "cb" ? (report.chargebacks ?? []) : (report.omissions ?? []);
         if (!source.length) continue;
         const rows = source.map((e) => [

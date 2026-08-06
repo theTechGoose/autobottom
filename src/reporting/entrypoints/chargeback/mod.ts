@@ -22,11 +22,8 @@ export class ChargebackController {
     if (!since) return { error: "since required" };
     const s = parseInt(since);
     const u = parseInt(until || String(Date.now()));
-    const [reviewedIds, bypassCfg] = await Promise.all([
-      getReviewedFindingIds(ORG()),
-      getOfficeBypassConfig(ORG()),
-    ]);
-    return queryChargebackReport(ORG(), s, u, reviewedIds, bypassCfg.patterns);
+    const reviewedIds = await getReviewedFindingIds(ORG());
+    return queryChargebackReport(ORG(), s, u, reviewedIds);
   }
 
   @Get("wire-deductions") @ReturnedType(WireReportResponse)

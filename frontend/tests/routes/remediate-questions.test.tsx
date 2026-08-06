@@ -12,7 +12,7 @@
  *  carries so a manager can finish the job without going back to the queue. */
 import { assert, assertEquals } from "@std/assert";
 import { assertContains, assertNotContains, renderHTML } from "../helpers/render.ts";
-import { renderQuestionList, renderRecordDetails, renderRemediateAction } from "../../routes/manager/remediate/[findingId].tsx";
+import { renderQuestionList, renderRecordDetails, renderRemediateAction, renderRemediationNote } from "../../routes/manager/remediate/[findingId].tsx";
 import { emitTranscriptLines } from "../../components/TranscriptPanel.tsx";
 
 const RAW = [
@@ -251,4 +251,38 @@ Deno.test("renderRecordDetails — package uses the partner field set", () => {
 Deno.test("renderRecordDetails — an empty record renders nothing, not a grid of dashes", () => {
   assertEquals(renderRecordDetails({ record: {}, recordingIdField: "RecordingId" }), null);
   assertEquals(renderRecordDetails({}), null);
+});
+
+/* ── Remediation note panel ───────────────────────────────────────────────
+   The note is the record of what a manager DID about a failure. It used to
+   render nowhere but a `title` tooltip; it now leads the left panel on a
+   closed-out audit, which is where the Completed tab's Notes column sends
+   you. Nothing shows while an item is still pending — there is no note yet. */
+
+Deno.test("renderRemediationNote — a closed-out item shows the note, who and when", () => {
+  const html = renderHTML(renderRemediationNote({
+    findingId: "fid-1",
+    status: "remediated",
+    remediatedBy: "lead@monsterrg.com",
+    remediatedAt: 1_700_000_000_000,
+    notes: "Walked Marcus through the 11% disclosure and re-scripted his close.",
+  }));
+  assertContains(html, "Walked Marcus through the 11% disclosure");
+  assertContains(html, "lead@monsterrg.com");
+  assertContains(html, "rem-note-panel");
+});
+
+Deno.test("renderRemediationNote — nothing renders for a pending or absent item", () => {
+  assertEquals(renderRemediationNote({ findingId: "fid-1", status: "pending", notes: "n/a" }), null);
+  assertEquals(renderRemediationNote(null), null);
+});
+
+Deno.test("renderRemediationNote — a closed-out item with no note says so", () => {
+  // Blank rather than absent: the panel still has to explain the audit was
+  // closed, or it reads as a rendering failure.
+  const html = renderHTML(renderRemediationNote({
+    findingId: "fid-1", status: "remediated", remediatedBy: "lead@monsterrg.com", notes: "   ",
+  }));
+  assertContains(html, "No notes were recorded");
+  assertContains(html, "lead@monsterrg.com");
 });

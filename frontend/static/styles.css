@@ -1828,6 +1828,56 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
    outage from the manager. */
 .rem-q-ungraded { margin: 0 0 8px; font-size: 11px; color: var(--text-muted); }
 .rem-q-none { padding: 10px; font-size: 12px; color: var(--text-muted); border: 1px dashed var(--border); border-radius: 6px; }
+
+/* ── Remediation notes (Completed tab) ─────────────────────────────────────
+   One clamped line in the cell; hovering the row pops the note out, itself
+   clamped so a rambling note can't cover the table. Pure CSS on purpose —
+   the Completed table is an HTMX fragment, where an island never hydrates.
+   Nothing up the chain (.card, .data-table) sets overflow, so the absolutely
+   positioned popout is free to escape the cell. */
+.rem-note-cell { position: relative; max-width: 260px; }
+.rem-note-line {
+  display: block; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; color: var(--text-muted);
+}
+.rem-note-pop {
+  position: absolute; right: 0; top: calc(100% - 4px);
+  z-index: 200; width: 340px; max-height: 220px;
+  padding: 10px 12px;
+  background: var(--bg-raised); border: 1px solid var(--border-hover);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  font-size: 12px; line-height: 1.5; color: var(--text);
+  white-space: pre-wrap; overflow: hidden;
+  /* Clamp rather than scroll: the popout is a preview, and the row click
+     opens the full note on the detail page. */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 10;
+  visibility: hidden; opacity: 0;
+  transition: opacity 0.12s;
+}
+.rem-note-cell:hover .rem-note-pop { visibility: visible; opacity: 1; }
+/* Bottom rows of a LONG table would push their popout off the fold, so those
+   open upward instead. The `:not(:nth-child(-n+4))` guard is what makes this
+   safe: on a short table every row is also a "last" row, and flipping up there
+   pushed the popout off the TOP of the window — worse than the problem. Only
+   rows with at least four rows above them have somewhere to open into. */
+.data-table tbody tr:last-child:not(:nth-child(-n+4)) .rem-note-pop,
+.data-table tbody tr:nth-last-child(2):not(:nth-child(-n+4)) .rem-note-pop {
+  top: auto; bottom: calc(100% - 4px);
+}
+
+/* ── The full note, on the remediation detail page ─────────────────────── */
+.rem-note-panel {
+  margin: 0 0 14px; padding: 12px 14px;
+  background: var(--green-bg); border: 1px solid var(--border);
+  border-left: 3px solid var(--green); border-radius: 8px;
+}
+.rem-note-panel-head {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--green); margin-bottom: 6px;
+}
+.rem-note-panel-meta { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+.rem-note-panel-body { font-size: 13px; line-height: 1.55; color: var(--text); white-space: pre-wrap; }
 /* Already-closed failure: a stamp where the Remediate button would be. */
 .rem-done { font-size: 12px; color: #3fb950; white-space: nowrap; }
 

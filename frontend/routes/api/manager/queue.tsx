@@ -83,10 +83,10 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
   const completed = !!opts.completed;
   return (
     <table class="data-table">
-      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th>{completed ? <><th>Remediated By</th><th>When</th></> : <><th>Timestamp</th><th>Status</th><th>Action</th></>}</tr></thead>
+      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th>{completed ? <><th>Remediated By</th><th>When</th><th>Notes</th></> : <><th>Timestamp</th><th>Status</th><th>Action</th></>}</tr></thead>
       <tbody>
         {items.length === 0 ? (
-          <tr class="empty-row"><td colSpan={completed ? 8 : 9}>{completed ? "No completed remediations" : "No items in queue"}</td></tr>
+          <tr class="empty-row"><td colSpan={completed ? 9 : 9}>{completed ? "No completed remediations" : "No items in queue"}</td></tr>
         ) : items.map((item) => {
           const score = scoreOf(item);
           // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
@@ -134,6 +134,21 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
             {completed ? <>
               <td style="font-size:12px;">{item.remediatedBy || "\u2014"}</td>
               <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtWhen(item.remediatedAt)}</td>
+              {/* What the manager actually DID about the failure. Until now it
+                  was written into a required textarea and then readable
+                  nowhere in the app but a title-attribute tooltip on the detail
+                  page. One clamped line here, a bigger clamped popout on hover,
+                  and the row click (already wired) opens the full note on the
+                  detail page \u2014 CSS only, because this fragment is HTMX-swapped
+                  and an island in it would never hydrate (CLAUDE.md Gotcha #1). */}
+              <td class="rem-note-cell">
+                {item.notes
+                  ? <>
+                    <span class="rem-note-line">{item.notes}</span>
+                    <span class="rem-note-pop" role="tooltip">{item.notes}</span>
+                  </>
+                  : <span style="color:var(--text-dim);font-size:11px;">&mdash;</span>}
+              </td>
             </> : <>
             <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtTsEastern(queueTimestamp(item))}</td>
             <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>

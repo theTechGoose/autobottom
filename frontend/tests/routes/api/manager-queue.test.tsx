@@ -338,3 +338,43 @@ Deno.test("renderQueueResults — shows the window total above the table", () =>
   assertContains(one, "failure");
   assertNotContains(one, "failures");
 });
+
+/* ── Notes column (Completed tab) ─────────────────────────────────────────
+   A manager's remediation notes were write-only: a required textarea whose
+   only render in the whole app was a `title` tooltip on the detail page. The
+   Completed tab now carries them as a column — one clamped line plus a hover
+   popout, both CSS-driven, so it survives being an HTMX fragment. */
+
+const done = (over: Partial<QueueItem> = {}): QueueItem =>
+  item({ status: "remediated", remediatedBy: "lead@monsterrg.com", remediatedAt: 1_700_000_000_000, ...over });
+
+Deno.test("ManagerQueue — completed mode has a Notes column, pending mode does not", () => {
+  const completedHtml = renderHTML(renderQueueTable([], { completed: true }));
+  assertContains(completedHtml, "Notes");
+  assertContains(completedHtml, "Remediated By");
+  // The pending queue has no notes yet — the column would be all dashes.
+  assertNotContains(renderHTML(renderQueueTable([])), "Notes");
+});
+
+Deno.test("ManagerQueue — the note renders in full for the popout, not pre-truncated", () => {
+  // Truncation is CSS (clamped line + clamped popout). Cutting the string
+  // server-side would make the hover useless — it would reveal nothing new.
+  const long = "Discussed the missed 11% disclosure with Marcus. ".repeat(8);
+  const html = renderHTML(renderQueueTable([done({ notes: long })], { completed: true }));
+  assertContains(html, "rem-note-line");
+  assertContains(html, "rem-note-pop");
+  // Present twice: once in the clamped line, once in the popout.
+  const occurrences = html.split("Discussed the missed").length - 1;
+  assertEquals(occurrences, 16, "the full note must appear in both the line and the popout");
+});
+
+Deno.test("ManagerQueue — a remediation with no notes gets a dash, not an empty popout", () => {
+  const html = renderHTML(renderQueueTable([done({ notes: undefined })], { completed: true }));
+  assertNotContains(html, "rem-note-pop");
+});
+
+Deno.test("ManagerQueue — completed empty state spans every column", () => {
+  // A short colSpan leaves a ragged row; it has to track the header count.
+  const html = renderHTML(renderQueueTable([], { completed: true }));
+  assertContains(html, 'colspan="9"');
+});

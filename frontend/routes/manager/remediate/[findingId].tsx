@@ -180,6 +180,41 @@ export function renderRemediateAction(opts: {
   };
 }
 
+/** The remediation note, for an audit that has already been closed out.
+ *
+ *  The note is the record of what a manager actually DID about a failure, and
+ *  it used to be readable nowhere in the app — a required textarea whose only
+ *  render was a `title` tooltip on the "Remediated by" stamp. It now leads the
+ *  left panel here, and the Completed tab's Notes column links straight to it
+ *  (the row click already opens this page).
+ *
+ *  Nothing renders while an item is still pending — there is no note yet — or
+ *  when the audit isn't in the queue at all. */
+export function renderRemediationNote(queueItem: QueueItem | null) {
+  if (!queueItem || queueItem.status !== "remediated") return null;
+  const note = (queueItem.notes ?? "").trim();
+  const when = queueItem.remediatedAt
+    ? new Date(queueItem.remediatedAt).toLocaleString("en-US", {
+      timeZone: "America/New_York", month: "short", day: "numeric",
+      year: "numeric", hour: "numeric", minute: "2-digit",
+    }) + " ET"
+    : "";
+  const by = queueItem.remediatedBy ?? "";
+  return (
+    <div class="rem-note-panel" id="remediation-note">
+      <div class="rem-note-panel-head">Remediation</div>
+      {(by || when) && (
+        <div class="rem-note-panel-meta">
+          {by}{by && when ? " · " : ""}{when}
+        </div>
+      )}
+      <div class="rem-note-panel-body">
+        {note || <span style="color:var(--text-dim);font-style:italic;">No notes were recorded.</span>}
+      </div>
+    </div>
+  );
+}
+
 /** Record Details — the same grid the review and judge queues show, built from
  *  the finding's raw QuickBase record via the shared buildRecordMeta.
  *
@@ -445,6 +480,10 @@ export default define.page(async function RemediationDetail(ctx) {
           <div class="queue-left">
             <div class="verdict-panel">
               <div class="verdict-scroll">
+                {/* Leads the panel on a closed-out audit: someone opening this
+                    from the Completed tab came to read what was done. */}
+                {renderRemediationNote(queueItem)}
+
                 <div class="rem-meta-grid">
                   <div><div class="rem-meta-label">Record</div><div class="mono">
                     {crmUrl

@@ -67,13 +67,19 @@ Deno.test("renderQuestionList — 'never mentioned' failure is not jumpable and 
   assertContains(html, "No matching moment in the call");
 });
 
-// A pass never carries a jump target, whatever its reasoning says.
-Deno.test("renderQuestionList — passing questions are never jumpable", () => {
+// Passes are not rendered at all — on a 25-question audit with one failure they
+// buried the one row the manager opened the page for.
+Deno.test("renderQuestionList — passing questions are not listed", () => {
   const html = renderHTML(renderQuestionList([
     q({ header: "Greeting", answer: "Yes", defense: 'The agent says "my name is Matthew".' }),
   ], TRANSCRIPT));
+  assertNotContains(html, "Greeting");
+  assertNotContains(html, "pill-green");
   assertNotContains(html, "data-rem-line-idx");
   assertNotContains(html, "No matching moment");
+  // The pass still counts toward the total, so the heading stays honest.
+  assertContains(html, "0 of 1");
+  assertContains(html, "Nothing failed on this audit.");
 });
 
 // The hint has to be honest about how many are actually clickable — the old
@@ -84,8 +90,8 @@ Deno.test("renderQuestionList — hint counts only the jumpable failures", () =>
     q({ header: "MCC", answer: "No", defense: 'No mention of "Monster Cruise Club" anywhere.' }),
     q({ header: "Taxes", answer: "No", defense: "There is no mention of taxes. No line includes the word tax." }),
   ], TRANSCRIPT));
-  assertContains(html, "3 failed");
-  assertContains(html, "1 of 3");
+  assertContains(html, "Failed Questions (3 of 3)");
+  assertContains(html, "jump to it (1 of 3)");
 });
 
 // No per-line times = nothing to seek to, so no row may advertise a jump and no
@@ -98,28 +104,42 @@ Deno.test("renderQuestionList — without utterance times nothing is jumpable", 
   assertNotContains(html, "No matching moment");
 });
 
-// Failures sort to the top but keep their original question numbers.
-Deno.test("renderQuestionList — failures first, original numbering preserved", () => {
+// Only failures are listed, and they keep their ORIGINAL question numbers — a
+// manager cross-checking against the full report needs "question 2", not "row 1".
+Deno.test("renderQuestionList — only failures listed, original numbering preserved", () => {
   const html = renderHTML(renderQuestionList([
     q({ header: "First Pass", answer: "Yes" }),
     q({ header: "Second Fail", answer: "No", defense: "no mention of anything relevant" }),
   ], TRANSCRIPT));
-  const failPos = html.indexOf("Second Fail");
-  const passPos = html.indexOf("First Pass");
-  assertEquals(failPos < passPos, true);
+  assertNotContains(html, "First Pass");
+  assertContains(html, "Second Fail");
   // The failure is question 2 and still renders as 2.
   assertContains(html, ">2<");
+  assertContains(html, "1 of 2");
 });
 
-// An "Error" answer is neither a pass nor a failure — it must not be treated as
-// a failed question (no red row, no jump, no missing-match note).
-Deno.test("renderQuestionList — Error answers are not treated as failures", () => {
+// An "Error" answer is neither a pass nor a failure. It must not get a failure
+// row, but it must not vanish with the passes either — a bot outage that left
+// questions ungraded is something the manager has to be able to see.
+Deno.test("renderQuestionList — ungraded questions are counted, not listed as failures", () => {
   const html = renderHTML(renderQuestionList([
     q({ header: "Timed Out", answer: "Error", thinking: "LLM timed out after 25s" }),
+    q({ header: "Real Fail", answer: "No", defense: "no mention of anything relevant" }),
   ], TRANSCRIPT));
-  assertNotContains(html, "rem-q-failed");
-  assertNotContains(html, "No matching moment");
-  assertContains(html, "pill-blue");
+  assertNotContains(html, "Timed Out");
+  assertNotContains(html, "pill-blue");
+  assertContains(html, "1 question could not be graded");
+  // The genuine failure is still there, and the count excludes the ungraded one.
+  assertContains(html, "Real Fail");
+  assertContains(html, "1 of 2");
+});
+
+Deno.test("renderQuestionList — ungraded count pluralizes", () => {
+  const html = renderHTML(renderQuestionList([
+    q({ header: "A", answer: "Error" }),
+    q({ header: "B", answer: "Error" }),
+  ], TRANSCRIPT));
+  assertContains(html, "2 questions could not be graded");
 });
 
 // ── Remediate action (close the failure from the detail page) ────────────────

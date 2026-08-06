@@ -197,24 +197,35 @@ export function renderRecordDetails(f: { record?: Record<string, unknown>; recor
   );
 }
 
-/** The questions list, failures first, each failure carrying the transcript
- *  line its evidence points at.
+/** The failures on this audit, each carrying the transcript line its evidence
+ *  points at.
  *
- *  The lookup happens HERE, on the server, against the same rendered line list
- *  TranscriptPanel emits — so a row's `data-rem-line-idx` addresses the exact
- *  `data-line-idx` the island will query. It used to happen client-side at
- *  click time against the whole call, which is how a failure whose evidence
- *  describes what was NEVER said still jumped somewhere (see findEvidenceLine).
- *  A failure with no confident match gets no attribute and says so in place. */
+ *  FAILURES ONLY. Passing questions used to render below the failures, which on
+ *  a 25-question audit with one failure meant 24 rows of "YES" pushing the one
+ *  thing the manager opened the page for off the top of the panel. Remediation
+ *  is about what went wrong; the pass count still shows in the topbar, and the
+ *  full question list is one click away on the audit report.
+ *
+ *  Questions the bot could not grade are not passes, so they are not silently
+ *  dropped with them — they get a count line above the list. There is nothing to
+ *  coach on an ungraded question, so they don't earn a row.
+ *
+ *  The evidence lookup happens HERE, on the server, against the same rendered
+ *  line list TranscriptPanel emits — so a row's `data-rem-line-idx` addresses
+ *  the exact `data-line-idx` the island will query. It used to happen
+ *  client-side at click time against the whole call, which is how a failure
+ *  whose evidence describes what was NEVER said still jumped somewhere (see
+ *  findEvidenceLine). A failure with no confident match gets no attribute and
+ *  says so in place. */
 export function renderQuestionList(qs: AnsweredQuestion[], transcript: TranscriptData) {
-  const failedCount = qs.filter((q) => !isYes(q.answer) && !isErrorAnswer(q.answer)).length;
   const hasTimes = (transcript.utteranceTimes?.length ?? 0) > 0;
 
-  // Failures first (preserving each question's original number), then the rest.
+  // Original question numbers are preserved — a manager comparing against the
+  // full report needs "question 2", not "the first row".
   const indexed = qs.map((q, i) => ({ q, num: i + 1 }));
   const failedRows = indexed.filter(({ q }) => !isYes(q.answer) && !isErrorAnswer(q.answer));
-  const passRows = indexed.filter(({ q }) => isYes(q.answer) || isErrorAnswer(q.answer));
-  const ordered = [...failedRows, ...passRows];
+  const ungradedCount = indexed.filter(({ q }) => isErrorAnswer(q.answer)).length;
+  const failedCount = failedRows.length;
 
   // Only worth resolving when the transcript can actually be seeked to.
   const renderedLines = hasTimes ? emitTranscriptLines(transcript).map((e) => e.line) : [];
@@ -233,41 +244,43 @@ export function renderQuestionList(qs: AnsweredQuestion[], transcript: Transcrip
   return (
     <>
       <div class="tbl-title" style="margin:16px 0 8px;">
-        Questions ({qs.length}{failedCount > 0 ? ` · ${failedCount} failed` : ""})
+        Failed Questions ({failedCount} of {qs.length})
         {evidenceLines.size > 0 && (
           <span class="rem-hint">
             {" "}· click a highlighted failure to jump to it ({evidenceLines.size} of {failedCount})
           </span>
         )}
       </div>
+      {ungradedCount > 0 && (
+        <div class="rem-q-ungraded">
+          {ungradedCount} question{ungradedCount === 1 ? "" : "s"} could not be graded by the bot — not counted as a pass or a failure.
+        </div>
+      )}
       <div class="rem-q-list">
-        {ordered.map(({ q, num }) => {
-          const yes = isYes(q.answer);
-          const errored = isErrorAnswer(q.answer);
-          const failed = !yes && !errored;
-          const pill = errored ? "blue" : yes ? "green" : "red";
-          const label = errored ? "Error" : yes ? "Yes" : "No";
-          const reason = failed ? (q.defense || q.thinking || "") : "";
-          const lineIdx = evidenceLines.get(num);
-          const jumpable = lineIdx != null;
-          return (
-            <div
-              key={num}
-              class={`rem-q-row ${failed ? "rem-q-failed" : ""} ${jumpable ? "rem-q-jumpable" : ""}`}
-              {...(jumpable ? { "data-rem-line-idx": String(lineIdx), title: "Jump to this failure in the transcript" } : {})}
-            >
-              <div class="rem-q-head">
-                <span class="rem-q-num mono">{num}</span>
-                <span class="rem-q-name">{questionLabel(q) || "—"}</span>
-                <span class={`pill pill-${pill}`}>{label}</span>
+        {failedCount === 0
+          ? <div class="rem-q-none">Nothing failed on this audit.</div>
+          : failedRows.map(({ q, num }) => {
+            const reason = q.defense || q.thinking || "";
+            const lineIdx = evidenceLines.get(num);
+            const jumpable = lineIdx != null;
+            return (
+              <div
+                key={num}
+                class={`rem-q-row rem-q-failed ${jumpable ? "rem-q-jumpable" : ""}`}
+                {...(jumpable ? { "data-rem-line-idx": String(lineIdx), title: "Jump to this failure in the transcript" } : {})}
+              >
+                <div class="rem-q-head">
+                  <span class="rem-q-num mono">{num}</span>
+                  <span class="rem-q-name">{questionLabel(q) || "—"}</span>
+                  <span class="pill pill-red">No</span>
+                </div>
+                {reason && <div class="rem-q-reason">{reason}</div>}
+                {hasTimes && !jumpable && (
+                  <div class="rem-q-nomatch">No matching moment in the call — nothing to jump to.</div>
+                )}
               </div>
-              {reason && <div class="rem-q-reason">{reason}</div>}
-              {failed && hasTimes && !jumpable && (
-                <div class="rem-q-nomatch">No matching moment in the call — nothing to jump to.</div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
       </div>
     </>
   );

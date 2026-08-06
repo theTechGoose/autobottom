@@ -1817,6 +1817,11 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .rem-q-name { flex: 1; font-size: 12px; min-width: 0; }
 .rem-q-reason { margin-top: 4px; font-size: 11px; color: var(--text-muted); line-height: 1.4; }
 .rem-q-nomatch { margin-top: 4px; font-size: 11px; color: var(--text-dim); font-style: italic; }
+/* Ungraded questions get a count, not rows — they are neither a pass to hide
+   nor a failure to coach on, but dropping them silently would hide a bot
+   outage from the manager. */
+.rem-q-ungraded { margin: 0 0 8px; font-size: 11px; color: var(--text-muted); }
+.rem-q-none { padding: 10px; font-size: 12px; color: var(--text-muted); border: 1px dashed var(--border); border-radius: 6px; }
 /* Already-closed failure: a stamp where the Remediate button would be. */
 .rem-done { font-size: 12px; color: #3fb950; white-space: nowrap; }
 

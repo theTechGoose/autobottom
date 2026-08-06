@@ -27,6 +27,11 @@ interface Props {
    *  "Re-Audited" pill becomes a link to the new audit's report so anyone
    *  landing on a stale report URL can jump to the live one in a click. */
   reAuditedTo?: string;
+  /** How the TRIGGER sits on the page — the overlays are unaffected.
+   *  "block" (default) is the audit report's centred, vertically-spaced
+   *  button. "inline" strips the spacing and shrinks it to btn-sm, for a
+   *  toolbar row like the manager remediation topbar. */
+  variant?: "block" | "inline";
 }
 
 type View =
@@ -48,7 +53,7 @@ function fmtTime(sec: number): string {
 }
 
 export default function AppealModal(props: Props) {
-  const { findingId, auditorEmail, failedQuestions, originalGenieId = "", appealedAt, reAuditedAt, reAuditedTo } = props;
+  const { findingId, auditorEmail, failedQuestions, originalGenieId = "", appealedAt, reAuditedAt, reAuditedTo, variant = "block" } = props;
   // Local lock — set after a successful submit so the button updates without
   // needing a page refresh. Server-side appealedAt/reAuditedAt cover the
   // post-refresh case.
@@ -293,7 +298,7 @@ export default function AppealModal(props: Props) {
 
   return (
     <>
-      <div style="margin:14px 0 6px;text-align:center;">
+      <div class={`appeal-trigger${variant === "inline" ? " appeal-trigger--inline" : ""}`}>
         {lockedLabel === "Re-Audited" && reAuditedTo ? (
           // Stale-report shortcut: anyone landing on a re-audited finding gets
           // a one-click jump to the live new audit instead of a dead pill.

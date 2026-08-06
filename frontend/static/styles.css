@@ -1543,6 +1543,12 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 /* ===== File Appeal — prod-matching modal (Commit W) ===== */
 @keyframes appealIn { from { opacity:0;transform:scale(0.95) translateY(6px); } to { opacity:1;transform:none; } }
 
+/* Trigger placement. "block" is the audit report's centred button; "inline"
+   drops it into a toolbar row (manager remediation topbar) at btn-sm size.
+   Only the trigger changes — every overlay is identical in both. */
+.appeal-trigger { margin: 14px 0 6px; text-align: center; }
+.appeal-trigger--inline { margin: 0; text-align: left; }
+.appeal-trigger--inline .appeal-btn { padding: 4px 10px; font-size: 11px; border-radius: 6px; }
 .appeal-btn {
   background: var(--red-dim); color: #fff; border: none;
   padding: 9px 28px; border-radius: 8px; font-weight: 700; font-size: 12px;

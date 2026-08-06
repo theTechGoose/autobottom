@@ -32,6 +32,7 @@ import { RecordDetails } from "../../../components/VerdictPanel.tsx";
 import QueueAudioPlayer from "../../../islands/QueueAudioPlayer.tsx";
 import RemediationInteractive from "../../../islands/RemediationInteractive.tsx";
 import HotkeyHandler from "../../../islands/HotkeyHandler.tsx";
+import AppealModal from "../../../islands/AppealModal.tsx";
 
 interface AnsweredQuestion {
   header?: string;
@@ -55,6 +56,11 @@ interface Finding {
   record?: Record<string, unknown>;
   completedAt?: number;
   findingStatus?: string;
+  /** Appeal / re-audit state — AppealModal reads these to lock its own button
+   *  ("Appeal Filed" / "Re-Audited") so a manager can't double-file. */
+  appealedAt?: number;
+  reAuditedAt?: number;
+  reAuditedTo?: string;
 }
 
 // Same QuickBase deep-links the audit report + finding modal use.
@@ -331,6 +337,30 @@ export default define.page(async function RemediationDetail(ctx) {
   const flags = saleFlagsOf(f);
   const saleTags = [...(flags.wgs ? ["WGS"] : []), ...(flags.mcc ? ["MCC"] : [])];
 
+  // ── Appeal inputs, mirrored from the audit report ────────────────────────
+  // Same audit, same appeal — so these deliberately reproduce report.tsx and
+  // AuditReport.tsx rather than inventing a manager-flavoured variant.
+  //
+  // Gate: report shows the button on a finished audit that isn't perfect. Note
+  // `pct < 100` is NOT the same as "has a confirmed failure" — a question the
+  // bot couldn't grade drags the score below 100 without being a failure, and
+  // that ungraded question is exactly the kind you'd want re-audited, so it
+  // stays appealable here too.
+  const appealable = f.findingStatus === "finished" && pct < 100;
+  // Auditor: the manager is always logged in here, so user.email wins every
+  // time. The rest of the report's chain is kept so this can't send an empty
+  // auditor if that ever stops being true — the backend rejects empty.
+  const voEmail = String(record.VoEmail ?? "").trim();
+  const ownerEmail = String(f.owner ?? "").trim();
+  const appealAuditorEmail = user.email ||
+    voEmail ||
+    (ownerEmail && ownerEmail !== "api" ? ownerEmail : "") ||
+    "appeal-from-public-report@autobottom.local";
+  // Prefill for the "Different Recording" tab. The report's chain ends in a
+  // literal "—" for display; that is a fine dash to PRINT and a terrible thing
+  // to seed a genie-ID input with, so this stops at "".
+  const appealGenieId = String(f.recordingId ?? record.VoGenie ?? "");
+
   // The queue item — NOT the finding — is where remediation state lives
   // (submitRemediation writes status/remediatedBy/remediatedAt onto it). Read it
   // so this page can offer the same Remediate action the queue row does, and so
@@ -380,6 +410,33 @@ export default define.page(async function RemediationDetail(ctx) {
             ))}
           </div>
           <a href={reportUrl} class="btn btn-ghost btn-sm" target="_blank" rel="noopener">Open Full Report &#8599;</a>
+          {/* Appeal sits between the report and the close-out because that is the
+              order of the decision: read it, dispute it if the bot got it wrong,
+              otherwise coach it and close.
+
+              Deliberately the SAME island and the SAME inputs as the audit
+              report's button — the gate (finished + not a perfect score), the
+              auditor-email fallback chain and the appealable-question filter are
+              all copied from routes/audit/report.tsx + AuditReport.tsx so the two
+              entry points can't drift into filing different appeals for the same
+              audit. Only the trigger's placement differs (variant="inline").
+              The island locks itself to "Appeal Filed" / "Re-Audited" off the
+              finding, which the manager endpoint returns whole, so a manager
+              can't double-file what a rep already appealed. */}
+          {appealable && (
+            <AppealModal
+              variant="inline"
+              findingId={findingId}
+              auditorEmail={appealAuditorEmail}
+              originalGenieId={appealGenieId}
+              appealedAt={f.appealedAt}
+              reAuditedAt={f.reAuditedAt}
+              reAuditedTo={f.reAuditedTo}
+              failedQuestions={qs
+                .map((q, i) => ({ index: i, header: questionLabel(q) || "Untitled question", answer: q.answer ?? "" }))
+                .filter((q) => !isYes(q.answer))}
+            />
+          )}
           {remediate.action}
         </div>
 

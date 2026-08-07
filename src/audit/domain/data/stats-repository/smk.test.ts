@@ -545,3 +545,40 @@ Deno.test("saleFlagsFromFinding — packages use field 345 for MCC, never WGS", 
   const f = { recordingIdField: "GenieNumber", record: { "345": "yes", "460": "169" } };
   assertEquals(saleFlagsFromFinding(f), { wgs: false, mcc: true });
 });
+
+// ── buildIndexMeta — employeeId, the unambiguous person key ──────────────────
+// The whole point of carrying QuickBase fid 143 onto the index row is that
+// neither the name nor the VO email can tell two people apart. Prod has two
+// Mariah Browns (one ODR, one WST) who share mariahb@monsterrg.com, so these
+// pin the ONE field that separates them.
+
+Deno.test("buildIndexMeta — employeeId comes off the record's RelatedEmployeeId", () => {
+  const f = { record: { VoName: "ODR - Mariah Brown", RelatedEmployeeId: "25335" } };
+  assertEquals(buildIndexMeta(f).employeeId, "25335");
+});
+
+Deno.test("buildIndexMeta — two same-named people keep different employeeIds", () => {
+  // Same display name, same email, different humans. The real prod case.
+  const odr = buildIndexMeta({
+    record: { VoName: "ODR - Mariah Brown", VoEmail: "mariahb@monsterrg.com", RelatedEmployeeId: "25335" },
+  });
+  const wst = buildIndexMeta({
+    record: { VoName: "WST ACT - Mariah Brown", VoEmail: "mariahb@monsterrg.com", RelatedEmployeeId: "22887" },
+  });
+  assertEquals(odr.voName, wst.voName, "names collide — that's the premise");
+  assert(odr.employeeId !== wst.employeeId, "employeeId must still separate them");
+});
+
+Deno.test("buildIndexMeta — a numeric employee id is stored as a string", () => {
+  // QuickBase hands this back as a number on one query shape and "22454.0" on
+  // another. Anything but a stable string re-splits one person into two.
+  assertEquals(buildIndexMeta({ record: { RelatedEmployeeId: 28963 } }).employeeId, "28963");
+});
+
+Deno.test("buildIndexMeta — a record with no employee id leaves employeeId undefined", () => {
+  // Undefined, NOT "" — a backfill has to tell "audited before we pulled fid
+  // 143" apart from "QuickBase has no employee on this record".
+  assertEquals(buildIndexMeta({ record: { VoName: "VBA PM - Samuel Timmons" } }).employeeId, undefined);
+  assertEquals(buildIndexMeta({ record: {} }).employeeId, undefined);
+  assertEquals(buildIndexMeta(null).employeeId, undefined);
+});

@@ -64,6 +64,14 @@ export interface AuditDoneIndexEntry {
   recordingId?: string;   // genie # — backfilled on hydrate from the finding doc
   isPackage?: boolean;
   voName?: string;
+  /** QuickBase "Related Employee2" (fid 143) — the numeric employee record
+   *  behind voName, and the only field that identifies a person unambiguously.
+   *  voName collides (two different Mariah Browns) and so does the VO email
+   *  (both Mariahs share one address). Written on every index (re)write since
+   *  2026-08; rows completed before that are undefined until backfilled from
+   *  QuickBase. Filtered in memory like every other dimension — no Firestore
+   *  index change. */
+  employeeId?: string;
   owner?: string;
   department?: string;
   shift?: string;

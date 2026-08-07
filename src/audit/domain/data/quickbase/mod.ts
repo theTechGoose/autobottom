@@ -7,6 +7,16 @@ function cleanGenieId(raw: unknown): string {
   return str.split(",").map((s) => s.trim().replace(/[^0-9].*$/, "")).filter((s) => s.length > 0).join(",");
 }
 
+/** Normalize a QuickBase numeric-reference field to a bare id string.
+ *  QuickBase hands the same field back as `28963` on one query shape and
+ *  `"22454.0"` on another, so both are trimmed to the integer. An id is an
+ *  identifier, not a quantity — keeping it a string stops "22454" and
+ *  "22454.0" becoming two different people downstream. */
+function cleanRefId(raw: unknown): string {
+  const num = Number(String(raw ?? "").trim());
+  return Number.isFinite(num) && num > 0 ? String(Math.trunc(num)) : "";
+}
+
 function headers() {
   return {
     "QB-Realm-Hostname": `${Deno.env.get("QB_REALM")}.quickbase.com`,
@@ -102,7 +112,13 @@ export async function queryRecords(opts: QBQueryOptions, attempt = 0): Promise<a
 // ── Date Legs ────────────────────────────────────────────────────────────────
 
 const DATE_LEGS_TABLE = "bpb28qsnn";
-const DL = { RECORD_ID: 3, VO_GENIE: 145, RELATED_DEST: 292, GUEST_NAME: 32, VO_NAME: 144, VO_EMAIL: 839, SUPERVISOR_EMAIL: 851, DEST_DISPLAY: 566, ACTIVATING_OFFICE: 140, SHIFT: 834 };
+// RELATED_EMPLOYEE (143) is the numeric employee record behind VO_NAME (144).
+// It's the only field that identifies a person unambiguously: names collide
+// (two Mariah Browns, one ODR one WST) and so do emails — one address is
+// listed on several employee records, and both Mariah records share
+// mariahb@monsterrg.com. Carried on the finding so a per-person view can
+// key on the ID instead of guessing from name + office.
+const DL = { RECORD_ID: 3, VO_GENIE: 145, RELATED_DEST: 292, GUEST_NAME: 32, VO_NAME: 144, VO_EMAIL: 839, SUPERVISOR_EMAIL: 851, DEST_DISPLAY: 566, ACTIVATING_OFFICE: 140, SHIFT: 834, RELATED_EMPLOYEE: 143 };
 const DATE_LEG_AUTOYES_FIELDS = [8, 10, 32, 33, 49, 297, 314, 460, 553, 594, 706];
 
 export async function getDateLegByRid(rid: string): Promise<Record<string, any> | null> {
@@ -111,7 +127,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     const records = await queryRecords({
     tableId: DATE_LEGS_TABLE,
     where: `{${DL.RECORD_ID}.EX.'${rid}'}`,
-    select: [DL.RECORD_ID, DL.VO_GENIE, DL.RELATED_DEST, DL.DEST_DISPLAY, DL.GUEST_NAME, DL.VO_NAME, DL.VO_EMAIL, DL.SUPERVISOR_EMAIL, DL.ACTIVATING_OFFICE, DL.SHIFT, ...DATE_LEG_AUTOYES_FIELDS],
+    select: [DL.RECORD_ID, DL.VO_GENIE, DL.RELATED_DEST, DL.DEST_DISPLAY, DL.GUEST_NAME, DL.VO_NAME, DL.VO_EMAIL, DL.SUPERVISOR_EMAIL, DL.ACTIVATING_OFFICE, DL.SHIFT, DL.RELATED_EMPLOYEE, ...DATE_LEG_AUTOYES_FIELDS],
   });
   if (records.length === 0) return null;
   const r = records[0];
@@ -122,6 +138,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     RelatedDestinationId: r[DL.RELATED_DEST]?.value ?? "", DestinationDisplay: r[DL.DEST_DISPLAY]?.value ?? "",
     GuestName: r[DL.GUEST_NAME]?.value ?? "", VoName: r[DL.VO_NAME]?.value ?? "",
     VoEmail: r[DL.VO_EMAIL]?.value ?? "", SupervisorEmail: r[DL.SUPERVISOR_EMAIL]?.value ?? "",
+    RelatedEmployeeId: cleanRefId(r[DL.RELATED_EMPLOYEE]?.value),
     ActivatingOffice: String(r[DL.ACTIVATING_OFFICE]?.value ?? ""), Shift: String(r[DL.SHIFT]?.value ?? ""),
     ...autoYes,
   };

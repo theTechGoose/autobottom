@@ -43,6 +43,14 @@ export interface IndexMeta {
   startedAt?: number;
   wgs?: boolean;
   mcc?: boolean;
+  /** QuickBase "Related Employee2" (fid 143) — the numeric employee record
+   *  behind VoName. The ONLY unambiguous person key: names collide (two
+   *  Mariah Browns, one ODR one WST) and so do emails (both Mariahs share
+   *  mariahb@; one address is listed on ten separate employee records).
+   *  Empty string = looked and QuickBase had none. Undefined = this row
+   *  predates the field — audits finalized before it was pulled, which need
+   *  a QuickBase-backed backfill, not a finding re-read. */
+  employeeId?: string;
 }
 
 /** WGS/MCC sale flags from the finding record. Date-legs: QB field 460
@@ -80,6 +88,10 @@ export function buildIndexMeta(finding: Record<string, any> | null | undefined):
     department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")) || undefined,
     shift: isPackage ? undefined : String(rec.Shift ?? "") || undefined,
     startedAt: (finding as any)?.startedAt as number | undefined,
+    // Left undefined (not "") when the record has no RelatedEmployeeId at all,
+    // so a backfill can tell "audited before we pulled fid 143" apart from
+    // "QuickBase genuinely has no employee on this record".
+    employeeId: rec.RelatedEmployeeId != null ? String(rec.RelatedEmployeeId) : undefined,
     ...saleFlagsFromFinding(finding),
   };
 }

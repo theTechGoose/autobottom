@@ -30,6 +30,10 @@ export interface AuditHistoryRow {
   recordId?: string;
   isPackage?: boolean;
   voName?: string;
+  /** QuickBase employee record id (fid 143). Unambiguous person key — voName
+   *  and VO email both collide. Undefined on audits completed before the
+   *  field was pulled. */
+  employeeId?: string;
   owner?: string;
   department?: string;
   shift?: string;
@@ -49,6 +53,10 @@ export interface AuditHistoryRow {
 
 export interface AuditHistoryFilters {
   owner?: string;
+  /** Exact QuickBase employee id. Preferred over `owner` when you mean ONE
+   *  person: `owner` matches on display name, so filtering "Mariah Brown"
+   *  returns both of them. */
+  employeeId?: string;
   shift?: string;
   department?: string;
   reviewed?: string;          // "" | "yes" | "no" | "auto" | "invalid_genie"
@@ -304,6 +312,7 @@ async function hydrateMissing(orgId: OrgId, rows: AuditHistoryRow[]): Promise<Au
       ...r,
       isPackage: isPkg,
       voName: vo || undefined,
+      employeeId: rec?.RelatedEmployeeId != null ? String(rec.RelatedEmployeeId) : undefined,
       owner: f.owner as string | undefined,
       department: String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? "")) || undefined,
       shift: isPkg ? undefined : String(rec?.Shift ?? "") || undefined,
@@ -320,6 +329,7 @@ function toRow(e: AuditDoneIndexEntry): AuditHistoryRow {
     recordId: e.recordId,
     isPackage: e.isPackage,
     voName: e.voName,
+    employeeId: e.employeeId,
     owner: e.owner,
     department: e.department,
     shift: e.shift,
@@ -357,6 +367,7 @@ async function _getAuditHistoryRaw(
   filters: AuditHistoryFilters,
 ): Promise<AuditHistoryResult> {
   const owner = filters.owner ?? "";
+  const employeeId = filters.employeeId ?? "";
   const shift = filters.shift ?? "";
   const department = filters.department ?? "";
   const reviewed = filters.reviewed ?? "";
@@ -426,6 +437,11 @@ async function _getAuditHistoryRaw(
   const inWindow = scopedEntries.filter((c) => (!until || c.ts <= until) && (!managerView || isReviewed(c)));
 
   const filtered = inWindow.filter((c) => {
+    // Employee id is the precise filter — one person, even when two people
+    // share a name. It intentionally excludes rows completed before fid 143
+    // was pulled (employeeId undefined) rather than falling back to the name,
+    // because a name fallback would silently re-merge the two Mariah Browns.
+    if (employeeId && c.employeeId !== employeeId) return false;
     if (owner && (c.voName || c.owner) !== owner) return false;
     if (shift && c.shift !== shift) return false;
     if (department && c.department !== department) return false;

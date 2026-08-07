@@ -10,6 +10,7 @@ import {
   getErrorsInWindow, isFindingRecovered, redactErrorMessage,
   deriveQbRecordId, inspectRecordIndex, repairRecordIndexForFinding, restoreHiddenFinding,
   markFindingHidden, getHiddenFindingIds, _resetHiddenCacheForTesting, _resetQueryAuditDoneIndexCacheForTests,
+  deleteDoneIdxRowsForFinding, deleteAuditDoneIdxByFindingId,
 } from "./mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
@@ -581,4 +582,69 @@ Deno.test("buildIndexMeta — a record with no employee id leaves employeeId und
   assertEquals(buildIndexMeta({ record: { VoName: "VBA PM - Samuel Timmons" } }).employeeId, undefined);
   assertEquals(buildIndexMeta({ record: {} }).employeeId, undefined);
   assertEquals(buildIndexMeta(null).employeeId, undefined);
+});
+
+// ── Removing a finding from the index ───────────────────────────────────────
+
+/** Live index rows for one finding — cache reset so post-delete reads are real. */
+async function idxRows(orgId: string, findingId: string): Promise<AuditDoneIndexEntry[]> {
+  _resetQueryAuditDoneIndexCacheForTests();
+  const all = await queryAuditDoneIndex(orgId, 0, Number.MAX_SAFE_INTEGER);
+  return all.filter((e) => e.findingId === findingId);
+}
+
+// Regression for "one call shows up as three audits". A re-audit is supposed to
+// pull the superseded finding's row out of audit-done-idx. The old cleanup
+// looked the row's timestamp up with the CAPPED 1000-row scan over an index of
+// 80k+, never found it, fell back to Date.now() as the key, and deleted nothing.
+
+Deno.test("deleteDoneIdxRowsForFinding — removes the row keyed at completedAt", async () => {
+  _resetHiddenCacheForTesting();
+  const orgId = "test-delidx-" + crypto.randomUUID().slice(0, 8);
+  const completedAt = 1_700_000_100_000;
+  await saveFinding(orgId, { id: "fid-DEL", findingStatus: "finished", completedAt });
+  await writeAuditDoneIndex(orgId, { findingId: "fid-DEL", completedAt, completed: true, score: 96, recordId: "recDEL" });
+  assertEquals((await idxRows(orgId, "fid-DEL")).length, 1, "row is there to begin with");
+
+  const deleted = await deleteDoneIdxRowsForFinding(orgId, "fid-DEL", { completedAt });
+  assert(deleted >= 1, "reported at least one key deleted");
+  assertEquals((await idxRows(orgId, "fid-DEL")).length, 0, "row is gone");
+});
+
+Deno.test("deleteDoneIdxRowsForFinding — catches the row a REVIEW moved to reviewedAt", async () => {
+  // writeSoleAuditDoneIndex re-keys a reviewed finding at reviewedAt, so a
+  // cleanup that only knows completedAt would miss it. Both are candidates.
+  _resetHiddenCacheForTesting();
+  const orgId = "test-delidx2-" + crypto.randomUUID().slice(0, 8);
+  const completedAt = 1_700_000_200_000;
+  const reviewedAt = completedAt + 9000;
+  await saveFinding(orgId, { id: "fid-REV", findingStatus: "finished", completedAt, reviewedAt });
+  await writeSoleAuditDoneIndex(orgId, { completedAt, reviewedAt }, {
+    findingId: "fid-REV", completed: true, score: 96, reason: "reviewed", recordId: "recREV",
+  });
+  assertEquals((await idxRows(orgId, "fid-REV")).length, 1, "one row, keyed at reviewedAt");
+
+  await deleteDoneIdxRowsForFinding(orgId, "fid-REV", { completedAt, reviewedAt });
+  assertEquals((await idxRows(orgId, "fid-REV")).length, 0, "reviewed row removed too");
+});
+
+Deno.test("deleteAuditDoneIdxByFindingId — finds a row past the 1000-row scan cap", async () => {
+  // The uncapped-scan fix: with more than 1000 rows in the index, the capped
+  // scan returned 0 and every row survived. Rows are keyed by padded timestamp,
+  // so the target is written LAST to put it past the cap in scan order.
+  _resetHiddenCacheForTesting();
+  const orgId = "test-delidx3-" + crypto.randomUUID().slice(0, 8);
+  const base = 1_700_000_300_000;
+  for (let i = 0; i < 1005; i++) {
+    await writeAuditDoneIndex(orgId, {
+      findingId: `filler-${i}`, completedAt: base + i, completed: true, score: 100, recordId: `r${i}`,
+    }, { assumeFinished: true });
+  }
+  await writeAuditDoneIndex(orgId, {
+    findingId: "fid-DEEP", completedAt: base + 5000, completed: true, score: 88, recordId: "recDEEP",
+  }, { assumeFinished: true });
+
+  const removed = await deleteAuditDoneIdxByFindingId(orgId, "fid-DEEP");
+  assertEquals(removed, 1, "row past the cap was found and deleted");
+  assertEquals((await idxRows(orgId, "fid-DEEP")).length, 0, "and it is actually gone");
 });

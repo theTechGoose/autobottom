@@ -850,9 +850,13 @@ export async function deleteAuditDoneIndexEntry(orgId: OrgId, findingId: string,
 /** Delete every audit-done-idx entry for a findingId without needing its
  *  completedAt. Scans the index — O(N) — so prefer the keyed variant when
  *  the caller already has the timestamp. Used by the retry-drain path
- *  where we don't trust the previous run's timestamp. */
+ *  where we don't trust the previous run's timestamp.
+ *
+ *  The scan MUST be the uncapped/paged one. Plain listStoredWithKeys stops at
+ *  1000 rows; against an index of 80k+ that silently matched nothing and the
+ *  function returned 0 while every row survived. */
 export async function deleteAuditDoneIdxByFindingId(orgId: OrgId, findingId: string): Promise<number> {
-  const rows = await listStoredWithKeys<AuditDoneIndexEntry>("audit-done-idx", orgId);
+  const rows = await listStoredWithKeysAll<AuditDoneIndexEntry>("audit-done-idx", orgId);
   let removed = 0;
   for (const { key, value } of rows) {
     if (value?.findingId === findingId) {
@@ -964,6 +968,40 @@ export async function pruneStaleDoneIdxRows(
   }
   await setStored(DONE_IDX_KEY_PTR, orgId, [findingId], { ts: canonicalTs }).catch((e) =>
     console.warn(`[DONE-IDX] ${findingId}: key-pointer write failed (non-fatal): ${(e as Error).message}`));
+}
+
+/** Delete a finding's audit-done-idx row(s) by KEY, using the same candidate
+ *  timestamps pruneStaleDoneIdxRows uses: whatever the finding still carries
+ *  plus the pointer recording where the last write landed. Also clears the
+ *  pointer, since the finding is being removed from the index entirely.
+ *
+ *  This exists because the obvious implementation — scan the index for rows
+ *  with this findingId — needs the UNCAPPED scan, and a re-audit is not the
+ *  place to walk 80k rows. Callers that hold the finding doc already know
+ *  every key its row could be under, so no scan is needed at all.
+ *
+ *  Returns how many keys were deleted. Best-effort per key. */
+export async function deleteDoneIdxRowsForFinding(
+  orgId: OrgId,
+  findingId: string,
+  finding: Record<string, any> | null | undefined,
+): Promise<number> {
+  const pointer = await getStored<{ ts: number }>(DONE_IDX_KEY_PTR, orgId, findingId).catch(() => null);
+  const candidates = new Set<number>();
+  for (const ts of [toEpochMs(finding?.completedAt), toEpochMs(finding?.reviewedAt), pointer?.ts]) {
+    if (typeof ts === "number" && Number.isFinite(ts)) candidates.add(ts);
+  }
+  let deleted = 0;
+  for (const ts of candidates) {
+    try {
+      await deleteAuditDoneIndexEntry(orgId, findingId, ts);
+      deleted++;
+    } catch (e) {
+      console.warn(`[DONE-IDX] ${findingId}: row delete at ts=${ts} failed (non-fatal): ${(e as Error).message}`);
+    }
+  }
+  await deleteStored(DONE_IDX_KEY_PTR, orgId, findingId).catch(() => {});
+  return deleted;
 }
 
 /** Among multiple audit-done-idx rows for ONE finding, pick the index of the

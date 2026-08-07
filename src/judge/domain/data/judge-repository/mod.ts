@@ -16,6 +16,7 @@ import {
   deleteChargebackEntry,
   deleteWireDeductionEntry,
   deleteAuditDoneIndexEntry,
+  deleteDoneIdxRowsForFinding,
   deleteCompletedStat,
   getChargebackEntries,
   getWireDeductionEntries,
@@ -745,20 +746,21 @@ export async function adminDeleteFinding(orgId: OrgId, findingId: string): Promi
 /** Like adminDeleteFinding minus the finding-chunk delete — keeps the
  *  finding alive for the report page after a recording-swap appeal. */
 export async function cleanupFindingFromIndices(orgId: OrgId, findingId: string): Promise<void> {
-  let completedAt = Date.now();
-  const idx = await listStoredWithKeys<{ findingId: string; completedAt: number }>("audit-done-idx", orgId);
-  for (const { value } of idx) {
-    if (value?.findingId === findingId) { completedAt = value.completedAt; break; }
-  }
-
   const keys = await collectKeysForFinding(orgId, findingId);
   for (const { type, key } of keys) await deleteStored(type, orgId, ...key);
 
   await deleteChargebackEntry(orgId, findingId).catch(() => {});
   await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
   await deleteCompletedStat(orgId, findingId).catch(() => {});
-  await deleteAuditDoneIndexEntry(orgId, findingId, completedAt).catch(() => {});
-  console.log(`[CLEANUP] 🗑️ ${findingId}: indices cleared (${keys.length} entries + cb/wire/stat/done-idx)`);
+  // Delete the index row by KEY off the finding's own timestamps. The old code
+  // looked the timestamp up with the CAPPED scan (1000 rows) over an index of
+  // 80k+, so it almost never found the row, fell back to Date.now() as the key,
+  // and deleted nothing — every re-audited audit kept its old row. One call
+  // that was re-audited twice therefore read as three separate audits in
+  // history, two of them at the pre-re-audit score.
+  const finding = await getFinding(orgId, findingId).catch(() => null);
+  const rowsGone = await deleteDoneIdxRowsForFinding(orgId, findingId, finding as Record<string, any> | null);
+  console.log(`[CLEANUP] 🗑️ ${findingId}: indices cleared (${keys.length} entries + cb/wire/stat, ${rowsGone} done-idx row(s))`);
 }
 
 // ── Legacy aliases ──────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import {
   getJudgeStats,
   claimNextItem,
   dismissFindingFromJudgeQueue,
+  dismissAppealForFinding,
   findDuplicates,
   deleteDuplicates,
   diagnoseDuplicates,
@@ -90,6 +91,58 @@ Deno.test({ name: "judge — dismiss removes from queue", ...kvOpts, fn: async (
   await populateJudgeQueue(ORG, "f-judge-dismiss", qs);
   const { dismissed } = await dismissFindingFromJudgeQueue(ORG, "f-judge-dismiss");
   assert(dismissed > 0);
+}});
+
+// Regression for "dismissed the appeal, button still says Appeal Filed": a
+// dismissal has to undo every write file-appeal made, not just the queue rows.
+// The dismissal email tells the auditor to file again — appealedAt left on the
+// finding makes that impossible, and appealStatus left on the index row keeps
+// "Appeal Pending" on every history screen.
+Deno.test({ name: "judge — dismissAppealForFinding unlocks the appeal button and clears the badge", ...kvOpts, fn: async () => {
+  reset();
+  const orgId = ("test-dismiss-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const fid = "f-dismiss-full";
+  const completedAt = 1_700_000_000_000;
+  const appealedAt = completedAt + 60_000;
+
+  await saveFinding(orgId, {
+    id: fid, findingStatus: "finished", completedAt, score: 84,
+    appealedAt, appealComment: "second genie number in the notes",
+  });
+  // Same write order file-appeal uses: queue rows, then the appeal record, then
+  // the index row (which stamps appealStatus off that record).
+  await populateJudgeQueue(orgId, fid, [
+    { header: "Taxes", populated: "P", thinking: "T", defense: "D", answer: "No" },
+    { header: "Active Bankruptcy", populated: "P", thinking: "T", defense: "D", answer: "No" },
+  ], "redo");
+  await saveAppeal(orgId, { findingId: fid, appealedAt, status: "pending", auditor: "vo@test.com", appealedQuestions: ["0", "1"] });
+  await writeAuditDoneIndex(orgId, { findingId: fid, completedAt, completed: true, score: 84, recordId: "rec-D" });
+
+  // Pre-state: everything reads "appeal open".
+  assertEquals((await idxRowsFor(orgId, fid))[0].appealStatus, "pending", "badge starts pending");
+  assertEquals(await getStored<number>("judge-audit-pending", orgId, fid), 2, "counter starts at the filed count");
+
+  const { dismissed } = await dismissAppealForFinding(orgId, fid);
+
+  assertEquals(dismissed, 2, "both queue rows torn down");
+  assertEquals(await getAppeal(orgId, fid), null, "appeal record deleted");
+  assertEquals(await getStored<number>("judge-audit-pending", orgId, fid), null, "stale counter cleared");
+
+  const after = await getFinding(orgId, fid) as Record<string, any>;
+  assertEquals(after.appealedAt, undefined, "appealedAt cleared — button goes back to red 'File Appeal'");
+  assertEquals(after.appealComment, undefined, "stale comment cleared so it can't surface under the next appeal");
+  assertEquals(after.score, 84, "the audit itself is untouched");
+
+  const rows = await idxRowsFor(orgId, fid);
+  assertEquals(rows.length, 1, "still exactly one index row");
+  assertEquals(rows[0].appealStatus, "none", "history badge no longer reads 'Appeal Pending'");
+  assertEquals(rows[0].score, 84, "score preserved through the re-stamp");
+
+  // The auditor can now file again — the whole point of a dismissal.
+  await populateJudgeQueue(orgId, fid, [
+    { header: "Taxes", populated: "P", thinking: "T", defense: "D", answer: "No" },
+  ], "redo");
+  assertEquals(await getStored<number>("judge-audit-pending", orgId, fid), 1, "re-filed appeal queues cleanly");
 }});
 
 // ─── getJudgeStats parity with the queue ───────────────────────────────────

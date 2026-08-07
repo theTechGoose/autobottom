@@ -5,7 +5,7 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import { JudgeStatsResponse, ReviewBufferResponse, DecisionResponse, OkResponse, OkMessageResponse, ReviewerListResponse, ReviewerConfigResponse, DismissResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, JudgeDecideRequest, DeleteEmailRequest, ReviewerConfigRequest, FindingIdRequest } from "@core/dto/requests.ts";
-import { recordJudgeDecision, getJudgeStats, getAppeal, dismissFindingFromJudgeQueue, clearJudgeQueue, deleteAppeal } from "@judge/domain/data/judge-repository/mod.ts";
+import { recordJudgeDecision, getJudgeStats, getAppeal, dismissFindingFromJudgeQueue, dismissAppealForFinding, clearJudgeQueue } from "@judge/domain/data/judge-repository/mod.ts";
 import { getReviewerLeaderboard } from "@review/domain/business/review-stats/mod.ts";
 import { getMyJudgeStats } from "@judge/domain/business/judge-analytics/mod.ts";
 import { getReviewerConfig, saveReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
@@ -143,7 +143,7 @@ export class JudgeController {
     }
   }
 
-  @Post("dismiss-appeal") @ReturnedType(OkResponse) @Description("Dismiss appeal — clears queue, deletes appeal record, fires dismissal webhook if a reason is supplied") @BodyType(GenericBodyRequest)
+  @Post("dismiss-appeal") @ReturnedType(OkResponse) @Description("Dismiss appeal — clears queue, deletes appeal record, unlocks the auditor's appeal button, fires dismissal webhook if a reason is supplied") @BodyType(GenericBodyRequest)
   async dismissAppeal(@Body() body: { findingId: string; dismissalReason?: string; judge?: string }) {
     if (!body.findingId) return { error: "findingId required" };
     try {
@@ -153,8 +153,7 @@ export class JudgeController {
       const { getFinding } = await import("@audit/domain/data/audit-repository/mod.ts");
       const finding = await getFinding(orgId, body.findingId).catch(() => null);
 
-      await dismissFindingFromJudgeQueue(orgId, body.findingId);
-      await deleteAppeal(orgId, body.findingId);
+      await dismissAppealForFinding(orgId, body.findingId);
 
       if (finding && body.dismissalReason) {
         const { fireWebhook } = await import("@admin/domain/data/admin-repository/mod.ts");

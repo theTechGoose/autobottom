@@ -619,6 +619,64 @@ export async function dismissFindingFromJudgeQueue(orgId: OrgId, fid: string): P
   return { dismissed };
 }
 
+/** Everything a dismissal must undo, in one place.
+ *
+ *  Dropping the queue rows and the appeal record is only half the job: the
+ *  auditor-facing state lives on three OTHER writes that file-appeal made, and
+ *  leaving any of them stamped tells every screen the appeal is still open.
+ *
+ *    - `finding.appealedAt` locks the report's button to a disabled "Appeal
+ *      Filed" (AppealModal.tsx:63). A dismissal email says "file it again" —
+ *      so the button MUST go back to red "File Appeal" or the auditor can't.
+ *    - `audit-done-idx.appealStatus` renders "Appeal Pending" on admin, manager,
+ *      operations and super-manager history (all read the same row). Deleting
+ *      the appeal record first is what lets writeAuditDoneIndex recompute it
+ *      to "none" here.
+ *    - `judge-audit-pending` is the per-audit remaining-questions counter; left
+ *      behind it sits at its filed count forever with no rows to drain.
+ *
+ *  Best-effort per step, like the rest of the post-decision writes: a failure
+ *  on the badge must not strand the queue teardown that already succeeded. */
+export async function dismissAppealForFinding(orgId: OrgId, findingId: string): Promise<{ dismissed: number }> {
+  const { dismissed } = await dismissFindingFromJudgeQueue(orgId, findingId);
+  await deleteAppeal(orgId, findingId);
+
+  try {
+    await deleteStored("judge-audit-pending", orgId, findingId);
+  } catch (err) {
+    console.warn(`⚠️ [JUDGE-DISMISS] ${findingId} counter clear failed (best-effort):`, err);
+  }
+
+  // Unlock the appeal button. appealComment goes with it — it belongs to the
+  // appeal we just tore down, and a stale one would surface under the next one.
+  let finding: Record<string, any> | null = null;
+  try {
+    finding = await getFinding(orgId, findingId) as Record<string, any> | null;
+    if (finding && (finding.appealedAt !== undefined || finding.appealComment !== undefined)) {
+      delete finding.appealedAt;
+      delete finding.appealComment;
+      await saveFinding(orgId, finding);
+    }
+  } catch (err) {
+    console.warn(`⚠️ [JUDGE-DISMISS] ${findingId} appeal-lock clear failed (best-effort):`, err);
+  }
+
+  // Re-stamp the history badge. appealStatus recomputes off the now-deleted
+  // appeal record → "none"; the merge keeps score / completed / doneAt.
+  try {
+    if (finding) {
+      await writeSoleAuditDoneIndex(orgId, finding, {
+        findingId, ...buildIndexMeta(finding),
+      } as Parameters<typeof writeSoleAuditDoneIndex>[2]);
+    }
+  } catch (err) {
+    console.warn(`⚠️ [JUDGE-DISMISS] ${findingId} appealStatus index stamp failed (best-effort):`, err);
+  }
+
+  console.log(`[JUDGE-DISMISS] ${findingId}: dismissed ${dismissed} queue row(s), appeal cleared, button unlocked`);
+  return { dismissed };
+}
+
 export async function clearJudgeQueue(orgId: OrgId): Promise<{ cleared: number }> {
   let cleared = 0;
   for (const { key } of await listStoredWithKeys("judge-pending", orgId)) { await deleteStored("judge-pending", orgId, ...key); cleared++; }

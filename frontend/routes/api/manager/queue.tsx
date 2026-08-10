@@ -5,6 +5,9 @@ import { define } from "../../../lib/define.ts";
 import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import type { JSX } from "preact";
+// Shared with the audit-history table so both surfaces agree on what a ticked
+// box means — and so the "no email sent yet" state can't drift apart.
+import { emailOpenedCell } from "./audit-history.tsx";
 
 /** Mirrors the backend `ManagerQueueItem` shape (manager-repository/mod.ts):
  *  the queue carries `owner` + `failedCount`/`totalQuestions`, NOT a precomputed
@@ -16,6 +19,10 @@ export interface QueueItem {
   /** QuickBase employee id. Present only on items queued since 2026-08-10 —
    *  older rows render an unlinked name rather than guessing from it. */
   employeeId?: string;
+  /** Audit-result email tracking, denormalized onto the queue row. Undefined
+   *  `emailSentAt` = no email sent yet. */
+  emailSentAt?: number;
+  emailOpenedAt?: number;
   status?: string;
   addedAt?: number;
   completedAt?: number;
@@ -86,10 +93,10 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
   const completed = !!opts.completed;
   return (
     <table class="data-table">
-      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th>{completed ? <><th>Remediated By</th><th>When</th><th>Notes</th></> : <><th>Timestamp</th><th>Status</th><th>Action</th></>}</tr></thead>
+      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th><th>Email Opened</th>{completed ? <><th>Remediated By</th><th>When</th><th>Notes</th></> : <><th>Timestamp</th><th>Status</th><th>Action</th></>}</tr></thead>
       <tbody>
         {items.length === 0 ? (
-          <tr class="empty-row"><td colSpan={completed ? 9 : 9}>{completed ? "No completed remediations" : "No items in queue"}</td></tr>
+          <tr class="empty-row"><td colSpan={10}>{completed ? "No completed remediations" : "No items in queue"}</td></tr>
         ) : items.map((item) => {
           const score = scoreOf(item);
           // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
@@ -149,6 +156,7 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
             <td>{failsCell}</td>
             <td>{saleCell}</td>
             <td>{scoreCell}</td>
+            <td>{emailOpenedCell(item)}</td>
             {completed ? <>
               <td style="font-size:12px;">{item.remediatedBy || "\u2014"}</td>
               <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtWhen(item.remediatedAt)}</td>

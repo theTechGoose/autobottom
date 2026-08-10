@@ -212,6 +212,9 @@ export default define.page(async function ManagerAuditsPage(ctx) {
         <input type="hidden" name="limit" value="50" />
         {/* Which filter dropdowns the fragment should refresh out-of-band. */}
         <input type="hidden" name="oob" value="owner,department,shift" />
+        {/* Asks the fragment to render the team-member chip row. Only this page
+            has one — /operations renders the same fragment without it. */}
+        <input type="hidden" name="memberChips" value="1" />
         {/* Propagate ?as=<email> through filter refreshes so backend
             scope lookup uses the impersonated manager's email, not the
             admin's. Without this hidden field, HTMX filter changes drop
@@ -235,7 +238,7 @@ export default define.page(async function ManagerAuditsPage(ctx) {
           <span class="ah-loading-text">Loading…</span>
         </div>
         <div id="audit-history-table">
-          {renderAuditHistoryTable(data, { since: sinceMs, until: untilMs })}
+          {renderAuditHistoryTable(data, { since: sinceMs, until: untilMs }, { memberChips: true, selectedMember: owner })}
         </div>
       </div>
 

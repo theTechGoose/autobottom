@@ -81,6 +81,20 @@ export interface AuditDoneIndexEntry {
    *  (re)write since 2026-07; older rows lack them until lazily backfilled. */
   wgs?: boolean;
   mcc?: boolean;
+  /** Audit-result email tracking, denormalized off the audit-email-mark doc so
+   *  a table can show an "Email Opened" column without hydrating one mark per
+   *  row (that per-request hydration pattern has 503'd prod before).
+   *
+   *  Three states on purpose: `emailSentAt` undefined = no email has gone out
+   *  yet (a failing audit waits for a reviewer, so this is a third of rows at
+   *  any moment); sent but no `emailOpenedAt` = delivered, not opened; both set
+   *  = the tracking pixel fired. Collapsing the first two into one unchecked
+   *  box would accuse people of ignoring mail that was never sent.
+   *
+   *  `emailOpenedAt` is the human-open time only — recordOpen's prefetch filter
+   *  keeps machine pre-fetches (Apple Mail Privacy Protection, Gmail) out. */
+  emailSentAt?: number;
+  emailOpenedAt?: number;
   reviewedBy?: string;
   /** Human review handle time: Σ active time over the audit's reviewed questions,
    *  excluding idle-discarded ones (set at finalize). Forward-only. */

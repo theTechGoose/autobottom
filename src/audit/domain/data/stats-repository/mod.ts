@@ -1010,6 +1010,47 @@ export async function deleteDoneIdxRowsForFinding(
   return deleted;
 }
 
+/** Stamp email sent/opened onto a finding's audit-done-idx row so the audit
+ *  tables can render an "Email Opened" column for free.
+ *
+ *  Point write, no scan: the row's timestamp comes from the key pointer this
+ *  module already maintains (DONE_IDX_KEY_PTR), so this is two gets and one set
+ *  regardless of index size. Called from the email send + open-pixel paths,
+ *  which are low-frequency — NOT from any render path.
+ *
+ *  Fields merge over the existing row and never clear it: a second open must
+ *  not wipe emailSentAt, and re-stamping is idempotent because both fields are
+ *  first-write-wins upstream. Best-effort by design — losing an open marker is
+ *  a cosmetic column, never a reason to fail a send or a pixel request. */
+export async function stampEmailOnDoneIdx(
+  orgId: OrgId,
+  findingId: string,
+  patch: { emailSentAt?: number; emailOpenedAt?: number },
+): Promise<boolean> {
+  try {
+    const pointer = await getStored<{ ts: number }>(DONE_IDX_KEY_PTR, orgId, findingId).catch(() => null);
+    const ts = pointer?.ts;
+    if (typeof ts !== "number" || !Number.isFinite(ts)) {
+      // No pointer means no row has been written for this finding yet (the
+      // audit is mid-pipeline). The stamp is simply skipped — step-finalize
+      // will write the row shortly, and a backfill can fill the marker later.
+      return false;
+    }
+    const existing = await getStored<AuditDoneIndexEntry>("audit-done-idx", orgId, padTs(ts), findingId).catch(() => null);
+    if (!existing) return false;
+    const merged: AuditDoneIndexEntry = {
+      ...existing,
+      ...(patch.emailSentAt != null && existing.emailSentAt == null ? { emailSentAt: patch.emailSentAt } : {}),
+      ...(patch.emailOpenedAt != null && existing.emailOpenedAt == null ? { emailOpenedAt: patch.emailOpenedAt } : {}),
+    };
+    await setStored("audit-done-idx", orgId, [padTs(ts), findingId], merged);
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [DONE-IDX] ${findingId}: email stamp failed (non-fatal):`, err);
+    return false;
+  }
+}
+
 /** Among multiple audit-done-idx rows for ONE finding, pick the index of the
  *  row to KEEP, per the operator's rule: the reviewed/judged row wins, else the
  *  most recent (by doneAt, then completedAt). */

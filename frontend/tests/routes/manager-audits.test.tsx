@@ -4,9 +4,10 @@
  *  fixture data — that's what both the SSR page and the HTMX wrapper call,
  *  so it's the right unit to assert against. */
 import { renderHTML, assertContains, assertNotContains } from "../helpers/render.ts";
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
-  renderAuditHistoryTable, renderFilterSelects, parseOobSelects, type AuditHistoryData,
+  renderAuditHistoryTable, renderFilterSelects, parseOobSelects, renderMemberChips,
+  emailOpenedCell, type AuditHistoryData,
 } from "../../routes/api/manager/audit-history.tsx";
 
 function fixture(over: Partial<AuditHistoryData> = {}): AuditHistoryData {
@@ -243,4 +244,109 @@ Deno.test("parseOobSelects — blank means all three; a list narrows it", () => 
   // The Operations portal has no Department select — swapping one would error.
   assertEquals(parseOobSelects("owner,shift"), ["owner", "shift"]);
   assertEquals(parseOobSelects("bogus"), []);
+});
+
+// ── Team-member chips ───────────────────────────────────────────────────────
+// One-click filtering by person, mirroring the Manager Portal queue. Counts
+// come from the backend (memberCounts) and deliberately ignore the member
+// filter, so selecting someone never hides everyone else.
+
+const COUNTS = [
+  { name: "Helaina Marlowe", count: 6, employeeId: "30687" },
+  { name: "Madison Gerald", count: 4, employeeId: "28755" },
+  { name: "Lorenzo Bennett", count: 2, employeeId: "29931" },
+];
+
+Deno.test("renderMemberChips — chips render in the order the backend ranked them", () => {
+  const html = renderHTML(renderMemberChips(fixture({ memberCounts: COUNTS }), "")!);
+  assert(html.indexOf("Helaina Marlowe") < html.indexOf("Madison Gerald"));
+  assert(html.indexOf("Madison Gerald") < html.indexOf("Lorenzo Bennett"));
+});
+
+Deno.test("renderMemberChips — the 'All' chip carries the summed total, not the filtered count", () => {
+  // 6 + 4 + 2. It's the number you get back by clicking it, so it must ignore
+  // whoever is currently selected.
+  const html = renderHTML(renderMemberChips(fixture({ memberCounts: COUNTS }), "Madison Gerald")!);
+  assertContains(html, ">All<");
+  assertContains(html, ">12<");
+});
+
+Deno.test("renderMemberChips — every other member stays visible while one is selected", () => {
+  const html = renderHTML(renderMemberChips(fixture({ memberCounts: COUNTS }), "Madison Gerald")!);
+  for (const m of COUNTS) assertContains(html, m.name);
+});
+
+Deno.test("renderMemberChips — overflow past the cap is stated, never silently dropped", () => {
+  // A window can hold hundreds of people. Truncating without saying so would
+  // read as "this is everyone who has audits".
+  const many = Array.from({ length: 20 }, (_, i) => ({ name: `Person ${i}`, count: 20 - i }));
+  const html = renderHTML(renderMemberChips(fixture({ memberCounts: many }), "")!);
+  assertContains(html, "+8 more");
+  assertContains(html, "use the Team Member filter");
+});
+
+Deno.test("renderMemberChips — absent memberCounts renders nothing at all", () => {
+  // Older backend responses have no memberCounts; the row must vanish rather
+  // than render an empty strip.
+  assertEquals(renderMemberChips(fixture(), ""), null);
+  assertEquals(renderMemberChips(fixture({ memberCounts: [] }), ""), null);
+});
+
+Deno.test("renderAuditHistoryTable — chips are opt-in, so the single-person report has none", () => {
+  const withChips = renderHTML(renderAuditHistoryTable(
+    fixture({ memberCounts: COUNTS }), undefined, { memberChips: true },
+  ));
+  assertContains(withChips, "Helaina Marlowe");
+
+  // The per-team-member report renders this same table for ONE person, where a
+  // chip row would be a single pointless chip.
+  const without = renderHTML(renderAuditHistoryTable(fixture({ memberCounts: COUNTS })));
+  assertNotContains(without, "Helaina Marlowe");
+});
+
+// ── Email Opened column ─────────────────────────────────────────────────────
+// Driven by the tracking pixel on the audit-result email. Three states, not
+// two: about a third of audits at any moment have no email yet, because a
+// failing audit doesn't email until a reviewer finishes. Rendering that as an
+// unticked box would accuse a team member of ignoring mail nobody sent.
+
+const TICKED = "\u2611";    // ☑
+const EMPTY_BOX = "\u2610"; // ☐
+
+Deno.test("emailOpenedCell — opened renders a ticked box", () => {
+  const html = renderHTML(emailOpenedCell({ emailSentAt: 1000, emailOpenedAt: 2000 }));
+  assertContains(html, TICKED);
+  assertNotContains(html, EMPTY_BOX);
+});
+
+Deno.test("emailOpenedCell — sent but unopened renders an EMPTY box", () => {
+  const html = renderHTML(emailOpenedCell({ emailSentAt: 1000 }));
+  assertContains(html, EMPTY_BOX);
+  assertNotContains(html, TICKED);
+});
+
+Deno.test("emailOpenedCell — no email sent renders neither box", () => {
+  // The load-bearing case. A dash, not an empty checkbox: nothing was sent, so
+  // there is nothing the team member failed to do.
+  const html = renderHTML(emailOpenedCell({}));
+  assertNotContains(html, EMPTY_BOX);
+  assertNotContains(html, TICKED);
+  assertContains(html, "No result email has been sent");
+});
+
+Deno.test("emailOpenedCell — an open without a send time still counts as opened", () => {
+  // Defensive: a backfilled row could carry openedAt with no sentAt. It was
+  // demonstrably opened, so it must not read as "never sent".
+  const html = renderHTML(emailOpenedCell({ emailOpenedAt: 2000 }));
+  assertNotContains(html, TICKED);
+  assertContains(html, "No result email has been sent");
+});
+
+Deno.test("ManagerAudits — the table carries an Email Opened column", () => {
+  const html = renderHTML(renderAuditHistoryTable(fixture({
+    items: [{ findingId: "f1", ts: 1, score: 100, emailSentAt: 10, emailOpenedAt: 20 }],
+    total: 1,
+  })));
+  assertContains(html, "Email Opened");
+  assertContains(html, TICKED);
 });

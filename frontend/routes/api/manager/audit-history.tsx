@@ -28,9 +28,49 @@ export interface AuditHistoryItem {
   reviewed?: boolean;
   reviewedBy?: string;
   appealStatus?: string | null;
+  /** Audit-result email tracking. `emailSentAt` undefined = no email has gone
+   *  out yet (a failing audit waits for a reviewer), which renders blank rather
+   *  than as an unticked box. */
+  emailSentAt?: number;
+  emailOpenedAt?: number;
   /** WGS/MCC sale flags; undefined = legacy row not yet backfilled. */
   wgs?: boolean;
   mcc?: boolean;
+}
+
+/** "Email Opened" cell. Three states, because two would lie: an audit whose
+ *  email hasn't been sent yet is not the same as one the team member ignored,
+ *  and roughly a third of rows are in that state at any moment (failing audits
+ *  don't email until a reviewer finishes). Blank = nothing sent; empty box =
+ *  delivered, not opened; ticked = the tracking pixel fired.
+ *
+ *  Exported for tests — the distinction is the whole point of the column. */
+export function emailOpenedCell(item: { emailSentAt?: number; emailOpenedAt?: number }) {
+  if (!item.emailSentAt) {
+    return (
+      <span style="color:var(--text-dim);font-size:11px;" title="No result email has been sent for this audit yet">
+        &mdash;
+      </span>
+    );
+  }
+  if (item.emailOpenedAt) {
+    return (
+      <span
+        style="color:var(--green,#3fb950);font-size:14px;"
+        title={`Opened ${new Date(item.emailOpenedAt).toLocaleString()}`}
+      >
+        &#9745;
+      </span>
+    );
+  }
+  return (
+    <span
+      style="color:var(--text-muted);font-size:14px;"
+      title={`Sent ${new Date(item.emailSentAt).toLocaleString()} — not opened yet`}
+    >
+      &#9744;
+    </span>
+  );
 }
 
 /** Mirrors `DeptRollupRow` in src/manager/domain/business/audit-history/mod.ts.
@@ -67,6 +107,10 @@ export interface AuditHistoryData {
   /** The three team members with the most misses in the window, each with the
    *  single question they miss most. Same filtered set as topMissed. */
   topMissers?: Array<{ member: string; misses: number; worstQuestion: string; worstCount: number }>;
+  /** Audits per team member across the filtered window, busiest first — the
+   *  one-click member chips. Ignores the member filter so every name stays
+   *  visible while one is selected. Absent on older responses. */
+  memberCounts?: Array<{ name: string; count: number; employeeId?: string }>;
   pages: number;
   page: number;
   owners: string[];
@@ -203,14 +247,85 @@ export function renderSummaryLine(data: AuditHistoryData, window?: { since: numb
   );
 }
 
+/** How many member chips render before the rest fold into the dropdown. A
+ *  window can hold hundreds of people (318 distinct in July alone), and a chip
+ *  row that long is worse than no chip row. The overflow is stated on screen —
+ *  a silently truncated list reads as "this is everyone". */
+const MEMBER_CHIP_LIMIT = 12;
+
+/** One-click team-member chips: the busiest people in the window, each with
+ *  their audit count, plus a leading "All" to get back.
+ *
+ *  Filters by NAME (writing into the existing Team Member <select>, so the two
+ *  controls can't disagree) rather than by employee id, because audits from
+ *  before 2026-08-07 carry no id and an id-based chip would hide them. The
+ *  row's name link is id-based and stays exact. */
+export function renderMemberChips(data: AuditHistoryData, selected: string) {
+  const counts = data.memberCounts ?? [];
+  if (counts.length === 0) return null;
+  const shown = counts.slice(0, MEMBER_CHIP_LIMIT);
+  const hidden = counts.length - shown.length;
+  const total = counts.reduce((sum, m) => sum + m.count, 0);
+
+  // Writes the Team Member <select> then refreshes through the same form every
+  // other filter uses, so window / dept / shift / score all survive the click.
+  const pick = (name: string) =>
+    `(()=>{const s=document.getElementById('ah-owner');if(!s)return;`
+    + `if(![...s.options].some(o=>o.value===${JSON.stringify(name)})){const o=document.createElement('option');`
+    + `o.value=${JSON.stringify(name)};o.text=${JSON.stringify(name)};s.appendChild(o);}`
+    + `s.value=${JSON.stringify(name)};`
+    + `var p=document.getElementById('ah-page');if(p)p.value='1';`
+    + `htmx.ajax('GET','/api/manager/audit-history',{source:'#audit-history-filters',target:'#audit-history-table',swap:'innerHTML'});})()`;
+
+  return (
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+      <button
+        type="button"
+        class={`btn btn-sm ${selected ? "btn-ghost" : ""}`}
+        title="Show every team member"
+        {...{ "hx-on:click": pick("") }}
+      >
+        All<span style="margin-left:6px;opacity:0.7;font-variant-numeric:tabular-nums;">{total}</span>
+      </button>
+      {shown.map((m) => {
+        const active = selected === m.name;
+        return (
+          <button
+            key={m.name}
+            type="button"
+            class={`btn btn-sm ${active ? "" : "btn-ghost"}`}
+            title={active ? `Showing only ${m.name} — click for everyone` : `Show only ${m.name}`}
+            {...{ "hx-on:click": pick(active ? "" : m.name) }}
+          >
+            {m.name}<span style="margin-left:6px;opacity:0.7;font-variant-numeric:tabular-nums;">{m.count}</span>
+          </button>
+        );
+      })}
+      {hidden > 0 && (
+        <span style="font-size:11px;color:var(--text-dim);">
+          +{hidden} more — use the Team Member filter
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** Render the summary + table + pagination. Used both for SSR (page initial
- *  load) and for HTMX swap on filter change. */
-export function renderAuditHistoryTable(data: AuditHistoryData, window?: { since: number; until: number }) {
+ *  load) and for HTMX swap on filter change.
+ *
+ *  `opts.memberChips` is opt-in: the per-team-member report renders this same
+ *  table for ONE person, where a chip row would be a single pointless chip. */
+export function renderAuditHistoryTable(
+  data: AuditHistoryData,
+  window?: { since: number; until: number },
+  opts: { memberChips?: boolean; selectedMember?: string } = {},
+) {
   const { items, pages, page, topMissed } = data;
   const missed = topMissed ?? [];
   const missers = data.topMissers ?? [];
   return (
     <div>
+      {opts.memberChips && renderMemberChips(data, opts.selectedMember ?? "")}
       {renderSummaryLine(data, window)}
       {missed.length > 0 && (
         /* Two halves of the same question: WHAT the team misses (left) and WHO
@@ -259,13 +374,14 @@ export function renderAuditHistoryTable(data: AuditHistoryData, window?: { since
               <th>Score</th>
               <th>Sale</th>
               <th>Reviewed</th>
+              <th>Email Opened</th>
               <th>Appeal</th>
               <th>Started</th>
             </tr>
           </thead>
           <tbody>
             {items.length === 0 ? (
-              <tr class="empty-row"><td colSpan={9}>No audits match the current filters</td></tr>
+              <tr class="empty-row"><td colSpan={10}>No audits match the current filters</td></tr>
             ) : items.map((item) => (
               <tr key={item.findingId}>
                 <td>
@@ -279,6 +395,7 @@ export function renderAuditHistoryTable(data: AuditHistoryData, window?: { since
                 <td>{item.score != null ? <span class={`pill pill-${pillColor(item.score)}`}>{item.score}%</span> : "\u2014"}</td>
                 <td>{saleTags(item)}</td>
                 <td>{reviewedBadge(item)}</td>
+                <td>{emailOpenedCell(item)}</td>
                 <td>{appealBadge(item)}</td>
                 <td class="time-ago">{item.startedAt ? timeAgo(item.startedAt) : timeAgo(item.ts)}</td>
               </tr>
@@ -399,9 +516,15 @@ export const handler = define.handlers({
       since: Number(url.searchParams.get("since") ?? 0) || 0,
       until: Number(url.searchParams.get("until") ?? Date.now()) || Date.now(),
     };
+    // Member chips ride inside the swapped table, not out-of-band: their counts
+    // deliberately ignore the member filter, so re-rendering them with the
+    // table keeps the full roster visible while one person is selected.
+    // Gated on `memberChips=1` so only /manager/audits gets them — /operations
+    // renders this same fragment and has no chip row.
+    const memberChips = url.searchParams.get("memberChips") === "1";
     const html = renderToString(
       <>
-        {renderAuditHistoryTable(data, win)}
+        {renderAuditHistoryTable(data, win, { memberChips, selectedMember: current.owner })}
         {renderFilterSelects(data, current, { oob: true, only: parseOobSelects(url.searchParams.get("oob")) })}
       </>,
     );

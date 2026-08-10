@@ -374,10 +374,19 @@ Deno.test("ManagerQueue — a remediation with no notes gets a dash, not an empt
   assertNotContains(html, "rem-note-pop");
 });
 
-Deno.test("ManagerQueue — completed empty state spans every column", () => {
-  // A short colSpan leaves a ragged row; it has to track the header count.
-  const html = renderHTML(renderQueueTable([], { completed: true }));
-  assertContains(html, 'colspan="9"');
+/** Count the <th> cells in the rendered header row. */
+function headerCount(html: string): number {
+  return (html.match(/<th[ >]/g) ?? []).length;
+}
+
+Deno.test("ManagerQueue — empty state spans every column, in both modes", () => {
+  // Derived from the header rather than hardcoded: adding a column used to
+  // silently leave a ragged empty row until someone noticed the stripe.
+  for (const completed of [false, true]) {
+    const html = renderHTML(renderQueueTable([], { completed }));
+    const n = headerCount(html);
+    assertContains(html, `colspan="${n}"`);
+  }
 });
 
 // ── Team-member buttons (replaced the free-text "Search name…" box) ──────────

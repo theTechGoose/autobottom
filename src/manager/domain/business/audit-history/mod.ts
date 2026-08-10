@@ -46,6 +46,11 @@ export interface AuditHistoryRow {
    *  Internal to this module — stripped before the response is built, which
    *  keeps `appealStatus` the single field the frontend reads. */
   indexAppealStatus?: "none" | "pending" | "complete";
+  /** Audit-result email tracking, straight off the index row (no per-row mark
+   *  read). Undefined `emailSentAt` = no email sent yet, which is normal for a
+   *  failing audit still waiting on a reviewer. */
+  emailSentAt?: number;
+  emailOpenedAt?: number;
   /** WGS/MCC sale flags. Undefined = legacy index row not yet backfilled. */
   wgs?: boolean;
   mcc?: boolean;
@@ -95,6 +100,10 @@ export interface AuditHistoryResult {
    *  coaching, and on what" beside the "what does the team miss" list.
    *  Same finding set as topMissed, so every filter applies. */
   topMissers: Array<{ member: string; misses: number; worstQuestion: string; worstCount: number }>;
+  /** Audits per team member across the filtered window, busiest first. Powers
+   *  the one-click member chips. Deliberately ignores the member filter itself
+   *  so every name stays visible while one is selected. */
+  memberCounts: Array<{ name: string; count: number; employeeId?: string }>;
   pages: number;
   page: number;
   owners: string[];
@@ -336,6 +345,8 @@ function toRow(e: AuditDoneIndexEntry): AuditHistoryRow {
     startedAt: e.startedAt,
     durationMs: e.durationMs,
     reason: e.reason,
+    emailSentAt: e.emailSentAt,
+    emailOpenedAt: e.emailOpenedAt,
     wgs: e.wgs,
     mcc: e.mcc,
     // Carried so the page slice can skip a per-row getAppeal() read. Stays
@@ -436,13 +447,12 @@ async function _getAuditHistoryRaw(
   const managerView = role === "manager" || role === "super-manager";
   const inWindow = scopedEntries.filter((c) => (!until || c.ts <= until) && (!managerView || isReviewed(c)));
 
-  const filtered = inWindow.filter((c) => {
-    // Employee id is the precise filter — one person, even when two people
-    // share a name. It intentionally excludes rows completed before fid 143
-    // was pulled (employeeId undefined) rather than falling back to the name,
-    // because a name fallback would silently re-merge the two Mariah Browns.
-    if (employeeId && c.employeeId !== employeeId) return false;
-    if (owner && (c.voName || c.owner) !== owner) return false;
+  // Every filter EXCEPT the team-member ones. Split out so the per-member
+  // counts below can be built from the same window the table shows while
+  // staying complete — a count that also applied the member filter would
+  // collapse to "the selected person: N" and nothing else, leaving no way to
+  // see who else has audits without clearing first.
+  const matchesExceptMember = (c: AuditHistoryRow) => {
     if (shift && c.shift !== shift) return false;
     if (department && c.department !== department) return false;
     if (reviewed === "yes" && !reviewedIds.has(c.findingId)) return false;
@@ -456,7 +466,39 @@ async function _getAuditHistoryRaw(
     if (sale === "none" && (c.wgs !== false || c.mcc !== false)) return false;
     if (c.score != null && (c.score < scoreMin || c.score > scoreMax)) return false;
     return true;
+  };
+
+  const filtered = inWindow.filter((c) => {
+    // Employee id is the precise filter — one person, even when two people
+    // share a name. It intentionally excludes rows completed before fid 143
+    // was pulled (employeeId undefined) rather than falling back to the name,
+    // because a name fallback would silently re-merge the two Mariah Browns.
+    if (employeeId && c.employeeId !== employeeId) return false;
+    if (owner && (c.voName || c.owner) !== owner) return false;
+    return matchesExceptMember(c);
   });
+
+  // Per-team-member audit counts for the filter chips, over the same window as
+  // the table but without the member filter applied (see matchesExceptMember).
+  // Pure in-memory work over rows already loaded — no extra reads, so this is
+  // safe on a page load. `employeeId` rides along so a chip can deep-link to
+  // that person's report; it stays undefined on audits that predate the field.
+  const memberCounts = (() => {
+    const by = new Map<string, { name: string; count: number; employeeId?: string }>();
+    for (const c of inWindow) {
+      if (!matchesExceptMember(c)) continue;
+      const name = auditeeLabel(c);
+      if (!name) continue;
+      const cur = by.get(name) ?? { name, count: 0, employeeId: undefined };
+      cur.count++;
+      // First id wins; two people sharing a name would disagree here, which is
+      // exactly why the chip filters by NAME and only the row link uses the id.
+      if (!cur.employeeId && c.employeeId) cur.employeeId = c.employeeId;
+      by.set(name, cur);
+    }
+    // Busiest first, name breaking ties so the row is stable across refreshes.
+    return [...by.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  })();
 
   const owners = [...new Set(inWindow.map((c) => c.voName || c.owner).filter(Boolean))].sort() as string[];
   const shifts = [...new Set(inWindow.map((c) => c.shift).filter(Boolean))].sort() as string[];
@@ -535,5 +577,5 @@ async function _getAuditHistoryRaw(
 
   console.log(`🔍 [MANAGER-AUDITS] ${email} role=${role} → ${total}/${inWindow.length} in window, page=${page}/${pages}`);
 
-  return { items, total, avgScore, scoredCount: scores.length, passedCount, wgsCount, mccCount, saleUnknownCount, topMissed, topMissers, pages, page, owners, shifts, departments, deptRollup };
+  return { items, total, avgScore, scoredCount: scores.length, passedCount, wgsCount, mccCount, saleUnknownCount, topMissed, topMissers, memberCounts, pages, page, owners, shifts, departments, deptRollup };
 }

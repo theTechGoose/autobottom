@@ -24,6 +24,11 @@ export interface ManagerQueueItem {
    *  Undefined on items queued before 2026-08-10, and on items whose finding
    *  predates the id — those render as plain text, deliberately unlinked. */
   employeeId?: string;
+  /** Audit-result email tracking, mirroring AuditDoneIndexEntry — denormalized
+   *  so the queue's "Email Opened" column costs no per-row reads. Undefined
+   *  `emailSentAt` means no email has gone out yet. */
+  emailSentAt?: number;
+  emailOpenedAt?: number;
   recordId?: string;
   recordingId?: string;
   totalQuestions?: number;
@@ -118,6 +123,34 @@ export async function enqueueRemediationForFinding(
   };
   await setStored("manager-queue", orgId, [findingId], item);
   return { enqueued: true };
+}
+
+/** Stamp email sent/opened onto a finding's remediation-queue row, so the queue
+ *  can show an "Email Opened" column without reading a mark per row.
+ *
+ *  A no-op when the finding isn't queued (most audits aren't), and best-effort
+ *  throughout — this runs off the email send + open-pixel paths, where failing
+ *  loudly would cost a real email or a pixel response for a cosmetic column.
+ *  Both fields are first-write-wins so a second open can't clear the send time. */
+export async function stampEmailOnQueueItem(
+  orgId: OrgId,
+  findingId: string,
+  patch: { emailSentAt?: number; emailOpenedAt?: number },
+): Promise<boolean> {
+  try {
+    const existing = await getStored<ManagerQueueItem>("manager-queue", orgId, findingId);
+    if (!existing) return false;
+    const merged: ManagerQueueItem = {
+      ...existing,
+      ...(patch.emailSentAt != null && existing.emailSentAt == null ? { emailSentAt: patch.emailSentAt } : {}),
+      ...(patch.emailOpenedAt != null && existing.emailOpenedAt == null ? { emailOpenedAt: patch.emailOpenedAt } : {}),
+    };
+    await setStored("manager-queue", orgId, [findingId], merged);
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [MANAGER-QUEUE] ${findingId}: email stamp failed (non-fatal):`, err);
+    return false;
+  }
 }
 
 export async function getManagerQueue(orgId: OrgId): Promise<ManagerQueueItem[]> {

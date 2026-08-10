@@ -133,12 +133,40 @@ function putMark(orgId: OrgId, mark: EmailMark): Promise<void> {
   return setStored(MARK_TYPE, orgId, [mark.findingId], mark);
 }
 
+/** Mirror an email marker onto the audit-done-idx row and the remediation-queue
+ *  row, so the audit tables can render an "Email Opened" column without reading
+ *  one mark per row. Same denormalization appealStatus already uses; the tables
+ *  poll, and per-row hydration on a polling path has taken prod down before.
+ *
+ *  Dynamically imported to keep this module free of a static dependency on the
+ *  audit + manager repositories (it is imported by the public /track routes).
+ *  Wholly best-effort: an unstamped row costs a checkbox, never an email. */
+async function mirrorEmailMarker(
+  orgId: OrgId,
+  findingId: string,
+  patch: { emailSentAt?: number; emailOpenedAt?: number },
+): Promise<void> {
+  try {
+    const [{ stampEmailOnDoneIdx }, { stampEmailOnQueueItem }] = await Promise.all([
+      import("@audit/domain/data/stats-repository/mod.ts"),
+      import("@manager/domain/data/manager-repository/mod.ts"),
+    ]);
+    await Promise.allSettled([
+      stampEmailOnDoneIdx(orgId, findingId, patch),
+      stampEmailOnQueueItem(orgId, findingId, patch),
+    ]);
+  } catch (err) {
+    console.warn(`⚠️ [EMAIL-ENGAGE] marker mirror failed (non-fatal) fid=${findingId}:`, err);
+  }
+}
+
 /** Stamp that the audit-complete email was sent for this finding. */
 export async function stampSent(orgId: OrgId, findingId: string): Promise<void> {
   try {
     const mark = (await getMark(orgId, findingId)) ?? { findingId };
     mark.sentAt = Date.now();
     await putMark(orgId, mark);
+    await mirrorEmailMarker(orgId, findingId, { emailSentAt: mark.sentAt });
   } catch (err) {
     console.warn(`⚠️ [EMAIL-ENGAGE] stampSent failed (non-fatal) fid=${findingId}:`, err);
   }
@@ -167,6 +195,11 @@ export async function recordOpen(orgId: OrgId, findingId: string, req: Request):
       console.log(`📬 [EMAIL-OPEN] ${findingId} open #${mark.openCount} Δ=${sentAt ? `${delta}ms` : "unknown"} src=${mark.lastOpenSource}`);
     }
     await putMark(orgId, mark);
+    // Only a real (non-prefetch) open mirrors out — a machine pre-fetch must
+    // never tick the checkbox, which is the whole point of the prefetch filter.
+    if (mark.openedAt) {
+      await mirrorEmailMarker(orgId, findingId, { emailSentAt: mark.sentAt, emailOpenedAt: mark.openedAt });
+    }
   } catch (err) {
     console.warn(`⚠️ [EMAIL-ENGAGE] recordOpen failed (non-fatal) fid=${findingId}:`, err);
   }

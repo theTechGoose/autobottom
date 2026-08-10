@@ -18,6 +18,12 @@ export interface ManagerQueueItem {
    *  string means "enriched, but the record has no VoName" — undefined means
    *  the item predates enrichment and is still pending a lazy backfill. */
   voName?: string;
+  /** QuickBase employee id (fid 143) — the person key the queue's team-member
+   *  name links on. voName can't do it: two different Mariah Browns share both
+   *  a name AND a VO email, so a name-built link opens the wrong report.
+   *  Undefined on items queued before 2026-08-10, and on items whose finding
+   *  predates the id — those render as plain text, deliberately unlinked. */
+  employeeId?: string;
   recordId?: string;
   recordingId?: string;
   totalQuestions?: number;
@@ -55,6 +61,9 @@ function enrichmentFromFinding(finding: Record<string, unknown>): Partial<Manage
   return {
     owner: (finding.owner as string | undefined) ?? "",
     voName,
+    // Left undefined (not "") when the record has no id, matching buildIndexMeta
+    // — the queue table decides "link or plain text" on exactly this.
+    employeeId: rec.RelatedEmployeeId != null ? String(rec.RelatedEmployeeId) : undefined,
     recordId: String(rec.RecordId ?? rec.id ?? ""),
     recordingId: (finding.recordingId as string | undefined) ?? "",
     totalQuestions: answered.length,

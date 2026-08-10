@@ -15,7 +15,8 @@ import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import DateRangePicker from "../../islands/DateRangePicker.tsx";
 import {
-  renderQueueResults, queueFacets, filterAndSortQueue, readQueueFilterParams, type QueueItem,
+  renderQueueResults, renderMemberButtons, queueFacets, filterAndSortQueue, readQueueFilterParams,
+  type QueueItem,
 } from "../api/manager/queue.tsx";
 
 export default define.page(async function ManagerPortalPage(ctx) {
@@ -89,11 +90,14 @@ export default define.page(async function ManagerPortalPage(ctx) {
           </div>
           <input type="hidden" name="since" id="q-since" value={String(params.since)} />
           <input type="hidden" name="until" id="q-until" value={String(params.until)} />
-          <div class="form-group" style="margin-bottom:0;">
-            <label>Team Member</label>
-            <input type="text" name="member" list="queue-members" value={params.member} placeholder="Search name…" autocomplete="off" />
-            <datalist id="queue-members">{facets.members.map((m) => <option key={m} value={m} />)}</datalist>
-          </div>
+          {/* Team member is chosen from the button row below the filter bar,
+              not typed. This hidden input is still what carries the choice
+              into the form submission — the buttons write into it. */}
+          <input type="hidden" name="member" id="q-member" value={params.member} />
+          {/* Asks the queue fragment to also return the refreshed button row
+              out-of-band. Only this page has that row — /operations posts to
+              the same endpoint and must not get the OOB block. */}
+          <input type="hidden" name="members" value="1" />
           <div class="form-group" style="margin-bottom:0;">
             <label>Failed Question</label>
             <select name="q">
@@ -131,6 +135,14 @@ export default define.page(async function ManagerPortalPage(ctx) {
             makes Back from a remediation detail page restore the exact view
             (filters / date window / sort) instead of resetting to the default
             window: the page's SSR reads these same params back out. */}
+        {/* One button per team member with open items, busiest first. Sits
+            outside #manager-queue-table so it never filters itself down to the
+            selected person; the queue fragment keeps it current via an
+            out-of-band swap on this id. */}
+        <div id="queue-member-buttons">
+          {renderMemberButtons(pending, params)}
+        </div>
+
         <div
           id="manager-queue-table"
           {...{ "hx-on::after-swap": "history.replaceState(null,'','/manager?'+new URLSearchParams(new FormData(document.getElementById('queue-filters'))).toString())" }}

@@ -8,6 +8,7 @@ import { assert, assertEquals } from "@std/assert";
 import { renderHTML, assertContains, assertNotContains } from "../../helpers/render.ts";
 import {
   renderQueueTable, renderQueueResults, queueTimestamp, queueFacets,
+  renderMemberButtons,
   filterAndSortQueue, readQueueFilterParams, type QueueItem,
 } from "../../../routes/api/manager/queue.tsx";
 
@@ -377,4 +378,82 @@ Deno.test("ManagerQueue — completed empty state spans every column", () => {
   // A short colSpan leaves a ragged row; it has to track the header count.
   const html = renderHTML(renderQueueTable([], { completed: true }));
   assertContains(html, 'colspan="9"');
+});
+
+// ── Team-member buttons (replaced the free-text "Search name…" box) ──────────
+
+const PARAMS = { member: "", q: "", wgs: false, mcc: false, sort: "recent", since: 0, until: Number.MAX_SAFE_INTEGER, dept: "" };
+
+Deno.test("renderMemberButtons — one button per member, busiest first with a count", () => {
+  const html = renderHTML(renderMemberButtons([
+    item({ findingId: "a", voName: "Natalia Reyes" }),
+    item({ findingId: "b", voName: "Natalia Reyes" }),
+    item({ findingId: "c", voName: "Natalia Reyes" }),
+    item({ findingId: "d", voName: "Lorenzo Bennett" }),
+    item({ findingId: "e", voName: "Lorenzo Bennett" }),
+    item({ findingId: "f", voName: "Madison Gerald" }),
+  ], PARAMS as never));
+  assertContains(html, "Natalia Reyes");
+  assertContains(html, "Lorenzo Bennett");
+  assertContains(html, "Madison Gerald");
+  // Busiest first — a manager opens this to see who needs attention most.
+  assert(
+    html.indexOf("Natalia Reyes") < html.indexOf("Lorenzo Bennett"),
+    "the member with the most open items must render first",
+  );
+  assert(html.indexOf("Lorenzo Bennett") < html.indexOf("Madison Gerald"));
+});
+
+Deno.test("renderMemberButtons — counts ignore the member filter so you can switch people", () => {
+  // With "Natalia Reyes" selected, every OTHER member must still have a button
+  // at their full count — otherwise selecting someone hides everyone else and
+  // there's no way to move on without clearing first.
+  const items = [
+    item({ findingId: "a", voName: "Natalia Reyes" }),
+    item({ findingId: "b", voName: "Lorenzo Bennett" }),
+    item({ findingId: "c", voName: "Lorenzo Bennett" }),
+  ];
+  const html = renderHTML(renderMemberButtons(items, { ...PARAMS, member: "Natalia Reyes" } as never));
+  assertContains(html, "Natalia Reyes");
+  assertContains(html, "Lorenzo Bennett");
+});
+
+Deno.test("renderMemberButtons — other filters DO narrow the counts", () => {
+  // The sale filter is part of the current view, so the buttons must reflect
+  // it — a count that ignored active filters wouldn't match the table below.
+  const items = [
+    item({ findingId: "a", voName: "Natalia Reyes", wgs: true }),
+    item({ findingId: "b", voName: "Lorenzo Bennett", wgs: false, mcc: false }),
+  ];
+  const html = renderHTML(renderMemberButtons(items, { ...PARAMS, wgs: true } as never));
+  assertContains(html, "Natalia Reyes");
+  assertNotContains(html, "Lorenzo Bennett");
+});
+
+Deno.test("renderMemberButtons — a member with no nameable auditee is skipped", () => {
+  // owner "api" is the pipeline, not a person — it must never get a button.
+  const html = renderHTML(renderMemberButtons([item({ findingId: "a", owner: "api" })], PARAMS as never));
+  assertContains(html, "No team members with open items");
+});
+
+Deno.test("renderMemberButtons — clicking the selected member clears the filter", () => {
+  // Toggle behaviour: without it there's no way back to "everyone" except
+  // hunting for the Clear link.
+  const html = renderHTML(renderMemberButtons(
+    [item({ findingId: "a", voName: "Natalia Reyes" })],
+    { ...PARAMS, member: "Natalia Reyes" } as never,
+  ));
+  assertContains(html, "q-member");
+  assertContains(html, "Show everyone again");
+});
+
+Deno.test("ManagerQueue — team member links to their report only when the row has an employee id", () => {
+  // Two people genuinely share the name "Mariah Brown" in prod, so a link built
+  // from the NAME would open the wrong person's report. No id → no link.
+  const linked = renderHTML(renderQueueTable([item({ voName: "Mariah Brown", employeeId: "25335" })]));
+  assertContains(linked, "/manager/team/25335");
+
+  const unlinked = renderHTML(renderQueueTable([item({ voName: "Mariah Brown" })]));
+  assertContains(unlinked, "Mariah Brown");
+  assertNotContains(unlinked, "/manager/team/");
 });

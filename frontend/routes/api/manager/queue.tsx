@@ -13,6 +13,9 @@ export interface QueueItem {
   findingId: string;
   owner?: string;
   voName?: string;
+  /** QuickBase employee id. Present only on items queued since 2026-08-10 —
+   *  older rows render an unlinked name rather than guessing from it. */
+  employeeId?: string;
   status?: string;
   addedAt?: number;
   completedAt?: number;
@@ -124,7 +127,22 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
             {...{ "hx-on:click": "var a=new URLSearchParams(location.search).get('as');location.href='/manager/remediate/'+encodeURIComponent(this.dataset.findingId)+(a?('?as='+encodeURIComponent(a)):'')" }}
           >
             <td class="mono">{item.findingId?.slice(0, 8)}</td>
-            <td>{teamMemberLabel(item)}</td>
+            {/* The row itself navigates to the remediation detail, so the name
+                link must stopPropagation or a click would fire both. Unlinked
+                when the item has no employee id — a name-built link would open
+                whichever person happens to share that name. */}
+            <td>
+              {item.employeeId
+                ? (
+                  <a
+                    href={`/manager/team/${encodeURIComponent(item.employeeId)}`}
+                    title={`See every audit for ${teamMemberLabel(item)}`}
+                    style="color:var(--accent);text-decoration:none;"
+                    {...{ "hx-on:click": "event.stopPropagation()" }}
+                  >{teamMemberLabel(item)}</a>
+                )
+                : teamMemberLabel(item)}
+            </td>
             <td style="font-size:11px;color:var(--text-muted);white-space:nowrap;">
               {item.department || "—"}{item.shift ? ` · ${item.shift}` : ""}
             </td>
@@ -277,6 +295,67 @@ export function filterAndSortQueue(items: QueueItem[], params: QueueFilterParams
   return out;
 }
 
+/** One button per team member with work in the CURRENT view, newest filter
+ *  state applied — except the member filter itself, so every name stays
+ *  visible and you can switch straight from one person to another instead of
+ *  clearing first.
+ *
+ *  This replaced a free-text "Search name…" box. Counts are the point: a
+ *  manager opens this page to see who needs attention, and the old box made
+ *  you already know the name before it could tell you anything.
+ *
+ *  Filtering is by NAME, not employee id, on purpose. Items queued before
+ *  2026-08-10 carry no id, so an id-based filter would hide most of the
+ *  existing queue. The trade-off is that two people sharing a name share a
+ *  button — the row's name link is id-based and stays exact. */
+export function renderMemberButtons(
+  items: QueueItem[],
+  params: QueueFilterParams,
+): JSX.Element {
+  // Everything except the member filter, so the buttons don't filter themselves
+  // down to the one person already selected.
+  const inView = filterAndSortQueue(items, { ...params, member: "" });
+  const counts = new Map<string, number>();
+  for (const it of inView) {
+    const label = teamMemberLabel(it);
+    if (!label || label === "—") continue;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  // Busiest first — that's the coaching order. Name breaks ties so the row
+  // doesn't reshuffle between refreshes.
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const selected = (params.member ?? "").trim();
+
+  if (ranked.length === 0) {
+    return <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">No team members with open items in this range.</div>;
+  }
+
+  return (
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      {ranked.map(([name, count]) => {
+        const active = selected.toLowerCase() === name.toLowerCase();
+        // Clicking the active button clears the filter — a toggle, so there's
+        // no "how do I get back to everyone" dead end without hunting for Clear.
+        const js = `(()=>{const m=document.getElementById('q-member');if(!m)return;`
+          + `m.value=(m.value.toLowerCase()===${JSON.stringify(name.toLowerCase())})?'':${JSON.stringify(name)};`
+          + `htmx.ajax('GET','/api/manager/queue',{source:'#queue-filters',target:'#manager-queue-table',swap:'innerHTML'});})()`;
+        return (
+          <button
+            key={name}
+            type="button"
+            class={`btn btn-sm ${active ? "" : "btn-ghost"}`}
+            title={active ? `Show everyone again` : `Show only ${name}`}
+            {...{ "hx-on:click": js }}
+          >
+            {name}
+            <span style={`margin-left:6px;opacity:0.7;font-variant-numeric:tabular-nums;`}>{count}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The queue table plus a small "window total" caption above it. Rendered by
  *  both the page (initial) and the fragment (filter refresh) so the count and
  *  table always swap together and agree. */
@@ -305,8 +384,28 @@ export const handler = define.handlers({
       // The Queue tab shows open work only — completed (remediated) items
       // live on the /manager/completed tab.
       const pending = (items ?? []).filter((i) => i.status !== "remediated");
-      const rows = filterAndSortQueue(pending, readQueueFilterParams(url.searchParams));
-      const html = renderToString(renderQueueResults(rows));
+      const params = readQueueFilterParams(url.searchParams);
+      const rows = filterAndSortQueue(pending, params);
+      // The member buttons live OUTSIDE the swapped table (they'd filter
+      // themselves down to one name if they were inside it), so they ride
+      // along as an out-of-band swap. Without this their counts would keep
+      // whatever the page first loaded with while the table moved on.
+      //
+      // Gated on `members=1`, which only the Manager Portal's form sends.
+      // /operations posts to this same endpoint with the same #queue-filters
+      // form id but has no button row — an unconditional OOB block would throw
+      // htmx:oobErrorNoTarget on every filter change over there.
+      const withMembers = url.searchParams.get("members") === "1";
+      const html = renderToString(
+        <>
+          {renderQueueResults(rows)}
+          {withMembers && (
+            <div id="queue-member-buttons" hx-swap-oob="true">
+              {renderMemberButtons(pending, params)}
+            </div>
+          )}
+        </>,
+      );
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch {
       return new Response(

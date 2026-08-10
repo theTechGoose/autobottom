@@ -373,7 +373,10 @@ export const handler = define.handlers({
     // Include `as` so backend manager-scope lookup uses the impersonated
     // manager's email when an admin is viewing via ?as=<email>. Without
     // this the backend would default to the admin's email (empty scope).
-    for (const k of ["since", "until", "owner", "department", "shift", "reviewed", "sale", "sort", "scoreMin", "scoreMax", "page", "limit", "as"]) {
+    // `employeeId` is what the per-team-member report pins. Without it in this
+    // list, that page's pagination would silently widen to the whole org on
+    // page 2 — the filter would be dropped, not error.
+    for (const k of ["since", "until", "owner", "employeeId", "department", "shift", "reviewed", "sale", "sort", "scoreMin", "scoreMax", "page", "limit", "as"]) {
       const v = url.searchParams.get(k);
       if (v != null && v !== "") params.set(k, v);
     }

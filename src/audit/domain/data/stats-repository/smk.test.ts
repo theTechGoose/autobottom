@@ -648,3 +648,18 @@ Deno.test("deleteAuditDoneIdxByFindingId — finds a row past the 1000-row scan 
   assertEquals(removed, 1, "row past the cap was found and deleted");
   assertEquals((await idxRows(orgId, "fid-DEEP")).length, 0, "and it is actually gone");
 });
+
+Deno.test("getHiddenFindingIds — returns findings past the 1000-row scan cap", async () => {
+  // The hidden set only ever grows. Under the capped scan, everything past the
+  // 1000th hidden finding was silently un-hidden — dedup losers and retired
+  // duplicates reappeared in every report and dashboard as unactionable
+  // sub-100% audits. Prod had 4095 hidden docs and loaded 1000.
+  _resetHiddenCacheForTesting();
+  const orgId = "test-hidden-cap-" + crypto.randomUUID().slice(0, 8);
+  for (let i = 0; i < 1005; i++) await markFindingHidden(orgId, `filler-${i}`, "dedup");
+  await markFindingHidden(orgId, "fid-PAST-CAP", "dedup");
+
+  const hidden = await getHiddenFindingIds(orgId);
+  assertEquals(hidden.size, 1006, "every hidden finding is loaded, not just the first 1000");
+  assert(hidden.has("fid-PAST-CAP"), "the finding past the cap is still hidden");
+});

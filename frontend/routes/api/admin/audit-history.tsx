@@ -20,6 +20,9 @@ export interface AdminAuditItem {
   recordingId?: string;   // genie # — hydrated + backfilled by the audit-history controller
   isPackage?: boolean;
   voName?: string;
+  /** QuickBase employee id — links the name to that person's report. Absent on
+   *  audits ingested before 2026-08-07 and on packages. */
+  employeeId?: string;
   owner?: string;
   department?: string;
   shift?: string;
@@ -204,7 +207,21 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
                     : <span style="color:var(--text-dim);">—</span>}
                 </td>
                 <td>{typeBadge(c.isPackage)}</td>
-                <td><span class="mono" style="font-size:10px;">{ownerLabel(c)}</span></td>
+                <td>
+                  <span class="mono" style="font-size:10px;">
+                    {/* Linked only when the row carries an employee id — a
+                        name-based link would open whichever person shares it. */}
+                    {c.employeeId
+                      ? (
+                        <a
+                          href={`/manager/team/${encodeURIComponent(c.employeeId)}`}
+                          title={`See every audit for ${ownerLabel(c)}`}
+                          style="color:var(--accent,#58a6ff);text-decoration:none;"
+                        >{ownerLabel(c)}</a>
+                      )
+                      : ownerLabel(c)}
+                  </span>
+                </td>
                 <td><span class="mono" style={`font-size:10px;color:${aud.dim ? "var(--text-dim)" : "var(--text)"};`}>{aud.text}</span></td>
                 <td>{scorePill(c.score)}</td>
                 <td><span title={c.startedAt ? new Date(c.startedAt).toLocaleString() : ""}>{c.startedAt ? timeAgo(c.startedAt) : "\u2014"}</span></td>

@@ -135,7 +135,13 @@ const _hiddenRefreshing = new Set<string>();
 const HIDDEN_TTL_MS = 30 * 1000;
 
 async function loadHiddenIds(orgId: OrgId): Promise<Set<string>> {
-  const rows = await listStoredWithKeys<{ findingId?: string }>("audit-hidden", orgId);
+  // Paged (uncapped) scan — plain listStoredWithKeys caps at 1000 rows, and
+  // this set only ever grows. Once prod passed 1000 hidden findings the cap
+  // silently un-hid every one past the limit: dedup losers, retired duplicates
+  // and re-audit losers all reappeared in reports, dashboards and the failed-
+  // audit lists, looking like unreviewed sub-100% audits nobody could action.
+  // Measured 2026-08-07: 4095 audit-hidden docs, 1000 loaded — ~3000 ghosts.
+  const rows = await listStoredWithKeysAll<{ findingId?: string }>("audit-hidden", orgId);
   const ids = new Set<string>();
   for (const { key, value } of rows) {
     const fid = (typeof key[0] === "string" ? key[0] : undefined) ?? value?.findingId;

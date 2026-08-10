@@ -90,6 +90,10 @@ export async function writeFailedFindingRows(
       header,
       completedAt,
       voName: voName || undefined,
+      // Same derivation as buildIndexMeta — the two indexes must agree on who
+      // a finding belongs to, or a person's audit list and their most-missed
+      // questions would be scoped to different sets of people.
+      employeeId: rec.RelatedEmployeeId != null ? String(rec.RelatedEmployeeId) : undefined,
       owner: typeof finding?.owner === "string" ? finding.owner : undefined,
       department: department || undefined,
       shift: shift || undefined,
@@ -120,6 +124,10 @@ export async function deleteFailedFindingRows(orgId: OrgId, findingId: string): 
 
 export interface FailedFilters {
   voName?: string;
+  /** Exact QuickBase employee id. Prefer this over voName when you mean ONE
+   *  person — voName is a case-insensitive substring match, so "Mariah Brown"
+   *  pulls in every Mariah Brown. */
+  employeeId?: string;
   department?: string;
   shift?: string;
   header?: string;
@@ -137,6 +145,7 @@ export async function queryFailedFindings(
     COLL, orgId, from, to, { fieldName: "completedAt", limit: Number.MAX_SAFE_INTEGER },
   );
   const hidden = await getHiddenFindingIds(orgId);
+  const eid = filters.employeeId?.trim();
   const v = filters.voName?.trim().toLowerCase();
   const dep = filters.department?.trim().toLowerCase();
   const sh = filters.shift?.trim().toLowerCase();
@@ -144,6 +153,9 @@ export async function queryFailedFindings(
   const src = filters.failureSource;
   return rows.filter((r) => {
     if (hidden.has(r.findingId)) return false;
+    // Exact, and deliberately no name fallback: matching on voName when the id
+    // is missing would silently fold two same-named people back together.
+    if (eid && r.employeeId !== eid) return false;
     if (v && !(r.voName ?? "").toLowerCase().includes(v)) return false;
     if (dep && (r.department ?? "").toLowerCase() !== dep) return false;
     if (sh && (r.shift ?? "").toLowerCase() !== sh) return false;

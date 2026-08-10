@@ -108,6 +108,11 @@ export interface FailedFindingIndexEntry {
   header: string;             // verbatim header for display
   completedAt: number;        // = finding.completedAt (range field)
   voName?: string;
+  /** QuickBase employee id (fid 143) — same person key as
+   *  AuditDoneIndexEntry.employeeId. voName alone merges two people who share
+   *  a name, which would blend their most-missed questions. Undefined on rows
+   *  written before 2026-08. */
+  employeeId?: string;
   owner?: string;
   department?: string;
   shift?: string;

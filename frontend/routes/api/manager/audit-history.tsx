@@ -15,6 +15,10 @@ export interface AuditHistoryItem {
   recordId?: string;
   isPackage?: boolean;
   voName?: string;
+  /** QuickBase employee id — the person key the report page links on. Absent
+   *  on audits ingested before 2026-08-07, and on packages (different table),
+   *  so the name renders as plain text rather than a link for those. */
+  employeeId?: string;
   owner?: string;
   department?: string;
   shift?: string;
@@ -85,6 +89,22 @@ function ownerLabel(item: AuditHistoryItem): string {
   if (item.voName) return item.voName;
   if (item.owner && item.owner !== "api") return item.owner.split("@")[0];
   return "\u2014";
+}
+
+/** The team member's name, linked to their individual report when the row
+ *  carries an employee id. Rows without one (audited before 2026-08-07, or
+ *  packages) render plain text \u2014 linking them by name would open a report for
+ *  whichever person happens to share that name. */
+function ownerCell(item: AuditHistoryItem) {
+  const label = ownerLabel(item);
+  if (!item.employeeId || label === "\u2014") return <>{label}</>;
+  return (
+    <a
+      href={`/manager/team/${encodeURIComponent(item.employeeId)}`}
+      title={`See every audit for ${label}`}
+      style="color:var(--accent,#58a6ff);text-decoration:none;"
+    >{label}</a>
+  );
 }
 
 function reviewedBadge(item: AuditHistoryItem) {
@@ -253,7 +273,7 @@ export function renderAuditHistoryTable(data: AuditHistoryData, window?: { since
                     {item.findingId.slice(0, 10)}…
                   </a>
                 </td>
-                <td>{ownerLabel(item)}</td>
+                <td>{ownerCell(item)}</td>
                 <td class="mono" style="font-size:11px;color:var(--text-muted);">{item.department ?? "\u2014"}</td>
                 <td class="mono" style="font-size:11px;color:var(--text-muted);">{item.shift ?? "\u2014"}</td>
                 <td>{item.score != null ? <span class={`pill pill-${pillColor(item.score)}`}>{item.score}%</span> : "\u2014"}</td>

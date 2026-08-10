@@ -143,6 +143,7 @@ export class ManagerController {
   @Get("audit-history") @ReturnedType(ManagerAuditHistoryResponse) @Description("Manager audit history")
   async auditHistory(
     @Query("owner") owner: string,
+    @Query("employeeId") employeeId: string,
     @Query("shift") shift: string,
     @Query("department") department: string,
     @Query("reviewed") reviewed: string,
@@ -163,6 +164,7 @@ export class ManagerController {
     ) as "manager" | "admin" | "super-manager";
     return getAuditHistory(orgId, email ?? "", effectiveRole, {
       owner: owner || undefined,
+      employeeId: employeeId || undefined,
       shift: shift || undefined,
       department: department || undefined,
       reviewed: reviewed || undefined,

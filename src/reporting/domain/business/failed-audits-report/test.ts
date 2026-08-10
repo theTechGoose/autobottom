@@ -14,7 +14,7 @@ function uniqueOrg(tag: string): OrgId {
 }
 
 interface Seed {
-  id: string; vo: string; dept: string; shift: string;
+  id: string; vo: string; dept: string; shift: string; empId?: string;
   fails: Array<{ header: string; reviewAction?: string; judgeAction?: string; judgeReason?: string }>;
   appealedDenied?: string[]; // headers
 }
@@ -25,7 +25,10 @@ async function seed(orgId: OrgId, completedAt: number, s: Seed): Promise<void> {
   }));
   const finding = {
     id: s.id, findingStatus: "finished", completedAt,
-    record: { RecordId: s.id, VoName: s.vo, ActivatingOffice: s.dept, Shift: s.shift },
+    record: {
+      RecordId: s.id, VoName: s.vo, ActivatingOffice: s.dept, Shift: s.shift,
+      ...(s.empId ? { RelatedEmployeeId: s.empId } : {}),
+    },
     answeredQuestions,
   };
   await saveFinding(orgId, finding);
@@ -116,4 +119,45 @@ Deno.test("getTopFailRanked — empty when no data at any scope", async () => {
   const res = await getTopFailRanked(orgId, LO, HI, { department: "Nowhere" });
   assertEquals(res.total, 0);
   assertEquals(res.rows.length, 0);
+});
+
+// ── employeeId — telling two people with the same name apart ─────────────────
+// Prod has two Mariah Browns (ODR and WST) who also share one email address.
+// The failed-question rows feed the "what does this person miss most" panel,
+// so if they key on the name, one Mariah's coaching list contains the other's
+// misses.
+
+Deno.test("getFailedFindings — employeeId returns ONE person, not everyone sharing the name", async () => {
+  const orgId = uniqueOrg("empid");
+  await seed(orgId, NOW, { id: "m1", vo: "ODR - Mariah Brown", dept: "ODR", shift: "PM", empId: "25335", fails: [{ header: "Taxes Due" }] });
+  await seed(orgId, NOW - 1000, { id: "m2", vo: "WST ACT - Mariah Brown", dept: "WST ACT", shift: "PM", empId: "22887", fails: [{ header: "Income" }, { header: "Taxes Due" }] });
+
+  const byName = await getFailedFindings(orgId, LO, HI, { voName: "Mariah Brown" });
+  assertEquals(byName.total, 3, "the name alone matches BOTH Mariahs — that's the bug");
+
+  const odr = await getFailedFindings(orgId, LO, HI, { employeeId: "25335" });
+  assertEquals(odr.total, 1);
+  assertEquals(odr.rows[0].findingId, "m1");
+
+  const wst = await getFailedFindings(orgId, LO, HI, { employeeId: "22887" });
+  assertEquals(wst.total, 2);
+});
+
+Deno.test("getFailedFindings — employeeId never falls back to the name", async () => {
+  // A row with no id must NOT be swept in by a name match, or the two Mariahs
+  // silently merge again on historical data.
+  const orgId = uniqueOrg("nofall");
+  await seed(orgId, NOW, { id: "n1", vo: "ODR - Mariah Brown", dept: "ODR", shift: "PM", fails: [{ header: "Taxes Due" }] });
+  const res = await getFailedFindings(orgId, LO, HI, { employeeId: "25335" });
+  assertEquals(res.total, 0, "no employeeId on the row means no match, ever");
+});
+
+Deno.test("getFailureByQuestion — scoped to one employee, not the shared name", async () => {
+  const orgId = uniqueOrg("byq");
+  await seed(orgId, NOW, { id: "q1", vo: "ODR - Mariah Brown", dept: "ODR", shift: "PM", empId: "25335", fails: [{ header: "Taxes Due" }] });
+  await seed(orgId, NOW - 1000, { id: "q2", vo: "WST ACT - Mariah Brown", dept: "WST", shift: "PM", empId: "22887", fails: [{ header: "Income" }] });
+
+  const odr = await getFailureByQuestion(orgId, LO, HI, { employeeId: "25335" });
+  assertEquals(odr.total, 1);
+  assertEquals(odr.rows[0].header, "Taxes Due");
 });

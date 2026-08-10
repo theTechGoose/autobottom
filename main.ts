@@ -168,6 +168,8 @@ async function handleManagerAuditHistory(req: Request): Promise<Response> {
   try {
     const result = await getAuditHistory(auth.orgId, scopeEmail, effectiveRole, {
       owner: q.get("owner") || undefined,
+      // Exact person key — what the per-team-member report page sends.
+      employeeId: q.get("employeeId") || undefined,
       shift: q.get("shift") || undefined,
       department: q.get("department") || undefined,
       reviewed: q.get("reviewed") || undefined,

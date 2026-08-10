@@ -1026,25 +1026,59 @@ export async function stampEmailOnDoneIdx(
   orgId: OrgId,
   findingId: string,
   patch: { emailSentAt?: number; emailOpenedAt?: number },
+  opts: { at?: number } = {},
 ): Promise<boolean> {
   try {
-    const pointer = await getStored<{ ts: number }>(DONE_IDX_KEY_PTR, orgId, findingId).catch(() => null);
-    const ts = pointer?.ts;
-    if (typeof ts !== "number" || !Number.isFinite(ts)) {
-      // No pointer means no row has been written for this finding yet (the
-      // audit is mid-pipeline). The stamp is simply skipped — step-finalize
-      // will write the row shortly, and a backfill can fill the marker later.
-      return false;
-    }
-    const existing = await getStored<AuditDoneIndexEntry>("audit-done-idx", orgId, padTs(ts), findingId).catch(() => null);
-    if (!existing) return false;
-    const merged: AuditDoneIndexEntry = {
-      ...existing,
-      ...(patch.emailSentAt != null && existing.emailSentAt == null ? { emailSentAt: patch.emailSentAt } : {}),
-      ...(patch.emailOpenedAt != null && existing.emailOpenedAt == null ? { emailOpenedAt: patch.emailOpenedAt } : {}),
+    // Candidate row timestamps, cheapest and most certain first. The key
+    // pointer alone is NOT enough: it is only written by writeSoleAuditDoneIndex
+    // (review / judge / flip / appeal), so rows finalized straight through
+    // step-finalize have none — measured 2026-08-10, 100% of rows under a week
+    // old had a pointer and 0% of older ones did. Depending on it silently
+    // skipped ~7k of 8.7k rows in the first backfill.
+    const candidates: number[] = [];
+    const push = (v: unknown) => {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0 && !candidates.includes(n)) candidates.push(n);
     };
-    await setStored("audit-done-idx", orgId, [padTs(ts), findingId], merged);
-    return true;
+    // Caller-supplied (a backfill already holds the row and its completedAt).
+    push(opts.at);
+    const pointer = await getStored<{ ts: number }>(DONE_IDX_KEY_PTR, orgId, findingId).catch(() => null);
+    push(pointer?.ts);
+
+    for (const ts of candidates) {
+      const existing = await getStored<AuditDoneIndexEntry>("audit-done-idx", orgId, padTs(ts), findingId).catch(() => null);
+      if (!existing) continue;
+      const merged: AuditDoneIndexEntry = {
+        ...existing,
+        ...(patch.emailSentAt != null && existing.emailSentAt == null ? { emailSentAt: patch.emailSentAt } : {}),
+        ...(patch.emailOpenedAt != null && existing.emailOpenedAt == null ? { emailOpenedAt: patch.emailOpenedAt } : {}),
+      };
+      await setStored("audit-done-idx", orgId, [padTs(ts), findingId], merged);
+      return true;
+    }
+
+    // Last resort — the live open path has no timestamp in hand and the finding
+    // is the only place left to learn it. One extra read, on a route that fires
+    // once per email open, never on a render path.
+    const finding = await getFinding(orgId, findingId).catch(() => null);
+    if (!finding) return false;
+    const fromFinding: number[] = [];
+    for (const v of [(finding as any).reviewedAt, (finding as any).completedAt]) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0 && !candidates.includes(n)) fromFinding.push(n);
+    }
+    for (const ts of fromFinding) {
+      const existing = await getStored<AuditDoneIndexEntry>("audit-done-idx", orgId, padTs(ts), findingId).catch(() => null);
+      if (!existing) continue;
+      const merged: AuditDoneIndexEntry = {
+        ...existing,
+        ...(patch.emailSentAt != null && existing.emailSentAt == null ? { emailSentAt: patch.emailSentAt } : {}),
+        ...(patch.emailOpenedAt != null && existing.emailOpenedAt == null ? { emailOpenedAt: patch.emailOpenedAt } : {}),
+      };
+      await setStored("audit-done-idx", orgId, [padTs(ts), findingId], merged);
+      return true;
+    }
+    return false;
   } catch (err) {
     console.warn(`⚠️ [DONE-IDX] ${findingId}: email stamp failed (non-fatal):`, err);
     return false;

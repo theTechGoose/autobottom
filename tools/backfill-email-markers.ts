@@ -28,6 +28,13 @@ const args = new Set(Deno.args);
 const commit = args.has("--commit");
 const daysArg = Deno.args.find((a) => a.startsWith("--days="));
 const days = Math.max(1, Number(daysArg?.split("=")[1] ?? 30) || 30);
+/** `--only=queue` / `--only=index`. The remediation queue is a few hundred rows
+ *  and is the surface managers actually work from, while the index pass is tens
+ *  of thousands of rows and takes over an hour — running them separately means
+ *  the queue doesn't wait on it. Both passes are idempotent and independent. */
+const onlyArg = Deno.args.find((a) => a.startsWith("--only="))?.split("=")[1];
+const doIndex = onlyArg !== "queue";
+const doQueue = onlyArg !== "index";
 
 const org = defaultOrgId();
 const now = Date.now();
@@ -61,18 +68,30 @@ async function eachMark<T extends { findingId: string }>(
   return { scanned, withMark, stamped };
 }
 
-// ── audit-done-idx (powers the Audit History column) ────────────────────────
-const idxRows = await queryAuditDoneIndex(org, since, now);
-const idx = await eachMark(idxRows, (r, m) =>
-  stampEmailOnDoneIdx(org, r.findingId, { emailSentAt: m.sentAt, emailOpenedAt: m.openedAt }));
-console.log(`\naudit-done-idx: scanned ${idx.scanned}, have a mark ${idx.withMark}, stamped ${idx.stamped}`);
+let wouldStamp = 0;
 
 // ── manager-queue (powers the Remediation Queue column) ─────────────────────
-const queueRows = (await getManagerQueue(org)).filter((i) => i.status !== "remediated");
-const q = await eachMark(queueRows, (r, m) =>
-  stampEmailOnQueueItem(org, r.findingId, { emailSentAt: m.sentAt, emailOpenedAt: m.openedAt }));
-console.log(`manager-queue:  scanned ${q.scanned}, have a mark ${q.withMark}, stamped ${q.stamped}`);
+// Runs FIRST: a few hundred rows, and it's the surface managers work from.
+if (doQueue) {
+  const queueRows = (await getManagerQueue(org)).filter((i) => i.status !== "remediated");
+  const q = await eachMark(queueRows, (r, m) =>
+    stampEmailOnQueueItem(org, r.findingId, { emailSentAt: m.sentAt, emailOpenedAt: m.openedAt }));
+  console.log(`manager-queue:  scanned ${q.scanned}, have a mark ${q.withMark}, stamped ${q.stamped}`);
+  wouldStamp += q.withMark;
+}
+
+// ── audit-done-idx (powers the Audit History column) ────────────────────────
+if (doIndex) {
+  const idxRows = await queryAuditDoneIndex(org, since, now);
+  // Pass the row's own completedAt as the key hint. Without it the stamper
+  // falls back to the key pointer, which only exists on rows written by
+  // writeSoleAuditDoneIndex — that skipped ~7k of 8.7k rows on the first run.
+  const idx = await eachMark(idxRows, (r, m) =>
+    stampEmailOnDoneIdx(org, r.findingId, { emailSentAt: m.sentAt, emailOpenedAt: m.openedAt }, { at: r.completedAt }));
+  console.log(`audit-done-idx: scanned ${idx.scanned}, have a mark ${idx.withMark}, stamped ${idx.stamped}`);
+  wouldStamp += idx.withMark;
+}
 
 if (!commit) {
-  console.log(`\nDry run only. ${idx.withMark + q.withMark} rows would be stamped. Re-run with --commit to apply.`);
+  console.log(`\nDry run only. ${wouldStamp} rows would be stamped. Re-run with --commit to apply.`);
 }

@@ -307,7 +307,13 @@ export function filterAndSortQueue(items: QueueItem[], params: QueueFilterParams
  *  Filtering is by NAME, not employee id, on purpose. Items queued before
  *  2026-08-10 carry no id, so an id-based filter would hide most of the
  *  existing queue. The trade-off is that two people sharing a name share a
- *  button — the row's name link is id-based and stays exact. */
+ *  button — the row's name link is id-based and stays exact.
+ *
+ *  The leading "All" chip is not decoration. The first cut relied on clicking
+ *  the selected name a second time to un-filter, which works but is invisible —
+ *  a manager who picked a person had no way to see that, and the only visible
+ *  exit was the Clear link, which also throws away their window and sort. "All"
+ *  makes going back a thing you can SEE. The toggle still works too. */
 export function renderMemberButtons(
   items: QueueItem[],
   params: QueueFilterParams,
@@ -330,21 +336,37 @@ export function renderMemberButtons(
     return <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">No team members with open items in this range.</div>;
   }
 
+  // Shared by the "All" chip and every name chip: write the member filter and
+  // refresh the table. `source` makes htmx serialize the whole filter form, so
+  // the window / question / sale / sort selections all survive.
+  const setMemberJs = (expr: string) =>
+    `(()=>{const m=document.getElementById('q-member');if(!m)return;m.value=${expr};`
+    + `htmx.ajax('GET','/api/manager/queue',{source:'#queue-filters',target:'#manager-queue-table',swap:'innerHTML'});})()`;
+
   return (
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <button
+        type="button"
+        class={`btn btn-sm ${selected ? "btn-ghost" : ""}`}
+        title="Show every team member"
+        {...{ "hx-on:click": setMemberJs("''") }}
+      >
+        All
+        <span style="margin-left:6px;opacity:0.7;font-variant-numeric:tabular-nums;">{inView.length}</span>
+      </button>
       {ranked.map(([name, count]) => {
         const active = selected.toLowerCase() === name.toLowerCase();
-        // Clicking the active button clears the filter — a toggle, so there's
-        // no "how do I get back to everyone" dead end without hunting for Clear.
-        const js = `(()=>{const m=document.getElementById('q-member');if(!m)return;`
-          + `m.value=(m.value.toLowerCase()===${JSON.stringify(name.toLowerCase())})?'':${JSON.stringify(name)};`
-          + `htmx.ajax('GET','/api/manager/queue',{source:'#queue-filters',target:'#manager-queue-table',swap:'innerHTML'});})()`;
+        // Clicking the active chip also clears — kept as a convenience, but
+        // "All" above is the discoverable way back.
+        const js = setMemberJs(
+          `(m.value.toLowerCase()===${JSON.stringify(name.toLowerCase())})?'':${JSON.stringify(name)}`,
+        );
         return (
           <button
             key={name}
             type="button"
             class={`btn btn-sm ${active ? "" : "btn-ghost"}`}
-            title={active ? `Show everyone again` : `Show only ${name}`}
+            title={active ? `Showing only ${name} — click for everyone` : `Show only ${name}`}
             {...{ "hx-on:click": js }}
           >
             {name}

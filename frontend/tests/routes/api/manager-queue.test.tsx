@@ -437,14 +437,46 @@ Deno.test("renderMemberButtons — a member with no nameable auditee is skipped"
 });
 
 Deno.test("renderMemberButtons — clicking the selected member clears the filter", () => {
-  // Toggle behaviour: without it there's no way back to "everyone" except
-  // hunting for the Clear link.
   const html = renderHTML(renderMemberButtons(
     [item({ findingId: "a", voName: "Natalia Reyes" })],
     { ...PARAMS, member: "Natalia Reyes" } as never,
   ));
   assertContains(html, "q-member");
-  assertContains(html, "Show everyone again");
+  assertContains(html, "click for everyone");
+});
+
+Deno.test("renderMemberButtons — an 'All' chip always leads, carrying the unfiltered total", () => {
+  // The way BACK has to be visible. Relying on clicking the selected name a
+  // second time is invisible, and the Clear link also throws away the window
+  // and sort — so picking a person read as a dead end.
+  const html = renderHTML(renderMemberButtons([
+    item({ findingId: "a", voName: "Natalia Reyes" }),
+    item({ findingId: "b", voName: "Natalia Reyes" }),
+    item({ findingId: "c", voName: "Lorenzo Bennett" }),
+  ], { ...PARAMS, member: "Natalia Reyes" } as never));
+  assertContains(html, ">All<");
+  // The count is the WHOLE view, not the filtered 2 — it's what you get back.
+  assertContains(html, "Show every team member");
+  assert(
+    html.indexOf(">All<") < html.indexOf("Natalia Reyes"),
+    "the All chip must come first, where a reader looks for the reset",
+  );
+});
+
+Deno.test("renderMemberButtons — 'All' is the active chip when nobody is selected", () => {
+  const unfiltered = renderHTML(renderMemberButtons(
+    [item({ findingId: "a", voName: "Natalia Reyes" })], PARAMS as never,
+  ));
+  // btn-ghost marks the INACTIVE chips, so an unselected view leaves All solid.
+  const allChip = unfiltered.slice(unfiltered.indexOf("<button"), unfiltered.indexOf(">All<"));
+  assert(!allChip.includes("btn-ghost"), "All should be the active chip with no member filter");
+
+  const filtered = renderHTML(renderMemberButtons(
+    [item({ findingId: "a", voName: "Natalia Reyes" })],
+    { ...PARAMS, member: "Natalia Reyes" } as never,
+  ));
+  const allChipFiltered = filtered.slice(filtered.indexOf("<button"), filtered.indexOf(">All<"));
+  assert(allChipFiltered.includes("btn-ghost"), "All should dim once a member is selected");
 });
 
 Deno.test("ManagerQueue — team member links to their report only when the row has an employee id", () => {

@@ -1823,10 +1823,17 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .rem-q-list { display: flex; flex-direction: column; gap: 6px; }
 .rem-q-row { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .rem-q-failed { border-left: 3px solid #f85149; background: rgba(248,81,73,0.06); }
-/* Only a failure whose evidence resolved to a real transcript line is
+/* The audit scrub view (/audit/scrub) lists EVERY question, not just the
+   failures the remediation view shows, so passes and ungraded questions need
+   their own rail — otherwise a green "Yes" reads inside a red failure row. */
+.rem-q-passed { border-left: 3px solid #3fb950; background: rgba(63,185,80,0.05); }
+.rem-q-error  { border-left: 3px solid #fab005; background: rgba(250,176,5,0.06); }
+/* Only a question whose evidence resolved to a real transcript line is
    clickable — a row with nothing to jump to must not look interactive. */
 .rem-q-jumpable { cursor: pointer; }
 .rem-q-jumpable:hover { background: rgba(248,81,73,0.12); }
+.rem-q-passed.rem-q-jumpable:hover { background: rgba(63,185,80,0.12); }
+.rem-q-error.rem-q-jumpable:hover { background: rgba(250,176,5,0.14); }
 .rem-q-active { outline: 2px solid #fab005; background: rgba(250,176,5,0.1); }
 .rem-q-head { display: flex; align-items: center; gap: 8px; }
 .rem-q-num { color: var(--text-dim); font-size: 11px; min-width: 20px; }

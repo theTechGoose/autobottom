@@ -232,6 +232,19 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
           </div>
           <div style="display:flex;gap:12px;align-items:center;">
             {finished && <AudioPlayer findingId={id} recordingCount={recordingCount} />}
+            {/* Scrub view — the same audit as a workspace: questions on the
+                left, click-to-seek transcript on the right, audio bar below.
+                Needs a transcript to scrub; the inline player above is the
+                whole story on an audit that has none. Same tab on purpose —
+                it's the same audit, and Back returns here. */}
+            {finished && transcriptText && (
+              <a
+                href={`/audit/scrub?id=${encodeURIComponent(id)}`}
+                class="sf-btn ghost"
+                style="text-decoration:none;white-space:nowrap;"
+                title="Open this audit with a click-to-seek transcript"
+              >Scrub Transcript</a>
+            )}
           </div>
         </div>
       </div>

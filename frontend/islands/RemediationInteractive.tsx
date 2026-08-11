@@ -1,10 +1,13 @@
-/** Island: scrub interactions for the manager remediation detail page
- *  (/manager/remediate/[findingId]). Two behaviors, both delegated at the
- *  document level so no per-node hydration is needed:
+/** Island: scrub interactions for both full-page scrub views — the manager
+ *  remediation detail page (/manager/remediate/[findingId]) and the audit scrub
+ *  view (/audit/scrub). Two behaviors, both delegated at the document level so
+ *  no per-node hydration is needed:
  *
  *   1. Click a transcript line  → seek the audio to that line's timestamp.
- *   2. Click a FAILED question  → scroll to the transcript line the page
- *      resolved as that failure's evidence, highlight it, and seek there.
+ *   2. Click a question row     → scroll to the transcript line the page
+ *      resolved as that question's evidence, highlight it, and seek there.
+ *      (Remediation only emits failures; the scrub view emits every question.
+ *      This island doesn't care which — it follows `data-rem-line-idx`.)
  *
  *  Both paths dispatch `queue:jump-to-audio`, which the QueueAudioPlayer island
  *  on the same page consumes to move the playhead.

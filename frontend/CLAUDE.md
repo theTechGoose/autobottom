@@ -263,7 +263,8 @@ Two review/queue traps that ship wrong audit scores or a dead scrubber:
 | Question Lab config | `/question-lab/config/[id]` | Done — Settings + Run Test Audit (HTMX polling) + Questions inline-edit |
 | Question Lab editor | `/question-lab/question/[id]` | Done — full editor + version history + simulator |
 | Store | `/store` | Done — item grid, buy flow |
-| Audit Report | `/audit/report` | Done — multi-recording REC tabs, File Appeal, Different Recording reaudit. Public page; admin-only extras (gated by `isAdmin`): per-question flip, failure-source override, reviewer handle-time (`⏱`) badges. |
+| Audit Report | `/audit/report` | Done — multi-recording REC tabs, File Appeal, Different Recording reaudit, **Scrub Transcript** button (→ `/audit/scrub`). Public page; admin-only extras (gated by `isAdmin`): per-question flip, failure-source override, reviewer handle-time (`⏱`) badges. |
+| Audit Scrub | `/audit/scrub` | Done — the report made playable: every question + record details on the left, click-to-seek transcript on the right, audio bar below (Space/P, ←/→, ↑/↓). Clicking a question jumps to the transcript line its evidence cites. Same parts as the manager remediation view; **public** like the report, and registered in `FRONTEND_EXACT_PAGES` + `PUBLIC_PATHS`. Multi-recording audits have no `utteranceTimes` (see `step-transcribe`'s multi-genie branch) so they render the transcript and play REC 1 without jumps. |
 | Super Admin | `/super-admin` | Done (gated to `ai@monsterrg.com`) |
 | Gamification | `/gamification` | Done |
 | 404 | `*` | Done |

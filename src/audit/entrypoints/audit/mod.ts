@@ -175,13 +175,27 @@ export class AuditController {
       // is missing — chunked-read race, downstream save with a stale value,
       // or a skip-to-finalize that left the field empty — fall back to the
       // canonical doc so the report page always renders the call text.
-      if (!finding.rawTranscript || !finding.diarizedTranscript) {
+      //
+      // utteranceTimes counts as a missing field too: the scrub view
+      // (/audit/scrub) seeks the audio to a clicked transcript line, and with no
+      // per-line times every line is dead. The times index the STORE's raw
+      // lines, so when we take them we take that raw text with them — mixing the
+      // finding doc's raw with the store's times slides every timestamp onto the
+      // wrong line. Same matched-pair rule as /manager/api/finding.
+      const rec = finding as Record<string, unknown>;
+      const hasTimes = Array.isArray(rec.utteranceTimes) && (rec.utteranceTimes as unknown[]).length > 0;
+      if (!finding.rawTranscript || !finding.diarizedTranscript || !hasTimes) {
         try {
           const t = await getTranscript(orgId, id);
           if (t) {
-            (finding as Record<string, unknown>).rawTranscript ??= t.raw;
-            (finding as Record<string, unknown>).diarizedTranscript ??= t.diarized;
-            (finding as Record<string, unknown>).utteranceTimes ??= t.utteranceTimes;
+            rec.diarizedTranscript ??= t.diarized;
+            if (!hasTimes && t.utteranceTimes?.length && t.raw) {
+              rec.rawTranscript = t.raw;
+              rec.utteranceTimes = t.utteranceTimes;
+            } else {
+              rec.rawTranscript ??= t.raw;
+              rec.utteranceTimes ??= t.utteranceTimes;
+            }
           }
         } catch (err) {
           console.warn(`[GET-FINDING] ⚠️ getTranscript fallback failed for id=${id}: ${err instanceof Error ? err.message : String(err)}`);

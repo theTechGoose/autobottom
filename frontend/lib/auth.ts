@@ -54,6 +54,10 @@ export const ROLE_REDIRECTS: Record<Role, string> = {
 export const PUBLIC_PATHS = [
   "/login", "/register", "/api/login", "/api/register",
   "/audit/report",
+  // The scrub view is the report made playable — same audit, same unguessable
+  // findingId, and its only entry point is a button on the (public) report.
+  // Gating it would put a login wall on a link to the agent's own audit.
+  "/audit/scrub",
   "/api/audit/appeal", // covers /api/audit/appeal, /api/audit/appeal/different-recording, /api/audit/appeal/upload-recording (via prefix match)
 ];
 

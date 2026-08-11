@@ -143,3 +143,70 @@ Deno.test({ name: "AuditController.fileAppeal — happy path returns ok+queued+j
   assertEquals(r.queued, 1);
   assertEquals(r.judgeUrl, "/judge");
 }});
+
+/* ── getFinding: per-line timestamps ──────────────────────────────────────────
+   The scrub view (/audit/scrub) seeks the audio to a clicked transcript line,
+   which needs `utteranceTimes`. Those live on the canonical audit-transcript
+   doc; the finding doc's copy can be missing (chunked-read race, a downstream
+   save with a stale value, an audit that predates the field). getFinding used
+   to backfill from the store ONLY when a transcript field was missing, so a
+   finding with both transcripts and no times came back unseekable forever.
+
+   The times index the STORE's raw lines, so they must travel WITH that raw
+   text — pairing the finding doc's raw with the store's times slides every
+   timestamp onto the wrong line, which is worse than no timestamps at all. */
+
+Deno.test({ name: "AuditController.getFinding — backfills utteranceTimes with their matching raw transcript", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const ORG = "test-org-times-" + crypto.randomUUID().slice(0, 8) as unknown as Parameters<typeof saveFinding>[0];
+  Deno.env.set("DEFAULT_ORG_ID", String(ORG));
+
+  const { saveTranscript } = await import("@audit/domain/data/audit-repository/mod.ts");
+  const findingId = "fid-times-" + crypto.randomUUID().slice(0, 8);
+  const storeRaw = "[AGENT]: Line one.\n[CUSTOMER]: Line two.\n[AGENT]: Line three.";
+
+  // Both transcripts present on the finding, no times — the shape the old
+  // condition skipped entirely.
+  await saveFinding(ORG, {
+    id: findingId,
+    findingStatus: "finished",
+    rawTranscript: "[AGENT]: A stale single line.",
+    diarizedTranscript: "[AGENT]: A stale single line.",
+    record: { RecordId: "1" },
+  });
+  await saveTranscript(ORG, findingId, storeRaw, "[AGENT]: Line one.", [0, 4000, 9000]);
+
+  const { AuditController } = await import("./mod.ts");
+  const r = await new AuditController().getFinding(findingId) as Record<string, unknown>;
+
+  assertEquals(r.utteranceTimes, [0, 4000, 9000], "times must be backfilled from the transcript store");
+  // Matched pair: the raw text comes from the store too, so line N and time N
+  // describe the same utterance.
+  assertEquals(r.rawTranscript, storeRaw, "raw must come from the same doc as the times");
+}});
+
+Deno.test({ name: "AuditController.getFinding — a finding that already has times keeps its own transcript", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const ORG = "test-org-times2-" + crypto.randomUUID().slice(0, 8) as unknown as Parameters<typeof saveFinding>[0];
+  Deno.env.set("DEFAULT_ORG_ID", String(ORG));
+
+  const { saveTranscript } = await import("@audit/domain/data/audit-repository/mod.ts");
+  const findingId = "fid-times2-" + crypto.randomUUID().slice(0, 8);
+  const findingRaw = "[AGENT]: The finding's own raw.";
+
+  await saveFinding(ORG, {
+    id: findingId,
+    findingStatus: "finished",
+    rawTranscript: findingRaw,
+    diarizedTranscript: "[AGENT]: The finding's own raw.",
+    utteranceTimes: [0],
+    record: { RecordId: "1" },
+  });
+  await saveTranscript(ORG, findingId, "[AGENT]: A different store raw.", "", [500, 900]);
+
+  const { AuditController } = await import("./mod.ts");
+  const r = await new AuditController().getFinding(findingId) as Record<string, unknown>;
+
+  assertEquals(r.utteranceTimes, [0], "existing times win — they belong to the finding's own raw");
+  assertEquals(r.rawTranscript, findingRaw);
+}});

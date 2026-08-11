@@ -916,6 +916,9 @@ const FRONTEND_EXACT_PAGES = new Set([
   "/judge", "/judge/dashboard",
   "/manager", "/agent", "/chat", "/store", "/question-lab",
   "/audit/report",
+  // Scrub view — a Fresh page under the /audit BACKEND_PREFIX, so without this
+  // entry it dispatches to danet and 404s.
+  "/audit/scrub",
   "/super-admin",
   "/gamification",
   // QLab Fresh HTMX wrappers that share URLs with same-name danet endpoints

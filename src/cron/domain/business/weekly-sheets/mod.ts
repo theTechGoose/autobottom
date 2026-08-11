@@ -40,19 +40,19 @@ export function prevWeekWindow(now: Date): { since: number; until: number } {
   return { since, until };
 }
 
-/** Is `now` the scheduled slot — Tuesday 7:00 AM Eastern?
+/** Is `now` the scheduled slot — Tuesday 9:00 AM Eastern?
  *
  *  The cron field can't carry this. `0 13 * * 1` fired on Sundays in prod for
  *  five weeks straight, so the day-of-week number isn't trustworthy, and a
  *  fixed UTC hour would slip an hour at every DST change. So the job ticks
  *  hourly and this decides against the Eastern wall clock.
  *
- *  `>= 7`, not `=== 7`: a 7am tick lost to a deploy or a cold start is picked
+ *  `>= 9`, not `=== 9`: a 9am tick lost to a deploy or a cold start is picked
  *  up by the next hour instead of skipping the week. The per-week claim key in
  *  runWeeklySheetsExport is what makes those extra ticks harmless. */
 export function isWeeklySheetsFireTime(now: Date = new Date()): boolean {
   const p = tzParts(SHEET_TZ, now.getTime());
-  return p.dow === 2 && p.hour >= 7;
+  return p.dow === 2 && p.hour >= 9;
 }
 
 export interface SheetExportResult {

@@ -43,7 +43,7 @@ export function registerCrons(): void {
     await flushOtel();
   });
 
-  // Weekly sheets export — Tuesdays 7:00 AM Eastern. Posts the just-completed
+  // Weekly sheets export — Tuesdays 9:00 AM Eastern. Posts the just-completed
   // Mon–Sun week's chargebacks/omissions/wire to the configured Google Sheet
   // (org = CHARGEBACKS_ORG_ID). This was silently lost in the monolith→modular
   // cutover, which is why the sheet went stale. Idempotent per (org, week) via
@@ -96,5 +96,5 @@ export function registerCrons(): void {
   //   }
   // });
 
-  console.log("⏰ Cron jobs registered: watchdog (hourly), email-reports (every minute), weekly-sheets (hourly tick, runs Tuesdays 7:00 AM America/New_York)");
+  console.log("⏰ Cron jobs registered: watchdog (hourly), email-reports (every minute), weekly-sheets (hourly tick, runs Tuesdays 9:00 AM America/New_York)");
 }

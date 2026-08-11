@@ -14,8 +14,8 @@ const et = (ms: number) =>
   });
 
 Deno.test("prevWeekWindow — Tuesday's run covers the previous Mon-Sun in ET", () => {
-  // Tuesday April 14, 2026, 7am ET (11:00Z, EDT).
-  const { since, until } = prevWeekWindow(new Date("2026-04-14T11:00:00Z"));
+  // Tuesday April 14, 2026, 9am ET (13:00Z, EDT).
+  const { since, until } = prevWeekWindow(new Date("2026-04-14T13:00:00Z"));
   assertEquals(et(since), "Mon, 04/06, 00:00:00");
   assertEquals(et(until), "Sun, 04/12, 23:59:59");
 });
@@ -39,15 +39,16 @@ Deno.test("prevWeekWindow — spans the spring DST change without losing an hour
   assertEquals(until - since, 7 * 86_400_000 - 3_600_000 - 1);
 });
 
-Deno.test("isWeeklySheetsFireTime — Tuesday 7am ET and after, nothing else", () => {
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T10:59:00Z")), false); // Tue 6:59am ET
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T11:00:00Z")), true);  // Tue 7:00am ET
+Deno.test("isWeeklySheetsFireTime — Tuesday 9am ET and after, nothing else", () => {
+  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T12:59:00Z")), false); // Tue 8:59am ET
+  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T13:00:00Z")), true);  // Tue 9:00am ET
   assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T15:00:00Z")), true);  // Tue 11am ET — catch-up
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-15T11:00:00Z")), false); // Wed
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-12T11:00:00Z")), false); // Sun — the old misfire day
-  // Standard time: 7am ET is 12:00Z, so a fixed-UTC-hour schedule would slip.
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-01-13T12:00:00Z")), true);  // Tue 7:00am EST
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-01-13T11:00:00Z")), false); // Tue 6:00am EST
+  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T11:00:00Z")), false); // Tue 7am ET — the old slot
+  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-15T13:00:00Z")), false); // Wed
+  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-12T13:00:00Z")), false); // Sun — the old misfire day
+  // Standard time: 9am ET is 14:00Z, so a fixed-UTC-hour schedule would slip.
+  assertEquals(isWeeklySheetsFireTime(new Date("2026-01-13T14:00:00Z")), true);  // Tue 9:00am EST
+  assertEquals(isWeeklySheetsFireTime(new Date("2026-01-13T13:00:00Z")), false); // Tue 8:00am EST
 });
 
 Deno.test("runWeeklySheetsExport — claims the week so a re-fire is skipped (no double-post)", async () => {

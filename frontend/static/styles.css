@@ -272,6 +272,16 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .data-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
 .data-table tr:hover td { background: var(--bg-surface); }
 .data-table .mono { font-family: var(--mono); font-size: 12px; }
+/* Team-member name inside a row that is ITSELF clickable (the remediation
+   queue). The name goes somewhere else than the row, so it has to announce
+   itself on hover — without one, you can't tell whether you're about to open
+   the remediation detail or the person's report. CSS only, because these rows
+   are HTMX-swapped and an island in them would never hydrate (Gotcha #1). */
+.tm-link { color: var(--accent); text-decoration: none; }
+.tm-link:hover, .tm-link:focus-visible {
+  color: var(--text); text-decoration: underline; text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+}
 
 /* ===== Pills / Badges ===== */
 .pill { display: inline-flex; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }

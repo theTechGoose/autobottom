@@ -144,7 +144,7 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
                   <a
                     href={`/manager/team/${encodeURIComponent(item.employeeId)}`}
                     title={`See every audit for ${teamMemberLabel(item)}`}
-                    style="color:var(--accent);text-decoration:none;"
+                    class="tm-link"
                     {...{ "hx-on:click": "event.stopPropagation()" }}
                   >{teamMemberLabel(item)}</a>
                 )

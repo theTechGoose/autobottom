@@ -2,7 +2,7 @@
  *  Firestore-backed via setStored* helpers. */
 
 import {
-  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredWithKeysAll, listStoredByIdPrefix, listStoredByCompletedAt, withTiming,
+  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredWithKeysAll, listStoredKeysAll, listStoredByIdPrefix, listStoredByCompletedAt, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry, AppealRecord } from "@core/dto/types.ts";
@@ -141,11 +141,18 @@ async function loadHiddenIds(orgId: OrgId): Promise<Set<string>> {
   // and re-audit losers all reappeared in reports, dashboards and the failed-
   // audit lists, looking like unreviewed sub-100% audits nobody could action.
   // Measured 2026-08-07: 4095 audit-hidden docs, 1000 loaded — ~3000 ghosts.
-  const rows = await listStoredWithKeysAll<{ findingId?: string }>("audit-hidden", orgId);
+  //
+  // KEYS-ONLY on purpose. markFindingHidden is the sole writer and always keys
+  // by [findingId], so the body carries nothing this Set needs. select:__name__
+  // holds the response near ~100 bytes/row, which keeps an uncapped scan
+  // CHEAPER per row than the capped body scan it replaces — this runs on
+  // report/dashboard/queue paths behind a 30s cache, so payload size here is
+  // what protects the Firestore stream pool from the wedge described on
+  // listStoredKeysAll.
+  const rows = await listStoredKeysAll("audit-hidden", orgId);
   const ids = new Set<string>();
-  for (const { key, value } of rows) {
-    const fid = (typeof key[0] === "string" ? key[0] : undefined) ?? value?.findingId;
-    if (fid) ids.add(String(fid));
+  for (const { key } of rows) {
+    if (typeof key[0] === "string" && key[0]) ids.add(key[0]);
   }
   return ids;
 }

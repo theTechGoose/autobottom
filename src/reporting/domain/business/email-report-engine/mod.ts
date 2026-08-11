@@ -123,8 +123,9 @@ export interface SectionResult {
  *  week resets at Eastern midnight (DST-safe), not on the server's UTC clock. */
 const WEEK_TZ = "America/New_York";
 
-/** Wall-clock fields for `atMs` projected into `tz` (DST-safe via Intl). */
-function tzParts(tz: string, atMs: number): {
+/** Wall-clock fields for `atMs` projected into `tz` (DST-safe via Intl).
+ *  Exported so the weekly-sheets cron anchors its window to the same clock. */
+export function tzParts(tz: string, atMs: number): {
   year: number; month: number; day: number; hour: number; minute: number; second: number; dow: number;
 } {
   const dtf = new Intl.DateTimeFormat("en-US", {
@@ -143,7 +144,7 @@ function tzParts(tz: string, atMs: number): {
 }
 
 /** Epoch ms for a given wall-clock time in `tz` (DST-safe, with one edge-correction pass). */
-function zonedToMs(tz: string, y: number, mo: number, d: number, h: number, mi: number, s: number, ms: number): number {
+export function zonedToMs(tz: string, y: number, mo: number, d: number, h: number, mi: number, s: number, ms: number): number {
   const guess = Date.UTC(y, mo - 1, d, h, mi, s, ms);
   const offset = (a: number) => {
     // tz offsets are whole seconds and tzParts has no ms, so compare against

@@ -14,16 +14,45 @@ import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { loadSheetsCredentials, appendSheetRows } from "@core/data/google-sheets/mod.ts";
 import { getSelfUrl } from "@core/data/qstash/mod.ts";
+import { tzParts, zonedToMs } from "@reporting/domain/business/email-report-engine/mod.ts";
 
-/** Previous calendar week [Mon 00:00, Sun 23:59:59] relative to `now`. */
+/** The reporting week resets at Eastern midnight, same as the email reports —
+ *  never on the server's UTC clock. */
+const SHEET_TZ = "America/New_York";
+
+/** The last COMPLETE Mon 00:00:00.000 → Sun 23:59:59.999 week in Eastern time.
+ *
+ *  Anchored to the calendar, not to "yesterday minus six days" — the old form
+ *  silently rewrote the window whenever the job's fire day moved, and it did
+ *  move: `0 13 * * 1` ran on SUNDAYS in prod (Jul 12 / 19 / 26, Aug 2 / 9), so
+ *  every export covered Sun→Sat instead of the Mon→Sun the name promised.
+ *  Computed here for any fire day, so the window can't drift again. */
 export function prevWeekWindow(now: Date): { since: number; until: number } {
-  const sunday = new Date(now);
-  sunday.setDate(sunday.getDate() - 1);
-  sunday.setHours(23, 59, 59, 999);
-  const monday = new Date(sunday);
-  monday.setDate(monday.getDate() - 6);
-  monday.setHours(0, 0, 0, 0);
-  return { since: monday.getTime(), until: sunday.getTime() };
+  const p = tzParts(SHEET_TZ, now.getTime());
+  const daysSinceMonday = (p.dow + 6) % 7; // Mon=0 … Sun=6
+  // Day arithmetic on a UTC scratch date (no DST hours to fall into), then
+  // project each boundary back through the zone.
+  const cal = new Date(Date.UTC(p.year, p.month - 1, p.day));
+  cal.setUTCDate(cal.getUTCDate() - daysSinceMonday - 7); // Monday, one week back
+  const since = zonedToMs(SHEET_TZ, cal.getUTCFullYear(), cal.getUTCMonth() + 1, cal.getUTCDate(), 0, 0, 0, 0);
+  cal.setUTCDate(cal.getUTCDate() + 7); // the Monday after it
+  const until = zonedToMs(SHEET_TZ, cal.getUTCFullYear(), cal.getUTCMonth() + 1, cal.getUTCDate(), 0, 0, 0, 0) - 1;
+  return { since, until };
+}
+
+/** Is `now` the scheduled slot — Tuesday 7:00 AM Eastern?
+ *
+ *  The cron field can't carry this. `0 13 * * 1` fired on Sundays in prod for
+ *  five weeks straight, so the day-of-week number isn't trustworthy, and a
+ *  fixed UTC hour would slip an hour at every DST change. So the job ticks
+ *  hourly and this decides against the Eastern wall clock.
+ *
+ *  `>= 7`, not `=== 7`: a 7am tick lost to a deploy or a cold start is picked
+ *  up by the next hour instead of skipping the week. The per-week claim key in
+ *  runWeeklySheetsExport is what makes those extra ticks harmless. */
+export function isWeeklySheetsFireTime(now: Date = new Date()): boolean {
+  const p = tzParts(SHEET_TZ, now.getTime());
+  return p.dow === 2 && p.hour >= 7;
 }
 
 export interface SheetExportResult {

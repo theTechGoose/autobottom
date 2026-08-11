@@ -328,11 +328,17 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
         // writeSoleAuditDoneIndex keys at reviewedAt when the finding was
         // reviewed before being judged (preserving reviewer attribution via
         // its merge), else at completedAt — one row per finding either way.
+        // `completed` is OMITTED below 100 so the merge inherits it. An appeal
+        // only exists after the audit was finalized, so deriving it from the
+        // score (`finalScore === 100`) downgraded every partly-granted appeal
+        // to completed:false — the audit then vanished from every weekly report
+        // while still showing REVIEWED / APPEAL COMPLETE in audit history.
         await writeSoleAuditDoneIndex(orgId, finding as Record<string, any>, {
           findingId,
           score: finalScore,
-          completed: finalScore === 100,
-          ...(finalScore === 100 ? { doneAt: Date.now(), reason: "reviewed" as const } : {}),
+          ...(finalScore === 100
+            ? { completed: true, doneAt: Date.now(), reason: "reviewed" as const }
+            : {}),
           ...buildIndexMeta(finding as Record<string, any>),
         });
       } catch (err) {

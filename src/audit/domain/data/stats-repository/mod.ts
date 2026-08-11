@@ -907,11 +907,17 @@ const DONE_IDX_KEY_PTR = "audit-done-idx-key";
  *  flips) instead of bare writeAuditDoneIndex.
  *
  *  Pass the finding doc reflecting the post-action state (e.g. the corrected
- *  finding with reviewedAt set) so the canonical timestamp resolves correctly. */
+ *  finding with reviewedAt set) so the canonical timestamp resolves correctly.
+ *
+ *  `completed` is OPTIONAL and omitting it INHERITS the existing row's value.
+ *  A writer that only knows the score (judge overturn, admin pencil-flip) must
+ *  omit it rather than derive `score === 100`: deriving downgrades an already-
+ *  finalized audit to completed:false, which silently drops it from every
+ *  weekly report (email-report-engine filters on `e.completed && e.doneAt`). */
 export async function writeSoleAuditDoneIndex(
   orgId: OrgId,
   finding: Record<string, any> | null | undefined,
-  entry: Omit<AuditDoneIndexEntry, "completedAt">,
+  entry: Omit<AuditDoneIndexEntry, "completedAt" | "completed"> & { completed?: boolean },
   opts?: { assumeFinished?: boolean },
 ): Promise<boolean> {
   const completedAt = toEpochMs(finding?.completedAt);
@@ -936,7 +942,14 @@ export async function writeSoleAuditDoneIndex(
   const lastKey = await getStored<{ ts: number }>(DONE_IDX_KEY_PTR, orgId, entry.findingId).catch(() => null);
   const wrote = await writeAuditDoneIndex(
     orgId,
-    { ...(existing ?? {}), ...entry, completedAt: canonicalTs } as AuditDoneIndexEntry,
+    {
+      ...(existing ?? {}),
+      ...entry,
+      completedAt: canonicalTs,
+      // Spelled out rather than left to the spread so an explicit
+      // `completed: undefined` can't punch a hole in the inherited value.
+      completed: entry.completed ?? existing?.completed ?? false,
+    } as AuditDoneIndexEntry,
     opts,
   );
   // Only prune once the new row is actually down — a skipped write (status

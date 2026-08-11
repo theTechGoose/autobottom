@@ -1705,15 +1705,16 @@ export async function adminFlipQuestion(
   // /admin/unreviewed-audits + audit-history queries kept showing the pre-flip
   // score forever — user-visible bug: bulk-flip listed 18 audits as 80-90%
   // when the report rendered 100%. Mirrors adminFlipFinding's pattern above.
-  // Only marks "completed: true" when score reaches 100, otherwise leaves the
-  // entry as a non-perfect index row (still surfaceable in unreviewed lists
-  // until either reviewer-finalize or admin-bulk-flip lifts it to 100).
+  // Only marks "completed: true" when score reaches 100. Below 100 it OMITS
+  // `completed` so the merge inherits it: an audit still awaiting review keeps
+  // completed:false (and stays surfaceable in unreviewed lists), while one a
+  // reviewer already finalized keeps completed:true. Writing `score === 100`
+  // outright downgraded the latter, silently dropping it from weekly reports.
   try {
     await writeSoleAuditDoneIndex(orgId, finding, {
       findingId,
       score,
-      completed: score === 100,
-      ...(score === 100 ? { doneAt: Date.now(), reason: "reviewed" as const } : {}),
+      ...(score === 100 ? { completed: true, doneAt: Date.now(), reason: "reviewed" as const } : {}),
       ...buildIndexMeta(finding),
       reviewedBy: flippedBy,
     });

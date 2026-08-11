@@ -202,7 +202,30 @@ Deno.test("adminFlipQuestion — reverse flip (Yes→No) drops index score appro
   const entry = idx.find((e) => e.findingId === fid);
   assertExists(entry);
   assertEquals(entry!.score, 75, "Yes→No flip must drop index score from 100 to 75");
-  assertEquals(entry!.completed, false, "Yes→No flip must clear completed flag");
+  // A finalized audit STAYS completed: the flip changes its score, not whether
+  // a human finished it. Clearing the flag here dropped the audit out of every
+  // weekly report (email-report-engine filters on `e.completed && e.doneAt`)
+  // while audit history still showed it REVIEWED.
+  assertEquals(entry!.completed, true, "Yes→No flip must not un-complete a finalized audit");
+});
+
+Deno.test("adminFlipQuestion — reverse flip leaves an UNFINALIZED audit not-completed", async () => {
+  resetForTest();
+  const ORG = ("test-flip-q-unfinal-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-unfinal-" + crypto.randomUUID().slice(0, 8);
+  const completedAt = await makeFindingFixture(ORG, fid, ["Yes", "Yes", "Yes", "Yes"]);
+  // Bot-completed at 100 was never the state here: the row is a plain unfinalized
+  // one, so the flip must leave it unfinalized (still surfaceable as unreviewed).
+  await writeAuditDoneIndex(ORG, {
+    findingId: fid, completedAt, score: 100, completed: false, isPackage: false,
+  });
+
+  await adminFlipQuestion(ORG, fid, 0);
+
+  const idx = await queryAuditDoneIndex(ORG, completedAt - 1000, completedAt + 1000);
+  const entry = idx.find((e) => e.findingId === fid);
+  assertExists(entry);
+  assertEquals(entry!.completed, false, "an unfinalized audit must stay not-completed");
 });
 
 // ── Per-question timing capture (handleMs / idle discard) ───────────────────

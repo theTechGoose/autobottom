@@ -100,8 +100,11 @@ export const handler = define.handlers({
             </div>
           )}
 
-          {/* Dismissal template — judge-finish only */}
-          {activeKind === "judge-finish" && (
+          {/* Dismissal template — judge only. Gated on "judge-finish" until the
+              tab above was renamed to kind="judge"; the picker then became
+              unreachable, so dismissals silently fell back to the verdict
+              template (sendAppealDecidedEmail reads cfg kind "judge"). */}
+          {activeKind === "judge" && (
             <div class="sf">
               <label class="sf-label">Dismissal Email Template <span style="color:var(--text-dim);font-weight:400;">(used when a judge dismisses — falls back to above if not set)</span></label>
               <select class="sf-input" name="dismissalTemplateId" style="font-family:inherit;">

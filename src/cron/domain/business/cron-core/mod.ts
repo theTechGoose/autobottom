@@ -2,7 +2,7 @@
 import { withSpan, metric, flushOtel } from "@core/data/datadog-otel/mod.ts";
 import { runWatchdog } from "@cron/domain/business/watchdog/mod.ts";
 import { runEmailReportsTick } from "@reporting/domain/business/email-reports-tick/mod.ts";
-import { runWeeklySheetsExport, isWeeklySheetsFireTime } from "@cron/domain/business/weekly-sheets/mod.ts";
+import { runWeeklySheetsExport, isWeeklySheetsFireTime, SHEET_JOB_NAMES } from "@cron/domain/business/weekly-sheets/mod.ts";
 // Migration imports preserved for when migration-tick is re-enabled:
 // import { listJobs, tickJob } from "@admin/domain/business/migration/mod.ts";
 // import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
@@ -43,27 +43,36 @@ export function registerCrons(): void {
     await flushOtel();
   });
 
-  // Weekly sheets export — Tuesdays 9:00 AM Eastern. Posts the just-completed
-  // Mon–Sun week's chargebacks/omissions/wire to the configured Google Sheet
-  // (org = CHARGEBACKS_ORG_ID). This was silently lost in the monolith→modular
-  // cutover, which is why the sheet went stale. Idempotent per (org, week) via
-  // a claim key so a re-fire can't double-append. Re-run a missed/failed week
-  // ad-hoc with the dashboard "Post to Sheet" button.
+  // Weekly sheets export — posts the just-completed Mon–Sun week to the
+  // configured Google Sheet (org = CHARGEBACKS_ORG_ID), on two days:
   //
-  // Registered hourly on purpose: the day-of-week cron field is not reliable
+  //   Mondays  9:00 AM ET — Wire Deductions
+  //   Tuesdays 9:00 AM ET — Chargebacks + Omissions
+  //
+  // That split is the original monolith schedule. It was lost when the Apr 14
+  // legacy sweep deleted main.ts, and the Jun 16 restore folded all three tabs
+  // into one Tuesday job; restored 2026-08-13. Both jobs read the SAME Mon–Sun
+  // window, so the per-week claim key includes the job name — otherwise Monday
+  // would claim the week and Tuesday would silently skip. Re-run a missed or
+  // failed week ad-hoc with the dashboard "Post to Sheet" button.
+  //
+  // One hourly tick drives both: the day-of-week cron field is not reliable
   // here (`0 13 * * 1` fired on SUNDAYS in prod for five straight weeks), and a
   // fixed UTC hour would drift at DST. isWeeklySheetsFireTime owns the schedule.
   Deno.cron("weekly-sheets", "0 * * * *", async () => {
-    if (!isWeeklySheetsFireTime()) return;
+    const due = SHEET_JOB_NAMES.filter((job) => isWeeklySheetsFireTime(job));
+    if (!due.length) return;
     await withSpan("cron.weekly-sheets", async (span) => {
-      try {
-        const result = await runWeeklySheetsExport();
-        span.setAttribute("cron.appended", result.appended ?? 0);
-        span.setAttribute("cron.skipped", String(!!result.skipped));
-        if (result.error) span.setAttribute("cron.error", result.error);
-        metric("autobottom.cron.weekly_sheets", 1, { appended: String(result.appended ?? 0) });
-      } catch (err) {
-        console.error("❌ [CRON:weekly-sheets] threw:", err);
+      for (const job of due) {
+        try {
+          const result = await runWeeklySheetsExport(job);
+          span.setAttribute(`cron.${job}.appended`, result.appended ?? 0);
+          span.setAttribute(`cron.${job}.skipped`, String(!!result.skipped));
+          if (result.error) span.setAttribute(`cron.${job}.error`, result.error);
+          metric("autobottom.cron.weekly_sheets", 1, { job, appended: String(result.appended ?? 0) });
+        } catch (err) {
+          console.error(`❌ [CRON:weekly-sheets] ${job} threw:`, err);
+        }
       }
     }, {}, "internal");
     await flushOtel();
@@ -96,5 +105,5 @@ export function registerCrons(): void {
   //   }
   // });
 
-  console.log("⏰ Cron jobs registered: watchdog (hourly), email-reports (every minute), weekly-sheets (hourly tick, runs Tuesdays 9:00 AM America/New_York)");
+  console.log("⏰ Cron jobs registered: watchdog (hourly), email-reports (every minute), weekly-sheets (hourly tick — wire Mondays, chargebacks+omissions Tuesdays, 9:00 AM America/New_York)");
 }

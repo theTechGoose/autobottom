@@ -268,9 +268,13 @@ export default function ChargebacksToolbar({ initialTab = "cb" }: Props) {
         }),
       });
       const data = await res.json().catch(() => ({} as Record<string, unknown>));
-      const d = data as { ok?: boolean; appended?: number; message?: string; error?: string };
+      const d = data as { ok?: boolean; appended?: number; duplicates?: number; message?: string; error?: string };
       if (!res.ok || d.error) throw new Error(d.error ?? `HTTP ${res.status}`);
-      setMsg({ kind: "ok", text: d.appended != null ? `Posted ${d.appended} row${d.appended === 1 ? "" : "s"} to sheet.` : (d.message ?? "Posted.") });
+      // The skipped count is worth showing: this button takes no per-week claim,
+      // so re-posting a range is normal, and "0 appended, 412 skipped" is the
+      // duplicate guard working rather than the export doing nothing.
+      const skipped = d.duplicates ? ` Skipped ${d.duplicates} already on the sheet.` : "";
+      setMsg({ kind: "ok", text: d.appended != null ? `Posted ${d.appended} row${d.appended === 1 ? "" : "s"} to sheet.${skipped}` : (d.message ?? "Posted.") });
     } catch (e) {
       setMsg({ kind: "err", text: (e as Error).message });
     } finally {

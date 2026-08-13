@@ -1,7 +1,7 @@
 /** Tests for weekly sheets date window calculation + cron idempotency. */
 
 import { assertEquals } from "#assert";
-import { prevWeekWindow, isWeeklySheetsFireTime, runWeeklySheetsExport } from "./mod.ts";
+import { prevWeekWindow, isWeeklySheetsFireTime, runWeeklySheetsExport, normKeyCell, rowKey, postedKeys } from "./mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 
 /** Eastern wall clock for an instant — the window is ET-anchored, so asserting
@@ -39,26 +39,101 @@ Deno.test("prevWeekWindow — spans the spring DST change without losing an hour
   assertEquals(until - since, 7 * 86_400_000 - 3_600_000 - 1);
 });
 
-Deno.test("isWeeklySheetsFireTime — Tuesday 9am ET and after, nothing else", () => {
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T12:59:00Z")), false); // Tue 8:59am ET
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T13:00:00Z")), true);  // Tue 9:00am ET
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T15:00:00Z")), true);  // Tue 11am ET — catch-up
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-14T11:00:00Z")), false); // Tue 7am ET — the old slot
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-15T13:00:00Z")), false); // Wed
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-04-12T13:00:00Z")), false); // Sun — the old misfire day
+Deno.test("isWeeklySheetsFireTime — chargebacks on Tuesday 9am ET and after, nothing else", () => {
+  const cb = (iso: string) => isWeeklySheetsFireTime("chargebacks", new Date(iso));
+  assertEquals(cb("2026-04-14T12:59:00Z"), false); // Tue 8:59am ET
+  assertEquals(cb("2026-04-14T13:00:00Z"), true);  // Tue 9:00am ET
+  assertEquals(cb("2026-04-14T15:00:00Z"), true);  // Tue 11am ET — catch-up
+  assertEquals(cb("2026-04-14T11:00:00Z"), false); // Tue 7am ET — the old slot
+  assertEquals(cb("2026-04-15T13:00:00Z"), false); // Wed
+  assertEquals(cb("2026-04-13T13:00:00Z"), false); // Mon — that's wire's day now
+  assertEquals(cb("2026-04-12T13:00:00Z"), false); // Sun — the old misfire day
   // Standard time: 9am ET is 14:00Z, so a fixed-UTC-hour schedule would slip.
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-01-13T14:00:00Z")), true);  // Tue 9:00am EST
-  assertEquals(isWeeklySheetsFireTime(new Date("2026-01-13T13:00:00Z")), false); // Tue 8:00am EST
+  assertEquals(cb("2026-01-13T14:00:00Z"), true);  // Tue 9:00am EST
+  assertEquals(cb("2026-01-13T13:00:00Z"), false); // Tue 8:00am EST
+});
+
+Deno.test("isWeeklySheetsFireTime — wire on Monday, never the same day as chargebacks", () => {
+  const wire = (iso: string) => isWeeklySheetsFireTime("wire", new Date(iso));
+  assertEquals(wire("2026-04-13T12:59:00Z"), false); // Mon 8:59am ET
+  assertEquals(wire("2026-04-13T13:00:00Z"), true);  // Mon 9:00am ET
+  assertEquals(wire("2026-04-13T20:00:00Z"), true);  // Mon 4pm ET — catch-up
+  assertEquals(wire("2026-04-14T13:00:00Z"), false); // Tue — chargebacks' day
+  assertEquals(wire("2026-04-12T13:00:00Z"), false); // Sun
+  // No hour of any day may fire both jobs — that is what the split means.
+  for (const day of ["12", "13", "14", "15", "16", "17", "18"]) {
+    for (const hour of ["00", "09", "13", "18", "23"]) {
+      const at = new Date(`2026-04-${day}T${hour}:00:00Z`);
+      const both = isWeeklySheetsFireTime("wire", at) && isWeeklySheetsFireTime("chargebacks", at);
+      assertEquals(both, false, `both jobs fired on Apr ${day} ${hour}:00Z`);
+    }
+  }
+});
+
+Deno.test("normKeyCell — a date matches however the sheet renders it back", () => {
+  // Appends are USER_ENTERED, so "8/5/2026" comes back re-rendered.
+  const written = normKeyCell("8/5/2026");
+  assertEquals(written, "2026-08-05");
+  assertEquals(normKeyCell("08/05/2026"), written);
+  assertEquals(normKeyCell("2026-08-05"), written);
+  assertEquals(normKeyCell("8-5-2026"), written);
+  // Non-dates pass through, case-folded.
+  assertEquals(normKeyCell("https://X.quickbase.com/db/a?rid=1"), "https://x.quickbase.com/db/a?rid=1");
+  assertEquals(normKeyCell(""), "");
+});
+
+Deno.test("rowKey — blank key column means never suppress the row", () => {
+  const row = ["8/5/2026", "Jane", "1000", "https://qb/db/x?rid=496199", "SMD", "Q1", "88%", "GS WST"];
+  assertEquals(rowKey(row, [0, 3]), "2026-08-05|https://qb/db/x?rid=496199");
+  // A missing CRM link can't identify a row — losing real data beats a dupe.
+  assertEquals(rowKey(["8/5/2026", "Jane", "", "", ""], [0, 3]), "");
+});
+
+Deno.test("postedKeys — the week of Aug 3 can't be posted a second time", () => {
+  // What the Sunday run left on the Chargebacks tab: column A (date) and D (CRM).
+  const onSheet = [
+    ["Date", "8/3/2026", "8/5/2026"],
+    ["CRM Link", "https://qb/db/x?rid=1", "https://qb/db/x?rid=2"],
+  ];
+  const posted = postedKeys(onSheet);
+  const candidates = [
+    ["8/3/2026", "Ann", "", "https://qb/db/x?rid=1", "", "", "", ""], // already there
+    ["8/9/2026", "Bo", "", "https://qb/db/x?rid=3", "", "", "", ""],  // Sunday, genuinely new
+  ];
+  const fresh = candidates.filter((r) => {
+    const k = rowKey(r, [0, 3]);
+    return !k || !posted.has(k);
+  });
+  assertEquals(fresh.length, 1);
+  assertEquals(fresh[0][3], "https://qb/db/x?rid=3");
 });
 
 Deno.test("runWeeklySheetsExport — claims the week so a re-fire is skipped (no double-post)", async () => {
   resetFirestoreCredentials(); // in-memory firestore
-  const now = new Date("2026-04-13T13:00:00Z");
+  const now = new Date("2026-04-14T13:00:00Z");
   // First run takes the per-week claim. (Sheets aren't configured in tests, so
   // the export itself returns a config error — but the claim is taken first.)
-  await runWeeklySheetsExport(now);
+  await runWeeklySheetsExport("chargebacks", now);
   // Second run for the same week must be skipped, never re-appending rows.
-  const second = await runWeeklySheetsExport(now);
+  const second = await runWeeklySheetsExport("chargebacks", now);
   assertEquals(second.skipped, true);
   assertEquals(second.appended, 0);
+});
+
+Deno.test("runWeeklySheetsExport — wire's claim doesn't block chargebacks", async () => {
+  // A LATER week than the test above on purpose: the claims are real writes to
+  // the shared in-memory store, and re-resetting it mid-suite breaks tests in
+  // other files that lean on it.
+  //
+  // Both jobs cover the SAME Mon-Sun window, one day apart. Keyed on the window
+  // alone, Monday's wire run would claim the week and Tuesday would skip.
+  const monday = new Date("2026-04-20T13:00:00Z");
+  const tuesday = new Date("2026-04-21T13:00:00Z");
+  assertEquals(prevWeekWindow(monday).since, prevWeekWindow(tuesday).since);
+  await runWeeklySheetsExport("wire", monday);
+  const cb = await runWeeklySheetsExport("chargebacks", tuesday);
+  assertEquals(cb.skipped, undefined); // ran — not blocked by wire's claim
+  // ...but each job still blocks its own re-fire.
+  assertEquals((await runWeeklySheetsExport("wire", monday)).skipped, true);
+  assertEquals((await runWeeklySheetsExport("chargebacks", tuesday)).skipped, true);
 });

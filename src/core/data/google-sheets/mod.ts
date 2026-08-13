@@ -96,6 +96,37 @@ async function getAccessToken(creds: SheetsCredentials): Promise<string> {
   return token;
 }
 
+/** Read whole columns of a tab, column-major and sheet-row aligned:
+ *  `result[c][r]` is the cell in requested column `c`, sheet row `r + 1`.
+ *
+ *  The tabs are append-only and carry no key column, so "is this row already
+ *  posted?" can only be answered by re-reading what is there. Only the keying
+ *  columns are fetched — a full A:Z read of a year-old tab is megabytes.
+ *
+ *  Values come back FORMATTED (what the cell displays): `USER_ENTERED` appends
+ *  let Google coerce "8/5/2026" into a real date, so the round-trip is a
+ *  display string in the sheet's locale, not the string that was written.
+ *  Callers must normalise before comparing. */
+export async function readSheetColumns(
+  creds: SheetsCredentials,
+  tabName: string,
+  columns: string[],
+): Promise<string[][]> {
+  if (!columns.length) return [];
+  const token = await getAccessToken(creds);
+  const qs = columns
+    .map((c) => `ranges=${encodeURIComponent(`${tabName}!${c}:${c}`)}`)
+    .join("&");
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(creds.sheetId)}/values:batchGet?${qs}&majorDimension=COLUMNS`;
+  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Sheets read failed: ${res.status} ${await res.text()}`);
+  const data = await res.json() as { valueRanges?: { values?: unknown[][] }[] };
+  return columns.map((_, i) => {
+    const col = data.valueRanges?.[i]?.values?.[0] ?? [];
+    return col.map((v) => (v == null ? "" : String(v)));
+  });
+}
+
 /** Append rows to a given sheet tab. Tab must already exist.
  *  Rows are `(string | number)[][]` (no header — caller includes it if wanted). */
 export async function appendSheetRows(

@@ -49,9 +49,10 @@ export class ChargebackController {
 
   @Get("trigger-weekly-sheets") @ReturnedType(OkResponse)
   async triggerWeeklySheets() {
-    // Manual "run the weekly job now" — goes through the same idempotent,
-    // per-week-claimed path as the cron, so it can't double-post the week.
-    const { runWeeklySheetsExport } = await import("@cron/domain/business/weekly-sheets/mod.ts");
-    return await runWeeklySheetsExport();
+    // Manual "run the weekly jobs now" — both wire (Monday) and chargebacks +
+    // omissions (Tuesday), each through the same idempotent, per-week-claimed
+    // path as the cron, so it can't double-post either week.
+    const { runAllWeeklySheetsExports } = await import("@cron/domain/business/weekly-sheets/mod.ts");
+    return await runAllWeeklySheetsExports();
   }
 }

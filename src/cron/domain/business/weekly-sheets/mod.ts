@@ -12,7 +12,8 @@ import { setStoredIfAbsent } from "@core/data/firestore/mod.ts";
 import { queryAuditDoneIndex, queryChargebackReport, queryWireReport } from "@reporting/domain/business/chargeback-report/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
-import { loadSheetsCredentials, appendSheetRows } from "@core/data/google-sheets/mod.ts";
+import { loadSheetsCredentials, appendSheetRows, readSheetColumns } from "@core/data/google-sheets/mod.ts";
+import type { SheetsCredentials } from "@core/data/google-sheets/mod.ts";
 import { getSelfUrl } from "@core/data/qstash/mod.ts";
 import { tzParts, zonedToMs } from "@reporting/domain/business/email-report-engine/mod.ts";
 
@@ -40,19 +41,36 @@ export function prevWeekWindow(now: Date): { since: number; until: number } {
   return { since, until };
 }
 
-/** Is `now` the scheduled slot — Tuesday 9:00 AM Eastern?
+/** The two scheduled posts, each on its own day.
  *
- *  The cron field can't carry this. `0 13 * * 1` fired on Sundays in prod for
- *  five weeks straight, so the day-of-week number isn't trustworthy, and a
- *  fixed UTC hour would slip an hour at every DST change. So the job ticks
- *  hourly and this decides against the Eastern wall clock.
+ *  Wire deductions had their own Monday cron until the Apr 14 legacy sweep
+ *  deleted `main.ts`; the Jun 16 restore folded all three tabs into one job and
+ *  wire has been riding along with chargebacks ever since. Split back here.
  *
- *  `>= 9`, not `=== 9`: a 9am tick lost to a deploy or a cold start is picked
- *  up by the next hour instead of skipping the week. The per-week claim key in
- *  runWeeklySheetsExport is what makes those extra ticks harmless. */
-export function isWeeklySheetsFireTime(now: Date = new Date()): boolean {
+ *  `dow` is the Eastern day (1 = Monday, 2 = Tuesday) and is deliberately NOT
+ *  the cron day-of-week field — `0 13 * * 1` fired on SUNDAYS in prod for five
+ *  weeks straight, so that field isn't trustworthy. */
+export const SHEET_JOBS = {
+  wire: { dow: 1, hour: 9, tabs: "wire", label: "Wire Deductions" },
+  chargebacks: { dow: 2, hour: 9, tabs: "cb,om", label: "Chargebacks + Omissions" },
+} as const;
+
+export type SheetJobName = keyof typeof SHEET_JOBS;
+
+export const SHEET_JOB_NAMES = Object.keys(SHEET_JOBS) as SheetJobName[];
+
+/** Is `now` this job's scheduled slot, on the Eastern wall clock?
+ *
+ *  A fixed UTC hour would slip an hour at every DST change, so the jobs tick
+ *  hourly and this decides.
+ *
+ *  `>= hour`, not `=== hour`: a 9am tick lost to a deploy or a cold start is
+ *  picked up by the next hour instead of skipping the week. The per-week claim
+ *  in runWeeklySheetsExport is what makes those extra ticks harmless. */
+export function isWeeklySheetsFireTime(job: SheetJobName, now: Date = new Date()): boolean {
+  const { dow, hour } = SHEET_JOBS[job];
   const p = tzParts(SHEET_TZ, now.getTime());
-  return p.dow === 2 && p.hour >= 9;
+  return p.dow === dow && p.hour >= hour;
 }
 
 export interface SheetExportResult {
@@ -60,6 +78,84 @@ export interface SheetExportResult {
   appended?: number;
   error?: string;
   skipped?: boolean;
+  /** Rows dropped because that tab already carried them. */
+  duplicates?: number;
+}
+
+/** ── Duplicate guard ────────────────────────────────────────────────────────
+ *
+ *  The per-week claim key is not enough on its own. It is keyed on the window
+ *  START, so any change to `prevWeekWindow` makes the same week look like a new
+ *  one — that is exactly how the week of 2026-08-03 got posted twice (a Sunday
+ *  misfire covering Aug 2–8, then the ET-anchored Tuesday run covering Aug 3–9,
+ *  claim keys Aug 2 vs Aug 3). The ad-hoc "Post to Sheet" button takes no claim
+ *  at all, so any operator re-running a range double-posts it outright.
+ *
+ *  Appends are the only write, so the sheet itself is the source of truth for
+ *  what has already been posted: re-derive each candidate row's key from the
+ *  same columns already on the tab, and drop the ones that are there. */
+
+/** Canonical form of one key cell.
+ *
+ *  Dates need it: rows are appended `USER_ENTERED`, so Google parses "8/5/2026"
+ *  into a real date and hands back whatever the sheet's locale renders — often
+ *  "08/05/2026". Compared raw, no key would ever match and the guard would
+ *  silently pass everything through. URLs fall through unchanged. */
+export function normKeyCell(value: string | number): string {
+  const s = String(value ?? "").trim();
+  const mdy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, "0")}-${mdy[2].padStart(2, "0")}`;
+  const ymd = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, "0")}-${ymd[3].padStart(2, "0")}`;
+  return s.toLowerCase();
+}
+
+/** Joins the key parts. A character that cannot occur in a date or a URL, so
+ *  two different cell splits can never collide into the same key. */
+const KEY_SEP = "|";
+
+/** Dedup key for one row, from the given column indexes.
+ *
+ *  Returns "" when any part is blank — an un-keyable row is always appended.
+ *  Suppressing a row on a partial match would lose real data, which is strictly
+ *  worse than the duplicate this guard exists to prevent. */
+export function rowKey(row: (string | number)[], idx: number[]): string {
+  const cells = idx.map((i) => normKeyCell(row[i] ?? ""));
+  return cells.every(Boolean) ? cells.join(KEY_SEP) : "";
+}
+
+/** Keys already on the tab, from column-major values (`readSheetColumns`). */
+export function postedKeys(columns: string[][]): Set<string> {
+  const height = columns.reduce((max, c) => Math.max(max, c.length), 0);
+  const keys = new Set<string>();
+  for (let r = 0; r < height; r++) {
+    const key = rowKey(columns.map((c) => c[r] ?? ""), columns.map((_, i) => i));
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+const colLetter = (idx: number): string => String.fromCharCode(65 + idx);
+
+/** Candidate rows minus the ones the tab already carries.
+ *
+ *  Throws if the sheet cannot be read — appending blind is what produced the
+ *  duplicates, so a failed read must fail the export (the week's claim is
+ *  already taken; re-run it with the "Post to Sheet" button). */
+async function dropAlreadyPosted(
+  creds: SheetsCredentials,
+  tabName: string,
+  rows: (string | number)[][],
+  keyIdx: number[],
+): Promise<{ fresh: (string | number)[][]; duplicates: number }> {
+  const posted = postedKeys(await readSheetColumns(creds, tabName, keyIdx.map(colLetter)));
+  const fresh = rows.filter((row) => {
+    const key = rowKey(row, keyIdx);
+    return !key || !posted.has(key);
+  });
+  const duplicates = rows.length - fresh.length;
+  if (duplicates) console.log(`📊 [POST-TO-SHEET] ${tabName}: skipped ${duplicates} row(s) already on the sheet`);
+  return { fresh, duplicates };
 }
 
 /** Append chargeback/omission/wire rows for [since, until] to the configured
@@ -121,6 +217,11 @@ export async function exportChargebacksToSheet(
   const auditUrl = (findingId: string) => findingId ? `${getSelfUrl()}/audit/report?id=${findingId}` : "";
   const fmtDate = (ts: number): string => ts ? new Date(ts).toLocaleDateString("en-US") : "";
   let appended = 0;
+  let duplicates = 0;
+  // Columns that identify a row for the duplicate guard. Chargebacks/Omissions:
+  // Date + CRM Link (the record). Wire: Date + CRM Link + Audit Link (finding).
+  const CB_KEY_IDX = [0, 3];
+  const WIRE_KEY_IDX = [0, 4, 5];
   const tabList = tabs.split(",").map((s) => s.trim()).filter(Boolean);
   try {
     for (const tab of tabList) {
@@ -139,7 +240,10 @@ export async function exportChargebacksToSheet(
           typeof e.score === "number" ? `${e.score}%` : "",
           deptMap.get(e.findingId) ?? "",
         ] as (string | number)[]);
-        const res = await appendSheetRows(creds, tab === "cb" ? "Chargebacks" : "Omissions", rows);
+        const tabName = tab === "cb" ? "Chargebacks" : "Omissions";
+        const guarded = await dropAlreadyPosted(creds, tabName, rows, CB_KEY_IDX);
+        duplicates += guarded.duplicates;
+        const res = await appendSheetRows(creds, tabName, guarded.fresh);
         appended += res.appended;
       } else if (tab === "wire") {
         const items = await queryWireReport(orgId, since, until, reviewedIds, bypassCfg.patterns);
@@ -156,7 +260,9 @@ export async function exportChargebacksToSheet(
           "", // intentional empty — matches prod schema (Date of Booking placeholder)
           e.guestName ?? "",
         ] as (string | number)[]);
-        const res = await appendSheetRows(creds, "Wire Deductions", rows);
+        const guarded = await dropAlreadyPosted(creds, "Wire Deductions", rows, WIRE_KEY_IDX);
+        duplicates += guarded.duplicates;
+        const res = await appendSheetRows(creds, "Wire Deductions", guarded.fresh);
         appended += res.appended;
       }
     }
@@ -164,29 +270,54 @@ export async function exportChargebacksToSheet(
     console.error(`❌ [POST-TO-SHEET] failed:`, err);
     return { error: (err as Error).message };
   }
-  console.log(`📊 [POST-TO-SHEET] appended ${appended} rows across tabs [${tabList.join(",")}]`);
-  return { ok: true, appended };
+  console.log(`📊 [POST-TO-SHEET] appended ${appended} rows across tabs [${tabList.join(",")}]${duplicates ? `, skipped ${duplicates} already posted` : ""}`);
+  return { ok: true, appended, duplicates };
 }
 
-/** Weekly cron entry + manual "trigger weekly sheets": post the just-completed
- *  week's chargebacks/omissions/wire to the sheet. Idempotent per (org, week)
- *  via a claim key — appends are NOT idempotent, so a retry or a second fire
- *  must never double-post. The claim is taken before the export and never
- *  released (at-most-once per week); a failed week is re-runnable via the
- *  ad-hoc "Post to Sheet" button, which bypasses the claim. */
-export async function runWeeklySheetsExport(now: Date = new Date()): Promise<SheetExportResult> {
+/** Weekly cron entry + manual "trigger weekly sheets": post one job's tabs for
+ *  the just-completed week. Idempotent per (org, job, week) via a claim key —
+ *  appends are NOT idempotent, so a retry or a second fire must never
+ *  double-post. The claim is taken before the export and never released
+ *  (at-most-once per week); a failed week is re-runnable via the ad-hoc
+ *  "Post to Sheet" button, which bypasses the claim.
+ *
+ *  The job name is IN the key. Wire (Monday) and chargebacks (Tuesday) run over
+ *  the SAME Mon–Sun window, so a key of `[since]` alone would let whichever ran
+ *  first claim the week and silently skip the other. */
+export async function runWeeklySheetsExport(
+  job: SheetJobName,
+  now: Date = new Date(),
+): Promise<SheetExportResult> {
   const orgId = defaultOrgId() as OrgId;
+  const { tabs, label } = SHEET_JOBS[job];
   const { since, until } = prevWeekWindow(now);
   const weekLabel = new Date(since).toISOString().slice(0, 10);
   const claimed = await setStoredIfAbsent(
-    "weekly-sheets-claim", orgId, [since], { since, until },
+    "weekly-sheets-claim", orgId, [job, since], { job, since, until },
     { expireInMs: 8 * 24 * 60 * 60 * 1000 }, // clears before the same week recurs
   );
   if (!claimed) {
-    console.log(`⏰ [CRON:weekly-sheets] week of ${weekLabel} already posted — skipping`);
+    console.log(`⏰ [CRON:weekly-sheets] ${label} for week of ${weekLabel} already posted — skipping`);
     return { ok: true, appended: 0, skipped: true };
   }
-  const result = await exportChargebacksToSheet(orgId, since, until, "cb,om,wire");
-  if (result.error) console.error(`❌ [CRON:weekly-sheets] week of ${weekLabel} failed: ${result.error}`);
+  const result = await exportChargebacksToSheet(orgId, since, until, tabs);
+  if (result.error) console.error(`❌ [CRON:weekly-sheets] ${label} for week of ${weekLabel} failed: ${result.error}`);
   return result;
+}
+
+/** Manual "run the weekly jobs now" — every job, each with its own claim, so
+ *  this stays safe to click twice. Sequential on purpose: prod wedges under
+ *  concurrent heavy report queries. */
+export async function runAllWeeklySheetsExports(now: Date = new Date()): Promise<SheetExportResult> {
+  let appended = 0, duplicates = 0, skipped = 0;
+  const errors: string[] = [];
+  for (const job of SHEET_JOB_NAMES) {
+    const r = await runWeeklySheetsExport(job, now);
+    appended += r.appended ?? 0;
+    duplicates += r.duplicates ?? 0;
+    if (r.skipped) skipped++;
+    if (r.error) errors.push(`${SHEET_JOBS[job].label}: ${r.error}`);
+  }
+  if (errors.length) return { error: errors.join("; "), appended, duplicates };
+  return { ok: true, appended, duplicates, skipped: skipped === SHEET_JOB_NAMES.length };
 }

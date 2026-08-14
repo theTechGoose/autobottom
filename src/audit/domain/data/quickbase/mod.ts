@@ -119,7 +119,14 @@ const DATE_LEGS_TABLE = "bpb28qsnn";
 // mariahb@monsterrg.com. Carried on the finding so a per-person view can
 // key on the ID instead of guessing from name + office.
 const DL = { RECORD_ID: 3, VO_GENIE: 145, RELATED_DEST: 292, GUEST_NAME: 32, VO_NAME: 144, VO_EMAIL: 839, SUPERVISOR_EMAIL: 851, DEST_DISPLAY: 566, ACTIVATING_OFFICE: 140, SHIFT: 834, RELATED_EMPLOYEE: 143 };
-const DATE_LEG_AUTOYES_FIELDS = [8, 10, 32, 33, 49, 297, 314, 460, 553, 594, 706];
+// The only fields a question template can reach via a `{{fid}}` placeholder —
+// they land on the finding's record under their bare numeric key. A placeholder
+// for a fid that isn't here resolves to "" with no error, so adding a field to a
+// question means adding its id here too.
+// 289 (OPC Gifting) is a QuickBase multitext: its value arrives as an array and
+// the String() below flattens it to "A,B" — comma, no space. Fine for a
+// contains-check like {{289}}~Resort Credit, ugly inside human-read text.
+const DATE_LEG_AUTOYES_FIELDS = [8, 10, 16, 32, 33, 49, 289, 297, 314, 460, 553, 594, 706];
 
 export async function getDateLegByRid(rid: string): Promise<Record<string, any> | null> {
   return withSpan("quickbase.getDateLegByRid", async (span) => {

@@ -91,7 +91,9 @@ export function RecordDetails({ meta, isPackage }: { meta: Record<string, string
       ["Destination", meta.destination ?? "—"],
       ["Arrival", meta.arrivalDate ?? "—"],
       ["Departure", meta.departureDate ?? "—"],
+      ["Tour Time", meta.tourTime ?? "—"],
       ["Room / Occupancy", meta.roomTypeMaxOccupancy ?? "—"],
+      ["OPC Gifting", meta.opcGifting ?? "—"],
       ["WGS / MCC", `${chk(meta.totalWGS)} WGS  ${chk(meta.totalMCC)} MCC`],
     ];
 

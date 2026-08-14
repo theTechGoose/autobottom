@@ -1,6 +1,7 @@
 import { renderHTML, assertContains, assertNotContains } from "../helpers/render.ts";
 import { assert, assertEquals } from "@std/assert";
-import { VerdictPanel, computeIsLastForAudit } from "../../components/VerdictPanel.tsx";
+import { VerdictPanel, RecordDetails, computeIsLastForAudit } from "../../components/VerdictPanel.tsx";
+import { buildRecordMeta } from "@core/business/record-meta/mod.ts";
 import type { ReviewItem } from "../../components/VerdictPanel.tsx";
 
 const MOCK_ITEM: ReviewItem = {
@@ -230,4 +231,38 @@ Deno.test("computeIsLastForAudit — review: missing decisions on a multi-questi
 Deno.test("computeIsLastForAudit — judge: keeps the counter heuristic (auditRemaining <= 1)", () => {
   assertEquals(computeIsLastForAudit({ isReview: false, buffer: BUF3, item: BUF3[0], decisions: undefined, auditRemaining: 1 }), true);
   assertEquals(computeIsLastForAudit({ isReview: false, buffer: BUF3, item: BUF3[0], decisions: undefined, auditRemaining: 2 }), false);
+});
+
+/** The Record Details grid a reviewer/judge opens. Tour Time (fid 16) and OPC
+ *  Gifting (fid 289) are date-leg-only — an OPC booking is exactly where they
+ *  matter, and a package audit has neither, so the package shape must not grow
+ *  an em-dash row for them. Values are the real ones from date-leg 500291. */
+Deno.test("RecordDetails — date-leg shows Tour Time and OPC Gifting", () => {
+  const html = renderHTML(
+    <RecordDetails
+      meta={buildRecordMeta({
+        "32": "William Goda",
+        "8": "2026-08-16",
+        "16": "9:30 AM",
+        "289": "$50 Resort Credit,8/7 Monster Week",
+        "314": "Myrtle Beach, SC",
+      }, "RecordingId")}
+      isPackage={false}
+    />,
+  );
+  assertContains(html, "Tour Time");
+  assertContains(html, "9:30 AM");
+  assertContains(html, "OPC Gifting");
+  assertContains(html, "$50 Resort Credit, 8/7 Monster Week");
+});
+
+Deno.test("RecordDetails — package shape has no Tour Time / OPC Gifting rows", () => {
+  const html = renderHTML(
+    <RecordDetails
+      meta={buildRecordMeta({ GuestName: "Sam Guest", "67": "Single", OfficeName: "ODS WFH" }, "GenieNumber")}
+      isPackage
+    />,
+  );
+  assertNotContains(html, "Tour Time");
+  assertNotContains(html, "OPC Gifting");
 });

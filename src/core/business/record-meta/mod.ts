@@ -38,6 +38,8 @@ export type RecordMeta = {
   arrivalDate?: string;
   departureDate?: string;
   roomTypeMaxOccupancy?: string;
+  tourTime?: string;
+  opcGifting?: string;
   totalWGS?: string;
   totalMCC?: string;
   officeName?: string;
@@ -52,6 +54,21 @@ export type RecordMeta = {
 function field(rec: Record<string, unknown>, key: string): string | undefined {
   const v = rec[key];
   return v ? String(v) : undefined;
+}
+
+/** A QuickBase multitext field (289 OPC Gifting) is a list. Whichever path
+ *  delivered it — the QB client already flattened it with String(), or the
+ *  webhook body handed the raw array through — it reads as "A,B" with no space,
+ *  which is fine for an autoYes contains-check and ugly in a grid a human
+ *  scans. Display-only: the raw record keeps the comma-joined form the
+ *  question expressions match against. */
+function listField(rec: Record<string, unknown>, key: string): string | undefined {
+  const v = rec[key];
+  if (!v) return undefined;
+  const parts = (Array.isArray(v) ? v : String(v).split(","))
+    .map((p) => String(p).trim())
+    .filter((p) => p.length > 0);
+  return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
 /** Build the Record Details for one finding.
@@ -85,6 +102,8 @@ export function buildRecordMeta(
       destination: field(rec, "DestinationDisplay") ?? field(rec, "314"),
       arrivalDate: field(rec, "8"),
       departureDate: field(rec, "10"),
+      tourTime: field(rec, "16"),
+      opcGifting: listField(rec, "289"),
       totalWGS: field(rec, "460"),
       totalMCC: field(rec, "594"),
     };

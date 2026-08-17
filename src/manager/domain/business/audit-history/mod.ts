@@ -14,7 +14,7 @@ import { withTiming } from "@core/data/firestore/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getReviewedFindingIdsCached } from "@review/domain/business/review-queue/mod.ts";
 import { getManagerScope, getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
-import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
+import { isOfficeBypassed, isBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 
 /** Offices the super-manager (president) role never sees. Matched
@@ -413,11 +413,11 @@ async function _getAuditHistoryRaw(
   }
 
   // Bypassed offices (e.g. JAY) are hidden from EVERY view — admin and manager.
+  // Packages match the office list, date legs the department list.
   const bypassCfg = await getOfficeBypassConfig(orgId);
-  const bypassPatterns = bypassCfg.patterns ?? [];
-  const afterBypass = bypassPatterns.length === 0
-    ? windowEntries
-    : windowEntries.filter((c) => !isOfficeBypassed(String(c.department ?? ""), bypassPatterns));
+  const afterBypass = windowEntries.filter(
+    (c) => !isBypassed(String(c.department ?? ""), !!c.isPackage, bypassCfg),
+  );
 
   // Scope to the manager's department+shift configuration; admin sees all.
   // Super-manager sees every department EXCEPT the JAY family — no per-manager

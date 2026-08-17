@@ -7,7 +7,7 @@ export { applyBonusFlips, calculateScore, getAutoCompleteReason } from "@audit/d
 export type { ScoringQuestion, BonusFlipResult } from "@audit/domain/business/scoring/mod.ts";
 export {
   CHARGEBACK_QUESTIONS, computeFailedQuestions, splitHeaders,
-  buildChargebackEntry, buildWireDeductionEntry, classifyChargebacks, isOfficeBypassed,
+  buildChargebackEntry, buildWireDeductionEntry, classifyChargebacks, isOfficeBypassed, isBypassed,
 } from "@audit/domain/business/chargeback-engine/mod.ts";
 export type { FailedQuestion } from "@audit/domain/business/chargeback-engine/mod.ts";
 

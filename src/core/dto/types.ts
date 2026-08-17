@@ -194,8 +194,19 @@ export interface BadWordConfig {
   officePatterns: string[];
 }
 
+/** Two independent bypass lists, because "office" and "department" are two
+ *  DIFFERENT QuickBase fields that buildIndexMeta collapses into one
+ *  `department` slot (stats-repository/mod.ts): packages carry OfficeName
+ *  (fid 46, the partner office), date legs carry Activating Office (fid 140,
+ *  the internal team). Matching one list against both fields meant a name
+ *  collision silently bypassed the other side — "FTL OPC" exists in both
+ *  fields, so bypassing the partner office also killed the internal team's
+ *  review queue for ~7 weeks. `patterns` now applies to packages only. */
 export interface OfficeBypassConfig {
+  /** Office names — matched against packages (partner) only. */
   patterns: string[];
+  /** Department names — matched against date legs (internal) only. */
+  departmentPatterns?: string[];
 }
 
 export interface BonusPointsConfig {

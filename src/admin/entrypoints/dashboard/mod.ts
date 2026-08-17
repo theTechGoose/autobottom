@@ -13,7 +13,7 @@ import { OkResponse, OkMessageResponse, MessageResponse, UserListResponse, Email
 import { getStats, getRecentCompleted, queryAuditDoneIndex, findAuditsByRecordId, writeAuditDoneIndex, inspectRecordIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { getReviewStats, getReviewedFindingIdsCached } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig, isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
-import { isOfficeBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
+import { isBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { getEmailEngagement, getEmailEngagementDetail } from "@reporting/domain/business/email-engagement/mod.ts";
@@ -81,11 +81,10 @@ export class DashboardController {
             getOfficeBypassConfig(orgId),
             isPipelinePaused(orgId),
           ]);
-          const patterns = bypassCfg.patterns ?? [];
-          const recent = (patterns.length === 0
-            ? recentRaw
-            : recentRaw.filter((r) => !isOfficeBypassed(String((r as Record<string, unknown>).department ?? ""), patterns))
-          ).slice(0, 25);
+          const recent = recentRaw.filter((r) => {
+            const row = r as Record<string, unknown>;
+            return !isBypassed(String(row.department ?? ""), !!row.isPackage, bypassCfg);
+          }).slice(0, 25);
           const result = { pipeline: { ...pipelineStats, paused }, review: reviewStats, recentCompleted: recent };
           DashboardController._dashCache.set(orgId, { value: result, expiresAt: Date.now() + 5_000 });
           return result;
@@ -292,12 +291,12 @@ export class DashboardController {
       throw err;
     }
     // Hide bypassed offices (e.g. JAY) from the admin Audit History — same
-    // gate already applied to chargeback reports + unreviewed list.
+    // gate already applied to chargeback reports + unreviewed list. Packages
+    // match the office list, date legs the department list.
     const bypassCfg = await getOfficeBypassConfig(orgId);
-    const bypassPatterns = bypassCfg.patterns ?? [];
     type AuditRow = AuditDoneIndexEntry & { ts: number };
     const windowEntries: AuditRow[] = indexEntries
-      .filter((e) => bypassPatterns.length === 0 || !isOfficeBypassed(String(e.department ?? ""), bypassPatterns))
+      .filter((e) => !isBypassed(String(e.department ?? ""), !!e.isPackage, bypassCfg))
       .map((e) => ({ ...e, ts: e.completedAt }))
       .sort((a, b) => b.ts - a.ts);
 

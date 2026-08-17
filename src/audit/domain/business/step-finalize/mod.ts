@@ -2,6 +2,7 @@
 import { getFinding, saveFinding, getAllBatchAnswers, getJob, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
 import { trackCompleted, saveChargebackEntry, deleteChargebackEntry, writeAuditDoneIndex, pruneStaleDoneIdxRows, saveWireDeductionEntry, buildIndexMeta } from "@audit/domain/data/stats-repository/mod.ts";
 import { getOfficeBypassConfig, getBonusPointsConfig } from "@admin/domain/data/admin-repository/mod.ts";
+import { isBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { incrFailed as incrQuestionFailed, configKeyForFinding, markCounted as markQuestionFailCounted } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { writeFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import { updatePartnerDimensions } from "@admin/domain/data/admin-repository/mod.ts";
@@ -174,9 +175,15 @@ export async function stepFinalize(req: Request): Promise<Response> {
   const meta = buildIndexMeta(finding);
   const { isPackage, department, voName } = meta;
   const bypassCfg = await getOfficeBypassConfig(orgId);
-  const isOfficeBypassed = bypassCfg.patterns.length > 0 && !!department &&
-    bypassCfg.patterns.some((p) => department.toLowerCase().includes(p.toLowerCase()));
-  if (isOfficeBypassed) console.log(`[STEP-FINALIZE] ${findingId}: ⚠️ Office "${department}" is bypassed — skipping review queue + audit email`);
+  // Packages match the OFFICE list, date legs match the DEPARTMENT list. The
+  // two are different QuickBase fields sharing one `department` slot, so a
+  // single list against both silently bypassed whichever side collided on a
+  // name (see isBypassed).
+  const isOfficeBypassed = !!department && isBypassed(department, isPackage, bypassCfg);
+  if (isOfficeBypassed) {
+    const label = isPackage ? "Office" : "Department";
+    console.log(`[STEP-FINALIZE] ${findingId}: ⚠️ ${label} "${department}" is bypassed — skipping review queue + audit email`);
+  }
   const reason = isInvalid ? "invalid_genie" : (score === 100 ? "perfect_score" : undefined);
   const genieList = (Array.isArray(finding.genieIds) && finding.genieIds.length)
     ? finding.genieIds.map(String)

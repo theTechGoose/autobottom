@@ -8,6 +8,7 @@ import { pauseAllQueues, resumeAllQueues, purgeAllQueues, getQueueCounts, getQue
 import { publishStep } from "@core/data/qstash/mod.ts";
 import { clearReviewQueue } from "@review/domain/business/review-queue/mod.ts";
 import { getTokenUsage } from "@audit/domain/data/groq/mod.ts";
+import { isBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { ReturnedType, Description, BodyType } from "#danet/swagger-decorators";
 import { PipelineConfigResponse, ParallelismResponse, WebhookConfigResponse, BadWordConfigResponse, BypassConfigResponse, BonusConfigResponse, DimensionsResponse, PartnerDimensionsResponse, QueueCountsResponse, OkResponse, OkMessageResponse, ClearedResponse, TerminatedResponse, TokenUsageResponse, MessageResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
@@ -2196,9 +2197,9 @@ export class AdminConfigController {
       getPendingReviewFindings(ORG(), { sinceMs: since, untilMs: until }),
       cfg.getOfficeBypassConfig(ORG()),
     ]);
-    const bypassPatterns = (bypassCfg.patterns ?? []).map((p: string) => p.toLowerCase());
-    const isBypassed = (dept: string) =>
-      bypassPatterns.length > 0 && bypassPatterns.some((p: string) => dept.toLowerCase().includes(p));
+    // Packages match the office list, date legs the department list — the two
+    // are different QuickBase fields sharing one `department` slot.
+    const bypassed = (dept: string, isPkg: boolean) => isBypassed(dept, isPkg, bypassCfg);
 
     // Enrich each pending finding with its finding-doc metadata + apply
     // facet/date/score filters using the LIVE finding data. Capped at 500
@@ -2248,7 +2249,7 @@ export class AdminConfigController {
       if (type === "date-leg" && isPkg) return null;
       if (type === "package" && !isPkg) return null;
       const dept = String(isPkg ? (rec?.OfficeName ?? "") : (rec?.ActivatingOffice ?? ""));
-      if (isBypassed(dept)) return null;
+      if (bypassed(dept, isPkg)) return null;
       const rawVo = String(rec?.VoName ?? "");
       const vo = rawVo.includes(" - ") ? rawVo.split(" - ").slice(1).join(" - ").trim() : rawVo.trim();
       const findingOwner = (finding as any).owner as string | undefined;

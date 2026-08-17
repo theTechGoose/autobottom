@@ -10,8 +10,13 @@ export const handler = define.handlers({
 
     let depts: string[] = [];
     let patterns: string[] = [];
+    let departmentPatterns: string[] = [];
     try { const d = await apiFetch<{ departments?: string[] }>("/admin/audit-dimensions", ctx.req); depts = d.departments ?? []; } catch {}
-    try { const d = await apiFetch<{ patterns?: string[] }>("/admin/office-bypass", ctx.req); patterns = d.patterns ?? []; } catch {}
+    try {
+      const d = await apiFetch<{ patterns?: string[]; departmentPatterns?: string[] }>("/admin/office-bypass", ctx.req);
+      patterns = d.patterns ?? [];
+      departmentPatterns = d.departmentPatterns ?? [];
+    } catch {}
 
     const html = renderToString(
       <div>
@@ -54,18 +59,38 @@ export const handler = define.handlers({
           </div>
         ) : (
           <div>
-            <div class="modal-sub" style="margin-bottom:10px;">Offices matching these patterns skip the review queue and audit emails. Case-insensitive substring match.</div>
+            <div class="modal-sub" style="margin-bottom:10px;">Patterns matching these names skip the review queue and audit emails. Case-insensitive substring match.</div>
+
+            <div style="font-size:11px;font-weight:600;margin-bottom:6px;">Offices — partner audits only</div>
+            <div class="modal-sub" style="margin-bottom:8px;">Matched against the package's Office Name.</div>
             <div style="display:flex;gap:6px;margin-bottom:12px;">
               <input id="ob-bypass-input" class="sf-input" type="text" name="pattern" placeholder="e.g. JAY" style="flex:1;font-size:12px;" />
-              <button class="sf-btn primary" style="font-size:11px;padding:8px 14px;" hx-post="/api/admin/modal/offices/add-bypass" hx-include="#ob-bypass-input" hx-target="#ob-bypass-list" hx-swap="innerHTML">Add</button>
+              <button class="sf-btn primary" style="font-size:11px;padding:8px 14px;" hx-post="/api/admin/modal/offices/add-bypass" hx-include="#ob-bypass-input" hx-vals={JSON.stringify({ kind: "office" })} hx-target="#ob-bypass-list" hx-swap="innerHTML">Add</button>
             </div>
-            <div id="ob-bypass-list" style="display:flex;flex-direction:column;gap:6px;min-height:40px;max-height:260px;overflow-y:auto;">
+            <div id="ob-bypass-list" style="display:flex;flex-direction:column;gap:6px;min-height:40px;max-height:160px;overflow-y:auto;margin-bottom:16px;">
               {patterns.length === 0 ? (
                 <div style="color:var(--text-dim);font-size:11px;padding:8px;">No bypass patterns</div>
               ) : patterns.map(p => (
                 <div key={p} class="item-row">
                   <span>{p}</span>
-                  <button class="item-remove" hx-post="/api/admin/modal/offices/remove-bypass" hx-vals={JSON.stringify({ pattern: p })} hx-target="#ob-bypass-list" hx-swap="innerHTML">&times;</button>
+                  <button class="item-remove" hx-post="/api/admin/modal/offices/remove-bypass" hx-vals={JSON.stringify({ pattern: p, kind: "office" })} hx-target="#ob-bypass-list" hx-swap="innerHTML">&times;</button>
+                </div>
+              ))}
+            </div>
+
+            <div style="font-size:11px;font-weight:600;margin-bottom:6px;">Departments — internal audits only</div>
+            <div class="modal-sub" style="margin-bottom:8px;">Matched against the date leg's Activating Office.</div>
+            <div style="display:flex;gap:6px;margin-bottom:12px;">
+              <input id="ob-deptbypass-input" class="sf-input" type="text" name="pattern" placeholder="e.g. GUN" style="flex:1;font-size:12px;" />
+              <button class="sf-btn primary" style="font-size:11px;padding:8px 14px;" hx-post="/api/admin/modal/offices/add-bypass" hx-include="#ob-deptbypass-input" hx-vals={JSON.stringify({ kind: "department" })} hx-target="#ob-deptbypass-list" hx-swap="innerHTML">Add</button>
+            </div>
+            <div id="ob-deptbypass-list" style="display:flex;flex-direction:column;gap:6px;min-height:40px;max-height:160px;overflow-y:auto;">
+              {departmentPatterns.length === 0 ? (
+                <div style="color:var(--text-dim);font-size:11px;padding:8px;">No bypass patterns</div>
+              ) : departmentPatterns.map(p => (
+                <div key={p} class="item-row">
+                  <span>{p}</span>
+                  <button class="item-remove" hx-post="/api/admin/modal/offices/remove-bypass" hx-vals={JSON.stringify({ pattern: p, kind: "department" })} hx-target="#ob-deptbypass-list" hx-swap="innerHTML">&times;</button>
                 </div>
               ))}
             </div>

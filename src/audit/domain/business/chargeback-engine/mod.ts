@@ -114,11 +114,32 @@ export function classifyChargebacks(entries: ChargebackEntry[]): {
 }
 
 /**
- * Check if an office should be bypassed based on configured patterns.
- * Case-insensitive substring match.
+ * Check a name against a bypass pattern list. Case-insensitive substring match.
+ *
+ * Prefer isBypassed() at call sites that know the audit type — this raw matcher
+ * does not know whether it was handed an office or a department, and matching
+ * the wrong list against the wrong field is exactly the bug isBypassed() fixes.
  */
 export function isOfficeBypassed(department: string, patterns: string[]): boolean {
   if (patterns.length === 0) return false;
   const dept = department.toLowerCase();
   return patterns.some((p) => dept.includes(p.toLowerCase()));
+}
+
+/**
+ * Type-aware bypass check — the one call sites should use.
+ *
+ * `buildIndexMeta` stores OfficeName (packages) and Activating Office (date
+ * legs) in the same `department` slot, so the value alone can't say which
+ * QuickBase field it came from. The caller knows, via isPackage, and that
+ * picks the list: `patterns` are OFFICES (partner/packages),
+ * `departmentPatterns` are DEPARTMENTS (internal/date legs).
+ */
+export function isBypassed(
+  department: string,
+  isPackage: boolean,
+  cfg: { patterns?: string[]; departmentPatterns?: string[] } | null | undefined,
+): boolean {
+  const list = (isPackage ? cfg?.patterns : cfg?.departmentPatterns) ?? [];
+  return isOfficeBypassed(department, list);
 }

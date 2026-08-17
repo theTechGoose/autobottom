@@ -3,7 +3,7 @@
 import { assertEquals, assert } from "#assert";
 import {
   computeFailedQuestions, splitHeaders, buildChargebackEntry,
-  buildWireDeductionEntry, classifyChargebacks, isOfficeBypassed,
+  buildWireDeductionEntry, classifyChargebacks, isOfficeBypassed, isBypassed,
   CHARGEBACK_QUESTIONS,
 } from "./mod.ts";
 import type { IAnsweredQuestion } from "@core/dto/types.ts";
@@ -121,4 +121,41 @@ Deno.test("bypass — no patterns = not bypassed", () => {
 
 Deno.test("bypass — non-matching = not bypassed", () => {
   assert(!isOfficeBypassed("Sales HQ", ["jay", "gun"]));
+});
+
+// -- isBypassed (type-aware) --
+
+// The bug this exists to prevent: "FTL OPC" is both a partner OfficeName and an
+// internal Activating Office. One shared list meant bypassing the partner
+// office also killed the internal team's review queue for ~7 weeks.
+Deno.test("isBypassed — office pattern hits packages, never date legs", () => {
+  const cfg = { patterns: ["FTL OPC"], departmentPatterns: [] };
+  assert(isBypassed("FTL OPC", true, cfg));
+  assert(!isBypassed("FTL OPC", false, cfg));
+});
+
+Deno.test("isBypassed — department pattern hits date legs, never packages", () => {
+  const cfg = { patterns: [], departmentPatterns: ["GUN"] };
+  assert(isBypassed("GUN", false, cfg));
+  assert(!isBypassed("GUN", true, cfg));
+});
+
+Deno.test("isBypassed — a name on both lists is bypassed on both sides", () => {
+  const cfg = { patterns: ["JAY"], departmentPatterns: ["JAY"] };
+  assert(isBypassed("JAY777", true, cfg));
+  assert(isBypassed("JAY777", false, cfg));
+});
+
+// An old config predates departmentPatterns. Internals must fall through to the
+// queue rather than silently inherit the office list (that WAS the bug).
+Deno.test("isBypassed — missing departmentPatterns bypasses nothing internal", () => {
+  const cfg = { patterns: ["JAY", "GUN"] };
+  assert(isBypassed("JAY777", true, cfg));
+  assert(!isBypassed("GUN", false, cfg));
+});
+
+Deno.test("isBypassed — empty/absent config bypasses nothing", () => {
+  assert(!isBypassed("JAY", true, { patterns: [], departmentPatterns: [] }));
+  assert(!isBypassed("JAY", false, null));
+  assert(!isBypassed("JAY", true, undefined));
 });

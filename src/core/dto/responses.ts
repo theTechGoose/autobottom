@@ -120,7 +120,7 @@ export class PipelineConfigResponse { maxRetries = 0; retryDelaySeconds = 0; par
 export class ParallelismResponse { parallelism = 0; }
 export class WebhookConfigResponse { postUrl = ""; postHeaders: unknown = {}; }
 export class BadWordConfigResponse { enabled = false; emails: string[] = []; words: unknown[] = []; }
-export class BypassConfigResponse { patterns: string[] = []; }
+export class BypassConfigResponse { patterns: string[] = []; departmentPatterns: string[] = []; }
 export class BonusConfigResponse { internalBonusPoints = 0; partnerBonusPoints = 0; }
 export class DimensionsResponse { departments: string[] = []; shifts: string[] = []; }
 export class PartnerDimensionsResponse { offices: unknown = {}; }

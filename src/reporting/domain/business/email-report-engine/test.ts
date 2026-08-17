@@ -15,7 +15,9 @@ import {
 } from "./mod.ts";
 import type { ReportRow } from "./mod.ts";
 import type { SectionResult } from "./mod.ts";
-import { writeAuditDoneIndex, _resetQueryAuditDoneIndexCacheForTests } from "@audit/domain/data/stats-repository/mod.ts";
+import { writeAuditDoneIndex, markFindingHidden, _resetQueryAuditDoneIndexCacheForTests } from "@audit/domain/data/stats-repository/mod.ts";
+import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { populateJudgeQueue } from "@judge/domain/data/judge-repository/mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 
@@ -415,3 +417,163 @@ Deno.test({ name: "queryReportData — dedup runs BEFORE failedOnly: a fail→pa
   // If dedup ran AFTER failedOnly, RWIN's old 40% would survive → ["RFAIL","RP2F","RWIN"].
   assertEquals(ids, ["RFAIL", "RP2F"], "fail→pass re-audit (RWIN) is excluded; pass→fail (RP2F) and plain fail (RFAIL) remain");
 }});
+
+// ── open-appeals sections — the live judge queue, not the index flag ──────────
+// The appeal-pipeline count on a backlog report MUST come from the judge queue.
+// audit-done-idx.appealStatus is written at file time and only cleared when the
+// resolve path runs, so rows that missed it read "pending" forever — ten were
+// still stale in prod on 2026-08-17 with an empty queue behind them. These pin
+// that the section counts the queue, ignores the date window, and honours the
+// same hidden/skip gate the judge screen uses.
+
+const APPEAL_COLUMNS = ["recordId", "voName", "score", "appealStatus", "findingId"];
+
+/** A finding doc shaped the way the engine reads it (record fields + score). */
+function appealFinding(id: string, recordId: string, dept: string, shift: string, score: number) {
+  return {
+    id,
+    score,
+    record: { RecordId: recordId, VoName: `${dept} - Pat Q`, ActivatingOffice: dept, Shift: shift },
+  };
+}
+
+Deno.test({ name: "open-appeals — lists an appeal far OUTSIDE the report's date window (any age)", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-openappeal-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+  const ancient = now - 90 * 86_400_000;
+
+  await saveFinding(ORG as any, appealFinding("fa", "R-OLD", "DS MB", "PM", 92));
+  await populateJudgeQueue(ORG as any, "fa", [{ header: "Major CC", answer: "No" }]);
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    // A one-second window 90 days AFTER the appeal's audit — an index-backed
+    // section could never see it.
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+    reportSections: [{ header: "Awaiting Appeal", columns: APPEAL_COLUMNS, criteria: [], source: "open-appeals" }],
+  };
+  const sections = await queryReportData(ORG as any, config as any);
+  assertEquals(sections[0].rows.length, 1, "open appeal listed regardless of the report window");
+  assertEquals(sections[0].rows[0].recordId, "R-OLD");
+  assertEquals(sections[0].rows[0].appealStatus, "pending");
+  assert(ancient < now);
+}});
+
+Deno.test({ name: "open-appeals — a STALE index appealStatus=pending with no queue row produces NO row", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-staleappeal-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+
+  // Exactly the prod shape: the index still says "pending", the judge queue is
+  // empty. Counting the flag would report an appeal nobody is waiting on.
+  await writeAuditDoneIndex(ORG as any, {
+    findingId: "fs", completedAt: now, doneAt: now, completed: true, reason: "reviewed",
+    score: 92, recordId: "R-STALE", voName: "Pat Q", department: "DS MB", shift: "PM",
+    isPackage: false, appealStatus: "pending",
+  } as any, { assumeFinished: true });
+  await saveFinding(ORG as any, appealFinding("fs", "R-STALE", "DS MB", "PM", 92));
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+    reportSections: [{ header: "Awaiting Appeal", columns: APPEAL_COLUMNS, criteria: [], source: "open-appeals" }],
+  };
+  const sections = await queryReportData(ORG as any, config as any);
+  assertEquals(sections[0].rows.length, 0, "stale index flag must not fabricate an open appeal");
+}});
+
+Deno.test({ name: "open-appeals — hidden finding is excluded (same gate the judge queue serves)", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-hiddenappeal-" + crypto.randomUUID().slice(0, 8);
+
+  await saveFinding(ORG as any, appealFinding("fh", "R-HID", "DS MB", "PM", 92));
+  await populateJudgeQueue(ORG as any, "fh", [{ header: "Major CC", answer: "No" }]);
+  await markFindingHidden(ORG as any, "fh", "test");
+
+  const now = Date.now();
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+    reportSections: [{ header: "Awaiting Appeal", columns: APPEAL_COLUMNS, criteria: [], source: "open-appeals" }],
+  };
+  const sections = await queryReportData(ORG as any, config as any);
+  assertEquals(sections[0].rows.length, 0, "hidden finding never reaches a judge, so it is not pending");
+}});
+
+Deno.test({ name: "open-appeals — topLevelFilters scope the queue to one department/shift", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-scopeappeal-" + crypto.randomUUID().slice(0, 8);
+
+  await saveFinding(ORG as any, appealFinding("f-mine", "R-MINE", "DS MB", "PM", 92));
+  await populateJudgeQueue(ORG as any, "f-mine", [{ header: "Q", answer: "No" }]);
+  await saveFinding(ORG as any, appealFinding("f-am", "R-AM", "DS MB", "AM", 92));
+  await populateJudgeQueue(ORG as any, "f-am", [{ header: "Q", answer: "No" }]);
+  await saveFinding(ORG as any, appealFinding("f-other", "R-OTHER", "GS MB", "PM", 92));
+  await populateJudgeQueue(ORG as any, "f-other", [{ header: "Q", answer: "No" }]);
+
+  const now = Date.now();
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+    topLevelFilters: [
+      { field: "department", operator: "equals", value: "DS MB" },
+      { field: "shift", operator: "equals", value: "PM" },
+    ],
+    reportSections: [{ header: "Awaiting Appeal", columns: APPEAL_COLUMNS, criteria: [], source: "open-appeals" }],
+  };
+  const sections = await queryReportData(ORG as any, config as any);
+  assertEquals(sections[0].rows.length, 1, "only the DS MB PM appeal survives the scope filters");
+  assertEquals(sections[0].rows[0].recordId, "R-MINE");
+}});
+
+Deno.test({ name: "open-appeals — coexists with a normal windowed fails section in one report", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  const ORG = "test-bothsections-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+
+  // A settled fail inside the window…
+  await writeAuditDoneIndex(ORG as any, {
+    findingId: "f-fail", completedAt: now, doneAt: now, completed: true, reason: "reviewed",
+    score: 95, recordId: "R-FAIL", voName: "Pat Q", department: "DS MB", shift: "PM", isPackage: false,
+  } as any, { assumeFinished: true });
+  // …and a separate appeal still with the judge.
+  await saveFinding(ORG as any, appealFinding("f-appeal", "R-APPEAL", "DS MB", "PM", 88));
+  await populateJudgeQueue(ORG as any, "f-appeal", [{ header: "Q", answer: "No" }]);
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+    topLevelFilters: [
+      { field: "department", operator: "equals", value: "DS MB" },
+      { field: "shift", operator: "equals", value: "PM" },
+    ],
+    reportSections: [
+      { header: "Failed Audits", columns: APPEAL_COLUMNS, criteria: [{ field: "score", operator: "less_than", value: "100" }] },
+      { header: "Awaiting Appeal", columns: APPEAL_COLUMNS, criteria: [], source: "open-appeals" },
+    ],
+  };
+  const sections = await queryReportData(ORG as any, config as any);
+  assertEquals(sections[0].rows.map((r) => r.recordId), ["R-FAIL"], "fails section stays index+window driven");
+  assertEquals(sections[1].rows.map((r) => r.recordId), ["R-APPEAL"], "appeals section stays queue driven");
+}});
+
+Deno.test("renderSection — the heading carries the row count (the headline number)", () => {
+  const html = renderSections([
+    { header: "Failed Audits", columns: ["recordId"], rows: [{ recordId: "A" }, { recordId: "B" }] },
+    { header: "Awaiting Appeal", columns: ["recordId"], rows: [] },
+  ] as SectionResult[]);
+  assert(html.includes("Failed Audits <span"), "header present");
+  assert(html.includes(">(2)<"), "fails count rendered");
+  assert(html.includes(">(0)<"), "an empty section still states zero rather than going silent");
+});

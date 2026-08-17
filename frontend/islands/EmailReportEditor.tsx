@@ -24,7 +24,11 @@ type Operator = "equals" | "not_equals" | "contains" | "not_contains" | "starts_
 type ColumnKey = "recordId" | "findingId" | "guestName" | "voName" | "department" | "score" | "appealStatus" | "finalizedAt" | "markedForReview";
 
 interface CriteriaRule { field: string; operator: Operator; value: string; }
-interface ReportSection { header: string; columns: ColumnKey[]; criteria: CriteriaRule[]; }
+/** Mirrors ReportSection in ../../src/core/dto/types.ts. `source` has no editor
+ *  control — it is set on the config and only surfaced here as a notice, so the
+ *  section's different behaviour is visible to whoever edits it next. Section
+ *  patches spread the existing object, so it survives an edit either way. */
+interface ReportSection { header: string; columns: ColumnKey[]; criteria: CriteriaRule[]; source?: "open-appeals"; }
 type DateRange =
   | { mode: "rolling"; hours: number }
   | { mode: "weekly"; startDay: number }
@@ -1082,6 +1086,13 @@ function SectionCard(
       </div>
       {open && (
         <div style="padding:14px;display:flex;flex-direction:column;gap:14px;">
+          {section.source === "open-appeals" && (
+            <div style="padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:6px;background:var(--bg-surface);font-size:11px;color:var(--text);line-height:1.5;">
+              <strong>Live judge queue</strong> — this section lists appeals still waiting on a judge,
+              at any age. It ignores the report's date range, and it reads the queue itself rather than
+              the audit index's appeal flag (which can go stale). Criteria below still narrow it.
+            </div>
+          )}
           <div>
             <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-dim);margin-bottom:8px;">CRITERIA</div>
             <RuleList rules={section.criteria} onChange={(criteria) => onChange({ criteria })} />

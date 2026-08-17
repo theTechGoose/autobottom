@@ -14,7 +14,7 @@ import type {
   ReportColumnKey,
   AppealRecord,
 } from "@core/dto/types.ts";
-import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
+import { getAppeal, listOpenAppealFindingIds } from "@judge/domain/data/judge-repository/mod.ts";
 import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
 import { queryFailedFindings } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import {
@@ -62,6 +62,11 @@ const MANAGER_TTL_MS = 30 * 60_000;
 /** Hard stop, so an unexpected flood of unmapped office codes can't turn a send
  *  into thousands of document reads. */
 const MAX_MANAGER_LOOKUPS = 1500;
+
+/** Same idea for the judge queue behind an "open-appeals" section — one
+ *  getFinding per open appeal, bounded so a runaway queue can't turn a send into
+ *  thousands of reads. */
+const MAX_OPEN_APPEAL_LOOKUPS = 500;
 
 async function managersForFindings(orgId: OrgId, findingIds: string[]): Promise<Map<string, string[]>> {
   const now = Date.now();
@@ -423,6 +428,9 @@ export async function queryReportData(
 
     let placed = false;
     for (let i = 0; i < sections.length; i++) {
+      // Open-appeals sections are filled from the judge queue below, not from
+      // this window's index rows.
+      if (sections[i].source === "open-appeals") continue;
       if (evaluateRules(finding, stat, appealStatus, reviewed, sections[i].criteria)) {
         placed = true;
         const rowIdx = results[i].rows.length;
@@ -452,6 +460,9 @@ export async function queryReportData(
   for (const p of pendingAbsorbed) {
     const i = sectionForAbsorbed(p.managers, managerSectionCounts, results.map((r: any) => r.rows.length));
     if (i < 0) continue;
+    // Never absorb an audit into the judge-queue section — it is a live backlog
+    // list, not a bucket for unrouted work.
+    if (sections[i].source === "open-appeals") continue;
     const rowIdx = results[i].rows.length;
     results[i].rows.push(extractRow(p.finding, p.stat, p.appealStatus, extractColumns[i], p.markedForReview));
     if (needsMcc && sections[i].columns.includes("mostRecentActiveMccId") && p.stat.recordId) {
@@ -460,6 +471,16 @@ export async function queryReportData(
   }
   if (pendingAbsorbed.length > 0) {
     console.log(`[EMAIL-REPORT] "${config.name}" absorbed ${pendingAbsorbed.length} audit(s) by manager (office code claimed by no report)`);
+  }
+
+  // Open-appeals sections: the live judge queue, at any age, ignoring the
+  // report's date window. Filled after the index pass so it can't be perturbed
+  // by dedup or the manager routing above.
+  for (let i = 0; i < sections.length; i++) {
+    if (sections[i].source !== "open-appeals") continue;
+    results[i].rows = await queryOpenAppealRows(
+      orgId, topFilters, sections[i].criteria, extractColumns[i],
+    );
   }
 
   if (needsMcc && mccRowMeta.length > 0) {
@@ -494,6 +515,72 @@ export async function queryReportData(
   }
 
   return results;
+}
+
+/** Rows for an "open-appeals" section: every finding still sitting in the judge
+ *  queue, at any age, scoped by the same filters an ordinary section uses.
+ *
+ *  The queue is small by nature (a judge works it down; it held 2 rows org-wide
+ *  on 2026-08-17), so a getFinding per appeal is cheap — but it is a live queue,
+ *  so the lookup is capped and batched like every other hydration path here
+ *  rather than trusted to stay small forever. */
+async function queryOpenAppealRows(
+  orgId: OrgId,
+  topFilters: CriteriaRule[],
+  criteria: CriteriaRule[],
+  columns: ReportColumnKey[],
+): Promise<ReportRow[]> {
+  const findingIds = await listOpenAppealFindingIds(orgId);
+  if (findingIds.length === 0) return [];
+
+  const capped = findingIds.slice(0, MAX_OPEN_APPEAL_LOOKUPS);
+  if (findingIds.length > capped.length) {
+    console.warn(
+      `[EMAIL-REPORT] open-appeals capped at ${capped.length} of ${findingIds.length} — the section under-reports`,
+    );
+  }
+
+  const rows: ReportRow[] = [];
+  const BATCH = 20;
+  for (let i = 0; i < capped.length; i += BATCH) {
+    const batch = await Promise.all(
+      capped.slice(i, i + BATCH).map((id) => getFinding(orgId, id)),
+    );
+    for (const finding of batch as Record<string, any>[]) {
+      if (!finding) continue;
+      const isPackage = finding.recordingIdField === "GenieNumber";
+      const rec = (finding.record ?? {}) as Record<string, any>;
+      const rawVoName = rec.VoName as string | undefined;
+      const stat: Record<string, any> = {
+        isPackage,
+        score: scoreOfFinding(finding),
+        reason: "",
+        voName: rawVoName
+          ? (rawVoName.includes(" - ") ? rawVoName.split(" - ").slice(1).join(" - ").trim() : rawVoName.trim())
+          : "",
+        department: String(isPackage ? (rec.OfficeName ?? "") : (rec.ActivatingOffice ?? "")),
+        recordId: String(rec.RecordId ?? "") || undefined,
+        shift: String(rec.Shift ?? "") || undefined,
+        ts: finding.appealedAt ?? finding.completedAt ?? undefined,
+      };
+      // These are by definition awaiting a judge, so appealStatus is "pending"
+      // regardless of what the (possibly stale) index row says.
+      if (topFilters.length > 0 && !evaluateRules(finding, stat, "pending", false, topFilters)) continue;
+      if (!evaluateRules(finding, stat, "pending", false, criteria)) continue;
+      rows.push(extractRow(finding, stat, "pending", columns, false));
+    }
+  }
+  return rows;
+}
+
+/** A finding's score, mirroring failed-finding-repository: the stored score when
+ *  present, else recomputed from the answered questions. */
+function scoreOfFinding(finding: Record<string, any>): number {
+  if (typeof finding?.score === "number") return finding.score;
+  const answered: any[] = finding?.answeredQuestions ?? [];
+  if (answered.length === 0) return 0;
+  const yes = answered.filter((q) => String(q?.answer ?? "").toLowerCase() === "yes").length;
+  return Math.round((yes / answered.length) * 100);
 }
 
 /** Order rows worst-first (0% → 100%); ties break most-recent-first. Mutates in
@@ -1159,7 +1246,7 @@ function renderSection(section: SectionResult): string {
   return `
 <div style="margin-bottom:28px;">
   <p style="margin:0 0 10px 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:${C.textMuted};">REPORT SECTION</p>
-  <h2 style="margin:0 0 14px 0;font-size:18px;font-weight:700;color:${C.textBright};">${esc(section.header)}</h2>
+  <h2 style="margin:0 0 14px 0;font-size:18px;font-weight:700;color:${C.textBright};">${esc(section.header)} <span style="font-weight:800;color:${C.textMuted};">(${section.rows.length})</span></h2>
   <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid ${C.border};border-radius:8px;overflow:hidden;">
     <thead style="background:${C.cardAlt};">
       <tr>${headerCells}</tr>

@@ -352,6 +352,14 @@ export interface ReportSection {
   header: string;
   columns: string[];
   criteria: CriteriaRule[];
+  /** Where the section's rows come from. Default (unset) is the audit-done
+   *  index inside the config's dateRange — every existing report.
+   *
+   *  "open-appeals" instead reads the live judge queue, ignoring dateRange, so
+   *  the section lists appeals still awaiting a judge at ANY age. topLevelFilters
+   *  and the section's own criteria still apply, so it can be scoped to one
+   *  department/shift like any other section. */
+  source?: "open-appeals";
 }
 
 export interface CriteriaRule {

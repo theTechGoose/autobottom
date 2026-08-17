@@ -611,6 +611,31 @@ async function _getJudgeStatsRaw(orgId: OrgId): Promise<{ pending: number; pendi
   return { pending, pendingAudits, decided: decided.length };
 }
 
+/** The findings that are genuinely waiting on a judge right now, newest appeal
+ *  first. This is the QUEUE — the same `isServablePending` gate the judge screen
+ *  and getJudgeStats use — deliberately NOT `audit-done-idx.appealStatus`.
+ *
+ *  The index flag is written at appeal-file time and only cleared when the
+ *  resolve path runs; rows that missed it read "pending" forever (the bug fixed
+ *  and backfilled 2026-08-01). Ten such rows were still stale as of 2026-08-17
+ *  while the queue itself held none of them, so a report that counts the flag
+ *  reports appeals nobody is waiting on. Counting the queue can't drift: if it
+ *  isn't in the queue, no judge will ever see it.
+ *
+ *  Un-windowed on purpose — an appeal that has been open for a month is exactly
+ *  the one a backlog report needs to surface. */
+export async function listOpenAppealFindingIds(orgId: OrgId): Promise<string[]> {
+  const hidden = await getHiddenFindingIds(orgId);
+  const rows = await listStoredWithKeysAll<JudgeItem>("judge-pending", orgId);
+  const seen = new Set<string>();
+  for (const { value } of rows) {
+    if (!value?.findingId) continue;
+    if (!isServablePending(value, hidden)) continue;
+    seen.add(value.findingId);
+  }
+  return [...seen];
+}
+
 // ── Dismiss / Clear ──────────────────────────────────────────────────────────
 
 export async function dismissFindingFromJudgeQueue(orgId: OrgId, fid: string): Promise<{ dismissed: number }> {

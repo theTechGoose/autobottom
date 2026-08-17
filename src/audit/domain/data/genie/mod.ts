@@ -31,6 +31,49 @@ export function isValidAudio(bytes: Uint8Array): boolean {
   return isId3 || isMp3Frame || isRiff || isOgg;
 }
 
+/** Pick the row that IS the contract we asked for.
+ *
+ *  Genie's `filter_contract` is a PREFIX match, not an exact one — the async job
+ *  index especially. A truncated 7-digit genie number typed into QuickBase (e.g.
+ *  `2764973` instead of `27649736`) therefore comes back as every 8-digit
+ *  contract starting with it — `27649730`, `27649733`, `27649736` — and taking
+ *  `records[0]` grades whichever call sorts first. Finding
+ *  `90_fxjN_RXWl1inxphoOi` audited a different guest that way (record 500952,
+ *  Shauna Oakley, graded against contract 27649730 — a stranger's call), scored
+ *  it 60, and a human reviewer signed off. The correct recording was row 1 of
+ *  the same response.
+ *
+ *  Real contracts are 8 digits, so an 8-digit request can only ever prefix-match
+ *  itself; this check costs nothing on the happy path and turns a bad genie
+ *  number into an honest "not found" (which step-init retries, then reports)
+ *  instead of a confidently wrong audit. Also filters Genie's "no recording"
+ *  placeholder rows, which carry a blank contract. */
+export function pickExactContract(
+  rows: unknown[],
+  contract: number,
+  role: AccountRole,
+  tag: string,
+  source: string,
+): string | null {
+  const want = String(contract);
+  const rowOf = (r: unknown) => r as { contract?: unknown; src?: unknown } | undefined;
+  const exact = rows.find((r) => String(rowOf(r)?.contract ?? "").trim() === want);
+  if (!exact) {
+    const got = rows.map((r) => String(rowOf(r)?.contract ?? "").trim() || "(blank)").join(",");
+    console.warn(
+      `[GENIE] 🔍 ${source} no exact contract match: contract=${contract} role=${role} returned=[${got}] ${tag}`,
+    );
+    return null;
+  }
+  const src = rowOf(exact)?.src as string | undefined;
+  if (!src || src === `${Deno.env.get("GENIE_BASE_URL") ?? ""}/` || src.trim() === "") {
+    console.warn(`[GENIE] 🔍 ${source} no src: contract=${contract} role=${role} src=${src} ${tag}`);
+    return null;
+  }
+  console.log(`[GENIE] 🔍 ${source} found: contract=${contract} role=${role} src=${src} ${tag}`);
+  return src;
+}
+
 // -- Async job search (fallback when sync API returns empty) --
 
 interface GenieSession {
@@ -139,13 +182,7 @@ async function searchViaJob(contract: number, role: AccountRole, tag: string): P
           console.warn(`[GENIE] 🔍 job result empty array: contract=${contract} ${tag}`);
           return null;
         }
-        const src = records[0]?.src as string | undefined;
-        if (src && src !== `${Deno.env.get("GENIE_BASE_URL") ?? ""}/` && src.trim() !== "") {
-          console.log(`[GENIE] 🔍 job search found: contract=${contract} role=${role} src=${src} ${tag}`);
-          return src;
-        }
-        console.warn(`[GENIE] 🔍 job search no src: contract=${contract} role=${role} ${tag}`);
-        return null;
+        return pickExactContract(records, contract, role, tag, "job search");
       }
     }
 
@@ -179,18 +216,7 @@ async function searchOnce(contract: number, role: AccountRole, tag: string): Pro
       console.warn(`[GENIE] 🔍 search empty: contract=${contract} role=${role} data=${JSON.stringify(json?.data)} ${tag}`);
       return null;
     }
-    const [record] = json.data;
-    if (!record?.contract || record.contract === "") {
-      console.warn(`[GENIE] 🔍 search no contract field: contract=${contract} role=${role} record=${JSON.stringify(record)} ${tag}`);
-      return null;
-    }
-    const src = record?.src as string | undefined;
-    if (!src || src === `${Deno.env.get("GENIE_BASE_URL") ?? ""}/` || src.trim() === "") {
-      console.warn(`[GENIE] 🔍 search no src: contract=${contract} role=${role} src=${src} ${tag}`);
-      return null;
-    }
-    console.log(`[GENIE] 🔍 search found: contract=${contract} role=${role} src=${src} ${tag}`);
-    return src;
+    return pickExactContract(json.data, contract, role, tag, "search");
   } catch (err) {
     console.error(`[GENIE] 🔍 search error: role=${role} contract=${contract} ${tag}`, err);
     return null;

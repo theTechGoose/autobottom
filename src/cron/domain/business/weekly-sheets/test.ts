@@ -2,7 +2,8 @@
 
 import { assertEquals } from "#assert";
 import { prevWeekWindow, isWeeklySheetsFireTime, runWeeklySheetsExport, normKeyCell, rowKey, postedKeys } from "./mod.ts";
-import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
+import { getStored, resetFirestoreCredentials, setStored } from "@core/data/firestore/mod.ts";
+import { defaultOrgId } from "@core/business/auth/mod.ts";
 
 /** Eastern wall clock for an instant — the window is ET-anchored, so asserting
  *  with the runner's local getDay()/getHours() would only pass on an ET box. */
@@ -108,20 +109,41 @@ Deno.test("postedKeys — the week of Aug 3 can't be posted a second time", () =
   assertEquals(fresh[0][3], "https://qb/db/x?rid=3");
 });
 
-Deno.test("runWeeklySheetsExport — claims the week so a re-fire is skipped (no double-post)", async () => {
+/** Mark a week as successfully posted, the way a finished export does.
+ *  Sheets aren't configured under test, so a real run can only ever fail —
+ *  the `done` marker has to be written directly to exercise the skip path. */
+const markPosted = (job: "wire" | "chargebacks", now: Date) =>
+  setStored(
+    "weekly-sheets-claim", defaultOrgId(), [job, prevWeekWindow(now).since],
+    { job, since: prevWeekWindow(now).since, status: "done", at: 0 },
+    { expireInMs: 8 * 24 * 60 * 60 * 1000 },
+  );
+
+Deno.test("runWeeklySheetsExport — a POSTED week is never posted again", async () => {
   resetFirestoreCredentials(); // in-memory firestore
   const now = new Date("2026-04-14T13:00:00Z");
-  // First run takes the per-week claim. (Sheets aren't configured in tests, so
-  // the export itself returns a config error — but the claim is taken first.)
-  await runWeeklySheetsExport("chargebacks", now);
-  // Second run for the same week must be skipped, never re-appending rows.
+  await markPosted("chargebacks", now);
   const second = await runWeeklySheetsExport("chargebacks", now);
   assertEquals(second.skipped, true);
   assertEquals(second.appended, 0);
 });
 
+Deno.test("runWeeklySheetsExport — a FAILED run releases the week so the next tick retries", async () => {
+  // The 2026-08-18 outage: the claim was taken before the work and never
+  // released, so one dead run burned the week and every later tick logged
+  // "already posted" over an empty sheet. A failed run must leave no claim.
+  const now = new Date("2026-04-28T13:00:00Z");
+  const first = await runWeeklySheetsExport("chargebacks", now);
+  assertEquals(typeof first.error, "string"); // sheets unconfigured under test
+  assertEquals(first.skipped, undefined);
+  const claim = await getStored("weekly-sheets-claim", defaultOrgId(), "chargebacks", prevWeekWindow(now).since);
+  assertEquals(claim, null); // released
+  // ...so the next tick actually retries instead of skipping.
+  assertEquals((await runWeeklySheetsExport("chargebacks", now)).skipped, undefined);
+});
+
 Deno.test("runWeeklySheetsExport — wire's claim doesn't block chargebacks", async () => {
-  // A LATER week than the test above on purpose: the claims are real writes to
+  // A LATER week than the tests above on purpose: the claims are real writes to
   // the shared in-memory store, and re-resetting it mid-suite breaks tests in
   // other files that lean on it.
   //
@@ -130,10 +152,8 @@ Deno.test("runWeeklySheetsExport — wire's claim doesn't block chargebacks", as
   const monday = new Date("2026-04-20T13:00:00Z");
   const tuesday = new Date("2026-04-21T13:00:00Z");
   assertEquals(prevWeekWindow(monday).since, prevWeekWindow(tuesday).since);
-  await runWeeklySheetsExport("wire", monday);
+  await markPosted("wire", monday);
   const cb = await runWeeklySheetsExport("chargebacks", tuesday);
-  assertEquals(cb.skipped, undefined); // ran — not blocked by wire's claim
-  // ...but each job still blocks its own re-fire.
+  assertEquals(cb.skipped, undefined); // ran — not blocked by wire's posted week
   assertEquals((await runWeeklySheetsExport("wire", monday)).skipped, true);
-  assertEquals((await runWeeklySheetsExport("chargebacks", tuesday)).skipped, true);
 });

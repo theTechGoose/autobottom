@@ -1249,11 +1249,25 @@ export async function getChargebackEntry(orgId: OrgId, findingId: string): Promi
 
 export async function getChargebackEntries(orgId: OrgId, since: number, until: number): Promise<ChargebackEntry[]> {
   const hidden = await getHiddenFindingIds(orgId);
-  // MUST be the uncapped/paged scan — plain listStored truncates at 1000, which
-  // silently dropped newer entries once the store grew past 1000 (the reports
-  // went near-empty around the cap-crossing). Report queries can't truncate.
-  const rows = await listStoredWithKeysAll<ChargebackEntry>("chargeback-entry", orgId);
-  return rows.map((r) => r.value).filter((e) => e && e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
+  // Server-side date range on `ts`, NOT a full-store scan.
+  //
+  // This used to read every chargeback-entry the org had ever written and filter
+  // the window in memory. That was the fix for an older bug (plain listStored
+  // truncates at 1000, which silently emptied the reports once the store grew
+  // past the cap) — but it traded truncation for unbounded growth. At ~15k docs
+  // the weekly Sheets cron was killed mid-scan on 2026-08-18: it claimed the
+  // week, died 29s in, and posted nothing. `ts` is a top-level field on these
+  // docs, so the same field-range query audit-done-idx already uses applies
+  // here. Measured on prod for one week: 541 entries either way, 4.6s → 0.23s.
+  //
+  // Uncapped limit so the range still cannot truncate — the paged reader walks
+  // every page in the window. The `ts` bounds are re-checked below because the
+  // range is the query's contract, not its guarantee.
+  const rows = await listStoredByCompletedAt<ChargebackEntry>(
+    "chargeback-entry", orgId, since, until,
+    { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
+  );
+  return rows.filter((e) => e && e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
 }
 
 // ── Wire Deduction Entries ───────────────────────────────────────────────────
@@ -1272,10 +1286,14 @@ export async function getWireDeductionEntry(orgId: OrgId, findingId: string): Pr
 
 export async function getWireDeductionEntries(orgId: OrgId, since: number, until: number): Promise<WireDeductionEntry[]> {
   const hidden = await getHiddenFindingIds(orgId);
-  // Uncapped/paged — see getChargebackEntries: listStored's 1000-row cap
-  // silently truncated the report once the store grew past it.
-  const rows = await listStoredWithKeysAll<WireDeductionEntry>("wire-deduction-entry", orgId);
-  return rows.map((r) => r.value).filter((e) => e && e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
+  // Server-side date range on `ts` — see getChargebackEntries. This store is
+  // still small enough that the old full scan finished, but it grows the same
+  // way and would fail the same way.
+  const rows = await listStoredByCompletedAt<WireDeductionEntry>(
+    "wire-deduction-entry", orgId, since, until,
+    { limit: Number.MAX_SAFE_INTEGER, fieldName: "ts" },
+  );
+  return rows.filter((e) => e && e.ts >= since && e.ts <= until && !hidden.has(e.findingId));
 }
 
 // ── Stuck Findings (watchdog) ────────────────────────────────────────────────

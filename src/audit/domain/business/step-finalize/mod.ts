@@ -287,6 +287,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
             failedQHeaders,
             egregiousHeaders,
             omissionHeaders,
+            // Settles the entry without a review: these never enter the review
+            // queue, so the reports cannot wait on a reviewer that will never
+            // come. Read side falls back to the header for older entries.
+            ...(isInvalid ? { invalidGenie: true } : {}),
           });
           console.log(`[STEP-FINALIZE] ${findingId}: 💰 chargebackEntry saved — ${egregiousHeaders.length} egregious, ${omissionHeaders.length} omissions${isInvalid ? " (invalid genie)" : ""}`);
         }

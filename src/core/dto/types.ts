@@ -155,6 +155,12 @@ export interface ChargebackEntry {
   failedQHeaders: string[];
   egregiousHeaders?: string[];
   omissionHeaders?: string[];
+  /** Audit failed because the recording was missing/unplayable, not on content.
+   *  These never enter the review queue, so they are settled the moment they
+   *  finalize — the reports treat the flag as a stand-in for "reviewed".
+   *  Absent on entries written before 2026-08-18; readers fall back to matching
+   *  the failed-question header. */
+  invalidGenie?: boolean;
 }
 
 export interface WireDeductionEntry {

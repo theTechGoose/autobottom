@@ -236,7 +236,7 @@ export function weeklyHeadline(
 
 /** A real, dedup-able record id, or "" for blank / placeholder ids that must NOT
  *  be collapsed together (empty, or all-zeros like "00000000"). */
-function normalizeRecordId(recordId: string | undefined): string {
+export function normalizeRecordId(recordId: string | undefined): string {
   const v = String(recordId ?? "").trim();
   return v === "" || /^0+$/.test(v) ? "" : v;
 }
@@ -244,7 +244,7 @@ function normalizeRecordId(recordId: string | undefined): string {
 /** True if `a` is the "newer" finding to keep: greater completedAt wins, and an
  *  EXACT completedAt tie is broken by the greater findingId — so the survivor is
  *  deterministic and never depends on input order. */
-function isNewerFinding(a: AuditDoneIndexEntry, b: AuditDoneIndexEntry): boolean {
+export function isNewerFinding(a: AuditDoneIndexEntry, b: AuditDoneIndexEntry): boolean {
   const at = a.completedAt ?? 0;
   const bt = b.completedAt ?? 0;
   if (at !== bt) return at > bt;

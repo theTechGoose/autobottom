@@ -8,7 +8,7 @@
 
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
-import { setStoredIfAbsent } from "@core/data/firestore/mod.ts";
+import { deleteStored, getStored, setStored, setStoredIfAbsent } from "@core/data/firestore/mod.ts";
 import { queryAuditDoneIndex, queryChargebackReport, queryWireReport } from "@reporting/domain/business/chargeback-report/mod.ts";
 import { getReviewedFindingIds } from "@review/domain/business/review-queue/mod.ts";
 import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
@@ -284,6 +284,23 @@ export async function exportChargebacksToSheet(
  *  The job name is IN the key. Wire (Monday) and chargebacks (Tuesday) run over
  *  the SAME Mon–Sun window, so a key of `[since]` alone would let whichever ran
  *  first claim the week and silently skip the other. */
+/** How long one run may hold a week before another tick can take it over. The
+ *  export is normally seconds; this only has to outlast a slow run. */
+const CLAIM_LEASE_MS = 30 * 60 * 1000;
+
+/** How long a FINISHED week stays claimed — long enough that no later tick
+ *  re-posts it, short enough to clear before the same week key recurs. */
+const CLAIM_DONE_MS = 8 * 24 * 60 * 60 * 1000;
+
+interface SheetClaim {
+  job: SheetJobName;
+  since: number;
+  until: number;
+  /** `running` is a lease taken before the work; `done` means the rows landed. */
+  status?: "running" | "done";
+  at?: number;
+}
+
 export async function runWeeklySheetsExport(
   job: SheetJobName,
   now: Date = new Date(),
@@ -292,16 +309,54 @@ export async function runWeeklySheetsExport(
   const { tabs, label } = SHEET_JOBS[job];
   const { since, until } = prevWeekWindow(now);
   const weekLabel = new Date(since).toISOString().slice(0, 10);
-  const claimed = await setStoredIfAbsent(
-    "weekly-sheets-claim", orgId, [job, since], { job, since, until },
-    { expireInMs: 8 * 24 * 60 * 60 * 1000 }, // clears before the same week recurs
-  );
-  if (!claimed) {
+
+  // A claim taken BEFORE the work used to be permanent, so a run that died
+  // mid-export burned the week: on 2026-08-18 the chargebacks job claimed at
+  // 9:00:55, was killed 29s into a 15k-doc scan, and every later tick logged
+  // "already posted" over an empty sheet. Now the pre-work claim is a LEASE
+  // that expires, and only success writes the permanent `done` marker.
+  //
+  // Duplicate rows are not what this guards — `dropAlreadyPosted` re-reads the
+  // tab and drops anything already there, which is what makes a retry (and the
+  // "Post to Sheet" button) safe. The claim only stops pointless duplicate work.
+  const existing = await getStored<SheetClaim>("weekly-sheets-claim", orgId, job, since);
+  if (existing?.status === "done") {
     console.log(`⏰ [CRON:weekly-sheets] ${label} for week of ${weekLabel} already posted — skipping`);
     return { ok: true, appended: 0, skipped: true };
   }
+  if (existing) {
+    console.log(`⏰ [CRON:weekly-sheets] ${label} for week of ${weekLabel} is already running elsewhere — skipping`);
+    return { ok: true, appended: 0, skipped: true };
+  }
+
+  // `getStored` honours `_expiresAt`, but `setStoredIfAbsent` keys on PHYSICAL
+  // existence — an expired lease doc still blocks the claim. Without this
+  // delete a dead lease would wedge the week permanently, which is the very
+  // failure being fixed.
+  await deleteStored("weekly-sheets-claim", orgId, job, since).catch(() => {});
+  const claimed = await setStoredIfAbsent(
+    "weekly-sheets-claim", orgId, [job, since],
+    { job, since, until, status: "running", at: Date.now() } satisfies SheetClaim,
+    { expireInMs: CLAIM_LEASE_MS },
+  );
+  if (!claimed) {
+    console.log(`⏰ [CRON:weekly-sheets] ${label} for week of ${weekLabel} claimed by another tick — skipping`);
+    return { ok: true, appended: 0, skipped: true };
+  }
+
   const result = await exportChargebacksToSheet(orgId, since, until, tabs);
-  if (result.error) console.error(`❌ [CRON:weekly-sheets] ${label} for week of ${weekLabel} failed: ${result.error}`);
+  if (result.error) {
+    // Release immediately so the next hourly tick retries instead of waiting
+    // out the lease.
+    console.error(`❌ [CRON:weekly-sheets] ${label} for week of ${weekLabel} failed: ${result.error}`);
+    await deleteStored("weekly-sheets-claim", orgId, job, since).catch(() => {});
+    return result;
+  }
+  await setStored(
+    "weekly-sheets-claim", orgId, [job, since],
+    { job, since, until, status: "done", at: Date.now() } satisfies SheetClaim,
+    { expireInMs: CLAIM_DONE_MS },
+  );
   return result;
 }
 

@@ -3,7 +3,7 @@
  *  (tests/e2e/dashboard.test.ts) so we don't need Postmark in unit tests. */
 
 import { assertEquals } from "#assert";
-import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock, resolveManagerCc, overturnPhraseFor, envFlagEnabled } from "./mod.ts";
+import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock, renderReAuditCommentBlock, resolveManagerCc, overturnPhraseFor, envFlagEnabled } from "./mod.ts";
 
 /** Build a minimal finding whose record carries the given SupervisorEmail. */
 const findingWithSupervisor = (supervisorEmail: string) => ({
@@ -173,4 +173,27 @@ Deno.test("envFlagEnabled — negatives and typos stay OFF", () => {
   for (const raw of ["false", "0", "no", "off", "ture", "enabled", "maybe"]) {
     assertEquals(envFlagEnabled(raw), false, `${raw} must not enable`);
   }
+});
+
+Deno.test("renderReAuditCommentBlock — empty when no note was typed", () => {
+  assertEquals(renderReAuditCommentBlock(""), "");
+  assertEquals(renderReAuditCommentBlock("   "), "");
+});
+
+Deno.test("renderReAuditCommentBlock — shows the typed note back to the team member", () => {
+  // The real case: the note held the replacement genie number (27643685) while
+  // the genie box still carried the pre-filled original, so the same recording
+  // was re-audited. Surfacing the note next to "New Genie(s)" makes that visible.
+  const html = renderReAuditCommentBlock("27643685");
+  assertEquals(html.includes("Your Note"), true);
+  assertEquals(html.includes("27643685"), true);
+  assertEquals(html.startsWith("<tr>"), true); // drops into the outer layout table
+  assertEquals(html.endsWith("</tr>"), true);
+});
+
+Deno.test("renderReAuditCommentBlock — escapes HTML in the member-typed note", () => {
+  const html = renderReAuditCommentBlock('wrong call & <b>bad</b>');
+  assertEquals(html.includes("&lt;b&gt;bad&lt;/b&gt;"), true);
+  assertEquals(html.includes("&amp;"), true);
+  assertEquals(html.includes("<b>bad</b>"), false);
 });

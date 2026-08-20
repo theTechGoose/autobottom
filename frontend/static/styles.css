@@ -1909,3 +1909,25 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .ah-summary strong { color: var(--text-bright); font-weight: 700; }
 .ah-summary-sep { color: var(--border-hover); }
 .ah-summary-dim { color: var(--text-muted); }
+
+/* ── Manager Portal split view: queue | completed ─────────────────────────
+   One filter bar drives both panes. `minmax(0,1fr)` (not plain `1fr`) is
+   load-bearing: a grid track's default min-width is auto, so a wide table
+   would push its column past 50% instead of scrolling inside it. Each pane
+   scrolls on its own via the .rem-split-pane overflow guard below. */
+.rem-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.rem-split-pane { min-width: 0; }
+.rem-split-pane > div[id] { overflow-x: auto; }
+/* A vertical divider between the panes, without an extra element. */
+.rem-split-pane:last-child { border-left: 1px solid var(--border); padding-left: 18px; }
+/* Below ~1100px two tables side by side stop being readable — stack them,
+   queue first, and drop the divider so the border doesn't float mid-page. */
+@media (max-width: 1100px) {
+  .rem-split { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .rem-split-pane:last-child { border-left: 0; padding-left: 0; border-top: 1px solid var(--border); padding-top: 18px; }
+}

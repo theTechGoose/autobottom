@@ -7,9 +7,9 @@
 import { assert, assertEquals } from "@std/assert";
 import { renderHTML, assertContains, assertNotContains } from "../../helpers/render.ts";
 import {
-  renderQueueTable, renderQueueResults, queueTimestamp, queueFacets,
+  renderQueueTable, renderQueueResults, renderCompletedResults, queueTimestamp, queueFacets,
   renderMemberButtons,
-  filterAndSortQueue, readQueueFilterParams, type QueueItem,
+  filterAndSortQueue, filterCompleted, readQueueFilterParams, type QueueItem,
 } from "../../../routes/api/manager/queue.tsx";
 
 function item(over: Partial<QueueItem> = {}): QueueItem {
@@ -379,13 +379,16 @@ function headerCount(html: string): number {
   return (html.match(/<th[ >]/g) ?? []).length;
 }
 
-Deno.test("ManagerQueue — empty state spans every column, in both modes", () => {
+Deno.test("ManagerQueue — empty state spans every column, in all four modes", () => {
   // Derived from the header rather than hardcoded: adding a column used to
-  // silently leave a ragged empty row until someone noticed the stripe.
+  // silently leave a ragged empty row until someone noticed the stripe. Compact
+  // (the split view) drops columns, so its colspan has to shrink with them.
   for (const completed of [false, true]) {
-    const html = renderHTML(renderQueueTable([], { completed }));
-    const n = headerCount(html);
-    assertContains(html, `colspan="${n}"`);
+    for (const compact of [false, true]) {
+      const html = renderHTML(renderQueueTable([], { completed, compact }));
+      const n = headerCount(html);
+      assertContains(html, `colspan="${n}"`);
+    }
   }
 });
 
@@ -497,4 +500,111 @@ Deno.test("ManagerQueue — team member links to their report only when the row 
   const unlinked = renderHTML(renderQueueTable([item({ voName: "Mariah Brown" })]));
   assertContains(unlinked, "Mariah Brown");
   assertNotContains(unlinked, "/manager/team/");
+});
+
+
+// ── Split view: compact tables + the Completed side ─────────────────────────
+// The Manager Portal shows pending and remediated side by side on one page,
+// sharing a filter bar. Compact mode is what makes two tables fit; filterCompleted
+// is what keeps the right side honest about the row you just submitted.
+
+const DAY = 86_400_000;
+
+Deno.test("ManagerQueue compact — pending side keeps triage columns, drops the rest", () => {
+  const html = renderHTML(renderQueueTable([item({ voName: "Jane Doe", department: "VBA", shift: "PM" })], { compact: true }));
+  for (const kept of ["Team Member", "Failed Questions", "Score", "Timestamp", "Action"]) assertContains(html, kept);
+  for (const dropped of ["Finding", "Dept / Shift", "Sale", "Email Opened", "Status"]) assertNotContains(html, `<th>${dropped}</th>`);
+});
+
+Deno.test("ManagerQueue compact — completed side is name / who / when / note", () => {
+  const html = renderHTML(renderQueueTable(
+    [item({ status: "remediated", voName: "Jane Doe", remediatedBy: "mgr@team.com", remediatedAt: 1, notes: "coached her" })],
+    { completed: true, compact: true },
+  ));
+  for (const kept of ["Team Member", "Remediated By", "When", "Notes"]) assertContains(html, kept);
+  // Failed Questions and Score give up their room to the note on this side.
+  for (const dropped of ["Failed Questions", "Score", "Finding", "Sale"]) assertNotContains(html, `<th>${dropped}</th>`);
+  assertContains(html, "coached her");
+});
+
+Deno.test("ManagerQueue compact — the full-width tables are untouched", () => {
+  // /operations and /manager/completed pass no `compact` and must still get
+  // every column; the split view is the only caller that trims.
+  const html = renderHTML(renderQueueTable([item()], {}));
+  for (const kept of ["Finding", "Dept / Shift", "Sale", "Email Opened", "Status"]) assertContains(html, `<th>${kept}</th>`);
+});
+
+Deno.test("filterCompleted — keeps only remediated rows", () => {
+  const rows = filterCompleted([
+    item({ findingId: "p", status: "pending" }),
+    item({ findingId: "r", status: "remediated", remediatedAt: Date.now() }),
+  ], { ...PARAMS });
+  assertEquals(rows.map((r) => r.findingId), ["r"]);
+});
+
+Deno.test("filterCompleted — windows on remediatedAt, NOT the audit's own timestamp", () => {
+  // The row a manager just closed out is the one they most need to see. An
+  // audit from three weeks ago, remediated today, belongs in today's window.
+  const now = Date.now();
+  const rows = filterCompleted([
+    item({ findingId: "old-audit-just-closed", status: "remediated", completedAt: now - 21 * DAY, remediatedAt: now }),
+    item({ findingId: "new-audit-closed-long-ago", status: "remediated", completedAt: now, remediatedAt: now - 21 * DAY }),
+  ], { ...PARAMS, since: now - 7 * DAY });
+  assertEquals(rows.map((r) => r.findingId), ["old-audit-just-closed"]);
+});
+
+Deno.test("filterCompleted — ignores `until` so a just-submitted row can't fall off the top", () => {
+  // Every open-ended preset (Today / 7D / …) freezes `until` at the moment it
+  // was clicked, so honoring it would hide anything remediated after page load.
+  const now = Date.now();
+  const rows = filterCompleted(
+    [item({ status: "remediated", remediatedAt: now })],
+    { ...PARAMS, since: now - 7 * DAY, until: now - 60_000 },
+  );
+  assertEquals(rows.length, 1);
+});
+
+Deno.test("filterCompleted — since=0 (All time) keeps everything", () => {
+  const rows = filterCompleted([item({ status: "remediated", remediatedAt: 1 })], { ...PARAMS, since: 0 });
+  assertEquals(rows.length, 1);
+});
+
+Deno.test("filterCompleted — shares the member filter with the queue side", () => {
+  const now = Date.now();
+  const rows = filterCompleted([
+    item({ findingId: "a", status: "remediated", voName: "Natalia Reyes", owner: "api", remediatedAt: now }),
+    item({ findingId: "b", status: "remediated", voName: "Mar Boos", owner: "api", remediatedAt: now }),
+  ], { ...PARAMS, member: "natalia" });
+  assertEquals(rows.map((r) => r.findingId), ["a"]);
+});
+
+Deno.test("filterCompleted — newest remediation first, whatever the queue's sort says", () => {
+  const now = Date.now();
+  const rows = filterCompleted([
+    item({ findingId: "older", status: "remediated", remediatedAt: now - DAY }),
+    item({ findingId: "newer", status: "remediated", remediatedAt: now }),
+  ], { ...PARAMS, sort: "oldest" });
+  assertEquals(rows.map((r) => r.findingId), ["newer", "older"]);
+});
+
+Deno.test("renderCompletedResults — the caption names the window it is actually showing", () => {
+  // This side ignores `until`, so the count has to say what dates it covers or
+  // a manager is left guessing.
+  const since = Date.UTC(2026, 7, 13, 12, 0, 0);
+  const html = renderHTML(renderCompletedResults([item({ status: "remediated", remediatedAt: since + DAY })], { ...PARAMS, since }));
+  // The count sits in its own <strong>, so assert the two halves separately.
+  assertContains(html, ">1</strong>");
+  assertContains(html, "remediation closed out since Aug 13, 2026");
+});
+
+Deno.test("renderCompletedResults — all-time says so instead of naming a date", () => {
+  const html = renderHTML(renderCompletedResults([], { ...PARAMS, since: 0 }));
+  assertContains(html, "closed out, all time");
+  assertContains(html, "No completed remediations");
+});
+
+Deno.test("ManagerQueue — the row click carries `back` so a submit returns to the same filtered view", () => {
+  const html = renderHTML(renderQueueTable([item()], { compact: true }));
+  assertContains(html, "q.set('back',location.pathname+location.search)");
+  assertContains(html, "/manager/remediate/");
 });

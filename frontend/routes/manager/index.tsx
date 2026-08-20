@@ -15,7 +15,8 @@ import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
 import DateRangePicker from "../../islands/DateRangePicker.tsx";
 import {
-  renderQueueResults, renderMemberButtons, queueFacets, filterAndSortQueue, readQueueFilterParams,
+  renderQueueResults, renderCompletedResults, renderMemberButtons, queueFacets,
+  filterAndSortQueue, filterCompleted, readQueueFilterParams,
   type QueueItem,
 } from "../api/manager/queue.tsx";
 
@@ -30,15 +31,24 @@ export default define.page(async function ManagerPortalPage(ctx) {
   // we can build the filter bar's autosuggest lists and server-render the first
   // (sorted) table. Filter changes re-fetch only the table via /api/manager/queue.
   const params = readQueueFilterParams(url.searchParams);
-  let pending: QueueItem[] = [];
+  // ONE read feeds both sides of the split — /manager/api/queue returns pending
+  // AND remediated items, so putting Completed next to the queue costs no extra
+  // Firestore reads (frontend/CLAUDE.md: never add per-request hydration to an
+  // auto-loading dashboard path).
+  let allItems: QueueItem[] = [];
   try {
     const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${asQs}`, ctx.req);
-    pending = (items ?? []).filter((i) => i.status !== "remediated");
+    allItems = items ?? [];
   } catch (e) {
     console.error("Manager queue load error:", e);
   }
+  const pending = allItems.filter((i) => i.status !== "remediated");
+  // Facets come from the OPEN items only: the question dropdown is a triage
+  // tool, and offering a question with no open work left would filter the queue
+  // side down to nothing.
   const facets = queueFacets(pending);
   const rows = filterAndSortQueue(pending, params);
+  const completedRows = filterCompleted(allItems, params);
 
   return (
     <Layout title="Manager Portal" section="manager" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
@@ -61,8 +71,6 @@ export default define.page(async function ManagerPortalPage(ctx) {
           Firestore reads). The queue table does not auto-poll, so filter state
           isn't clobbered mid-use. */}
       <div class="card" style="padding:14px 18px;">
-        <div class="tbl-title" style="margin-bottom:10px;">Remediation Queue</div>
-
         <form
           id="queue-filters"
           style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;"
@@ -98,6 +106,11 @@ export default define.page(async function ManagerPortalPage(ctx) {
               out-of-band. Only this page has that row — /operations posts to
               the same endpoint and must not get the OOB block. */}
           <input type="hidden" name="members" value="1" />
+          {/* Asks the queue fragment for the compact tables AND the Completed
+              side as an out-of-band swap, so one filter change refreshes both
+              panes. Only this page is split — /operations posts to the same
+              endpoint from a form with the same id and must not get it. */}
+          <input type="hidden" name="split" value="1" />
           <div class="form-group" style="margin-bottom:0;">
             <label>Failed Question</label>
             <select name="q">
@@ -143,11 +156,33 @@ export default define.page(async function ManagerPortalPage(ctx) {
           {renderMemberButtons(pending, params)}
         </div>
 
-        <div
-          id="manager-queue-table"
-          {...{ "hx-on::after-swap": "history.replaceState(null,'','/manager?'+new URLSearchParams(new FormData(document.getElementById('queue-filters'))).toString())" }}
-        >
-          {renderQueueResults(rows)}
+        {/* Side-by-side: open work on the left, what you already closed out on
+            the right, sharing one filter bar. Before this they were two separate
+            pages, so submitting a remediation dropped you back on a queue with
+            the row simply gone — and with several audits for the same team
+            member you could not tell which one you had just handled. Now the row
+            leaves the left pane and appears at the top of the right one.
+
+            Only the left pane is the hx-target; the right rides along as an
+            out-of-band swap from the same fragment response (`split=1`), so one
+            request refreshes both and they can never disagree. */}
+        <div class="rem-split">
+          <section class="rem-split-pane">
+            <div class="tbl-title" style="margin-bottom:10px;">Remediation Queue</div>
+            <div
+              id="manager-queue-table"
+              {...{ "hx-on::after-swap": "history.replaceState(null,'','/manager?'+new URLSearchParams(new FormData(document.getElementById('queue-filters'))).toString())" }}
+            >
+              {renderQueueResults(rows, { compact: true })}
+            </div>
+          </section>
+
+          <section class="rem-split-pane">
+            <div class="tbl-title" style="margin-bottom:10px;">Completed</div>
+            <div id="manager-completed-table">
+              {renderCompletedResults(completedRows, params)}
+            </div>
+          </section>
         </div>
       </div>
 
@@ -175,6 +210,13 @@ export default define.page(async function ManagerPortalPage(ctx) {
           <div class="modal-sub" style="margin-bottom:14px;">Record how this failure was addressed with the agent.</div>
           <form hx-post="/api/manager/remediate" hx-swap="none">
             <input type="hidden" id="rem-findingId" name="findingId" value="" />
+            {/* Stamped by the Remediate button at click time, not rendered
+                here: filter changes only replaceState the URL, so a value
+                baked in at SSR would send the manager back to whatever view
+                the page happened to load with. /operations has its own static
+                returnTo and no element with this id, so the button's `if (rt)`
+                guard leaves it alone. */}
+            <input type="hidden" id="rem-returnTo" name="returnTo" value="" />
             {/* username → remediatedBy on the queue item + gamification credit */}
             <input type="hidden" name="username" value={user.email} />
             <div class="form-group">

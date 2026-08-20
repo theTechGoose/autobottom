@@ -84,19 +84,64 @@ const fmtTsEastern = (ms?: number) =>
     }) + " ET"
     : "—";
 
+/** Row click → the full-page remediation detail.
+ *
+ *  `back` carries the view you left — path AND query string — so submitting a
+ *  remediation returns you to the exact filtered queue you were working
+ *  (member chip, date window, sort), not a default-windowed dashboard. Before
+ *  this, every submit dropped you on a bare /manager and you lost your place;
+ *  that was the whole "I get lost on repeated remediations" complaint. The
+ *  detail page re-checks it is a same-origin absolute path before using it.
+ *
+ *  Read the id off `this.dataset` — never inline it into the JS string, where
+ *  a `'` would break out of the literal. */
+const ROW_OPEN_JS =
+  "var q=new URLSearchParams();"
+  + "q.set('back',location.pathname+location.search);"
+  + "var a=new URLSearchParams(location.search).get('as');if(a)q.set('as',a);"
+  + "location.href='/manager/remediate/'+encodeURIComponent(this.dataset.findingId)+'?'+q.toString()";
+
 /** Pure render of the queue table. Team Member = enriched voName (never the
  *  raw "api" owner token); Failed Questions = first two + a "+N more" hint;
  *  Score = derived pass-rate (or a "N failed" fallback when totals are unknown).
- *  `completed` mode (the Completed tab) swaps Status/Action for who
- *  remediated the item and when. */
-export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean } = {}): JSX.Element {
+ *  `completed` mode swaps Status/Action for who remediated the item and when.
+ *
+ *  `compact` mode is for the Manager Portal's side-by-side split, where each
+ *  table gets half the page. It drops the columns a manager doesn't read while
+ *  working their own queue — Finding id, Dept/Shift (their queue is already
+ *  their team), Sale, Email Opened, and the Status pill (redundant once the two
+ *  states are separate tables). Compact-completed also drops Failed Questions
+ *  and Score: on that side the NOTE is what you came to read, and it needs the
+ *  room. Full-width surfaces (/operations, /manager/completed) are unchanged —
+ *  they pass no `compact` and still get all ten columns. */
+export function renderQueueTable(
+  items: QueueItem[],
+  opts: { completed?: boolean; compact?: boolean } = {},
+): JSX.Element {
   const completed = !!opts.completed;
+  const compact = !!opts.compact;
+  const showFails = !(compact && completed);
+  const showScore = !(compact && completed);
+  const colCount = compact ? (completed ? 4 : 5) : 10;
   return (
     <table class="data-table">
-      <thead><tr><th>Finding</th><th>Team Member</th><th>Dept / Shift</th><th>Failed Questions</th><th>Sale</th><th>Score</th><th>Email Opened</th>{completed ? <><th>Remediated By</th><th>When</th><th>Notes</th></> : <><th>Timestamp</th><th>Status</th><th>Action</th></>}</tr></thead>
+      <thead>
+        <tr>
+          {!compact && <th>Finding</th>}
+          <th>Team Member</th>
+          {!compact && <th>Dept / Shift</th>}
+          {showFails && <th>Failed Questions</th>}
+          {!compact && <th>Sale</th>}
+          {showScore && <th>Score</th>}
+          {!compact && <th>Email Opened</th>}
+          {completed
+            ? <><th>Remediated By</th><th>When</th><th>Notes</th></>
+            : <><th>Timestamp</th>{!compact && <th>Status</th>}<th>Action</th></>}
+        </tr>
+      </thead>
       <tbody>
         {items.length === 0 ? (
-          <tr class="empty-row"><td colSpan={10}>{completed ? "No completed remediations" : "No items in queue"}</td></tr>
+          <tr class="empty-row"><td colSpan={colCount}>{completed ? "No completed remediations" : "No items in queue"}</td></tr>
         ) : items.map((item) => {
           const score = scoreOf(item);
           // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
@@ -105,12 +150,12 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
             ? <span class={`pill pill-${pillColor(score)}`}>{score}%</span>
             : item.failedCount != null
               ? <span class="pill pill-red">{item.failedCount} failed</span>
-              : "\u2014";
+              : "—";
           const fails = item.failedQuestions ?? [];
           const failsCell = fails.length === 0
-            ? <span style="color:var(--text-dim);font-size:11px;">\u2014</span>
+            ? <span style="color:var(--text-dim);font-size:11px;">—</span>
             : (
-              <div style="font-size:11px;color:var(--text-muted);max-width:420px;">
+              <div style={`font-size:11px;color:var(--text-muted);max-width:${compact ? "220px" : "420px"};`}>
                 {fails.slice(0, 2).map((q) => (
                   <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{q}</div>
                 ))}
@@ -131,9 +176,9 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
             style="cursor:pointer;"
             data-finding-id={item.findingId}
             title="Open remediation detail"
-            {...{ "hx-on:click": "var a=new URLSearchParams(location.search).get('as');location.href='/manager/remediate/'+encodeURIComponent(this.dataset.findingId)+(a?('?as='+encodeURIComponent(a)):'')" }}
+            {...{ "hx-on:click": ROW_OPEN_JS }}
           >
-            <td class="mono">{item.findingId?.slice(0, 8)}</td>
+            {!compact && <td class="mono">{item.findingId?.slice(0, 8)}</td>}
             {/* The row itself navigates to the remediation detail, so the name
                 link must stopPropagation or a click would fire both. Unlinked
                 when the item has no employee id — a name-built link would open
@@ -150,22 +195,24 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
                 )
                 : teamMemberLabel(item)}
             </td>
-            <td style="font-size:11px;color:var(--text-muted);white-space:nowrap;">
-              {item.department || "—"}{item.shift ? ` · ${item.shift}` : ""}
-            </td>
-            <td>{failsCell}</td>
-            <td>{saleCell}</td>
-            <td>{scoreCell}</td>
-            <td>{emailOpenedCell(item)}</td>
+            {!compact && (
+              <td style="font-size:11px;color:var(--text-muted);white-space:nowrap;">
+                {item.department || "—"}{item.shift ? ` · ${item.shift}` : ""}
+              </td>
+            )}
+            {showFails && <td>{failsCell}</td>}
+            {!compact && <td>{saleCell}</td>}
+            {showScore && <td>{scoreCell}</td>}
+            {!compact && <td>{emailOpenedCell(item)}</td>}
             {completed ? <>
-              <td style="font-size:12px;">{item.remediatedBy || "\u2014"}</td>
+              <td style="font-size:12px;">{item.remediatedBy || "—"}</td>
               <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtWhen(item.remediatedAt)}</td>
               {/* What the manager actually DID about the failure. Until now it
                   was written into a required textarea and then readable
                   nowhere in the app but a title-attribute tooltip on the detail
                   page. One clamped line here, a bigger clamped popout on hover,
                   and the row click (already wired) opens the full note on the
-                  detail page \u2014 CSS only, because this fragment is HTMX-swapped
+                  detail page — CSS only, because this fragment is HTMX-swapped
                   and an island in it would never hydrate (CLAUDE.md Gotcha #1). */}
               <td class="rem-note-cell">
                 {item.notes
@@ -177,15 +224,15 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
               </td>
             </> : <>
             <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtTsEastern(queueTimestamp(item))}</td>
-            <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>
+            {!compact && <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>}
             <td {...{ "hx-on:click": "event.stopPropagation()" }}>
               {/* Carry the id on a data-attribute (Preact attribute-escapes it)
-                  and read it via this.dataset \u2014 never inline it into the JS
+                  and read it via this.dataset — never inline it into the JS
                   string, where a `'` would break out of the literal. */}
               <button
                 class="btn btn-ghost btn-sm"
                 data-finding-id={item.findingId}
-                {...{ "hx-on:click": "event.stopPropagation();document.getElementById('remediate-modal')?.classList.add('open');document.getElementById('rem-findingId').value=this.dataset.findingId" }}
+                {...{ "hx-on:click": "event.stopPropagation();document.getElementById('remediate-modal')?.classList.add('open');document.getElementById('rem-findingId').value=this.dataset.findingId;var rt=document.getElementById('rem-returnTo');if(rt)rt.value=location.pathname+location.search" }}
               >Remediate</button>
             </td>
             </>}
@@ -196,6 +243,7 @@ export function renderQueueTable(items: QueueItem[], opts: { completed?: boolean
     </table>
   );
 }
+
 
 // ── Filtering / sorting (all in-memory over the already-loaded queue) ─────────
 // Every field these touch (team member, failed questions, WGS/MCC, fail counts,
@@ -389,7 +437,7 @@ export function renderMemberButtons(
 /** The queue table plus a small "window total" caption above it. Rendered by
  *  both the page (initial) and the fragment (filter refresh) so the count and
  *  table always swap together and agree. */
-export function renderQueueResults(rows: QueueItem[]): JSX.Element {
+export function renderQueueResults(rows: QueueItem[], opts: { compact?: boolean } = {}): JSX.Element {
   return (
     <>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">
@@ -397,7 +445,71 @@ export function renderQueueResults(rows: QueueItem[]): JSX.Element {
         <strong style="color:var(--text-muted);">{rows.length}</strong>{" "}
         {rows.length === 1 ? "failure" : "failures"} in the selected date range
       </div>
-      <div style="overflow-x:auto;">{renderQueueTable(rows)}</div>
+      <div style="overflow-x:auto;">{renderQueueTable(rows, { compact: !!opts.compact })}</div>
+    </>
+  );
+}
+
+/** The Completed side of the Manager Portal's split view.
+ *
+ *  Shares the member / failed-question / sale / department filters with the
+ *  queue — that's the point of the split: pick "Natalia Reyes" once and see
+ *  what's left for her next to what you've already closed out.
+ *
+ *  Two deliberate differences from `filterAndSortQueue`:
+ *
+ *  1. The date window is applied to `remediatedAt` (WHEN YOU CLOSED IT OUT),
+ *     not `queueTimestamp` (when the audit happened). Remediating a three-week-
+ *     old audit has to show up in a "last 7 days" view, or the row you just
+ *     submitted disappears from both panes and you're left wondering whether it
+ *     saved at all.
+ *  2. Only `since` is applied — the window is open-ended at the top. Every
+ *     open-ended preset (Today / This week / 7D / 30D / All time) freezes
+ *     `until` at the moment it was clicked, so honoring it would hide a
+ *     remediation submitted after the page first loaded — precisely the row the
+ *     manager is looking for. The pane header states the range it's showing.
+ *
+ *  Always newest-remediation-first; the queue's sort control is about triage
+ *  order and doesn't apply to a history list. */
+export function filterCompleted(items: QueueItem[], params: QueueFilterParams): QueueItem[] {
+  const member = (params.member ?? "").trim().toLowerCase();
+  const q = (params.q ?? "").trim();
+  const wgs = !!params.wgs;
+  const mcc = !!params.mcc;
+  const since = typeof params.since === "number" ? params.since : undefined;
+  const dept = (params.dept ?? "").trim();
+
+  return items
+    .filter((it) => it.status === "remediated")
+    .filter((it) => {
+      if (dept && (it.department ?? "") !== dept) return false;
+      // since=0 is the All-time preset — keep everything.
+      if (since != null && since > 0 && (it.remediatedAt ?? 0) < since) return false;
+      if (member && !teamMemberLabel(it).toLowerCase().includes(member)) return false;
+      if (q && !(it.failedQuestions ?? []).includes(q)) return false;
+      if ((wgs || mcc) && !((wgs && it.wgs) || (mcc && it.mcc))) return false;
+      return true;
+    })
+    .sort((a, b) => (b.remediatedAt ?? 0) - (a.remediatedAt ?? 0));
+}
+
+/** Completed-side caption + compact table, the mirror of `renderQueueResults`.
+ *  The caption spells out the window because this side ignores `until` (see
+ *  `filterCompleted`) — a manager should never have to guess which dates a
+ *  count covers. */
+export function renderCompletedResults(rows: QueueItem[], params: QueueFilterParams): JSX.Element {
+  const since = typeof params.since === "number" ? params.since : 0;
+  const sinceLabel = since > 0
+    ? new Date(since).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" })
+    : "";
+  return (
+    <>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">
+        <strong style="color:var(--text-muted);">{rows.length}</strong>{" "}
+        {rows.length === 1 ? "remediation" : "remediations"}{" "}
+        {sinceLabel ? <>closed out since {sinceLabel}</> : <>closed out, all time</>}
+      </div>
+      <div style="overflow-x:auto;">{renderQueueTable(rows, { completed: true, compact: true })}</div>
     </>
   );
 }
@@ -411,11 +523,18 @@ export const handler = define.handlers({
       const asEmail = url.searchParams.get("as");
       const qs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
       const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${qs}`, ctx.req);
-      // The Queue tab shows open work only — completed (remediated) items
-      // live on the /manager/completed tab.
+      // The queue side shows open work only. Remediated items go to the
+      // Completed side of the split (below) — or, on /operations and the
+      // standalone /manager/completed page, to their own tab.
       const pending = (items ?? []).filter((i) => i.status !== "remediated");
       const params = readQueueFilterParams(url.searchParams);
       const rows = filterAndSortQueue(pending, params);
+      // Manager Portal only: the two states sit side by side on one page, so a
+      // filter change has to refresh BOTH. Gated on `split=1` (only that form
+      // sends it) for the same reason `members=1` is — /operations posts to
+      // this endpoint from a form with the same id and has no such target, and
+      // an unconditional OOB block throws htmx:oobErrorNoTarget over there.
+      const withSplit = url.searchParams.get("split") === "1";
       // The member buttons live OUTSIDE the swapped table (they'd filter
       // themselves down to one name if they were inside it), so they ride
       // along as an out-of-band swap. Without this their counts would keep
@@ -428,10 +547,15 @@ export const handler = define.handlers({
       const withMembers = url.searchParams.get("members") === "1";
       const html = renderToString(
         <>
-          {renderQueueResults(rows)}
+          {renderQueueResults(rows, { compact: withSplit })}
           {withMembers && (
             <div id="queue-member-buttons" hx-swap-oob="true">
               {renderMemberButtons(pending, params)}
+            </div>
+          )}
+          {withSplit && (
+            <div id="manager-completed-table" hx-swap-oob="true">
+              {renderCompletedResults(filterCompleted(items ?? [], params), params)}
             </div>
           )}
         </>,

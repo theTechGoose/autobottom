@@ -333,7 +333,16 @@ export default define.page(async function RemediationDetail(ctx) {
   const findingId = ctx.params.findingId;
   const asEmail = url.searchParams.get("as") ?? "";
   const asQs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
-  const backHref = `/manager${asQs}`;
+  // Where the row was clicked from, path + query and all, so Back and the
+  // post-submit redirect both land on the EXACT filtered view the manager left
+  // (member chip, date window, sort) instead of a default-windowed /manager.
+  // Working six audits for one person used to mean re-filtering after every
+  // single submit. Same open-redirect guard the remediate API wrapper uses:
+  // same-origin absolute paths only, so "//host" and "https://…" are refused.
+  const backParam = url.searchParams.get("back") ?? "";
+  const backHref = backParam.startsWith("/") && !backParam.startsWith("//")
+    ? backParam
+    : `/manager${asQs}`;
 
   let f: Finding | null = null;
   try {

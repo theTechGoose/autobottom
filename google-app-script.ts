@@ -2,8 +2,9 @@
  * Weekly Fails → Google Sheet
  * ===========================
  *
- * Pulls every audit from last week that either died on an invalid genie, or was
- * STILL failing after a human reviewed it.
+ * Pulls every INTERNAL (date leg) audit from last week that either died on an
+ * invalid genie, or was STILL failing after a human reviewed it. Partner
+ * package audits are not included - the server filters those out.
  *
  * It writes onto THE SHEET THE BUTTON IS ON. That tab is wiped first, so every
  * pull is a clean replacement rather than rows piling up. Your button survives

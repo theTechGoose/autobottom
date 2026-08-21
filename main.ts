@@ -1016,6 +1016,14 @@ applyDefaultQueueParallelism().catch((e) => {
 
 console.log(`🚀 [BOOT] autobottom deployed at ${new Date().toISOString()} — direct-dispatch v3 (appeal+reaudit) + qstash-parallelism`);
 
+// Local-only login. No-ops the moment Firestore credentials are configured, so
+// this never runs on a deployment — it exists so `deno task start` on a laptop
+// (in-memory store, wiped every restart) comes up with an admin you can log in
+// as instead of a login page you have no password for.
+await (await import("@core/business/seed/mod.ts")).seedDevLogin().catch((e) => {
+  console.error(`⚠️ [BOOT] seedDevLogin failed: ${e instanceof Error ? e.message : String(e)}`);
+});
+
 Deno.serve({ port }, (req, info) => {
   // Wrap the entire request lifecycle in AsyncLocalStorage so QStash callbacks
   // use this deployment's origin (not the inherited SELF_URL from .env).

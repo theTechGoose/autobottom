@@ -143,6 +143,7 @@ export class EmailConfigListResponse { configs: unknown[] = []; }
 export class EmailTemplateListResponse { templates: unknown[] = []; }
 export class EmailPreviewResponse { html = ""; }
 export class TokenUsageResponse { total_tokens = 0; prompt_tokens = 0; completion_tokens = 0; calls = 0; }
+export class WeeklyFailsResponse { window: unknown = {}; scan: unknown = {}; counts: unknown = {}; items: unknown[] = []; }
 
 // ── Question Lab ─────────────────────────────────────────────────────────────
 

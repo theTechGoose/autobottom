@@ -6,7 +6,7 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import {
   FailedFindingsResponse, FailureByQuestionResponse, FailureMatrixResponse, TopFailResponse,
-  OkResponse, MessageResponse,
+  OkResponse, MessageResponse, WeeklyFailsResponse,
 } from "@core/dto/responses.ts";
 import { GenericBodyRequest } from "@core/dto/requests.ts";
 import {
@@ -17,6 +17,9 @@ import {
   setQuestionFailureSource, writeFailedFindingRows, resetFailedFindingIndex,
 } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import { normalizeQuestionKey } from "@audit/domain/data/question-stats-repository/mod.ts";
+import { queryWeeklyFails, DEFAULT_LOOKBACK_DAYS } from "@reporting/domain/business/weekly-fails/mod.ts";
+import { prevWeekWindow } from "@cron/domain/business/weekly-sheets/mod.ts";
+import { getSelfUrl } from "@core/data/qstash/mod.ts";
 import type { FailureSource } from "@core/dto/types.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
@@ -108,6 +111,32 @@ export class FailedAuditsController {
     const from = ms(since, 0);
     const to = ms(until, Date.now());
     return getTopFailRanked(ORG(), from, to, filtersFrom(voName, department, shift, "", source));
+  }
+
+  /** Prior-week fails: invalid genies + audits still failing after review.
+   *
+   *  Defaults to the last COMPLETE Mon 00:00 → Sun 23:59:59.999 in Eastern
+   *  (same window the weekly sheet export uses), filtered on `doneAt` — when
+   *  the audit settled, not when the bot finished. Override the window with
+   *  ?since=&until= (epoch ms) for a one-off range.
+   *
+   *  ?lookbackDays= widens how far back the completedAt scan reaches to catch
+   *  audits reviewed long after they were graded. */
+  @Get("weekly-fails") @ReturnedType(WeeklyFailsResponse)
+  async weeklyFails(
+    @Query("since") since: string, @Query("until") until: string,
+    @Query("lookbackDays") lookbackDays: string,
+    @Query("questions") questions: string,
+  ) {
+    const week = prevWeekWindow(new Date());
+    const from = ms(since, week.since);
+    const to = ms(until, week.until);
+    if (to < from) return { error: "until must not be before since" };
+    return queryWeeklyFails(ORG(), from, to, {
+      lookbackDays: ms(lookbackDays, DEFAULT_LOOKBACK_DAYS),
+      includeQuestions: !/^(0|false|no)$/i.test((questions ?? "").trim()),
+      selfUrl: getSelfUrl(),
+    });
   }
 
   /** Manual admin override of a failed question's source. */

@@ -1,7 +1,7 @@
 /** Tests for the prior-week fails report — criteria + the two window traps. */
 
 import { assertEquals, assert } from "#assert";
-import { classifyWeeklyFail, queryWeeklyFails, settledAt } from "./mod.ts";
+import { classifyWeeklyFail, queryWeeklyFails, settledAt, isInternalDateLeg } from "./mod.ts";
 import { prevWeekWindow } from "@cron/domain/business/weekly-sheets/mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import { writeAuditDoneIndex, _resetHiddenCacheForTesting } from "@audit/domain/data/stats-repository/mod.ts";
@@ -164,4 +164,45 @@ Deno.test("queryWeeklyFails — rows come back oldest-settled first with a repor
   assertEquals(res.items.map((i) => i.findingId), ["early", "late"]);
   assertEquals(res.items[0].reportUrl, "https://x.test/audit/report?id=early");
   assertEquals(res.window.filteredOn, "doneAt");
+});
+
+// ── Internal (date leg) vs partner package ──────────────────────────────────
+// "Internal" and "date leg" are the same thing; the index spells it isPackage.
+// A missing flag counts as internal so a row can never fall out of a
+// payroll-adjacent report just for being written by older code.
+
+Deno.test("isInternalDateLeg — package flag decides, missing means internal", () => {
+  assertEquals(isInternalDateLeg({ isPackage: false }), true);
+  assertEquals(isInternalDateLeg({}), true);
+  assertEquals(isInternalDateLeg({ isPackage: true }), false);
+});
+
+Deno.test("queryWeeklyFails — partner packages are excluded by default", async () => {
+  resetFirestoreCredentials(); _resetHiddenCacheForTesting();
+  const orgId = ("wf-scope-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const since = 100 * DAY, until = since + 7 * DAY - 1;
+  const t = since + 2 * DAY;
+
+  await writeAuditDoneIndex(orgId, row({
+    findingId: "internal-ig", completedAt: t, doneAt: t, completed: true,
+    reason: "invalid_genie", score: 0, recordId: "r-i1", isPackage: false,
+  }));
+  await writeAuditDoneIndex(orgId, row({
+    findingId: "package-ig", completedAt: t, doneAt: t, completed: true,
+    reason: "invalid_genie", score: 0, recordId: "r-p1", isPackage: true,
+  }));
+  await writeAuditDoneIndex(orgId, row({
+    findingId: "package-fpr", completedAt: t, doneAt: t, completed: true,
+    reason: "reviewed", score: 90, recordId: "r-p2", isPackage: true,
+  }));
+
+  const def = await queryWeeklyFails(orgId, since, until, {});
+  assertEquals(def.window.scope, "internal");
+  assertEquals(def.items.map((i) => i.findingId), ["internal-ig"]);
+
+  const all = await queryWeeklyFails(orgId, since, until, { scope: "all" });
+  assertEquals(all.counts.total, 3);
+
+  const pkg = await queryWeeklyFails(orgId, since, until, { scope: "package" });
+  assertEquals(pkg.items.map((i) => i.findingId).sort(), ["package-fpr", "package-ig"]);
 });

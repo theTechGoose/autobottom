@@ -1,5 +1,12 @@
-/** Prior-week fails report — the audits that either died on an invalid genie
- *  or were still failing AFTER a human reviewed them.
+/** Prior-week fails report — INTERNAL (date-leg) audits that either died on an
+ *  invalid genie or were still failing AFTER a human reviewed them.
+ *
+ *  "Internal" and "date leg" are the same thing, named two ways in this
+ *  codebase: a finding whose `recordingIdField` is NOT "GenieNumber". The index
+ *  carries it as `isPackage`, and the report engine maps it straight across —
+ *  `isPackage ? "partner" : "internal"`. Partner packages are excluded by
+ *  default; that is not a small trim, it removed 217 of 248 invalid genies for
+ *  the week of 2026-08-10.
  *
  *  Read-only and index-only: every field the criteria need (reason, score,
  *  doneAt, department, shift, VO) already lives on `audit-done-idx`, so this
@@ -39,6 +46,23 @@ export const DEFAULT_LOOKBACK_DAYS = 14;
 
 export type WeeklyFailCategory = "invalid_genie" | "failed_post_review";
 
+/** Which side of the business to report on. "internal" = date legs, the
+ *  default and what the report is for. */
+export type WeeklyFailScope = "internal" | "package" | "all";
+
+/** A row is internal (a date leg) unless it is explicitly flagged a package.
+ *  Falsy-means-internal matches how the chargeback report already branches, so
+ *  a row missing the flag is never silently dropped from payroll-adjacent
+ *  numbers. */
+export function isInternalDateLeg(e: { isPackage?: boolean }): boolean {
+  return !e.isPackage;
+}
+
+export function inScope(e: { isPackage?: boolean }, scope: WeeklyFailScope): boolean {
+  if (scope === "all") return true;
+  return scope === "internal" ? isInternalDateLeg(e) : !isInternalDateLeg(e);
+}
+
 export interface WeeklyFailRow {
   findingId: string;
   category: WeeklyFailCategory;
@@ -71,7 +95,7 @@ export interface WeeklyFailRow {
 }
 
 export interface WeeklyFailsResult {
-  window: { since: number; until: number; timeZone: string; filteredOn: "doneAt" };
+  window: { since: number; until: number; timeZone: string; filteredOn: "doneAt"; scope: WeeklyFailScope };
   scan: { from: number; to: number; lookbackDays: number; rowsScanned: number };
   counts: { total: number; invalidGenie: number; failedPostReview: number; superseded: number };
   items: WeeklyFailRow[];
@@ -100,6 +124,8 @@ export function classifyWeeklyFail(e: AuditDoneIndexEntry): WeeklyFailCategory |
 }
 
 export interface WeeklyFailsOpts {
+  /** Defaults to "internal" — date legs only. */
+  scope?: WeeklyFailScope;
   lookbackDays?: number;
   selfUrl?: string;
   /** Join the failed-question names. On by default; it is a second full range
@@ -114,6 +140,7 @@ export async function queryWeeklyFails(
   until: number,
   opts: WeeklyFailsOpts = {},
 ): Promise<WeeklyFailsResult> {
+  const scope: WeeklyFailScope = opts.scope ?? "internal";
   const lookbackDays = Math.max(0, opts.lookbackDays ?? DEFAULT_LOOKBACK_DAYS);
   const scanFrom = since - lookbackDays * 86_400_000;
   // Upper bound stays at `until`: doneAt >= completedAt always (you cannot
@@ -128,6 +155,7 @@ export async function queryWeeklyFails(
 
   const matched: Array<{ e: AuditDoneIndexEntry; category: WeeklyFailCategory }> = [];
   for (const e of inWeek) {
+    if (!inScope(e, scope)) continue;
     const category = classifyWeeklyFail(e);
     if (category) matched.push({ e, category });
   }
@@ -183,7 +211,7 @@ export async function queryWeeklyFails(
   items.sort((a, b) => a.doneAt - b.doneAt);
 
   return {
-    window: { since, until, timeZone: "America/New_York", filteredOn: "doneAt" },
+    window: { since, until, timeZone: "America/New_York", filteredOn: "doneAt", scope },
     scan: { from: scanFrom, to: until, lookbackDays, rowsScanned: rows.length },
     counts: {
       total: items.length,

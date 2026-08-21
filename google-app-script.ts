@@ -3,7 +3,11 @@
  * ===========================
  *
  * Pulls every audit from last week that either died on an invalid genie, or was
- * STILL failing after a human reviewed it, and drops them into a tab.
+ * STILL failing after a human reviewed it.
+ *
+ * It writes onto THE SHEET THE BUTTON IS ON. That tab is wiped first, so every
+ * pull is a clean replacement rather than rows piling up. Your button survives
+ * the wipe — buttons float above the grid, they are not cell contents.
  *
  * NOTE ON THIS FILE: Google Apps Script runs JavaScript, not TypeScript. The
  * code below is plain Apps Script JS — paste it in exactly as-is. (The .ts name
@@ -30,8 +34,10 @@
 /** The AutoBot server. Change this only if the app moves to a new address. */
 var BASE_URL = 'https://autobottom.thetechgoose.deno.net';
 
-/** Tab the rows get written to. Created automatically if it isn't there. */
-var SHEET_NAME = 'Weekly Fails';
+/** Normally blank, which means "write onto whichever sheet is showing" — the
+ *  one the button lives on. Put a tab name here to always target that tab
+ *  instead, no matter which one happens to be open. */
+var TARGET_SHEET_NAME = '';
 
 /** Pull the names of the failed questions too. Set to false to make the pull
  *  roughly twice as fast, at the cost of the "Failed Questions" column. */
@@ -108,10 +114,15 @@ function runPull(since, until) {
   }
 
   var rows = data.items || [];
-  // Write into a fresh in-memory table first, so a failure part-way through
-  // can never leave the sheet half-updated.
+  // Build the whole grid in memory first, so a failure part-way through can
+  // never leave the sheet half-wiped and half-written.
   var table = buildTable(rows);
-  var sheet = getOrCreateSheet(ss, SHEET_NAME);
+
+  var sheet = resolveTargetSheet(ss);
+  if (!confirmWipe(sheet)) {
+    ss.toast('Cancelled. Nothing was changed.', 'Stopped', 5);
+    return;
+  }
   writeTable(sheet, table, data, since, until);
 
   ss.toast(
@@ -210,13 +221,42 @@ function appealLabel(status) {
   return '';
 }
 
-function getOrCreateSheet(ss, name) {
-  var sheet = ss.getSheetByName(name);
-  if (!sheet) sheet = ss.insertSheet(name);
-  return sheet;
+/** The sheet to write on: whichever is showing, unless TARGET_SHEET_NAME
+ *  names one. */
+function resolveTargetSheet(ss) {
+  if (TARGET_SHEET_NAME) {
+    var named = ss.getSheetByName(TARGET_SHEET_NAME);
+    if (named) return named;
+    return ss.insertSheet(TARGET_SHEET_NAME);
+  }
+  return ss.getActiveSheet();
+}
+
+/** Wiping is the whole point, so do not nag on a normal refresh — but DO ask
+ *  before erasing a sheet that holds something we did not put there. Returns
+ *  true when it is safe to proceed. */
+function confirmWipe(sheet) {
+  if (sheet.getLastRow() === 0) return true;                 // empty, nothing to lose
+  if (sheet.getRange(2, 1).getDisplayValue() === HEADERS[0]) return true;  // our own output
+
+  var answer = SpreadsheetApp.getUi().alert(
+    'Erase "' + sheet.getName() + '"?',
+    'Everything on this tab will be replaced with the audit rows.\n\n' +
+    'Buttons and drawings are kept. Cell contents are not.',
+    SpreadsheetApp.getUi().ButtonSet.OK_CANCEL
+  );
+  return answer === SpreadsheetApp.getUi().Button.OK;
 }
 
 function writeTable(sheet, table, data, since, until) {
+  // clear() wipes values and formats but leaves these two behind, and both
+  // break the rewrite: a stale merge blocks the new one, a stale filter throws
+  // when a second filter is created over the same range.
+  var oldFilter = sheet.getFilter();
+  if (oldFilter) oldFilter.remove();
+  if (sheet.getLastRow() > 0) {
+    sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).breakApart();
+  }
   sheet.clear();
 
   // Row 1: what this is and when it was pulled, so nobody guesses at stale data.
@@ -258,8 +298,6 @@ function writeTable(sheet, table, data, since, until) {
   // Header stays put while scrolling, and the columns get a filter.
   sheet.setFrozenRows(2);
   if (table.length > 0) {
-    var existing = sheet.getFilter();
-    if (existing) existing.remove();
     sheet.getRange(2, 1, table.length + 1, HEADERS.length).createFilter();
   }
 

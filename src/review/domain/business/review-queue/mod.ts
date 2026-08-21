@@ -988,6 +988,24 @@ export async function finalizeReviewedAudit(
   writeFailedFindingRows(orgId, correctedFinding as Record<string, any>).catch((err) =>
     console.warn(`[REVIEW] ${findingId}: ⚠️ failed-finding index rebuild failed:`, err));
 
+  // Keep the chargeback (date-leg) / wire (package) "payroll" entry in sync with
+  // the REVIEWED score. The bot wrote it at the PRE-review score, so a flip to a
+  // passing / fewer-fails result would otherwise leave a stale FAILING entry on
+  // the chargeback sheet for an audit that now passes — the "failed VOs are
+  // incorrect" report bug (prod record 483830). See syncChargebackWireToScore.
+  //
+  // MUST run BEFORE the "review-done" marker below. That marker is what makes
+  // this finding "settled" for the chargeback report (getReviewedFindingIds →
+  // isSettled), so writing it first opens a window where the row is VISIBLE on
+  // the sheet but still carries the pre-review score. If finalize dies in that
+  // window the retry short-circuits on the marker and never syncs, leaving a
+  // permanently stale payroll row — prod finding VBe4ZFjT1dn1DQmREcAKP, whose
+  // review finalize aborted 2026-08-13 between the two. Ordered this way a
+  // crash leaves the audit un-settled and the stale row hidden, which the next
+  // finalize corrects. The sync recomputes from `answered`, so re-running it is
+  // idempotent.
+  await syncChargebackWireToScore(orgId, findingId, correctedFinding, reviewScore);
+
   await setStored("review-done", orgId, [findingId], { reviewedAt: new Date(reviewedAt).toISOString(), reviewScore, reviewedBy: reviewer });
   noteFindingReviewed(orgId, findingId);
 
@@ -1064,13 +1082,6 @@ export async function finalizeReviewedAudit(
   });
 
   await updateCompletedStatScore(orgId, findingId, reviewScore);
-
-  // Keep the chargeback (date-leg) / wire (package) "payroll" entry in sync with
-  // the REVIEWED score. The bot wrote it at the PRE-review score, so a flip to a
-  // passing / fewer-fails result would otherwise leave a stale FAILING entry on
-  // the chargeback sheet for an audit that now passes — the "failed VOs are
-  // incorrect" report bug (prod record 483830). See syncChargebackWireToScore.
-  await syncChargebackWireToScore(orgId, findingId, correctedFinding, reviewScore);
 
   // Drain review-decided for this finding. Without this, getReviewStats
   // counts every decision since the table was created as "decided
@@ -1384,6 +1395,13 @@ export async function adminFlipFinding(
   await deleteStored("review-audit-pending", orgId, findingId); cleared++;
   await releaseLocksForFinding(orgId, findingId);
 
+  // Same ordering rule as finalizeReviewedAudit: clear the payroll rows BEFORE
+  // the "review-done" marker settles this finding for the chargeback report.
+  // Marker-first would leave a stale FAILING row visible on the sheet if this
+  // path died in between.
+  await deleteChargebackEntry(orgId, findingId).catch(() => {});
+  await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
+
   await setStored("review-done", orgId, [findingId], {
     reviewedAt: new Date().toISOString(),
     reviewScore: score,
@@ -1403,9 +1421,6 @@ export async function adminFlipFinding(
     });
   } catch { /* index write is best-effort */ }
   await updateCompletedStatScore(orgId, findingId, score);
-
-  await deleteChargebackEntry(orgId, findingId).catch(() => {});
-  await deleteWireDeductionEntry(orgId, findingId).catch(() => {});
 
   console.log(`[ADMIN-FLIP] ✅ ${findingId} → 100% (${cleared} queue entries removed)`);
   return { success: true, score };

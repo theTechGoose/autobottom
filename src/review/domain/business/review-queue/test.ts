@@ -484,3 +484,71 @@ Deno.test("adminFlipQuestion (package) — wire entry written on fail, DELETED o
   wire = await getWireDeductionEntries(orgId, 0, Date.now() + 10_000);
   assertEquals(wire.find((e) => e.findingId === fid), undefined, "flipping back to 100% deletes the wire entry");
 });
+
+// ── Ordering: payroll row corrected BEFORE the audit is marked reviewed ──────
+// Production bug (finding VBe4ZFjT1dn1DQmREcAKP, record 500302, 2026-08-13):
+// the reviewer flipped the last fail to Yes, but finalize died with an
+// AbortError partway through. The "review-done" marker had already been
+// written; syncChargebackWireToScore had NOT run. review-done is what makes a
+// finding "settled" for the chargeback report, so the entry became VISIBLE on
+// the payroll sheet still carrying the pre-review 96% and "No Group Travel" —
+// for an audit that now scores 100. The retry then short-circuited on the same
+// marker and never synced. Fix: correct the row first, settle second.
+
+Deno.test("finalize retry — the already-finalized guard does NOT sync, which is why order matters", async () => {
+  // Reproduces the SECOND half of the bug: once review-done exists, finalize
+  // returns early and touches nothing. Any step that failed on the first pass
+  // is never retried, so a stale row written before the marker is permanent.
+  resetForTest();
+  const orgId = ("test-cb-retry-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-cb-retry", reviewer = "rev@example.com";
+  await seedClaimedAudit(orgId, fid, reviewer, ["No", "Yes", "Yes", "Yes", "Yes"]);
+  await saveChargebackEntry(orgId, {
+    findingId: fid, ts: Date.now(), voName: "Test Person", destination: "SMD - Gatlinburg, TN",
+    revenue: "187.59", recordId: "r-" + fid, score: 80,
+    failedQHeaders: ["Q0"], egregiousHeaders: [], omissionHeaders: ["Q0"],
+  });
+  // A crashed earlier run left the marker behind without syncing.
+  await setStored("review-done", orgId, [fid], {
+    reviewedAt: new Date().toISOString(), reviewScore: 100, reviewedBy: reviewer,
+  });
+
+  const result = await finalizeReviewedAudit(orgId, fid, reviewer);
+  assertEquals(result.alreadyFinalized, true, "guard fires on the existing marker");
+
+  const entries = await getChargebackEntries(orgId, 0, Date.now() + 10_000);
+  assertExists(entries.find((e) => e.findingId === fid),
+    "the retry does NOT clean up — so the sync must happen before the marker is written");
+  const reviewed = await getReviewedFindingIds(orgId);
+  assert(reviewed.has(fid), "and the finding is already settled, so that stale row is on the sheet");
+});
+
+Deno.test("finalizeReviewedAudit — syncs the payroll row BEFORE writing the review-done marker", async () => {
+  const src = await Deno.readTextFile(new URL("./mod.ts", import.meta.url));
+  const start = src.indexOf("export async function finalizeReviewedAudit");
+  assert(start > -1, "finalizeReviewedAudit not found");
+  const body = src.slice(start, src.indexOf("\nexport ", start + 1));
+
+  const sync = body.indexOf("syncChargebackWireToScore(orgId");
+  const marker = body.indexOf('setStored("review-done"');
+  assert(sync > -1, "the chargeback sync must still be called from finalize");
+  assert(marker > -1, "the review-done marker write must still be in finalize");
+  assert(
+    sync < marker,
+    "ORDER REGRESSION: review-done settles the finding for the chargeback report, so the " +
+    "payroll sync must run first — otherwise a crash between them strands a visible stale row",
+  );
+});
+
+Deno.test("adminFlipFinding — clears the payroll rows BEFORE writing the review-done marker", async () => {
+  const src = await Deno.readTextFile(new URL("./mod.ts", import.meta.url));
+  const start = src.indexOf("export async function adminFlipFinding");
+  assert(start > -1, "adminFlipFinding not found");
+  const body = src.slice(start, src.indexOf("\nexport ", start + 1));
+
+  const del = body.indexOf("deleteChargebackEntry(orgId, findingId)");
+  const marker = body.indexOf('setStored("review-done"');
+  assert(del > -1, "the chargeback delete must still be called from adminFlipFinding");
+  assert(marker > -1, "the review-done marker write must still be in adminFlipFinding");
+  assert(del < marker, "ORDER REGRESSION: same rule as finalizeReviewedAudit — clear the row, then settle");
+});

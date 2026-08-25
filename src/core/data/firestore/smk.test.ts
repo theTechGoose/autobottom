@@ -8,6 +8,12 @@ import {
   resetFirestoreCredentials,
 } from "./mod.ts";
 
+// Storage is a real database now, shared across runs — so each run gets its
+// own org rather than reusing "org-a" and inheriting yesterday's documents.
+const RUN = crypto.randomUUID().slice(0, 8);
+const ORG_A = `org-a-${RUN}`;
+const ORG_B = `org-b-${RUN}`;
+
 Deno.test("firestore — public API exports", async () => {
   const mod = await import("./mod.ts");
   for (const name of [
@@ -49,120 +55,123 @@ Deno.test("firestore — integers vs doubles encoded correctly", () => {
 
 // ── In-memory backend smoke (used when no creds set) ──────────────────────
 
-Deno.test("firestore in-mem — getStored / setStored round-trip object", async () => {
+Deno.test("firestore — getStored / setStored round-trip object", async () => {
   resetFirestoreCredentials();
-  await setStored("test-type", "org-a", ["k1"], { foo: "bar", n: 7 });
-  const got = await getStored<{ foo: string; n: number }>("test-type", "org-a", "k1");
+  await setStored("test-type", ORG_A, ["k1"], { foo: "bar", n: 7 });
+  const got = await getStored<{ foo: string; n: number }>("test-type", ORG_A, "k1");
   assertEquals(got, { foo: "bar", n: 7 });
 });
 
-Deno.test("firestore in-mem — getStored / setStored round-trip primitive (boolean)", async () => {
+Deno.test("firestore — getStored / setStored round-trip primitive (boolean)", async () => {
   resetFirestoreCredentials();
-  await setStored("pipeline-paused", "org-a", [], true);
-  assertEquals(await getStored<boolean>("pipeline-paused", "org-a"), true);
-  await setStored("pipeline-paused", "org-a", [], false);
-  assertEquals(await getStored<boolean>("pipeline-paused", "org-a"), false);
+  await setStored("pipeline-paused", ORG_A, [], true);
+  assertEquals(await getStored<boolean>("pipeline-paused", ORG_A), true);
+  await setStored("pipeline-paused", ORG_A, [], false);
+  assertEquals(await getStored<boolean>("pipeline-paused", ORG_A), false);
 });
 
-Deno.test("firestore in-mem — getStored returns null for missing doc", async () => {
+Deno.test("firestore — getStored returns null for missing doc", async () => {
   resetFirestoreCredentials();
-  assertEquals(await getStored("nope", "org-a", "missing"), null);
+  assertEquals(await getStored("nope", ORG_A, "missing"), null);
 });
 
-Deno.test("firestore in-mem — deleteStored is idempotent", async () => {
+Deno.test("firestore — deleteStored is idempotent", async () => {
   resetFirestoreCredentials();
-  await setStored("t", "org-a", ["k"], { v: 1 });
-  await deleteStored("t", "org-a", "k");
-  assertEquals(await getStored("t", "org-a", "k"), null);
-  await deleteStored("t", "org-a", "k"); // no throw
+  await setStored("t", ORG_A, ["k"], { v: 1 });
+  await deleteStored("t", ORG_A, "k");
+  assertEquals(await getStored("t", ORG_A, "k"), null);
+  await deleteStored("t", ORG_A, "k"); // no throw
 });
 
-Deno.test("firestore in-mem — setStoredIfAbsent claims first writer", async () => {
+Deno.test("firestore — setStoredIfAbsent claims first writer", async () => {
   resetFirestoreCredentials();
-  assertEquals(await setStoredIfAbsent("dedup", "org-a", ["x"], { ts: 1 }), true);
-  assertEquals(await setStoredIfAbsent("dedup", "org-a", ["x"], { ts: 2 }), false);
-  const v = await getStored<{ ts: number }>("dedup", "org-a", "x");
+  assertEquals(await setStoredIfAbsent("dedup", ORG_A, ["x"], { ts: 1 }), true);
+  assertEquals(await setStoredIfAbsent("dedup", ORG_A, ["x"], { ts: 2 }), false);
+  const v = await getStored<{ ts: number }>("dedup", ORG_A, "x");
   assertEquals(v?.ts, 1);
 });
 
-Deno.test("firestore in-mem — listStored filters by type+org", async () => {
+Deno.test("firestore — listStored filters by type+org", async () => {
   resetFirestoreCredentials();
-  await setStored("badge", "org-a", ["b1"], { name: "Foo" });
-  await setStored("badge", "org-a", ["b2"], { name: "Bar" });
-  await setStored("badge", "org-b", ["b3"], { name: "Baz" });
-  await setStored("not-a-badge", "org-a", ["x"], { name: "Skip" });
-  const list = await listStored<{ name: string }>("badge", "org-a");
+  await setStored("badge", ORG_A, ["b1"], { name: "Foo" });
+  await setStored("badge", ORG_A, ["b2"], { name: "Bar" });
+  await setStored("badge", ORG_B, ["b3"], { name: "Baz" });
+  await setStored("not-a-badge", ORG_A, ["x"], { name: "Skip" });
+  const list = await listStored<{ name: string }>("badge", ORG_A);
   assertEquals(list.length, 2);
   const names = new Set(list.map((b) => b.name));
   assert(names.has("Foo") && names.has("Bar"));
 });
 
-Deno.test("firestore in-mem — listStoredWithKeys returns key parts", async () => {
+Deno.test("firestore — listStoredWithKeys returns key parts", async () => {
   resetFirestoreCredentials();
-  await setStored("manager-scope", "org-a", ["alice@x.com"], { departments: ["d"], shifts: [] });
-  await setStored("manager-scope", "org-a", ["bob@x.com"], { departments: [], shifts: ["s"] });
-  const list = await listStoredWithKeys<{ departments: string[]; shifts: string[] }>("manager-scope", "org-a");
+  await setStored("manager-scope", ORG_A, ["alice@x.com"], { departments: ["d"], shifts: [] });
+  await setStored("manager-scope", ORG_A, ["bob@x.com"], { departments: [], shifts: ["s"] });
+  const list = await listStoredWithKeys<{ departments: string[]; shifts: string[] }>("manager-scope", ORG_A);
   assertEquals(list.length, 2);
   // Note: key parts go through safePart (dots → _)
   const keys = new Set(list.map((r) => r.key.join(",")));
   assert(keys.has("alice@x_com") || keys.has("alice@x.com")); // sanitized form
 });
 
-Deno.test("firestore in-mem — TTL expiry hides expired docs", async () => {
+Deno.test("firestore — TTL expiry hides expired docs", async () => {
   resetFirestoreCredentials();
-  await setStored("ephemeral", "org-a", ["x"], { v: 1 }, { expireInMs: -1 }); // already expired
-  assertEquals(await getStored("ephemeral", "org-a", "x"), null);
+  await setStored("ephemeral", ORG_A, ["x"], { v: 1 }, { expireInMs: -1 }); // already expired
+  assertEquals(await getStored("ephemeral", ORG_A, "x"), null);
 });
 
-Deno.test("firestore in-mem — listStoredByIdPrefix walks ordered keys", async () => {
+Deno.test("firestore — listStoredByIdPrefix walks ordered keys", async () => {
   resetFirestoreCredentials();
-  await setStored("audit-done-idx", "org-a", ["00001-aaa"], { ts: 1 });
-  await setStored("audit-done-idx", "org-a", ["00002-bbb"], { ts: 2 });
-  await setStored("audit-done-idx", "org-a", ["00003-ccc"], { ts: 3 });
-  await setStored("audit-done-idx", "org-b", ["99999-zzz"], { ts: 99 });
-  const rows = await listStoredByIdPrefix<{ ts: number }>("audit-done-idx__org-a__");
+  await setStored("audit-done-idx", ORG_A, ["00001-aaa"], { ts: 1 });
+  await setStored("audit-done-idx", ORG_A, ["00002-bbb"], { ts: 2 });
+  await setStored("audit-done-idx", ORG_A, ["00003-ccc"], { ts: 3 });
+  await setStored("audit-done-idx", ORG_B, ["99999-zzz"], { ts: 99 });
+  // Prefix has to be built from the org, not spelled out: the org is unique per
+  // run now (shared database), so a hardcoded "…__org-a__" matches nothing.
+  const prefix = `audit-done-idx__${ORG_A}__`;
+  const rows = await listStoredByIdPrefix<{ ts: number }>(prefix);
   assertEquals(rows.length, 3);
-  for (const r of rows) assert(r.id.startsWith("audit-done-idx__org-a__"));
+  for (const r of rows) assert(r.id.startsWith(prefix));
 });
 
-Deno.test("firestore in-mem — chunked round-trip (small value)", async () => {
+Deno.test("firestore — chunked round-trip (small value)", async () => {
   resetFirestoreCredentials();
   const value = { name: "test", chars: "small" };
-  await setStoredChunked("audit-finding", "org-a", ["fid-1"], value);
-  assertEquals(await getStoredChunked("audit-finding", "org-a", "fid-1"), value);
+  await setStoredChunked("audit-finding", ORG_A, ["fid-1"], value);
+  assertEquals(await getStoredChunked("audit-finding", ORG_A, "fid-1"), value);
 });
 
-Deno.test("firestore in-mem — chunked round-trip (large value triggers chunking)", async () => {
+Deno.test("firestore — chunked round-trip (large value triggers chunking)", async () => {
   resetFirestoreCredentials();
   const big = "x".repeat(1_500_000); // 1.5MB → 3 chunks at 700K each
   const value = { name: "transcript", body: big };
-  await setStoredChunked("audit-transcript", "org-a", ["fid-1"], value);
-  const got = await getStoredChunked<{ name: string; body: string }>("audit-transcript", "org-a", "fid-1");
+  await setStoredChunked("audit-transcript", ORG_A, ["fid-1"], value);
+  const got = await getStoredChunked<{ name: string; body: string }>("audit-transcript", ORG_A, "fid-1");
   assertEquals(got?.name, "transcript");
   assertEquals(got?.body.length, 1_500_000);
 });
 
-Deno.test("firestore in-mem — deleteStoredChunked removes header + all chunks", async () => {
+Deno.test("firestore — deleteStoredChunked removes header + all chunks", async () => {
   resetFirestoreCredentials();
   const big = "y".repeat(1_500_000);
-  await setStoredChunked("audit-transcript", "org-a", ["fid-2"], { body: big });
-  await deleteStoredChunked("audit-transcript", "org-a", "fid-2");
-  assertEquals(await getStoredChunked("audit-transcript", "org-a", "fid-2"), null);
+  await setStoredChunked("audit-transcript", ORG_A, ["fid-2"], { body: big });
+  await deleteStoredChunked("audit-transcript", ORG_A, "fid-2");
+  assertEquals(await getStoredChunked("audit-transcript", ORG_A, "fid-2"), null);
 });
 
-Deno.test("firestore in-mem — low-level getDoc/setDoc/setDocIfAbsent/deleteDoc work", async () => {
+Deno.test("firestore — low-level getDoc/setDoc/setDocIfAbsent/deleteDoc work", async () => {
   resetFirestoreCredentials();
-  const id = encodeDocId("manual", "org-a", "k1");
-  await setDoc(id, { type: "manual", org: "org-a", key: ["k1"] }, { v: 1 });
+  const id = encodeDocId("manual", ORG_A, "k1");
+  await setDoc(id, { type: "manual", org: ORG_A, key: ["k1"] }, { v: 1 });
   const body = await getDoc(id);
   assert(body !== null);
   assertEquals(body!._type, "manual");
-  assertEquals(body!._org, "org-a");
+  assertEquals(body!._org, ORG_A);
   assertEquals(body!.v, 1);
 
-  const id2 = encodeDocId("manual", "org-a", "k2");
-  assertEquals(await setDocIfAbsent(id2, { type: "manual", org: "org-a", key: ["k2"] }, { v: 2 }), true);
-  assertEquals(await setDocIfAbsent(id2, { type: "manual", org: "org-a", key: ["k2"] }, { v: 99 }), false);
+  const id2 = encodeDocId("manual", ORG_A, "k2");
+  assertEquals(await setDocIfAbsent(id2, { type: "manual", org: ORG_A, key: ["k2"] }, { v: 2 }), true);
+  assertEquals(await setDocIfAbsent(id2, { type: "manual", org: ORG_A, key: ["k2"] }, { v: 99 }), false);
 
   await deleteDoc(id);
   assertEquals(await getDoc(id), null);

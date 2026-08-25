@@ -18,6 +18,7 @@ import {
 } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import { normalizeQuestionKey } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { queryWeeklyFails, DEFAULT_LOOKBACK_DAYS } from "@reporting/domain/business/weekly-fails/mod.ts";
+import type { WeeklyFailScope } from "@reporting/domain/business/weekly-fails/mod.ts";
 import { prevWeekWindow } from "@cron/domain/business/weekly-sheets/mod.ts";
 import { getSelfUrl } from "@core/data/qstash/mod.ts";
 import type { FailureSource } from "@core/dto/types.ts";
@@ -120,13 +121,15 @@ export class FailedAuditsController {
    *  the audit settled, not when the bot finished. Override the window with
    *  ?since=&until= (epoch ms) for a one-off range.
    *
-   *  ?lookbackDays= widens how far back the completedAt scan reaches to catch
-   *  audits reviewed long after they were graded. */
+   *  Internal (date-leg) audits only by default — ?scope=package or ?scope=all
+   *  widen it. ?lookbackDays= widens how far back the completedAt scan reaches
+   *  to catch audits reviewed long after they were graded. */
   @Get("weekly-fails") @ReturnedType(WeeklyFailsResponse)
   async weeklyFails(
     @Query("since") since: string, @Query("until") until: string,
     @Query("lookbackDays") lookbackDays: string,
     @Query("questions") questions: string,
+    @Query("scope") scope: string,
   ) {
     const week = prevWeekWindow(new Date());
     const from = ms(since, week.since);
@@ -135,6 +138,9 @@ export class FailedAuditsController {
     return queryWeeklyFails(ORG(), from, to, {
       lookbackDays: ms(lookbackDays, DEFAULT_LOOKBACK_DAYS),
       includeQuestions: !/^(0|false|no)$/i.test((questions ?? "").trim()),
+      scope: (["internal", "package", "all"].includes((scope ?? "").trim())
+        ? (scope.trim() as WeeklyFailScope)
+        : "internal"),
       selfUrl: getSelfUrl(),
     });
   }

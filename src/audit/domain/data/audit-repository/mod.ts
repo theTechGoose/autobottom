@@ -109,6 +109,7 @@ export function invalidateFindingCache(orgId?: OrgId, id?: string): void {
  *  in this list — step-init overwrites them anyway, and keeping them means the
  *  report page's audio player still works while the re-run is in flight. */
 const RUN_STATE_FIELDS = [
+  "assemblyAiTranscriptIds",
   "rawTranscript", "diarizedTranscript", "utteranceTimes",
   "populatedQuestions", "unpopulatedQuestions", "answeredQuestions",
   "feedback", "completedAt", "reviewScore",

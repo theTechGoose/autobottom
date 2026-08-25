@@ -1,8 +1,9 @@
-/** STEP 2: Submit audio to AssemblyAI. Single-genie returns immediately; poll-transcript handles the wait. */
+/** STEP 2: Submit audio to AssemblyAI. Returns immediately (single OR multi genie);
+ *  poll-transcript handles the wait. */
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
 import { enqueueStep } from "@core/data/qstash/mod.ts";
-import { transcribe, uploadAudio, submitTranscription } from "@audit/domain/data/assemblyai/mod.ts";
+import { uploadAudio, submitTranscription } from "@audit/domain/data/assemblyai/mod.ts";
 import { S3Ref } from "@core/data/s3/mod.ts";
 
 
@@ -57,10 +58,23 @@ export async function stepTranscribe(req: Request): Promise<Response> {
   finding.findingStatus = "transcribing";
   await saveFinding(orgId, finding);
 
-  // Multi-genie path: transcribe each recording separately and concatenate
+  // Multi-genie path: submit every recording to AssemblyAI, then hand off to
+  // poll-transcript — exactly like the single-genie path below.
+  //
+  // This used to call the BLOCKING transcribe() once per recording, holding the
+  // request open for the entire AssemblyAI job (whose internal wait loop has no
+  // deadline at all). When that wait stalled, the isolate died mid-loop: no
+  // status write, no error, no log — and because non-delayed QStash steps carry
+  // Upstash-Retries: 0, nothing ever re-sent it. QqzfObJYP5aibL_YT6AHX sat at
+  // findingStatus="transcribing" for 4 days that way. Submitting and returning
+  // means the handler now finishes in seconds and every subsequent wait is a
+  // separate, individually-retryable QStash message.
   const multiKeys = finding.s3RecordingKeys;
   if (multiKeys && multiKeys.length > 1) {
-    const texts: string[] = [];
+    // Order matters — the transcripts are concatenated back in submit order to
+    // reconstruct the call chronologically, so this stays a sequential loop
+    // over multiKeys and a failed leg does NOT shift the others.
+    const transcriptIds: string[] = [];
     for (const key of multiKeys) {
       const ref = new S3Ref(Deno.env.get("S3_BUCKET") ?? "", key);
       const bytes = await ref.get();
@@ -69,32 +83,35 @@ export async function stepTranscribe(req: Request): Promise<Response> {
         continue;
       }
       try {
-        const text = await transcribe(bytes, 3, 1500, findingId);
-        if (text && text.trim().length > 0) texts.push(text);
+        const uploadUrl = await uploadAudio(bytes);
+        transcriptIds.push(await submitTranscription(uploadUrl, findingId));
       } catch (err) {
-        console.error(`[STEP-TRANSCRIBE] ${findingId}: Failed to transcribe ${key}:`, err);
+        // Same tolerance as before: one bad leg must not sink the whole audit.
+        console.error(`[STEP-TRANSCRIBE] ${findingId}: Failed to submit ${key}:`, err);
       }
     }
 
-    if (texts.length === 0) {
+    if (transcriptIds.length === 0) {
       finding.rawTranscript = "Genie Invalid";
       finding.findingStatus = "finished";
-    } else {
-      finding.rawTranscript = texts.join("\n");
+      await saveFinding(orgId, finding);
+      // Payload-carry rawTranscript across the QStash hop so transcribe-cb
+      // doesn't depend on the saveFinding write propagating across isolates.
+      // Without this, multi-genie audits raced and finalized with 0 questions
+      // (BOTH-MISS at [TRANSCRIPT-RACE] — see 7xjSz3Cb8HgKmDOmRfhAP incident).
+      await enqueueStep("transcribe-complete", { findingId, orgId, rawTranscript: finding.rawTranscript });
+      return json({ ok: true, multiGenie: true, error: true, reason: "no submissions" });
     }
 
+    // CRITICAL: carry transcriptIds IN THE QSTASH PAYLOAD, same reason the
+    // single-genie path does — poll-transcript must not depend on this
+    // saveFinding being visible to a fresh isolate 15s later.
+    finding.assemblyAiTranscriptIds = transcriptIds;
+    (finding as Record<string, any>).assemblyAiSubmittedAt = Date.now();
     await saveFinding(orgId, finding);
-    // Payload-carry rawTranscript across the QStash hop so transcribe-cb
-    // doesn't depend on the saveFinding write propagating across isolates.
-    // Without this, multi-genie audits raced and finalized with 0 questions
-    // (BOTH-MISS at [TRANSCRIPT-RACE] — see 7xjSz3Cb8HgKmDOmRfhAP incident).
-    // 900KB cap matches the cap on transcribe-cb → prepare/diarize hop.
-    const cbCarry: Record<string, unknown> = { findingId, orgId };
-    if (finding.rawTranscript && finding.rawTranscript.length <= 900_000) {
-      cbCarry.rawTranscript = finding.rawTranscript;
-    }
-    await enqueueStep("transcribe-complete", cbCarry);
-    return json({ ok: true, multiGenie: true, transcribed: texts.length });
+    await enqueueStep("poll-transcript", { findingId, orgId, transcriptIds }, POLL_DELAY_SECONDS);
+    console.log(`[STEP-TRANSCRIBE] ${findingId}: 🚀 Submitted ${transcriptIds.length}/${multiKeys.length} recordings [${transcriptIds.join(",")}], polling in ${POLL_DELAY_SECONDS}s`);
+    return json({ ok: true, multiGenie: true, submitted: transcriptIds.length });
   }
 
   // Single-genie path: non-blocking submit → poll-transcript handles the rest

@@ -1,0 +1,11 @@
+// Emulator only. The app authenticates as a service account, which bypasses
+// rules in prod; the emulator ignores the bearer token entirely. Nothing here
+// is deployed.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

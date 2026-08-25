@@ -10,6 +10,19 @@ import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod
 
 const DAY_MS = 86_400_000;
 
+/** How fresh an `active-tracking` row must be to count as "running now" on the
+ *  admin dashboard's Active panel. Purely a DISPLAY filter. */
+export const ACTIVE_DISPLAY_STALE_MS = 5 * 60 * 1000;
+
+/** How old an `active-tracking` row must be before the dashboard read is
+ *  allowed to DELETE it. Must stay comfortably larger than the watchdog's
+ *  STUCK_THRESHOLD_MS (and than its hourly tick) — the watchdog recovers stuck
+ *  findings by reading these rows, so reaping one early makes the finding
+ *  permanently unrecoverable. Six hours ≈ six watchdog attempts before the
+ *  evidence is discarded, which also bounds re-publish loops on a finding that
+ *  can never succeed. Enforced by a unit test against the watchdog constant. */
+export const ACTIVE_REAP_MS = 6 * 60 * 60 * 1000;
+
 function padTs(ts: number): string { return String(ts).padStart(15, "0"); }
 
 /** Single source of truth for the QB record id we index a finding under.
@@ -199,7 +212,10 @@ export function _resetHiddenCacheForTesting(): void {
 export async function trackActive(orgId: OrgId, findingId: string, step: string, meta?: Record<string, unknown>): Promise<void> {
   const existing = (await getStored<Record<string, unknown>>("active-tracking", orgId, findingId)) ?? {};
   await setStored("active-tracking", orgId, [findingId], { ...existing, findingId, step, ts: Date.now(), ...(meta ?? {}) });
-  await setStored("watchdog-active", GLOBAL, [findingId], { orgId, findingId, step, ts: Date.now() }, { expireInMs: 2 * 60 * 60 * 1000 });
+  // TTL matches ACTIVE_REAP_MS so the cross-org backup the watchdog reads
+  // stays alive exactly as long as the primary `active-tracking` row does.
+  // At the old 2h it expired while the primary was still recoverable.
+  await setStored("watchdog-active", GLOBAL, [findingId], { orgId, findingId, step, ts: Date.now() }, { expireInMs: ACTIVE_REAP_MS });
 }
 
 /** Mark a handler invocation as finished WITHOUT marking the whole audit as
@@ -209,6 +225,16 @@ export async function trackActive(orgId: OrgId, findingId: string, step: string,
  *  lifecycle is tracked separately by trackCompleted/terminateFinding. */
 export async function untrackHandler(orgId: OrgId, findingId: string): Promise<void> {
   await deleteStored("active-tracking", orgId, findingId);
+}
+
+/** Clear BOTH tracking rows for a finding. The watchdog reads `active-tracking`
+ *  AND the `watchdog-active` backup, so clearing only the first would let a
+ *  finished/terminated finding resurface from the backup on every hourly tick
+ *  until its TTL expired. Used by the watchdog's stale-row cleanup; the normal
+ *  pipeline exit path goes through trackCompleted, which already clears both. */
+export async function untrackForWatchdog(orgId: OrgId, findingId: string): Promise<void> {
+  await deleteStored("active-tracking", orgId, findingId);
+  await deleteStored("watchdog-active", GLOBAL, findingId);
 }
 
 export async function trackCompleted(
@@ -940,13 +966,29 @@ export async function writeSoleAuditDoneIndex(
     console.warn(`[DONE-IDX] ${entry.findingId}: no finite completedAt/reviewedAt — skipping sole-index write (malformed finding)`);
     return false;
   }
-  // Merge over any existing row at the canonical key so fields the new writer
-  // omits survive — notably reviewedBy/reviewHandleMs when a JUDGE or FLIP
-  // overwrites a previously-reviewed finding's row (those entries carry the new
-  // score but not the reviewer attribution).
-  const existing = await getStored<AuditDoneIndexEntry>("audit-done-idx", orgId, padTs(canonicalTs), entry.findingId)
-    .catch(() => null);
+  // Merge over any existing row so fields the new writer omits survive —
+  // notably reviewedBy/reviewHandleMs when a JUDGE or FLIP overwrites a
+  // previously-reviewed finding's row (those entries carry the new score but
+  // not the reviewer attribution), and `completed` on an audit a human already
+  // finalized.
+  //
+  // The canonical key alone is NOT enough. Callers stamp a fresh
+  // `reviewedAt` on the finding immediately before calling us (see
+  // adminFlipQuestion), which moves the canonical key — so the row we are
+  // merging over sits at the PREVIOUS timestamp, not this one. Reading only
+  // the new key found nothing, `completed` fell back to false, and a
+  // pencil-flip on a reviewed audit quietly dropped it out of every weekly
+  // report (those filter on `e.completed && e.doneAt`) while audit history
+  // still showed it REVIEWED. Fall back to where the last write actually put
+  // the row (the key pointer), then to the finding's completedAt.
   const lastKey = await getStored<{ ts: number }>(DONE_IDX_KEY_PTR, orgId, entry.findingId).catch(() => null);
+  const readAt = async (ts: number | undefined) =>
+    ts != null && Number.isFinite(ts)
+      ? await getStored<AuditDoneIndexEntry>("audit-done-idx", orgId, padTs(ts), entry.findingId).catch(() => null)
+      : null;
+  const existing = await readAt(canonicalTs)
+    ?? await readAt(lastKey?.ts)
+    ?? await readAt(completedAt);
   const wrote = await writeAuditDoneIndex(
     orgId,
     {
@@ -1335,12 +1377,20 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
   const now = Date.now();
   const cutoff = now - DAY_MS;
 
-  // Active = a row whose step has reported in within the last STALE_MS.
-  // Anything older almost certainly crashed/timed out without calling
-  // untrackActive, so it's not actually running on QStash anymore. We
-  // filter stale rows out of the dashboard view AND fire-and-forget
-  // delete them so they don't keep accumulating across reads.
-  const STALE_MS = 5 * 60 * 1000;
+  // Active = a row whose step has reported in within the last
+  // ACTIVE_DISPLAY_STALE_MS. Anything older almost certainly crashed/timed out
+  // without calling untrackActive, so it's not actually running on QStash
+  // anymore and we hide it from the dashboard view.
+  //
+  // HIDING IS NOT DELETING. This read used to delete every row older than 5
+  // minutes, which silently disarmed the watchdog: the watchdog only re-
+  // publishes rows older than 30 minutes and only runs hourly, so the row it
+  // needed was always swept 25+ minutes before it looked. A multi-genie audit
+  // hung at "transcribing" for 4 days with zero recovery attempts and zero
+  // WATCHDOG log lines (QqzfObJYP5aibL_YT6AHX, 2026-08-20) because of exactly
+  // this. Rows now survive until ACTIVE_REAP_MS, which is deliberately several
+  // watchdog ticks wide so every stuck finding gets multiple recovery attempts
+  // before its evidence is thrown away.
   const activeRows = await listStoredWithKeys<Record<string, unknown>>("active-tracking", orgId);
   const active: Record<string, unknown>[] = [];
   const staleFindingIds: string[] = [];
@@ -1348,9 +1398,9 @@ async function _getStatsRaw(orgId: OrgId): Promise<{
     const ts = Number(value?.ts ?? 0);
     const ageMs = ts > 0 ? now - ts : Number.POSITIVE_INFINITY;
     const findingId = (value?.findingId as string) || String(key[key.length - 1]);
-    if (ageMs <= STALE_MS) {
+    if (ageMs <= ACTIVE_DISPLAY_STALE_MS) {
       active.push({ ...value, findingId });
-    } else {
+    } else if (ageMs > ACTIVE_REAP_MS) {
       staleFindingIds.push(findingId);
     }
   }

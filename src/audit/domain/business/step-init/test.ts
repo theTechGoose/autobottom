@@ -36,8 +36,14 @@ function installStubs(): { restore: () => void; steps: string[] } {
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = globalThis.setTimeout;
   const steps: string[] = [];
-  globalThis.fetch = (async (input: string | URL | Request) => {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : (input instanceof URL ? input.toString() : input.url);
+    // Storage is real HTTP now — Firestore emulator (:8099), the S3 stand-in
+    // (:9001) and the token stub (:9003). Let those through; answering them
+    // from this stub hands Firestore an empty 200 and S3 a 500. The queue
+    // (:9002) is deliberately NOT passed through: these tests assert on what
+    // was enqueued, so the stub still has to capture it.
+    if ([":8099", ":9001", ":9003"].some((port) => url.includes(port))) return originalFetch(input, init);
     const m = url.match(/\/audit\/step\/([a-z-]+)/);
     if (m) {
       steps.push(m[1]);

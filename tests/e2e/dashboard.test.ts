@@ -119,7 +119,11 @@ Deno.test({ name: "E2E Debug: /admin/debug/self-url exposes all fallback sources
     (body.sources.scopedOrigin !== null && !body.sources.scopedIsLocalhost) ||
     body.sources.knownPublicOrigin !== null ||
     body.sources.envSelfUrl !== null;
-  if (hasPublicSource) {
+  // In emulator mode SELF_URL is deliberately loopback — the queue runs on this
+  // machine, so a callback to 127.0.0.1 is the CORRECT destination, not a
+  // misconfiguration. The invariant below is about deployments.
+  const emulatorMode = Deno.env.get("EMULATOR") === "true";
+  if (hasPublicSource && !emulatorMode) {
     assert(
       !body.selfUrl.startsWith("http://localhost") && !body.selfUrl.startsWith("http://127."),
       `selfUrl must not be loopback when a public source exists: ${body.selfUrl}`,

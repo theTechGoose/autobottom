@@ -15,6 +15,7 @@
  *  Port of main:providers/sheets.ts + main:main.ts post-to-sheet SA loader. */
 
 import { S3Ref } from "@core/data/s3/mod.ts";
+import { googleTokenUrl, sheetsBaseUrl } from "@core/config/endpoints.ts";
 
 export interface SheetsCredentials {
   clientEmail: string;
@@ -84,7 +85,7 @@ async function signJwt(clientEmail: string, privateKeyPem: string, scope: string
 
 async function getAccessToken(creds: SheetsCredentials): Promise<string> {
   const jwt = await signJwt(creds.clientEmail, creds.privateKey, "https://www.googleapis.com/auth/spreadsheets");
-  const res = await fetch("https://oauth2.googleapis.com/token", {
+  const res = await fetch(googleTokenUrl(), {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${encodeURIComponent(jwt)}`,
@@ -117,7 +118,7 @@ export async function readSheetColumns(
   const qs = columns
     .map((c) => `ranges=${encodeURIComponent(`${tabName}!${c}:${c}`)}`)
     .join("&");
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(creds.sheetId)}/values:batchGet?${qs}&majorDimension=COLUMNS`;
+  const url = `${sheetsBaseUrl()}/spreadsheets/${encodeURIComponent(creds.sheetId)}/values:batchGet?${qs}&majorDimension=COLUMNS`;
   const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`Sheets read failed: ${res.status} ${await res.text()}`);
   const data = await res.json() as { valueRanges?: { values?: unknown[][] }[] };
@@ -137,7 +138,7 @@ export async function appendSheetRows(
   if (!rows.length) return { appended: 0 };
   const token = await getAccessToken(creds);
   const range = encodeURIComponent(`${tabName}!A:Z`);
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(creds.sheetId)}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+  const url = `${sheetsBaseUrl()}/spreadsheets/${encodeURIComponent(creds.sheetId)}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
   const res = await fetch(url, {
     method: "POST",
     headers: {

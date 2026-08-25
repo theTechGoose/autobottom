@@ -1,4 +1,5 @@
 /** Google Sheets API adapter. Ported from providers/sheets.ts. */
+import { googleTokenUrl, sheetsBaseUrl } from "@core/config/endpoints.ts";
 
 function base64url(data: Uint8Array | string): string {
   const str = typeof data === "string" ? data : String.fromCharCode(...data);
@@ -21,7 +22,7 @@ async function getAccessToken(email: string, privateKeyPem: string): Promise<str
   const sigBytes = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, sigInput);
   const sig = base64url(new Uint8Array(sigBytes));
   const jwt = `${header}.${payload}.${sig}`;
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+  const tokenRes = await fetch(googleTokenUrl(), {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: jwt }),
   });
@@ -37,7 +38,7 @@ export async function appendSheetRows(
   const token = await getAccessToken(email, privateKey);
   const range = encodeURIComponent(`${tabName}!A1`);
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    `${sheetsBaseUrl()}/spreadsheets/${sheetId}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
     { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ values: rows }) },
   );
   if (!res.ok) throw new Error(`Sheets append failed (${tabName}): ${res.status} ${await res.text()}`);

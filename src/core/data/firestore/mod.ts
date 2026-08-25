@@ -28,6 +28,8 @@ const SEP = "__";
 
 // ── Credentials ─────────────────────────────────────────────────────────────
 
+import { firestoreBaseUrl, googleTokenUrl, isEmulator } from "@core/config/endpoints.ts";
+
 export interface FirestoreCreds {
   clientEmail: string;
   privateKey: string;
@@ -36,34 +38,66 @@ export interface FirestoreCreds {
   databaseId: string;
 }
 
-let _cached: FirestoreCreds | null | undefined;
+const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
+const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);
 
-export async function loadFirestoreCredentials(): Promise<FirestoreCreds | null> {
+let _cached: FirestoreCreds | undefined;
+
+export async function loadFirestoreCredentials(): Promise<FirestoreCreds> {
   if (_cached !== undefined) return _cached;
   const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";
   const saKey = Deno.env.get("FIREBASE_SA_S3_KEY") ?? "";
   const projectId = Deno.env.get("FIREBASE_PROJECT_ID") ?? "";
   const collection = Deno.env.get("FIREBASE_COLLECTION") ?? "autobottom";
   const databaseId = Deno.env.get("FIREBASE_DATABASE_ID") ?? "(default)";
-  if (!bucket || !saKey || !projectId) return (_cached = null);
+  if (!bucket || !saKey || !projectId) {
+    throw new Error(
+      "Firestore is not configured: S3_BUCKET, FIREBASE_SA_S3_KEY and FIREBASE_PROJECT_ID are all required. " +
+        "For local work run `deno task emulators` and start the app with EMULATOR=true " +
+        "(deno task dev:emulator), which points these at the Firestore emulator.",
+    );
+  }
   try {
     const bytes = await new S3Ref(bucket, saKey).get();
-    if (!bytes) return (_cached = null);
+    if (!bytes) throw new Error(`Firestore service account not found at ${bucket}/${saKey}`);
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { client_email?: string; private_key?: string };
-    if (!parsed.client_email || !parsed.private_key) return (_cached = null);
+    if (!parsed.client_email || !parsed.private_key) {
+      throw new Error(`Firestore service account at ${bucket}/${saKey} is missing client_email or private_key`);
+    }
     return (_cached = { clientEmail: parsed.client_email, privateKey: parsed.private_key, projectId, collection, databaseId });
   } catch (err) {
     console.error(`❌ [FIRESTORE] loadFirestoreCredentials failed:`, err);
-    return (_cached = null);
+    throw err;
   }
 }
 
-/** Reset cached credentials + in-mem store (test only). */
+/** Drop the cached credentials and access token (test only). Storage itself
+ *  is never in this process any more — to clear DATA between tests, wipe the
+ *  emulator with `wipeEmulatorData()` below. */
 export function resetFirestoreCredentials(): void {
   _cached = undefined;
   _token = null;
   _tokenExpiry = 0;
-  _inMem.clear();
+}
+
+/** Delete every document in the emulator's database.
+ *
+ *  Tests used to get isolation for free because the store was a Map they could
+ *  clear. Now they share one real database, so they clear it the same way any
+ *  Firestore test suite does: the emulator's own wipe endpoint. Refuses to run
+ *  against anything but the emulator — this is a DELETE-EVERYTHING call. */
+export async function wipeEmulatorData(): Promise<void> {
+  if (!isEmulator()) {
+    throw new Error("wipeEmulatorData() refused: EMULATOR is not true. This would delete real data.");
+  }
+  const creds = await loadFirestoreCredentials();
+  const res = await fetch(
+    `${firestoreBaseUrl().replace(/\/v1$/, "")}/emulator/v1/projects/${creds.projectId}/databases/${creds.databaseId}/documents`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(`emulator wipe failed: ${res.status} ${await res.text()}`);
+  await res.body?.cancel();
+  resetFirestoreCredentials();
 }
 
 // ── JWT signing + token exchange ────────────────────────────────────────────
@@ -114,7 +148,7 @@ let _tokenExpiry = 0;
 async function getAccessToken(creds: FirestoreCreds): Promise<string> {
   if (_token && Date.now() < _tokenExpiry - 60_000) return _token;
   const jwt = await signJwt(creds);
-  const res = await fetch("https://oauth2.googleapis.com/token", {
+  const res = await fetch(googleTokenUrl(), {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${encodeURIComponent(jwt)}`,
@@ -242,50 +276,6 @@ function unwrapPayload<T>(body: DocBody): T {
 
 function isExpired(body: DocBody): boolean {
   return typeof body._expiresAt === "number" && body._expiresAt > 0 && body._expiresAt < Date.now();
-}
-
-// ── In-memory store (used when creds unconfigured) ──────────────────────────
-
-const _inMem = new Map<string, DocBody>();
-
-function inMemGet(docId: string): DocBody | null {
-  const body = _inMem.get(docId);
-  if (!body) return null;
-  if (isExpired(body)) {
-    _inMem.delete(docId);
-    return null;
-  }
-  return body;
-}
-
-function inMemSet(docId: string, body: DocBody): void {
-  _inMem.set(docId, body);
-}
-
-function inMemDelete(docId: string): void {
-  _inMem.delete(docId);
-}
-
-function inMemListByType(type: string, org: string, limit: number): DocBody[] {
-  const out: DocBody[] = [];
-  for (const body of _inMem.values()) {
-    if (out.length >= limit) break;
-    if (body._type !== type || body._org !== org) continue;
-    if (isExpired(body)) continue;
-    out.push(body);
-  }
-  return out;
-}
-
-function inMemListByIdPrefix(prefix: string, limit: number): Array<{ id: string; body: DocBody }> {
-  const out: Array<{ id: string; body: DocBody }> = [];
-  for (const [id, body] of _inMem.entries()) {
-    if (out.length >= limit) break;
-    if (!id.startsWith(prefix)) continue;
-    if (isExpired(body)) continue;
-    out.push({ id, body });
-  }
-  return out;
 }
 
 // ── REST operations (cred-explicit, used internally + by migration script) ──
@@ -530,7 +520,7 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
   const httpClient = getHttpClientForLane(lane);
   try {
     const token = await getAccessToken(creds);
-    const url = `https://firestore.googleapis.com/v1/${path}`;
+    const url = `${firestoreBaseUrl()}/${path}`;
     const headers = { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) };
 
     // slot maps to one of the three lane keys via SlotKind ("foreground"
@@ -543,11 +533,11 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
     let lastErr: unknown;
     for (let attempt = 0; attempt <= FS_RETRY_DELAYS_MS.length; attempt++) {
       const ctrl = new AbortController();
-      const timeoutId = setTimeout(() => ctrl.abort(), laneCfg.timeoutMs);
+      const timeoutId = nativeSetTimeout(() => ctrl.abort(), laneCfg.timeoutMs);
       try {
         const res = await fetch(url, { ...init, headers, signal: ctrl.signal, client: httpClient } as RequestInit & { client: Deno.HttpClient });
         const text = await res.text();
-        clearTimeout(timeoutId);
+        nativeClearTimeout(timeoutId);
         if (res.status >= 500 && res.status < 600 && attempt < FS_RETRY_DELAYS_MS.length) {
           console.warn(`⚠️ [FS] ${res.status} from Firestore (attempt ${attempt + 1}) — retrying`);
           await new Promise((r) => setTimeout(r, FS_RETRY_DELAYS_MS[attempt]));
@@ -555,7 +545,7 @@ async function fsFetch(creds: FirestoreCreds, path: string, init: RequestInit): 
         }
         return { status: res.status, ok: res.ok, text };
       } catch (err) {
-        clearTimeout(timeoutId);
+        nativeClearTimeout(timeoutId);
         lastErr = err;
         // Distinguish "our own watchdog timer fired" from "the underlying
         // stream aborted unexpectedly". Both surface as AbortError with
@@ -769,20 +759,6 @@ async function restListByCompletedAt(
   return out;
 }
 
-function inMemListByCompletedAt(type: string, org: string, from: number, to: number, limit: number, fieldName: string): DocBody[] {
-  const out: DocBody[] = [];
-  for (const body of _inMem.values()) {
-    if (out.length >= limit) break;
-    if (body._type !== type || body._org !== org) continue;
-    if (isExpired(body)) continue;
-    const ts = (body as Record<string, unknown>)[fieldName];
-    if (typeof ts !== "number" || ts < from || ts > to) continue;
-    out.push(body);
-  }
-  out.sort((a, b) => Number((b as Record<string, unknown>)[fieldName]) - Number((a as Record<string, unknown>)[fieldName]));
-  return out;
-}
-
 async function restListByIdPrefix(creds: FirestoreCreds, prefix: string, limit: number): Promise<Array<{ id: string; body: DocBody }>> {
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
   const startName = `${parent}/${creds.collection}/${prefix}`;
@@ -822,7 +798,6 @@ async function restListByIdPrefix(creds: FirestoreCreds, prefix: string, limit: 
 /** Read a doc by ID. Returns the raw body (with `_*` metadata) or null. */
 export async function getDoc(docId: string): Promise<DocBody | null> {
   const creds = await loadFirestoreCredentials();
-  if (!creds) return inMemGet(docId);
   return restGet(creds, docId);
 }
 
@@ -830,14 +805,12 @@ export async function getDoc(docId: string): Promise<DocBody | null> {
 export async function setDoc(docId: string, meta: DocMeta, value: unknown): Promise<void> {
   const body = makeBody(meta, value);
   const creds = await loadFirestoreCredentials();
-  if (!creds) return inMemSet(docId, body);
   return restSet(creds, docId, body);
 }
 
 /** Delete a doc. Idempotent. */
 export async function deleteDoc(docId: string): Promise<void> {
   const creds = await loadFirestoreCredentials();
-  if (!creds) return inMemDelete(docId);
   return restDelete(creds, docId);
 }
 
@@ -845,12 +818,6 @@ export async function deleteDoc(docId: string): Promise<void> {
 export async function setDocIfAbsent(docId: string, meta: DocMeta, value: unknown): Promise<boolean> {
   const body = makeBody(meta, value);
   const creds = await loadFirestoreCredentials();
-  if (!creds) {
-    const existing = inMemGet(docId);
-    if (existing) return false;
-    inMemSet(docId, body);
-    return true;
-  }
   return restSetIfAbsent(creds, docId, body);
 }
 
@@ -907,7 +874,7 @@ export async function listStored<T>(type: string, org: string, opts: { limit?: n
   return withTiming(`list:${type}`, async () => {
     const limit = opts.limit ?? 1000;
     const creds = await loadFirestoreCredentials();
-    const bodies = creds ? await restListByType(creds, type, org, limit) : inMemListByType(type, org, limit);
+    const bodies = await restListByType(creds, type, org, limit);
     return bodies.map((b) => unwrapPayload<T>(b));
   });
 }
@@ -981,12 +948,6 @@ export async function listStoredWithKeysAll<T>(
   org: string,
 ): Promise<Array<{ key: string[]; value: T }>> {
   const creds = await loadFirestoreCredentials();
-  if (!creds) {
-    // In-mem fallback: just dump everything matching.
-    return inMemListByType(type, org, Number.MAX_SAFE_INTEGER).map((b) => ({
-      key: b._key, value: unwrapPayload<T>(b),
-    }));
-  }
   const bodies = await restListByTypePaged(creds, type, org);
   return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
 }
@@ -1007,9 +968,6 @@ export async function listStoredWithKeysAll<T>(
  *  simple split on `__` is unambiguous. */
 export async function listStoredKeysAll(type: string, org: string): Promise<Array<{ key: string[] }>> {
   const creds = await loadFirestoreCredentials();
-  if (!creds) {
-    return inMemListByType(type, org, Number.MAX_SAFE_INTEGER).map((b) => ({ key: b._key }));
-  }
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
   const out: Array<{ key: string[] }> = [];
   let cursorDocName: string | null = null;
@@ -1074,7 +1032,7 @@ export async function listStoredWithKeys<T>(
   return withTiming(`listWithKeys:${type}`, async () => {
     const limit = opts.limit ?? 1000;
     const creds = await loadFirestoreCredentials();
-    const bodies = creds ? await restListByType(creds, type, org, limit) : inMemListByType(type, org, limit);
+    const bodies = await restListByType(creds, type, org, limit);
     return bodies.map((b) => ({ key: b._key, value: unwrapPayload<T>(b) }));
   });
 }
@@ -1086,21 +1044,9 @@ export async function listStoredWithKeys<T>(
  *  `:commit` endpoint instead — one HTTP call clears 500 docs in ~1s.
  *
  *  Returns the number of docs deleted. Safe to call on a non-existent
- *  type/org combo (returns 0). Falls back to in-memory wipe in local mode. */
+ *  type/org combo (returns 0). */
 export async function purgeByTypeAndOrg(type: string, org: string, limit = 50_000): Promise<number> {
   const creds = await loadFirestoreCredentials();
-  if (!creds) {
-    let count = 0;
-    for (const [id, body] of [..._inMem.entries()]) {
-      if (body._type === type && body._org === org) {
-        _inMem.delete(id);
-        count++;
-        if (count >= limit) break;
-      }
-    }
-    return count;
-  }
-
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
   const collectionPrefix = `${parent}/${creds.collection}/`;
 
@@ -1154,13 +1100,6 @@ export async function purgeByTypeAndOrg(type: string, org: string, limit = 50_00
 export async function commitDeletes(docIds: string[]): Promise<number> {
   if (docIds.length === 0) return 0;
   const creds = await loadFirestoreCredentials();
-  if (!creds) {
-    let count = 0;
-    for (const id of docIds) {
-      if (_inMem.delete(id)) count++;
-    }
-    return count;
-  }
   const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
   const collectionPrefix = `${parent}/${creds.collection}/`;
   const BATCH = 500;
@@ -1184,16 +1123,6 @@ export async function listAllStoredByOrg(
 ): Promise<Array<{ id: string; body: DocBody }>> {
   const limit = opts.limit ?? 10_000;
   const creds = await loadFirestoreCredentials();
-  if (!creds) {
-    const out: Array<{ id: string; body: DocBody }> = [];
-    for (const [id, body] of _inMem.entries()) {
-      if (out.length >= limit) break;
-      if (body._org !== org) continue;
-      if (isExpired(body)) continue;
-      out.push({ id, body });
-    }
-    return out;
-  }
   return restListByOrg(creds, org, limit);
 }
 
@@ -1220,9 +1149,7 @@ async function _listStoredByFieldRaw(
   const limit = opts.limit ?? 5000;
   const fieldName = opts.fieldName ?? "completedAt";
   const creds = await loadFirestoreCredentials();
-  return creds
-    ? await restListByCompletedAt(creds, type, org, from, to, limit, fieldName)
-    : inMemListByCompletedAt(type, org, from, to, limit, fieldName);
+  return await restListByCompletedAt(creds, type, org, from, to, limit, fieldName);
 }
 
 export async function listStoredByCompletedAt<T>(
@@ -1262,7 +1189,7 @@ export async function listStoredByIdPrefix<T>(
   return withTiming(`listByIdPrefix:${prefix.split(SEP)[0]}`, async () => {
     const limit = opts.limit ?? 1000;
     const creds = await loadFirestoreCredentials();
-    const rows = creds ? await restListByIdPrefix(creds, prefix, limit) : inMemListByIdPrefix(prefix, limit);
+    const rows = await restListByIdPrefix(creds, prefix, limit);
     return rows.map(({ id, body }) => ({ id, key: body._key, value: unwrapPayload<T>(body) }));
   });
 }

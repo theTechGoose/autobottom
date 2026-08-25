@@ -1,5 +1,6 @@
 /** QuickBase API client. Ported from providers/quickbase.ts. */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
+import { quickbaseBaseUrl } from "@core/config/endpoints.ts";
 
 function cleanGenieId(raw: unknown): string {
   const str = String(raw ?? "").trim();
@@ -26,7 +27,7 @@ function headers() {
   };
 }
 
-const API = "https://api.quickbase.com/v1";
+const API = () => quickbaseBaseUrl();
 const QB_TIMEOUT_MS = 30_000;
 const QB_RETRY_DELAYS = [2000, 5000, 10000];
 
@@ -64,7 +65,7 @@ async function queryRecordsInner(opts: QBQueryOptions, attempt = 0): Promise<any
 
   let res: Response;
   try {
-    res = await fetch(`${API}/records/query`, {
+    res = await fetch(`${API()}/records/query`, {
       method: "POST", headers: headers(), body: JSON.stringify(body), signal: controller.signal,
       client: qbHttpClient(),
     } as RequestInit & { client: Deno.HttpClient });

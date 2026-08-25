@@ -42,6 +42,12 @@ function installFetchStub(stub: Stub): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : (input instanceof URL ? input.toString() : input.url);
+    // Storage is real HTTP now — Firestore emulator (:8099), the S3 stand-in
+    // (:9001) and the token stub (:9003). Let those through; answering them
+    // from this stub hands Firestore an empty 200 and S3 a 500. The queue
+    // (:9002) is deliberately NOT passed through: these tests assert on what
+    // was enqueued, so the stub still has to capture it.
+    if ([":8099", ":9001", ":9003"].some((port) => url.includes(port))) return original(input, init);
     stub.calls.push({ url, init });
     // AssemblyAI poll: extract the transcriptId from the URL tail.
     if (url.includes("api.assemblyai.com")) {
@@ -56,7 +62,7 @@ function installFetchStub(stub: Stub): () => void {
     // other test in the suite sets globally): localEnqueue fetches the
     // target step URL directly instead of the QStash gateway, so we
     // need to match both.
-    if (url.includes("qstash") || url.includes("upstash.io") || url.includes("/audit/step/")) {
+    if (url.includes("qstash") || url.includes("upstash.io") || url.includes("/audit/step/") || url.includes(":9002")) {
       let bodyJson: Record<string, unknown> = {};
       try { bodyJson = JSON.parse(String(init?.body ?? "{}")); } catch { /* leave empty */ }
       stub.enqueueBodies.set(url, bodyJson);
@@ -231,6 +237,205 @@ Deno.test({
         reEnqueue,
         `expected re-enqueue body to include transcriptId; got: ${JSON.stringify(enqueued)}`,
       );
+    } finally {
+      undo();
+    }
+  },
+});
+
+// ── Multi-genie polling ──────────────────────────────────────────────────────
+// step-transcribe now submits every recording and hands the wait to this step
+// instead of blocking inside its own request (the failure that stranded
+// QqzfObJYP5aibL_YT6AHX at "transcribing" for 4 days). These pin the contract.
+
+/** Stub that answers each transcript id differently, so ordering, partial
+ *  completion and per-leg failure can all be asserted. */
+function installPerIdStub(
+  stub: Stub,
+  byId: Record<string, Record<string, unknown>>,
+): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : (input instanceof URL ? input.toString() : input.url);
+    if ([":8099", ":9001", ":9003"].some((port) => url.includes(port))) return original(input, init);
+    stub.calls.push({ url, init });
+    if (url.includes("api.assemblyai.com")) {
+      const idMatch = url.match(/\/transcript\/([^/?]+)$/);
+      const id = idMatch?.[1] ?? "";
+      if (id) stub.polledTranscriptIds.push(id);
+      return new Response(JSON.stringify(byId[id] ?? { status: "error", error: "unknown id" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("qstash") || url.includes("upstash.io") || url.includes("/audit/step/") || url.includes(":9002")) {
+      let bodyJson: Record<string, unknown> = {};
+      try { bodyJson = JSON.parse(String(init?.body ?? "{}")); } catch { /* leave empty */ }
+      stub.enqueueBodies.set(url, bodyJson);
+      return new Response(JSON.stringify({ messageId: "stub" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response("", { status: 200 });
+  }) as typeof globalThis.fetch;
+  return () => { globalThis.fetch = original; };
+}
+
+const utt = (speaker: string, text: string, start: number) => ({ speaker, text, start, end: start + 1000 });
+
+Deno.test({
+  name: "stepPollTranscript — multi-genie concatenates completed legs in submit order",
+  ...kvOpts,
+  fn: async () => {
+    setupEnv();
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    await saveFinding(orgId, {
+      id: findingId, auditJobId: "job-mg", findingStatus: "transcribing",
+      record: { RecordId: 502442 }, assemblyAiTranscriptIds: ["tid-A", "tid-B"],
+      assemblyAiSubmittedAt: Date.now() - 30_000,
+    });
+    const stub = freshStub({});
+    const undo = installPerIdStub(stub, {
+      "tid-A": { status: "completed", text: "leg one", utterances: [utt("A", "leg one", 0)] },
+      "tid-B": { status: "completed", text: "leg two", utterances: [utt("A", "leg two", 0)] },
+    });
+    try {
+      const res = await stepPollTranscript(reqWith({ findingId, orgId, transcriptIds: ["tid-A", "tid-B"] }));
+      assertEquals(res.status, 200);
+      const json = await res.json();
+      assertEquals(json.completed, true);
+      assertEquals(json.legs, 2);
+      assertEquals(stub.polledTranscriptIds, ["tid-A", "tid-B"], "every leg polled, in order");
+
+      const fresh = await getFinding(orgId, findingId);
+      // Submit order is call chronology — leg two must never precede leg one.
+      assert(
+        fresh!.rawTranscript.indexOf("leg one") < fresh!.rawTranscript.indexOf("leg two"),
+        `legs out of order: ${fresh!.rawTranscript}`,
+      );
+      assert(!fresh!.utteranceTimes, "no utteranceTimes: per-leg offsets would mis-seek the player on leg 2+");
+      assert([...stub.enqueueBodies.keys()].some((u) => u.includes("transcribe-complete")), "pipeline continues");
+    } finally {
+      undo();
+    }
+  },
+});
+
+Deno.test({
+  name: "stepPollTranscript — multi-genie re-polls while any leg is still running",
+  ...kvOpts,
+  fn: async () => {
+    setupEnv();
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    await saveFinding(orgId, {
+      id: findingId, auditJobId: "job-mg2", findingStatus: "transcribing",
+      record: { RecordId: 1 }, assemblyAiTranscriptIds: ["tid-A", "tid-B"],
+    });
+    const stub = freshStub({});
+    const undo = installPerIdStub(stub, {
+      "tid-A": { status: "completed", text: "done", utterances: [utt("A", "done", 0)] },
+      "tid-B": { status: "processing" },
+    });
+    try {
+      const res = await stepPollTranscript(reqWith({ findingId, orgId, transcriptIds: ["tid-A", "tid-B"] }));
+      const json = await res.json();
+      assertEquals(json.polling, true, "must come back later, not finalize on a partial result");
+      assertEquals(json.pending, 1);
+
+      const repoll = [...stub.enqueueBodies.entries()].find(([u]) => u.includes("poll-transcript"));
+      assert(repoll, "re-enqueued itself");
+      assertEquals(repoll![1].transcriptIds, ["tid-A", "tid-B"], "ids propagated so the re-poll doesn't lose them");
+
+      const fresh = await getFinding(orgId, findingId);
+      assert(!fresh?.rawTranscript, "no transcript written while a leg is outstanding");
+      assertEquals(fresh?.findingStatus, "transcribing");
+    } finally {
+      undo();
+    }
+  },
+});
+
+Deno.test({
+  name: "stepPollTranscript — multi-genie keeps a good leg when the other one errors",
+  ...kvOpts,
+  fn: async () => {
+    setupEnv();
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    await saveFinding(orgId, {
+      id: findingId, auditJobId: "job-mg3", findingStatus: "transcribing",
+      record: { RecordId: 1 }, assemblyAiTranscriptIds: ["tid-A", "tid-B"],
+    });
+    const stub = freshStub({});
+    const undo = installPerIdStub(stub, {
+      "tid-A": { status: "error", error: "boom" },
+      "tid-B": { status: "completed", text: "survivor", utterances: [utt("A", "survivor", 0)] },
+    });
+    try {
+      const res = await stepPollTranscript(reqWith({ findingId, orgId, transcriptIds: ["tid-A", "tid-B"] }));
+      const json = await res.json();
+      assertEquals(json.legs, 1);
+      const fresh = await getFinding(orgId, findingId);
+      // One dead leg must not sink an audit whose other recording is fine —
+      // that was the old blocking loop's behaviour and it must be preserved.
+      assert(fresh!.rawTranscript.includes("survivor"), `expected the good leg, got: ${fresh!.rawTranscript}`);
+      assert(fresh!.rawTranscript !== "Genie Invalid", "one bad leg must not fail the whole audit");
+    } finally {
+      undo();
+    }
+  },
+});
+
+Deno.test({
+  name: "stepPollTranscript — multi-genie with every leg failed finalizes as Genie Invalid",
+  ...kvOpts,
+  fn: async () => {
+    setupEnv();
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    await saveFinding(orgId, {
+      id: findingId, auditJobId: "job-mg4", findingStatus: "transcribing",
+      record: { RecordId: 1 }, assemblyAiTranscriptIds: ["tid-A", "tid-B"],
+    });
+    const stub = freshStub({});
+    const undo = installPerIdStub(stub, {
+      "tid-A": { status: "error", error: "boom" },
+      "tid-B": { status: "error", error: "boom" },
+    });
+    try {
+      await stepPollTranscript(reqWith({ findingId, orgId, transcriptIds: ["tid-A", "tid-B"] }));
+      const fresh = await getFinding(orgId, findingId);
+      assertEquals(fresh?.rawTranscript, "Genie Invalid");
+      assertEquals(fresh?.findingStatus, "finished", "must reach a terminal state, never sit in 'transcribing'");
+    } finally {
+      undo();
+    }
+  },
+});
+
+Deno.test({
+  name: "stepPollTranscript — multi-genie falls back to ids on the finding when payload lacks them",
+  ...kvOpts,
+  fn: async () => {
+    setupEnv();
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    await saveFinding(orgId, {
+      id: findingId, auditJobId: "job-mg5", findingStatus: "transcribing",
+      record: { RecordId: 1 }, assemblyAiTranscriptIds: ["tid-A", "tid-B"],
+    });
+    const stub = freshStub({});
+    const undo = installPerIdStub(stub, {
+      "tid-A": { status: "completed", text: "one", utterances: [utt("A", "one", 0)] },
+      "tid-B": { status: "completed", text: "two", utterances: [utt("A", "two", 0)] },
+    });
+    try {
+      // Mimics a message enqueued before the payload-shape change deployed.
+      const res = await stepPollTranscript(reqWith({ findingId, orgId }));
+      const json = await res.json();
+      assertEquals(json.completed, true);
+      assertEquals(stub.polledTranscriptIds, ["tid-A", "tid-B"]);
     } finally {
       undo();
     }

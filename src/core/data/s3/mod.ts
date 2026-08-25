@@ -3,6 +3,7 @@
  * Ported from lib/s3.ts — deploy-compatible, no AWS SDK dependency.
  */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
+import { s3ObjectUrl } from "@core/config/endpoints.ts";
 
 const region = () => Deno.env.get("AWS_REGION") ?? "us-east-1";
 const accessKey = () => Deno.env.get("AWS_ACCESS_KEY_ID") ?? "";
@@ -51,7 +52,7 @@ async function signV4(method: string, bucket: string, key: string, payloadHash: 
   const sig = hex(new Uint8Array(await hmac(signingKey, stringToSign)));
 
   headers["authorization"] = `AWS4-HMAC-SHA256 Credential=${accessKey()}/${scope}, SignedHeaders=${signedHeaders}, Signature=${sig}`;
-  return `https://${host}${encodedKey}`;
+  return s3ObjectUrl(bucket, r, encodedKey);
 }
 
 const S3_MAX_ATTEMPTS = 3;

@@ -1,6 +1,7 @@
 /** Genie recording provider - fetches recording URLs and downloads audio. */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 import { trackErrorOnce } from "@audit/domain/data/stats-repository/mod.ts";
+import { genieBaseUrl } from "@core/config/endpoints.ts";
 
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -66,7 +67,7 @@ export function pickExactContract(
     return null;
   }
   const src = rowOf(exact)?.src as string | undefined;
-  if (!src || src === `${Deno.env.get("GENIE_BASE_URL") ?? ""}/` || src.trim() === "") {
+  if (!src || src === `${genieBaseUrl()}/` || src.trim() === "") {
     console.warn(`[GENIE] 🔍 ${source} no src: contract=${contract} role=${role} src=${src} ${tag}`);
     return null;
   }
@@ -93,7 +94,7 @@ async function getSession(role: AccountRole): Promise<string | null> {
   const apirid = `${Date.now()}-1`;
 
   try {
-    const res = await fetch(`${Deno.env.get("GENIE_BASE_URL") ?? ""}/loginsession.wr`, {
+    const res = await fetch(`${genieBaseUrl()}/loginsession.wr`, {
       method: "POST",
       headers: new Headers({ "Content-Type": "application/x-www-form-urlencoded" }),
       body: new URLSearchParams({ username: String(accountId), password, apirid }).toString(),
@@ -133,7 +134,7 @@ async function searchViaJob(contract: number, role: AccountRole, tag: string): P
   try {
     // Step 1: Submit search job
     const apirid = `${Date.now()}-1`;
-    const jobRes = await fetch(`${Deno.env.get("GENIE_BASE_URL") ?? ""}/${accountId}/judge_makesearchresults.wr`, {
+    const jobRes = await fetch(`${genieBaseUrl()}/${accountId}/judge_makesearchresults.wr`, {
       method: "POST",
       headers: cookieHeaders(sid),
       body: new URLSearchParams({ apirid, filter_contract: String(contract) }).toString(),
@@ -158,7 +159,7 @@ async function searchViaJob(contract: number, role: AccountRole, tag: string): P
       await sleep(2000);
       const pollApirid = `${Date.now()}-${i + 1}`;
       const pollRes = await fetch(
-        `${Deno.env.get("GENIE_BASE_URL") ?? ""}/${accountId}/jobqueuestatus.wr?apirid=${pollApirid}`,
+        `${genieBaseUrl()}/${accountId}/jobqueuestatus.wr?apirid=${pollApirid}`,
         {
           method: "POST",
           headers: cookieHeaders(sid),
@@ -199,7 +200,7 @@ async function searchViaJob(contract: number, role: AccountRole, tag: string): P
 async function searchOnce(contract: number, role: AccountRole, tag: string): Promise<string | null> {
   const accountId = getAccountId(role);
   try {
-    const url = `${Deno.env.get("GENIE_BASE_URL") ?? ""}/api/v1/${accountId}/judge_search.wr?filter_contract=${contract}`;
+    const url = `${genieBaseUrl()}/api/v1/${accountId}/judge_search.wr?filter_contract=${contract}`;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 15_000);
     const res = await fetch(url, { headers: getHeaders(role), signal: ctrl.signal }).finally(() => clearTimeout(t));

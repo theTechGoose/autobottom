@@ -1,5 +1,7 @@
 /** Postmark email sender. Ported from providers/postmark.ts. */
 
+import { postmarkUrl } from "@core/config/endpoints.ts";
+
 export interface EmailAttachment {
   name: string;
   content: string; // base64-encoded
@@ -43,7 +45,7 @@ export async function sendEmail(opts: {
     }));
   }
 
-  const res = await fetch("https://api.postmarkapp.com/email", {
+  const res = await fetch(postmarkUrl(), {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json", "X-Postmark-Server-Token": token },
     body: JSON.stringify(payload),

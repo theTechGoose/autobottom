@@ -15,20 +15,26 @@ import { saveFinding, saveTranscript } from "@audit/domain/data/audit-repository
 import { populateReviewQueue, claimNextItem } from "@review/domain/business/review-queue/mod.ts";
 import { saveReviewerConfig } from "@admin/domain/data/admin-repository/mod.ts";
 
-const ORG = "review-types-test-org";
+const orgBase = "review-types-test-org";
+let ORG = `${orgBase}-${crypto.randomUUID().slice(0, 8)}`;
 
 /** Force the in-memory firestore fallback for the duration of this test file.
  *  Without this, a developer with FIREBASE_* + S3_BUCKET in their shell env
  *  would route writes to real Firestore and pollute prod data. */
+/** Start each test from a clean slate.
+ *
+ *  These tests run against the Firestore emulator like everything else — which
+ *  is the point, because claim/lock behavior depends on real atomic writes and
+ *  a Map could never prove it. But a real database persists between tests AND
+ *  between runs, so "clean" now means a fresh org rather than a cleared Map:
+ *  isolation comes from the key space. */
 function forceInMemoryFirestore(): void {
-  for (const k of ["S3_BUCKET", "AWS_S3_BUCKET", "FIREBASE_SA_S3_KEY", "FIREBASE_PROJECT_ID"]) {
-    try { Deno.env.delete(k); } catch { /* ignore */ }
-  }
+  ORG = `${orgBase}-${crypto.randomUUID().slice(0, 8)}`;
   resetFirestoreCredentials();
 }
 
 Deno.test({
-  name: "Reviewer type filter — setup (in-memory firestore)",
+  name: "Reviewer type filter — setup (firestore emulator)",
   fn() { forceInMemoryFirestore(); },
 });
 

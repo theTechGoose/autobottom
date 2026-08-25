@@ -10,3 +10,6 @@ frontend/_fresh
 .playwright-mcp/
 fixtures/json/
 alex-refactor/
+
+# Firestore emulator scratch output
+firestore-debug.log

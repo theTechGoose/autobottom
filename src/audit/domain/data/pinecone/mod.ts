@@ -1,6 +1,7 @@
 /** Pinecone vector store adapter for RAG retrieval. Ported from providers/pinecone.ts. */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 import OpenAI from "#openai";
+import { pineconeControlUrl, pineconeDataUrl } from "@core/config/endpoints.ts";
 
 function getOpenAI() { return new OpenAI({ apiKey: Deno.env.get("OPEN_AI_KEY") }); }
 
@@ -24,7 +25,7 @@ let _hostUrl: string | undefined;
 async function getPineconeHost(): Promise<string> {
   if (_hostUrl) return _hostUrl;
   const { key, index } = PINECONE_HOST();
-  const res = await timedFetch(`https://api.pinecone.io/indexes/${index}`, { headers: { "Api-Key": key } });
+  const res = await timedFetch(`${pineconeControlUrl()}/indexes/${index}`, { headers: { "Api-Key": key } });
   if (!res.ok) throw new Error(`Pinecone describe index failed: ${res.status}`);
   const data = await res.json();
   _hostUrl = data.host;
@@ -73,7 +74,7 @@ export async function upload(findingId: string, text: string): Promise<void> {
     }));
     for (let i = 0; i < vectors.length; i += 100) {
       const batch = vectors.slice(i, i + 100);
-      const res = await timedFetch(`https://${host}/vectors/upsert`, {
+      const res = await timedFetch(`${pineconeDataUrl(host)}/vectors/upsert`, {
         method: "POST", headers: { "Api-Key": key, "Content-Type": "application/json" },
         body: JSON.stringify({ vectors: batch, namespace: findingId }),
       });
@@ -89,7 +90,7 @@ export async function query(findingId: string, question: string, numDocs = 4): P
     const host = await getPineconeHost();
     const { key } = PINECONE_HOST();
     const queryVector = await embed(question);
-    const res = await timedFetch(`https://${host}/query`, {
+    const res = await timedFetch(`${pineconeDataUrl(host)}/query`, {
       method: "POST", headers: { "Api-Key": key, "Content-Type": "application/json" },
       body: JSON.stringify({ vector: queryVector, topK: numDocs, namespace: findingId, includeMetadata: true }),
     });
@@ -106,7 +107,7 @@ export async function deleteNamespace(findingId: string): Promise<void> {
   return withSpan("pinecone.deleteNamespace", async () => {
     const host = await getPineconeHost();
     const { key } = PINECONE_HOST();
-    const res = await timedFetch(`https://${host}/vectors/delete`, {
+    const res = await timedFetch(`${pineconeDataUrl(host)}/vectors/delete`, {
       method: "POST", headers: { "Api-Key": key, "Content-Type": "application/json" },
       body: JSON.stringify({ deleteAll: true, namespace: findingId }),
     });

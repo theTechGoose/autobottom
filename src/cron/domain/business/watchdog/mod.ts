@@ -2,11 +2,19 @@
 
 import { listStoredByIdPrefix } from "@core/data/firestore/mod.ts";
 import { publishStep } from "@core/data/qstash/mod.ts";
-import { isFindingRecovered, untrackHandler } from "@audit/domain/data/stats-repository/mod.ts";
+import { isFindingRecovered, untrackForWatchdog, ACTIVE_REAP_MS } from "@audit/domain/data/stats-repository/mod.ts";
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
-const STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+/** A finding whose tracking row hasn't been touched in this long is presumed
+ *  dead and gets its step re-published.
+ *
+ *  Clamped to half of ACTIVE_REAP_MS so the invariant is structural rather than
+ *  a comment someone can drift away from: the dashboard's stats read deletes
+ *  rows past ACTIVE_REAP_MS, and a row deleted before the watchdog ever sees it
+ *  means the finding is permanently unrecoverable. Half guarantees at least one
+ *  hourly tick lands inside the window. */
+export const STUCK_THRESHOLD_MS = Math.min(30 * 60 * 1000, Math.floor(ACTIVE_REAP_MS / 2));
 
 /** active-tracking.step doubles as a dashboard display label, and a few labels
  *  are NOT dispatchable pipeline steps. Re-publishing them verbatim hits an
@@ -34,24 +42,43 @@ interface StuckFinding {
 
 export async function getStuckFindings(thresholdMs = STUCK_THRESHOLD_MS): Promise<StuckFinding[]> {
   const now = Date.now();
-  const stuck: StuckFinding[] = [];
+  // Keyed `${orgId}::${findingId}` — the same finding appears in both stores,
+  // and re-publishing it twice in one tick would double-run the step.
+  const stuck = new Map<string, StuckFinding>();
 
-  // Scan active-tracking docs across all orgs via doc-ID prefix.
-  // Doc IDs are encoded as `active-tracking__{org}__{findingId}` so the
-  // prefix "active-tracking__" matches every entry regardless of org.
-  // We parse the org out of the ID (sanitization keeps it round-trip-safe
-  // for our org IDs which are lowercase alphanumeric).
-  const rows = await listStoredByIdPrefix<{ findingId: string; step: string; ts: number }>("active-tracking__");
-  for (const { id, value } of rows) {
-    if (!value?.ts || !value?.findingId) continue;
+  const consider = (orgId: string, value: { findingId?: string; step?: string; ts?: number } | null) => {
+    if (!value?.ts || !value?.findingId) return;
     const age = now - value.ts;
-    if (age > thresholdMs) {
-      const idParts = id.split("__");
-      const orgId = idParts[1] ?? "";
-      stuck.push({ orgId, findingId: value.findingId, step: value.step, ts: value.ts, ageMs: age });
-    }
+    if (age <= thresholdMs) return;
+    const key = `${orgId}::${value.findingId}`;
+    const prev = stuck.get(key);
+    // Keep the OLDEST sighting — the two stores are written together, but if
+    // they ever drift, the older ts is the conservative "stuck since" answer.
+    if (prev && prev.ts <= value.ts) return;
+    stuck.set(key, { orgId, findingId: value.findingId, step: value.step ?? "", ts: value.ts, ageMs: age });
+  };
+
+  // Source 1 — `active-tracking`, the durable per-org row written by the step
+  // dispatcher's pre-track. Doc IDs are `active-tracking__{org}__{findingId}`,
+  // so the prefix matches every entry regardless of org and we parse the org
+  // back out (sanitization is round-trip-safe for our lowercase-alnum orgs).
+  const activeRows = await listStoredByIdPrefix<{ findingId: string; step: string; ts: number }>("active-tracking__");
+  for (const { id, value } of activeRows) {
+    consider(id.split("__")[1] ?? "", value);
   }
-  return stuck;
+
+  // Source 2 — `watchdog-active`, the GLOBAL-org backup written alongside it by
+  // trackActive. It carries orgId in the VALUE (no id parsing needed) and has a
+  // TTL, so it survives an early delete of the primary row. This store was
+  // written for years but never read by the watchdog — findings whose primary
+  // row was reaped were simply lost. Union, don't replace: the primary has no
+  // TTL and so outlives this one on a long hang.
+  const backupRows = await listStoredByIdPrefix<{ orgId: string; findingId: string; step: string; ts: number }>("watchdog-active__");
+  for (const { value } of backupRows) {
+    consider(String(value?.orgId ?? ""), value);
+  }
+
+  return [...stuck.values()];
 }
 
 export async function runWatchdog(): Promise<{ recovered: number; skippedTerminal: number }> {
@@ -73,7 +100,7 @@ export async function runWatchdog(): Promise<{ recovered: number; skippedTermina
         // refusal guard (review-queue HARD PRE-FLIGHT). Clear the stale row so it
         // stops resurfacing every hour, and skip it.
         if (await isFindingRecovered(orgId, s.findingId)) {
-          await untrackHandler(orgId, s.findingId);
+          await untrackForWatchdog(orgId, s.findingId);
           skippedTerminal++;
           console.log(`🧹 [WATCHDOG] Cleared stale active-tracking for ${s.findingId} (already terminal; was "${s.step}" for ${Math.round(s.ageMs / 60000)}min)`);
           continue;

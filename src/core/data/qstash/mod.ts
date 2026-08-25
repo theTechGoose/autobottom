@@ -2,6 +2,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 import { getStored, setStored } from "@core/data/firestore/mod.ts";
+import { qstashBaseUrl } from "@core/config/endpoints.ts";
 
 // Storage type for operator-set parallelism overrides. Keyed by queue name
 // at the GLOBAL org so a single operator config applies regardless of which
@@ -116,30 +117,11 @@ export function getSelfUrlSources(): {
     effective: selfUrl(),
   };
 }
-function qstashUrl(): string { return Deno.env.get("QSTASH_URL") ?? "https://qstash.upstash.io"; }
+function qstashUrl(): string { return qstashBaseUrl(); }
 function qstashToken(): string { return Deno.env.get("QSTASH_TOKEN") ?? ""; }
-function isLocalMode(): boolean { return Deno.env.get("LOCAL_QUEUE") === "true"; }
 function qstashAuth(): Record<string, string> { return { Authorization: `Bearer ${qstashToken()}` }; }
 
-async function localEnqueue(targetUrl: string, body: unknown, delaySeconds?: number): Promise<string> {
-  const delay = delaySeconds ? delaySeconds * 1000 : 0;
-  setTimeout(async () => {
-    try {
-      const res = await fetch(targetUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) console.error(`[LOCAL-QUEUE] ${targetUrl} failed: ${res.status} ${await res.text()}`);
-    } catch (err) {
-      console.error(`[LOCAL-QUEUE] ${targetUrl} error:`, err);
-    }
-  }, delay);
-  return `local-${Date.now()}`;
-}
-
 async function enqueue(queueName: string, targetUrl: string, body: unknown, delaySeconds?: number, extraHeaders?: Record<string, string>): Promise<string> {
-  if (isLocalMode()) return localEnqueue(targetUrl, body, delaySeconds);
 
   const headers: Record<string, string> = {
     ...qstashAuth(),
@@ -181,7 +163,6 @@ export async function publishStep(step: string, body: unknown): Promise<string> 
   return withSpan("qstash.publishStep", async (span) => {
     span.setAttribute("qstash.step", step);
     const url = `${selfUrl()}/audit/step/${step}`;
-    if (isLocalMode()) return localEnqueue(url, body);
     const timeout: Record<string, string> = step === "ask-all" ? { "Upstash-Timeout": "900s" } : {};
     const res = await fetch(`${qstashUrl()}/v2/publish/${url}`, {
       method: "POST",
@@ -202,7 +183,6 @@ export async function publishStep(step: string, body: unknown): Promise<string> 
 export async function publishUrl(url: string, body: unknown, delaySeconds?: number): Promise<string> {
   return withSpan("qstash.publishUrl", async (span) => {
     span.setAttribute("qstash.url", url);
-    if (isLocalMode()) return localEnqueue(url, body, delaySeconds);
     const headers: Record<string, string> = {
       ...qstashAuth(),
       "Content-Type": "application/json",
@@ -232,7 +212,6 @@ export function enqueueCleanup(body: unknown, delaySeconds: number): Promise<str
 
 export async function pauseAllQueues(): Promise<void> {
   return withSpan("qstash.pauseAllQueues", async () => {
-    if (isLocalMode()) return;
     await Promise.all(ALL_QUEUES.map(async (q) => {
       const res = await fetch(`${qstashUrl()}/v2/queues/${q}/pause`, { method: "POST", headers: qstashAuth() });
       if (!res.ok) console.error(`[QSTASH] pause ${q} failed: ${res.status} ${await res.text()}`);
@@ -243,7 +222,6 @@ export async function pauseAllQueues(): Promise<void> {
 
 export async function resumeAllQueues(): Promise<void> {
   return withSpan("qstash.resumeAllQueues", async () => {
-    if (isLocalMode()) return;
     await Promise.all(ALL_QUEUES.map(async (q) => {
       const res = await fetch(`${qstashUrl()}/v2/queues/${q}/resume`, { method: "POST", headers: qstashAuth() });
       if (!res.ok) console.error(`[QSTASH] resume ${q} failed: ${res.status} ${await res.text()}`);
@@ -266,7 +244,6 @@ export async function resumeAllQueues(): Promise<void> {
  *  queue an operator just paused or reset parallelism. */
 export async function purgeAllQueues(): Promise<number> {
   return withSpan("qstash.purgeAllQueues", async (span) => {
-    if (isLocalMode()) return 0;
     let total = 0;
     await Promise.all(ALL_QUEUES.map(async (q) => {
       // Snapshot current settings so we can recreate the queue identically.
@@ -341,7 +318,6 @@ export async function purgeAllQueues(): Promise<number> {
  *  caused a flood. Do not remove the paused-preservation step.) */
 export async function setQstashQueueParallelism(queueName: string, parallelism: number): Promise<{ ok: boolean; error?: string }> {
   return withSpan("qstash.setQueueParallelism", async (span) => {
-    if (isLocalMode()) return { ok: true };
     span.setAttribute("qstash.queue", queueName);
     span.setAttribute("qstash.parallelism", parallelism);
 
@@ -415,7 +391,6 @@ export interface ApplyDefaultsResult {
 }
 
 export async function applyDefaultQueueParallelism(): Promise<ApplyDefaultsResult[]> {
-  if (isLocalMode()) return ALL_QUEUES.map((q) => ({ queueName: q, parallelism: DEFAULT_PARALLELISM[q], source: "default", ok: true }));
   const results: ApplyDefaultsResult[] = [];
   for (const q of ALL_QUEUES) {
     let parallelism = DEFAULT_PARALLELISM[q];
@@ -444,7 +419,6 @@ export async function applyDefaultQueueParallelism(): Promise<ApplyDefaultsResul
  *  our parallelism push actually landed. Useful for verifying after deploys. */
 export async function getQueueInfo(): Promise<Array<{ queueName: string; parallelism?: number; messageCount?: number; paused?: boolean; raw?: unknown }>> {
   return withSpan("qstash.getQueueInfo", async () => {
-    if (isLocalMode()) return ALL_QUEUES.map((q) => ({ queueName: q, parallelism: 0, messageCount: 0, paused: false }));
     const out = await Promise.all(ALL_QUEUES.map(async (q) => {
       try {
         const res = await fetch(`${qstashUrl()}/v2/queues/${q}`, { headers: qstashAuth() });
@@ -467,7 +441,6 @@ export async function getQueueInfo(): Promise<Array<{ queueName: string; paralle
 
 export async function getQueueCounts(): Promise<Record<string, number>> {
   return withSpan("qstash.getQueueCounts", async () => {
-    if (isLocalMode()) return Object.fromEntries(ALL_QUEUES.map((q) => [q, 0]));
     const pairs = await Promise.all(ALL_QUEUES.map(async (q) => {
       const res = await fetch(`${qstashUrl()}/v2/queues/${q}`, { headers: qstashAuth() });
       const data = res.ok ? await res.json() : {};

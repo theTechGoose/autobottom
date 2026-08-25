@@ -27,6 +27,9 @@ Deno.test("dashboard e2e — placeholder", () => { assert(true); });
 // The controller's auditsData hardcodes ORG() = defaultOrgId(), so tests
 // must seed entries under the same orgId — otherwise the query returns
 // zero matches.
+// This file seeds and counts rows, so it must own its org outright: the
+// configured default now points at a database with real snapshot data in it.
+Deno.env.set("DEFAULT_ORG_ID", "dash-e2e-" + crypto.randomUUID().slice(0, 8));
 const ORG = defaultOrgId();
 
 function reset() {

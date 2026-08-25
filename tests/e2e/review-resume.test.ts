@@ -23,12 +23,18 @@ import {
 } from "@review/domain/business/review-queue/mod.ts";
 import type { ReviewItem } from "@core/dto/types.ts";
 
-const ORG = "review-resume-test-org";
+const orgBase = "review-resume-test-org";
+let ORG = `${orgBase}-${crypto.randomUUID().slice(0, 8)}`;
 
+/** Start each test from a clean slate.
+ *
+ *  These tests run against the Firestore emulator like everything else — which
+ *  is the point, because claim/lock behavior depends on real atomic writes and
+ *  a Map could never prove it. But a real database persists between tests AND
+ *  between runs, so "clean" now means a fresh org rather than a cleared Map:
+ *  isolation comes from the key space. */
 function forceInMemoryFirestore(): void {
-  for (const k of ["S3_BUCKET", "AWS_S3_BUCKET", "FIREBASE_SA_S3_KEY", "FIREBASE_PROJECT_ID"]) {
-    try { Deno.env.delete(k); } catch { /* ignore */ }
-  }
+  ORG = `${orgBase}-${crypto.randomUUID().slice(0, 8)}`;
   resetFirestoreCredentials();
 }
 
@@ -67,7 +73,7 @@ async function seedAudit(findingId: string, completedAt: number): Promise<void> 
 }
 
 Deno.test({
-  name: "Resume — setup (in-memory firestore)",
+  name: "Resume — setup (firestore emulator)",
   fn() { forceInMemoryFirestore(); },
 });
 

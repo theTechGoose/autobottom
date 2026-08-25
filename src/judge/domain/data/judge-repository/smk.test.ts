@@ -264,7 +264,9 @@ Deno.test({ name: "claimNextItem — hidden rows are left in place, not drained"
 
 // ─── dedup soft-hide path ──────────────────────────────────────────────────
 
-const DEDUP_ORG = "test-org" as OrgId;
+// Unique per run: the emulator database persists between test runs, so a
+// fixed org would inherit the previous run's findings and index rows.
+const DEDUP_ORG = ("test-org-" + crypto.randomUUID().slice(0, 8)) as OrgId;
 
 Deno.test("dedup — markFindingHidden writes the audit-hidden doc", async () => {
   reset();
@@ -914,8 +916,14 @@ Deno.test("processChargebackBackfillBatch — folds totals across >1 concurrency
 // complete" emails with partial scores (56%→84%, 84%→88% … 96%→100%).
 
 /** Poll for the judgeAction stamp postJudgedAudit writes — it's fired
- *  fire-and-forget from recordJudgeDecision, so it can't be awaited directly. */
-async function stampedAfter(orgId: OrgId, findingId: string, ms = 150): Promise<boolean> {
+ *  fire-and-forget from recordJudgeDecision, so it can't be awaited directly.
+ *
+ *  The budget is generous because storage is real HTTP now: the stamp needs a
+ *  read and a write against the Firestore emulator, which takes tens of
+ *  milliseconds rather than the microseconds an in-process Map took. The
+ *  negative assertion below still fails fast — it returns as soon as the
+ *  deadline passes with nothing stamped. */
+async function stampedAfter(orgId: OrgId, findingId: string, ms = 3_000): Promise<boolean> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     const f = await getFinding(orgId, findingId) as { answeredQuestions?: Array<{ judgeAction?: string }> } | null;

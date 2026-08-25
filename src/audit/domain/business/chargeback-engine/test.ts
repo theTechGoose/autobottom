@@ -94,11 +94,21 @@ Deno.test("classify — non-chargeback header is omission", () => {
   assertEquals(omissions.length, 1);
 });
 
-Deno.test("classify — mixed headers in both lists", () => {
+Deno.test("classify — mixed headers are a chargeback ONLY, never both", () => {
   const entries = [{ findingId: "f1", failedQHeaders: ["Income", "Email"], ts: 0, voName: "", destination: "", revenue: "", recordId: "", score: 0 }];
   const { chargebacks, omissions } = classifyChargebacks(entries);
   assertEquals(chargebacks.length, 1);
-  assertEquals(omissions.length, 1);
+  assertEquals(omissions.length, 0);
+});
+
+Deno.test("classify — partitions: no entry lands on both sides", () => {
+  const mk = (findingId: string, failedQHeaders: string[]) =>
+    ({ findingId, failedQHeaders, ts: 0, voName: "", destination: "", revenue: "", recordId: "", score: 0 });
+  const entries = [mk("cbOnly", ["Income"]), mk("omOnly", ["Email"]), mk("mixed", ["Income", "Email"])];
+  const { chargebacks, omissions } = classifyChargebacks(entries);
+  assertEquals(chargebacks.map((e) => e.findingId), ["cbOnly", "mixed"]);
+  assertEquals(omissions.map((e) => e.findingId), ["omOnly"]);
+  assertEquals(chargebacks.length + omissions.length, entries.length);
 });
 
 Deno.test("classify — all 4 chargeback questions recognized", () => {

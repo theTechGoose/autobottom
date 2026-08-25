@@ -101,15 +101,25 @@ export function buildWireDeductionEntry(opts: {
 
 /**
  * Classify chargeback entries into chargebacks vs omissions.
- * An entry can appear in both if it has headers matching both categories.
+ *
+ * A PARTITION — every entry lands on exactly one side. Chargeback wins: an
+ * audit that failed both a chargeback question and some other question is a
+ * chargeback, not an omission.
+ *
+ * These used to be two independent filters, so a mixed audit was returned in
+ * BOTH lists and the weekly export wrote it to both tabs. For the week of
+ * 2026-08-17 that was 103 of the 129 chargeback rows duplicated onto Omissions
+ * (639 rows posted for 536 distinct audits), which double-counts an audit for
+ * anyone totalling the two tabs.
  */
 export function classifyChargebacks(entries: ChargebackEntry[]): {
   chargebacks: ChargebackEntry[];
   omissions: ChargebackEntry[];
 } {
+  const isChargeback = (e: ChargebackEntry) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h));
   return {
-    chargebacks: entries.filter((e) => e.failedQHeaders.some((h) => CHARGEBACK_QUESTIONS.has(h))),
-    omissions: entries.filter((e) => e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h))),
+    chargebacks: entries.filter(isChargeback),
+    omissions: entries.filter((e) => !isChargeback(e) && e.failedQHeaders.some((h) => !CHARGEBACK_QUESTIONS.has(h))),
   };
 }
 

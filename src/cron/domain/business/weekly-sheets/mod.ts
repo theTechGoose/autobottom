@@ -51,8 +51,12 @@ export function prevWeekWindow(now: Date): { since: number; until: number } {
  *  the cron day-of-week field — `0 13 * * 1` fired on SUNDAYS in prod for five
  *  weeks straight, so that field isn't trustworthy. */
 export const SHEET_JOBS = {
-  wire: { dow: 1, hour: 9, tabs: "wire", label: "Wire Deductions" },
-  chargebacks: { dow: 2, hour: 9, tabs: "cb,om", label: "Chargebacks + Omissions" },
+  wire: { dow: 1, hour: 9, tabs: "wire", label: "Wire Deductions", paused: false },
+  // PAUSED 2026-08-26 at alex's request — chargebacks + omissions are being
+  // pulled by hand from the Google Apps Script for now. Nothing about the
+  // schedule below is wrong; it is simply not wanted at the moment. Set
+  // `paused: false` to resume Tuesday posting, no other change needed.
+  chargebacks: { dow: 2, hour: 9, tabs: "cb,om", label: "Chargebacks + Omissions", paused: true },
 } as const;
 
 export type SheetJobName = keyof typeof SHEET_JOBS;
@@ -66,11 +70,23 @@ export const SHEET_JOB_NAMES = Object.keys(SHEET_JOBS) as SheetJobName[];
  *
  *  `>= hour`, not `=== hour`: a 9am tick lost to a deploy or a cold start is
  *  picked up by the next hour instead of skipping the week. The per-week claim
- *  in runWeeklySheetsExport is what makes those extra ticks harmless. */
-export function isWeeklySheetsFireTime(job: SheetJobName, now: Date = new Date()): boolean {
+ *  in runWeeklySheetsExport is what makes those extra ticks harmless.
+ *
+ *  Deliberately ignores `paused` — this is the schedule math on its own, kept
+ *  exported and under test so a paused job's timing can't quietly rot while
+ *  it's switched off and then misfire the week it's switched back on. */
+export function isJobSlot(job: SheetJobName, now: Date = new Date()): boolean {
   const { dow, hour } = SHEET_JOBS[job];
   const p = tzParts(SHEET_TZ, now.getTime());
   return p.dow === dow && p.hour >= hour;
+}
+
+/** Should the hourly cron run this job right now? The slot, AND not paused.
+ *  A paused job never fires on a schedule; it can still be run deliberately
+ *  via runWeeklySheetsExport / exportChargebacksToSheet. */
+export function isWeeklySheetsFireTime(job: SheetJobName, now: Date = new Date()): boolean {
+  if (SHEET_JOBS[job].paused) return false;
+  return isJobSlot(job, now);
 }
 
 export interface SheetExportResult {
@@ -367,6 +383,11 @@ export async function runAllWeeklySheetsExports(now: Date = new Date()): Promise
   let appended = 0, duplicates = 0, skipped = 0;
   const errors: string[] = [];
   for (const job of SHEET_JOB_NAMES) {
+    if (SHEET_JOBS[job].paused) {
+      console.log(`⏸️  [POST-TO-SHEET] ${SHEET_JOBS[job].label} is paused — skipping`);
+      skipped++;
+      continue;
+    }
     const r = await runWeeklySheetsExport(job, now);
     appended += r.appended ?? 0;
     duplicates += r.duplicates ?? 0;

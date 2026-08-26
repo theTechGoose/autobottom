@@ -1,7 +1,7 @@
 /** Tests for weekly sheets date window calculation + cron idempotency. */
 
 import { assertEquals } from "#assert";
-import { prevWeekWindow, isWeeklySheetsFireTime, runWeeklySheetsExport, normKeyCell, rowKey, postedKeys } from "./mod.ts";
+import { prevWeekWindow, isWeeklySheetsFireTime, isJobSlot, runWeeklySheetsExport, normKeyCell, rowKey, postedKeys } from "./mod.ts";
 import { getStored, resetFirestoreCredentials, setStored } from "@core/data/firestore/mod.ts";
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 
@@ -40,8 +40,8 @@ Deno.test("prevWeekWindow — spans the spring DST change without losing an hour
   assertEquals(until - since, 7 * 86_400_000 - 3_600_000 - 1);
 });
 
-Deno.test("isWeeklySheetsFireTime — chargebacks on Tuesday 9am ET and after, nothing else", () => {
-  const cb = (iso: string) => isWeeklySheetsFireTime("chargebacks", new Date(iso));
+Deno.test("isJobSlot — chargebacks' Tuesday 9am ET slot, still correct while paused", () => {
+  const cb = (iso: string) => isJobSlot("chargebacks", new Date(iso));
   assertEquals(cb("2026-04-14T12:59:00Z"), false); // Tue 8:59am ET
   assertEquals(cb("2026-04-14T13:00:00Z"), true);  // Tue 9:00am ET
   assertEquals(cb("2026-04-14T15:00:00Z"), true);  // Tue 11am ET — catch-up
@@ -54,8 +54,8 @@ Deno.test("isWeeklySheetsFireTime — chargebacks on Tuesday 9am ET and after, n
   assertEquals(cb("2026-01-13T13:00:00Z"), false); // Tue 8:00am EST
 });
 
-Deno.test("isWeeklySheetsFireTime — wire on Monday, never the same day as chargebacks", () => {
-  const wire = (iso: string) => isWeeklySheetsFireTime("wire", new Date(iso));
+Deno.test("isJobSlot — wire on Monday, never the same day as chargebacks", () => {
+  const wire = (iso: string) => isJobSlot("wire", new Date(iso));
   assertEquals(wire("2026-04-13T12:59:00Z"), false); // Mon 8:59am ET
   assertEquals(wire("2026-04-13T13:00:00Z"), true);  // Mon 9:00am ET
   assertEquals(wire("2026-04-13T20:00:00Z"), true);  // Mon 4pm ET — catch-up
@@ -65,7 +65,7 @@ Deno.test("isWeeklySheetsFireTime — wire on Monday, never the same day as char
   for (const day of ["12", "13", "14", "15", "16", "17", "18"]) {
     for (const hour of ["00", "09", "13", "18", "23"]) {
       const at = new Date(`2026-04-${day}T${hour}:00:00Z`);
-      const both = isWeeklySheetsFireTime("wire", at) && isWeeklySheetsFireTime("chargebacks", at);
+      const both = isJobSlot("wire", at) && isJobSlot("chargebacks", at);
       assertEquals(both, false, `both jobs fired on Apr ${day} ${hour}:00Z`);
     }
   }
@@ -156,4 +156,34 @@ Deno.test("runWeeklySheetsExport — wire's claim doesn't block chargebacks", as
   const cb = await runWeeklySheetsExport("chargebacks", tuesday);
   assertEquals(cb.skipped, undefined); // ran — not blocked by wire's posted week
   assertEquals((await runWeeklySheetsExport("wire", monday)).skipped, true);
+});
+
+// ── Tuesday paused (2026-08-26) ───────────────────────────────────────────────
+
+Deno.test("isWeeklySheetsFireTime — chargebacks never fires on a schedule while paused", () => {
+  // Every hour of the week, including its own Tuesday 9am slot.
+  for (const day of ["12", "13", "14", "15", "16", "17", "18"]) {
+    for (const hour of ["00", "09", "12", "13", "14", "18", "23"]) {
+      const at = new Date(`2026-04-${day}T${hour}:00:00Z`);
+      assertEquals(
+        isWeeklySheetsFireTime("chargebacks", at), false,
+        `paused chargebacks fired on Apr ${day} ${hour}:00Z`,
+      );
+    }
+  }
+  // Standard time too — the DST path must not sneak past the pause.
+  assertEquals(isWeeklySheetsFireTime("chargebacks", new Date("2026-01-13T14:00:00Z")), false);
+});
+
+Deno.test("isWeeklySheetsFireTime — pausing chargebacks left wire's Monday run alone", () => {
+  assertEquals(isWeeklySheetsFireTime("wire", new Date("2026-04-13T13:00:00Z")), true);  // Mon 9am ET
+  assertEquals(isWeeklySheetsFireTime("wire", new Date("2026-04-13T20:00:00Z")), true);  // Mon 4pm — catch-up
+  assertEquals(isWeeklySheetsFireTime("wire", new Date("2026-04-13T12:59:00Z")), false); // Mon 8:59am
+  assertEquals(isWeeklySheetsFireTime("wire", new Date("2026-01-12T14:00:00Z")), true);  // Mon 9am EST
+});
+
+Deno.test("chargebacks' slot math still resolves — so un-pausing restores Tuesday", () => {
+  // isJobSlot is what isWeeklySheetsFireTime falls through to once paused=false.
+  assertEquals(isJobSlot("chargebacks", new Date("2026-04-14T13:00:00Z")), true);
+  assertEquals(isJobSlot("chargebacks", new Date("2026-04-14T12:59:00Z")), false);
 });

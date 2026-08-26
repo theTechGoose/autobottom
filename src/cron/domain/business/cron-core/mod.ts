@@ -2,7 +2,7 @@
 import { withSpan, metric, flushOtel } from "@core/data/datadog-otel/mod.ts";
 import { runWatchdog } from "@cron/domain/business/watchdog/mod.ts";
 import { runEmailReportsTick } from "@reporting/domain/business/email-reports-tick/mod.ts";
-import { runWeeklySheetsExport, isWeeklySheetsFireTime, SHEET_JOB_NAMES } from "@cron/domain/business/weekly-sheets/mod.ts";
+import { runWeeklySheetsExport, isWeeklySheetsFireTime, SHEET_JOBS, SHEET_JOB_NAMES } from "@cron/domain/business/weekly-sheets/mod.ts";
 // Migration imports preserved for when migration-tick is re-enabled:
 // import { listJobs, tickJob } from "@admin/domain/business/migration/mod.ts";
 // import { runInBackgroundLane } from "@core/data/firestore/mod.ts";
@@ -47,7 +47,9 @@ export function registerCrons(): void {
   // configured Google Sheet (org = CHARGEBACKS_ORG_ID), on two days:
   //
   //   Mondays  9:00 AM ET — Wire Deductions
-  //   Tuesdays 9:00 AM ET — Chargebacks + Omissions
+  //   Tuesdays 9:00 AM ET — Chargebacks + Omissions  [PAUSED 2026-08-26 —
+  //     pulled by hand from the Google Apps Script; SHEET_JOBS.chargebacks
+  //     .paused = false resumes it]
   //
   // That split is the original monolith schedule. It was lost when the Apr 14
   // legacy sweep deleted main.ts, and the Jun 16 restore folded all three tabs
@@ -105,5 +107,8 @@ export function registerCrons(): void {
   //   }
   // });
 
-  console.log("⏰ Cron jobs registered: watchdog (hourly), email-reports (every minute), weekly-sheets (hourly tick — wire Mondays, chargebacks+omissions Tuesdays, 9:00 AM America/New_York)");
+  const sheetJobSummary = SHEET_JOB_NAMES
+    .map((job) => `${job}${SHEET_JOBS[job].paused ? " PAUSED" : ""}`)
+    .join(", ");
+  console.log(`⏰ Cron jobs registered: watchdog (hourly), email-reports (every minute), weekly-sheets (hourly tick — ${sheetJobSummary}; 9:00 AM America/New_York)`);
 }

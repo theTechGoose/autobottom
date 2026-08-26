@@ -154,18 +154,34 @@ function parseCronOrNull(cron: string): ParsedCron | null {
   };
 }
 
+/** Per-tz formatter cache. Constructing an Intl.DateTimeFormat is by far the
+ *  most expensive part of a match, and the walk helpers below call this once
+ *  per candidate minute — up to 180 (lastFireAtOrBefore) or 10,080
+ *  (nextFireAt) times for a single question. The set of tz strings in play is
+ *  tiny and fixed, so cache them outright. */
+const _dtfCache = new Map<string, Intl.DateTimeFormat>();
+
+function dtfFor(tz: string): Intl.DateTimeFormat {
+  let dtf = _dtfCache.get(tz);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      weekday: "short",
+      hour12: false,
+    });
+    _dtfCache.set(tz, dtf);
+  }
+  return dtf;
+}
+
 /** Project nowMs into the schedule's tz and return the cron-relevant fields. */
 function wallClockInTz(tz: string, nowMs: number): { minute: number; hour: number; dom: number; month: number; dow: number } {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    weekday: "short",
-    hour12: false,
-  });
+  const dtf = dtfFor(tz);
   const parts = dtf.formatToParts(new Date(nowMs));
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   const weekdayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -186,6 +202,12 @@ function wallClockInTz(tz: string, nowMs: number): { minute: number; hour: numbe
 export function matchesCron(cron: string, tz: string, nowMs: number): boolean {
   const parsed = parseCronOrNull(cron);
   if (!parsed) return false;
+  return matchesParsed(parsed, tz, nowMs);
+}
+
+/** Match against an already-parsed cron — lets the walk helpers parse once
+ *  rather than re-parsing the string for every candidate minute. */
+function matchesParsed(parsed: ParsedCron, tz: string, nowMs: number): boolean {
   const wc = wallClockInTz(tz, nowMs);
   if (!parsed.minute.has(wc.minute)) return false;
   if (!parsed.hour.has(wc.hour)) return false;
@@ -201,12 +223,38 @@ export function matchesCron(cron: string, tz: string, nowMs: number): boolean {
  *  instant that matches the cron. Returns ms-epoch or null if no match in
  *  the search horizon. Caller uses this for the "next fires at …" UI badge. */
 export function nextFireAt(cron: string, tz: string, fromMs: number, maxMinutes = 60 * 24 * 7): number | null {
-  if (!parseCronOrNull(cron)) return null;
+  const parsed = parseCronOrNull(cron);
+  if (!parsed) return null;
   // Round up to the next minute boundary so we don't match the current minute.
   const start = Math.ceil((fromMs + 1) / 60_000) * 60_000;
   for (let i = 0; i < maxMinutes; i++) {
     const t = start + i * 60_000;
-    if (matchesCron(cron, tz, t)) return t;
+    if (matchesParsed(parsed, tz, t)) return t;
+  }
+  return null;
+}
+
+/** Walk BACKWARD minute-by-minute from `fromMs` looking for the most recent
+ *  instant at or before it that matches the cron. Returns ms-epoch (floored to
+ *  the minute), or null if nothing matched within `maxMinutes`.
+ *
+ *  This is the mirror of `nextFireAt`, and it is what lets the tick tell
+ *  "this config's 9:00 slot already passed and was missed" apart from
+ *  "9:00 isn't due today at all" — without it a tick can only ever ask
+ *  "is it exactly 9:00 right now?", so a crash at 9:00 loses the whole day.
+ *  See the catch-up guard in email-reports-tick. */
+export function lastFireAtOrBefore(
+  cron: string,
+  tz: string,
+  fromMs: number,
+  maxMinutes = 180,
+): number | null {
+  const parsed = parseCronOrNull(cron);
+  if (!parsed) return null;
+  const start = Math.floor(fromMs / 60_000) * 60_000;
+  for (let i = 0; i < maxMinutes; i++) {
+    const t = start - i * 60_000;
+    if (matchesParsed(parsed, tz, t)) return t;
   }
   return null;
 }

@@ -362,7 +362,9 @@ export interface EmailReportStatus {
   lastRunStatus: "ok" | string;     // string = error message
   lastRunDurationMs: number;
   lastSentMessageId?: string;       // Postmark id; double-send prevention
-  lastTickKey?: string;             // yyyymmddhhmm of the last successful tick
+  lastTickKey?: string;             // yyyymmddhhmm of the tick that ran it
+  lastSlotKey?: string;             // yyyymmddhhmm of the SCHEDULED slot it ran for
+                                    // (differs from lastTickKey on a catch-up run)
 }
 
 export interface ReportSection {

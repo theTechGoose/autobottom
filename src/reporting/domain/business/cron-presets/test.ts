@@ -2,7 +2,7 @@
 
 import { assert, assertEquals } from "#assert";
 import {
-  matchesCron, nextFireAt, presetToCron, parseCronToPreset, DEFAULT_TZ,
+  matchesCron, nextFireAt, lastFireAtOrBefore, presetToCron, parseCronToPreset, DEFAULT_TZ,
 } from "./mod.ts";
 
 const EST = DEFAULT_TZ;
@@ -159,4 +159,37 @@ Deno.test("nextFireAt — finds the next match within a week", () => {
 Deno.test("nextFireAt — returns null if no match within horizon", () => {
   // Cron that never fires: minute=99 doesn't even parse → null.
   assertEquals(nextFireAt("99 * * * *", EST, Date.now(), 60 * 24), null);
+});
+
+Deno.test("lastFireAtOrBefore — finds today's already-passed slot", () => {
+  // 9:37am EST, Daily 9am → the 9:00 slot that already passed today.
+  const at937 = utcMsForWallClock(EST, "2026-01-12T09:37:00.000");
+  const slot = lastFireAtOrBefore("0 9 * * *", EST, at937, 180);
+  assert(slot !== null, "expected to find the passed 9:00 slot");
+  const nine = utcMsForWallClock(EST, "2026-01-12T09:00:00.000");
+  assert(Math.abs(slot! - nine) < 60_000, `expected ~${nine} got ${slot}`);
+});
+
+Deno.test("lastFireAtOrBefore — exact match returns the current minute", () => {
+  const nine = utcMsForWallClock(EST, "2026-01-12T09:00:00.000");
+  const slot = lastFireAtOrBefore("0 9 * * *", EST, nine, 180);
+  assert(slot !== null);
+  assert(Math.abs(slot! - nine) < 60_000);
+});
+
+Deno.test("lastFireAtOrBefore — null once the slot is outside the lookback", () => {
+  // 1:00pm EST is 4h past the 9am slot; a 180-minute lookback must not reach it.
+  const at1300 = utcMsForWallClock(EST, "2026-01-12T13:00:00.000");
+  assertEquals(lastFireAtOrBefore("0 9 * * *", EST, at1300, 180), null);
+});
+
+Deno.test("lastFireAtOrBefore — does not reach back into a non-matching day", () => {
+  // Weekly Monday 9am, asked on TUESDAY 9:30am. Monday's slot is 24h back,
+  // far outside the window — must be null, not Monday's fire.
+  const tue930 = utcMsForWallClock(EST, "2026-01-13T09:30:00.000");
+  assertEquals(lastFireAtOrBefore("0 9 * * 1", EST, tue930, 180), null);
+});
+
+Deno.test("lastFireAtOrBefore — unparseable cron → null", () => {
+  assertEquals(lastFireAtOrBefore("99 * * * *", EST, Date.now(), 180), null);
 });

@@ -1,9 +1,10 @@
 /** Smoke tests for manager repository. */
 import { assertEquals, assert } from "#assert";
-import { populateManagerQueue, enqueueRemediationForFinding, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope } from "./mod.ts";
+import { populateManagerQueue, enqueueRemediationForFinding, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope, dropResolvedQueueItems, removeFromManagerQueue } from "./mod.ts";
 import type { ManagerQueueItem } from "./mod.ts";
 import { setStored, resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { writeAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 const kvOpts = { sanitizeResources: false, sanitizeOps: false };
@@ -334,4 +335,81 @@ Deno.test({ name: "enrichManagerQueueBatch — respects the max bound", ...kvOpt
     await setStored("manager-queue", org, [`f-m${i}`], { findingId: `f-m${i}`, addedAt: i, status: "pending" });
   }
   assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 2), 2);
+}});
+
+/** Seed a queue item plus the audit-done-idx row the drain reads. `score`
+ *  undefined = queued but no index row at all. */
+async function seedQueuedWithIndex(
+  org: OrgId,
+  findingId: string,
+  o: { ts: number; score?: number; status?: string },
+): Promise<void> {
+  await setStored("manager-queue", org, [findingId], {
+    findingId, addedAt: o.ts, completedAt: o.ts, status: o.status ?? "pending",
+  });
+  if (o.score !== undefined) {
+    await writeAuditDoneIndex(org, {
+      findingId, completedAt: o.ts, score: o.score, completed: true,
+    } as never, { assumeFinished: true });
+  }
+}
+
+Deno.test({ name: "dropResolvedQueueItems — drops an audit that went back to 100%", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-drain-100-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await seedQueuedWithIndex(org, "f-drain-100", { ts: 1_700_000_000_000, score: 100 });
+  const items = await getManagerQueue(org);
+  assertEquals(await dropResolvedQueueItems(org, items), 1);
+  // Out of the caller's list AND out of the store — the row is paid for once.
+  assertEquals(items.filter((i) => i.findingId === "f-drain-100").length, 0);
+  assertEquals((await getManagerQueue(org)).length, 0);
+}});
+
+Deno.test({ name: "dropResolvedQueueItems — keeps an audit that still has a failure", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-drain-96-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await seedQueuedWithIndex(org, "f-drain-96", { ts: 1_700_000_001_000, score: 96 });
+  const items = await getManagerQueue(org);
+  assertEquals(await dropResolvedQueueItems(org, items), 0);
+  assertEquals((await getManagerQueue(org)).length, 1);
+}});
+
+Deno.test({ name: "dropResolvedQueueItems — keeps an item whose index row is missing", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-drain-noidx-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await seedQueuedWithIndex(org, "f-drain-noidx", { ts: 1_700_000_002_000 });
+  const items = await getManagerQueue(org);
+  // Unknown is not "passed" — never empty a manager's queue on a missing read.
+  assertEquals(await dropResolvedQueueItems(org, items), 0);
+  assertEquals((await getManagerQueue(org)).length, 1);
+}});
+
+Deno.test({ name: "dropResolvedQueueItems — leaves a remediated row alone", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-drain-done-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await seedQueuedWithIndex(org, "f-drain-done", { ts: 1_700_000_003_000, score: 100, status: "remediated" });
+  const items = await getManagerQueue(org);
+  assertEquals(await dropResolvedQueueItems(org, items), 0);
+  assertEquals((await getManagerQueue(org)).length, 1);
+}});
+
+Deno.test({ name: "dropResolvedQueueItems — respects the max bound", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-drain-max-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  for (let i = 0; i < 4; i++) {
+    await seedQueuedWithIndex(org, `f-drain-max-${i}`, { ts: 1_700_000_100_000 + i, score: 100 });
+  }
+  assertEquals(await dropResolvedQueueItems(org, await getManagerQueue(org), 2), 2);
+  assertEquals((await getManagerQueue(org)).length, 2);
+}});
+
+Deno.test({ name: "removeFromManagerQueue — pending row goes, remediated row stays", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-remove-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await seedQueuedWithIndex(org, "f-rm-pending", { ts: 1_700_000_200_000 });
+  await seedQueuedWithIndex(org, "f-rm-done", { ts: 1_700_000_200_001, status: "remediated" });
+  assertEquals(await removeFromManagerQueue(org, "f-rm-pending"), true);
+  assertEquals(await removeFromManagerQueue(org, "f-rm-done"), false);
+  assertEquals(await removeFromManagerQueue(org, "f-rm-absent"), false);
+  assertEquals((await getManagerQueue(org)).map((i) => i.findingId), ["f-rm-done"]);
 }});

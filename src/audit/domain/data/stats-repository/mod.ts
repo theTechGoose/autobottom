@@ -1072,6 +1072,40 @@ export async function deleteDoneIdxRowsForFinding(
   return deleted;
 }
 
+/** Read ONE finding's audit-done-idx row without scanning the index.
+ *
+ *  Walks the same candidate timestamps stampEmailOnDoneIdx does, cheapest
+ *  first: a timestamp the caller already holds (queue items carry the
+ *  canonical one), then this module's key pointer. One or two small gets,
+ *  regardless of how big the index is.
+ *
+ *  Deliberately does NOT fall back to reading the finding — this is meant for
+ *  render paths, and per-request finding hydration on an auto-polling
+ *  dashboard has taken prod down before. `null` means "no row found", which
+ *  callers must treat as unknown, never as a score.
+ */
+export async function readDoneIdxEntry(
+  orgId: OrgId,
+  findingId: string,
+  opts: { at?: number } = {},
+): Promise<AuditDoneIndexEntry | null> {
+  const candidates: number[] = [];
+  const push = (v: unknown) => {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0 && !candidates.includes(n)) candidates.push(n);
+  };
+  push(opts.at);
+  const pointer = await getStored<{ ts: number }>(DONE_IDX_KEY_PTR, orgId, findingId).catch(() => null);
+  push(pointer?.ts);
+
+  for (const ts of candidates) {
+    const row = await getStored<AuditDoneIndexEntry>("audit-done-idx", orgId, padTs(ts), findingId)
+      .catch(() => null);
+    if (row) return row;
+  }
+  return null;
+}
+
 /** Stamp email sent/opened onto a finding's audit-done-idx row so the audit
  *  tables can render an "Email Opened" column for free.
  *

@@ -234,21 +234,33 @@ async function computeManagerQueueView(req: Request): Promise<
   if (auth.role !== "manager" && auth.role !== "admin" && auth.role !== "super-manager" && auth.role !== "operations-manager") {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
-  const { getManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope } =
+  const { getManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope, dropResolvedQueueItems } =
     await import("@manager/domain/data/manager-repository/mod.ts");
   const allItems = await getManagerQueue(auth.orgId);
   // Piggyback the bounded lazy enrichment (10 findings/call) so legacy items
   // converge — NEVER unbounded hydration on an auto-polling path.
   try { await enrichManagerQueueBatch(auth.orgId, allItems, 10); }
   catch (err) { console.warn("⚠️ [MANAGER] queue enrichment skipped:", err); }
+  // Read-time drain, on whichever list this caller actually sees: an audit a
+  // judge (or a flip) took back to 100% after the queue snapshot was written
+  // must not sit there asking to be remediated. Bounded + best-effort — the
+  // queue still renders if the check fails.
+  const drainResolved = async (items: { status: string }[]) => {
+    try { await dropResolvedQueueItems(auth.orgId, items as Parameters<typeof dropResolvedQueueItems>[1]); }
+    catch (err) { console.warn("⚠️ [MANAGER] queue drain skipped:", err); }
+  };
   const asEmail = new URL(req.url).searchParams.get("as");
   const isImpersonating = Boolean(asEmail) && auth.role === "admin";
   if (auth.role === "manager" || auth.role === "operations-manager" || isImpersonating) {
     const { getManagerScope } = await import("@admin/domain/data/admin-repository/mod.ts");
     const scope = await getManagerScope(auth.orgId, isImpersonating ? asEmail! : auth.email);
-    return { allItems, scopedItems: filterQueueToManagerScope(allItems, scope), orgWide: false };
+    const scopedItems = filterQueueToManagerScope(allItems, scope);
+    await drainResolved(scopedItems);
+    return { allItems, scopedItems, orgWide: false };
   }
-  // Admin / super-manager without impersonation: no queue of their own.
+  // Admin / super-manager without impersonation: no queue of their own, but
+  // their stats count the whole org — drain against that list instead.
+  await drainResolved(allItems);
   return { allItems, scopedItems: [], orgWide: true };
 }
 

@@ -7,7 +7,7 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { questionLabel } from "@core/business/question-labels/mod.ts";
 import type { ReviewDecision } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
-import { buildIndexMeta, saleFlagsFromFinding } from "@audit/domain/data/stats-repository/mod.ts";
+import { buildIndexMeta, readDoneIdxEntry, saleFlagsFromFinding } from "@audit/domain/data/stats-repository/mod.ts";
 
 export interface ManagerQueueItem {
   findingId: string;
@@ -200,6 +200,78 @@ export async function enrichManagerQueueBatch(orgId: OrgId, items: ManagerQueueI
     } catch { /* transient — retried on the next poll */ }
   }));
   return stale.length;
+}
+
+/** Take one finding out of the remediation queue. Used by the judge path when
+ *  an overturn puts the audit back at 100% — there is nothing left to coach on,
+ *  and the queue row would otherwise outlive the failure that created it.
+ *  Returns whether a row was actually there. A remediated row is left alone:
+ *  that is a manager's completed work, not a pending ask. */
+export async function removeFromManagerQueue(orgId: OrgId, findingId: string): Promise<boolean> {
+  const existing = await getStored<ManagerQueueItem>("manager-queue", orgId, findingId);
+  if (!existing || existing.status !== "pending") return false;
+  await deleteStored("manager-queue", orgId, findingId);
+  return true;
+}
+
+/** Drop queue items whose audit has gone back to 100% on audit-done-idx.
+ *
+ *  The queue is a SNAPSHOT taken at review-finalize: it records the failures
+ *  as they stood then, and nothing recomputes it. When a judge overturns the
+ *  last confirmed failure (or a reviewer/admin flips it), the audit returns to
+ *  100% and its audit-done-idx row is rewritten — but the queue item stayed
+ *  put, so a manager was still asked to remediate a failure that no longer
+ *  exists. Prod case: qJfmNgg8lCKwSGfaIY0qW sat in VBA PM's queue with
+ *  failedQuestions ["Conf Email"] nine hours after that question was overturned.
+ *
+ *  Read-time drain: check the items the caller is about to show, take the
+ *  resolved ones out of the list AND delete their rows, so each one is paid
+ *  for once instead of on every poll. Bounded per call — this runs on an
+ *  auto-polling dashboard, so it must never do unbounded work per request —
+ *  and costs one or two small point-gets per item: no finding hydration, no
+ *  index scan.
+ *
+ *  An item whose index row can't be found is KEPT. Unknown is not the same as
+ *  passed, and silently emptying a manager's queue on a failed read is the
+ *  worse failure.
+ *
+ *  Mutates `items` in place (same convention as enrichManagerQueueBatch) and
+ *  returns how many it dropped. */
+export async function dropResolvedQueueItems(
+  orgId: OrgId,
+  items: ManagerQueueItem[],
+  max = 25,
+): Promise<number> {
+  const candidates = items.filter((i) => i.status === "pending" && i.findingId).slice(0, max);
+  if (candidates.length === 0) return 0;
+
+  const scores = await Promise.all(candidates.map(async (item) => {
+    try {
+      const entry = await readDoneIdxEntry(orgId, item.findingId, { at: item.completedAt });
+      return { findingId: item.findingId, score: entry?.score };
+    } catch {
+      // Transient read failure — keep the item, the next poll retries it.
+      return { findingId: item.findingId, score: undefined };
+    }
+  }));
+
+  const resolved = scores.filter((s) => s.score === 100).map((s) => s.findingId);
+  if (resolved.length === 0) return 0;
+
+  const drop = new Set(resolved);
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (drop.has(items[i].findingId)) items.splice(i, 1);
+  }
+  for (const findingId of resolved) {
+    try {
+      await deleteStored("manager-queue", orgId, findingId);
+      console.log(`🧹 [MANAGER-QUEUE] ${findingId}: dropped — audit is back to 100%`);
+    } catch (err) {
+      // Already out of the returned list; the next poll deletes it for real.
+      console.warn(`⚠️ [MANAGER-QUEUE] ${findingId}: drop delete failed (non-fatal):`, err);
+    }
+  }
+  return resolved.length;
 }
 
 // ── Data maintenance: clear queue items by team / date ───────────────────────

@@ -350,6 +350,25 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
         console.warn(`⚠️ [JUDGE] ${findingId} updateCompletedStatScore failed (best-effort):`, err);
       }
 
+      // An audit back at 100% has nothing left to remediate, so take it out of
+      // the manager queue here — review-finalize put it there when the failure
+      // was still real, and the queue is a snapshot that never recomputes. The
+      // manager routes also drain resolved rows at read time (that covers the
+      // backlog and the flip paths), but doing it on the score change means the
+      // row is gone before anyone's dashboard polls. Best-effort + dynamic
+      // import, mirroring review-finalize's enqueue.
+      if (finalScore === 100) {
+        try {
+          const { removeFromManagerQueue } = await import(
+            "@manager/domain/data/manager-repository/mod.ts"
+          );
+          const removed = await removeFromManagerQueue(orgId, findingId);
+          if (removed) console.log(`[JUDGE] ${findingId}: 📋 removed from manager remediation queue (100%)`);
+        } catch (err) {
+          console.warn(`⚠️ [JUDGE] ${findingId} manager-queue removal failed (best-effort):`, err);
+        }
+      }
+
       // Resync the chargeback (date-leg) / wire (package) "payroll" entry to the
       // judged answers. The review path does this on finalize
       // (review-queue/mod.ts syncChargebackWireToScore) but the judge path never

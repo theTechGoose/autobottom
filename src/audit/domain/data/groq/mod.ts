@@ -71,7 +71,7 @@ function tagOf(entry: { provider: Provider; model: string }): string {
 }
 
 const MODEL = FALLBACK_MODELS[0].model;
-const LLM_TIMEOUT_MS = 25_000;
+const LLM_TIMEOUT_MS = 35_000;
 
 // ── Token tracking ───────────────────────────────────────────────────────────
 

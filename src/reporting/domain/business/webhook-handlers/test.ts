@@ -3,7 +3,7 @@
  *  (tests/e2e/dashboard.test.ts) so we don't need Postmark in unit tests. */
 
 import { assertEquals } from "#assert";
-import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock, renderReAuditCommentBlock, resolveManagerCc, overturnPhraseFor, envFlagEnabled } from "./mod.ts";
+import { parseVoName, renderTemplate, buildGreeting, renderFailedQuestionsBlock, renderReAuditCommentBlock, resolveManagerCc, overturnPhraseFor, envFlagEnabled, shouldHoldInvalidGenieEmail } from "./mod.ts";
 
 /** Build a minimal finding whose record carries the given SupervisorEmail. */
 const findingWithSupervisor = (supervisorEmail: string) => ({
@@ -196,4 +196,23 @@ Deno.test("renderReAuditCommentBlock — escapes HTML in the member-typed note",
   assertEquals(html.includes("&lt;b&gt;bad&lt;/b&gt;"), true);
   assertEquals(html.includes("&amp;"), true);
   assertEquals(html.includes("<b>bad</b>"), false);
+});
+
+Deno.test("shouldHoldInvalidGenieEmail — holds invalid-genie mail only when the switch is on", () => {
+  assertEquals(shouldHoldInvalidGenieEmail("invalid_genie", "true"), true);
+  assertEquals(shouldHoldInvalidGenieEmail("invalid_genie", "1"), true);
+});
+
+Deno.test("shouldHoldInvalidGenieEmail — absent env SENDS (opposite polarity to the manager switch)", () => {
+  // A wiped env or a fresh preview branch must fall back to sending, otherwise
+  // real Invalid-Genie audits would go silently unreported.
+  assertEquals(shouldHoldInvalidGenieEmail("invalid_genie", undefined), false);
+  assertEquals(shouldHoldInvalidGenieEmail("invalid_genie", ""), false);
+  assertEquals(shouldHoldInvalidGenieEmail("invalid_genie", "ture"), false);
+});
+
+Deno.test("shouldHoldInvalidGenieEmail — never touches the other terminate fires", () => {
+  // Perfect-score and post-review mail must keep flowing during the outage.
+  assertEquals(shouldHoldInvalidGenieEmail("perfect_score", "true"), false);
+  assertEquals(shouldHoldInvalidGenieEmail(undefined, "true"), false);
 });

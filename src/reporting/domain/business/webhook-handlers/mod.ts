@@ -124,6 +124,33 @@ interface AuditCompletePayload {
   reviewScore?: number;
 }
 
+/** Incident switch: hold the "Invalid Genie" audit-complete emails.
+ *
+ *  When Genie's recording feed goes dark, every audit finalizes at 0% with
+ *  reason=invalid_genie and mails the rep and their supervisor a failing score
+ *  for a call that was never recorded. On 2026-08-27 the feed stopped indexing
+ *  after contract 27661980 and 64 audits went out that way before anyone
+ *  noticed. Setting this var holds ONLY those emails — the audit still
+ *  finalizes and the webhook POST still fires, so the bulk genie-retry can
+ *  re-run them once the feed is back.
+ *
+ *  Polarity is the opposite of MANAGER_REMEDIATION_EMAILS_ENABLED on purpose:
+ *  sending is the normal, correct behaviour, so absent ⇒ SEND. Pausing is a
+ *  deliberate, temporary act during a known outage — it must never be the
+ *  state a wiped env or a fresh preview branch quietly falls into, or real
+ *  Invalid-Genie audits would go silently unreported. */
+const PAUSE_INVALID_GENIE_EMAILS_ENV = "PAUSE_INVALID_GENIE_EMAILS";
+
+/** True when this fire is an Invalid-Genie audit AND the pause is switched on.
+ *  Pure + exported so the polarity is pinned by a test rather than by env
+ *  fiddling; `rawFlag` is the env value read at call time. */
+export function shouldHoldInvalidGenieEmail(
+  reason: string | undefined,
+  rawFlag: string | undefined,
+): boolean {
+  return reason === "invalid_genie" && envFlagEnabled(rawFlag);
+}
+
 /** Build template variables and send the audit-complete email. Mirrors
  *  main:main.ts handleAuditCompleteWebhook. Returns silently if not configured
  *  (no email template, no recipient) — fireWebhook already wraps in catch. */
@@ -149,6 +176,15 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   // action, not a customer-facing review event.
   if (finding?.noWebhook === true) {
     console.log(`📧 [WEBHOOK:terminate] fid=${findingId} noWebhook flag set (admin bulk-flip) — suppressing email`);
+    return;
+  }
+
+  // Read the env at call time so flipping the switch takes effect on the next
+  // isolate, with no code deploy — same as managerReviewEmailsEnabled.
+  if (shouldHoldInvalidGenieEmail(payload.reason, Deno.env.get(PAUSE_INVALID_GENIE_EMAILS_ENV))) {
+    console.log(
+      `🔇 [WEBHOOK:terminate] invalid-genie email PAUSED (${PAUSE_INVALID_GENIE_EMAILS_ENV}) — not sending fid=${findingId}`,
+    );
     return;
   }
 

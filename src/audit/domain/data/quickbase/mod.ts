@@ -1,11 +1,13 @@
 /** QuickBase API client. Ported from providers/quickbase.ts. */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 import { quickbaseBaseUrl } from "@core/config/endpoints.ts";
+import { splitGenieIds } from "@core/business/genie-ids/mod.ts";
 
+/** Normalize the free-text genie field to a comma-joined list of bare IDs.
+ *  Whatever the typist used to separate two recordings, `splitGenieIds` reads
+ *  every run of digits as one ID; ingest splits this field the same way. */
 function cleanGenieId(raw: unknown): string {
-  const str = String(raw ?? "").trim();
-  if (!str) return "";
-  return str.split(",").map((s) => s.trim().replace(/[^0-9].*$/, "")).filter((s) => s.length > 0).join(",");
+  return splitGenieIds(raw).join(",");
 }
 
 /** Normalize a QuickBase numeric-reference field to a bare id string.

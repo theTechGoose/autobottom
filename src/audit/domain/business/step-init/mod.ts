@@ -6,6 +6,7 @@ import { enqueueStep } from "@core/data/qstash/mod.ts";
 import { downloadRecording } from "@audit/domain/data/genie/mod.ts";
 import { uploadAudio } from "@audit/domain/data/assemblyai/mod.ts";
 import { S3Ref } from "@core/data/s3/mod.ts";
+import { splitGenieIds, firstGenieId } from "@core/business/genie-ids/mod.ts";
 
 
 function json(data: unknown, status = 200) {
@@ -77,9 +78,13 @@ export async function stepInit(req: Request): Promise<Response> {
   // Multi-genie path: download all genies in parallel
   if (finding.genieIds && finding.genieIds.length > 0) {
     const validIds = finding.genieIds
-      .map((gid: any) => String(gid).trim().replace(/[^0-9].*$/, ""))
+      .flatMap((gid: any) => {
+        const ids = splitGenieIds(gid);
+        if (ids.length === 0) console.warn(`[STEP-INIT] ${findingId}: Skipping invalid genie ID "${String(gid)}"`);
+        return ids;
+      })
       .filter((trimmed: string) => {
-        if (!trimmed || trimmed === "0" || trimmed.replace(/0/g, "") === "") {
+        if (trimmed === "0" || trimmed.replace(/0/g, "") === "") {
           console.warn(`[STEP-INIT] ${findingId}: Skipping invalid genie ID "${trimmed}"`);
           return false;
         }
@@ -174,8 +179,8 @@ export async function stepInit(req: Request): Promise<Response> {
     return json({ ok: true, s3Keys: keys });
   }
 
-  // Validate genie ID — strip any non-numeric suffix (e.g. "27475188-error" → "27475188")
-  const rid = String(finding.recordingId ?? "").trim().replace(/[^0-9].*$/, "");
+  // Validate genie ID — keep the first run of digits (e.g. "27475188-error" → "27475188")
+  const rid = firstGenieId(finding.recordingId);
   if (!rid || rid === "0" || rid === "00000000" || rid.replace(/0/g, "") === "") {
     console.warn(`[STEP-INIT] ${findingId}: Invalid Genie ID: "${rid}"`);
     finding.rawTranscript = "Invalid Genie";

@@ -15,6 +15,7 @@ import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/m
 import { enqueueStep, getSelfUrl, getQueueCounts } from "@core/data/qstash/mod.ts";
 import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
 import { startReauditWithGenies } from "@audit/domain/business/reaudit/mod.ts";
+import { splitGenieIds } from "@core/business/genie-ids/mod.ts";
 
 @SwaggerDescription("Audit pipeline — create audits, retrieve findings, pipeline stats")
 @Controller("audit")
@@ -35,7 +36,7 @@ export class AuditController {
 
     const findingId = nanoid();
     const rawRecordingId = record[recordingIdField] ? String(record[recordingIdField]) : undefined;
-    const genieIdList = rawRecordingId ? rawRecordingId.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
+    const genieIdList = splitGenieIds(rawRecordingId);
     const finding = {
       id: findingId, auditJobId: jobId, findingStatus: "pending",
       feedback: { heading: "", text: "", viewUrl: "" },
@@ -91,7 +92,7 @@ export class AuditController {
 
     const findingId = nanoid();
     const rawRecordingId = record[recordingIdField] ? String(record[recordingIdField]) : undefined;
-    const genieIdList = rawRecordingId ? rawRecordingId.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
+    const genieIdList = splitGenieIds(rawRecordingId);
     const finding = {
       id: findingId, auditJobId: jobId, findingStatus: "pending",
       feedback: { heading: "", text: "", viewUrl: "" },

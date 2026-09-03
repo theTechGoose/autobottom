@@ -79,6 +79,11 @@ export interface ManagerQueueItem {
    *  rep whose call did not record needs following up) but it needs its own
    *  badge, and its 0% score is an artefact rather than a real result. */
   invalidGenie?: boolean;
+  /** The audit's score, straight off audit-done-idx. Derived rows mostly have
+   *  NO stored row behind them, so totalQuestions/failedCount are unknown and
+   *  the table's derived pass-rate can't be computed — without this the Score
+   *  column renders an em-dash on ~89% of rows. */
+  score?: number;
   /** A manager decided this one is not worth coaching. Closes the row the same
    *  way remediation does, but records no write-up — the button is one click. */
   skippedBy?: string;
@@ -295,12 +300,27 @@ export async function getManagerQueueForDepartments(
  *  appealStatus is filtered in memory rather than in the query on purpose —
  *  each extra field makes the composite index narrower and less reusable, and
  *  the result set is already department-sized by then. */
+/** How far back the derived queue reaches, in days. Env-tunable
+ *  (DERIVED_QUEUE_WINDOW_DAYS); 0 means no floor at all.
+ *
+ *  There has to be a floor. audit-done-idx holds every failing audit ever, so
+ *  deriving without one takes GS MB from 302 rows to 2,821 — 1,439 of them
+ *  older than 90 days. Nobody is coaching a call from two years ago, and
+ *  burying this week's failures under them makes the queue useless. */
+export function derivedQueueWindowDays(): number {
+  const raw = Number(Deno.env.get("DERIVED_QUEUE_WINDOW_DAYS"));
+  return Number.isFinite(raw) && raw >= 0 ? raw : 90;
+}
+
 export async function deriveManagerQueue(
   orgId: OrgId,
   departments: string[],
 ): Promise<ManagerQueueItem[] | null> {
   const depts = [...new Set(departments.map((d) => d.trim()).filter(Boolean))];
   if (depts.length === 0 || depts.length > FIELD_IN_MAX_VALUES) return null;
+  // days=0 means "no floor" — computing now-0 would exclude every row instead.
+  const days = derivedQueueWindowDays();
+  const floor = days === 0 ? 0 : Date.now() - days * 86_400_000;
 
   const [rows, stored] = await Promise.all([
     listStoredByQuery<AuditDoneIndexEntry>("audit-done-idx", orgId, {
@@ -316,6 +336,10 @@ export async function deriveManagerQueue(
   const seen = new Set<string>();
   for (const r of rows) {
     if (!r.findingId || seen.has(r.findingId)) continue;
+    // Applied in memory, not in the query: Firestore allows one range field
+    // per query and `score` already uses it, and adding a second would change
+    // the composite index this depends on.
+    if ((r.doneAt ?? r.completedAt ?? 0) < floor) continue;
     // Invalid genies STAY. There is no graded question to coach, but a call
     // that never recorded is still a failure a manager has to follow up, so it
     // shows with its own badge instead of being filtered out.
@@ -364,6 +388,7 @@ function mergeIndexRowWithStored(
     // the stored row (it is written at enqueue time) and is simply absent for
     // rows that never had one — the table already renders a dash for that,
     // and hydrating questions per row is the pattern that has 503'd prod.
+    ...(typeof r.score === "number" ? { score: r.score } : {}),
     totalQuestions: stored?.totalQuestions,
     failedCount: stored?.failedCount
       ?? (stored?.totalQuestions ? Math.round(stored.totalQuestions * (100 - (r.score ?? 0)) / 100) : undefined),

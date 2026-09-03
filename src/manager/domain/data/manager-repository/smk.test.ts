@@ -1,6 +1,6 @@
 /** Smoke tests for manager repository. */
 import { assertEquals, assert } from "#assert";
-import { populateManagerQueue, enqueueRemediationForFinding, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope, dropResolvedQueueItems, removeFromManagerQueue, markQueueItemAppealed, clearQueueItemAppeal, isOpenQueueItem, getManagerQueueForDepartments, deriveManagerQueue, skipRemediation, isInvalidGenieFinding } from "./mod.ts";
+import { populateManagerQueue, enqueueRemediationForFinding, getManagerQueue, submitRemediation, getManagerStats, clearManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope, dropResolvedQueueItems, removeFromManagerQueue, markQueueItemAppealed, clearQueueItemAppeal, isOpenQueueItem, getManagerQueueForDepartments, deriveManagerQueue, skipRemediation, isInvalidGenieFinding, derivedQueueWindowDays } from "./mod.ts";
 import type { ManagerQueueItem } from "./mod.ts";
 import { setStored, resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -595,9 +595,13 @@ async function seedIdx(
   findingId: string,
   o: Partial<{ score: number; completed: boolean; reason: string; department: string; shift: string; appealStatus: string; voName: string; completedAt: number }>,
 ): Promise<void> {
-  await setStored("audit-done-idx", org, [String(o.completedAt ?? 1_700_000_000_000), findingId], {
+  // Default to RECENT: the derived queue applies a date floor, so a fixture
+  // dated years back is correctly filtered out and every assertion below would
+  // be testing the floor rather than what it means to.
+  const at = o.completedAt ?? Date.now() - 86_400_000;
+  await setStored("audit-done-idx", org, [String(at), findingId], {
     findingId,
-    completedAt: o.completedAt ?? 1_700_000_000_000,
+    completedAt: at,
     completed: o.completed ?? true,
     score: o.score ?? 80,
     reason: o.reason ?? "reviewed",
@@ -772,3 +776,39 @@ Deno.test("isInvalidGenieFinding — matches step-finalize's own predicate", () 
   assert(!isInvalidGenieFinding({ rawTranscript: "Agent: hello, thanks for calling" }));
   assert(!isInvalidGenieFinding({}));
 });
+
+// ── Derived queue: score and the date floor ─────────────────────────────────
+
+Deno.test({ name: "deriveManagerQueue — carries the index score, so Score is never blank", ...kvOpts, fn: async () => {
+  const org = ("test-derive-score-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  // No stored row behind it — the common case once deriving, and the case
+  // that rendered an em-dash before the index score was carried through.
+  await seedIdx(org, "d-score", { score: 88, completedAt: Date.now() - 86_400_000 });
+  const [row] = (await deriveManagerQueue(org, ["ODR"]))!;
+  assertEquals(row.score, 88);
+  assertEquals(row.totalQuestions, undefined, "the index has no per-question detail — that is expected");
+}});
+
+Deno.test({ name: "deriveManagerQueue — a date floor keeps years of history out", ...kvOpts, fn: async () => {
+  const org = ("test-derive-floor-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const DAY = 86_400_000;
+  await seedIdx(org, "d-recent", { score: 80, completedAt: Date.now() - 10 * DAY });
+  await seedIdx(org, "d-ancient", { score: 80, completedAt: Date.now() - 400 * DAY });
+
+  Deno.env.set("DERIVED_QUEUE_WINDOW_DAYS", "90");
+  try {
+    assertEquals(derivedQueueWindowDays(), 90);
+    assertEquals((await deriveManagerQueue(org, ["ODR"]))?.map((r) => r.findingId), ["d-recent"]);
+
+    // 0 means no floor — it must return everything, NOT filter everything out
+    // (now - 0 is now, which would exclude every row).
+    Deno.env.set("DERIVED_QUEUE_WINDOW_DAYS", "0");
+    assertEquals(
+      (await deriveManagerQueue(org, ["ODR"]))?.map((r) => r.findingId).sort(),
+      ["d-ancient", "d-recent"],
+    );
+  } finally {
+    Deno.env.delete("DERIVED_QUEUE_WINDOW_DAYS");
+  }
+  assertEquals(derivedQueueWindowDays(), 90, "unset falls back to the 90-day default");
+}});

@@ -52,6 +52,10 @@ export interface QueueItem {
    *  but the call not recording is itself the thing to follow up. Badged, and
    *  its 0% score suppressed as an artefact. */
   invalidGenie?: boolean;
+  /** Score straight off audit-done-idx. Derived rows usually have no stored
+   *  row behind them, so totalQuestions/failedCount are unknown — without this
+   *  the Score column would be an em-dash on most of them. */
+  score?: number;
   skippedBy?: string;
   skippedAt?: number;
 }
@@ -93,6 +97,9 @@ function pillColor(score: number | null) {
 /** Pass-rate from failed/total. Returns null when total is unknown so the
  *  cell falls back to a "N failed" label instead of a misleading 0%/100%. */
 function scoreOf(item: QueueItem): number | null {
+  // An explicit score wins: it is the audit's real, judged score off the
+  // index, whereas the fallback below only re-derives one from counts.
+  if (typeof item.score === "number") return Math.max(0, Math.min(100, Math.round(item.score)));
   if (item.totalQuestions == null || item.totalQuestions <= 0) return null;
   const failed = item.failedCount ?? 0;
   // Clamp to [0,100] so a backend that ever reports failed > total (or a

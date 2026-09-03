@@ -37,6 +37,42 @@ export interface QueueItem {
   remediatedBy?: string;
   remediatedAt?: number;
   notes?: string;
+  /** Out for appeal — a judge appeal ("appealed") or a re-audit with new audio
+   *  ("re-audited"). Either way the audit's result is being contested, so it is
+   *  not something to coach on yet: the row leaves the queue and shows on the
+   *  Completed side under its own flag. Mirrors ManagerQueueItem. */
+  appealState?: "appealed" | "re-audited";
+  appealedAt?: number;
+  appealedBy?: string;
+  appealNote?: string;
+  /** The appeal was decided and the failure stood, so the row came BACK to the
+   *  queue. Shown on the row so it doesn't read as a brand-new failure. */
+  appealDeniedAt?: number;
+  /** The bot never got usable audio, so there is no graded question to coach —
+   *  but the call not recording is itself the thing to follow up. Badged, and
+   *  its 0% score suppressed as an artefact. */
+  invalidGenie?: boolean;
+  skippedBy?: string;
+  skippedAt?: number;
+}
+
+/** Open work — still needs a manager. Mirrors isOpenQueueItem in
+ *  manager-repository/mod.ts; the two must agree or a row lands in neither
+ *  pane, or in both. */
+export function isOpenItem(it: QueueItem): boolean {
+  return it.status !== "remediated" && it.status !== "skipped" && !it.appealState;
+}
+
+/** Human label for the appeal flag. */
+export function appealLabel(it: QueueItem): string {
+  return it.appealState === "re-audited" ? "Re-Audited" : "Appealed";
+}
+
+/** When a row was closed out, whichever way it happened. Drives the Completed
+ *  side's date window and sort, so an appealed row is ordered by when it was
+ *  appealed and a remediated one by when it was written up. */
+export function closedOutAt(it: QueueItem): number {
+  return Math.max(it.remediatedAt ?? 0, it.appealedAt ?? 0, it.skippedAt ?? 0);
 }
 
 /** Team member display name: enriched voName first, then a real owner email's
@@ -74,6 +110,18 @@ const fmtWhen = (ms?: number) =>
 export function queueTimestamp(it: QueueItem): number {
   return it.completedAt ?? it.addedAt ?? 0;
 }
+
+/** Short date + time in US Eastern for the half-width split panes. Drops the
+ *  year and the ET suffix: the filter bar already states the window, both
+ *  panes are the same timezone, and the full form was the widest low-value
+ *  column — it pushed the Action buttons off the edge of the pane. */
+const fmtTsEasternShort = (ms?: number) =>
+  ms
+    ? new Date(ms).toLocaleString("en-US", {
+      timeZone: "America/New_York", month: "short", day: "numeric",
+      hour: "numeric", minute: "2-digit",
+    })
+    : "—";
 
 /** Date + time in US Eastern (auto-handles EST/EDT), labeled ET. */
 const fmtTsEastern = (ms?: number) =>
@@ -122,7 +170,7 @@ export function renderQueueTable(
   const compact = !!opts.compact;
   const showFails = !(compact && completed);
   const showScore = !(compact && completed);
-  const colCount = compact ? (completed ? 4 : 5) : 10;
+  const colCount = compact ? 5 : (completed ? 11 : 10);
   return (
     <table class="data-table">
       <thead>
@@ -135,7 +183,7 @@ export function renderQueueTable(
           {showScore && <th>Score</th>}
           {!compact && <th>Email Opened</th>}
           {completed
-            ? <><th>Remediated By</th><th>When</th><th>Notes</th></>
+            ? <><th>Outcome</th><th>By</th><th>When</th><th>Notes</th></>
             : <><th>Timestamp</th>{!compact && <th>Status</th>}<th>Action</th></>}
         </tr>
       </thead>
@@ -146,13 +194,20 @@ export function renderQueueTable(
           const score = scoreOf(item);
           // Name the three Score states (derived pass-rate / 'N failed' / em-dash)
           // instead of nesting a two-level ternary inside the <td>.
-          const scoreCell = score != null
+          // An invalid-genie audit was never graded — the 0% the pipeline
+          // stores is an artefact of "no audio", not a result, and showing it
+          // as a red 0% pill reads as a catastrophic call.
+          const scoreCell = item.invalidGenie
+            ? <span style="color:var(--text-dim);font-size:11px;white-space:nowrap;">not graded</span>
+            : score != null
             ? <span class={`pill pill-${pillColor(score)}`}>{score}%</span>
             : item.failedCount != null
               ? <span class="pill pill-red">{item.failedCount} failed</span>
               : "—";
           const fails = item.failedQuestions ?? [];
-          const failsCell = fails.length === 0
+          const failsCell = item.invalidGenie && fails.length === 0
+            ? <span style="color:var(--text-dim);font-size:11px;white-space:nowrap;">no audio to grade</span>
+            : fails.length === 0
             ? <span style="color:var(--text-dim);font-size:11px;">—</span>
             : (
               <div style={`font-size:11px;color:var(--text-muted);max-width:${compact ? "220px" : "420px"};`}>
@@ -184,16 +239,44 @@ export function renderQueueTable(
                 when the item has no employee id — a name-built link would open
                 whichever person happens to share that name. */}
             <td>
-              {item.employeeId
-                ? (
-                  <a
-                    href={`/manager/team/${encodeURIComponent(item.employeeId)}`}
-                    title={`See every audit for ${teamMemberLabel(item)}`}
-                    class="tm-link"
-                    {...{ "hx-on:click": "event.stopPropagation()" }}
-                  >{teamMemberLabel(item)}</a>
-                )
-                : teamMemberLabel(item)}
+              {/* Name + badges on one centred line — see .tm-cell. */}
+              <div class="tm-cell">
+                {item.employeeId
+                  ? (
+                    <a
+                      href={`/manager/team/${encodeURIComponent(item.employeeId)}`}
+                      title={`See every audit for ${teamMemberLabel(item)}`}
+                      class="tm-link"
+                      {...{ "hx-on:click": "event.stopPropagation()" }}
+                    >{teamMemberLabel(item)}</a>
+                  )
+                  : <span>{teamMemberLabel(item)}</span>}
+                {/* This row LEFT the queue when it was appealed and came back
+                    when the judge let the failure stand. Without a marker it
+                    reads as a brand-new failure, and a manager who already saw
+                    it go would reasonably think the queue was glitching.
+                    Pending side only — on the Completed side the Outcome
+                    column carries the story. */}
+                {!completed && item.appealDeniedAt && (
+                  <span
+                    class="pill pill-red"
+                    style="font-size:9px;"
+                    title="Appealed, but the judge let the failure stand — it still needs coaching"
+                  >Appeal denied</span>
+                )}
+                {/* No usable audio, so nothing was graded. The row is still
+                    real work — the call did not record and someone has to find
+                    out why — but a manager needs to know that BEFORE opening
+                    it, or they go looking for a failed question that isn't
+                    there. */}
+                {item.invalidGenie && (
+                  <span
+                    class="pill pill-purple"
+                    style="font-size:9px;"
+                    title="The recording was missing or unusable, so the bot could not grade this call"
+                  >Invalid genie</span>
+                )}
+              </div>
             </td>
             {!compact && (
               <td style="font-size:11px;color:var(--text-muted);white-space:nowrap;">
@@ -205,8 +288,23 @@ export function renderQueueTable(
             {showScore && <td>{scoreCell}</td>}
             {!compact && <td>{emailOpenedCell(item)}</td>}
             {completed ? <>
-              <td style="font-size:12px;">{item.remediatedBy || "—"}</td>
-              <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtWhen(item.remediatedAt)}</td>
+              {/* How this audit left the queue. A row can carry BOTH marks —
+                  appealing does not stop a manager coaching it as well — so
+                  these are two independent pills, not one either/or label. */}
+              <td>
+                <div class="outcome-cell">
+                  {item.status === "remediated" && <span class="pill pill-green">Remediated</span>}
+                  {item.status === "skipped" && <span class="pill pill-muted" title="Closed out without a remediation note">Skipped</span>}
+                  {item.invalidGenie && <span class="pill pill-purple">Invalid genie</span>}
+                  {item.appealState && (
+                    <span class={`pill pill-${item.appealState === "re-audited" ? "blue" : "yellow"}`}>
+                      {appealLabel(item)}
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td style="font-size:12px;">{item.remediatedBy || item.skippedBy || item.appealedBy || "—"}</td>
+              <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtWhen(closedOutAt(item) || undefined)}</td>
               {/* What the manager actually DID about the failure. Until now it
                   was written into a required textarea and then readable
                   nowhere in the app but a title-attribute tooltip on the detail
@@ -215,17 +313,25 @@ export function renderQueueTable(
                   detail page — CSS only, because this fragment is HTMX-swapped
                   and an island in it would never hydrate (CLAUDE.md Gotcha #1). */}
               <td class="rem-note-cell">
-                {item.notes
+                {/* The remediation write-up when there is one; otherwise the
+                    comment left when the audit was appealed, which is the only
+                    thing written about the row on that path. The Outcome pill
+                    says which of the two you are reading. */}
+                {(item.notes || item.appealNote)
                   ? <>
-                    <span class="rem-note-line">{item.notes}</span>
-                    <span class="rem-note-pop" role="tooltip">{item.notes}</span>
+                    <span class="rem-note-line">{item.notes || item.appealNote}</span>
+                    <span class="rem-note-pop" role="tooltip">{item.notes || item.appealNote}</span>
                   </>
                   : <span style="color:var(--text-dim);font-size:11px;">&mdash;</span>}
               </td>
             </> : <>
-            <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtTsEastern(queueTimestamp(item))}</td>
+            <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">
+              {compact ? fmtTsEasternShort(queueTimestamp(item)) : fmtTsEastern(queueTimestamp(item))}
+            </td>
             {!compact && <td><span class={`pill pill-${item.status === "remediated" ? "green" : "yellow"}`}>{item.status ?? "pending"}</span></td>}
             <td {...{ "hx-on:click": "event.stopPropagation()" }}>
+              {/* Side by side with real spacing — see .row-actions. */}
+              <div class="row-actions">
               {/* Carry the id on a data-attribute (Preact attribute-escapes it)
                   and read it via this.dataset — never inline it into the JS
                   string, where a `'` would break out of the literal. */}
@@ -234,6 +340,19 @@ export function renderQueueTable(
                 data-finding-id={item.findingId}
                 {...{ "hx-on:click": "event.stopPropagation();document.getElementById('remediate-modal')?.classList.add('open');document.getElementById('rem-findingId').value=this.dataset.findingId;var rt=document.getElementById('rem-returnTo');if(rt)rt.value=location.pathname+location.search" }}
               >Remediate</button>
+              {/* Skip closes the row with no write-up. It posts through the
+                  page's hidden skip form rather than carrying its own, so the
+                  username comes from the server-rendered value and can't be
+                  spoofed by editing the row. Confirmed because it is
+                  one-click and otherwise indistinguishable from a misclick. */}
+              <button
+                class="btn btn-ghost btn-sm"
+                style="opacity:0.75;"
+                data-finding-id={item.findingId}
+                title="Close this out without recording a remediation"
+                {...{ "hx-on:click": "event.stopPropagation();if(!confirm('Skip this audit? It closes without a remediation note.'))return;var f=document.getElementById('skip-form');if(!f)return;document.getElementById('skip-findingId').value=this.dataset.findingId;var rt=document.getElementById('skip-returnTo');if(rt)rt.value=location.pathname+location.search;htmx.trigger(f,'skip-now')" }}
+              >Skip</button>
+              </div>
             </td>
             </>}
           </tr>
@@ -480,17 +599,19 @@ export function filterCompleted(items: QueueItem[], params: QueueFilterParams): 
   const dept = (params.dept ?? "").trim();
 
   return items
-    .filter((it) => it.status === "remediated")
+    // Anything closed out, however it closed: written up, or taken off the
+    // table by an appeal. An audit under appeal is not open work.
+    .filter((it) => !isOpenItem(it))
     .filter((it) => {
       if (dept && (it.department ?? "") !== dept) return false;
       // since=0 is the All-time preset — keep everything.
-      if (since != null && since > 0 && (it.remediatedAt ?? 0) < since) return false;
+      if (since != null && since > 0 && closedOutAt(it) < since) return false;
       if (member && !teamMemberLabel(it).toLowerCase().includes(member)) return false;
       if (q && !(it.failedQuestions ?? []).includes(q)) return false;
       if ((wgs || mcc) && !((wgs && it.wgs) || (mcc && it.mcc))) return false;
       return true;
     })
-    .sort((a, b) => (b.remediatedAt ?? 0) - (a.remediatedAt ?? 0));
+    .sort((a, b) => closedOutAt(b) - closedOutAt(a));
 }
 
 /** Completed-side caption + compact table, the mirror of `renderQueueResults`.
@@ -498,6 +619,7 @@ export function filterCompleted(items: QueueItem[], params: QueueFilterParams): 
  *  `filterCompleted`) — a manager should never have to guess which dates a
  *  count covers. */
 export function renderCompletedResults(rows: QueueItem[], params: QueueFilterParams): JSX.Element {
+  const appealed = rows.filter((r) => !!r.appealState).length;
   const since = typeof params.since === "number" ? params.since : 0;
   const sinceLabel = since > 0
     ? new Date(since).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" })
@@ -506,8 +628,9 @@ export function renderCompletedResults(rows: QueueItem[], params: QueueFilterPar
     <>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">
         <strong style="color:var(--text-muted);">{rows.length}</strong>{" "}
-        {rows.length === 1 ? "remediation" : "remediations"}{" "}
+        {rows.length === 1 ? "audit" : "audits"}{" "}
         {sinceLabel ? <>closed out since {sinceLabel}</> : <>closed out, all time</>}
+        {appealed > 0 && <> · <strong style="color:var(--text-muted);">{appealed}</strong> under appeal</>}
       </div>
       <div style="overflow-x:auto;">{renderQueueTable(rows, { completed: true, compact: true })}</div>
     </>
@@ -523,10 +646,11 @@ export const handler = define.handlers({
       const asEmail = url.searchParams.get("as");
       const qs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
       const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${qs}`, ctx.req);
-      // The queue side shows open work only. Remediated items go to the
-      // Completed side of the split (below) — or, on /operations and the
-      // standalone /manager/completed page, to their own tab.
-      const pending = (items ?? []).filter((i) => i.status !== "remediated");
+      // The queue side shows open work only. Anything closed out — remediated,
+      // or taken off the table by an appeal — goes to the Completed side of the
+      // split (below), or on /operations and the standalone /manager/completed
+      // page, to their own tab.
+      const pending = (items ?? []).filter(isOpenItem);
       const params = readQueueFilterParams(url.searchParams);
       const rows = filterAndSortQueue(pending, params);
       // Manager Portal only: the two states sit side by side on one page, so a

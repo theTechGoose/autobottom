@@ -33,7 +33,7 @@ import { apiFetch } from "../../lib/api.ts";
 import DateRangePicker from "../../islands/DateRangePicker.tsx";
 import {
   renderQueueResults, renderQueueTable, queueFacets, filterAndSortQueue,
-  readQueueFilterParams, queueTimestamp, type QueueItem,
+  readQueueFilterParams, queueTimestamp, isOpenItem, closedOutAt, type QueueItem,
 } from "../api/manager/queue.tsx";
 import { renderAuditHistoryTable, renderFilterSelect, type AuditHistoryData, type DeptRollup } from "../api/manager/audit-history.tsx";
 
@@ -92,7 +92,9 @@ export function deptStats(items: QueueItem[], deptNames: string[]): DeptStat[] {
     const name = item.department ?? "";
     const stat = byName.get(name);
     if (!stat) continue;
-    if (item.status === "remediated") {
+    // Closed out, however it closed — coached, or taken off the table by an
+    // appeal. Either way it is not work this department still owes.
+    if (!isOpenItem(item)) {
       stat.remediated += 1;
       continue;
     }
@@ -368,12 +370,12 @@ export default define.page(async function OperationsPortalPage(ctx) {
   // ── Queue-derived tabs (in-memory over the already-loaded list) ───────────
   const queueParams = { ...readQueueFilterParams(url.searchParams), dept };
   const inDept = (i: QueueItem) => !dept || (i.department ?? "") === dept;
-  const pending = allItems.filter((i) => i.status !== "remediated");
+  const pending = allItems.filter(isOpenItem);
   const facets = queueFacets(pending.filter(inDept));
   const queueRows = filterAndSortQueue(pending, queueParams);
   const completedRows = allItems
-    .filter((i) => i.status === "remediated" && inDept(i))
-    .sort((a, b) => (b.remediatedAt ?? 0) - (a.remediatedAt ?? 0));
+    .filter((i) => !isOpenItem(i) && inDept(i))
+    .sort((a, b) => closedOutAt(b) - closedOutAt(a));
 
   // ── Audit-history read (overview roll-up, or the Audit History tab) ───────
   // Params + query-string builder are hoisted to the top of the handler so the
@@ -674,6 +676,15 @@ export default define.page(async function OperationsPortalPage(ctx) {
       {/* Remediate modal shell — plain HTML, NOT an island. The queue table's
           inline handler toggles `.open` and fills #rem-findingId, so the shell
           has to be in this page's initial SSR (frontend/CLAUDE.md Gotcha #1). */}
+      {/* Hidden Skip form — the row's Skip button fills it in and triggers it.
+          Mirrors the Manager Portal's: username comes from this
+          server-rendered value, never from row markup. */}
+      <form id="skip-form" hx-post="/api/manager/skip" hx-trigger="skip-now" hx-swap="none" style="display:none;">
+        <input type="hidden" id="skip-findingId" name="findingId" value="" />
+        <input type="hidden" id="skip-returnTo" name="returnTo" value="" />
+        <input type="hidden" name="username" value={user.email} />
+      </form>
+
       <div id="remediate-modal" class="modal-overlay">
         <div class="modal" style="width:min(520px,92vw);">
           <div class="modal-title">Remediate Failure</div>

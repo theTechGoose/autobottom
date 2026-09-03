@@ -938,6 +938,199 @@ async function restListByTypePaged(creds: FirestoreCreds, type: string, org: str
   return out;
 }
 
+/** Firestore's `IN` operator caps the value list at 30. Callers with more
+ *  distinct values than this must fall back to a full paged scan. */
+export const FIELD_IN_MAX_VALUES = 30;
+
+/** Paged scan of (_type, _org) narrowed to docs whose `field` equals one of
+ *  `values`. Pages on __name__ exactly like restListByTypePaged, so it returns
+ *  EVERY match — it can never reintroduce the silent 1000-row truncation that
+ *  the single-shot `limit` path has.
+ *
+ *  No composite index is required: all three filters are equality (`IN` is a
+ *  set of equalities), and Firestore serves pure-equality queries from the
+ *  single-field indexes it maintains automatically. A composite index only
+ *  becomes necessary once a range filter or a foreign orderBy joins the query
+ *  — which is why listStoredByCompletedAt needs one and this does not.
+ *
+ *  Docs MISSING the field never match, by Firestore's own semantics. That is
+ *  the intended behaviour for the manager queue (an item with no department is
+ *  deliberately hidden from every manager), but it does mean this must not be
+ *  the ONLY read path for a type that still needs such rows backfilled. */
+async function restListByFieldInPaged(
+  creds: FirestoreCreds,
+  type: string,
+  org: string,
+  field: string,
+  values: string[],
+): Promise<DocBody[]> {
+  const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
+  const out: DocBody[] = [];
+  let cursorDocName: string | null = null;
+  let pageNum = 0;
+
+  // A single value uses EQUAL rather than a one-element IN: same result, but
+  // it keeps the common case (most managers own one department) on the
+  // simplest query shape.
+  const fieldFilter = values.length === 1
+    ? { fieldFilter: { field: { fieldPath: field }, op: "EQUAL", value: { stringValue: values[0] } } }
+    : { fieldFilter: { field: { fieldPath: field }, op: "IN", value: { arrayValue: { values: values.map((v) => ({ stringValue: v })) } } } };
+
+  while (true) {
+    pageNum++;
+    const structuredQuery: Record<string, unknown> = {
+      from: [{ collectionId: creds.collection }],
+      where: {
+        compositeFilter: {
+          op: "AND",
+          filters: [
+            { fieldFilter: { field: { fieldPath: "_type" }, op: "EQUAL", value: { stringValue: type } } },
+            { fieldFilter: { field: { fieldPath: "_org" }, op: "EQUAL", value: { stringValue: org } } },
+            fieldFilter,
+          ],
+        },
+      },
+      orderBy: [{ field: { fieldPath: "__name__" }, direction: "ASCENDING" }],
+      limit: LIST_BY_TYPE_PAGE_SIZE,
+    };
+    if (cursorDocName) {
+      structuredQuery.startAt = { values: [{ referenceValue: cursorDocName }], before: false };
+    }
+    const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify({ structuredQuery }) });
+    if (!res.ok) throw new Error(`field-in list failed: ${res.status} ${res.text}`);
+    const rows = JSON.parse(res.text) as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
+    let pageRows = 0;
+    let lastDocName: string | null = null;
+    for (const row of rows) {
+      if (!row.document?.fields || !row.document?.name) continue;
+      pageRows++;
+      const obj = objectFromFields(row.document.fields) as DocBody;
+      lastDocName = row.document.name;
+      if (isExpired(obj)) continue;
+      out.push(obj);
+    }
+    if (pageRows < LIST_BY_TYPE_PAGE_SIZE || !lastDocName) break;
+    cursorDocName = lastDocName;
+  }
+  console.log(`🔍 [LIST-FIELD-IN] type=${type} ${field}∈[${values.join(", ")}] → ${out.length} rows in ${pageNum} page(s)`);
+  return out;
+}
+
+/** A narrowing filter for listStoredByQuery. `equals` and `oneOf` are pure
+ *  equality; `lessThan` is the single range Firestore permits per query. */
+export interface StoredQueryFilters {
+  equals?: Record<string, string | boolean | number>;
+  oneOf?: { field: string; values: string[] };
+  lessThan?: { field: string; value: number };
+}
+
+/** Paged (_type, _org) scan with extra field filters pushed into Firestore.
+ *
+ *  Unlike listStoredByFieldIn this can carry a RANGE (`lessThan`), which is
+ *  what makes "the failing audits for these departments" expressible as one
+ *  query. The price is a composite index: equality filters alone are served by
+ *  Firestore's automatic single-field indexes, but the moment a range joins
+ *  them a composite is required. Firestore answers the first such query with a
+ *  400 carrying a one-click create link — that error is passed through
+ *  verbatim rather than swallowed, because a silently empty queue is far worse
+ *  than a loud "create this index".
+ *
+ *  Ordering must lead with the range field (Firestore's rule), then __name__
+ *  so the cursor paging below is stable. */
+export async function listStoredByQuery<T>(
+  type: string,
+  org: string,
+  filters: StoredQueryFilters,
+): Promise<T[]> {
+  if (filters.oneOf && filters.oneOf.values.length === 0) return [];
+  if (filters.oneOf && filters.oneOf.values.length > FIELD_IN_MAX_VALUES) {
+    throw new Error(
+      `listStoredByQuery: ${filters.oneOf.values.length} values exceeds Firestore's IN limit of ${FIELD_IN_MAX_VALUES}`,
+    );
+  }
+  return await withTiming(`listByQuery:${type}`, async () => {
+    const creds = await loadFirestoreCredentials();
+    const parent = `projects/${creds.projectId}/databases/${creds.databaseId}/documents`;
+    const where: unknown[] = [
+      { fieldFilter: { field: { fieldPath: "_type" }, op: "EQUAL", value: { stringValue: type } } },
+      { fieldFilter: { field: { fieldPath: "_org" }, op: "EQUAL", value: { stringValue: org } } },
+    ];
+    for (const [field, v] of Object.entries(filters.equals ?? {})) {
+      where.push({ fieldFilter: { field: { fieldPath: field }, op: "EQUAL", value: toFsValue(v) } });
+    }
+    if (filters.oneOf) {
+      const { field, values } = filters.oneOf;
+      where.push(values.length === 1
+        ? { fieldFilter: { field: { fieldPath: field }, op: "EQUAL", value: { stringValue: values[0] } } }
+        : { fieldFilter: { field: { fieldPath: field }, op: "IN", value: { arrayValue: { values: values.map((v) => ({ stringValue: v })) } } } });
+    }
+    if (filters.lessThan) {
+      where.push({ fieldFilter: { field: { fieldPath: filters.lessThan.field }, op: "LESS_THAN", value: { integerValue: String(filters.lessThan.value) } } });
+    }
+    const orderBy = [
+      ...(filters.lessThan ? [{ field: { fieldPath: filters.lessThan.field }, direction: "ASCENDING" }] : []),
+      { field: { fieldPath: "__name__" }, direction: "ASCENDING" },
+    ];
+
+    const out: T[] = [];
+    let cursor: Array<Record<string, unknown>> | null = null;
+    let pageNum = 0;
+    while (true) {
+      pageNum++;
+      const structuredQuery: Record<string, unknown> = {
+        from: [{ collectionId: creds.collection }],
+        where: { compositeFilter: { op: "AND", filters: where } },
+        orderBy,
+        limit: LIST_BY_TYPE_PAGE_SIZE,
+      };
+      if (cursor) structuredQuery.startAt = { values: cursor, before: false };
+      const res = await fsFetch(creds, `${parent}:runQuery`, { method: "POST", body: JSON.stringify({ structuredQuery }) });
+      if (!res.ok) throw new Error(`query list failed: ${res.status} ${res.text}`);
+      const rows = JSON.parse(res.text) as Array<{ document?: { name?: string; fields?: Record<string, FsValue> } }>;
+      let pageRows = 0;
+      let lastCursor: Array<Record<string, unknown>> | null = null;
+      for (const row of rows) {
+        if (!row.document?.fields || !row.document?.name) continue;
+        pageRows++;
+        const obj = objectFromFields(row.document.fields) as DocBody;
+        // The cursor must carry every orderBy value, in order.
+        lastCursor = [
+          ...(filters.lessThan ? [toFsValue((obj as Record<string, unknown>)[filters.lessThan.field] ?? 0) as unknown as Record<string, unknown>] : []),
+          { referenceValue: row.document.name },
+        ];
+        if (isExpired(obj)) continue;
+        out.push(unwrapPayload<T>(obj));
+      }
+      if (pageRows < LIST_BY_TYPE_PAGE_SIZE || !lastCursor) break;
+      cursor = lastCursor;
+    }
+    console.log(`🔍 [LIST-QUERY] type=${type} → ${out.length} rows in ${pageNum} page(s)`);
+    return out;
+  });
+}
+
+/** Every doc of (_type, _org) whose `field` matches one of `values`.
+ *  Throws when given more than FIELD_IN_MAX_VALUES values — the caller must
+ *  choose a fallback rather than have the query silently drop the overflow. */
+export async function listStoredByFieldIn<T>(
+  type: string,
+  org: string,
+  field: string,
+  values: string[],
+): Promise<T[]> {
+  if (values.length === 0) return [];
+  if (values.length > FIELD_IN_MAX_VALUES) {
+    throw new Error(
+      `listStoredByFieldIn: ${values.length} values exceeds Firestore's IN limit of ${FIELD_IN_MAX_VALUES}`,
+    );
+  }
+  return await withTiming(`listByFieldIn:${type}.${field}`, async () => {
+    const creds = await loadFirestoreCredentials();
+    const bodies = await restListByFieldInPaged(creds, type, org, field, values);
+    return bodies.map((b) => unwrapPayload<T>(b));
+  });
+}
+
 /** Like listStoredWithKeys, but paginates internally — returns EVERY doc
  *  of (_type, _org), no silent truncation. Use for bulk maintenance ops
  *  (dedup, purge) where leaving orphans isn't acceptable. Heavier per

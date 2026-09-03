@@ -57,7 +57,23 @@ export async function startUploadReaudit(
   // Soft-delete the old finding from queues; keep chunks for the report link.
   (old as Record<string, unknown>).reAuditedAt = Date.now();
   await saveFinding(orgId, old);
-  cleanupFindingFromIndices(orgId, findingId).catch((err) =>
+
+  // Same as the genie re-audit path: flag the manager's remediation row
+  // "re-audited" so the audit leaves the pending queue while the new recording
+  // is graded. Must run BEFORE the fire-and-forget cleanup, which is told to
+  // leave manager-queue alone — otherwise the two race and the row is deleted.
+  try {
+    const { markQueueItemAppealed } = await import("@manager/domain/data/manager-repository/mod.ts");
+    await markQueueItemAppealed(orgId, findingId, {
+      appealState: "re-audited",
+      appealedBy: input.agentEmail,
+      ...(input.comment ? { appealNote: input.comment } : {}),
+    });
+  } catch (err) {
+    console.warn(`[UPLOAD-REAUDIT] ⚠️ ${findingId} manager-queue re-audit flag failed (best-effort):`, err);
+  }
+
+  cleanupFindingFromIndices(orgId, findingId, { keepManagerQueue: true }).catch((err) =>
     console.error(`[UPLOAD-REAUDIT] ❌ cleanup old fid=${findingId} failed:`, err));
 
   const newJobId = nanoid();

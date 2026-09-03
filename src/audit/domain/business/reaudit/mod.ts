@@ -81,7 +81,28 @@ export async function startReauditWithGenies(
   (old as Record<string, unknown>).reAuditedAt = Date.now();
   (old as Record<string, unknown>).reAuditedTo = newFindingId;
   await step("saveFinding(old, reAuditedAt/To)", findingId, () => saveFinding(orgId, old));
-  cleanupFindingFromIndices(orgId, findingId).catch((err) =>
+
+  // Flag the manager's remediation row "re-audited" BEFORE the cleanup fires.
+  // Submitting new audio is an appeal like any other: the failure the row was
+  // queued for may be about to disappear, so the audit leaves the pending queue
+  // and shows on the Completed side under its own flag.
+  //
+  // Ordering matters — the cleanup below is fire-and-forget, so flagging after
+  // it would race the delete. Instead the flag lands first and the cleanup is
+  // told to leave manager-queue alone. If this re-audit itself fails, the new
+  // audit replaces the row anyway when IT lands in the queue.
+  try {
+    const { markQueueItemAppealed } = await import("@manager/domain/data/manager-repository/mod.ts");
+    await markQueueItemAppealed(orgId, findingId, {
+      appealState: "re-audited",
+      appealedBy: input.agentEmail,
+      ...(input.comment ? { appealNote: input.comment } : {}),
+    });
+  } catch (err) {
+    console.warn(`[REAUDIT] ⚠️ ${findingId} manager-queue re-audit flag failed (best-effort):`, err);
+  }
+
+  cleanupFindingFromIndices(orgId, findingId, { keepManagerQueue: true }).catch((err) =>
     console.error(`[REAUDIT] ❌ cleanup old fid=${findingId} failed:`, err));
   // Reverse the old finding's contribution to the per-question failure
   // counters. The chargeback/audit-done-idx entries are deleted above so the

@@ -16,7 +16,7 @@ import { apiFetch } from "../../lib/api.ts";
 import DateRangePicker from "../../islands/DateRangePicker.tsx";
 import {
   renderQueueResults, renderCompletedResults, renderMemberButtons, queueFacets,
-  filterAndSortQueue, filterCompleted, readQueueFilterParams,
+  filterAndSortQueue, filterCompleted, readQueueFilterParams, isOpenItem,
   type QueueItem,
 } from "../api/manager/queue.tsx";
 
@@ -42,7 +42,7 @@ export default define.page(async function ManagerPortalPage(ctx) {
   } catch (e) {
     console.error("Manager queue load error:", e);
   }
-  const pending = allItems.filter((i) => i.status !== "remediated");
+  const pending = allItems.filter(isOpenItem);
   // Facets come from the OPEN items only: the question dropdown is a triage
   // tool, and offering a question with no open work left would filter the queue
   // side down to nothing.
@@ -60,7 +60,8 @@ export default define.page(async function ManagerPortalPage(ctx) {
         <a href={auditsHref} class="btn btn-ghost btn-sm">Audit History &rarr;</a>
       </div>
 
-      {/* Stat strip — Total / Pending / Remediated / Agents, refreshed every 10s. */}
+      {/* Stat strip — Total / Pending / Remediated / Appealed / Agents,
+          refreshed every 10s. */}
       <div id="manager-stats" hx-get={`/api/manager/stats${asQs}`} hx-trigger="load, every 10s" hx-swap="innerHTML" style="margin-bottom:18px;">
         <div class="stat-grid"><div class="placeholder-card">Loading stats…</div></div>
       </div>
@@ -185,6 +186,24 @@ export default define.page(async function ManagerPortalPage(ctx) {
           </section>
         </div>
       </div>
+
+
+      {/* Hidden Skip form. The Skip button on a row fills these in and triggers
+          it, so the username is the server-rendered value here rather than
+          something carried on each row — a row-level form would put the
+          identity in markup a viewer can edit. Kept OUT of the swapped table
+          so an HTMX refresh can't replace it mid-submit. */}
+      <form
+        id="skip-form"
+        hx-post="/api/manager/skip"
+        hx-trigger="skip-now"
+        hx-swap="none"
+        style="display:none;"
+      >
+        <input type="hidden" id="skip-findingId" name="findingId" value="" />
+        <input type="hidden" id="skip-returnTo" name="returnTo" value="" />
+        <input type="hidden" name="username" value={user.email} />
+      </form>
 
       {/* ===== Modal shells (plain HTML — NOT islands). The queue fragment
           toggles `.open` (CSS: .modal-overlay.open{display:flex}) and swaps

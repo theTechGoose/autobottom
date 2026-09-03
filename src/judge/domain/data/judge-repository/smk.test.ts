@@ -1132,3 +1132,78 @@ Deno.test("postJudgedAudit — an all-uphold appeal still closes (badge flips, s
   assertEquals(entry?.appealStatus, "complete", "badge must flip even when nothing was overturned");
   assertEquals(entry?.score, 42, "an upheld appeal must NOT move the score");
 });
+
+// ─── postJudgedAudit — manager remediation queue ────────────────────────────
+// Filing an appeal takes an audit off the manager's queue. Deciding it is what
+// puts it back — but only when the failure actually survived.
+
+Deno.test("postJudgedAudit — a denied appeal sends the row back to Pending", async () => {
+  reset();
+  const ORG = ("test-judge-mq-denied-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-mq-denied-" + crypto.randomUUID().slice(0, 8);
+  await makeFindingWith4Nos(ORG, fid);
+  const { markQueueItemAppealed, isOpenQueueItem } = await import(
+    "@manager/domain/data/manager-repository/mod.ts"
+  );
+  await setStored("manager-queue", ORG, [fid], {
+    findingId: fid, addedAt: 1, status: "pending", department: "EPG",
+  });
+  await markQueueItemAppealed(ORG, fid, { appealState: "appealed", appealedBy: "rep@x.com" });
+
+  // Judge upholds every question — the audit is still failing.
+  await seedJudgeDecisions(ORG, fid, [0, 1, 2, 3].map((i) => ({ questionIndex: i, decision: "uphold" as const })));
+  await postJudgedAudit(ORG, fid, "judge@x.com");
+
+  const row = await getStored<Record<string, unknown>>("manager-queue", ORG, fid);
+  assertEquals(row?.appealState, undefined, "the appeal flag comes off");
+  assert(typeof row?.appealDeniedAt === "number", "stamped so the row explains why it reappeared");
+  assert(isOpenQueueItem(row as { status?: string; appealState?: string }), "back to open work");
+  assertEquals(row?.department, "EPG", "display fields survive");
+});
+
+Deno.test("postJudgedAudit — a partly-granted appeal that still fails also comes back", async () => {
+  reset();
+  const ORG = ("test-judge-mq-partial-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-mq-partial-" + crypto.randomUUID().slice(0, 8);
+  await makeFindingWith4Nos(ORG, fid);
+  const { markQueueItemAppealed, isOpenQueueItem } = await import(
+    "@manager/domain/data/manager-repository/mod.ts"
+  );
+  await setStored("manager-queue", ORG, [fid], { findingId: fid, addedAt: 1, status: "pending" });
+  await markQueueItemAppealed(ORG, fid, { appealState: "appealed", appealedBy: "rep@x.com" });
+
+  // Two overturned, two upheld — score moves but the audit still has failures,
+  // so someone still has to have the conversation.
+  await seedJudgeDecisions(ORG, fid, [
+    { questionIndex: 0, decision: "overturn" },
+    { questionIndex: 1, decision: "overturn" },
+    { questionIndex: 2, decision: "uphold" },
+    { questionIndex: 3, decision: "uphold" },
+  ]);
+  await postJudgedAudit(ORG, fid, "judge@x.com");
+
+  const row = await getStored<Record<string, unknown>>("manager-queue", ORG, fid);
+  assertEquals(row?.appealState, undefined);
+  assert(isOpenQueueItem(row as { status?: string; appealState?: string }), "any surviving failure is still coaching work");
+});
+
+Deno.test("postJudgedAudit — a won appeal leaves the row closed out, flag intact", async () => {
+  reset();
+  const ORG = ("test-judge-mq-won-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-mq-won-" + crypto.randomUUID().slice(0, 8);
+  await makeFindingWith4Nos(ORG, fid);
+  const { markQueueItemAppealed, isOpenQueueItem } = await import(
+    "@manager/domain/data/manager-repository/mod.ts"
+  );
+  await setStored("manager-queue", ORG, [fid], { findingId: fid, addedAt: 1, status: "pending" });
+  await markQueueItemAppealed(ORG, fid, { appealState: "appealed", appealedBy: "rep@x.com" });
+
+  // Every question overturned — back to 100%, nothing left to coach.
+  await seedJudgeDecisions(ORG, fid, [0, 1, 2, 3].map((i) => ({ questionIndex: i, decision: "overturn" as const })));
+  await postJudgedAudit(ORG, fid, "judge@x.com");
+
+  const row = await getStored<Record<string, unknown>>("manager-queue", ORG, fid);
+  assertEquals(row?.appealState, "appealed", "the row stays as the record that it was appealed and won");
+  assertEquals(row?.appealDeniedAt, undefined, "nothing was denied");
+  assert(!isOpenQueueItem(row as { status?: string; appealState?: string }), "it must not reappear as work");
+});

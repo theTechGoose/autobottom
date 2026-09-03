@@ -138,6 +138,24 @@ export function renderRemediateAction(opts: {
     };
   }
 
+  // Skipped is closed out too — show who decided, not a live button that would
+  // silently re-skip an audit somebody already ruled on.
+  if (queueItem.status === "skipped") {
+    return {
+      action: (
+        <span class="rem-done">
+          Skipped{queueItem.skippedBy ? ` by ${queueItem.skippedBy}` : ""}
+        </span>
+      ),
+      modal: null,
+    };
+  }
+
+  // An audit out for appeal has left the queue, but the button STAYS: appealing
+  // and coaching are not mutually exclusive, and a manager who has already had
+  // the conversation should still be able to write it up. The pill next to it
+  // is what says the row is off their queue, so the live button doesn't read as
+  // "this is still owed".
   return {
     action: (
       <button
@@ -191,7 +209,7 @@ export function renderRemediateAction(opts: {
  *  Nothing renders while an item is still pending — there is no note yet — or
  *  when the audit isn't in the queue at all. */
 export function renderRemediationNote(queueItem: QueueItem | null) {
-  if (!queueItem || queueItem.status !== "remediated") return null;
+  if (!queueItem || queueItem.status !== "remediated") return null;  // a skipped row has no note by design
   const note = (queueItem.notes ?? "").trim();
   const when = queueItem.remediatedAt
     ? new Date(queueItem.remediatedAt).toLocaleString("en-US", {
@@ -481,7 +499,45 @@ export default define.page(async function RemediationDetail(ctx) {
                 .filter((q) => !isYes(q.answer))}
             />
           )}
+          {queueItem?.appealState && (
+            <span
+              class={`pill pill-${queueItem.appealState === "re-audited" ? "blue" : "yellow"}`}
+              title={
+                queueItem.appealState === "re-audited"
+                  ? "New audio was submitted — this audit is off the remediation queue until the re-audit lands"
+                  : "Out for a judge decision — this audit is off the remediation queue until the appeal is decided"
+              }
+            >{queueItem.appealState === "re-audited" ? "Re-Audited" : "Appealed"}</span>
+          )}
+          {queueItem?.appealDeniedAt && !queueItem.appealState && (
+            <span class="pill pill-red" title="Appealed, but the judge let the failure stand">Appeal denied</span>
+          )}
+          {/* Nothing was graded here, so the questions list below is empty by
+              design — say so up front rather than letting a manager hunt for
+              a failure that does not exist. */}
+          {queueItem?.invalidGenie && (
+            <span class="pill pill-purple" title="The recording was missing or unusable, so the bot could not grade this call">
+              Invalid genie
+            </span>
+          )}
           {remediate.action}
+          {queueItem && remediate.modal && (
+            <form
+              hx-post="/api/manager/skip"
+              hx-swap="none"
+              style="display:inline;"
+              {...{ "hx-on:submit": "if(!confirm('Skip this audit? It closes without a remediation note.'))event.preventDefault()" }}
+            >
+              <input type="hidden" name="findingId" value={findingId} />
+              <input type="hidden" name="username" value={user.email} />
+              <input type="hidden" name="returnTo" value={backHref} />
+              <button
+                type="submit"
+                class="btn btn-ghost btn-sm"
+                title="Close this out without recording a remediation"
+              >Skip</button>
+            </form>
+          )}
         </div>
 
         <div class="queue-layout" data-mode="review" style="height:calc(100vh - 52px);">

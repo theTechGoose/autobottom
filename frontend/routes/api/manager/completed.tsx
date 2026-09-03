@@ -4,7 +4,7 @@
 import { define } from "../../../lib/define.ts";
 import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
-import { renderQueueTable, type QueueItem } from "./queue.tsx";
+import { renderQueueTable, isOpenItem, closedOutAt, type QueueItem } from "./queue.tsx";
 
 export const handler = define.handlers({
   async GET(ctx) {
@@ -14,9 +14,11 @@ export const handler = define.handlers({
       const asEmail = new URL(ctx.req.url).searchParams.get("as");
       const qs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
       const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${qs}`, ctx.req);
+      // Everything closed out, newest first — remediated rows and rows an
+      // appeal took off the queue, ordered by whichever of those happened.
       const completed = (items ?? [])
-        .filter((i) => i.status === "remediated")
-        .sort((a, b) => (b.remediatedAt ?? 0) - (a.remediatedAt ?? 0));
+        .filter((i) => !isOpenItem(i))
+        .sort((a, b) => closedOutAt(b) - closedOutAt(a));
       const html = renderToString(renderQueueTable(completed, { completed: true }));
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch {

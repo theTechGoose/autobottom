@@ -226,40 +226,85 @@ async function handleManagerQueueClear(req: Request): Promise<Response> {
  *  queue of their own — an admin can impersonate a manager via ?as=<email>
  *  (same convention as audit-history). Returns a deny Response, or the full
  *  item list plus the caller's scoped view. */
+type QueueViewItem = { status: string; appealState?: string };
 async function computeManagerQueueView(req: Request): Promise<
-  Response | { allItems: { status: string }[]; scopedItems: { status: string }[]; orgWide: boolean }
+  Response | { allItems: QueueViewItem[]; scopedItems: QueueViewItem[]; orgWide: boolean }
 > {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
   if (auth.role !== "manager" && auth.role !== "admin" && auth.role !== "super-manager" && auth.role !== "operations-manager") {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
-  const { getManagerQueue, enrichManagerQueueBatch, filterQueueToManagerScope, dropResolvedQueueItems } =
-    await import("@manager/domain/data/manager-repository/mod.ts");
-  const allItems = await getManagerQueue(auth.orgId);
-  // Piggyback the bounded lazy enrichment (10 findings/call) so legacy items
-  // converge — NEVER unbounded hydration on an auto-polling path.
-  try { await enrichManagerQueueBatch(auth.orgId, allItems, 10); }
-  catch (err) { console.warn("⚠️ [MANAGER] queue enrichment skipped:", err); }
+  const {
+    getManagerQueue, getManagerQueueForDepartments, deriveManagerQueue,
+    enrichManagerQueueBatch, filterQueueToManagerScope, dropResolvedQueueItems,
+  } = await import("@manager/domain/data/manager-repository/mod.ts");
+
+  // Bounded lazy enrichment (10 findings/call) so legacy items converge —
+  // NEVER unbounded hydration on an auto-polling path.
+  const enrich = async (items: QueueViewItem[]) => {
+    try { await enrichManagerQueueBatch(auth.orgId, items as Parameters<typeof enrichManagerQueueBatch>[1], 10); }
+    catch (err) { console.warn("⚠️ [MANAGER] queue enrichment skipped:", err); }
+  };
   // Read-time drain, on whichever list this caller actually sees: an audit a
   // judge (or a flip) took back to 100% after the queue snapshot was written
   // must not sit there asking to be remediated. Bounded + best-effort — the
   // queue still renders if the check fails.
-  const drainResolved = async (items: { status: string }[]) => {
+  const drainResolved = async (items: QueueViewItem[]) => {
     try { await dropResolvedQueueItems(auth.orgId, items as Parameters<typeof dropResolvedQueueItems>[1]); }
     catch (err) { console.warn("⚠️ [MANAGER] queue drain skipped:", err); }
   };
+
   const asEmail = new URL(req.url).searchParams.get("as");
   const isImpersonating = Boolean(asEmail) && auth.role === "admin";
   if (auth.role === "manager" || auth.role === "operations-manager" || isImpersonating) {
     const { getManagerScope } = await import("@admin/domain/data/admin-repository/mod.ts");
     const scope = await getManagerScope(auth.orgId, isImpersonating ? asEmail! : auth.email);
-    const scopedItems = filterQueueToManagerScope(allItems, scope);
+    // Ask the DATABASE for this manager's departments rather than reading the
+    // whole org and filtering after. The old whole-org read was capped at
+    // 1000 rows by listStored's default while the queue held 1,518, so 518
+    // rows — the same ones every time, since the query has no sort — were
+    // permanently invisible: five departments were over half hidden and three
+    // saw nothing at all. Narrowing the query fixes that AND cuts reads (29
+    // docs for a one-department manager, against 1000 before).
+    //
+    // null = this scope can't be expressed as a query (no departments, which
+    // means "unrestricted", or more than Firestore's IN limit). Those fall
+    // back to the full paged scan, which is uncapped and therefore still
+    // correct — just heavier.
+    // DERIVED_MANAGER_QUEUE=true reads the queue from audit-done-idx instead
+    // of the stored snapshot (deriveManagerQueue). It needs a composite index
+    // on (_org, _type, completed, department, score) — until that exists in
+    // Firestore the query 400s, so this stays opt-in and falls back rather
+    // than emptying every manager's queue on a bad deploy.
+    let rows: Awaited<ReturnType<typeof getManagerQueue>> | null = null;
+    if (Deno.env.get("DERIVED_MANAGER_QUEUE") === "true") {
+      try {
+        rows = await deriveManagerQueue(auth.orgId, scope.departments);
+      } catch (err) {
+        console.error("❌ [MANAGER] derived queue failed — falling back to the stored queue:", err);
+        rows = null;
+      }
+    }
+    rows ??= await getManagerQueueForDepartments(auth.orgId, scope.departments)
+      ?? await getManagerQueue(auth.orgId);
+    await enrich(rows);
+    // Still run the in-memory scope filter: it applies the SHIFT axis, which
+    // is deliberately not in the query (packages carry no shift and must skip
+    // that check), and it re-checks department as a backstop.
+    const scopedItems = filterQueueToManagerScope(rows, scope);
     await drainResolved(scopedItems);
-    return { allItems, scopedItems, orgWide: false };
+    // allItems is only read for org-wide stat totals, which this caller is
+    // not — handing back the same scoped list keeps it from being mistaken
+    // for a whole-org list it no longer is.
+    return { allItems: scopedItems, scopedItems, orgWide: false };
   }
   // Admin / super-manager without impersonation: no queue of their own, but
-  // their stats count the whole org — drain against that list instead.
+  // their stats count the whole org — so this one genuinely needs every row,
+  // and it is also the only path that can still reach a row missing its
+  // department stamp (the narrowed query above can't match one) to enrich it.
+  const allItems = await getManagerQueue(auth.orgId);
+  await enrich(allItems);
   await drainResolved(allItems);
   return { allItems, scopedItems: [], orgWide: true };
 }
@@ -276,10 +321,18 @@ async function handleManagerStats(req: Request): Promise<Response> {
   // Managers get counts over THEIR scoped queue (matches their table);
   // admin/super-manager get the org-wide remediation numbers.
   const base = view.orgWide ? view.allItems : view.scopedItems;
+  // Pending is OPEN work — an audit out for appeal is not the manager's to act
+  // on until the appeal lands, so it moves to its own count instead of sitting
+  // against them. Same predicate the queue table splits on (isOpenQueueItem).
+  const { isOpenQueueItem } = await import("@manager/domain/data/manager-repository/mod.ts");
   return Response.json({
     total: base.length,
-    pending: base.filter((i) => i.status === "pending").length,
-    remediated: base.filter((i) => i.status === "remediated").length,
+    pending: base.filter(isOpenQueueItem).length,
+    // Skipped counts as closed out alongside remediated — both are a manager
+    // having dealt with the row. Must match getManagerStats in the repository,
+    // or the portal and the swagger/tooling endpoint disagree.
+    remediated: base.filter((i) => i.status === "remediated" || i.status === "skipped").length,
+    appealed: base.filter((i) => !!i.appealState).length,
   });
 }
 

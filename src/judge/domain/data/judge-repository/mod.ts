@@ -304,6 +304,28 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
       console.warn(`⚠️ [JUDGE] ${findingId} appeal resolve failed (best-effort):`, err);
     }
 
+    // The appeal is decided, so the manager's remediation row stops waiting on
+    // it. Two outcomes, and the score is what separates them:
+    //   - still failing → the coaching ask is real after all, so the row comes
+    //     off the Completed side and back onto Pending (clearQueueItemAppeal
+    //     stamps appealDeniedAt so it doesn't look like a brand-new failure).
+    //   - back at 100%  → the appeal was won. The flag STAYS and the row stays
+    //     on the Completed side as the record of that: removeFromManagerQueue
+    //     below only clears rows still open, so it skips this one exactly as it
+    //     skips a remediated row.
+    // A partly-granted appeal that leaves ANY failure standing counts as still
+    // failing — someone still has to have the conversation.
+    if (finalScore < 100) {
+      try {
+        const { clearQueueItemAppeal } = await import(
+          "@manager/domain/data/manager-repository/mod.ts"
+        );
+        await clearQueueItemAppeal(orgId, findingId);
+      } catch (err) {
+        console.warn(`⚠️ [JUDGE] ${findingId} manager-queue appeal clear failed (best-effort):`, err);
+      }
+    }
+
     if (overturns > 0) {
       // Per-question counter — each overturn is a No→Yes flip. Fire-and-
       // forget so a counter write failure doesn't strand the judge result.
@@ -737,7 +759,11 @@ export async function clearJudgeQueue(orgId: OrgId): Promise<{ cleared: number }
 
 // ── Admin delete finding — full cross-table cleanup ─────────────────────────
 
-async function collectKeysForFinding(orgId: OrgId, findingId: string): Promise<Array<{ type: string; key: string[] }>> {
+async function collectKeysForFinding(
+  orgId: OrgId,
+  findingId: string,
+  opts: { keepManagerQueue?: boolean } = {},
+): Promise<Array<{ type: string; key: string[] }>> {
   const out: Array<{ type: string; key: string[] }> = [];
 
   // Per-finding queues + counters across review + judge + manager + appeals
@@ -750,8 +776,14 @@ async function collectKeysForFinding(orgId: OrgId, findingId: string): Promise<A
     }
   }
 
-  // Singleton-per-finding entries
-  for (const t of ["review-audit-pending", "review-done", "judge-audit-pending", "manager-queue", "appeal", "appeal-history"]) {
+  // Singleton-per-finding entries. The manager-queue row is held back for a
+  // re-audit (keepManagerQueue): the row is not garbage there, it is the
+  // manager's record that this audit went out for new audio, and the re-audit
+  // path re-flags it "re-audited" instead of deleting it. An admin delete
+  // still passes no option and clears everything.
+  const singletons = ["review-audit-pending", "review-done", "judge-audit-pending", "manager-queue", "appeal", "appeal-history"]
+    .filter((t) => !(opts.keepManagerQueue && t === "manager-queue"));
+  for (const t of singletons) {
     const v = await getStored(t, orgId, findingId);
     if (v !== null) out.push({ type: t, key: [findingId] });
   }
@@ -795,8 +827,12 @@ export async function adminDeleteFinding(orgId: OrgId, findingId: string): Promi
 
 /** Like adminDeleteFinding minus the finding-chunk delete — keeps the
  *  finding alive for the report page after a recording-swap appeal. */
-export async function cleanupFindingFromIndices(orgId: OrgId, findingId: string): Promise<void> {
-  const keys = await collectKeysForFinding(orgId, findingId);
+export async function cleanupFindingFromIndices(
+  orgId: OrgId,
+  findingId: string,
+  opts: { keepManagerQueue?: boolean } = {},
+): Promise<void> {
+  const keys = await collectKeysForFinding(orgId, findingId, opts);
   for (const { type, key } of keys) await deleteStored(type, orgId, ...key);
 
   await deleteChargebackEntry(orgId, findingId).catch(() => {});

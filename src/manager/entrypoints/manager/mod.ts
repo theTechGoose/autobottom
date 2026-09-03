@@ -5,7 +5,7 @@ import { SwaggerDescription } from "@mrg-keystone/danet";
 import { ReturnedType, BodyType, Description } from "#danet/swagger-decorators";
 import { ManagerQueueResponse, ManagerStatsResponse, OkResponse, OkMessageResponse, AgentListResponse, MessageResponse, FindingResponse, ManagerAuditHistoryResponse } from "@core/dto/responses.ts";
 import { GenericBodyRequest, RemediateRequest, CreateAgentRequest, DeleteEmailRequest, PrefabSubscriptionsRequest } from "@core/dto/requests.ts";
-import { getManagerQueue, submitRemediation, enrichManagerQueueBatch } from "@manager/domain/data/manager-repository/mod.ts";
+import { getManagerQueue, submitRemediation, skipRemediation, enrichManagerQueueBatch } from "@manager/domain/data/manager-repository/mod.ts";
 import { getFinding, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
 import { createUser, deleteUser, listUsers } from "@core/business/auth/mod.ts";
 import { getPrefabSubscriptions, savePrefabSubscriptions } from "@events/domain/data/events-repository/mod.ts";
@@ -72,6 +72,14 @@ export class ManagerController {
   async remediate(@Body() body: { findingId: string; notes: string; username: string }) {
     if (!body.findingId || !body.notes || !body.username) return { error: "findingId, notes, username required" };
     return submitRemediation(ORG(), body.findingId, body.notes, body.username);
+  }
+
+  /** Close a row out with no write-up. No notes, by design — see
+   *  skipRemediation for why this awards no XP and fires no webhook. */
+  @Post("skip") @ReturnedType(OkResponse) @Description("Skip a failure without recording remediation") @BodyType(GenericBodyRequest)
+  async skip(@Body() body: { findingId?: string; username?: string }) {
+    if (!body?.findingId || !body?.username) return { error: "findingId, username required" };
+    return skipRemediation(ORG(), body.findingId, body.username);
   }
 
   /** NOTE: the live route is dispatched from main.ts (AUTH_CONTEXT_HANDLERS →

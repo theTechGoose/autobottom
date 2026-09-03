@@ -9,7 +9,8 @@ import { renderHTML, assertContains, assertNotContains } from "../../helpers/ren
 import {
   renderQueueTable, renderQueueResults, renderCompletedResults, queueTimestamp, queueFacets,
   renderMemberButtons,
-  filterAndSortQueue, filterCompleted, readQueueFilterParams, type QueueItem,
+  filterAndSortQueue, filterCompleted, readQueueFilterParams,
+  isOpenItem, closedOutAt, appealLabel, type QueueItem,
 } from "../../../routes/api/manager/queue.tsx";
 
 function item(over: Partial<QueueItem> = {}): QueueItem {
@@ -139,10 +140,11 @@ Deno.test("ManagerQueue — remediated item shows green pill", () => {
 
 // ── Completed mode (the /manager/completed tab) ───────────────────────────────
 
-Deno.test("ManagerQueue completed — swaps Status/Action for Remediated By/When", () => {
+Deno.test("ManagerQueue completed — swaps Status/Action for Outcome/By/When", () => {
   const html = renderHTML(renderQueueTable([], { completed: true }));
-  assertContains(html, "Remediated By");
-  assertContains(html, "When");
+  // Outcome carries how the audit left the queue — coached, or appealed —
+  // which is why "By" is no longer specifically "Remediated By".
+  for (const th of ["Outcome", "By", "When"]) assertContains(html, `<th>${th}</th>`);
   assertNotContains(html, "Status");
   assertNotContains(html, "Action");
   assertContains(html, "No completed remediations");
@@ -352,7 +354,7 @@ const done = (over: Partial<QueueItem> = {}): QueueItem =>
 Deno.test("ManagerQueue — completed mode has a Notes column, pending mode does not", () => {
   const completedHtml = renderHTML(renderQueueTable([], { completed: true }));
   assertContains(completedHtml, "Notes");
-  assertContains(completedHtml, "Remediated By");
+  assertContains(completedHtml, "<th>Outcome</th>");
   // The pending queue has no notes yet — the column would be all dashes.
   assertNotContains(renderHTML(renderQueueTable([])), "Notes");
 });
@@ -521,7 +523,7 @@ Deno.test("ManagerQueue compact — completed side is name / who / when / note",
     [item({ status: "remediated", voName: "Jane Doe", remediatedBy: "mgr@team.com", remediatedAt: 1, notes: "coached her" })],
     { completed: true, compact: true },
   ));
-  for (const kept of ["Team Member", "Remediated By", "When", "Notes"]) assertContains(html, kept);
+  for (const kept of ["Team Member", "Outcome", "By", "When", "Notes"]) assertContains(html, kept);
   // Failed Questions and Score give up their room to the note on this side.
   for (const dropped of ["Failed Questions", "Score", "Finding", "Sale"]) assertNotContains(html, `<th>${dropped}</th>`);
   assertContains(html, "coached her");
@@ -594,7 +596,7 @@ Deno.test("renderCompletedResults — the caption names the window it is actuall
   const html = renderHTML(renderCompletedResults([item({ status: "remediated", remediatedAt: since + DAY })], { ...PARAMS, since }));
   // The count sits in its own <strong>, so assert the two halves separately.
   assertContains(html, ">1</strong>");
-  assertContains(html, "remediation closed out since Aug 13, 2026");
+  assertContains(html, "audit closed out since Aug 13, 2026");
 });
 
 Deno.test("renderCompletedResults — all-time says so instead of naming a date", () => {
@@ -607,4 +609,202 @@ Deno.test("ManagerQueue — the row click carries `back` so a submit returns to 
   const html = renderHTML(renderQueueTable([item()], { compact: true }));
   assertContains(html, "q.set('back',location.pathname+location.search)");
   assertContains(html, "/manager/remediate/");
+});
+
+// ── An appeal takes the audit off the queue ──────────────────────────────────
+// An audit whose result is being contested isn't ready to coach on, so any
+// appeal — judge decision or new audio — moves the row to the Completed side.
+
+Deno.test("isOpenItem — an appeal closes a row just as remediation does", () => {
+  assert(isOpenItem(item()));
+  assert(!isOpenItem(item({ status: "remediated" })));
+  assert(!isOpenItem(item({ appealState: "appealed" })));
+  assert(!isOpenItem(item({ appealState: "re-audited" })));
+  assert(
+    isOpenItem(item({ appealDeniedAt: 5 })),
+    "a denied appeal put the row back — it is open work again",
+  );
+});
+
+Deno.test("closedOutAt — whichever way the row actually closed", () => {
+  assertEquals(closedOutAt(item({ remediatedAt: 30 })), 30);
+  assertEquals(closedOutAt(item({ appealedAt: 20 })), 20);
+  // Coached AND appealed: the later of the two is when it left the queue.
+  assertEquals(closedOutAt(item({ remediatedAt: 30, appealedAt: 40 })), 40);
+  assertEquals(closedOutAt(item()), 0);
+});
+
+Deno.test("appealLabel — the two paths are named differently", () => {
+  assertEquals(appealLabel(item({ appealState: "appealed" })), "Appealed");
+  assertEquals(appealLabel(item({ appealState: "re-audited" })), "Re-Audited");
+});
+
+Deno.test("filterCompleted — appealed rows join the Completed side", () => {
+  const rows = filterCompleted([
+    item({ findingId: "open" }),
+    item({ findingId: "coached", status: "remediated", remediatedAt: 10 }),
+    item({ findingId: "appealed", appealState: "appealed", appealedAt: 20 }),
+    item({ findingId: "reaudited", appealState: "re-audited", appealedAt: 30 }),
+  ], PARAMS);
+  // Newest close-out first, and the still-open row is not here.
+  assertEquals(rows.map((r) => r.findingId), ["reaudited", "appealed", "coached"]);
+});
+
+Deno.test("filterCompleted — the date window uses the appeal time, not remediatedAt", () => {
+  const since = Date.UTC(2026, 7, 13);
+  // Appealed the day AFTER the window opens: it must show. Keying the window
+  // off remediatedAt (0 here) would silently drop every appealed row.
+  const inWindow = filterCompleted(
+    [item({ findingId: "recent", appealState: "appealed", appealedAt: since + DAY })],
+    { ...PARAMS, since },
+  );
+  assertEquals(inWindow.map((r) => r.findingId), ["recent"]);
+  const outOfWindow = filterCompleted(
+    [item({ findingId: "old", appealState: "appealed", appealedAt: since - DAY })],
+    { ...PARAMS, since },
+  );
+  assertEquals(outOfWindow.length, 0);
+});
+
+Deno.test("ManagerQueue completed — an appealed row shows its flag, filer and comment", () => {
+  const html = renderHTML(renderQueueTable(
+    [item({
+      status: "pending", voName: "Reese Moore", appealState: "appealed",
+      appealedAt: Date.UTC(2026, 7, 14, 12, 0), appealedBy: "reesem@monsterrg.com",
+      appealNote: "the bot misheard the disclosure",
+    })],
+    { completed: true },
+  ));
+  assertContains(html, "Appealed");
+  assertContains(html, "reesem@monsterrg.com");
+  assertContains(html, "Aug 14");
+  assertContains(html, "the bot misheard the disclosure");
+});
+
+Deno.test("ManagerQueue completed — new audio reads Re-Audited, not Appealed", () => {
+  const html = renderHTML(renderQueueTable(
+    [item({ status: "pending", appealState: "re-audited", appealedBy: "rep@team.com" })],
+    { completed: true },
+  ));
+  assertContains(html, "Re-Audited");
+});
+
+Deno.test("ManagerQueue completed — coached AND appealed carries both marks", () => {
+  const html = renderHTML(renderQueueTable(
+    [item({
+      status: "remediated", remediatedBy: "mgr@team.com", remediatedAt: 50, notes: "coached her",
+      appealState: "appealed", appealedAt: 40,
+    })],
+    { completed: true },
+  ));
+  assertContains(html, "Remediated");
+  assertContains(html, "Appealed");
+  // The remediation write-up wins the Notes cell — it is the more specific one.
+  assertContains(html, "coached her");
+});
+
+Deno.test("ManagerQueue pending — a row back from a denied appeal says so", () => {
+  const html = renderHTML(renderQueueTable([item({ appealDeniedAt: 1_700_000_000_000 })]));
+  assertContains(html, "Appeal denied");
+  // Only on the open side; Completed explains itself through the Outcome column.
+  assertNotContains(
+    renderHTML(renderQueueTable([item({ status: "remediated", appealDeniedAt: 1 })], { completed: true })),
+    "Appeal denied",
+  );
+});
+
+Deno.test("renderCompletedResults — the caption calls out how many are under appeal", () => {
+  const html = renderHTML(renderCompletedResults([
+    item({ findingId: "a", status: "remediated", remediatedAt: 10 }),
+    item({ findingId: "b", appealState: "appealed", appealedAt: 20 }),
+  ], { ...PARAMS, since: 0 }));
+  assertContains(html, ">2</strong>");
+  assertContains(html, "under appeal");
+});
+
+Deno.test("ManagerQueue — the empty-row colspan matches the header count in every mode", () => {
+  // The Outcome column shifted these. A colspan that undercounts leaves the
+  // empty-state text boxed into part of the table instead of spanning it.
+  for (const opts of [{}, { compact: true }, { completed: true }, { completed: true, compact: true }]) {
+    const html = renderHTML(renderQueueTable([], opts));
+    const headers = (html.match(/<th[ >]/g) ?? []).length;
+    const colSpan = Number(/colspan="(\d+)"/i.exec(html)?.[1] ?? -1);
+    assertEquals(colSpan, headers, `colspan must span every column for ${JSON.stringify(opts)}`);
+  }
+});
+
+// ── Invalid genie + Skip ────────────────────────────────────────────────────
+
+Deno.test("isOpenItem — a skipped row is closed out", () => {
+  assert(!isOpenItem(item({ status: "skipped" })));
+  assertEquals(closedOutAt(item({ skippedAt: 42 })), 42);
+});
+
+Deno.test("ManagerQueue pending — an invalid genie is badged, not scored", () => {
+  const html = renderHTML(renderQueueTable(
+    [item({ invalidGenie: true, failedQuestions: [], totalQuestions: 0, failedCount: 0 })],
+  ));
+  assertContains(html, "Invalid genie");
+  assertContains(html, "no audio to grade");
+  // The pipeline stores 0% for a call that never recorded. Rendering that as a
+  // red 0% pill reads as a catastrophic call rather than a missing recording.
+  assertContains(html, "not graded");
+  assertNotContains(html, ">0%<");
+});
+
+Deno.test("ManagerQueue pending — a graded failure keeps its real score", () => {
+  const html = renderHTML(renderQueueTable([item({ totalQuestions: 10, failedCount: 2 })]));
+  assertContains(html, "80%");
+  assertNotContains(html, "Invalid genie");
+  assertNotContains(html, "not graded");
+});
+
+Deno.test("ManagerQueue pending — Skip sits next to Remediate", () => {
+  const html = renderHTML(renderQueueTable([item()]));
+  assertContains(html, ">Remediate</button>");
+  assertContains(html, ">Skip</button>");
+  // It drives the page's single hidden form, so the username can't be edited
+  // out of row markup.
+  assertContains(html, "skip-findingId");
+  assertContains(html, "skip-now");
+  // One click and irreversible-looking, so it must confirm.
+  assertContains(html, "confirm(");
+});
+
+Deno.test("ManagerQueue completed — Skipped and Invalid genie show as outcomes", () => {
+  const skipped = renderHTML(renderQueueTable(
+    [item({ status: "skipped", skippedBy: "anna@monsterrg.com", skippedAt: 5 })],
+    { completed: true },
+  ));
+  assertContains(skipped, "Skipped");
+  assertContains(skipped, "anna@monsterrg.com");
+
+  const genie = renderHTML(renderQueueTable(
+    [item({ status: "skipped", invalidGenie: true, skippedBy: "anna@monsterrg.com", skippedAt: 5 })],
+    { completed: true },
+  ));
+  assertContains(genie, "Invalid genie");
+  assertContains(genie, "Skipped");
+});
+
+Deno.test("filterCompleted — skipped rows join the Completed side", () => {
+  const rows = filterCompleted([
+    item({ findingId: "open" }),
+    item({ findingId: "skipped", status: "skipped", skippedAt: 20 }),
+    item({ findingId: "coached", status: "remediated", remediatedAt: 10 }),
+  ], PARAMS);
+  assertEquals(rows.map((r) => r.findingId), ["skipped", "coached"]);
+});
+
+Deno.test("ManagerQueue — the split view uses a short timestamp so Action stays on screen", () => {
+  const at = Date.UTC(2026, 8, 2, 15, 52);
+  // Full width keeps the year + ET; the half-width split drops both. The long
+  // form was the widest low-value column and pushed Skip off the pane edge.
+  const full = renderHTML(renderQueueTable([item({ completedAt: at })]));
+  assertContains(full, "2026");
+  assertContains(full, "ET");
+  const compact = renderHTML(renderQueueTable([item({ completedAt: at })], { compact: true }));
+  assertNotContains(compact, "2026,");
+  assertNotContains(compact, " ET");
+  assertContains(compact, "Sep 2");
 });

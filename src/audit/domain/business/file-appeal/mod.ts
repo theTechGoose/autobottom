@@ -132,6 +132,27 @@ export async function fileJudgeAppeal(
     console.warn(`⚠️ [APPEAL] ${findingId} audit-done-idx appealStatus stamp failed (best-effort):`, err);
   }
 
+  // Take the audit off the manager's remediation queue while the appeal is
+  // open. An audit whose result is being contested isn't ready to coach on —
+  // the failure the row was created for may be about to disappear. The row
+  // moves to the Completed side flagged "Appealed", and comes back to Pending
+  // if the judge decides the failure stands (postJudgedAudit).
+  //
+  // Fires for ANY appeal, not just one a manager filed: the rule is about the
+  // audit's state, not who clicked. Best-effort + dynamic import, mirroring
+  // the manager-queue calls on the judge and review paths.
+  try {
+    const { markQueueItemAppealed } = await import("@manager/domain/data/manager-repository/mod.ts");
+    await markQueueItemAppealed(orgId, findingId, {
+      appealState: "appealed",
+      appealedAt,
+      appealedBy: input.auditor,
+      ...(input.comment ? { appealNote: input.comment } : {}),
+    });
+  } catch (err) {
+    console.warn(`⚠️ [APPEAL] ${findingId} manager-queue appeal flag failed (best-effort):`, err);
+  }
+
   fireWebhook(orgId, "appeal", {
     findingId,
     finding,

@@ -153,3 +153,41 @@ Deno.test({ name: "reaudit — soft-deletes old finding (sets reAuditedAt)", san
   assert(old);
   assert(typeof old.reAuditedAt === "number", "old finding must have reAuditedAt set after re-audit");
 }});
+
+// ── The re-audit keeps the manager's remediation row instead of deleting it ──
+// cleanupFindingFromIndices used to wipe the manager-queue entry outright, so
+// submitting new audio made the row vanish from Pending AND never appear in
+// Completed — a manager just watched work disappear. It now survives, flagged.
+
+Deno.test({ name: "reaudit — flags the manager-queue row 're-audited' instead of deleting it", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const { setStored, getStored } = await import("@core/data/firestore/mod.ts");
+  const { isOpenQueueItem } = await import("@manager/domain/data/manager-repository/mod.ts");
+  const findingId = "fid-ra-queue-" + crypto.randomUUID().slice(0, 8);
+  await saveFinding(ORG, {
+    id: findingId,
+    auditJobId: "job-" + crypto.randomUUID().slice(0, 8),
+    findingStatus: "finished",
+    recordingId: "27229615",
+    recordingIdField: "VoGenie",
+    record: { RecordId: "777", ActivatingOffice: "DS MB" },
+    answeredQuestions: [{ header: "Q0", answer: "No" }],
+  });
+  await setStored("manager-queue", ORG, [findingId], {
+    findingId, addedAt: 1, status: "pending", department: "DS MB", voName: "Lindsay Byard",
+  });
+
+  await startReauditWithGenies(ORG, findingId, {
+    recordingIds: ["27229616"],
+    comment: "wrong call was pulled",
+    agentEmail: "lbyard@monsterrg.com",
+  });
+
+  const row = await getStored<Record<string, unknown>>("manager-queue", ORG, findingId);
+  assert(row, "the row must survive the re-audit cleanup, not be deleted");
+  assertEquals(row?.appealState, "re-audited");
+  assertEquals(row?.appealedBy, "lbyard@monsterrg.com");
+  assertEquals(row?.appealNote, "wrong call was pulled");
+  assert(!isOpenQueueItem(row as { status?: string; appealState?: string }), "it leaves the pending queue");
+  assertEquals(row?.department, "DS MB", "display fields survive so Completed renders");
+}});

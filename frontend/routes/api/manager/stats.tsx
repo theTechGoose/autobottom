@@ -4,7 +4,7 @@ import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { StatCard } from "../../../components/StatCard.tsx";
 
-interface ManagerStats { total?: number; pending?: number; remediated?: number; }
+interface ManagerStats { total?: number; pending?: number; remediated?: number; appealed?: number; }
 interface AgentList { agents?: { email: string }[]; }
 
 export const handler = define.handlers({
@@ -23,6 +23,11 @@ export const handler = define.handlers({
           <StatCard label="Total" value={stats.total ?? 0} color="blue" />
           <StatCard label="Pending" value={stats.pending ?? 0} color="yellow" />
           <StatCard label="Remediated" value={stats.remediated ?? 0} color="green" />
+          {/* Out for appeal — off the manager's plate until the judge (or the
+              re-audit) lands. Broken out rather than folded into Remediated so
+              Total still equals Pending + Remediated + Appealed, and so a
+              manager can see how much of their queue is in dispute. */}
+          <StatCard label="Appealed" value={stats.appealed ?? 0} color="cyan" />
           <StatCard label="Agents" value={agents.agents?.length ?? 0} color="purple" />
         </div>,
       );

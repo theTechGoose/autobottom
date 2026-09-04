@@ -30,6 +30,7 @@
 
 import { listStoredByCompletedAt } from "@core/data/firestore/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { splitGenieIds } from "@core/business/genie-ids/mod.ts";
 
 const ORG = Deno.env.get("DEFAULT_ORG_ID") ?? "";
 const OUT_DIR = new URL("../mutliple-genies/", import.meta.url).pathname;
@@ -42,6 +43,12 @@ function argOf(name: string, fallback: number): number {
 
 const DAYS = argOf("days", 90);
 const MAX = argOf("max", 50);
+/** How many full finding docs (~282 KB each) to write to disk. Every
+ *  qualifying finding is always listed in index.json; this only caps the fat
+ *  copies, so a wide scan doesn't dump hundreds of megabytes into the repo. */
+const SAVE = argOf("save", MAX);
+const outArg = Deno.args.indexOf("--out");
+const DIR = outArg >= 0 ? Deno.args[outArg + 1].replace(/\/?$/, "/") : OUT_DIR;
 
 if (!ORG || ORG === "default") {
   console.error("Set DEFAULT_ORG_ID to the prod org id.");
@@ -66,10 +73,6 @@ function rawGenieField(finding: Record<string, any>): string {
   return String(finding.record?.[field] ?? "");
 }
 
-function splitGenies(raw: string): string[] {
-  return raw.split(/[,;/]+/).map((s) => s.trim()).filter(Boolean);
-}
-
 const now = Date.now();
 const since = now - DAYS * 24 * 60 * 60 * 1000;
 
@@ -86,14 +89,16 @@ console.log(`  ${stats.length} completed rows`);
 const candidates = stats.filter((s) => (s.genies ?? "").includes(","));
 console.log(`  ${candidates.length} carry more than one genie`);
 
-await Deno.mkdir(OUT_DIR, { recursive: true });
+await Deno.mkdir(DIR, { recursive: true });
 
 const saved: Array<Record<string, unknown>> = [];
 let reaudits = 0;
 let missing = 0;
 
+let scanned = 0;
 for (const stat of candidates) {
-  if (saved.length >= MAX) break;
+  if (scanned >= MAX) break;
+  scanned++;
   const findingId = stat.findingId;
   if (!findingId) continue;
 
@@ -104,14 +109,18 @@ for (const stat of candidates) {
   }
 
   const raw = rawGenieField(finding);
-  const fromQuickbase = splitGenies(raw).length > 1;
+  const fromQuickbase = splitGenieIds(raw).length > 1;
   if (!fromQuickbase) {
     reaudits++;
     continue;
   }
 
-  const file = `${OUT_DIR}${findingId}.json`;
-  await Deno.writeTextFile(file, JSON.stringify(finding, null, 2));
+  let bytes = 0;
+  if (saved.length < SAVE) {
+    const file = `${DIR}${findingId}.json`;
+    await Deno.writeTextFile(file, JSON.stringify(finding, null, 2));
+    bytes = (await Deno.stat(file)).size;
+  }
   saved.push({
     findingId,
     recordId: String(finding.record?.RecordId ?? ""),
@@ -124,18 +133,19 @@ for (const stat of candidates) {
     voName: stat.voName,
     completedAt: stat.ts,
     isReaudit: !!finding.appealSourceFindingId,
-    bytes: (await Deno.stat(file)).size,
+    bytes,
   });
   console.log(`  saved ${findingId} — raw "${raw}" → ${JSON.stringify(finding.genieIds ?? [])}`);
 }
 
 await Deno.writeTextFile(
-  `${OUT_DIR}index.json`,
+  `${DIR}index.json`,
   JSON.stringify({
     generatedAt: new Date(now).toISOString(),
     windowDays: DAYS,
     completedRowsScanned: stats.length,
     multiGenieRows: candidates.length,
+    candidatesInspected: scanned,
     fromQuickbaseField: saved.length,
     reauditChainsSkipped: reaudits,
     findingDocMissing: missing,

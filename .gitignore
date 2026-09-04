@@ -13,3 +13,6 @@ alex-refactor/
 
 # Firestore emulator scratch output
 firestore-debug.log
+
+# Local CSV exports (QuickBase pulls)
+*.csv

@@ -1207,3 +1207,51 @@ Deno.test("postJudgedAudit — a won appeal leaves the row closed out, flag inta
   assertEquals(row?.appealDeniedAt, undefined, "nothing was denied");
   assert(!isOpenQueueItem(row as { status?: string; appealState?: string }), "it must not reappear as work");
 });
+
+Deno.test("postJudgedAudit — the resolved appeal records WHICH WAY it went", async () => {
+  reset();
+  const ORG = ("test-judge-outcome-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-outcome-" + crypto.randomUUID().slice(0, 8);
+  await makeFindingWith4Nos(ORG, fid);
+  await saveAppeal(ORG, {
+    findingId: fid, appealedAt: Date.now(), status: "pending",
+    auditor: "rep@x.com", comment: "The dates were confirmed twice",
+  });
+  // Two of the four flipped — a partly-accepted appeal, 0% → 50%.
+  await seedJudgeDecisions(ORG, fid, [
+    { questionIndex: 0, decision: "overturn" },
+    { questionIndex: 1, decision: "overturn" },
+    { questionIndex: 2, decision: "uphold" },
+    { questionIndex: 3, decision: "uphold" },
+  ]);
+
+  await postJudgedAudit(ORG, fid, "judge@x.com");
+
+  const appeal = await getAppeal(ORG, fid);
+  assertExists(appeal);
+  assertEquals(appeal!.status, "complete");
+  assertEquals(appeal!.outcome, "partial");
+  assertEquals(appeal!.overturnedCount, 2);
+  assertEquals(appeal!.upheldCount, 2);
+  assertEquals(appeal!.scoreBefore, 0);
+  assertEquals(appeal!.scoreAfter, 50);
+  assert(appeal!.judgeNotes?.includes("Overturned"), "the notes name what the judge did");
+  assert(appeal!.judgeNotes?.includes("Upheld"), "both directions land in the notes");
+  assertEquals(appeal!.comment, "The dates were confirmed twice", "the team member's words survive");
+});
+
+Deno.test("postJudgedAudit — an all-uphold appeal is recorded as denied", async () => {
+  reset();
+  const ORG = ("test-judge-denied-" + crypto.randomUUID().slice(0, 8)) as unknown as OrgId;
+  const fid = "fid-judge-denied-" + crypto.randomUUID().slice(0, 8);
+  await makeFindingWith4Nos(ORG, fid);
+  await saveAppeal(ORG, { findingId: fid, appealedAt: Date.now(), status: "pending" });
+  await seedJudgeDecisions(ORG, fid, [0, 1, 2, 3].map((i) => ({ questionIndex: i, decision: "uphold" as const })));
+
+  await postJudgedAudit(ORG, fid, "judge@x.com");
+
+  const appeal = await getAppeal(ORG, fid);
+  assertEquals(appeal!.outcome, "denied");
+  assertEquals(appeal!.overturnedCount, 0);
+  assertEquals(appeal!.scoreBefore, appeal!.scoreAfter, "nothing flipped, so nothing moved");
+});

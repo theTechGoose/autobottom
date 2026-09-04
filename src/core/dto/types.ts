@@ -281,7 +281,24 @@ export interface AppealRecord {
   auditor?: string;
   comment?: string;
   appealedQuestions?: string[];
+  /** How the appeal went, stamped when the judge finishes (postJudgedAudit) so
+   *  every screen can say WHICH WAY it went without hydrating the finding.
+   *  Absent on appeals decided before this shipped — the admin audit-history
+   *  read back-fills those a few rows at a time (bounded lazy enrichment). */
+  outcome?: AppealOutcome;
+  overturnedCount?: number;
+  upheldCount?: number;
+  scoreBefore?: number;
+  scoreAfter?: number;
+  /** One human-readable line per judged question — what the tooltip shows. */
+  judgeNotes?: string;
+  decidedAt?: number;
 }
+
+/** Direction of a decided appeal. `granted` = every appealed question was
+ *  overturned, `denied` = none were, `partial` = some of each. `unknown` is the
+ *  honest answer for an appeal whose finding carries no judge stamps at all. */
+export type AppealOutcome = "granted" | "partial" | "denied" | "unknown";
 
 // ── Gamification types ───────────────────────────────────────────────────────
 

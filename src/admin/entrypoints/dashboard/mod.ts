@@ -15,15 +15,59 @@ import { getReviewStats, getReviewedFindingIdsCached } from "@review/domain/busi
 import { getOfficeBypassConfig, isPipelinePaused } from "@admin/domain/data/admin-repository/mod.ts";
 import { isBypassed } from "@audit/domain/business/chargeback-engine/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
-import { getAppeal } from "@judge/domain/data/judge-repository/mod.ts";
+import { getAppeal, saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
+import { appealOutcomeFromFinding, APPEAL_OUTCOME_LABELS } from "@judge/domain/business/appeal-tracking/mod.ts";
 import { getEmailEngagement, getEmailEngagementDetail } from "@reporting/domain/business/email-engagement/mod.ts";
 import { getReviewerLeaderboard, getQuestionTiming, getReviewerAudits } from "@review/domain/business/review-stats/mod.ts";
 import { getReviewerOverturns, getReviewerOverturnsLifetime, getReviewerOverturnDetail } from "@review/domain/business/reviewer-quality/mod.ts";
-import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
+import type { AuditDoneIndexEntry, AppealRecord } from "@core/dto/types.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 
 import { defaultOrgId } from "@core/business/auth/mod.ts";
 const ORG = defaultOrgId;
+
+/** How many legacy appeal records one audit-history page load may repair.
+ *  Small on purpose: this runs inside a page read, and unbounded finding
+ *  hydration on a dashboard path is what wedged prod before. */
+const APPEAL_OUTCOME_BACKFILL_LIMIT = 10;
+
+/** Repair up to a handful of decided appeals that predate the outcome stamp.
+ *
+ *  Patches the array in place so THIS render shows the recovered direction,
+ *  and persists each patch so the next read finds it already there. A finding
+ *  that has gone away (or was never judged) resolves to `outcome:"unknown"` —
+ *  a real answer that stops the row matching again. A failed read is left
+ *  untouched and retried on a later page load. */
+async function backfillAppealOutcomes(
+  orgId: OrgId,
+  appeals: Array<AppealRecord | null>,
+): Promise<void> {
+  const stale: Array<{ i: number; appeal: AppealRecord }> = [];
+  appeals.forEach((a, i) => {
+    if (a && a.status === "complete" && a.outcome === undefined) stale.push({ i, appeal: a });
+  });
+  if (stale.length === 0) return;
+  const batch = stale.slice(0, APPEAL_OUTCOME_BACKFILL_LIMIT);
+  const reads = await Promise.allSettled(batch.map(({ appeal }) => getFinding(orgId, appeal.findingId)));
+  const patched: AppealRecord[] = [];
+  batch.forEach(({ i, appeal }, n) => {
+    const read = reads[n];
+    if (read.status === "rejected") return;
+    const next: AppealRecord = { ...appeal, ...appealOutcomeFromFinding(read.value) };
+    appeals[i] = next;
+    patched.push(next);
+  });
+  if (patched.length === 0) return;
+  // Fire-and-forget: the render already has the values, and a failed write
+  // just means the next page load recomputes them.
+  Promise.allSettled(patched.map((a) => saveAppeal(orgId, a)))
+    .then((results) => {
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) console.warn(`[AUDIT-HISTORY] ⚠️ ${failed}/${patched.length} appeal-outcome back-fills failed`);
+      else console.log(`[AUDIT-HISTORY] 🔧 back-filled outcome on ${patched.length} appeal records (${stale.length - patched.length} left)`);
+    })
+    .catch(() => {});
+}
 
 @SwaggerDescription("Dashboard — admin analytics data, audit history, review queue data")
 @Controller("admin")
@@ -474,7 +518,7 @@ export class DashboardController {
     if (format === "csv") {
       const hydratedAll = await hydrateMissing(filtered);
       const appeals = await Promise.all(hydratedAll.map((c) => getAppeal(orgId, c.findingId)));
-      const headers = ["Finding ID", "Record ID", "Type", "Team Member", "Auditor", "Score", "Started", "Finished", "Duration", "Reviewed", "Appeal Status"];
+      const headers = ["Finding ID", "Record ID", "Type", "Team Member", "Auditor", "Score", "Started", "Finished", "Duration", "Reviewed", "Appeal Status", "Appeal Outcome"];
       const rows = [headers.join(",")];
       hydratedAll.forEach((c, i) => {
         const isReviewed = reviewedIds.has(c.findingId);
@@ -491,6 +535,7 @@ export class DashboardController {
           c.durationMs ? Math.round(c.durationMs / 1000) + "s" : "",
           isReviewed ? "Reviewed" : (c.reason === "perfect_score" || c.reason === "invalid_genie" ? "Auto" : ""),
           appealStatus === "pending" ? "Pending" : (appealStatus === "complete" ? "Complete" : ""),
+          appealStatus === "complete" ? APPEAL_OUTCOME_LABELS[appeals[i]?.outcome ?? "unknown"] : "",
         ].join(","));
       });
       console.log(`📥 [AUDITS] CSV export ${hydratedAll.length} rows`);
@@ -518,20 +563,42 @@ export class DashboardController {
       throw err;
     }
     console.log(`[AUDIT-HISTORY] fetching ${hydratedPage.length} appeal records...`);
-    let appeals: Array<{ status?: string } | null>;
+    let appeals: Array<AppealRecord | null>;
     try {
-      appeals = await Promise.all(hydratedPage.map((c) => getAppeal(orgId, c.findingId))) as Array<{ status?: string } | null>;
+      appeals = await Promise.all(hydratedPage.map((c) => getAppeal(orgId, c.findingId)));
       console.log(`[AUDIT-HISTORY] fetched ${appeals.length} appeal records`);
     } catch (err) {
       console.error(`[AUDIT-HISTORY] ❌ getAppeal threw: ${err instanceof Error ? err.message : String(err)}`);
       console.error(`[AUDIT-HISTORY] ❌ stack: ${err instanceof Error && err.stack ? err.stack : "<no stack>"}`);
       throw err;
     }
-      const items = hydratedPage.map((c, i) => ({
-        ...c,
-        reviewed: reviewedIds.has(c.findingId),
-        appealStatus: appeals[i] ? appeals[i]!.status : null,
-      }));
+      // Appeals decided before the judge started stamping the outcome carry a
+      // bare status:"complete" and nothing else, so the badge could only say
+      // "Appeal Complete". Recover the direction from the judge stamps on the
+      // finding, a few rows at a time, and persist it back onto the appeal so
+      // the store converges instead of paying this read forever. Bounded and
+      // page-scoped on purpose — unbounded per-render hydration is what took
+      // the dashboard down before. `outcome` is written by nothing else, so it
+      // is a safe marker; a finding with no judge stamps resolves to "unknown"
+      // and stops matching.
+      await backfillAppealOutcomes(orgId, appeals);
+
+      const items = hydratedPage.map((c, i) => {
+        const a = appeals[i];
+        return {
+          ...c,
+          reviewed: reviewedIds.has(c.findingId),
+          appealStatus: a ? a.status : null,
+          appealOutcome: a?.outcome ?? null,
+          appealOverturned: a?.overturnedCount ?? null,
+          appealUpheld: a?.upheldCount ?? null,
+          appealScoreBefore: a?.scoreBefore ?? null,
+          appealScoreAfter: a?.scoreAfter ?? null,
+          appealNotes: a?.judgeNotes ?? null,
+          appealComment: a?.comment ?? null,
+          appealJudgedBy: a?.judgedBy ?? null,
+        };
+      });
 
       console.log(`[AUDIT-HISTORY] ✅ DONE total=${total}/${windowEntries.length} page=${effectivePg}/${pages} type=${t} owner=${owner || "all"} dept=${department || "all"}`);
       return { items, total, pages, page: effectivePg, owners, departments, shifts, reviewers, lowTranscriptScan };

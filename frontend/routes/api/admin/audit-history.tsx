@@ -10,6 +10,8 @@ import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { timeAgo } from "../../../lib/format.ts";
 import type { VNode } from "preact";
+import { APPEAL_OUTCOME_LABELS } from "@judge/domain/business/appeal-tracking/mod.ts";
+import type { AppealOutcome } from "@core/dto/types.ts";
 
 export interface AdminAuditItem {
   findingId: string;
@@ -32,6 +34,17 @@ export interface AdminAuditItem {
   reviewed?: boolean;
   reviewedBy?: string;
   appealStatus?: string | null;
+  /** Appeal outcome, stamped on the appeal record when the judge finishes and
+   *  back-filled onto older records by the audit-history read. Null on a row
+   *  whose appeal has not been decided. */
+  appealOutcome?: AppealOutcome | null;
+  appealOverturned?: number | null;
+  appealUpheld?: number | null;
+  appealScoreBefore?: number | null;
+  appealScoreAfter?: number | null;
+  appealNotes?: string | null;
+  appealComment?: string | null;
+  appealJudgedBy?: string | null;
 }
 
 export interface AdminAuditData {
@@ -112,10 +125,55 @@ function reviewedBadge(item: AdminAuditItem): VNode | string {
   return "\u2014";
 }
 
-function appealBadge(status: string | null | undefined): VNode | string {
-  if (status === "pending") return <span class="pill pill-yellow">Appeal Pending</span>;
-  if (status === "complete") return <span class="pill pill-blue">Appeal Complete</span>;
-  return "\u2014";
+const OUTCOME_PILL: Record<AppealOutcome, string> = {
+  granted: "green",
+  partial: "yellow",
+  denied: "red",
+  unknown: "blue",
+};
+
+/** Everything the hover text says: which way it went, how the score moved, who
+ *  judged it, what the team member wrote, and the judge's reason per question.
+ *  Plain text with newlines — a `title` attribute renders them as separate
+ *  lines and needs no styling. */
+function appealTooltip(item: AdminAuditItem, outcome: AppealOutcome): string {
+  const lines: string[] = [`Appeal ${APPEAL_OUTCOME_LABELS[outcome].toLowerCase()}`];
+  if (item.appealOverturned != null && item.appealUpheld != null) {
+    lines.push(`${item.appealOverturned} overturned · ${item.appealUpheld} upheld`);
+  }
+  if (item.appealScoreBefore != null && item.appealScoreAfter != null) {
+    lines.push(item.appealScoreBefore === item.appealScoreAfter
+      ? `Score unchanged at ${item.appealScoreAfter}%`
+      : `Score ${item.appealScoreBefore}% → ${item.appealScoreAfter}%`);
+  }
+  if (item.appealJudgedBy) lines.push(`Judged by ${item.appealJudgedBy}`);
+  if (item.appealComment) lines.push("", `Team member said: ${item.appealComment}`);
+  if (item.appealNotes) lines.push("", item.appealNotes);
+  lines.push("", "Click for the full appeal detail");
+  return lines.join("\n");
+}
+
+/** A decided appeal says WHICH WAY it went and opens the appeal-detail modal
+ *  on click. The old badge said only "Appeal Complete" and carried no hover
+ *  text at all, so the direction and the judge's reasons were invisible. */
+function appealBadge(item: AdminAuditItem): VNode | string {
+  if (item.appealStatus === "pending") {
+    return <span class="pill pill-yellow" title="Filed — still waiting on a judge">Appeal Pending</span>;
+  }
+  if (item.appealStatus !== "complete") return "\u2014";
+  const outcome: AppealOutcome = item.appealOutcome ?? "unknown";
+  return (
+    <button
+      type="button"
+      class={`pill pill-${OUTCOME_PILL[outcome]}`}
+      style="border:0;cursor:pointer;font:inherit;"
+      title={appealTooltip(item, outcome)}
+      hx-get={`/api/manager/appeal?findingId=${encodeURIComponent(item.findingId)}`}
+      hx-target="#appeal-detail-content"
+      hx-swap="innerHTML"
+      {...{ "hx-on:click": "document.getElementById('appeal-detail-modal').classList.add('open')" }}
+    >Appeal {APPEAL_OUTCOME_LABELS[outcome]}</button>
+  );
 }
 
 function ownerLabel(item: AdminAuditItem): string {
@@ -228,7 +286,7 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
                 <td><span title={ts ? new Date(ts).toLocaleString() : ""}>{ts ? timeAgo(ts) : "\u2014"}</span></td>
                 <td style="font-variant-numeric:tabular-nums;">{fmtDur(c.durationMs)}</td>
                 <td>{reviewedBadge(c)}</td>
-                <td>{appealBadge(c.appealStatus)}</td>
+                <td>{appealBadge(c)}</td>
                 <td style="white-space:nowrap;">
                   {/* Same Re-run pattern as DashboardTables.tsx — POSTs to the
                       Fresh /api/admin/config-save proxy which forwards to the

@@ -18,6 +18,7 @@ import { define } from "../../../lib/define.ts";
 import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { questionLabel } from "@core/business/question-labels/mod.ts";
+import { APPEAL_OUTCOME_LABELS, appealDirection, judgeReasonText } from "@judge/domain/business/appeal-tracking/mod.ts";
 
 interface AnsweredQuestion {
   header?: string;
@@ -36,15 +37,6 @@ interface Finding {
   answeredQuestions?: AnsweredQuestion[];
   record?: Record<string, unknown>;
 }
-
-/** The overturn picker's four codes, spelled out. Anything else is the judge's
- *  own words and is shown verbatim. */
-const REASON_CODES: Record<string, string> = {
-  error: "Bot error — the bot got it wrong",
-  logic: "Question logic — the question itself misfired",
-  fragment: "Fragment — the snippet the bot judged was incomplete",
-  transcript: "Transcript — the transcript was wrong or missing",
-};
 
 function isYes(a: string | undefined): boolean {
   const s = String(a ?? "").trim().toLowerCase();
@@ -65,6 +57,13 @@ function teamMemberOf(f: Finding): string {
 
 const LABEL = "font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);";
 
+const OUTCOME_PILL: Record<string, string> = {
+  granted: "green",
+  partial: "yellow",
+  denied: "red",
+  unknown: "blue",
+};
+
 export function renderAppealDetail(f: Finding, findingId: string) {
   const qs = f.answeredQuestions ?? [];
   const judged = qs
@@ -81,9 +80,18 @@ export function renderAppealDetail(f: Finding, findingId: string) {
     : null;
   const judges = [...new Set(judged.map(({ q }) => q.judgedBy).filter(Boolean))] as string[];
   const comment = String(f.appealComment ?? "").trim();
+  const direction = appealDirection(overturned, upheld);
 
   return (
     <div>
+      {/* Lead with the direction — it is the first thing anyone opening this
+          wants to know, and the badge that opened it says the same word. */}
+      <div style="margin-bottom:14px;">
+        <span class={`pill pill-${OUTCOME_PILL[direction]}`} style="font-size:12px;padding:4px 12px;">
+          Appeal {APPEAL_OUTCOME_LABELS[direction]}
+        </span>
+      </div>
+
       <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:baseline;margin-bottom:14px;">
         <div>
           <div style={LABEL}>Team member</div>
@@ -136,7 +144,7 @@ export function renderAppealDetail(f: Finding, findingId: string) {
           {judged.map(({ q, i }) => {
             const over = q.judgeAction === "overturn";
             const reasonRaw = String(q.judgeReason ?? "").trim();
-            const reason = REASON_CODES[reasonRaw] ?? reasonRaw;
+            const reason = judgeReasonText(reasonRaw);
             return (
               <div
                 key={i}

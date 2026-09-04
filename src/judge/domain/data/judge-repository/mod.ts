@@ -7,6 +7,7 @@ import {
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { JudgeDecision, AppealRecord } from "@core/dto/types.ts";
+import { summarizeAppealOutcome } from "@judge/domain/business/appeal-tracking/mod.ts";
 import { buildRecordMeta } from "@core/business/record-meta/mod.ts";
 import { getFinding, getTranscript, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
@@ -296,9 +297,19 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
     try {
       const appeal = await getAppeal(orgId, findingId);
       if (appeal && appeal.status !== "complete") {
-        await saveAppeal(orgId, { ...appeal, status: "complete", judgedBy: judge });
+        // Stamp WHICH WAY it went alongside the status. Audit history reads the
+        // appeal record but never the finding, so without this the only thing
+        // any screen could say was "Appeal Complete".
+        const summary = summarizeAppealOutcome(decisions, { before: originalScore, after: finalScore });
+        await saveAppeal(orgId, {
+          ...appeal,
+          status: "complete",
+          judgedBy: judge,
+          ...summary,
+          decidedAt: Date.now(),
+        });
         appealResolved = true;
-        console.log(`[JUDGE] ${findingId}: appeal marked complete (judge=${judge})`);
+        console.log(`[JUDGE] ${findingId}: appeal marked complete (judge=${judge}, outcome=${summary.outcome} ${summary.overturnedCount}↑/${summary.upheldCount}↓)`);
       }
     } catch (err) {
       console.warn(`⚠️ [JUDGE] ${findingId} appeal resolve failed (best-effort):`, err);

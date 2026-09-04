@@ -433,8 +433,29 @@ export function createQuestion(seed: any): IQuestion {
   };
 }
 
+/** Force an LLM-supplied answer field back to plain text.
+ *
+ *  The grading model returns `answer` / `thinking` / `defense` inside a JSON
+ *  object, and it sometimes cites two lines by emitting an ARRAY of strings
+ *  instead of one. Nothing downstream expects that: the report page trims
+ *  `defense` and threw `(...).trim is not a function`, which Fresh turned into
+ *  a hard 500 on /audit/report (finding dAMNEoJXOl3AxXs2bL8xm, q[13]).
+ *  The DTO says these fields are strings, so make that true at the edge. */
+export function asAnswerText(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v === null || v === undefined) return "";
+  if (Array.isArray(v)) return v.map(asAnswerText).filter(Boolean).join("\n");
+  return JSON.stringify(v) ?? "";
+}
+
 export function answerQuestion(q: any, answer: { answer: string; thinking: string; defense: string }): IAnsweredQuestion {
-  return { ...q, ...answer } as IAnsweredQuestion;
+  return {
+    ...q,
+    ...answer,
+    answer: asAnswerText(answer.answer),
+    thinking: asAnswerText(answer.thinking),
+    defense: asAnswerText(answer.defense),
+  } as IAnsweredQuestion;
 }
 
 // ── Audit finding/job types (used by pipeline steps) ─────────────────────────

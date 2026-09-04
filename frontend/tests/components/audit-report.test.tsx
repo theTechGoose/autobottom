@@ -160,6 +160,22 @@ Deno.test("AuditReport — Transcript Context is speaker-split (no single un-lab
   assertContains(html, "[GUEST]");
 });
 
+// ── defense stored as an ARRAY must not 500 the page (dAMNEoJ… regression) ───
+// The grading model cites two lines by emitting a JSON array for `defense`.
+// Nothing coerced it, so the report page trimmed an array and threw
+// "(...).trim is not a function", which Fresh served as a hard 500.
+Deno.test("AuditReport — renders when defense is an array of quotes", () => {
+  const finding = brickFinding();
+  (finding.answeredQuestions as Array<Record<string, unknown>>)[0].defense = [
+    '"As a reminder, the tax on your own resolves any resort fees."',
+    '"Refundable deposits are due when you set your dates."',
+  ];
+  const html = renderHTML(<AuditReport finding={finding} id="fid-test" />);
+  assertContains(html, "Transcript Context");
+  // Both quoted lines still drive the excerpt match, same as the string form.
+  assertContains(html, "resort fees");
+});
+
 Deno.test("AuditReport — Transcript Context falls back to full split transcript when defense doesn't match", () => {
   const finding = brickFinding();
   // Defense quotes nothing that appears in the transcript → no confident match.

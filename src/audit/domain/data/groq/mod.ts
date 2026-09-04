@@ -1,6 +1,7 @@
 /** Groq LLM adapter for QA, diarization, feedback. Ported from providers/groq.ts. */
 import { withSpan, metric } from "@core/data/datadog-otel/mod.ts";
 import { extractDiarizedTranscript } from "@core/business/diarization-validation/mod.ts";
+import { asAnswerText } from "@core/dto/types.ts";
 import Groq from "#groq-sdk";
 import OpenAI from "#openai";
 import type { ChatCompletion } from "#groq-sdk/resources/chat/completions";
@@ -211,6 +212,11 @@ async function askQuestionInner(
     const text = res.choices[0]?.message?.content ?? "";
     const parsed = parseLlmJson<LlmAnswer>(text, { answer: "Error!", thinking: "Error!", defense: "Error!" });
     if (typeof parsed.answer !== "string") parsed.answer = JSON.stringify(parsed.answer) ?? "Error!";
+    // Same guard for the other two. The model cites multiple lines by emitting
+    // an array here, which every reader (report page, review queue, appeal)
+    // treats as a string. Normalize at the edge so nothing stores a non-string.
+    parsed.thinking = asAnswerText(parsed.thinking);
+    parsed.defense = asAnswerText(parsed.defense);
     return parsed;
   } catch (e: any) {
     clearTimeout(timerId!);

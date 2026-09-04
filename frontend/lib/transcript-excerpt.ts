@@ -229,7 +229,10 @@ export function buildFocusedExcerpt(opts: {
   diarized?: string;
   raw?: string;
   snippet?: string;
-  defense?: string;
+  /** Usually text, but findings graded before the LLM-edge guard can carry an
+   *  ARRAY of quotes here — the model's way of citing two lines. Accept both;
+   *  trimming an array is what 500'd /audit/report. */
+  defense?: string | string[];
   contextTurns?: number;
   maxCharWindow?: number;
 }): FocusedExcerpt {
@@ -241,7 +244,7 @@ export function buildFocusedExcerpt(opts: {
   // real transcript (cut out of the commentary) or falls back to raw.
   const diarized = safeDiarized(opts.diarized, raw).trim();
   const snippet = (opts.snippet ?? "").trim();
-  const defense = (opts.defense ?? "").trim();
+  const defense = (Array.isArray(opts.defense) ? opts.defense.join("\n") : (opts.defense ?? "")).trim();
 
   const hasLabels = (s: string) => /\[(?:AGENT|CUSTOMER|TEAM MEMBER|GUEST)\b/i.test(s);
   // Prefer a properly speaker-split source. A non-empty diarized transcript that

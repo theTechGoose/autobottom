@@ -5,6 +5,7 @@
  *  handler registry). */
 
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
+import { asAnswerText } from "@core/dto/types.ts";
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { populateJudgeQueue, saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
@@ -66,8 +67,8 @@ export async function fileJudgeAppeal(
       _origIdx: i,
       header: q.header ?? "",
       populated: q.populated ?? "",
-      thinking: q.thinking ?? "",
-      defense: q.defense ?? "",
+      thinking: asAnswerText(q.thinking),
+      defense: asAnswerText(q.defense),
       answer: q.answer ?? "No",
     }));
 

@@ -14,6 +14,7 @@
 import {
   setStored, deleteStored, listStoredByCompletedAt, listStoredByKeyPrefix, listStoredKeysAll,
 } from "@core/data/firestore/mod.ts";
+import { asAnswerText } from "@core/dto/types.ts";
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getHiddenFindingIds } from "@audit/domain/data/stats-repository/mod.ts";
 import { normalizeQuestionKey, configKeyForFinding, yyyymm } from "@audit/domain/data/question-stats-repository/mod.ts";
@@ -101,7 +102,7 @@ export async function writeFailedFindingRows(
       recordingId: typeof finding?.recordingId === "string" ? finding.recordingId : undefined,
       isPackage,
       score,
-      defense: String(q.defense ?? "").slice(0, DEFENSE_CAP) || undefined,
+      defense: asAnswerText(q.defense).slice(0, DEFENSE_CAP) || undefined,
       failureSource: deriveFailureSource(q),
       appealed: opts?.appealedQuestionKeys?.has(questionKey) ?? undefined,
       appealDenied: opts?.deniedQuestionKeys?.has(questionKey) ?? undefined,

@@ -3,7 +3,7 @@
  *
  *  Two renderings off ONE aggregation:
  *    - `renderDigestEmail`  light, flat (no <details>) — the email body.
- *    - `renderDigestPage`   dark, expandable, itemised — the /r/<slug> page.
+ *    - `renderDigestPage`   light, expandable, itemised — the /r/<slug> page.
  *
  *  Pure functions only: no KV, no Firestore, no network. The caller supplies
  *  the report's rows and a findingId -> failed-question map (both already
@@ -281,20 +281,22 @@ const L = {
   failBg: "#fff5f5",
 };
 
-/** Dark theme — the browser page at /r/<slug>. */
+/** The browser page at /r/<slug> — the same light palette as the email, so the
+ *  page a reader lands on matches the email they clicked from. `bright` is the
+ *  strongest text (headings, figures) and `text` the softer body line. */
 const D = {
-  bg: "#0b0f15",
-  card: "#161c28",
-  border: "#1c2333",
-  text: "#c9d1d9",
-  bright: "#e6edf3",
-  muted: "#6e7681",
-  dim: "#484f58",
-  blue: "#58a6ff",
-  red: "#f85149",
-  amber: "#d29922",
-  passBg: "rgba(88,166,255,0.07)",
-  failBg: "rgba(248,81,73,0.08)",
+  bg: "#ffffff",
+  card: "#f6f8fa",
+  border: "#d0d7de",
+  text: "#3d444d",
+  bright: "#1f2328",
+  muted: "#59636e",
+  dim: "#818b98",
+  blue: "#0969da",
+  red: "#cf222e",
+  amber: "#9a6700",
+  passBg: "#f2f7fd",
+  failBg: "#fff5f5",
 };
 
 /** The "Highest Number of Fails" block, or the right sentence when there is
@@ -415,7 +417,7 @@ ${opts.footerHtml ? `  <tr><td>${opts.footerHtml}</td></tr>` : ""}
 </table></td></tr></table></body></html>`;
 }
 
-// ── Page rendering (dark, expandable) ─────────────────────────────────────────
+// ── Page rendering (light, expandable) ────────────────────────────────────────
 
 function pageCountRows(categories: LabelCount[], pad: string): string {
   return categories.map((c) => `<tr><td style="padding:${pad} 0;font-size:13px;color:${c.genie ? D.amber : D.text};">&ndash; ${esc(c.label)}</td><td style="padding:${pad} 0 ${pad} 16px;font-size:13px;font-weight:600;color:${D.bright};text-align:right;width:56px;">${c.count}</td></tr>`).join("");
@@ -499,7 +501,7 @@ function pageMemberCard(member: DigestMember, links: PageLinks): string {
 </details>`;
 }
 
-/** The full dark-theme browser page — every team member, every itemised
+/** The full light-theme browser page — every team member, every itemised
  *  failure, collapsed behind a click. */
 export function renderDigestPage(groups: DigestGroup[], opts: DigestOptions, links: PageLinks): string {
   const body = groups.map((group) => `
@@ -517,6 +519,7 @@ ${pageGroupSummary(group)}
 
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
 <title>${esc(opts.title)} &mdash; Full Report</title></head>
 <body style="margin:0;padding:0;background:${D.bg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:${D.bg};"><tr><td align="center" style="padding:40px 16px;">

@@ -925,7 +925,7 @@ const INLINE_MEMBER_CAPS = [20, 12, 8, 5, 3];
 export interface WeeklyRender {
   /** Light, flat digest — the email body. */
   emailHtml: string;
-  /** Dark, expandable, itemised digest — the /r/<slug> page. */
+  /** Light, expandable, itemised digest — the /r/<slug> page. */
   pageHtml: string;
   groups: DigestGroup[];
 }

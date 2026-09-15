@@ -9,6 +9,7 @@ import { questionLabel } from "@core/business/question-labels/mod.ts";
 import type { ReviewDecision, AuditDoneIndexEntry } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { buildIndexMeta, readDoneIdxEntry, saleFlagsFromFinding } from "@audit/domain/data/stats-repository/mod.ts";
+import { appealOutcomeFromFinding } from "@judge/domain/business/appeal-tracking/mod.ts";
 
 export interface ManagerQueueItem {
   findingId: string;
@@ -71,6 +72,18 @@ export interface ManagerQueueItem {
   /** Stamped when a decided appeal sent the row back to Pending, so the queue
    *  row can say why it reappeared instead of looking like a new failure. */
   appealDeniedAt?: number;
+  /** What the judge WROTE when they let the failure stand — one line per
+   *  question they ruled on, the same text the appeal record carries. The
+   *  manager's next move is a coaching conversation, and "the judge said no"
+   *  is not enough to have it: they need the reasoning. Denormalized onto the
+   *  row because the queue is an auto-refreshing dashboard path that must
+   *  never hydrate findings per request (that has crashed prod).
+   *
+   *  Empty string = looked and there was nothing to find (a decided appeal
+   *  whose finding carries no judge marks). It is the marker that stops the
+   *  lazy back-fill retrying the row forever; `undefined` means not looked
+   *  at yet. */
+  appealDeniedNotes?: string;
   remediatedBy?: string;
   remediatedAt?: number;
   notes?: string;
@@ -431,9 +444,21 @@ export function filterQueueToManagerScope(
  *  failedQuestions, wgs, and now department (added for manager scoping, so
  *  previously-enriched items re-enrich once to pick it up). Mutates the
  *  passed items in place AND persists, so the queue converges one poll at
- *  a time. Items whose finding is gone get an empty marker to stop re-tries. */
+ *  a time. Items whose finding is gone get an empty marker to stop re-tries.
+ *
+ *  Also recovers `appealDeniedNotes` for rows a denied appeal sent back before
+ *  the judge path started stamping it — same bounded batch, same finding read,
+ *  same empty-string marker to stop retrying a row with nothing to recover. */
 export async function enrichManagerQueueBatch(orgId: OrgId, items: ManagerQueueItem[], max = 10): Promise<number> {
-  const stale = items.filter((i) => (i.failedQuestions === undefined || i.wgs === undefined || i.department === undefined) && i.findingId).slice(0, max);
+  const needsBase = (i: ManagerQueueItem) =>
+    i.failedQuestions === undefined || i.wgs === undefined || i.department === undefined;
+  // A row sent back by a denied appeal, stamped before the judge's reasoning
+  // was carried onto it. Same bounded treatment — the notes come off the SAME
+  // finding read the base enrichment already does, so this adds no reads of
+  // its own for a row that needed enriching anyway.
+  const needsAppealNotes = (i: ManagerQueueItem) =>
+    !!i.appealDeniedAt && i.appealDeniedNotes === undefined;
+  const stale = items.filter((i) => (needsBase(i) || needsAppealNotes(i)) && i.findingId).slice(0, max);
   if (stale.length === 0) return 0;
   await Promise.all(stale.map(async (item) => {
     try {
@@ -444,7 +469,14 @@ export async function enrichManagerQueueBatch(orgId: OrgId, items: ManagerQueueI
       const patch = finding
         ? enrichmentFromFinding(finding)
         : { voName: item.voName ?? "", failedQuestions: item.failedQuestions ?? [], wgs: false, mcc: false, department: "", shift: "", isPackage: false };
-      Object.assign(item, patch);
+      Object.assign(item, needsBase(item) ? patch : {});
+      if (needsAppealNotes(item)) {
+        // "" when the finding is gone or carries no judge marks — that is the
+        // marker that stops this row being re-read on every poll.
+        item.appealDeniedNotes = finding
+          ? (appealOutcomeFromFinding(finding).judgeNotes ?? "")
+          : "";
+      }
       await setStored("manager-queue", orgId, [item.findingId], { ...item });
     } catch { /* transient — retried on the next poll */ }
   }));
@@ -498,13 +530,29 @@ export async function markQueueItemAppealed(
  *
  *  Only for a row still carrying an appeal flag — a remediated row stays
  *  remediated (that is a manager's completed work, not a pending ask), and a
- *  row with no flag never left. Best-effort, same contract as the mark. */
-export async function clearQueueItemAppeal(orgId: OrgId, findingId: string): Promise<boolean> {
+ *  row with no flag never left. Best-effort, same contract as the mark.
+ *
+ *  `judgeNotes` is the judge's per-question reasoning (summarizeAppealOutcome's
+ *  judgeNotes). Pass it: it is what the manager reads on hover before having
+ *  the coaching conversation, and rows stamped without it need a finding read
+ *  to recover it. */
+export async function clearQueueItemAppeal(
+  orgId: OrgId,
+  findingId: string,
+  judgeNotes?: string,
+): Promise<boolean> {
   try {
     const existing = await getStored<ManagerQueueItem>("manager-queue", orgId, findingId);
     if (!existing?.appealState) return false;
     const { appealState: _s, appealedAt: _a, appealedBy: _b, appealNote: _n, ...rest } = existing;
-    await setStored("manager-queue", orgId, [findingId], { ...rest, appealDeniedAt: Date.now() });
+    // Stamp what the judge wrote at the moment they wrote it. The queue can't
+    // go and fetch it later without hydrating a finding per row, and this is
+    // the one place the reasoning is in hand — see appealDeniedNotes.
+    await setStored("manager-queue", orgId, [findingId], {
+      ...rest,
+      appealDeniedAt: Date.now(),
+      appealDeniedNotes: (judgeNotes ?? "").trim(),
+    });
     console.log(`📋 [MANAGER-QUEUE] ${findingId}: appeal decided, failure stands — back on the pending queue`);
     return true;
   } catch (err) {

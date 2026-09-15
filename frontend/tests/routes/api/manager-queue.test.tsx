@@ -10,7 +10,7 @@ import {
   renderQueueTable, renderQueueResults, renderCompletedResults, queueTimestamp, queueFacets,
   renderMemberButtons,
   filterAndSortQueue, filterCompleted, readQueueFilterParams,
-  isOpenItem, closedOutAt, appealLabel, type QueueItem,
+  isOpenItem, closedOutAt, appealLabel, appealDeniedTooltip, type QueueItem,
 } from "../../../routes/api/manager/queue.tsx";
 
 function item(over: Partial<QueueItem> = {}): QueueItem {
@@ -713,6 +713,43 @@ Deno.test("ManagerQueue pending — a row back from a denied appeal says so", ()
   );
 });
 
+Deno.test("ManagerQueue pending — the denied badge pops the judge's words on hover", () => {
+  // The manager is about to coach a failure the team member already argued
+  // against. "A judge said no" is not enough to have that conversation.
+  //
+  // A `title` tooltip technically carried this and nobody found it — it wants a
+  // second of dead-still hovering on a row that invites the mouse to move. So
+  // the text must be in the CSS popout (.appeal-pop), not an attribute.
+  const html = renderHTML(renderQueueTable([item({
+    appealDeniedAt: 1_700_000_000_000,
+    appealDeniedNotes: "Presentation Disclosure — Upheld: rep never read the 11% line",
+  })]));
+  assertContains(html, "appeal-pop-wrap");
+  assertContains(html, 'class="appeal-pop" role="tooltip"');
+  assertContains(html, "rep never read the 11% line");
+  assertNotContains(html, 'title="Appealed, but the judge let the failure stand');
+});
+
+Deno.test("ManagerQueue pending — no judge note falls back to the plain badge text", () => {
+  // A row whose notes have not been back-filled yet (undefined) and one whose
+  // finding had no judge marks to recover ("") both keep the old one-liner
+  // rather than claiming a reason they can't show.
+  for (const notes of [undefined, ""]) {
+    const html = renderHTML(renderQueueTable([item({ appealDeniedAt: 1, appealDeniedNotes: notes })]));
+    assertContains(html, "it still needs coaching");
+    assertNotContains(html, "appeal-pop");
+  }
+});
+
+Deno.test("appealDeniedTooltip — the judge's lines follow the summary line", () => {
+  const plain = appealDeniedTooltip({ findingId: "a" });
+  assertEquals(plain.includes("\n"), false, "no notes → a single line");
+  const full = appealDeniedTooltip({ findingId: "a", appealDeniedNotes: "Taxes — Upheld: it was never said" });
+  // Newlines, because `title` renders them as separate lines with no styling.
+  assertEquals(full.split("\n")[0], "Appealed, but the judge let the failure stand — it still needs coaching");
+  assertContains(full, "it was never said");
+});
+
 Deno.test("renderCompletedResults — the caption calls out how many are under appeal", () => {
   const html = renderHTML(renderCompletedResults([
     item({ findingId: "a", status: "remediated", remediatedAt: 10 }),
@@ -794,6 +831,36 @@ Deno.test("filterCompleted — skipped rows join the Completed side", () => {
     item({ findingId: "coached", status: "remediated", remediatedAt: 10 }),
   ], PARAMS);
   assertEquals(rows.map((r) => r.findingId), ["skipped", "coached"]);
+});
+
+/** The split's width budget. Each pane is (viewport - 400) / 2, so the two
+ *  compact tables have to stay under ~600px or the last column — the Skip
+ *  button — ends up off the pane edge behind a horizontal scrollbar. The
+ *  trims that keep them there live in .data-table-compact, so what these
+ *  guard is that the class is applied and the cells opt into the caps. */
+Deno.test("ManagerQueue — compact tables opt into the split's width caps", () => {
+  const compact = renderHTML(renderQueueTable([item({})], { compact: true }));
+  assertContains(compact, "data-table-compact");
+  // Full-width surfaces (/operations, /manager/completed) keep the roomy cells.
+  const full = renderHTML(renderQueueTable([item({})]));
+  assertNotContains(full, "data-table-compact");
+});
+
+Deno.test("ManagerQueue — the compact fails column is narrower than the full one", () => {
+  const withFails = { failedQuestions: ["Presentation Disclosure", "Conf Email", "Taxes"] };
+  assertContains(renderHTML(renderQueueTable([item(withFails)], { compact: true })), "max-width:140px");
+  assertContains(renderHTML(renderQueueTable([item(withFails)])), "max-width:420px");
+});
+
+Deno.test("ManagerQueue completed — the split shows the mailbox name, full address on hover", () => {
+  const row = item({ status: "remediated", remediatedBy: "christopher.villanueva@monsterrg.com", remediatedAt: Date.now() });
+  // @monsterrg.com on every row was ~80px of column saying the same thing.
+  const compact = renderHTML(renderQueueTable([row], { completed: true, compact: true }));
+  assertContains(compact, ">christopher.villanueva<");
+  assertContains(compact, 'title="christopher.villanueva@monsterrg.com"');
+  // Full width has the room, so it keeps the whole address in the cell.
+  const full = renderHTML(renderQueueTable([row], { completed: true }));
+  assertContains(full, ">christopher.villanueva@monsterrg.com<");
 });
 
 Deno.test("ManagerQueue — the split view uses a short timestamp so Action stays on screen", () => {

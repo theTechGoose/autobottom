@@ -12,7 +12,7 @@
  *  carries so a manager can finish the job without going back to the queue. */
 import { assert, assertEquals } from "@std/assert";
 import { assertContains, assertNotContains, renderHTML } from "../helpers/render.ts";
-import { renderQuestionList, renderRecordDetails, renderRemediateAction, renderRemediationNote } from "../../routes/manager/remediate/[findingId].tsx";
+import { appealDeniedTitle, renderQuestionList, renderRecordDetails, renderRemediateAction, renderRemediationNote } from "../../routes/manager/remediate/[findingId].tsx";
 import { emitTranscriptLines } from "../../components/TranscriptPanel.tsx";
 
 const RAW = [
@@ -285,4 +285,24 @@ Deno.test("renderRemediationNote — a closed-out item with no note says so", ()
   }));
   assertContains(html, "No notes were recorded");
   assertContains(html, "lead@monsterrg.com");
+});
+
+Deno.test("appealDeniedTitle — reads the judge's reasoning off the finding itself", () => {
+  // This page holds the whole finding, so the badge needs nothing denormalized
+  // — the judge marks on the questions ARE the source.
+  const title = appealDeniedTitle({
+    answeredQuestions: [
+      { header: "Presentation Disclosure", answer: "No", judgeAction: "uphold", judgeReason: "rep never read the 11% line" },
+      { header: "Conf Email", answer: "Yes" },
+    ],
+  } as never);
+  assertContains(title, "The judge wrote:");
+  assertContains(title, "Presentation Disclosure");
+  assertContains(title, "rep never read the 11% line");
+});
+
+Deno.test("appealDeniedTitle — a finding with no judge marks keeps the plain text", () => {
+  const title = appealDeniedTitle({ answeredQuestions: [{ header: "Taxes", answer: "No" }] } as never);
+  assertEquals(title, "Appealed, but the judge let the failure stand");
+  assertEquals(appealDeniedTitle(null), "Appealed, but the judge let the failure stand");
 });

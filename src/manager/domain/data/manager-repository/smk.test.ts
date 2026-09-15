@@ -494,6 +494,69 @@ Deno.test({ name: "clearQueueItemAppeal — a denied appeal sends the row back t
   assertEquals(item.department, "2ND", "display fields survive the round trip");
 }});
 
+Deno.test({ name: "clearQueueItemAppeal — carries the judge's reasoning onto the row", ...kvOpts, fn: async () => {
+  const org = ("test-appeal-notes-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await setStored("manager-queue", org, ["f-note"], {
+    findingId: "f-note", addedAt: 1, status: "pending",
+    appealState: "appealed", appealedAt: 500,
+  });
+  // The manager hovers this before coaching a failure the rep argued against.
+  await clearQueueItemAppeal(org, "f-note", "Presentation Disclosure — Upheld: never read the 11% line");
+  const [item] = await getManagerQueue(org);
+  assertEquals(item.appealDeniedNotes, "Presentation Disclosure — Upheld: never read the 11% line");
+
+  // No notes in hand → the empty marker, so the lazy backfill stops retrying it.
+  const org2 = ("test-appeal-nonotes-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await setStored("manager-queue", org2, ["f-bare"], {
+    findingId: "f-bare", addedAt: 1, status: "pending", appealState: "appealed", appealedAt: 1,
+  });
+  await clearQueueItemAppeal(org2, "f-bare");
+  assertEquals((await getManagerQueue(org2))[0].appealDeniedNotes, "");
+}});
+
+Deno.test({ name: "enrichManagerQueueBatch — recovers judge notes for rows denied before the stamp", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-appeal-backfill-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  // Fully enriched by every OLD marker, so only the missing appeal notes can
+  // make it stale.
+  await setStored("manager-queue", org, ["f-old"], {
+    findingId: "f-old", addedAt: 1, status: "pending", owner: "api", voName: "Old Denied",
+    failedQuestions: ["Presentation Disclosure"], wgs: false, mcc: false,
+    department: "VBA", shift: "PM", appealDeniedAt: 900,
+  });
+  await saveFinding(org, {
+    id: "f-old",
+    record: { VoName: "VBA - Old Denied", RecordId: 7, ActivatingOffice: "VBA", Shift: "PM" },
+    answeredQuestions: [
+      { header: "Presentation Disclosure", answer: "No", judgeAction: "uphold", judgeReason: "never read the 11% line" },
+    ],
+  });
+  assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 10), 1);
+  const [item] = await getManagerQueue(org);
+  assert(item.appealDeniedNotes!.includes("never read the 11% line"), "the judge's words, recovered from the finding");
+  assertEquals(item.department, "VBA", "the base enrichment fields are left alone");
+  // Converged — a second pass has nothing to do.
+  assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 10), 0);
+}});
+
+Deno.test({ name: "enrichManagerQueueBatch — a denied row with no judge marks stops being retried", ...kvOpts, fn: async () => {
+  resetFirestoreCredentials();
+  const org = ("test-appeal-backfill-empty-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  await setStored("manager-queue", org, ["f-nomark"], {
+    findingId: "f-nomark", addedAt: 1, status: "pending", owner: "api", voName: "No Marks",
+    failedQuestions: ["Q1"], wgs: false, mcc: false, department: "VBA", shift: "PM",
+    appealDeniedAt: 900,
+  });
+  await saveFinding(org, {
+    id: "f-nomark",
+    record: { VoName: "VBA - No Marks", RecordId: 8, ActivatingOffice: "VBA", Shift: "PM" },
+    answeredQuestions: [{ header: "Q1", answer: "No" }],
+  });
+  assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 10), 1);
+  assertEquals((await getManagerQueue(org))[0].appealDeniedNotes, "", "empty marker, not undefined");
+  assertEquals(await enrichManagerQueueBatch(org, await getManagerQueue(org), 10), 0, "never read again");
+}});
+
 Deno.test({ name: "clearQueueItemAppeal — leaves rows it does not own alone", ...kvOpts, fn: async () => {
   const org = ("test-appeal-clear-noop-" + crypto.randomUUID().slice(0, 8)) as OrgId;
   await setStored("manager-queue", org, ["f-plain"], { findingId: "f-plain", addedAt: 1, status: "pending" });

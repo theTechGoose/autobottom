@@ -48,6 +48,10 @@ export interface QueueItem {
   /** The appeal was decided and the failure stood, so the row came BACK to the
    *  queue. Shown on the row so it doesn't read as a brand-new failure. */
   appealDeniedAt?: number;
+  /** What the judge wrote when they let the failure stand, denormalized onto
+   *  the row by the judge path (older rows recovered by the bounded backfill).
+   *  Empty string = nothing to show; undefined = not back-filled yet. */
+  appealDeniedNotes?: string;
   /** The bot never got usable audio, so there is no graded question to coach —
    *  but the call not recording is itself the thing to follow up. Badged, and
    *  its 0% score suppressed as an artefact. */
@@ -70,6 +74,21 @@ export function isOpenItem(it: QueueItem): boolean {
 /** Human label for the appeal flag. */
 export function appealLabel(it: QueueItem): string {
   return it.appealState === "re-audited" ? "Re-Audited" : "Appealed";
+}
+
+/** Hover text for the "Appeal denied" badge. The badge alone says a judge
+ *  ruled; a manager about to coach a failure the team member already argued
+ *  against needs to know WHY it stood, and that reasoning was previously
+ *  readable nowhere in the manager's world.
+ *
+ *  Plain text with newlines — `title` renders them as separate lines and needs
+ *  no styling, the same treatment the admin audit-history badge uses. Falls
+ *  back to the old one-liner for a row whose notes haven't been back-filled
+ *  yet, or whose finding carried no judge marks to recover. */
+export function appealDeniedTooltip(it: QueueItem): string {
+  const head = "Appealed, but the judge let the failure stand — it still needs coaching";
+  const notes = (it.appealDeniedNotes ?? "").trim();
+  return notes ? `${head}\n\nThe judge wrote:\n${notes}` : head;
 }
 
 /** When a row was closed out, whichever way it happened. Drives the Completed
@@ -156,6 +175,13 @@ const ROW_OPEN_JS =
   + "var a=new URLSearchParams(location.search).get('as');if(a)q.set('as',a);"
   + "location.href='/manager/remediate/'+encodeURIComponent(this.dataset.findingId)+'?'+q.toString()";
 
+/** Who took the row off the queue — remediated it, skipped it, or appealed it.
+ *  Em-dash when none of the three is set (an older row written before the
+ *  actor was recorded). */
+function closedOutBy(item: QueueItem): string {
+  return item.remediatedBy || item.skippedBy || item.appealedBy || "—";
+}
+
 /** Pure render of the queue table. Team Member = enriched voName (never the
  *  raw "api" owner token); Failed Questions = first two + a "+N more" hint;
  *  Score = derived pass-rate (or a "N failed" fallback when totals are unknown).
@@ -179,7 +205,11 @@ export function renderQueueTable(
   const showScore = !(compact && completed);
   const colCount = compact ? 5 : (completed ? 11 : 10);
   return (
-    <table class="data-table">
+    // Compact tables sit two-to-a-row in the Manager Portal split, so they get
+    // tighter cell padding (see .data-table-compact) — at full padding the
+    // table's minimum width beat the pane's and the last column (Skip) sat
+    // off the right edge behind a horizontal scroll.
+    <table class={`data-table${compact ? " data-table-compact" : ""}`}>
       <thead>
         <tr>
           {!compact && <th>Finding</th>}
@@ -217,7 +247,7 @@ export function renderQueueTable(
             : fails.length === 0
             ? <span style="color:var(--text-dim);font-size:11px;">—</span>
             : (
-              <div style={`font-size:11px;color:var(--text-muted);max-width:${compact ? "220px" : "420px"};`}>
+              <div style={`font-size:11px;color:var(--text-muted);max-width:${compact ? "140px" : "420px"};`}>
                 {fails.slice(0, 2).map((q) => (
                   <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{q}</div>
                 ))}
@@ -265,11 +295,30 @@ export function renderQueueTable(
                     Pending side only — on the Completed side the Outcome
                     column carries the story. */}
                 {!completed && item.appealDeniedAt && (
-                  <span
-                    class="pill pill-red"
-                    style="font-size:9px;"
-                    title="Appealed, but the judge let the failure stand — it still needs coaching"
-                  >Appeal denied</span>
+                  (item.appealDeniedNotes ?? "").trim()
+                    ? (
+                      /* With the judge's reasoning in hand, the badge gets the
+                         instant hover popout (.appeal-pop) instead of a native
+                         `title` — the tooltip carried this text for a while and
+                         nobody found it: a second of dead-still hovering, on a
+                         row that invites the mouse to keep moving. */
+                      <span class="appeal-pop-wrap">
+                        <span class="pill pill-red" style="font-size:9px;" tabIndex={0}>Appeal denied</span>
+                        <span class="appeal-pop" role="tooltip">
+                          <span class="appeal-pop-head">The judge let the failure stand</span>
+                          {(item.appealDeniedNotes ?? "").trim()}
+                        </span>
+                      </span>
+                    )
+                    : (
+                      /* Nothing recovered to show — the plain badge, and the
+                         old one-liner still explains why the row reappeared. */
+                      <span
+                        class="pill pill-red"
+                        style="font-size:9px;"
+                        title={appealDeniedTooltip(item)}
+                      >Appeal denied</span>
+                    )
                 )}
                 {/* No usable audio, so nothing was graded. The row is still
                     real work — the call did not record and someone has to find
@@ -310,7 +359,13 @@ export function renderQueueTable(
                   )}
                 </div>
               </td>
-              <td style="font-size:12px;">{item.remediatedBy || item.skippedBy || item.appealedBy || "—"}</td>
+              {/* Who closed it out. In the split the column is on a width
+                  budget (.rem-by-cell), so show the mailbox name and keep the
+                  full address in the tooltip — an @monsterrg.com on every row
+                  was ~80px of column that said the same thing every time. */}
+              <td class="rem-by-cell" style="font-size:12px;" title={closedOutBy(item)}>
+                {compact ? closedOutBy(item).split("@")[0] : closedOutBy(item)}
+              </td>
               <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtWhen(closedOutAt(item) || undefined)}</td>
               {/* What the manager actually DID about the failure. Until now it
                   was written into a required textarea and then readable
@@ -571,7 +626,13 @@ export function renderQueueResults(rows: QueueItem[], opts: { compact?: boolean 
         <strong style="color:var(--text-muted);">{rows.length}</strong>{" "}
         {rows.length === 1 ? "failure" : "failures"} in the selected date range
       </div>
-      <div style="overflow-x:auto;">{renderQueueTable(rows, { compact: !!opts.compact })}</div>
+      {/* Full-width surfaces keep the horizontal scroll guard. The split's
+          compact tables must NOT have it: every column there is width-capped
+          to fit the pane already, and an overflow container clips both axes —
+          which hides the appeal-note popout that escapes the cell. */}
+      {opts.compact
+        ? renderQueueTable(rows, { compact: true })
+        : <div style="overflow-x:auto;">{renderQueueTable(rows, {})}</div>}
     </>
   );
 }
@@ -639,7 +700,8 @@ export function renderCompletedResults(rows: QueueItem[], params: QueueFilterPar
         {sinceLabel ? <>closed out since {sinceLabel}</> : <>closed out, all time</>}
         {appealed > 0 && <> · <strong style="color:var(--text-muted);">{appealed}</strong> under appeal</>}
       </div>
-      <div style="overflow-x:auto;">{renderQueueTable(rows, { completed: true, compact: true })}</div>
+      {/* Compact — no overflow wrapper, same reason as the queue side. */}
+      {renderQueueTable(rows, { completed: true, compact: true })}
     </>
   );
 }

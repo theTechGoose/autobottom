@@ -28,6 +28,7 @@ import type { QueueItem } from "../../api/manager/queue.tsx";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 import { questionLabel } from "@core/business/question-labels/mod.ts";
 import { buildRecordMeta } from "@core/business/record-meta/mod.ts";
+import { appealOutcomeFromFinding } from "@judge/domain/business/appeal-tracking/mod.ts";
 import { RecordDetails } from "../../../components/VerdictPanel.tsx";
 import QueueAudioPlayer from "../../../islands/QueueAudioPlayer.tsx";
 import RemediationInteractive from "../../../islands/RemediationInteractive.tsx";
@@ -117,6 +118,26 @@ function score(qs: AnsweredQuestion[]): number {
  *    - already handled  → a stamp of who closed it, no modal. Re-submitting
  *                         would re-fire the manager webhook and re-award XP.
  *    - not in the queue → nothing; there's no queue item to close. */
+/** Hover text for this page's "Appeal denied" badge: what the judge actually
+ *  wrote, per question they ruled on. Derived from the finding's own judge
+ *  marks — the same summary the appeal record carries, so the two can't
+ *  disagree — and this page holds the finding already.
+ *
+ *  Falls back to the plain one-liner when the finding carries no judge marks,
+ *  rather than implying a reason it can't show. */
+export function appealDeniedTitle(f: { answeredQuestions?: AnsweredQuestion[] } | null): string {
+  const head = "Appealed, but the judge let the failure stand";
+  const notes = judgeNotesOf(f);
+  return notes ? `${head}\n\nThe judge wrote:\n${notes}` : head;
+}
+
+/** The judge's per-question reasoning off this finding's own judge marks, or
+ *  "" when it carries none. Drives both the popout and the fallback title, so
+ *  the two can never disagree about whether there is anything to show. */
+export function judgeNotesOf(f: { answeredQuestions?: AnsweredQuestion[] } | null): string {
+  return (appealOutcomeFromFinding(f as never).judgeNotes ?? "").trim();
+}
+
 export function renderRemediateAction(opts: {
   queueItem: QueueItem | null;
   findingId: string;
@@ -509,8 +530,25 @@ export default define.page(async function RemediationDetail(ctx) {
               }
             >{queueItem.appealState === "re-audited" ? "Re-Audited" : "Appealed"}</span>
           )}
+          {/* The judge's reasoning, read straight off the finding's judge marks
+              — this page already has the whole finding in hand, so unlike the
+              queue list it needs nothing denormalized. Hovering the badge is
+              where a manager finds out WHY the failure stood before they go
+              coach it, via the same instant popout the queue list uses. */}
           {queueItem?.appealDeniedAt && !queueItem.appealState && (
-            <span class="pill pill-red" title="Appealed, but the judge let the failure stand">Appeal denied</span>
+            judgeNotesOf(f)
+              ? (
+                /* `appeal-pop-left` because this badge lives at the right end
+                   of the top bar — opening rightward puts the note off-screen. */
+                <span class="appeal-pop-wrap appeal-pop-left">
+                  <span class="pill pill-red" tabIndex={0}>Appeal denied</span>
+                  <span class="appeal-pop" role="tooltip">
+                    <span class="appeal-pop-head">The judge let the failure stand</span>
+                    {judgeNotesOf(f)}
+                  </span>
+                </span>
+              )
+              : <span class="pill pill-red" title={appealDeniedTitle(f)}>Appeal denied</span>
           )}
           {/* Nothing was graded here, so the questions list below is empty by
               design — say so up front rather than letting a manager hunt for

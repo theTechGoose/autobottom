@@ -1902,6 +1902,49 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   top: auto; bottom: calc(100% - 4px);
 }
 
+/* ── The judge's reasoning, hovered off the "Appeal denied" badge ─────────
+   A native `title` tooltip technically carried this text, but nobody found it:
+   it takes a second of dead-still hovering to appear, on a row that is itself
+   clickable and invites the mouse to keep moving. This is the same instant,
+   styled popout the Completed notes use.
+
+   Pure CSS, because the queue table is an HTMX fragment where an island would
+   never hydrate (frontend/CLAUDE.md Gotcha #1). */
+.appeal-pop-wrap { position: relative; display: inline-flex; }
+.appeal-pop-wrap > .pill { cursor: help; }
+.appeal-pop {
+  position: absolute; left: 0; top: calc(100% + 4px);
+  z-index: 200; width: 320px; max-width: 80vw; max-height: 220px;
+  padding: 10px 12px;
+  background: var(--bg-raised); border: 1px solid var(--border-hover);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  font-size: 12px; line-height: 1.5; color: var(--text);
+  white-space: pre-wrap; overflow: hidden; text-transform: none;
+  letter-spacing: normal; font-weight: 400;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 10;
+  visibility: hidden; opacity: 0;
+  transition: opacity 0.12s;
+}
+.appeal-pop-wrap:hover .appeal-pop, .appeal-pop-wrap:focus-within .appeal-pop {
+  visibility: visible; opacity: 1;
+}
+/* Anchor to the badge's RIGHT edge instead. For a badge that sits near the
+   right of its container — the remediation top bar — opening rightward runs
+   the popout straight off the screen and cuts the sentence in half. CSS can't
+   detect that on its own, so the caller says which way there is room. */
+.appeal-pop-wrap.appeal-pop-left .appeal-pop { left: auto; right: 0; }
+.appeal-pop-head {
+  display: block; margin-bottom: 4px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-dim);
+}
+/* Bottom rows open upward — same guard as .rem-note-pop: only rows with at
+   least four above them have somewhere to open into. */
+.data-table tbody tr:last-child:not(:nth-child(-n+4)) .appeal-pop,
+.data-table tbody tr:nth-last-child(2):not(:nth-child(-n+4)) .appeal-pop {
+  top: auto; bottom: calc(100% + 4px);
+}
+
 /* ── The full note, on the remediation detail page ─────────────────────── */
 .rem-note-panel {
   margin: 0 0 14px; padding: 12px 14px;
@@ -1940,13 +1983,52 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   gap: 18px;
   align-items: start;
 }
+/* Tables inside the split share the page two-to-a-row, so every column here is
+   on a width budget. Before this the queue table's minimum was 755px against a
+   528px pane on a 1440px screen, and the Action column — the Skip button
+   first — sat off the right edge behind a horizontal scrollbar nobody looks
+   for. The trims below bring it to ~600px worst case. Full-width tables
+   elsewhere (/operations, /manager/completed) keep the roomier treatment. */
+.data-table-compact th, .data-table-compact td { padding-left: 8px; padding-right: 8px; }
+/* The status badges ("Appeal denied", "Invalid genie") were the single biggest
+   waste: nowrap made every Team Member cell as wide as name + badge on one
+   line (221px), for a badge only some rows carry. Let them drop under the
+   name — the column is then sized by the name alone. */
+.data-table-compact .tm-cell { flex-wrap: wrap; white-space: normal; }
+.data-table-compact .outcome-cell { flex-wrap: wrap; white-space: normal; }
+/* Hard caps so one unusually long name or address can't blow the budget and
+   push Skip off-screen again. Both already carry the full text in a title
+   tooltip, and the row itself opens the detail view. */
+/* `:not(.appeal-pop-wrap)` is load-bearing: without it this rule's
+   overflow:hidden clipped the appeal popout out of existence — the wrapper is
+   a bare span in this cell too. */
+.data-table-compact .tm-cell > a,
+.data-table-compact .tm-cell > span:not(.pill):not(.appeal-pop-wrap) {
+  white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis;
+}
+.data-table-compact .rem-by-cell {
+  max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Same reason, Completed side: the note column is the widest thing over there.
+   It is a one-line preview anyway — the full note is in the hover popout and
+   on the detail page. */
+.data-table-compact .rem-note-cell, .data-table-compact .rem-note-line { max-width: 150px; }
+
 .rem-split-pane { min-width: 0; }
-.rem-split-pane > div[id] { overflow-x: auto; }
+/* No scroll guard here on purpose. It used to be `overflow-x: auto`, back when
+   these tables were wider than their pane; every column is capped now, so the
+   guard bought nothing and cost something real — an `overflow` of any kind
+   clips BOTH axes, which silently swallowed the appeal-note popout. */
+.rem-split-pane > div[id] { overflow: visible; }
 /* A vertical divider between the panes, without an extra element. */
 .rem-split-pane:last-child { border-left: 1px solid var(--border); padding-left: 18px; }
-/* Below ~1100px two tables side by side stop being readable — stack them,
-   queue first, and drop the divider so the border doesn't float mid-page. */
-@media (max-width: 1100px) {
+/* Below ~1600px there is genuinely not room for two of these tables: the pane
+   is (viewport - 400) / 2, so a 1512px laptop gives each side 564px against a
+   ~600px table and the last column gets clipped. Stack them instead — queue
+   first, full width, every column visible including the Skip button — and drop
+   the divider so the border doesn't float mid-page. Was 1100px, which left
+   every normal laptop in the clipped range. */
+@media (max-width: 1600px) {
   .rem-split { grid-template-columns: minmax(0, 1fr); gap: 24px; }
   .rem-split-pane:last-child { border-left: 0; padding-left: 0; border-top: 1px solid var(--border); padding-top: 18px; }
 }

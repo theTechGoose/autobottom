@@ -286,6 +286,10 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
       console.warn(`⚠️ [JUDGE] ${findingId} failed-finding index rebuild failed (best-effort):`, err);
     }
 
+    // One summary for both consumers below — the appeal record and the manager
+    // queue row must not be able to disagree about what the judge decided.
+    const outcomeSummary = summarizeAppealOutcome(decisions, { before: originalScore, after: finalScore });
+
     // Resolve the appeal record. It is written status:"pending" at file time and
     // nothing ever moved it off that, so every judged appeal stayed "pending"
     // forever: audit history (admin + manager + operations portal + super-
@@ -300,16 +304,15 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
         // Stamp WHICH WAY it went alongside the status. Audit history reads the
         // appeal record but never the finding, so without this the only thing
         // any screen could say was "Appeal Complete".
-        const summary = summarizeAppealOutcome(decisions, { before: originalScore, after: finalScore });
         await saveAppeal(orgId, {
           ...appeal,
           status: "complete",
           judgedBy: judge,
-          ...summary,
+          ...outcomeSummary,
           decidedAt: Date.now(),
         });
         appealResolved = true;
-        console.log(`[JUDGE] ${findingId}: appeal marked complete (judge=${judge}, outcome=${summary.outcome} ${summary.overturnedCount}↑/${summary.upheldCount}↓)`);
+        console.log(`[JUDGE] ${findingId}: appeal marked complete (judge=${judge}, outcome=${outcomeSummary.outcome} ${outcomeSummary.overturnedCount}↑/${outcomeSummary.upheldCount}↓)`);
       }
     } catch (err) {
       console.warn(`⚠️ [JUDGE] ${findingId} appeal resolve failed (best-effort):`, err);
@@ -331,7 +334,10 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
         const { clearQueueItemAppeal } = await import(
           "@manager/domain/data/manager-repository/mod.ts"
         );
-        await clearQueueItemAppeal(orgId, findingId);
+        // Carry the judge's reasoning onto the queue row. The manager who picks
+        // this row back up is about to coach on a failure someone already
+        // argued against — they need to know why it stood.
+        await clearQueueItemAppeal(orgId, findingId, outcomeSummary.judgeNotes);
       } catch (err) {
         console.warn(`⚠️ [JUDGE] ${findingId} manager-queue appeal clear failed (best-effort):`, err);
       }

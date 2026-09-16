@@ -65,6 +65,7 @@ import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { bucketWeeklyTrend } from "@audit/domain/business/agent-trend/mod.ts";
 import { handleKvExport, handleKvInventory, handleKvBatchList } from "@admin/entrypoints/kv-export/mod.ts";
 import { handleCanaryErrors } from "@admin/entrypoints/canary-errors/mod.ts";
+import { handleFindingByRecord } from "@audit/entrypoints/finding-by-record/mod.ts";
 import { recordOpen, recordClick, verifyFinding, TRANSPARENT_GIF } from "@reporting/domain/business/email-engagement/mod.ts";
 import { handleEventsStream, handleChatStream } from "@events/entrypoints/events-stream/mod.ts";
 import { buildDispatchErrorResponse, isDanetAbortBody } from "@core/business/dispatch-error/mod.ts";
@@ -1133,6 +1134,14 @@ Deno.serve({ port }, (req, info) => {
     if (path === "/canary/errors") {
       console.log(`[ROUTER] ${req.method} ${path} → direct canary-errors handler`);
       return handleCanaryErrors(req);
+    }
+
+    // /audit/finding-by-record — secret-gated (FINDING_API_SECRET) record id →
+    // full finding(s) for other apps. Direct-dispatch: the bearer check needs
+    // the Authorization header, and danet's @Req is broken via router.fetch.
+    if (path === "/audit/finding-by-record") {
+      console.log(`[ROUTER] ${req.method} ${path} → direct finding-by-record handler`);
+      return handleFindingByRecord(req);
     }
 
     // SSE streams — direct-dispatched because danet controllers can't return

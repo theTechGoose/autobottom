@@ -10,7 +10,8 @@ import { GenericBodyRequest } from "@core/dto/requests.ts";
 import { nanoid } from "https://deno.land/x/nanoid@v3.0.0/mod.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
-import { saveFinding, saveJob, getFinding, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
+import { saveFinding, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
+import { readFullFinding } from "@audit/domain/business/read-finding/mod.ts";
 import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/mod.ts";
 import { enqueueStep, getSelfUrl, getQueueCounts } from "@core/data/qstash/mod.ts";
 import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
@@ -135,76 +136,10 @@ export class AuditController {
     if (!id) return { error: "id parameter required" };
     const orgId = defaultOrgId() as OrgId;
     console.log(`[GET-FINDING] looking up id=${id} orgId=${orgId}`);
-    let finding: Record<string, unknown> | null = null;
-    // getFinding does a CHUNKED read (header + record + transcript +
-    // answeredQuestions chunks, often 5-10 FS round-trips). If any single
-    // chunk aborts on the 25s foreground watchdog, the whole call throws —
-    // but the data is fine, the wedge is transient. Retry once on abort
-    // before giving up; this catches the common "audit mid-pipeline + brief
-    // pool wedge" case where the user opens the report page seconds after
-    // triggering an audit. If the retry also aborts, return retry:true so
-    // the frontend can render a Retry button instead of "lookup failed".
-    let lastErr: unknown = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        finding = await getFinding(orgId, id);
-        lastErr = null;
-        break;
-      } catch (err) {
-        lastErr = err;
-        const msg = err instanceof Error ? err.message : String(err);
-        const isAbort = msg.includes("aborted") || msg.includes("AbortError") || msg.includes("signal");
-        console.warn(`[GET-FINDING] ⚠️ getFinding attempt ${attempt + 1} threw for id=${id}: ${msg}${isAbort ? " (abort — will retry)" : " (non-abort — giving up)"}`);
-        if (!isAbort) break;
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
-      }
-    }
-    if (lastErr) {
-      const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
-      const isAbort = msg.includes("aborted") || msg.includes("AbortError") || msg.includes("signal");
-      console.error(`[GET-FINDING] ❌ getFinding final fail for id=${id} orgId=${orgId}: ${msg}`);
-      if (isAbort) {
-        return { error: "Server busy, please retry", retry: true, detail: msg };
-      }
-      return { error: "lookup failed", detail: msg };
-    }
-    if (finding) {
-      // Transcript text lives in two places: on the finding doc (working
-      // copy for pipeline steps) and in the separate `audit-transcript`
-      // chunked doc (canonical persistent record, written by step-transcribe-cb
-      // + step-diarize-async). If either transcript field on the finding
-      // is missing — chunked-read race, downstream save with a stale value,
-      // or a skip-to-finalize that left the field empty — fall back to the
-      // canonical doc so the report page always renders the call text.
-      //
-      // utteranceTimes counts as a missing field too: the scrub view
-      // (/audit/scrub) seeks the audio to a clicked transcript line, and with no
-      // per-line times every line is dead. The times index the STORE's raw
-      // lines, so when we take them we take that raw text with them — mixing the
-      // finding doc's raw with the store's times slides every timestamp onto the
-      // wrong line. Same matched-pair rule as /manager/api/finding.
-      const rec = finding as Record<string, unknown>;
-      const hasTimes = Array.isArray(rec.utteranceTimes) && (rec.utteranceTimes as unknown[]).length > 0;
-      if (!finding.rawTranscript || !finding.diarizedTranscript || !hasTimes) {
-        try {
-          const t = await getTranscript(orgId, id);
-          if (t) {
-            rec.diarizedTranscript ??= t.diarized;
-            if (!hasTimes && t.utteranceTimes?.length && t.raw) {
-              rec.rawTranscript = t.raw;
-              rec.utteranceTimes = t.utteranceTimes;
-            } else {
-              rec.rawTranscript ??= t.raw;
-              rec.utteranceTimes ??= t.utteranceTimes;
-            }
-          }
-        } catch (err) {
-          console.warn(`[GET-FINDING] ⚠️ getTranscript fallback failed for id=${id}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-      console.log(`[GET-FINDING] ✅ found id=${id} orgId=${orgId}`);
-      return finding;
-    }
+    const read = await readFullFinding(orgId, id);
+    if (read.kind === "busy") return { error: "Server busy, please retry", retry: true, detail: read.detail };
+    if (read.kind === "failed") return { error: "lookup failed", detail: read.detail };
+    if (read.kind === "found") return read.finding;
     // Diagnostic: where else might this finding live?
     try {
       const { listStoredByIdPrefix, getDoc, encodeDocId } = await import("@core/data/firestore/mod.ts");

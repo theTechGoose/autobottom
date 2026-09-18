@@ -77,20 +77,20 @@ const RESET_PAGE_JS = `document.getElementById('ah-page').value='1';`;
 
 /** JS snippet for window-button click — sets hidden since/until, hides ✕ Clear, refreshes. */
 function windowBtnJs(hours: number): string {
-  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('f-date-clear').style.display='none';${RESET_PAGE_JS}${REFRESH_JS};})()`;
+  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));(window.ahClearDates||function(){document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';})();document.getElementById('f-date-clear').style.display='none';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 }
 
 /** JS for custom-date Go button. Reveals ✕ Clear so user can return to 24h. */
 const goBtnJs =
-  `(()=>{const s=document.getElementById('f-date-start').value;const e=document.getElementById('f-date-end').value;if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';${RESET_PAGE_JS}${REFRESH_JS};})()`;
+  `(()=>{const R=window.ahReadDate||(id=>(document.getElementById(id)||{}).value||'');const s=R('f-date-start');const e=R('f-date-end');if(s===null||e===null){alert('Type the dates as MM/DD/YYYY — e.g. 09/07/2026');return;}if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 
 /** JS for ✕ Clear (visible only after a custom range) — return to 24h default. */
 const clearBtnJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${RESET_PAGE_JS}${REFRESH_JS};})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;(window.ahClearDates||function(){document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';})();document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 
 /** JS for Reset button — clears all filters back to defaults and 24h. */
 const resetJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-score-state').value='';document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-score-state').value='';(window.ahClearDates||function(){document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';})();document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
 
 /** JS for CSV button — gathers form values + format=csv into a download URL. */
 const csvBtnJs =
@@ -146,10 +146,11 @@ export default define.page(async function AdminAuditsPage(ctx) {
         .audits-filters select, .audits-filters input[type=number] { background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:11px; padding:5px 8px; font-family:'SF Mono','Fira Code',monospace; }
         .audits-filters select:focus, .audits-filters input:focus { outline:none; border-color:var(--blue); }
         .audits-filters input[type="date"],
+        .audits-filters input.ah-date,
         .audits-filters input.flatpickr-input,
         .audits-filters input.flatpickr-alt-input,
         .audits-filters input.form-control.input { background:var(--bg-raised) !important; border:1px solid var(--border) !important; border-radius:6px !important; color:var(--text) !important; font-size:11px !important; padding:3px 10px !important; height:26px !important; min-width:120px !important; cursor:text; font-family:'SF Mono','Fira Code',monospace; }
-        .audits-filters input[type="date"]:focus, .audits-filters input.flatpickr-input:focus, .audits-filters input.flatpickr-alt-input:focus, .audits-filters input.flatpickr-input.active, .audits-filters input.flatpickr-alt-input.active { border-color:var(--blue) !important; outline:none !important; }
+        .audits-filters input[type="date"]:focus, .audits-filters input.ah-date:focus, .audits-filters input.flatpickr-input:focus, .audits-filters input.flatpickr-alt-input:focus, .audits-filters input.flatpickr-input.active, .audits-filters input.flatpickr-alt-input.active { border-color:var(--blue) !important; outline:none !important; }
         /* Flatpickr theme overrides — match the page's dark surface tones. */
         .flatpickr-calendar { background:var(--bg-raised) !important; border:1px solid var(--border) !important; box-shadow:0 6px 16px rgba(0,0,0,0.5) !important; font-family:inherit !important; }
         .flatpickr-months .flatpickr-month, .flatpickr-weekday, .flatpickr-current-month input.cur-year, .flatpickr-current-month .cur-month { color:var(--text-bright) !important; }
@@ -266,9 +267,9 @@ export default define.page(async function AdminAuditsPage(ctx) {
               >{w.label}</button>
             ))}
             <span style="color:var(--text-dim);font-size:10px;margin:0 4px;align-self:center;">or</span>
-            <input type="text" id="f-date-start" placeholder="MM/DD/YYYY" />
+            <input type="text" id="f-date-start" class="ah-date" placeholder="MM/DD/YYYY" />
             <span style="color:var(--text-dim);align-self:center;">–</span>
-            <input type="text" id="f-date-end" placeholder="MM/DD/YYYY" />
+            <input type="text" id="f-date-end" class="ah-date" placeholder="MM/DD/YYYY" />
             {/* Init both inputs as flatpickr pickers once the script + DOM
                 are ready.
                 - dateFormat Y-m-d: the value stored on the (now-hidden)
@@ -279,17 +280,69 @@ export default define.page(async function AdminAuditsPage(ctx) {
                   users actually type.
                 - allowInput: true — type directly OR click the calendar. */}
             <script dangerouslySetInnerHTML={{ __html: `
-              (function init(){
-                if(!window.flatpickr){ setTimeout(init, 50); return; }
-                var opts = {
-                  dateFormat: "Y-m-d",
-                  altInput: true,
-                  altFormat: "m/d/Y",
-                  allowInput: true,
-                  maxDate: "today",
+              (function(){
+                function two(n){ return (n < 10 ? '0' : '') + n; }
+                /* Read the date the user can actually SEE — the picker's
+                   visible m/d/Y box when flatpickr loaded, the plain input
+                   when it didn't (blocked CDN, slow network, old browser).
+                   Never trust flatpickr's hidden Y-m-d alone: it stays empty
+                   whenever the widget isn't there to fill it, which is what
+                   made Go say "Select both start and end dates" on boxes that
+                   plainly had dates in them.
+                   Returns YYYY-MM-DD, '' if empty, null if unreadable. */
+                window.ahReadDate = function(id){
+                  var el = document.getElementById(id);
+                  if(!el) return '';
+                  var fp = el._flatpickr;
+                  var raw = (fp && fp.altInput ? fp.altInput.value : '') || el.value || '';
+                  raw = ('' + raw).trim().split('.').join('/');
+                  if(!raw) return '';
+                  var y, mo, d, parts;
+                  if(raw.indexOf('-') > 0){       /* YYYY-MM-DD from the picker */
+                    parts = raw.split('-');
+                    if(parts.length !== 3) return null;
+                    y = +parts[0]; mo = +parts[1]; d = +parts[2];
+                  } else {                        /* MM/DD/YYYY as people type it */
+                    parts = raw.split('/');
+                    if(parts.length !== 3) return null;
+                    mo = +parts[0]; d = +parts[1]; y = +parts[2];
+                    if(y < 100) y += 2000;
+                  }
+                  if(!y || !mo || !d) return null;
+                  if(mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+                  var iso = y + '-' + two(mo) + '-' + two(d);
+                  var t = new Date(iso + 'T00:00:00');
+                  if(isNaN(t.getTime()) || t.getDate() !== d) return null;
+                  return iso;
                 };
-                flatpickr("#f-date-start", opts);
-                flatpickr("#f-date-end",   opts);
+                /* Clearing has to go through the widget when it exists —
+                   setting the hidden input's value leaves the visible box
+                   still showing the old range. */
+                window.ahClearDates = function(){
+                  ['f-date-start','f-date-end'].forEach(function(id){
+                    var el = document.getElementById(id);
+                    if(!el) return;
+                    if(el._flatpickr) el._flatpickr.clear(); else el.value = '';
+                  });
+                };
+                var tries = 0;
+                (function init(){
+                  if(!window.flatpickr){
+                    /* Give the CDN ~5s, then leave the plain boxes alone —
+                       typing MM/DD/YYYY still works without the calendar. */
+                    if(++tries < 100) setTimeout(init, 50);
+                    return;
+                  }
+                  var opts = {
+                    dateFormat: "Y-m-d",
+                    altInput: true,
+                    altFormat: "m/d/Y",
+                    allowInput: true,
+                    maxDate: "today",
+                  };
+                  flatpickr("#f-date-start", opts);
+                  flatpickr("#f-date-end",   opts);
+                })();
               })();
             `}} />
             <button type="button" class="ah-btn ah-btn-primary" style="padding:3px 10px;font-size:11px;height:26px;" {...{ "hx-on:click": goBtnJs }}>Go</button>

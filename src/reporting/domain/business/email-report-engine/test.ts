@@ -12,11 +12,14 @@ import {
   weeklyHeadline,
   renderSections,
   queryReportData,
+  isReportExcluded,
+  _resetManagerRoutingCachesForTests,
 } from "./mod.ts";
 import type { ReportRow } from "./mod.ts";
 import type { SectionResult } from "./mod.ts";
 import { writeAuditDoneIndex, markFindingHidden, _resetQueryAuditDoneIndexCacheForTests } from "@audit/domain/data/stats-repository/mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
+import { saveOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { populateJudgeQueue } from "@judge/domain/data/judge-repository/mod.ts";
 import { resetFirestoreCredentials } from "@core/data/firestore/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
@@ -306,6 +309,57 @@ Deno.test({ name: "queryReportData — builds rows from the index with NO findin
   assertEquals(row.score, 80);
   assertEquals(row.recordId, "R1");
   assertEquals(row.findingId, "f1");
+}});
+
+Deno.test("isReportExcluded — date legs only, so a partner OfficeName can never collide", () => {
+  const cfg = { reportExcludeDepartments: ["Online App Rebook"] };
+  assertEquals(isReportExcluded("Online App Rebook", false, cfg), true);
+  assertEquals(isReportExcluded("online app rebook", false, cfg), true, "case-insensitive");
+  assertEquals(isReportExcluded("Online App Rebook", true, cfg), false, "a package with the same OfficeName is untouched");
+  assertEquals(isReportExcluded("GS MB", false, cfg), false);
+  assertEquals(isReportExcluded(undefined, false, cfg), false);
+  assertEquals(isReportExcluded("GS MB", false, { reportExcludeDepartments: [] }), false);
+  assertEquals(isReportExcluded("GS MB", false, {}), false, "no list configured excludes nothing");
+  assertEquals(isReportExcluded("GS MB", false, { reportExcludeDepartments: ["  "] }), false, "a blank entry can't swallow every row");
+});
+
+Deno.test({ name: "queryReportData — an excluded department is dropped, by section AND by manager routing", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  _resetManagerRoutingCachesForTests();
+  const ORG = "test-reportexclude-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+  await saveOfficeBypassConfig(ORG as any, { patterns: [], reportExcludeDepartments: ["Online App Rebook"] } as any);
+
+  const row = (findingId: string, department: string) => ({
+    findingId, completedAt: now, doneAt: now, completed: true, reason: "reviewed",
+    score: 80, recordId: "R" + findingId, voName: "Other", department, shift: "AM", isPackage: false,
+  });
+  // "GS MB" is claimed by this report's section; the other two are not, so they
+  // would otherwise ride their manager in via the absorb path.
+  await writeAuditDoneIndex(ORG as any, row("keep", "GS MB") as any, { assumeFinished: true });
+  await writeAuditDoneIndex(ORG as any, row("excluded", "Online App Rebook") as any, { assumeFinished: true });
+  await writeAuditDoneIndex(ORG as any, row("absorbed", "Some New Code") as any, { assumeFinished: true });
+  for (const id of ["keep", "excluded", "absorbed"]) {
+    await saveFinding(ORG as any, { id, record: { SupervisorEmail: "boss@x.com" } } as any);
+  }
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    weeklyManagers: ["boss@x.com"],
+    reportSections: [{
+      header: "GS MB", columns: IDX_COLUMNS,
+      criteria: [{ field: "department", operator: "equals", value: "GS MB" }],
+    }],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+  };
+
+  const sections = await queryReportData(ORG as any, config as any);
+  const ids = sections[0].rows.map((r) => r.findingId).sort();
+  // "absorbed" proves manager routing is live in this setup — so "excluded"
+  // being gone is the exclusion working, not routing quietly failing.
+  assertEquals(ids, ["absorbed", "keep"]);
 }});
 
 Deno.test({ name: "queryReportData — wrong department/shift filters drop the index row (no hydration needed)", sanitizeOps: false, sanitizeResources: false, fn: async () => {

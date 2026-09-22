@@ -213,6 +213,12 @@ export interface OfficeBypassConfig {
   patterns: string[];
   /** Department names — matched against date legs (internal) only. */
   departmentPatterns?: string[];
+  /** Department names dropped from WEEKLY REPORTS entirely — no section, no
+   *  manager routing, no absorb. A different gate from the two lists above,
+   *  which only skip the review queue / audit email and never touched
+   *  reporting. Date legs only (matched against Activating Office), so it can
+   *  never collide with a partner OfficeName the way one shared list did. */
+  reportExcludeDepartments?: string[];
 }
 
 export interface BonusPointsConfig {

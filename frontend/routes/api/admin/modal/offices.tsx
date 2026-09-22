@@ -11,11 +11,13 @@ export const handler = define.handlers({
     let depts: string[] = [];
     let patterns: string[] = [];
     let departmentPatterns: string[] = [];
+    let reportExcludeDepartments: string[] = [];
     try { const d = await apiFetch<{ departments?: string[] }>("/admin/audit-dimensions", ctx.req); depts = d.departments ?? []; } catch {}
     try {
-      const d = await apiFetch<{ patterns?: string[]; departmentPatterns?: string[] }>("/admin/office-bypass", ctx.req);
+      const d = await apiFetch<{ patterns?: string[]; departmentPatterns?: string[]; reportExcludeDepartments?: string[] }>("/admin/office-bypass", ctx.req);
       patterns = d.patterns ?? [];
       departmentPatterns = d.departmentPatterns ?? [];
+      reportExcludeDepartments = d.reportExcludeDepartments ?? [];
     } catch {}
 
     const html = renderToString(
@@ -38,7 +40,7 @@ export const handler = define.handlers({
             >Bypass</button>
           </div>
         </div>
-        <div class="modal-sub">Manage known offices and configure which ones skip review and audit emails</div>
+        <div class="modal-sub">Manage known offices and configure which ones skip review, audit emails, or reporting</div>
 
         {tab === "offices" ? (
           <div>
@@ -84,13 +86,30 @@ export const handler = define.handlers({
               <input id="ob-deptbypass-input" class="sf-input" type="text" name="pattern" placeholder="e.g. GUN" style="flex:1;font-size:12px;" />
               <button class="sf-btn primary" style="font-size:11px;padding:8px 14px;" hx-post="/api/admin/modal/offices/add-bypass" hx-include="#ob-deptbypass-input" hx-vals={JSON.stringify({ kind: "department" })} hx-target="#ob-deptbypass-list" hx-swap="innerHTML">Add</button>
             </div>
-            <div id="ob-deptbypass-list" style="display:flex;flex-direction:column;gap:6px;min-height:40px;max-height:160px;overflow-y:auto;">
+            <div id="ob-deptbypass-list" style="display:flex;flex-direction:column;gap:6px;min-height:40px;max-height:160px;overflow-y:auto;margin-bottom:16px;">
               {departmentPatterns.length === 0 ? (
                 <div style="color:var(--text-dim);font-size:11px;padding:8px;">No bypass patterns</div>
               ) : departmentPatterns.map(p => (
                 <div key={p} class="item-row">
                   <span>{p}</span>
                   <button class="item-remove" hx-post="/api/admin/modal/offices/remove-bypass" hx-vals={JSON.stringify({ pattern: p, kind: "department" })} hx-target="#ob-deptbypass-list" hx-swap="innerHTML">&times;</button>
+                </div>
+              ))}
+            </div>
+
+            <div style="font-size:11px;font-weight:600;margin-bottom:6px;">Excluded from reporting — internal audits only</div>
+            <div class="modal-sub" style="margin-bottom:8px;">Matched against the date leg's Activating Office. These audits are left off every weekly report and its full-report page, including manager routing. They are still audited and still counted everywhere else.</div>
+            <div style="display:flex;gap:6px;margin-bottom:12px;">
+              <input id="ob-reportexclude-input" class="sf-input" type="text" name="pattern" placeholder="e.g. Online App Rebook" style="flex:1;font-size:12px;" />
+              <button class="sf-btn primary" style="font-size:11px;padding:8px 14px;" hx-post="/api/admin/modal/offices/add-bypass" hx-include="#ob-reportexclude-input" hx-vals={JSON.stringify({ kind: "report" })} hx-target="#ob-reportexclude-list" hx-swap="innerHTML">Add</button>
+            </div>
+            <div id="ob-reportexclude-list" style="display:flex;flex-direction:column;gap:6px;min-height:40px;max-height:160px;overflow-y:auto;">
+              {reportExcludeDepartments.length === 0 ? (
+                <div style="color:var(--text-dim);font-size:11px;padding:8px;">Nothing excluded from reporting</div>
+              ) : reportExcludeDepartments.map(p => (
+                <div key={p} class="item-row">
+                  <span>{p}</span>
+                  <button class="item-remove" hx-post="/api/admin/modal/offices/remove-bypass" hx-vals={JSON.stringify({ pattern: p, kind: "report" })} hx-target="#ob-reportexclude-list" hx-swap="innerHTML">&times;</button>
                 </div>
               ))}
             </div>

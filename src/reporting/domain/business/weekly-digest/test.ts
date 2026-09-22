@@ -65,7 +65,7 @@ Deno.test("buildDigest — a member's passed/failed/total always reconcile, geni
   const groups = buildDigest([section("GS MB", [
     row({ findingId: "f1", score: 100 }),
     row({ findingId: "f2", score: 96 }),
-    row({ findingId: "f3", score: 100, invalidGenie: true }),
+    row({ recordId: "480126", findingId: "f3", score: 100, invalidGenie: true }),
   ])], fails);
 
   assertEquals(groups.length, 1);
@@ -76,9 +76,11 @@ Deno.test("buildDigest — a member's passed/failed/total always reconcile, geni
   assertEquals(m.genieInvalid, 1);
   assertEquals(m.passed + m.failed, m.total);
   assertEquals(m.passPct, passPercent(2, 3));
-  // The invalid genie never graded, so it isn't itemised — but it IS a category line.
-  assertEquals(m.failedAuditTotal, 1);
-  assertEquals(m.failedAudits.length, 1);
+  // The invalid genie never graded, so it has no categories — but it is still
+  // listed, ids and all, and it is still a category line.
+  assertEquals(m.failedAuditTotal, 2);
+  assertEquals(m.failedAudits.length, 2);
+  assertEquals(m.failedAudits.at(-1)?.findingId, "f3", "scoreless, so it sorts last");
   assertEquals(m.categories.map((c) => c.label), ["Taxes", "Genie Invalid"]);
   assert(m.categories.at(-1)?.genie, "Genie Invalid is flagged so it renders in amber");
 });
@@ -100,6 +102,27 @@ Deno.test("buildDigest — a failed audit missing from the question index still 
   assert(page.includes("itemised (1 of 2)"), "the page owns up to the gap");
 });
 
+Deno.test("buildDigest — an invalid genie still shows its record and audit ids", () => {
+  // The "Other" bucket is a blank VO name, so the ids are the only handle on the
+  // audit — and an invalid genie is the one somebody has to go re-run.
+  const groups = buildDigest([section("GS MB", [
+    row({ voName: "", recordId: "480126", findingId: "f9", score: 100, invalidGenie: true }),
+  ])], new Map());
+
+  const m = groups[0].members[0];
+  assertEquals(m.name, "Other");
+  assertEquals(m.failedAudits.length, 1);
+  assertEquals(m.failedAudits[0].genie, true);
+  // The stat carries 100 on a row that failed — printing it would be a lie.
+  assertEquals(m.failedAudits[0].score, undefined);
+
+  const page = renderDigestPage(groups, OPTS, LINKS);
+  assert(page.includes("Failed Audits (1)"), "listed in full, no '0 of 1' hedge");
+  assert(page.includes("https://qb.example/480126"), "the record links to QuickBase");
+  assert(page.includes("audit/report?id=f9"), "the finding links to the audit report");
+  assert(page.includes("Genie Invalid</span></td>"), "the empty Categories cell says why");
+});
+
 Deno.test("buildDigest — itemised failures read least-bad first", () => {
   const groups = buildDigest([section("GS MB", [
     row({ findingId: "a", recordId: "100", score: 88 }),
@@ -108,6 +131,64 @@ Deno.test("buildDigest — itemised failures read least-bad first", () => {
   ])], new Map([["a", ["Taxes"]], ["b", ["Income"]], ["c", ["Age"]]]));
 
   assertEquals(groups[0].members[0].failedAudits.map((a) => a.score), [96, 92, 88]);
+});
+
+Deno.test("buildDigest — an explicit '- Other' leaves its office group and lands at the bottom", () => {
+  // voName arrives already split on " - ", so "GS MB - Other" is "Other" here.
+  const groups = buildDigest([section("GS MB", [
+    row({ voName: "Brandy Congleton", findingId: "b1" }),
+    row({ voName: "Brandy Congleton", findingId: "b2" }),
+    row({ voName: "Other", recordId: "512633", findingId: "o1", score: 0, invalidGenie: true }),
+  ])], new Map());
+
+  assertEquals(groups.length, 2);
+  assertEquals(groups[0].label, "GS MB");
+  assertEquals(groups[1].label, "Other", "collected card sits last");
+
+  // The office group loses the audit from its TOTALS, not just its cards —
+  // otherwise the summary wouldn't match the cards under it.
+  assertEquals(groups[0].total, 2);
+  assertEquals(groups[0].failed, 0);
+  assertEquals(groups[0].passPct, 100);
+  assertEquals(groups[0].members.map((m) => m.name), ["Brandy Congleton"]);
+
+  assertEquals(groups[1].total, 1);
+  assertEquals(groups[1].failed, 1);
+  assertEquals(groups[1].genieInvalid, 1);
+  assertEquals(groups[1].members[0].failedAudits[0].recordId, "512633");
+});
+
+Deno.test("buildDigest — a BLANK name still buckets inside its own group, unmoved", () => {
+  // A blank VO field is a real person we failed to capture, not the picklist
+  // "Other" — it must not be swept into the bottom card.
+  const groups = buildDigest([section("GS MB", [
+    row({ voName: "Brandy Congleton", findingId: "b1" }),
+    row({ voName: "", findingId: "n1" }),
+  ])], new Map());
+
+  assertEquals(groups.length, 1, "no bottom card — nothing said 'Other'");
+  assertEquals(groups[0].total, 2, "the blank-name audit still counts here");
+  assertEquals(groups[0].members.map((m) => m.name).sort(), ["Brandy Congleton", "Other"]);
+});
+
+Deno.test("buildDigest — every section's and shift's 'Other' collects into ONE bottom card", () => {
+  const groups = buildDigest([
+    section("GS WST", [
+      row({ voName: "Real Person", findingId: "r1", shift: "AM" }),
+      row({ voName: "Other", findingId: "o1", shift: "AM", score: 80 }),
+      row({ voName: "Other", findingId: "o2", shift: "PM", score: 90 }),
+    ]),
+    section("WST ACT", [
+      row({ voName: "Other", findingId: "o3", shift: "AM", score: 70 }),
+    ]),
+  ], new Map());
+
+  const last = groups[groups.length - 1];
+  assertEquals(last.label, "Other");
+  assertEquals(last.total, 3, "three departments' worth, one card");
+  assertEquals(last.members.length, 1);
+  // WST ACT held nothing else, so it drops out entirely rather than rendering empty.
+  assert(!groups.some((g) => g.label.startsWith("WST ACT")), "emptied section is dropped");
 });
 
 Deno.test("buildDigest — one group per shift once a section spans more than one, in floor order", () => {

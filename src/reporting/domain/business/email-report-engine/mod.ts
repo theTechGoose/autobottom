@@ -4,6 +4,7 @@
 
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
+import { getOfficeBypassConfig } from "@admin/domain/data/admin-repository/mod.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { getEmailTemplate, saveWeeklyReportView } from "@reporting/domain/data/email-repository/mod.ts";
 import type {
@@ -278,6 +279,22 @@ export function dedupeByRecordKeepNewest(entries: AuditDoneIndexEntry[]): AuditD
 
 // ── Main entry point ─────────────────────────────────────────────────────────
 
+/** Departments excluded from reporting outright. Case-insensitive substring
+ *  match, the same as the bypass lists, and date legs ONLY — a package carries
+ *  a partner OfficeName in the same slot, and matching one list against both
+ *  fields is the bug that silently bypassed FTL OPC for seven weeks. */
+export function isReportExcluded(
+  department: string | undefined,
+  isPackage: boolean,
+  cfg: { reportExcludeDepartments?: string[] } | null | undefined,
+): boolean {
+  if (isPackage || !department) return false;
+  const list = cfg?.reportExcludeDepartments ?? [];
+  if (list.length === 0) return false;
+  const dept = department.toLowerCase();
+  return list.some((p) => p.trim() !== "" && dept.includes(p.trim().toLowerCase()));
+}
+
 export async function queryReportData(
   orgId: OrgId,
   config: EmailReportConfig,
@@ -369,6 +386,7 @@ export async function queryReportData(
   // them. Absorbed rows are placed after the main pass, once we know which
   // section already holds each manager's work.
   const routeByManager = !!config.weeklyManagers?.length;
+  const excludeCfg = await getOfficeBypassConfig(orgId);
   const claimed = routeByManager ? await claimedDepartmentCodes(orgId) : new Set<string>();
   const myManagers = new Set((config.weeklyManagers ?? []).map(normalizeEmail));
   // The manager lives on the audit document, not the index row, so it is read
@@ -397,6 +415,11 @@ export async function queryReportData(
       String(isPackage
         ? ((finding.record as any)?.OfficeName ?? "")
         : ((finding.record as any)?.ActivatingOffice ?? "")) || undefined;
+
+    // Excluded departments leave here and nowhere else — ahead of section
+    // criteria, manager routing and the absorb path, so there is exactly one
+    // way out and no report can readmit them.
+    if (isReportExcluded(department, isPackage, excludeCfg)) continue;
 
     const stat: Record<string, any> = {
       isPackage,

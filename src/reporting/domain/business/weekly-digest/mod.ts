@@ -34,6 +34,21 @@ const NO_SHIFT = "Unassigned";
 /** The bucket for an audit whose VO name is blank. */
 const NO_NAME = "Other";
 
+/** The VO field can explicitly say "<OFFICE> - Other" — a picklist fallback,
+ *  not a person. `voName` here is already the half AFTER the dash, so those
+ *  rows arrive as exactly this. A BLANK name also buckets to NO_NAME above;
+ *  that is a different thing (a real person we failed to capture) and it stays
+ *  inside its office group. */
+const EXPLICIT_OTHER = "other";
+
+/** Heading for the collected card at the very bottom of the report. */
+const OTHER_GROUP_LABEL = "Other";
+
+/** True only for a VO field that explicitly named "Other" — never for a blank. */
+function isExplicitOther(voName: string | undefined): boolean {
+  return (voName ?? "").trim().toLowerCase() === EXPLICIT_OTHER;
+}
+
 /** Genie-invalid audits are counted as a failure but have no failed question,
  *  so they ride along as their own line at the BOTTOM of a category list. */
 const GENIE_LABEL = "Genie Invalid";
@@ -60,6 +75,9 @@ export interface DigestAudit {
   score?: number;
   /** Short labels for every question this audit failed. */
   categories: string[];
+  /** An invalid genie: no questions, no score — but still a real audit with
+   *  ids, and the one you most need to go find, because it has to be re-run. */
+  genie?: boolean;
 }
 
 export interface DigestMember {
@@ -71,9 +89,10 @@ export interface DigestMember {
   /** 100 − round(failed ÷ total), so the three numbers always reconcile. */
   passPct: number;
   categories: LabelCount[];
-  /** Failed audits we can itemise (they have question-level rows), worst-first. */
+  /** Failed audits we can name — every invalid genie, plus every failure with
+   *  question-level rows — worst-first. */
   failedAudits: DigestAudit[];
-  /** Every non-genie failed audit, itemisable or not — the "9 of 10" denominator. */
+  /** Every failed audit, listable or not — the "9 of 10" denominator. */
   failedAuditTotal: number;
 }
 
@@ -154,9 +173,17 @@ function buildMember(name: string, rows: ReportRow[], failsByFinding: Map<string
     if (row.invalidGenie) genieInvalid++;
     if (!isFailedRow(row)) continue;
     failed++;
-    if (row.invalidGenie) continue; // no questions to itemise — it never graded
-
     failedAuditTotal++;
+
+    // An invalid genie never graded, so it has no questions to itemise and no
+    // score worth printing (the stat's is meaningless). It still gets a row:
+    // its ids are the only way to go pull the record and re-run it, and in the
+    // "Other" bucket — a blank VO name — they are the ONLY handle on it.
+    if (row.invalidGenie) {
+      failedAudits.push({ recordId: row.recordId, findingId: row.findingId, categories: [], genie: true });
+      continue;
+    }
+
     const categories = row.findingId ? (failsByFinding.get(row.findingId) ?? []) : [];
     for (const c of categories) counts.set(c, (counts.get(c) ?? 0) + 1);
     if (categories.length > 0) {
@@ -227,16 +254,33 @@ function buildGroup(label: string, rows: ReportRow[], failsByFinding: Map<string
  *  be mistaken for another department's AM.
  *
  *  `splitByShift: false` keeps one group per section — for reports where the
- *  departments, not the shifts, are how the floor thinks about the work. */
+ *  departments, not the shifts, are how the floor thinks about the work.
+ *
+ *  Audits whose VO field says "- Other" leave their office group entirely and
+ *  collect into ONE card at the bottom, across every section and shift. They
+ *  are not a person on any team, so counting them inside a team's card dragged
+ *  that team's pass rate for work nobody there did. */
 export function buildDigest(
   sections: SectionResult[],
   failsByFinding: Map<string, string[]>,
   splitByShift = true,
 ): DigestGroup[] {
-  const prefix = sections.filter((s) => s.rows.length > 0).length > 1;
+  // Pulled out BEFORE any grouping, so they leave the office totals as well as
+  // the cards — a group's "Total Audits" always matches the cards beneath it.
+  const otherRows: ReportRow[] = [];
+  const sectionsKept = sections.map((section) => ({
+    ...section,
+    rows: section.rows.filter((row) => {
+      if (!isExplicitOther(row.voName)) return true;
+      otherRows.push(row);
+      return false;
+    }),
+  }));
+
+  const prefix = sectionsKept.filter((s) => s.rows.length > 0).length > 1;
   const groups: DigestGroup[] = [];
 
-  for (const section of sections) {
+  for (const section of sectionsKept) {
     if (section.rows.length === 0) continue;
 
     const byShift = new Map<string, ReportRow[]>();
@@ -256,6 +300,11 @@ export function buildDigest(
     for (const [label, rows] of ordered) {
       groups.push(buildGroup(prefix ? `${section.header} — ${label}` : label, rows, failsByFinding));
     }
+  }
+
+  // Last, so it reads underneath every office on both the email and the page.
+  if (otherRows.length > 0) {
+    groups.push(buildGroup(OTHER_GROUP_LABEL, otherRows, failsByFinding));
   }
 
   return groups;
@@ -468,7 +517,12 @@ function pageFailedAudits(member: DigestMember, links: PageLinks): string {
       ? `<a href="${links.findingUrl(a.findingId)}" style="color:${D.blue};text-decoration:none;">${esc(a.findingId)}</a>`
       : dash;
     const score = a.score != null ? `${a.score}%` : "&mdash;";
-    return `<tr><td style="${idCell}color:${D.blue};">${rid}</td><td style="${idCell}color:${D.blue};">${fid}</td><td style="padding:6px 10px 6px 0;font-size:12px;font-weight:700;color:${D.red};white-space:nowrap;">${score}</td><td style="padding:6px 0;font-size:12px;color:${D.text};line-height:1.5;">${esc(a.categories.join(", "))}</td></tr>`;
+    // A blank Categories cell reads as data gone missing; the genie row says
+    // why it has none.
+    const cats = a.genie
+      ? `<span style="color:${D.amber};">${GENIE_LABEL}</span>`
+      : esc(a.categories.join(", "));
+    return `<tr><td style="${idCell}color:${D.blue};">${rid}</td><td style="${idCell}color:${D.blue};">${fid}</td><td style="padding:6px 10px 6px 0;font-size:12px;font-weight:700;color:${D.red};white-space:nowrap;">${score}</td><td style="padding:6px 0;font-size:12px;color:${D.text};line-height:1.5;">${cats}</td></tr>`;
   }).join("");
   // Two id columns side by side need labelling or they read as one number.
   const th = `padding:0 10px 4px 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${D.muted};text-align:left;white-space:nowrap;`;

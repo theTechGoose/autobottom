@@ -38,6 +38,7 @@ import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
 import { queryAuditDoneIndex } from "@audit/domain/data/stats-repository/mod.ts";
 import { queryFailedFindings } from "@audit/domain/data/failed-finding-repository/mod.ts";
 import { normalizeRecordId, isNewerFinding } from "@reporting/domain/business/email-report-engine/mod.ts";
+import { isPlaceholderVoName } from "@core/business/record-meta/mod.ts";
 
 /** Safety margin on the completedAt scan. Measured lag is zero (see the note
  *  above), so this is slack for an unexpected row, not a correction. Two weeks
@@ -156,6 +157,9 @@ export async function queryWeeklyFails(
   const matched: Array<{ e: AuditDoneIndexEntry; category: WeeklyFailCategory }> = [];
   for (const e of inWeek) {
     if (!inScope(e, scope)) continue;
+    // Placeholder manager seats never belong on a report — same rule the email
+    // report engine applies, kept here because this path is index-only.
+    if (isPlaceholderVoName(e.voName)) continue;
     const category = classifyWeeklyFail(e);
     if (category) matched.push({ e, category });
   }

@@ -3,7 +3,7 @@
  *  every ID is pinned here against the shape the three original call sites
  *  (step-finalize, review-queue rehydrate, judge-repository) hand-built. */
 import { assertEquals } from "#assert";
-import { buildRecordMeta } from "./mod.ts";
+import { buildRecordMeta, isPlaceholderVoName } from "./mod.ts";
 
 Deno.test("buildRecordMeta — date-leg maps every QuickBase field ID", () => {
   const meta = buildRecordMeta({
@@ -106,4 +106,19 @@ Deno.test("buildRecordMeta — empty fields are dropped, so an empty record is e
 Deno.test("buildRecordMeta — a partial record keeps only what is there", () => {
   const meta = buildRecordMeta({ GuestName: "Solo" }, undefined);
   assertEquals(meta, { guestName: "Solo" });
+});
+
+Deno.test("isPlaceholderVoName — numbered manager seats, in either shape the field arrives", () => {
+  // Raw off the finding record, and already split the way audit-done-idx stores it.
+  assertEquals(isPlaceholderVoName("ODS - Manager 4"), true);
+  assertEquals(isPlaceholderVoName("Manager 4"), true);
+  assertEquals(isPlaceholderVoName("manager 12"), true, "case-insensitive");
+  assertEquals(isPlaceholderVoName("Manager4"), true, "no space");
+  assertEquals(isPlaceholderVoName("GS MB - Manager #2"), true);
+  // Real people keep their audits, including a name that merely contains the word.
+  assertEquals(isPlaceholderVoName("Jane Manager"), false);
+  assertEquals(isPlaceholderVoName("ODS - Manager Jane"), false);
+  assertEquals(isPlaceholderVoName("ODS - Other"), false);
+  assertEquals(isPlaceholderVoName(""), false);
+  assertEquals(isPlaceholderVoName(undefined), false);
 });

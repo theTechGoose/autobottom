@@ -15,6 +15,7 @@ import type {
   ReportColumnKey,
   AppealRecord,
 } from "@core/dto/types.ts";
+import { isPlaceholderVoName } from "@core/business/record-meta/mod.ts";
 import { getAppeal, listOpenAppealFindingIds } from "@judge/domain/data/judge-repository/mod.ts";
 import { sendEmail } from "@reporting/domain/data/postmark/mod.ts";
 import { queryFailedFindings } from "@audit/domain/data/failed-finding-repository/mod.ts";
@@ -421,6 +422,11 @@ export async function queryReportData(
     // way out and no report can readmit them.
     if (isReportExcluded(department, isPackage, excludeCfg)) continue;
 
+    // Placeholder manager SEATS ("ODS - Manager 4") leave by the same door, and
+    // before the section criteria, so they are absent from the rows, the totals
+    // and the digest cards alike rather than merely unplaced.
+    if (isPlaceholderVoName(voName)) continue;
+
     const stat: Record<string, any> = {
       isPackage,
       score: entry.score,
@@ -574,6 +580,7 @@ async function queryOpenAppealRows(
       const isPackage = finding.recordingIdField === "GenieNumber";
       const rec = (finding.record ?? {}) as Record<string, any>;
       const rawVoName = rec.VoName as string | undefined;
+      if (isPlaceholderVoName(rawVoName)) continue;
       const stat: Record<string, any> = {
         isPackage,
         score: scoreOfFinding(finding),

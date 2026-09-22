@@ -115,3 +115,19 @@ export function buildRecordMeta(
   }
   return meta;
 }
+
+/** True for a VO field that names a placeholder SEAT rather than a person —
+ *  ODS books numbered manager slots ("ODS - Manager 4") that get audited like
+ *  anyone else, and they are not meant to appear on a report.
+ *
+ *  Accepts the field in either shape it reaches a caller: raw off the finding
+ *  record ("ODS - Manager 4") or already split to the half after the dash
+ *  ("Manager 4"), which is what `audit-done-idx` stores. Matched on the name
+ *  alone, not the office, so the same seat naming anywhere is treated the same.
+ *  A real name that merely CONTAINS "manager" is untouched — the whole name
+ *  must be the word plus a number. */
+export function isPlaceholderVoName(voName: string | undefined | null): boolean {
+  const raw = String(voName ?? "");
+  const name = raw.includes(" - ") ? raw.split(" - ").slice(1).join(" - ") : raw;
+  return /^manager\s*#?\s*\d+$/i.test(name.trim());
+}

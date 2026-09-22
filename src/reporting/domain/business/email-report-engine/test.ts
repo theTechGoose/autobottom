@@ -362,6 +362,45 @@ Deno.test({ name: "queryReportData — an excluded department is dropped, by sec
   assertEquals(ids, ["absorbed", "keep"]);
 }});
 
+Deno.test({ name: "queryReportData — a placeholder manager seat is dropped, by section AND by manager routing", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  _resetQueryAuditDoneIndexCacheForTests();
+  _resetManagerRoutingCachesForTests();
+  const ORG = "test-mgrseat-" + crypto.randomUUID().slice(0, 8);
+  const now = Date.now();
+
+  const row = (findingId: string, voName: string, department: string) => ({
+    findingId, completedAt: now, doneAt: now, completed: true, reason: "reviewed",
+    score: 100, recordId: "R" + findingId, voName, department, shift: "AM", isPackage: false,
+  });
+  // "ODS" is claimed by this report's section; "Some New Code" is not, so those
+  // two ride their manager in through the absorb path.
+  await writeAuditDoneIndex(ORG as any, row("person", "Jane Doe", "ODS") as any, { assumeFinished: true });
+  await writeAuditDoneIndex(ORG as any, row("seat", "Manager 4", "ODS") as any, { assumeFinished: true });
+  await writeAuditDoneIndex(ORG as any, row("absorbed-person", "Pat Real", "Some New Code") as any, { assumeFinished: true });
+  await writeAuditDoneIndex(ORG as any, row("absorbed-seat", "Manager 12", "Some New Code") as any, { assumeFinished: true });
+  for (const id of ["person", "seat", "absorbed-person", "absorbed-seat"]) {
+    await saveFinding(ORG as any, { id, record: { SupervisorEmail: "boss@x.com" } } as any);
+  }
+
+  const config = {
+    name: "t", recipients: ["x@y.com"],
+    weeklyManagers: ["boss@x.com"],
+    reportSections: [{
+      header: "ODS", columns: IDX_COLUMNS,
+      criteria: [{ field: "department", operator: "equals", value: "ODS" }],
+    }],
+    dateRange: { mode: "fixed", from: now - 1000, to: now + 1000 },
+    onlyCompleted: true,
+  };
+
+  const sections = await queryReportData(ORG as any, config as any);
+  const ids = sections[0].rows.map((r) => r.findingId).sort();
+  // "absorbed-person" proves routing is live, so both seats being gone is the
+  // placeholder rule working rather than routing quietly failing.
+  assertEquals(ids, ["absorbed-person", "person"]);
+}});
+
 Deno.test({ name: "queryReportData — wrong department/shift filters drop the index row (no hydration needed)", sanitizeOps: false, sanitizeResources: false, fn: async () => {
   resetFirestoreCredentials();
   _resetQueryAuditDoneIndexCacheForTests();

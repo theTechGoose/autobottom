@@ -55,7 +55,9 @@ export async function startUploadReaudit(
   await new S3Ref(bucket, s3Key).save(input.file);
 
   // Soft-delete the old finding from queues; keep chunks for the report link.
+  // reAuditedTo points the old report's "Re-Audited" button at the new audit.
   (old as Record<string, unknown>).reAuditedAt = Date.now();
+  (old as Record<string, unknown>).reAuditedTo = newFindingId;
   await saveFinding(orgId, old);
 
   // Same as the genie re-audit path: flag the manager's remediation row

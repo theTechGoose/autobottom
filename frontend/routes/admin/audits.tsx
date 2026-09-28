@@ -88,7 +88,12 @@ export default define.page(async function AdminAuditsPage(ctx) {
   const user = ctx.state.user!;
   const url = new URL(ctx.req.url);
   const filters = buildInitialFilters(url);
-  const activeHours = Math.round((parseInt(filters.until, 10) - parseInt(filters.since, 10)) / 3_600_000);
+  // A typed range highlights NO preset. A one-day range rounds to 24h, so
+  // matching on the span alone lit the 24h button up under a date the user had
+  // typed themselves — the same lie the window label used to tell.
+  const activeHours = filters.rangeMode === "custom"
+    ? -1
+    : Math.round((parseInt(filters.until, 10) - parseInt(filters.since, 10)) / 3_600_000);
 
   let data: AdminAuditData;
   let mainHtml: string;

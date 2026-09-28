@@ -8,7 +8,7 @@
 import { define } from "../../../lib/define.ts";
 import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
-import { timeAgo } from "../../../lib/format.ts";
+import { eastern, easternFull, easternDay } from "../../../lib/format.ts";
 import type { VNode } from "preact";
 import { APPEAL_OUTCOME_LABELS } from "@judge/domain/business/appeal-tracking/mod.ts";
 import type { AppealOutcome } from "@core/dto/types.ts";
@@ -82,6 +82,10 @@ export interface AdminAuditFilters {
   scoreState: string;   // "" | "has-score" | "no-score"
   page: string;
   limit: string;
+  /** "custom" once the user types a date range, "" while a preset button drives
+   *  the window. Display only: it decides whether the label names dates or a
+   *  preset, and is deliberately kept out of the backend query. */
+  rangeMode: string;
 }
 
 const QB_DATE_URL = "https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bpb28qsnn/action/dr?rid=";
@@ -103,6 +107,44 @@ function fmtDur(ms?: number): string {
   return r ? `${m}m ${r}s` : `${m}m`;
 }
 
+/** An audit that never needed a human: the bot passed it outright, or there
+ *  was no recording to grade. No review clock exists for these. */
+function isAutoResolved(item: AdminAuditItem): boolean {
+  return item.reason === "perfect_score" || item.reason === "invalid_genie";
+}
+
+/** Either signal counts — the review-done sentinel and the index's reviewedBy
+ *  disagree on legacy rows (reconcileReviewedSignals backfills the divergence). */
+function isReviewed(item: AdminAuditItem): boolean {
+  return !isAutoResolved(item) && !!(item.reviewed || item.reviewedBy);
+}
+
+/** When the BOT finished grading.
+ *
+ *  It is not simply the row's timestamp: writeSoleAuditDoneIndex re-keys a
+ *  reviewed row's `completedAt` to the REVIEW time
+ *  (`canonicalTs = reviewedAt ?? completedAt`), so the bot's own finish is gone
+ *  from the index on exactly the rows a reader most wants to compare. What
+ *  survives is the pair the pipeline stamped at finalize — startedAt and the
+ *  run's duration — so add them back up. On a row the index never re-keyed
+ *  (nothing reviewed it), the row's timestamp IS the bot's finish. */
+function botDoneAt(item: AdminAuditItem): number | undefined {
+  if (item.startedAt && item.durationMs) return item.startedAt + item.durationMs;
+  if (!isReviewed(item)) return item.ts ?? item.completedAt;
+  return undefined;
+}
+
+/** When the REVIEWER finished — the re-keyed timestamp, and only on a row that
+ *  a human actually reviewed. */
+function reviewedAt(item: AdminAuditItem): number | undefined {
+  return isReviewed(item) ? (item.ts ?? item.completedAt) : undefined;
+}
+
+/** A clock time with the full date, seconds and zone on hover. */
+function timeCell(ts?: number): VNode {
+  return <span title={easternFull(ts)}>{eastern(ts)}</span>;
+}
+
 function scorePill(s: number | null | undefined): VNode | string {
   if (s == null) return "\u2014";
   const cls = s === 100 ? "green" : s >= 80 ? "yellow" : "red";
@@ -115,13 +157,21 @@ function typeBadge(isPackage?: boolean): VNode {
     : <span class="pill pill-blue">Internal</span>;
 }
 
+/** WHEN a human finished, not just THAT one did — a bare "✓ Reviewed" pill
+ *  left the only human timestamp on the page invisible. Audits that never
+ *  needed a review keep their pill, because no such time exists for them. */
 function reviewedBadge(item: AdminAuditItem): VNode | string {
   if (item.reason === "perfect_score") return <span class="pill pill-green" title="100% — no review needed">✓ Auto</span>;
   if (item.reason === "invalid_genie") return <span class="pill pill-blue" title="No recording — no review needed">✓ Auto</span>;
-  // Either signal counts as reviewed — review-done sentinel and audit-done-idx
-  // reviewedBy field can disagree on legacy rows (reconcileReviewedSignals
-  // backfills the divergence; new write paths write both).
-  if (item.reviewed || item.reviewedBy) return <span class="pill pill-green">✓ Reviewed</span>;
+  const ts = reviewedAt(item);
+  if (ts) {
+    return (
+      <span style="color:var(--green);white-space:nowrap;" title={`Reviewed ${easternFull(ts)}`}>
+        ✓ {eastern(ts)}
+      </span>
+    );
+  }
+  if (isReviewed(item)) return <span class="pill pill-green">✓ Reviewed</span>;
   return "\u2014";
 }
 
@@ -230,7 +280,7 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
             <th>Auditor</th>
             <th>Score</th>
             <th>Started</th>
-            <th>Finished</th>
+            <th>Bot Done</th>
             <th>Duration</th>
             <th>Reviewed</th>
             <th>Appeal</th>
@@ -240,7 +290,6 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
         <tbody>
           {data.items.map((c) => {
             const fid = c.findingId || "\u2014";
-            const ts = c.ts ?? c.completedAt ?? 0;
             const aud = auditorLabel(c);
             return (
               <tr key={fid}>
@@ -282,8 +331,8 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
                 </td>
                 <td><span class="mono" style={`font-size:10px;color:${aud.dim ? "var(--text-dim)" : "var(--text)"};`}>{aud.text}</span></td>
                 <td>{scorePill(c.score)}</td>
-                <td><span title={c.startedAt ? new Date(c.startedAt).toLocaleString() : ""}>{c.startedAt ? timeAgo(c.startedAt) : "\u2014"}</span></td>
-                <td><span title={ts ? new Date(ts).toLocaleString() : ""}>{ts ? timeAgo(ts) : "\u2014"}</span></td>
+                <td style="white-space:nowrap;">{timeCell(c.startedAt)}</td>
+                <td style="white-space:nowrap;">{timeCell(botDoneAt(c))}</td>
                 <td style="font-variant-numeric:tabular-nums;">{fmtDur(c.durationMs)}</td>
                 <td>{reviewedBadge(c)}</td>
                 <td>{appealBadge(c)}</td>
@@ -417,10 +466,22 @@ export function renderAuditHistoryDropdowns(data: AdminAuditData, filters: Admin
   };
 }
 
-function windowLabelFromFilters(f: AdminAuditFilters): string {
+/** What to call the window on screen.
+ *
+ *  A preset button means a ROLLING window ("the last 24 hours"), so its preset
+ *  name is the honest label. A typed date range means a FIXED window, and
+ *  bucketing it by span labelled 09/26-09/26 as "24h" — the same words the
+ *  rolling window uses, for a completely different set of audits. A fixed
+ *  window names its dates instead. */
+export function windowLabelFromFilters(f: AdminAuditFilters): string {
   const since = parseInt(f.since || "0", 10);
   const until = parseInt(f.until || String(Date.now()), 10);
   if (since === 0) return "all";
+  if (f.rangeMode === "custom" && Number.isFinite(since) && Number.isFinite(until)) {
+    const start = easternDay(since);
+    const end = easternDay(until);
+    return start === end ? start : `${start} \u2013 ${end}`;
+  }
   const hours = Math.round((until - since) / 3_600_000);
   if (hours <= 1) return "1h";
   if (hours <= 4) return "4h";
@@ -447,6 +508,7 @@ export function readFilters(url: URL): AdminAuditFilters {
     scoreState: url.searchParams.get("scoreState") ?? "",
     page: url.searchParams.get("page") ?? "1",
     limit: url.searchParams.get("limit") ?? "50",
+    rangeMode: url.searchParams.get("rangeMode") ?? "",
   };
 }
 
@@ -454,6 +516,9 @@ export function readFilters(url: URL): AdminAuditFilters {
 export function buildBackendQs(f: AdminAuditFilters): URLSearchParams {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(f)) {
+    // rangeMode only tells the LABEL whether the window is fixed or rolling;
+    // since/until already say everything the query needs.
+    if (k === "rangeMode") continue;
     if (v != null && v !== "") qs.set(k, v);
   }
   return qs;

@@ -4,10 +4,11 @@
  *  admin nothing about which way the appeal went. These lock in the direction,
  *  the hover notes, and the click-through to the appeal-detail modal. */
 import { renderHTML, assertContains, assertNotContains } from "../../helpers/render.ts";
-import { assert } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   renderAuditHistoryMain,
   renderAuditHistoryDropdowns,
+  windowLabelFromFilters,
   type AdminAuditData,
   type AdminAuditFilters,
   type AdminAuditItem,
@@ -95,7 +96,7 @@ function filters(over: Partial<AdminAuditFilters> = {}): AdminAuditFilters {
   return {
     since: "0", until: "1", type: "", owner: "", department: "", shift: "",
     reviewed: "", auditor: "", scoreMin: "0", scoreMax: "100", scoreState: "",
-    page: "1", limit: "50", ...over,
+    page: "1", limit: "50", rangeMode: "", ...over,
   };
 }
 
@@ -122,4 +123,128 @@ Deno.test("auditor dropdown — the chosen auditor stays chosen after a refresh"
 Deno.test("auditor dropdown — options are ordered by the name people read", () => {
   const html = auditorDropdown(["zzz@a.com", "aknight@zzzz.com"]);
   assert(html.indexOf(">aknight<") < html.indexOf(">zzz<"));
+});
+
+/** REQ-001 — the window label must name the window that was actually queried.
+ *
+ *  A typed 09/26–09/26 range spans ~24h, so bucketing by span labelled it
+ *  "24h" — which reads as "the last 24 hours", a different window entirely. */
+
+/** Eastern-time boundaries of a typed date range. The page's Go button builds
+ *  these from `<date>T00:00:00` / `<date>T23:59:59` in the user's own zone. */
+const SEP26_START = Date.UTC(2026, 8, 26, 4, 0, 0);       // Sep 26 00:00 EDT
+const SEP26_END = Date.UTC(2026, 8, 27, 3, 59, 59);       // Sep 26 23:59:59 EDT
+const SEP22_START = Date.UTC(2026, 8, 22, 4, 0, 0);       // Sep 22 00:00 EDT
+
+function label(over: Partial<AdminAuditFilters>): string {
+  return windowLabelFromFilters(filters(over));
+}
+
+Deno.test("REQ-001 — a one-day custom range names the day, not '24h'", () => {
+  assertEquals(
+    label({ since: String(SEP26_START), until: String(SEP26_END), rangeMode: "custom" }),
+    "Sep 26",
+  );
+});
+
+Deno.test("REQ-001 — a custom range across days names both ends", () => {
+  assertEquals(
+    label({ since: String(SEP22_START), until: String(SEP26_END), rangeMode: "custom" }),
+    "Sep 22 \u2013 Sep 26",
+  );
+});
+
+Deno.test("REQ-001 — a preset button keeps its preset name", () => {
+  const until = Date.now();
+  assertEquals(label({ since: String(until - 24 * 3_600_000), until: String(until) }), "24h");
+  assertEquals(label({ since: String(until - 7 * 24 * 3_600_000), until: String(until) }), "7d");
+});
+
+Deno.test("REQ-001 — no date filter still reads 'all'", () => {
+  assertEquals(label({ since: "0", until: String(Date.now()) }), "all");
+});
+
+Deno.test("REQ-001 — the Total card carries whatever label it is given", () => {
+  const html = renderHTML(renderAuditHistoryMain(data({}), "Sep 26", null));
+  assertContains(html, "Total (Sep 26)");
+});
+
+/** REQ-002 — Started / Bot Done / Reviewed are Eastern clock times.
+ *
+ *  The old single FINISHED column rendered the index row's `completedAt`, and
+ *  writeSoleAuditDoneIndex overwrites that with the review time on a reviewed
+ *  row — so one column silently meant the reviewer on some rows and the bot on
+ *  others. Split it, and print real times instead of "1d ago". */
+const STARTED = Date.UTC(2026, 8, 24, 12, 12, 0);   // Sep 24  8:12 AM EDT
+const BOT_MS = 95_000;                               // → bot done 8:13 AM EDT
+const BOT_DONE_TEXT = "9/24 8:13 AM";
+const STARTED_TEXT = "9/24 8:12 AM";
+const REVIEW_TS = Date.UTC(2026, 8, 26, 18, 41, 0); // Sep 26  2:41 PM EDT
+const REVIEW_TEXT = "9/26 2:41 PM";
+
+function occurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
+Deno.test("REQ-002 — the table has a Bot Done and a Reviewed column, not one 'Finished'", () => {
+  const html = render({});
+  assertContains(html, "<th>Bot Done</th>");
+  assertContains(html, "<th>Reviewed</th>");
+  assertNotContains(html, "<th>Finished</th>");
+});
+
+Deno.test("REQ-002 — a reviewed audit shows the bot's finish and the reviewer's finish apart", () => {
+  const html = render({
+    startedAt: STARTED,
+    durationMs: BOT_MS,
+    ts: REVIEW_TS,
+    reviewed: true,
+    reviewedBy: "aknight@monsterrg.com",
+    reason: "reviewed",
+  });
+  assertContains(html, STARTED_TEXT);
+  assertContains(html, BOT_DONE_TEXT);
+  assertContains(html, REVIEW_TEXT);
+});
+
+Deno.test("REQ-002 — times are clock times, never '1d ago'", () => {
+  const html = render({
+    startedAt: STARTED,
+    durationMs: BOT_MS,
+    ts: REVIEW_TS,
+    reviewed: true,
+    reviewedBy: "aknight@monsterrg.com",
+    reason: "reviewed",
+  });
+  assertNotContains(html, "d ago");
+  assertNotContains(html, "h ago");
+  assertNotContains(html, "m ago");
+});
+
+Deno.test("REQ-002 — hovering a time gives the full date, seconds and zone", () => {
+  const html = render({ startedAt: STARTED, durationMs: BOT_MS, ts: REVIEW_TS, reviewed: true, reviewedBy: "a@b.com" });
+  assertContains(html, "2026");
+  assertContains(html, "EDT");
+});
+
+Deno.test("REQ-002 — an audit nobody has reviewed shows no review time", () => {
+  const html = render({ startedAt: STARTED, durationMs: BOT_MS, ts: STARTED + BOT_MS, reviewed: false });
+  assertContains(html, BOT_DONE_TEXT);
+  assertNotContains(html, REVIEW_TEXT);
+});
+
+Deno.test("REQ-002 — an audit that never needed review still reads as Auto", () => {
+  const html = render({ reason: "perfect_score", startedAt: STARTED, durationMs: BOT_MS, ts: STARTED + BOT_MS });
+  assertContains(html, "\u2713 Auto");
+  assertNotContains(html, REVIEW_TEXT);
+});
+
+Deno.test("REQ-002 — an old row with no duration falls back to its index time for Bot Done", () => {
+  const html = render({ ts: STARTED + BOT_MS, reviewed: false });
+  assertContains(html, BOT_DONE_TEXT);
+});
+
+Deno.test("REQ-002 — a reviewed row with no duration does not pass the review time off as the bot's", () => {
+  const html = render({ ts: REVIEW_TS, reviewed: true, reviewedBy: "aknight@monsterrg.com", reason: "reviewed" });
+  assertEquals(occurrences(html, REVIEW_TEXT), 1);
 });

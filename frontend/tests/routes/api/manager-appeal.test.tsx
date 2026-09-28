@@ -18,11 +18,11 @@ function finding(over: Record<string, unknown> = {}) {
       { header: "Guest Name", answer: "Yes" },
       {
         header: "Confirmation Expectations", answer: "No",
-        judgeAction: "uphold", judgedBy: "judge@monsterrg.com", judgeReason: UPHELD_REASON,
+        judgeAction: "uphold" as const, judgedBy: "judge@monsterrg.com", judgeReason: UPHELD_REASON,
       },
       {
         header: "9% Service Fee", answer: "Yes",
-        judgeAction: "overturn", judgedBy: "judge@monsterrg.com", judgeReason: "error",
+        judgeAction: "overturn" as const, judgedBy: "judge@monsterrg.com", judgeReason: "error",
       },
       { header: "Taxes", answer: "Yes" },
     ],
@@ -70,7 +70,7 @@ Deno.test("appeal modal — an all-upheld appeal says the score is unchanged", (
   const html = renderHTML(renderAppealDetail(finding({
     answeredQuestions: [
       { header: "Guest Name", answer: "Yes" },
-      { header: "Taxes", answer: "No", judgeAction: "uphold", judgedBy: "j@x.com", judgeReason: "Stands." },
+      { header: "Taxes", answer: "No", judgeAction: "uphold" as const, judgedBy: "j@x.com", judgeReason: "Stands." },
     ],
   }), "fid-appeal"));
   assertContains(html, "unchanged");
@@ -94,7 +94,7 @@ Deno.test("appeal modal — no comment means no comment block", () => {
 Deno.test("appeal modal — older appeals with no reason say so instead of rendering blank", () => {
   const html = renderHTML(renderAppealDetail(finding({
     answeredQuestions: [
-      { header: "Taxes", answer: "No", judgeAction: "uphold", judgedBy: "j@x.com" },
+      { header: "Taxes", answer: "No", judgeAction: "uphold" as const, judgedBy: "j@x.com" },
     ],
   }), "fid-appeal"));
   assertContains(html, "No reason recorded");

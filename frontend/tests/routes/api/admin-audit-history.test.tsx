@@ -4,9 +4,12 @@
  *  admin nothing about which way the appeal went. These lock in the direction,
  *  the hover notes, and the click-through to the appeal-detail modal. */
 import { renderHTML, assertContains, assertNotContains } from "../../helpers/render.ts";
+import { assert } from "@std/assert";
 import {
   renderAuditHistoryMain,
+  renderAuditHistoryDropdowns,
   type AdminAuditData,
+  type AdminAuditFilters,
   type AdminAuditItem,
 } from "../../../routes/api/admin/audit-history.tsx";
 
@@ -80,4 +83,43 @@ Deno.test("appeal badge — a pending appeal is still pending, and says what it 
 Deno.test("appeal badge — an un-appealed audit gets no badge at all", () => {
   const html = render({ appealStatus: null });
   assertNotContains(html, "Appeal ");
+});
+
+/** The AUDITOR dropdown.
+ *
+ *  It used to strip the @domain off the option's VALUE as well as its label,
+ *  so picking "aknight" submitted `auditor=aknight` while the backend compares
+ *  against the full `reviewedBy` email — every row failed the match and the
+ *  page went blank. Value stays the email; only the label is shortened. */
+function filters(over: Partial<AdminAuditFilters> = {}): AdminAuditFilters {
+  return {
+    since: "0", until: "1", type: "", owner: "", department: "", shift: "",
+    reviewed: "", auditor: "", scoreMin: "0", scoreMax: "100", scoreState: "",
+    page: "1", limit: "50", ...over,
+  };
+}
+
+function auditorDropdown(reviewers: string[], selected = ""): string {
+  const d: AdminAuditData = {
+    items: [], total: 0, pages: 1, page: 1,
+    owners: [], departments: [], shifts: [], reviewers,
+  };
+  return renderHTML(renderAuditHistoryDropdowns(d, filters({ auditor: selected })).auditor);
+}
+
+Deno.test("auditor dropdown — submits the full email, shows the short name", () => {
+  const html = auditorDropdown(["aknight@monsterrg.com"]);
+  assertContains(html, 'value="aknight@monsterrg.com"');
+  assertContains(html, ">aknight<");
+  assertNotContains(html, 'value="aknight"');
+});
+
+Deno.test("auditor dropdown — the chosen auditor stays chosen after a refresh", () => {
+  const html = auditorDropdown(["aknight@monsterrg.com", "zzz@monsterrg.com"], "aknight@monsterrg.com");
+  assertContains(html, 'value="aknight@monsterrg.com" selected');
+});
+
+Deno.test("auditor dropdown — options are ordered by the name people read", () => {
+  const html = auditorDropdown(["zzz@a.com", "aknight@zzzz.com"]);
+  assert(html.indexOf(">aknight<") < html.indexOf(">zzz<"));
 });

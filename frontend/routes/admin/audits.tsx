@@ -9,6 +9,7 @@ import { Layout } from "../../components/Layout.tsx";
 import {
   fetchAndRenderFragment,
   renderAuditHistoryDropdowns,
+  windowLabelFromFilters,
   type AdminAuditData,
   type AdminAuditFilters,
 } from "../api/admin/audit-history.tsx";
@@ -39,21 +40,8 @@ function buildInitialFilters(url: URL): AdminAuditFilters {
     scoreState: url.searchParams.get("scoreState") ?? "",
     page: url.searchParams.get("page") ?? "1",
     limit: "50",
+    rangeMode: url.searchParams.get("rangeMode") ?? "",
   };
-}
-
-function windowLabel(f: AdminAuditFilters): string {
-  const since = parseInt(f.since || "0", 10);
-  const until = parseInt(f.until || String(Date.now()), 10);
-  if (since === 0) return "all";
-  const hours = Math.round((until - since) / 3_600_000);
-  if (hours <= 1) return "1h";
-  if (hours <= 4) return "4h";
-  if (hours <= 12) return "12h";
-  if (hours <= 24) return "24h";
-  if (hours <= 72) return "3d";
-  if (hours <= 168) return "7d";
-  return `${Math.round(hours / 24)}d`;
 }
 
 const WINDOWS: Array<{ h: number; label: string }> = [
@@ -77,20 +65,20 @@ const RESET_PAGE_JS = `document.getElementById('ah-page').value='1';`;
 
 /** JS snippet for window-button click — sets hidden since/until, hides ✕ Clear, refreshes. */
 function windowBtnJs(hours: number): string {
-  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));(window.ahClearDates||function(){document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';})();document.getElementById('f-date-clear').style.display='none';${RESET_PAGE_JS}${REFRESH_JS};})()`;
+  return `(()=>{const u=Date.now();const s=u-${hours}*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===${hours}));(window.ahClearDates||function(){document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';})();document.getElementById('f-date-clear').style.display='none';document.getElementById('ah-range-mode').value='';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 }
 
 /** JS for custom-date Go button. Reveals ✕ Clear so user can return to 24h. */
 const goBtnJs =
-  `(()=>{const R=window.ahReadDate||(id=>(document.getElementById(id)||{}).value||'');const s=R('f-date-start');const e=R('f-date-end');if(s===null||e===null){alert('Type the dates as MM/DD/YYYY — e.g. 09/07/2026');return;}if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';${RESET_PAGE_JS}${REFRESH_JS};})()`;
+  `(()=>{const R=window.ahReadDate||(id=>(document.getElementById(id)||{}).value||'');const s=R('f-date-start');const e=R('f-date-end');if(s===null||e===null){alert('Type the dates as MM/DD/YYYY — e.g. 09/07/2026');return;}if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}const B=window.ahEtDayBounds||((d,z)=>new Date(d+(z?'T23:59:59':'T00:00:00')).getTime());document.getElementById('ah-since').value=B(s,false);document.getElementById('ah-until').value=B(e,true);document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';document.getElementById('ah-range-mode').value='custom';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 
 /** JS for ✕ Clear (visible only after a custom range) — return to 24h default. */
 const clearBtnJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;(window.ahClearDates||function(){document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';})();document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${RESET_PAGE_JS}${REFRESH_JS};})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;(window.ahClearDates||function(){document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';})();document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';document.getElementById('ah-range-mode').value='';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 
 /** JS for Reset button — clears all filters back to defaults and 24h. */
 const resetJs =
-  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-score-state').value='';(window.ahClearDates||function(){document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';})();document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';${REFRESH_JS};})()`;
+  `(()=>{const u=Date.now();const s=u-24*3600000;document.getElementById('ah-since').value=s;document.getElementById('ah-until').value=u;document.getElementById('f-type').value='';document.getElementById('f-owner').value='';document.getElementById('f-dept').value='';document.getElementById('f-shift').value='';document.getElementById('f-reviewed').value='';document.getElementById('f-auditor').value='';document.getElementById('f-score-min').value=0;document.getElementById('f-score-max').value=100;document.getElementById('f-score-state').value='';(window.ahClearDates||function(){document.getElementById('f-date-start').value='';document.getElementById('f-date-end').value='';})();document.getElementById('ah-page').value='1';document.querySelectorAll('.window-btn').forEach(b=>b.classList.toggle('active',+b.getAttribute('data-hours')===24));document.getElementById('f-date-clear').style.display='none';document.getElementById('ah-range-mode').value='';${REFRESH_JS};})()`;
 
 /** JS for CSV button — gathers form values + format=csv into a download URL. */
 const csvBtnJs =
@@ -100,7 +88,12 @@ export default define.page(async function AdminAuditsPage(ctx) {
   const user = ctx.state.user!;
   const url = new URL(ctx.req.url);
   const filters = buildInitialFilters(url);
-  const activeHours = Math.round((parseInt(filters.until, 10) - parseInt(filters.since, 10)) / 3_600_000);
+  // A typed range highlights NO preset. A one-day range rounds to 24h, so
+  // matching on the span alone lit the 24h button up under a date the user had
+  // typed themselves — the same lie the window label used to tell.
+  const activeHours = filters.rangeMode === "custom"
+    ? -1
+    : Math.round((parseInt(filters.until, 10) - parseInt(filters.since, 10)) / 3_600_000);
 
   let data: AdminAuditData;
   let mainHtml: string;
@@ -201,7 +194,7 @@ export default define.page(async function AdminAuditsPage(ctx) {
       <div class="audits-topbar">
         <a class="ah-back" href="/admin/dashboard">&larr; Dashboard</a>
         <h1>
-          Audit History <span id="ah-window" style="font-weight:400;color:var(--text-muted);">({windowLabel(filters)})</span>
+          Audit History <span id="ah-window" style="font-weight:400;color:var(--text-muted);">({windowLabelFromFilters(filters)})</span>
         </h1>
         <span class="ah-sub" id="ah-count">{data.total} audits in window</span>
         <span class="ah-updated" id="ah-last-updated">loaded</span>
@@ -315,6 +308,23 @@ export default define.page(async function AdminAuditsPage(ctx) {
                   if(isNaN(t.getTime()) || t.getDate() !== d) return null;
                   return iso;
                 };
+                /* Turn a typed YYYY-MM-DD into the epoch bounds of that day
+                   IN EASTERN, whatever zone the viewer's computer is set to.
+                   new Date(d+'T00:00:00') reads the browser's own zone, so a
+                   UTC machine asked for Sep 26 queried Sep 25 8PM - Sep 26 8PM
+                   Eastern and then labelled it "Sep 25 - Sep 26". Everyone who
+                   reads this page works Eastern hours, and every timestamp in
+                   the table is printed Eastern, so the window is Eastern too.
+                   Probe at noon: that hour never falls inside a DST shift. */
+                window.ahEtDayBounds = function(ymd, endOfDay){
+                  var p = ymd.split('-').map(Number);
+                  var noon = Date.UTC(p[0], p[1] - 1, p[2], 12, 0, 0);
+                  var etHour = Number(new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/New_York', hour: 'numeric', hour12: false,
+                  }).format(noon));
+                  var offset = (12 - etHour) * 3600000;
+                  return Date.UTC(p[0], p[1] - 1, p[2], 0, 0, 0) + offset + (endOfDay ? 86399000 : 0);
+                };
                 /* Clearing has to go through the widget when it exists —
                    setting the hidden input's value leaves the visible box
                    still showing the old range. */
@@ -350,6 +360,10 @@ export default define.page(async function AdminAuditsPage(ctx) {
           </div>
           <input type="hidden" name="since" id="ah-since" value={filters.since} />
           <input type="hidden" name="until" id="ah-until" value={filters.until} />
+          {/* Fixed range (typed dates) or rolling one (a preset button)? The
+              timestamps alone cannot say — a one-day range spans 24h just like
+              the 24h preset — so the buttons state it outright. */}
+          <input type="hidden" name="rangeMode" id="ah-range-mode" value={filters.rangeMode} />
         </label>
 
         <label>Type

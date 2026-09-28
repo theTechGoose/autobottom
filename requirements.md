@@ -22,6 +22,12 @@ window that was actually queried:
 A one-day custom range spans ~24h, so the old span-bucketing logic labelled it
 `24h` — which reads as "the last 24 hours" and is a different window entirely.
 
+The typed range must also RESOLVE in Eastern. The Go button built its bounds
+with `new Date(d+'T00:00:00')`, which reads the viewer's own zone: a UTC machine
+asked for Sep 26 actually queried Sep 25 8PM – Sep 26 8PM Eastern, and then
+honestly labelled that "Sep 25 – Sep 26". Found by driving the page in a
+browser, not by the unit tests.
+
 Tests: `frontend/tests/routes/api/admin-audit-history.test.tsx`
 — "REQ-001 …" (unit). Integration/e2e: covered by the REQ-002 e2e drive of the
 same page (one page, one render path).

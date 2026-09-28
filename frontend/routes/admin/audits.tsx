@@ -70,7 +70,7 @@ function windowBtnJs(hours: number): string {
 
 /** JS for custom-date Go button. Reveals ✕ Clear so user can return to 24h. */
 const goBtnJs =
-  `(()=>{const R=window.ahReadDate||(id=>(document.getElementById(id)||{}).value||'');const s=R('f-date-start');const e=R('f-date-end');if(s===null||e===null){alert('Type the dates as MM/DD/YYYY — e.g. 09/07/2026');return;}if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}document.getElementById('ah-since').value=new Date(s+'T00:00:00').getTime();document.getElementById('ah-until').value=new Date(e+'T23:59:59').getTime();document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';document.getElementById('ah-range-mode').value='custom';${RESET_PAGE_JS}${REFRESH_JS};})()`;
+  `(()=>{const R=window.ahReadDate||(id=>(document.getElementById(id)||{}).value||'');const s=R('f-date-start');const e=R('f-date-end');if(s===null||e===null){alert('Type the dates as MM/DD/YYYY — e.g. 09/07/2026');return;}if(!s||!e){alert('Select both start and end dates');return;}if(s>e){alert('Start date must be before end date');return;}const B=window.ahEtDayBounds||((d,z)=>new Date(d+(z?'T23:59:59':'T00:00:00')).getTime());document.getElementById('ah-since').value=B(s,false);document.getElementById('ah-until').value=B(e,true);document.querySelectorAll('.window-btn').forEach(b=>b.classList.remove('active'));document.getElementById('f-date-clear').style.display='';document.getElementById('ah-range-mode').value='custom';${RESET_PAGE_JS}${REFRESH_JS};})()`;
 
 /** JS for ✕ Clear (visible only after a custom range) — return to 24h default. */
 const clearBtnJs =
@@ -302,6 +302,23 @@ export default define.page(async function AdminAuditsPage(ctx) {
                   var t = new Date(iso + 'T00:00:00');
                   if(isNaN(t.getTime()) || t.getDate() !== d) return null;
                   return iso;
+                };
+                /* Turn a typed YYYY-MM-DD into the epoch bounds of that day
+                   IN EASTERN, whatever zone the viewer's computer is set to.
+                   new Date(d+'T00:00:00') reads the browser's own zone, so a
+                   UTC machine asked for Sep 26 queried Sep 25 8PM - Sep 26 8PM
+                   Eastern and then labelled it "Sep 25 - Sep 26". Everyone who
+                   reads this page works Eastern hours, and every timestamp in
+                   the table is printed Eastern, so the window is Eastern too.
+                   Probe at noon: that hour never falls inside a DST shift. */
+                window.ahEtDayBounds = function(ymd, endOfDay){
+                  var p = ymd.split('-').map(Number);
+                  var noon = Date.UTC(p[0], p[1] - 1, p[2], 12, 0, 0);
+                  var etHour = Number(new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/New_York', hour: 'numeric', hour12: false,
+                  }).format(noon));
+                  var offset = (12 - etHour) * 3600000;
+                  return Date.UTC(p[0], p[1] - 1, p[2], 0, 0, 0) + offset + (endOfDay ? 86399000 : 0);
                 };
                 /* Clearing has to go through the widget when it exists —
                    setting the hidden input's value leaves the visible box

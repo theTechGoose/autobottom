@@ -3,8 +3,10 @@ import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 import { assert } from "@std/assert";
 
-export function renderHTML(vnode: VNode): string {
-  return renderToString(vnode);
+/** A render helper that returns null for "nothing to show" is a normal
+ *  result, not a test error — render it as the empty string. */
+export function renderHTML(vnode: VNode | null): string {
+  return vnode === null ? "" : renderToString(vnode);
 }
 
 export function assertContains(html: string, substring: string, msg?: string) {

@@ -347,11 +347,19 @@ function renderPagination(data: AdminAuditData): VNode | null {
 }
 
 /** Render dropdown <option> list with the current selection preserved. */
-function renderOptions(values: string[], selected: string, allLabel: string): VNode {
+/** `labelOf` lets a dropdown SHOW a friendlier string than it SUBMITS. The
+ *  option's value must stay whatever the backend filters on (e.g. the full
+ *  reviewer email) — shortening the value silently matches nothing. */
+function renderOptions(
+  values: string[],
+  selected: string,
+  allLabel: string,
+  labelOf: (v: string) => string = (v) => v,
+): VNode {
   return (
     <>
       <option value="" selected={selected === ""}>{allLabel}</option>
-      {values.map((v) => <option key={v} value={v} selected={v === selected}>{v}</option>)}
+      {values.map((v) => <option key={v} value={v} selected={v === selected}>{labelOf(v)}</option>)}
     </>
   );
 }
@@ -400,7 +408,12 @@ export function renderAuditHistoryDropdowns(data: AdminAuditData, filters: Admin
     owner: renderOptions(data.owners, filters.owner, "All Members"),
     department: renderOptions(data.departments, filters.department, "All Departments"),
     shift: renderOptions(data.shifts, filters.shift, "All Shifts"),
-    auditor: renderOptions(data.reviewers.map((r) => r.split("@")[0]).sort(), filters.auditor.split("@")[0], "All Auditors"),
+    auditor: renderOptions(
+      [...data.reviewers].sort((a, b) => a.split("@")[0].localeCompare(b.split("@")[0])),
+      filters.auditor,
+      "All Auditors",
+      (r) => r.split("@")[0],
+    ),
   };
 }
 

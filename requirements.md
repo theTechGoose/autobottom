@@ -62,3 +62,44 @@ are deliberately unchanged (asked and confirmed 2026-09-28).
 
 Tests: `frontend/tests/routes/api/admin-audit-history.test.tsx`
 — "REQ-002 …" (unit); e2e: driven in a browser against the Firestore emulator.
+
+---
+
+## REQ-003 — An audit that should be reviewed can't be appealed before it is
+
+> "make it to where reports that aren't reviewed yet, that should be reviewed,
+> do not have the ability to 'file appeal'."
+
+Filing an appeal on an audit still in the review queue put the same failed
+questions in front of a reviewer AND a judge at once, each deciding blind to the
+other (prod finding `1O_T1qMvLZKQlUUJ1vgKi`, 2026-10-01). "Should be reviewed"
+means the review queue picked the audit up (`review-audit-pending` exists);
+"reviewed" means its review was finalized (`review-done` exists).
+
+- The File Appeal button on the audit report and the manager remediation page
+  renders as a disabled **Awaiting Review** pill while the audit waits.
+- The server refuses every appeal path — judge appeal, different/additional
+  recording, uploaded recording — with an "awaiting review" error, so the lock
+  can't be bypassed by calling the endpoint.
+- An audit the review queue never took (Invalid Genie, bypassed office) has
+  nothing to wait for and stays appealable.
+
+Tests: `src/audit/domain/business/file-appeal/test.ts`,
+`src/audit/domain/business/reaudit/test.ts`,
+`src/audit/domain/business/upload-reaudit/test.ts`,
+`src/audit/entrypoints/audit/e2e.test.ts`,
+`frontend/tests/islands/appeal-trigger-variant.test.tsx`,
+`frontend/tests/components/audit-report.test.tsx` — every "REQ-003 …" test.
+
+## REQ-004 — The appeal opens only once ALL failed questions are reviewed
+
+> "Only until that report has been reviewed, and a reviewer finsihed reviewing
+> ALL the failed questions on the report, can a user hit the 'file appeal'
+> button"
+
+A partly reviewed audit is still awaiting review. The lock lifts when the
+review is finalized — which happens only after every failed question has a
+decision — and not before.
+
+Tests: `src/audit/domain/business/file-appeal/test.ts`,
+`src/audit/entrypoints/audit/e2e.test.ts` — every "REQ-004 …" test.

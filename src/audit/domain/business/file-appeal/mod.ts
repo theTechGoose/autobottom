@@ -8,6 +8,7 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { asAnswerText } from "@core/dto/types.ts";
 import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { populateJudgeQueue, saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
+import { assertReviewedBeforeAppeal } from "@review/domain/business/review-queue/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { writeSoleAuditDoneIndex, buildIndexMeta } from "@audit/domain/data/stats-repository/mod.ts";
 import type { AuditDoneIndexEntry } from "@core/dto/types.ts";
@@ -42,6 +43,7 @@ export async function fileJudgeAppeal(
 
   const finding = await step("getFinding", findingId, () => getFinding(orgId, findingId));
   if (!finding) throw new Error(`finding not found: ${findingId}`);
+  await assertReviewedBeforeAppeal(orgId, findingId);
 
   const all = (finding.answeredQuestions ?? []) as Array<Record<string, unknown>>;
   if (!all.length) throw new Error(`no answered questions on finding ${findingId} — Invalid Genie audits can only be re-audited, not appealed`);

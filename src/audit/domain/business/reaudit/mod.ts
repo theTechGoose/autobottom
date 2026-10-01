@@ -16,6 +16,7 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { getFinding, saveFinding, getJob, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
 import { enqueueStep } from "@core/data/qstash/mod.ts";
 import { cleanupFindingFromIndices } from "@judge/domain/data/judge-repository/mod.ts";
+import { assertReviewedBeforeAppeal } from "@review/domain/business/review-queue/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { decrementForFinding as decrementQuestionFailCounters } from "@audit/domain/data/question-stats-repository/mod.ts";
 import { deleteFailedFindingRows } from "@audit/domain/data/failed-finding-repository/mod.ts";
@@ -58,6 +59,7 @@ export async function startReauditWithGenies(
 
   const old = await step("getFinding", findingId, () => getFinding(orgId, findingId));
   if (!old) throw new Error(`finding not found: ${findingId}`);
+  await assertReviewedBeforeAppeal(orgId, findingId);
 
   const normalized = input.recordingIds.map((r) => String(r).trim()).filter(Boolean);
   if (!normalized.length) throw new Error("recordingIds must not be empty");

@@ -38,3 +38,12 @@ Deno.test("AppealModal — an already-filed appeal locks the button in either va
     assert(html.includes("disabled"), `${variant}: filed appeal must not be re-fileable`);
   }
 });
+
+Deno.test("REQ-003: an audit awaiting review shows a locked button, not File Appeal", () => {
+  for (const variant of ["block", "inline"] as const) {
+    const html = renderHTML(<AppealModal {...ARGS} variant={variant} awaitingReview />);
+    assert(html.includes("Awaiting Review"), `${variant}: must say why it is locked`);
+    assert(html.includes("disabled"), `${variant}: must not be clickable`);
+    assert(!html.includes(">File Appeal<"), `${variant}: the live button must not render`);
+  }
+});

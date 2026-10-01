@@ -80,6 +80,8 @@ interface Finding {
   /** Set by reaudit flow — points to the new finding that superseded this
    *  one. Used to turn the "Re-Audited" pill into a one-click jump link. */
   reAuditedTo?: string;
+  /** Set by GET /audit/finding — queued for review, review not finished. */
+  awaitingReview?: boolean;
   /** Multi-recording audits: per-track S3 keys (length = recording count). */
   s3RecordingKeys?: string[];
   /** Multi-recording audits: per-track recording IDs (genie IDs). */
@@ -285,6 +287,7 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
             appealedAt={finding.appealedAt}
             reAuditedAt={finding.reAuditedAt}
             reAuditedTo={finding.reAuditedTo}
+            awaitingReview={finding.awaitingReview}
             failedQuestions={questions
               .map((q, i) => ({ index: i, header: questionLabel(q) || "Untitled question", answer: q.answer ?? "" }))
               .filter((q) => !isYes(q.answer))}

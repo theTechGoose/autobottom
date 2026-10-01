@@ -191,3 +191,27 @@ Deno.test({ name: "reaudit — flags the manager-queue row 're-audited' instead 
   assert(!isOpenQueueItem(row as { status?: string; appealState?: string }), "it leaves the pending queue");
   assertEquals(row?.department, "DS MB", "display fields survive so Completed renders");
 }});
+
+Deno.test({ name: "REQ-003: an audit queued for review cannot be re-audited with a different recording until it is reviewed", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const { populateReviewQueue } = await import("@review/domain/business/review-queue/mod.ts");
+  const findingId = "fid-ra-awaiting-" + crypto.randomUUID().slice(0, 8);
+  const answered = [{ header: "Q0", populated: "P0", thinking: "T0", defense: "D0", answer: "No" }];
+  await saveFinding(ORG, {
+    id: findingId,
+    auditJobId: "job-" + crypto.randomUUID().slice(0, 8),
+    findingStatus: "finished",
+    answeredQuestions: answered,
+    record: { RecordId: "779" },
+    recordingId: "11111111",
+    recordingIdField: "VoGenie",
+    owner: "test@x.com",
+  });
+  await populateReviewQueue(ORG, findingId, answered, "VoGenie", "779");
+
+  await assertRejects(
+    () => startReauditWithGenies(ORG, findingId, { recordingIds: ["22222222"], agentEmail: "test@x.com" }),
+    Error,
+    "awaiting review",
+  );
+}});

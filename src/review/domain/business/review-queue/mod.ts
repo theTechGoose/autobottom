@@ -2045,6 +2045,31 @@ async function _getReviewStatsRaw(orgId: OrgId): Promise<{
   };
 }
 
+// ── Appeal gate: a queued audit waits for its review ─────────────────────────
+
+/** True while `findingId` sits in the review queue unfinished — queued (the
+ *  `review-audit-pending` counter exists) but not finalized (`review-done`
+ *  absent). Partly decided still counts: only finalize, which runs once every
+ *  failed question is decided, ends the wait. An audit that never entered the
+ *  queue (Invalid Genie, bypassed office) has no counter and is not waiting. */
+export async function isAwaitingReview(orgId: OrgId, findingId: string): Promise<boolean> {
+  const [done, counter] = await Promise.all([
+    getStored("review-done", orgId, findingId),
+    getStored<number>("review-audit-pending", orgId, findingId),
+  ]);
+  return !done && counter != null;
+}
+
+/** Refuse an appeal (judge or re-audit) on an audit still awaiting review —
+ *  otherwise a reviewer and a judge decide the same questions independently. */
+export async function assertReviewedBeforeAppeal(orgId: OrgId, findingId: string): Promise<void> {
+  if (await isAwaitingReview(orgId, findingId)) {
+    throw new Error(
+      "This audit is awaiting review — an appeal can be filed once a reviewer has finished every failed question.",
+    );
+  }
+}
+
 // ── Reviewed finding IDs ─────────────────────────────────────────────────────
 
 export async function getReviewedFindingIds(orgId: OrgId): Promise<Set<string>> {

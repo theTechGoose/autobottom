@@ -239,3 +239,14 @@ Deno.test("AuditReport — questions render under their display name, not the ra
   assertNotContains(html, "9% Service Fee");
   assertNotContains(html, "Preview 15 Months");
 });
+
+Deno.test("REQ-003: the report locks File Appeal while the audit awaits review", () => {
+  const failing = { answeredQuestions: [{ header: "Q1", answer: "No" }, { header: "Q2", answer: "Yes" }] };
+  const waiting = renderHTML(<AuditReport finding={baseFinding({ ...failing, awaitingReview: true })} id="fid-test" />);
+  assertContains(waiting, "Awaiting Review");
+  assertNotContains(waiting, ">File Appeal<");
+
+  const reviewed = renderHTML(<AuditReport finding={baseFinding({ ...failing, awaitingReview: false })} id="fid-test" />);
+  assertContains(reviewed, ">File Appeal<");
+  assertNotContains(reviewed, "Awaiting Review");
+});

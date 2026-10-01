@@ -103,3 +103,28 @@ decision — and not before.
 
 Tests: `src/audit/domain/business/file-appeal/test.ts`,
 `src/audit/entrypoints/audit/e2e.test.ts` — every "REQ-004 …" test.
+
+## REQ-005 — The repo declares the merge gate's four tasks
+
+> "A" — chosen from: "Add the four commands to `deno.json` on this branch.
+> `test:unit` and `test:int` split the existing suite, and `serve` points at the
+> emulator app."
+
+`/wt:merge` refused every branch here — even with `--anyway` — because
+`deno.json` lacked `test:unit`, `test:int` and `serve`. Now:
+
+- `test:unit` — the frontend tests (pure renders, no services).
+- `test:int` — the `src/` tests on the Firestore emulator, smoke tests left out
+  (they move to `test:smoke`; `deno task test` still runs all three).
+- `test:e2e` — `shots run` over the stories in `e2e/`, against `serve`.
+- `serve` — the unified app on the emulator stack, on `$PORT`.
+
+The gate runs the three lanes at once and they share one emulator stack (its
+ports are fixed), so `tools/emulators/with-emulators.ts` now takes a file lock:
+one run starts the stack, that run stops it only after every other run is done,
+a signal stops the wrapped command instead of orphaning it, and
+`EMULATOR_PROJECT` gives each run its own Firestore project. The older
+`tests/e2e/` suites, which boot their own server, keep running as
+`test:e2e:standalone`.
+
+No tests — repo/gate wiring; proven by the gate's own run (`wt-gate` GREEN).

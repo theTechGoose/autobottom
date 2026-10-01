@@ -15,14 +15,29 @@
  *    deno run -A tools/emulators/with-emulators.ts deno test -A ...
  *
  *  If the stack is ALREADY running (you keep `deno task emulators` open in
- *  another terminal), it is reused as-is and left running afterwards. */
+ *  another terminal), it is reused as-is and left running afterwards.
+ *
+ *  Several runs may share one stack at once — the gate runs `test:int` and
+ *  `serve` side by side, and the emulator ports are fixed. A file lock keeps
+ *  that safe: only one run starts the stack, every run holds a shared lock
+ *  while its command runs, and the run that started the stack waits for an
+ *  exclusive lock (every other run finished) before stopping it.
+ *
+ *  EMULATOR_PROJECT names the Firestore project (default "autobottom-test"),
+ *  so concurrent runs each get their own wiped document space.
+ *
+ *  `--plan` anywhere in the command runs it straight away, with no stack: it
+ *  only lists what the command would run (the gate asks this before a lane). */
 
 import { EMULATOR_PORTS } from "@core/config/endpoints.ts";
 
 const REQUIRED = [EMULATOR_PORTS.firestore, EMULATOR_PORTS.s3, EMULATOR_PORTS.google, EMULATOR_PORTS.qstash];
 
 /** Separate document space from the seeded dev project. */
-const TEST_PROJECT = "autobottom-test";
+const TEST_PROJECT = Deno.env.get("EMULATOR_PROJECT") || "autobottom-test";
+
+/** Machine-wide, like the ports it guards. */
+const LOCK_PATH = `${Deno.env.get("TMPDIR") ?? "/tmp"}/autobottom-emulators.lock`;
 
 async function wipeTestProject(): Promise<void> {
   const url = `http://127.0.0.1:${EMULATOR_PORTS.firestore}` +
@@ -54,6 +69,16 @@ if (command.length === 0) {
   Deno.exit(2);
 }
 
+if (command.includes("--plan")) {
+  const { code } = await new Deno.Command(command[0], {
+    args: command.slice(1), stdout: "inherit", stderr: "inherit",
+  }).output();
+  Deno.exit(code);
+}
+
+const lock = await Deno.open(LOCK_PATH, { create: true, read: true, write: true });
+await lock.lock(true); // one run at a time decides whether to start the stack
+
 const alreadyRunning = await allUp();
 let stack: Deno.ChildProcess | undefined;
 
@@ -81,18 +106,45 @@ if (alreadyRunning) {
     Deno.exit(1);
   }
 }
+await lock.unlock();
+await lock.lock(false); // held while the command runs, so a starter waits for us
 
 function shutdown() {
   if (!stack) return;
   try { stack.kill("SIGTERM"); } catch { /* already gone */ }
   stack = undefined;
 }
-Deno.addSignalListener("SIGINT", () => { shutdown(); Deno.exit(130); });
-Deno.addSignalListener("SIGTERM", () => { shutdown(); Deno.exit(143); });
+
+/** Leave the stack the way we found it: drop our shared lock and, if we
+ *  started the stack, stop it once every other run sharing it has finished. */
+async function finish(code: number): Promise<never> {
+  await lock.unlock();
+  if (stack) {
+    await lock.lock(true);
+    shutdown();
+  }
+  Deno.exit(code);
+}
+
+let child: Deno.ChildProcess | undefined;
+let signalCode = 0;
+function onSignal(signal: Deno.Signal, code: number) {
+  // Pass it on and let the normal path below finish up — exiting here would
+  // orphan the command (a served app left holding its port) and stop a stack
+  // other runs are still using.
+  if (child) {
+    signalCode = code;
+    try { child.kill(signal); } catch { /* already gone */ }
+  } else {
+    finish(code);
+  }
+}
+Deno.addSignalListener("SIGINT", () => onSignal("SIGINT", 130));
+Deno.addSignalListener("SIGTERM", () => onSignal("SIGTERM", 143));
 
 await wipeTestProject();
 
-const child = new Deno.Command(command[0], {
+child = new Deno.Command(command[0], {
   args: command.slice(1),
   // Set in the process environment, which beats --env-file: the suite runs in
   // emulator mode against its own throwaway project.
@@ -102,5 +154,4 @@ const child = new Deno.Command(command[0], {
 }).spawn();
 
 const { code } = await child.status;
-shutdown();
-Deno.exit(code);
+await finish(signalCode || code);

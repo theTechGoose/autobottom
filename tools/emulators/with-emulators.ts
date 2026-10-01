@@ -18,10 +18,11 @@
  *  another terminal), it is reused as-is and left running afterwards.
  *
  *  Several runs may share one stack at once — the gate runs `test:int` and
- *  `serve` side by side, and the emulator ports are fixed. A file lock keeps
- *  that safe: only one run starts the stack, every run holds a shared lock
- *  while its command runs, and the run that started the stack waits for an
- *  exclusive lock (every other run finished) before stopping it.
+ *  `serve` side by side, and the emulator ports are fixed. Each run registers
+ *  its pid while its command runs; when one finishes and no other live run is
+ *  registered, it stops the stack — if a with-emulators run started it. Those
+ *  decisions are made under a short lock, and no run ever waits on another
+ *  run's lifetime, so a long-lived `serve` can't hold anything up.
  *
  *  EMULATOR_PROJECT names the Firestore project (default "autobottom-test"),
  *  so concurrent runs each get their own wiped document space.
@@ -36,8 +37,14 @@ const REQUIRED = [EMULATOR_PORTS.firestore, EMULATOR_PORTS.s3, EMULATOR_PORTS.go
 /** Separate document space from the seeded dev project. */
 const TEST_PROJECT = Deno.env.get("EMULATOR_PROJECT") || "autobottom-test";
 
-/** Machine-wide, like the ports it guards. */
-const LOCK_PATH = `${Deno.env.get("TMPDIR") ?? "/tmp"}/autobottom-emulators.lock`;
+/** Machine-wide, like the ports it guards: `start.lock` serialises starting
+ *  and stopping, `stack.pid` is a stack a with-emulators run started (one
+ *  started by `deno task emulators` has none and is never stopped here), and
+ *  `clients/<pid>` is one file per run using the stack. */
+const STATE_DIR = `${Deno.env.get("TMPDIR") ?? "/tmp"}/autobottom-emulators`;
+const STACK_PID = `${STATE_DIR}/stack.pid`;
+const CLIENTS = `${STATE_DIR}/clients`;
+const ME = `${CLIENTS}/${Deno.pid}`;
 
 async function wipeTestProject(): Promise<void> {
   const url = `http://127.0.0.1:${EMULATOR_PORTS.firestore}` +
@@ -76,53 +83,78 @@ if (command.includes("--plan")) {
   Deno.exit(code);
 }
 
-const lock = await Deno.open(LOCK_PATH, { create: true, read: true, write: true });
-await lock.lock(true); // one run at a time decides whether to start the stack
+await Deno.mkdir(CLIENTS, { recursive: true });
+const startLock = await Deno.open(`${STATE_DIR}/start.lock`, { create: true, read: true, write: true });
 
-const alreadyRunning = await allUp();
-let stack: Deno.ChildProcess | undefined;
+async function isAlive(pid: number): Promise<boolean> {
+  return (await new Deno.Command("kill", { args: ["-0", String(pid)], stderr: "null" }).output()).success;
+}
 
-if (alreadyRunning) {
+async function readPid(path: string): Promise<number | null> {
+  try {
+    const pid = Number((await Deno.readTextFile(path)).trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Live runs other than this one; files left by a run that died are removed. */
+async function otherClients(): Promise<number> {
+  let n = 0;
+  for await (const e of Deno.readDir(CLIENTS)) {
+    const pid = Number(e.name);
+    if (pid === Deno.pid) continue;
+    if (Number.isInteger(pid) && await isAlive(pid)) n++;
+    else await Deno.remove(`${CLIENTS}/${e.name}`).catch(() => {});
+  }
+  return n;
+}
+
+await startLock.lock(true);
+if (await allUp()) {
   console.log("🧪 reusing the emulator stack already listening on 127.0.0.1");
 } else {
   console.log("🧪 starting emulators…");
-  stack = new Deno.Command(Deno.execPath(), {
+  const stack = new Deno.Command(Deno.execPath(), {
     args: [
       "run", "-A", "--unstable-kv",
       "--env-file=autobottom.env", "--env-file=emulator.env",
       "tools/emulators/mod.ts",
     ],
-    stdout: "inherit",
-    stderr: "inherit",
+    // Not inherited: the stack can outlive this run (another run still using
+    // it), and must not die writing to a pipe nobody reads any more.
+    stdout: "null",
+    stderr: "null",
   }).spawn();
+  stack.unref();
+  await Deno.writeTextFile(STACK_PID, String(stack.pid));
 
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline && !await allUp()) {
     await new Promise((r) => setTimeout(r, 500));
   }
   if (!await allUp()) {
-    console.error("❌ emulators did not come up in 90s (is Java installed? `brew install openjdk`)");
+    console.error("❌ emulators did not come up in 90s — run `deno task emulators` to see why (is Java installed? `brew install openjdk`)");
     try { stack.kill("SIGTERM"); } catch { /* already gone */ }
+    await Deno.remove(STACK_PID).catch(() => {});
     Deno.exit(1);
   }
 }
-await lock.unlock();
-await lock.lock(false); // held while the command runs, so a starter waits for us
+await Deno.writeTextFile(ME, "");
+await startLock.unlock();
 
-function shutdown() {
-  if (!stack) return;
-  try { stack.kill("SIGTERM"); } catch { /* already gone */ }
-  stack = undefined;
-}
-
-/** Leave the stack the way we found it: drop our shared lock and, if we
- *  started the stack, stop it once every other run sharing it has finished. */
+/** Deregister, and stop the stack if we were the last run using it and a
+ *  with-emulators run started it. */
 async function finish(code: number): Promise<never> {
-  await lock.unlock();
-  if (stack) {
-    await lock.lock(true);
-    shutdown();
+  await startLock.lock(true);
+  await Deno.remove(ME).catch(() => {});
+  const stackPid = await readPid(STACK_PID);
+  if (stackPid && await otherClients() === 0) {
+    try { Deno.kill(stackPid, "SIGTERM"); } catch { /* already gone */ }
+    await Deno.remove(STACK_PID).catch(() => {});
   }
+  await startLock.unlock();
   Deno.exit(code);
 }
 
@@ -130,8 +162,7 @@ let child: Deno.ChildProcess | undefined;
 let signalCode = 0;
 function onSignal(signal: Deno.Signal, code: number) {
   // Pass it on and let the normal path below finish up — exiting here would
-  // orphan the command (a served app left holding its port) and stop a stack
-  // other runs are still using.
+  // orphan the command (a served app left holding its port).
   if (child) {
     signalCode = code;
     try { child.kill(signal); } catch { /* already gone */ }

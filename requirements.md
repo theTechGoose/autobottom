@@ -120,9 +120,10 @@ Tests: `src/audit/domain/business/file-appeal/test.ts`,
 - `serve` — the unified app on the emulator stack, on `$PORT`.
 
 The gate runs the three lanes at once and they share one emulator stack (its
-ports are fixed), so `tools/emulators/with-emulators.ts` now takes a file lock:
-one run starts the stack, that run stops it only after every other run is done,
-a signal stops the wrapped command instead of orphaning it, and
+ports are fixed), so `tools/emulators/with-emulators.ts` now registers each run
+that uses the stack: the first run starts it, the last run still using it stops
+it, no run waits on another (a long-lived `serve` holds nothing up), a signal
+stops the wrapped command instead of orphaning it, and
 `EMULATOR_PROJECT` gives each run its own Firestore project. The older
 `tests/e2e/` suites, which boot their own server, keep running as
 `test:e2e:standalone`.

@@ -280,9 +280,9 @@ From the repo root (`deno.json` tasks):
 
 The merge gate (`wt-gate`) runs `test:unit`, `test:int` and `test:e2e` at once,
 with `serve` started for the e2e lane. They share one emulator stack:
-`tools/emulators/with-emulators.ts` lets one run start it, and that run stops
-it only after every other run has finished; each run gets its own Firestore
-project.
+`tools/emulators/with-emulators.ts` starts it for the first run that needs it
+and stops it when the last run still using it finishes; each run gets its own
+Firestore project.
 
 Frontend-only type-check: `cd frontend && deno task check`.
 

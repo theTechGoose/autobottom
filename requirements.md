@@ -129,3 +129,13 @@ stops the wrapped command instead of orphaning it, and
 `test:e2e:standalone`.
 
 No tests — repo/gate wiring; proven by the gate's own run (`wt-gate` GREEN).
+
+## REQ-006 — The login / register links are a hittable size
+
+> "fix it"
+
+The pre-merge hit-target audit flagged the login page's "Create organization"
+link at 119×15 px, under the 24×24 minimum. The `.auth-link a` links (that one
+and register's "Sign in") are now at least 24px tall.
+
+Tests: `frontend/tests/routes/auth-link-target.test.ts` — "REQ-006 …" (unit).

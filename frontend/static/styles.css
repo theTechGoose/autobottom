@@ -218,7 +218,7 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .auth-logo { font-size: 22px; font-weight: 800; color: var(--text-bright); margin-bottom: 4px; letter-spacing: -0.5px; text-align: center; }
 .auth-sub { font-size: 13px; color: var(--text-dim); margin-bottom: 32px; text-align: center; }
 .auth-link { text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-muted); }
-.auth-link a { color: var(--blue); text-decoration: none; }
+.auth-link a { color: var(--blue); text-decoration: none; display: inline-block; min-height: 24px; line-height: 24px; padding: 0 4px; }
 .auth-link a:hover { text-decoration: underline; }
 .auth-error { margin-top: 8px; min-height: 20px; }
 .error-text { color: var(--red); font-size: 12px; }

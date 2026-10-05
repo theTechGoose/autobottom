@@ -16,7 +16,9 @@ interface Props {
   findingId: string;
   auditorEmail: string;
   failedQuestions: FailedQuestion[];
-  originalGenieId?: string;
+  /** Every recording the audit used — the "Different Recording" tab starts
+   *  with all of them so adding one appends instead of swapping (REQ-007). */
+  originalGenieIds?: string[];
   /** Set when an appeal has already been filed for this finding —
    *  disables the trigger button and changes its label to "Appeal Filed". */
   appealedAt?: number;
@@ -56,7 +58,7 @@ function fmtTime(sec: number): string {
 }
 
 export default function AppealModal(props: Props) {
-  const { findingId, auditorEmail, failedQuestions, originalGenieId = "", appealedAt, reAuditedAt, reAuditedTo, awaitingReview, variant = "block" } = props;
+  const { findingId, auditorEmail, failedQuestions, originalGenieIds = [], appealedAt, reAuditedAt, reAuditedTo, awaitingReview, variant = "block" } = props;
   // Local lock — set after a successful submit so the button updates without
   // needing a page refresh. Server-side appealedAt/reAuditedAt cover the
   // post-refresh case.
@@ -78,7 +80,7 @@ export default function AppealModal(props: Props) {
   const [appealComment, setAppealComment] = useState("");
 
   // Re-audit — different recording tab
-  const [genies, setGenies] = useState<string[]>(originalGenieId ? [originalGenieId] : [""]);
+  const [genies, setGenies] = useState<string[]>(originalGenieIds.length ? [...originalGenieIds] : [""]);
   const [reauditComment, setReauditComment] = useState("");
 
   // Re-audit — upload tab
@@ -113,7 +115,7 @@ export default function AppealModal(props: Props) {
     setErr(null);
     setChecked(new Set());
     setAppealComment("");
-    setGenies(originalGenieId ? [originalGenieId] : [""]);
+    setGenies(originalGenieIds.length ? [...originalGenieIds] : [""]);
     setReauditComment("");
     if (uploadUrl) URL.revokeObjectURL(uploadUrl);
     setUploadFile(null);

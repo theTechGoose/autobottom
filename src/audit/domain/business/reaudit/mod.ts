@@ -5,9 +5,9 @@
  *  handles multi-genie download + stitch, and step-transcribe concatenates the
  *  transcripts, so "additional-recording" just works once `genieIds` is set.
  *
- *  appealType is chosen by whether the original genie stays in the list:
- *    - keeps original → "additional-recording" (concat + audit as one call)
- *    - drops original → "different-recording" (swap, single re-audit)
+ *  appealType is chosen by whether every original genie stays in the list:
+ *    - keeps all originals → "additional-recording" (concat + audit as one call)
+ *    - drops any original  → "different-recording" (swap, REQ-008)
  *
  *  A "re-audit-receipt" webhook fires so the agent gets a confirmation email. */
 
@@ -68,8 +68,15 @@ export async function startReauditWithGenies(
   }
 
   const originalId = old.recordingId ? String(old.recordingId) : undefined;
+  // A multi-recording audit lists every genie in `genieIds`; keeping only the
+  // first while dropping another is a swap, not an addition (REQ-008).
+  const originalIds = Array.isArray(old.genieIds) && old.genieIds.length
+    ? old.genieIds.map((g: unknown) => String(g))
+    : originalId ? [originalId] : [];
   const appealType: "different-recording" | "additional-recording" =
-    originalId && normalized.includes(originalId) ? "additional-recording" : "different-recording";
+    originalIds.length && originalIds.every((g: string) => normalized.includes(g))
+      ? "additional-recording"
+      : "different-recording";
 
   // Generate the new finding ID up-front so the old finding doc can carry a
   // `reAuditedTo` pointer. Stale-link UX: anyone landing on the old report

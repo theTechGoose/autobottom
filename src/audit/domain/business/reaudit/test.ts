@@ -215,3 +215,46 @@ Deno.test({ name: "REQ-003: an audit queued for review cannot be re-audited with
     "awaiting review",
   );
 }});
+
+Deno.test({ name: "REQ-008: dropping one of the audit's recordings is a different-recording re-audit", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const findingId = "fid-drop-" + crypto.randomUUID().slice(0, 8);
+  // The prod case: two genies, the appeal kept the first and swapped the second.
+  await saveFinding(ORG, {
+    id: findingId,
+    auditJobId: "job-" + crypto.randomUUID().slice(0, 8),
+    findingStatus: "finished",
+    record: { RecordId: "100" },
+    recordingId: "11111111",
+    genieIds: ["11111111", "22222222"],
+    recordingIdField: "VoGenie",
+    owner: "test@x.com",
+  });
+
+  const result = await startReauditWithGenies(ORG, findingId, {
+    recordingIds: ["11111111", "33333333"],
+    agentEmail: "test@x.com",
+  });
+  assertEquals(result.appealType, "different-recording");
+}});
+
+Deno.test({ name: "REQ-008: keeping every one of the audit's recordings and adding one is additional", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const findingId = "fid-keepall-" + crypto.randomUUID().slice(0, 8);
+  await saveFinding(ORG, {
+    id: findingId,
+    auditJobId: "job-" + crypto.randomUUID().slice(0, 8),
+    findingStatus: "finished",
+    record: { RecordId: "100" },
+    recordingId: "11111111",
+    genieIds: ["11111111", "22222222"],
+    recordingIdField: "VoGenie",
+    owner: "test@x.com",
+  });
+
+  const result = await startReauditWithGenies(ORG, findingId, {
+    recordingIds: ["11111111", "22222222", "33333333"],
+    agentEmail: "test@x.com",
+  });
+  assertEquals(result.appealType, "additional-recording");
+}});

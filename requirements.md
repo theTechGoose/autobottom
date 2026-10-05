@@ -136,6 +136,7 @@ No tests — repo/gate wiring; proven by the gate's own run (`wt-gate` GREEN).
 
 The pre-merge hit-target audit flagged the login page's "Create organization"
 link at 119×15 px, under the 24×24 minimum. The `.auth-link a` links (that one
-and register's "Sign in") are now at least 24px tall.
+and register's "Sign in") are now at least 24px tall, and so are links in the
+audit report's metadata grid (the Record ID link to the CRM was 43×13 px).
 
 Tests: `frontend/tests/routes/auth-link-target.test.ts` — "REQ-006 …" (unit).

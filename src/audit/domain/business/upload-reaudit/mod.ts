@@ -14,6 +14,7 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { getFinding, saveFinding, saveJob } from "@audit/domain/data/audit-repository/mod.ts";
 import { enqueueStep } from "@core/data/qstash/mod.ts";
 import { cleanupFindingFromIndices } from "@judge/domain/data/judge-repository/mod.ts";
+import { assertReviewedBeforeAppeal } from "@review/domain/business/review-queue/mod.ts";
 import { fireWebhook } from "@admin/domain/data/admin-repository/mod.ts";
 import { S3Ref } from "@core/data/s3/mod.ts";
 
@@ -44,6 +45,7 @@ export async function startUploadReaudit(
 ): Promise<UploadReauditResult> {
   const old = await getFinding(orgId, findingId);
   if (!old) throw new Error(`finding not found: ${findingId}`);
+  await assertReviewedBeforeAppeal(orgId, findingId);
   if (!input.file || input.file.byteLength === 0) throw new Error("file required");
 
   const bucket = Deno.env.get("S3_BUCKET") ?? Deno.env.get("AWS_S3_BUCKET") ?? "";

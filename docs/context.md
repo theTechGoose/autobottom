@@ -268,10 +268,21 @@ From the repo root (`deno.json` tasks):
 | `deno task build` | Fresh build (required before deploy + for new routes) |
 | `deno task check` | `deno check main.ts` — type-check the app graph |
 | `deno task check:tests` | Type-check `src/**/*.test.ts` (no run) — catches test arity/signature drift |
-| `deno task test` | Unit/module tests (excludes `frontend/`, `tests/e2e/`) |
-| `deno task test:e2e` | HTTP end-to-end suites (boot server + hit it) |
+| `deno task test:unit` | Frontend tests (`frontend/tests/`) — pure renders, no services |
+| `deno task test:int` | `src/` tests against the Firestore emulator (smoke tests excluded) |
+| `deno task test:smoke` | `src/**/smk.test.ts` only — the ones that talk to external services |
+| `deno task test:e2e` | Stories under `e2e/` via `shots run`, against `serve` (emulator project `autobottom-e2e`) |
+| `deno task serve` | The unified server on the emulator stack, on `$PORT` — what `test:e2e` drives |
+| `deno task test` | `test:unit` + `test:int` + `test:smoke` |
+| `deno task test:e2e:standalone` | The older HTTP suites in `tests/e2e/` (each boots its own server) |
 | `deno task shape-check` | Enforce the module-structure ruleset over `src/` |
-| `deno task verify` | **The gate:** `check` + `check:tests` + `shape-check` + `test:e2e` |
+| `deno task verify` | `check` + `check:tests` + `shape-check` + `test:e2e:standalone` |
+
+The merge gate (`wt-gate`) runs `test:unit`, `test:int` and `test:e2e` at once,
+with `serve` started for the e2e lane. They share one emulator stack:
+`tools/emulators/with-emulators.ts` starts it for the first run that needs it
+and stops it when the last run still using it finishes; each run gets its own
+Firestore project.
 
 Frontend-only type-check: `cd frontend && deno task check`.
 

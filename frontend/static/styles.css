@@ -218,7 +218,7 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .auth-logo { font-size: 22px; font-weight: 800; color: var(--text-bright); margin-bottom: 4px; letter-spacing: -0.5px; text-align: center; }
 .auth-sub { font-size: 13px; color: var(--text-dim); margin-bottom: 32px; text-align: center; }
 .auth-link { text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-muted); }
-.auth-link a { color: var(--blue); text-decoration: none; }
+.auth-link a { color: var(--blue); text-decoration: none; display: inline-block; min-height: 24px; line-height: 24px; padding: 0 4px; }
 .auth-link a:hover { text-decoration: underline; }
 .auth-error { margin-top: 8px; min-height: 20px; }
 .error-text { color: var(--red); font-size: 12px; }
@@ -1495,6 +1495,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .rpt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin: 24px 28px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
 .rpt-field-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-bottom: 4px; }
 .rpt-field-value { font-size: 14px; color: var(--text-bright); font-weight: 600; }
+.rpt-field-value a { display: inline-block; min-height: 24px; line-height: 24px; }
 
 .rpt-section { margin: 24px 28px; }
 .rpt-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-muted); margin-bottom: 10px; }

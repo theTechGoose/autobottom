@@ -18,6 +18,10 @@
  *  new test that sets env is classified correctly without anyone remembering.
  *
  *    deno run -A tools/run-tests.ts [path ...]      (default: src/)
+ *
+ *  Smoke tests (*.smk.test.ts) talk to external services and are kept out of
+ *  the gate: they run only with `--smoke`, which runs nothing else. `--plan`
+ *  prints the files a run would take, one per line, and runs nothing.
  */
 
 const DENO_TEST_FLAGS = [
@@ -34,12 +38,19 @@ const NOT_PARALLEL_SAFE: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /runWatchdog\(|getStuckFindings\(/, reason: "scans every org" },
 ];
 
+const PLAN = Deno.args.includes("--plan");
+const SMOKE = Deno.args.includes("--smoke");
+
+function isSmoke(name: string): boolean {
+  return /(^|\.)smk\.test\.ts$/.test(name);
+}
+
 async function collect(root: string): Promise<string[]> {
   const out: string[] = [];
   for await (const entry of Deno.readDir(root)) {
     const path = `${root}/${entry.name}`;
     if (entry.isDirectory) out.push(...await collect(path));
-    else if (/(^|\.)(test|smk\.test|e2e\.test)\.ts$/.test(entry.name)) out.push(path);
+    else if (/(^|\.)(test|smk\.test|e2e\.test)\.ts$/.test(entry.name) && isSmoke(entry.name) === SMOKE) out.push(path);
   }
   return out;
 }
@@ -58,9 +69,15 @@ async function runDenoTest(files: string[], parallel: boolean): Promise<number> 
   return (await child.status).code;
 }
 
-const roots = Deno.args.length > 0 ? Deno.args : ["src"];
+const paths = Deno.args.filter((a) => !a.startsWith("--"));
+const roots = paths.length > 0 ? paths : ["src"];
 const files: string[] = [];
 for (const root of roots) files.push(...await collect(root));
+
+if (PLAN) {
+  for (const file of files) console.log(file);
+  Deno.exit(0);
+}
 
 const parallelFiles: string[] = [];
 const serialFiles: Array<{ file: string; reason: string }> = [];

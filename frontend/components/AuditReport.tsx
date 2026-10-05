@@ -12,6 +12,7 @@
 import AudioPlayer from "../islands/AudioPlayer.tsx";
 import AppealModal from "../islands/AppealModal.tsx";
 import { buildFocusedExcerpt, type ExcerptSegment } from "../lib/transcript-excerpt.ts";
+import { appealGenieIds } from "../lib/appeal-genie-ids.ts";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 import { questionLabel, shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
@@ -283,7 +284,7 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
           <AppealModal
             findingId={id}
             auditorEmail={auditorEmail}
-            originalGenieId={String(meta.recordingId ?? "")}
+            originalGenieIds={appealGenieIds(finding)}
             appealedAt={finding.appealedAt}
             reAuditedAt={finding.reAuditedAt}
             reAuditedTo={finding.reAuditedTo}

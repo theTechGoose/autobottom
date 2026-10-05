@@ -140,3 +140,29 @@ and register's "Sign in") are now at least 24px tall, and so are links in the
 audit report's metadata grid (the Record ID link to the CRM was 43×13 px).
 
 Tests: `frontend/tests/routes/auth-link-target.test.ts` — "REQ-006 …" (unit).
+
+## REQ-007 — An appeal's recording list starts with every recording the audit used
+
+> "trace why it swapped instead of added" / "fix it"
+
+A multi-recording audit (e.g. a pitch split across two genies) opened its
+"Different Recording" appeal form with only the FIRST genie filled in. An agent
+adding a callback typed it into a second row, submitted two IDs, and the
+re-audit ran without the dropped recording (finding `Wb8LoMjcSjPAPmWY06uC4`
+lost its main sales call and fell from 95 to 32). The form — on the audit
+report and on the manager remediation page — now opens with every one of the
+audit's `genieIds` filled in, so adding a recording appends to them.
+
+Tests: `frontend/tests/lib/appeal-genie-ids.test.ts` — "REQ-007 …" (unit);
+`e2e/appeal-genies/appeal-genies.e2e.test.ts` — "REQ-007 …" (e2e).
+
+## REQ-008 — A re-audit that drops an original recording is never labelled "additional"
+
+> "fix it"
+
+`startReauditWithGenies` called a re-audit `additional-recording` whenever the
+first genie was kept, even when another of the audit's recordings was missing
+from the new list. It is `additional-recording` only when every original
+recording is kept; otherwise `different-recording`.
+
+Tests: `src/audit/domain/business/reaudit/test.ts` — "REQ-008 …" (int).

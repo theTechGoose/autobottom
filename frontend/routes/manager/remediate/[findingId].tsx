@@ -23,6 +23,7 @@ import { define } from "../../../lib/define.ts";
 import { Layout } from "../../../components/Layout.tsx";
 import { emitTranscriptLines, TranscriptPanel, type TranscriptData } from "../../../components/TranscriptPanel.tsx";
 import { findEvidenceLine } from "../../../lib/transcript-excerpt.ts";
+import { appealGenieIds } from "../../../lib/appeal-genie-ids.ts";
 import { apiFetch } from "../../../lib/api.ts";
 import type { QueueItem } from "../../api/manager/queue.tsx";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
@@ -49,6 +50,7 @@ interface Finding {
   findingId?: string;
   owner?: string;
   recordingId?: string;
+  genieIds?: string[];
   recordingIdField?: string;
   rawTranscript?: string;
   diarizedTranscript?: string;
@@ -442,10 +444,9 @@ export default define.page(async function RemediationDetail(ctx) {
     voEmail ||
     (ownerEmail && ownerEmail !== "api" ? ownerEmail : "") ||
     "appeal-from-public-report@autobottom.local";
-  // Prefill for the "Different Recording" tab. The report's chain ends in a
-  // literal "—" for display; that is a fine dash to PRINT and a terrible thing
-  // to seed a genie-ID input with, so this stops at "".
-  const appealGenieId = String(f.recordingId ?? record.VoGenie ?? "");
+  // Prefill for the "Different Recording" tab: every recording the audit used
+  // (REQ-007) — never the report's display "—".
+  const appealGenies = appealGenieIds({ ...f, record });
 
   // The queue item — NOT the finding — is where remediation state lives
   // (submitRemediation writes status/remediatedBy/remediatedAt onto it). Read it
@@ -514,7 +515,7 @@ export default define.page(async function RemediationDetail(ctx) {
               variant="inline"
               findingId={findingId}
               auditorEmail={appealAuditorEmail}
-              originalGenieId={appealGenieId}
+              originalGenieIds={appealGenies}
               appealedAt={f.appealedAt}
               reAuditedAt={f.reAuditedAt}
               reAuditedTo={f.reAuditedTo}

@@ -62,6 +62,9 @@ interface Finding {
   appealedAt?: number;
   reAuditedAt?: number;
   reAuditedTo?: string;
+  /** Set by GET /audit/finding — still awaiting review, so nothing can be
+   *  appealed yet; AppealModal locks to "Awaiting Review". */
+  awaitingReview?: boolean;
 }
 
 // Same QuickBase deep-links the audit report + finding modal use.
@@ -515,6 +518,7 @@ export default define.page(async function RemediationDetail(ctx) {
               appealedAt={f.appealedAt}
               reAuditedAt={f.reAuditedAt}
               reAuditedTo={f.reAuditedTo}
+              awaitingReview={f.awaitingReview}
               failedQuestions={qs
                 .map((q, i) => ({ index: i, header: questionLabel(q) || "Untitled question", answer: q.answer ?? "" }))
                 .filter((q) => !isYes(q.answer))}

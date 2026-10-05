@@ -156,3 +156,87 @@ Deno.test({ name: "file-appeal — an audit that was never queued still appeals 
   assertEquals(res.ok, true);
   assertEquals(res.queued, 1);
 }});
+
+// ── An appeal waits for the review (REQ-003 / REQ-004) ──────────────────────
+// An audit the review queue picked up must be reviewed — every failed question
+// decided and the review finished — before anyone can appeal it. Appealing
+// earlier put the same questions in front of a reviewer AND a judge at once.
+
+async function queueForReview(findingId: string) {
+  const { populateReviewQueue } = await import("@review/domain/business/review-queue/mod.ts");
+  const answered = [
+    { header: "Q0", populated: "P0", thinking: "T0", defense: "D0", answer: "No" },
+    { header: "Q1", populated: "P1", thinking: "T1", defense: "D1", answer: "Yes" },
+    { header: "Q2", populated: "P2", thinking: "T2", defense: "D2", answer: "No" },
+  ];
+  await saveFinding(ORG, {
+    id: findingId,
+    findingStatus: "finished",
+    answeredQuestions: answered,
+    record: { RecordId: "777" },
+    recordingId: "27229615",
+    recordingIdField: "VoGenie",
+  });
+  await populateReviewQueue(ORG, findingId, answered, "VoGenie", "777");
+}
+
+Deno.test({ name: "REQ-003: an audit queued for review cannot be appealed until it is reviewed", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const { listStoredByKeyPrefix } = await import("@core/data/firestore/mod.ts");
+  const findingId = "fid-fa-awaiting-" + crypto.randomUUID().slice(0, 8);
+  await queueForReview(findingId);
+
+  await assertRejects(
+    () => fileJudgeAppeal(ORG, findingId, { auditor: "rep@x.com", appealedQuestions: [0, 2] }),
+    Error,
+    "awaiting review",
+  );
+  // Nothing reached the judge queue.
+  assertEquals((await listStoredByKeyPrefix("judge-pending", ORG, findingId)).length, 0);
+}});
+
+Deno.test({ name: "REQ-003: an audit that never needed review can still be appealed", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const findingId = "fid-fa-noreview-" + crypto.randomUUID().slice(0, 8);
+  // Bypassed offices / Invalid Genie never enter the review queue — there is no
+  // review to wait for, so the appeal must not be held.
+  await saveFinding(ORG, {
+    id: findingId,
+    findingStatus: "finished",
+    answeredQuestions: [{ header: "Q0", answer: "No" }],
+    record: { RecordId: "778" },
+    recordingId: "27229616",
+    recordingIdField: "VoGenie",
+  });
+  const res = await fileJudgeAppeal(ORG, findingId, { auditor: "rep@x.com", appealedQuestions: [0] });
+  assertEquals(res.ok, true);
+}});
+
+Deno.test({ name: "REQ-004: a partly reviewed audit still cannot be appealed", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const { recordDecision } = await import("@review/domain/business/review-queue/mod.ts");
+  const findingId = "fid-fa-partial-" + crypto.randomUUID().slice(0, 8);
+  await queueForReview(findingId);
+  // One of the two failed questions decided — the other is still waiting.
+  await recordDecision(ORG, findingId, 0, "confirm", "reviewer@x.com");
+
+  await assertRejects(
+    () => fileJudgeAppeal(ORG, findingId, { auditor: "rep@x.com", appealedQuestions: [0, 2] }),
+    Error,
+    "awaiting review",
+  );
+}});
+
+Deno.test({ name: "REQ-004: once a reviewer finishes every failed question the appeal goes through", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const { recordDecision, finalizeReviewedAudit } = await import("@review/domain/business/review-queue/mod.ts");
+  const findingId = "fid-fa-reviewed-" + crypto.randomUUID().slice(0, 8);
+  await queueForReview(findingId);
+  await recordDecision(ORG, findingId, 0, "confirm", "reviewer@x.com");
+  await recordDecision(ORG, findingId, 2, "confirm", "reviewer@x.com");
+  await finalizeReviewedAudit(ORG, findingId, "reviewer@x.com");
+
+  const res = await fileJudgeAppeal(ORG, findingId, { auditor: "rep@x.com", appealedQuestions: [0, 2] });
+  assertEquals(res.ok, true);
+  assertEquals(res.queued, 2);
+}});

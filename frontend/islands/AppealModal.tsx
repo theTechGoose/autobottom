@@ -27,6 +27,9 @@ interface Props {
    *  "Re-Audited" pill becomes a link to the new audit's report so anyone
    *  landing on a stale report URL can jump to the live one in a click. */
   reAuditedTo?: string;
+  /** The audit is queued for review and the review isn't finished — nothing
+   *  can be appealed until a reviewer has decided every failed question. */
+  awaitingReview?: boolean;
   /** How the TRIGGER sits on the page — the overlays are unaffected.
    *  "block" (default) is the audit report's centred, vertically-spaced
    *  button. "inline" strips the spacing and shrinks it to btn-sm, for a
@@ -53,7 +56,7 @@ function fmtTime(sec: number): string {
 }
 
 export default function AppealModal(props: Props) {
-  const { findingId, auditorEmail, failedQuestions, originalGenieId = "", appealedAt, reAuditedAt, reAuditedTo, variant = "block" } = props;
+  const { findingId, auditorEmail, failedQuestions, originalGenieId = "", appealedAt, reAuditedAt, reAuditedTo, awaitingReview, variant = "block" } = props;
   // Local lock — set after a successful submit so the button updates without
   // needing a page refresh. Server-side appealedAt/reAuditedAt cover the
   // post-refresh case.
@@ -62,7 +65,9 @@ export default function AppealModal(props: Props) {
     ? "Re-Audited"
     : appealedAt || localLock === "appeal"
       ? "Appeal Filed"
-      : null;
+      : awaitingReview
+        ? "Awaiting Review"
+        : null;
 
   const [view, setView] = useState<View>("closed");
   const [tab, setTab] = useState<ReauditTab>("recording");
@@ -309,7 +314,12 @@ export default function AppealModal(props: Props) {
             title="View the re-audit that superseded this one"
           >{lockedLabel} → View new audit</a>
         ) : lockedLabel ? (
-          <button type="button" class="appeal-btn filed" disabled>{lockedLabel}</button>
+          <button
+            type="button"
+            class="appeal-btn filed"
+            disabled
+            title={lockedLabel === "Awaiting Review" ? "An appeal can be filed once a reviewer has finished every failed question" : undefined}
+          >{lockedLabel}</button>
         ) : (
           <button type="button" class="appeal-btn" onClick={openChoice}>File Appeal</button>
         )}

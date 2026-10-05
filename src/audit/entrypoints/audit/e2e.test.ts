@@ -210,3 +210,55 @@ Deno.test({ name: "AuditController.getFinding — a finding that already has tim
   assertEquals(r.utteranceTimes, [0], "existing times win — they belong to the finding's own raw");
   assertEquals(r.rawTranscript, findingRaw);
 }});
+
+// ── The report learns whether the audit is still awaiting review ─────────────
+
+Deno.test({ name: "REQ-003: GET finding tells the report the audit is awaiting review", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const { populateReviewQueue } = await import("@review/domain/business/review-queue/mod.ts");
+  const ORG = "test-org-gf-" + crypto.randomUUID().slice(0, 8) as unknown as Parameters<typeof saveFinding>[0];
+  Deno.env.set("DEFAULT_ORG_ID", String(ORG));
+  const findingId = "fid-gf-" + crypto.randomUUID().slice(0, 8);
+  const answered = [{ header: "Q0", populated: "P0", thinking: "T0", defense: "D0", answer: "No" }];
+  await saveFinding(ORG, {
+    id: findingId, findingStatus: "finished", answeredQuestions: answered,
+    record: { RecordId: "781" }, recordingId: "27229617", recordingIdField: "VoGenie",
+  });
+
+  const { AuditController } = await import("./mod.ts");
+  const controller = new AuditController();
+  const before = await controller.getFinding(findingId) as Record<string, unknown>;
+  assertEquals(before.awaitingReview, false, "not queued for review → nothing to wait for");
+
+  await populateReviewQueue(ORG, findingId, answered, "VoGenie", "781");
+  const queued = await controller.getFinding(findingId) as Record<string, unknown>;
+  assertEquals(queued.awaitingReview, true);
+}});
+
+Deno.test({ name: "REQ-004: GET finding stops reporting awaiting review once the review is finished", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  resetFirestoreCredentials();
+  const { populateReviewQueue, recordDecision, finalizeReviewedAudit } = await import("@review/domain/business/review-queue/mod.ts");
+  const ORG = "test-org-gf2-" + crypto.randomUUID().slice(0, 8) as unknown as Parameters<typeof saveFinding>[0];
+  Deno.env.set("DEFAULT_ORG_ID", String(ORG));
+  const findingId = "fid-gf2-" + crypto.randomUUID().slice(0, 8);
+  const answered = [
+    { header: "Q0", populated: "P0", thinking: "T0", defense: "D0", answer: "No" },
+    { header: "Q1", populated: "P1", thinking: "T1", defense: "D1", answer: "No" },
+  ];
+  await saveFinding(ORG, {
+    id: findingId, findingStatus: "finished", answeredQuestions: answered,
+    record: { RecordId: "782" }, recordingId: "27229618", recordingIdField: "VoGenie",
+  });
+  await populateReviewQueue(ORG, findingId, answered, "VoGenie", "782");
+
+  const { AuditController } = await import("./mod.ts");
+  const controller = new AuditController();
+  await recordDecision(ORG, findingId, 0, "confirm", "reviewer@x.com");
+  const partly = await controller.getFinding(findingId) as Record<string, unknown>;
+  assertEquals(partly.awaitingReview, true, "one failed question still undecided");
+
+  await recordDecision(ORG, findingId, 1, "confirm", "reviewer@x.com");
+  await finalizeReviewedAudit(ORG, findingId, "reviewer@x.com");
+  const done = await controller.getFinding(findingId) as Record<string, unknown>;
+  assertEquals(done.awaitingReview, false);
+}});

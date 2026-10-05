@@ -16,6 +16,7 @@ import { getDateLegByRid, getPackageByRid } from "@audit/domain/data/quickbase/m
 import { enqueueStep, getSelfUrl, getQueueCounts } from "@core/data/qstash/mod.ts";
 import { fileJudgeAppeal } from "@audit/domain/business/file-appeal/mod.ts";
 import { startReauditWithGenies } from "@audit/domain/business/reaudit/mod.ts";
+import { isAwaitingReview } from "@review/domain/business/review-queue/mod.ts";
 import { splitGenieIds } from "@core/business/genie-ids/mod.ts";
 
 @SwaggerDescription("Audit pipeline — create audits, retrieve findings, pipeline stats")
@@ -139,7 +140,13 @@ export class AuditController {
     const read = await readFullFinding(orgId, id);
     if (read.kind === "busy") return { error: "Server busy, please retry", retry: true, detail: read.detail };
     if (read.kind === "failed") return { error: "lookup failed", detail: read.detail };
-    if (read.kind === "found") return read.finding;
+    if (read.kind === "found") {
+      // The report locks File Appeal while this is true. Display only — the
+      // appeal endpoints enforce it themselves — so a failed lookup shows the
+      // button rather than failing the whole report.
+      const awaitingReview = await isAwaitingReview(orgId, id).catch(() => false);
+      return { ...read.finding, awaitingReview };
+    }
     // Diagnostic: where else might this finding live?
     try {
       const { listStoredByIdPrefix, getDoc, encodeDocId } = await import("@core/data/firestore/mod.ts");

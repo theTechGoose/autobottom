@@ -166,3 +166,19 @@ from the new list. It is `additional-recording` only when every original
 recording is kept; otherwise `different-recording`.
 
 Tests: `src/audit/domain/business/reaudit/test.ts` — "REQ-008 …" (int).
+
+## REQ-009 — Genie Retry's "Find & re-run invalid genies" actually re-runs the audits
+
+> "I'm trying to re-run the calls that fell through because the service is on now, why the fuck isn't this button working?"
+
+In prod the run found 96 audits and never queued one. Each tick resets 5
+audits through `resetFindingDerivedState`, which deleted the audit's
+`audit-done-idx` rows by scanning the WHOLE index (110k rows, ~35s per scan
+from a laptop), 5 scans per tick — past Deno Deploy's request budget, so no
+tick ever finished and nothing was requeued. The reset now deletes those rows
+by key (`deleteDoneIdxRowsForFinding`: the finding's completedAt/reviewedAt
+plus the key pointer), so a tick costs a few point reads regardless of index
+size.
+
+Tests: `src/review/domain/business/review-queue/test.ts` — "REQ-009 …" (int);
+`e2e/genie-retry/genie-retry.e2e.test.ts` — "REQ-009 …" (e2e).

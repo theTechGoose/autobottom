@@ -10,7 +10,7 @@ import {
   getErrorsInWindow, isFindingRecovered, redactErrorMessage,
   deriveQbRecordId, inspectRecordIndex, repairRecordIndexForFinding, restoreHiddenFinding,
   markFindingHidden, getHiddenFindingIds, _resetHiddenCacheForTesting, _resetQueryAuditDoneIndexCacheForTests,
-  deleteDoneIdxRowsForFinding, deleteAuditDoneIdxByFindingId,
+  deleteDoneIdxRowsForFinding,
 } from "./mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
@@ -626,27 +626,6 @@ Deno.test("deleteDoneIdxRowsForFinding — catches the row a REVIEW moved to rev
 
   await deleteDoneIdxRowsForFinding(orgId, "fid-REV", { completedAt, reviewedAt });
   assertEquals((await idxRows(orgId, "fid-REV")).length, 0, "reviewed row removed too");
-});
-
-Deno.test("deleteAuditDoneIdxByFindingId — finds a row past the 1000-row scan cap", async () => {
-  // The uncapped-scan fix: with more than 1000 rows in the index, the capped
-  // scan returned 0 and every row survived. Rows are keyed by padded timestamp,
-  // so the target is written LAST to put it past the cap in scan order.
-  _resetHiddenCacheForTesting();
-  const orgId = "test-delidx3-" + crypto.randomUUID().slice(0, 8);
-  const base = 1_700_000_300_000;
-  for (let i = 0; i < 1005; i++) {
-    await writeAuditDoneIndex(orgId, {
-      findingId: `filler-${i}`, completedAt: base + i, completed: true, score: 100, recordId: `r${i}`,
-    }, { assumeFinished: true });
-  }
-  await writeAuditDoneIndex(orgId, {
-    findingId: "fid-DEEP", completedAt: base + 5000, completed: true, score: 88, recordId: "recDEEP",
-  }, { assumeFinished: true });
-
-  const removed = await deleteAuditDoneIdxByFindingId(orgId, "fid-DEEP");
-  assertEquals(removed, 1, "row past the cap was found and deleted");
-  assertEquals((await idxRows(orgId, "fid-DEEP")).length, 0, "and it is actually gone");
 });
 
 Deno.test("getHiddenFindingIds — returns findings past the 1000-row scan cap", async () => {

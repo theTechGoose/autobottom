@@ -26,7 +26,7 @@ import {
   deleteChargebackEntry,
   deleteWireDeductionEntry,
   deleteCompletedStat,
-  deleteAuditDoneIdxByFindingId,
+  deleteDoneIdxRowsForFinding,
   getHiddenFindingIds,
   buildIndexMeta,
 } from "@audit/domain/data/stats-repository/mod.ts";
@@ -1527,7 +1527,11 @@ export async function resetFindingDerivedState(
   findingId: string,
 ): Promise<{ reviewCleared: number; doneIdxRemoved: number }> {
   const reviewCleared = await drainReviewStoresForFinding(orgId, findingId);
-  const doneIdxRemoved = await deleteAuditDoneIdxByFindingId(orgId, findingId);
+  // By key, never by scanning audit-done-idx: Genie Retry runs this 5 audits
+  // per request, and a full-index scan per audit (110k rows, ~35s) blew the
+  // Deno Deploy request budget so no batch was ever requeued (REQ-009).
+  const finding = await getFinding(orgId, findingId);
+  const doneIdxRemoved = await deleteDoneIdxRowsForFinding(orgId, findingId, finding);
   await deleteCompletedStat(orgId, findingId);
   await deleteChargebackEntry(orgId, findingId).catch(() => {});
   await deleteWireDeductionEntry(orgId, findingId).catch(() => {});

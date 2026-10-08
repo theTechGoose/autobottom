@@ -2,7 +2,7 @@
  *  Firestore-backed via setStored* helpers. */
 
 import {
-  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredWithKeysAll, listStoredKeysAll, listStoredByIdPrefix, listStoredByCompletedAt, withTiming,
+  getStored, setStored, deleteStored, listStored, listStoredWithKeys, listStoredKeysAll, listStoredByIdPrefix, listStoredByCompletedAt, withTiming,
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AuditDoneIndexEntry, ChargebackEntry, WireDeductionEntry, AppealRecord } from "@core/dto/types.ts";
@@ -884,26 +884,6 @@ async function _findAuditsByRecordIdRaw(orgId: OrgId, recordId: string): Promise
 
 export async function deleteAuditDoneIndexEntry(orgId: OrgId, findingId: string, completedAt: number): Promise<void> {
   await deleteStored("audit-done-idx", orgId, padTs(completedAt), findingId);
-}
-
-/** Delete every audit-done-idx entry for a findingId without needing its
- *  completedAt. Scans the index — O(N) — so prefer the keyed variant when
- *  the caller already has the timestamp. Used by the retry-drain path
- *  where we don't trust the previous run's timestamp.
- *
- *  The scan MUST be the uncapped/paged one. Plain listStoredWithKeys stops at
- *  1000 rows; against an index of 80k+ that silently matched nothing and the
- *  function returned 0 while every row survived. */
-export async function deleteAuditDoneIdxByFindingId(orgId: OrgId, findingId: string): Promise<number> {
-  const rows = await listStoredWithKeysAll<AuditDoneIndexEntry>("audit-done-idx", orgId);
-  let removed = 0;
-  for (const { key, value } of rows) {
-    if (value?.findingId === findingId) {
-      await deleteStored("audit-done-idx", orgId, ...key);
-      removed++;
-    }
-  }
-  return removed;
 }
 
 /** Epoch-ms from a timestamp field that may be stored either way. Findings are

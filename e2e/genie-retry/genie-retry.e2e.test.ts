@@ -63,6 +63,9 @@ Deno.test("REQ-009: Find & re-run invalid genies puts the window's Invalid Genie
     await msg.getByText(/Re-running audits/i).waitFor();
     // The first tick runs 4s after the bar appears; it must requeue a batch.
     await msg.getByText(/Re-running audits… [1-9]\d* in flight/i).waitFor({ timeout: 20_000 });
+    // Frames are taken per action, so click the progress card to stamp one
+    // showing the audits in flight (the card only polls on load, not click).
+    await msg.click();
     const text = await msg.innerText();
     expect(/Re-running audits… [1-9]\d* in flight/i.test(text), "the run has audits in flight, not 0");
     expect(!/not found/i.test(text), "the run was not lost between ticks");

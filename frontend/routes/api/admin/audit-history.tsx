@@ -340,9 +340,8 @@ function renderTable(data: AdminAuditData, logsBase: string | null): VNode {
                   {/* Same Re-run pattern as DashboardTables.tsx — POSTs to the
                       Fresh /api/admin/config-save proxy which forwards to the
                       backend's /admin/reset-finding. resetFindingDerivedState
-                      drains the OLD audit-done-idx entry (via
-                      deleteAuditDoneIdxByFindingId — scans + removes ALL rows
-                      for this findingId), then re-publishes step-init against
+                      drains the OLD audit-done-idx entry (by key, via
+                      deleteDoneIdxRowsForFinding), then re-publishes step-init against
                       the SAME findingId. When the new run completes,
                       step-finalize writes exactly ONE new audit-done-idx row
                       → no duplicates on this page. */}

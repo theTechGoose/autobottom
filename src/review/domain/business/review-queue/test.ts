@@ -2,7 +2,7 @@
  *  audit-done-idx sync contract on admin flips. */
 
 import { assertEquals, assert, assertExists } from "#assert";
-import { selectOldestFinding, adminFlipQuestion, recordDecision, jumpToQuestion, finalizeReviewedAudit, questionTimingFromGap, getReviewedFindingIds, REVIEW_BREAK_MS, REVIEW_IDLE_DISCARD_MS } from "./mod.ts";
+import { resetFindingDerivedState, selectOldestFinding, adminFlipQuestion, recordDecision, jumpToQuestion, finalizeReviewedAudit, questionTimingFromGap, getReviewedFindingIds, REVIEW_BREAK_MS, REVIEW_IDLE_DISCARD_MS } from "./mod.ts";
 import type { ReviewDecision, ReviewItem } from "@core/dto/types.ts";
 import { getStored, resetFirestoreCredentials, setStored } from "@core/data/firestore/mod.ts";
 import { saveFinding, getFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -551,4 +551,39 @@ Deno.test("adminFlipFinding — clears the payroll rows BEFORE writing the revie
   assert(del > -1, "the chargeback delete must still be called from adminFlipFinding");
   assert(marker > -1, "the review-done marker write must still be in adminFlipFinding");
   assert(del < marker, "ORDER REGRESSION: same rule as finalizeReviewedAudit — clear the row, then settle");
+});
+
+// REQ-009: Genie Retry resets 5 audits per tick through resetFindingDerivedState.
+// Scanning the whole audit-done-idx (110k rows in prod, ~35s each) per audit
+// blew Deno Deploy's request budget, so no tick ever finished. The reset must
+// remove the audit's index row by key, never by scanning the index.
+Deno.test("REQ-009: resetFindingDerivedState removes the audit-done-idx row by key, without scanning the index", async () => {
+  resetFirestoreCredentials();
+  const orgId = ("test-reset-keyed-" + crypto.randomUUID().slice(0, 8)) as OrgId;
+  const fid = "fid-reset-keyed";
+  const completedAt = 1_791_400_000_000;
+  await saveFinding(orgId, { id: fid, findingStatus: "finished", rawTranscript: "Invalid Genie", completedAt } as any);
+  await writeAuditDoneIndex(orgId, { findingId: fid, completedAt, completed: true, reason: "invalid_genie" } as any);
+  const rowKey = [String(completedAt).padStart(15, "0"), fid];
+  assertExists(await getStored("audit-done-idx", orgId, ...rowKey), "seeded row is there");
+
+  const realFetch = globalThis.fetch;
+  const indexScans: string[] = [];
+  let firestoreCalls = 0;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("/documents")) firestoreCalls++;
+    const body = typeof init?.body === "string" ? init.body : "";
+    if (url.endsWith(":runQuery") && body.includes("audit-done-idx")) indexScans.push(body);
+    return realFetch(input, init);
+  }) as typeof fetch;
+  try {
+    await resetFindingDerivedState(orgId, fid);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert(firestoreCalls > 0, "the reset really talked to Firestore");
+  assertEquals(indexScans.length, 0, "no query over audit-done-idx");
+  assertEquals(await getStored("audit-done-idx", orgId, ...rowKey), null, "the row is gone");
 });

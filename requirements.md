@@ -182,3 +182,16 @@ size.
 
 Tests: `src/review/domain/business/review-queue/test.ts` — "REQ-009 …" (int);
 `e2e/genie-retry/genie-retry.e2e.test.ts` — "REQ-009 …" (e2e).
+
+## REQ-010 — A judged appeal closes no matter how many decisions the org has
+
+> "okay so we can go even cheaper and actually load the fucking correct data? is that what you're saying?" / "okay worktree the fix man"
+
+`postJudgedAudit` found an audit's judge decisions by scanning the org's whole
+`judge-decided` set, capped at 1000 rows. Prod passed 1321, so an appeal whose
+decisions fell past the cap read as "0 decisions" and the step quit: the
+appeal stayed "pending", the overturned answer stayed "No", no result email
+(x6StebJgPkhggCpqwdFQ5, judged 2026-10-12). It now reads the audit's decisions
+by key, one point read per question — exact, and the same cost at any size.
+
+Tests: `src/judge/domain/data/judge-repository/int.test.ts` — "REQ-010 …" (int).

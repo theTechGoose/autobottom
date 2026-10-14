@@ -195,3 +195,16 @@ appeal stayed "pending", the overturned answer stayed "No", no result email
 by key, one point read per question — exact, and the same cost at any size.
 
 Tests: `src/judge/domain/data/judge-repository/int.test.ts` — "REQ-010 …" (int).
+
+## REQ-011 — Backfill the last 7 days of judged-but-stuck appeals, no emails
+
+> "alright can we do a backfill script for just the last 7 days?" / "don't send"
+
+REQ-010's bug left appeals fully judged but still "pending", answers
+uncorrected. `tools/backfill-stuck-appeals.ts --days=7 [--commit]` finds every
+appeal filed in the window that is still "pending" while every appealed
+question has a judge decision, and re-runs `postJudgedAudit` on it with
+`notify: false` — the appeal-result email is not sent. Dry run by default.
+Prod dry run on 2026-10-14 found 16.
+
+Tests: `src/judge/domain/business/appeal-close-backfill/int.test.ts` — "REQ-011 …" (int).

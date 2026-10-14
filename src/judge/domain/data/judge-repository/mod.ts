@@ -222,7 +222,11 @@ async function sweepExpiredActiveClaims(orgId: OrgId, excludeJudge?: string): Pr
 // callers can't await it directly — exporting lets tests bypass the queue
 // state machine and assert on the index/finding writes deterministically.
 
-export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: string): Promise<void> {
+/** `notify: false` skips the appeal-result email/webhook — the stuck-appeal
+ *  backfill (REQ-011) closes appeals days late and must not mail anyone. */
+export async function postJudgedAudit(
+  orgId: OrgId, findingId: string, judge: string, opts: { notify?: boolean } = {},
+): Promise<void> {
   try {
     const finding = await getFinding(orgId, findingId);
     if (!finding) {
@@ -445,7 +449,7 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
       }
     }
 
-    fireWebhook(orgId, "judge", {
+    if (opts.notify !== false) fireWebhook(orgId, "judge", {
       findingId,
       finding,
       judgedBy: judge,

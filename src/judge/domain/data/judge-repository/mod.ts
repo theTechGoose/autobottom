@@ -230,9 +230,14 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
       return;
     }
 
-    // Pull all decisions for this finding
-    const allDecisions = await listStoredWithKeys<JudgeDecision>("judge-decided", orgId);
-    const decisions = allDecisions.filter(({ key }) => key[0] === findingId).map(({ value }) => value);
+    // This finding's decisions, read by key — one point read per question.
+    // Never scan the org's judge-decided set: that scan was capped at 1000 rows,
+    // and past 1000 decisions an appeal's own rows fell off it, so the appeal
+    // stayed "pending" with its score uncorrected (REQ-010).
+    const all = (finding.answeredQuestions ?? []) as Array<Record<string, unknown>>;
+    const decisions = (await Promise.all(
+      all.map((_, i) => getStored<JudgeDecision>("judge-decided", orgId, findingId, i)),
+    )).filter((d): d is JudgeDecision => d !== null);
     if (decisions.length === 0) {
       console.log(`[JUDGE] ${findingId}: 0 decisions (system-skip) — no webhook`);
       return;
@@ -241,7 +246,6 @@ export async function postJudgedAudit(orgId: OrgId, findingId: string, judge: st
     const overturns = decisions.filter((d) => d.decision === "overturn").length;
     const totalQuestions = decisions.length;
 
-    const all = (finding.answeredQuestions ?? []) as Array<Record<string, unknown>>;
     // Stamp every decided question with the judge's action/reason/identity so
     // downstream analytics (failure-source attribution) can read it off the
     // finding doc, and flip overturned answers to "Yes".

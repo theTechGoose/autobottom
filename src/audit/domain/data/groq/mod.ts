@@ -175,6 +175,10 @@ function isRateLimitError(msg: string): boolean {
 function isModelDeadError(msg: string): boolean {
   return msg.includes("503") || msg.includes("404") || msg.includes("model_not_found")
     || msg.includes("json_validate_failed")
+    // Groq's newer code for the same failure: the model emitted nothing it
+    // could parse as JSON (rrJvbO40W1Vk49iGFt7XC q[17], failed_generation:"").
+    // A bad generation, not a bad prompt — another model answers it fine.
+    || msg.includes("output_parse_failed")
     // OpenAI returns "out of credit" and "key revoked" as a 429 and a 401, and
     // isRateLimitError() would otherwise burn the full retry budget sleeping on
     // a condition no amount of waiting fixes. Dead, not throttled.

@@ -340,7 +340,7 @@ export default define.page(async function AuditScrubPage(ctx) {
                     <div class="rem-meta-label">Record</div>
                     <div class="mono">
                       {crmUrl
-                        ? <a href={crmUrl} target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">{recordId} &#8599;</a>
+                        ? <a href={crmUrl} target="_blank" rel="noopener" class="rem-record-link" style="color:var(--accent);text-decoration:none;">{recordId} &#8599;</a>
                         : (recordId || "—")}
                     </div>
                   </div>

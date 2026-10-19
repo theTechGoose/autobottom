@@ -208,3 +208,29 @@ question has a judge decision, and re-runs `postJudgedAudit` on it with
 Prod dry run on 2026-10-14 found 16.
 
 Tests: `src/judge/domain/business/appeal-close-backfill/int.test.ts` — "REQ-011 …" (int).
+
+## REQ-012 — A Groq "output_parse_failed" falls back to the next model, never "Bot Error"
+
+> "why did the matching IDs response error out?" / "Fix both in a worktree"
+
+rrJvbO40W1Vk49iGFt7XC q[17] "Matching IDs" stored `answer: "Error"` with Groq's
+raw 400 `output_parse_failed` (`failed_generation: ""`) as its reasoning, so the
+report showed "Bot Error — Could Not Grade". `isModelDeadError` already treated
+`json_validate_failed` as a reason to try the next model; `output_parse_failed`
+(Groq's newer code for the same failure) was missing, so the 400 was rethrown
+with no retry or fallback. It now falls back like `json_validate_failed`.
+
+Tests: `src/audit/domain/data/groq/int.test.ts` — "REQ-012 …" (int).
+
+## REQ-013 — The pre-review "perfect score" email fires only on a real 100%
+
+> "so the report says 100% in the email, but it says there is a missed question, but if you click on the actual report, it says its a 96" / "Fix both in a worktree"
+
+`stepFinalize` sent the terminate email with a hard-coded `score: 100` whenever
+no answer was literally "No". An "Error" answer is neither Yes nor No, so
+rrJvbO40W1Vk49iGFt7XC (24 Yes + 1 Error = 96%) mailed the rep "100%" while
+listing the errored question as missed. The email now fires on the computed
+`score === 100` — every answer Yes — the same score the report and the
+audit-done index use; anything less waits for review.
+
+Tests: `src/audit/domain/business/step-finalize/int.test.ts` — "REQ-013 …" (int).

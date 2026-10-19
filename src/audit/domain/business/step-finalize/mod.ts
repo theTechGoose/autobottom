@@ -438,8 +438,10 @@ export async function stepFinalize(req: Request): Promise<Response> {
     }).catch((err) => console.error(`[STEP-FINALIZE] ${findingId}: Terminate webhook (invalid) failed:`, err));
   }
 
-  // 100% -- no failing questions, fire terminate webhook (includes recording re-audits)
-  if (nos === 0 && yeses > 0 && !isOfficeBypassed) {
+  // 100% -- every answer Yes, fire terminate webhook (includes recording re-audits).
+  // Keyed on `score`, not "no No answers": an "Error" answer is neither, and
+  // rrJvbO40W1Vk49iGFt7XC (24 Yes + 1 Error = 96%) mailed the rep "100%".
+  if (score === 100 && !isOfficeBypassed) {
     console.log(`[STEP-FINALIZE] ${findingId}: 🔔 Firing terminate webhook (perfect_score) orgId=${orgId}`);
     await fireWebhook(orgId, "terminate", {
       findingId,

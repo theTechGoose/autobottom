@@ -234,3 +234,48 @@ listing the errored question as missed. The email now fires on the computed
 audit-done index use; anything less waits for review.
 
 Tests: `src/audit/domain/business/step-finalize/int.test.ts` — "REQ-013 …" (int).
+## REQ-014 — The scrub page plays every recording of a multi-recording audit
+
+> "it says on the report, there are two recordings, and they load, but the srub page does not have two recordings. Why" / "yes build it"
+
+`/audit/scrub` hard-coded the audio bar to recording 1 (`idx=0`), so the second
+recording of Pxsca8VF5NlibMlX7xP8Q could not be played from it. The bar now has
+a REC tab per recording (`QueueAudioPlayer recordingCount`), and the record
+details list every recording ID.
+
+Tests: `frontend/tests/islands/queue-audio-controls.test.tsx` — "REQ-014 …" (unit);
+`e2e/scrub-recordings/scrub-recordings.e2e.test.ts` — "REQ-014 …" (e2e).
+
+## REQ-015 — Clicking a line on a multi-recording audit plays its own recording at its time
+
+> "We have two different recordings? So why wouldn't switching to the second recording allow us to click on 00:00 of recording 2? and there is a new transcript?" / "yes build it"
+
+The multi-recording pipeline dropped AssemblyAI's per-line times because each
+recording restarts at 0:00. It now stores `recordingLineTimes` (each line's
+start on its own recording) and `recordingLineIdx` (which recording) next to the
+joined text, on the finding and the transcript store; step-transcribe records
+which recording each transcript is so a skipped one doesn't shift the rest. The
+scrub view labels where each recording starts, and a clicked line — or a
+question's evidence line — switches the bar to that recording and seeks. The
+grader still reads the joined text, and `utteranceTimes` stays empty for these
+audits so the review/judge players (recording 1 only) never mis-seek.
+
+Tests: `src/audit/domain/business/step-poll-transcript/test.ts`,
+`src/audit/domain/business/step-transcribe/test.ts`,
+`src/audit/domain/business/step-transcribe-cb/test.ts`,
+`src/audit/domain/business/read-finding/int.test.ts` — "REQ-015 …" (int);
+`frontend/tests/components/transcript-panel.test.tsx`,
+`frontend/tests/routes/audit-scrub.test.tsx` — "REQ-015 …" (unit);
+`e2e/scrub-recordings/scrub-recordings.e2e.test.ts` — "REQ-015 …" (e2e).
+
+## REQ-016 — Backfill the line times for multi-recording audits already transcribed
+
+> "Audits already processed would need their transcripts re-fetched from AssemblyAI to get the times back. The transcript IDs are saved on each audit, so that's doable." / "yes build it"
+
+`tools/backfill-recording-lines.ts --id=<findingId>[,…] | --days=N [--commit]`
+re-reads each audit's own AssemblyAI transcripts and stores the times only when
+the rebuilt text equals the stored transcript. Dry run by default. Prod dry run
+on 2026-10-19 (`--days=2`): 9 would update; Pxsca8VF5NlibMlX7xP8Q is skipped —
+it has no AssemblyAI transcript ids stored.
+
+Tests: `src/audit/domain/business/recording-lines-backfill/int.test.ts` — "REQ-016 …" (int).

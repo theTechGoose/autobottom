@@ -13,7 +13,7 @@
  *  is load-bearing for its own page. */
 import { assertEquals } from "@std/assert";
 import { assertContains, assertNotContains, renderHTML } from "../helpers/render.ts";
-import { renderQuestionList } from "../../routes/audit/scrub.tsx";
+import { renderQuestionList, scrubTranscript } from "../../routes/audit/scrub.tsx";
 import { emitTranscriptLines } from "../../components/TranscriptPanel.tsx";
 
 const RAW = [
@@ -152,4 +152,44 @@ Deno.test("scrub renderQuestionList — the hint counts only the jumpable rows",
 Deno.test("scrub renderQuestionList — an audit with no questions says so", () => {
   const html = renderHTML(renderQuestionList([], TRANSCRIPT));
   assertContains(html, "no graded questions");
+});
+
+// ── REQ-014 / REQ-015: multi-recording audits ────────────────────────────────
+
+const MULTI_RAW = ["[AGENT]: Hi there.", "[CUSTOMER]: Hello.", "[AGENT]: Calling you back."].join("\n");
+
+Deno.test("REQ-015: scrubTranscript seeks a multi-recording audit by each line's own recording", () => {
+  const t = scrubTranscript({
+    rawTranscript: MULTI_RAW,
+    s3RecordingKeys: ["a.mp3", "b.mp3"],
+    recordingLineTimes: [0, 2000, 0],
+    recordingLineIdx: [0, 0, 1],
+  });
+  assertEquals(t.utteranceTimes, [0, 2000, 0]);
+  assertEquals(t.lineRecordings, [0, 0, 1]);
+});
+
+Deno.test("REQ-015: scrubTranscript drops times that don't line up with the transcript's lines", () => {
+  const t = scrubTranscript({
+    rawTranscript: MULTI_RAW,
+    s3RecordingKeys: ["a.mp3", "b.mp3"],
+    recordingLineTimes: [0, 2000],
+    recordingLineIdx: [0, 0],
+  });
+  assertEquals(t.utteranceTimes, []);
+  assertEquals(t.lineRecordings, undefined);
+});
+
+Deno.test("REQ-015: a multi-recording audit with line times gets question jumps", () => {
+  const t = scrubTranscript({
+    rawTranscript: MULTI_RAW,
+    s3RecordingKeys: ["a.mp3", "b.mp3"],
+    recordingLineTimes: [0, 2000, 0],
+    recordingLineIdx: [0, 0, 1],
+  });
+  const html = renderHTML(renderQuestionList([
+    q({ header: "Callback", answer: "Yes", defense: 'The agent says "calling you back".' }),
+  ], t));
+  assertContains(html, 'data-rem-line-idx="2"');
+  assertNotContains(html, "no per-line timestamps");
 });

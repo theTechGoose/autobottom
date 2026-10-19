@@ -176,3 +176,33 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "REQ-015: a multi-recording audit's per-recording line times reach the finding and the transcript store",
+  ...kvOpts,
+  fn: async () => {
+    setupEnv();
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    await saveFinding(orgId, { id: findingId, findingStatus: "transcribing", record: { RecordId: 1 } });
+    const stub: Stub = { enqueueBodies: new Map() };
+    const undo = installFetchStub(stub);
+    try {
+      await stepTranscribeCb(reqWith({
+        findingId, orgId,
+        rawTranscript: "[AGENT]: one\n[AGENT]: two\n[AGENT]: three",
+        recordingLineTimes: [0, 4000, 0],
+        recordingLineIdx: [0, 0, 1],
+      }));
+      const fresh = await getFinding(orgId, findingId) as Record<string, unknown>;
+      assertEquals(fresh.recordingLineTimes, [0, 4000, 0]);
+      assertEquals(fresh.recordingLineIdx, [0, 0, 1]);
+      assert(!fresh.utteranceTimes, "never folded into the flat utteranceTimes the queue players read");
+      const t = await getTranscript(orgId, findingId);
+      assertEquals(t?.recordingLineTimes, [0, 4000, 0], "canonical store keeps the pair with its raw text");
+      assertEquals(t?.recordingLineIdx, [0, 0, 1]);
+    } finally {
+      undo();
+    }
+  },
+});

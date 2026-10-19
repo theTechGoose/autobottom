@@ -4,6 +4,8 @@ import { getFinding, saveFinding } from "@audit/domain/data/audit-repository/mod
 import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
 import { enqueueStep } from "@core/data/qstash/mod.ts";
 import { pollTranscriptOnce, processTranscriptResult } from "@audit/domain/data/assemblyai/mod.ts";
+import { joinRecordingTranscripts } from "@audit/domain/business/recording-lines/mod.ts";
+import type { RecordingLines } from "@audit/domain/data/audit-repository/mod.ts";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -16,11 +18,18 @@ const POLL_DELAY_SECONDS = 15;
 
 const TRANSCRIBE_CB_PAYLOAD_MAX = 900_000;
 
-function buildTranscribeCbPayload(findingId: string, orgId: string, rawTranscript: string, utteranceTimes: number[] | undefined): Record<string, unknown> {
+function buildTranscribeCbPayload(
+  findingId: string,
+  orgId: string,
+  rawTranscript: string,
+  utteranceTimes: number[] | undefined,
+  recordingLines?: RecordingLines,
+): Record<string, unknown> {
   const payload: Record<string, unknown> = { findingId, orgId };
   if (rawTranscript && rawTranscript.length <= TRANSCRIBE_CB_PAYLOAD_MAX) {
     payload.rawTranscript = rawTranscript;
     if (utteranceTimes && utteranceTimes.length > 0) payload.utteranceTimes = utteranceTimes;
+    if (recordingLines) Object.assign(payload, recordingLines);
   }
   return payload;
 }
@@ -33,7 +42,7 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
   // the finding doc only for in-flight messages enqueued before this
   // payload-shape change deployed. See plan file for the
   // mqlfcCsh3sP1zH_6vpeT6 incident this prevents.
-  const { findingId, orgId, transcriptId: payloadTranscriptId, transcriptIds: payloadTranscriptIds } = body;
+  const { findingId, orgId, transcriptId: payloadTranscriptId, transcriptIds: payloadTranscriptIds, transcriptRecs: payloadTranscriptRecs } = body;
 
   const pollStart = Date.now();
   console.log(`[STEP-POLL-TRANSCRIPT] ${findingId}: Starting...`);
@@ -50,7 +59,17 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
     ? payloadTranscriptIds
     : (Array.isArray(finding.assemblyAiTranscriptIds) ? finding.assemblyAiTranscriptIds : []);
   if (multiIds.length > 1) {
-    return await pollMultiGenie(finding, findingId, orgId, multiIds, pollStart);
+    // Which recording each id transcribes. Absent on messages enqueued before
+    // step-transcribe carried it — then no recording was skipped at submit
+    // unless the counts differ, and a guess there would mis-seek every line.
+    const recs: number[] | undefined = Array.isArray(payloadTranscriptRecs)
+      ? payloadTranscriptRecs
+      : Array.isArray(finding.assemblyAiTranscriptRecs)
+      ? finding.assemblyAiTranscriptRecs
+      : (finding.s3RecordingKeys?.length ?? multiIds.length) === multiIds.length
+      ? multiIds.map((_, i) => i)
+      : undefined;
+    return await pollMultiGenie(finding, findingId, orgId, multiIds, recs, pollStart);
   }
 
   const transcriptId = payloadTranscriptId ?? finding.assemblyAiTranscriptId ?? multiIds[0];
@@ -127,14 +146,16 @@ export async function stepPollTranscript(req: Request): Promise<Response> {
  *  "transcribing" forever when that request died (QqzfObJYP5aibL_YT6AHX).
  *
  *  Deliberately does NOT write utteranceTimes. Those offsets are per-recording,
- *  and the reviewer's click-to-scrub player streams one leg at a time
- *  (/audit/recording?idx=n), so concatenated times would seek to the wrong
- *  place in leg 2+. Matches the old multi-genie behaviour, which was text-only. */
+ *  and the review/judge players stream recording 1 only, so a flat list would
+ *  seek leg-2 lines into leg 1. Each line's own-recording time and recording
+ *  index go in recordingLineTimes/recordingLineIdx instead, which only the
+ *  scrub view reads — it switches recordings before seeking (REQ-015). */
 async function pollMultiGenie(
   finding: Record<string, any>,
   findingId: string,
   orgId: string,
   transcriptIds: string[],
+  transcriptRecs: number[] | undefined,
   pollStart: number,
 ): Promise<Response> {
   const submittedAt = finding.assemblyAiSubmittedAt as number | undefined;
@@ -149,7 +170,7 @@ async function pollMultiGenie(
       // A failed poll REQUEST says nothing about the transcript — come back and
       // ask again rather than throwing away a leg that may well be finished.
       console.warn(`[STEP-POLL-TRANSCRIPT] ${findingId}: ⚠️ Poll request failed for ${id}${elapsedTag}, retrying in ${POLL_DELAY_SECONDS}s:`, err);
-      await enqueueStep("poll-transcript", { findingId, orgId, transcriptIds }, POLL_DELAY_SECONDS);
+      await enqueueStep("poll-transcript", { findingId, orgId, transcriptIds, transcriptRecs }, POLL_DELAY_SECONDS);
       return json({ ok: true, retrying: true, multiGenie: true });
     }
   }
@@ -157,32 +178,33 @@ async function pollMultiGenie(
   const pending = results.filter((t) => t.status === "queued" || t.status === "processing");
   if (pending.length > 0) {
     console.log(`[STEP-POLL-TRANSCRIPT] ${findingId}: 🔍 ${pending.length}/${transcriptIds.length} still running${elapsedTag}, re-polling in ${POLL_DELAY_SECONDS}s`);
-    await enqueueStep("poll-transcript", { findingId, orgId, transcriptIds }, POLL_DELAY_SECONDS);
+    await enqueueStep("poll-transcript", { findingId, orgId, transcriptIds, transcriptRecs }, POLL_DELAY_SECONDS);
     return json({ ok: true, polling: true, multiGenie: true, pending: pending.length });
   }
 
   // All settled. Keep whatever completed — one dead leg must not sink an audit
   // whose other recording transcribed fine (the old loop behaved the same way).
-  const texts: string[] = [];
   for (let i = 0; i < results.length; i++) {
     const t = results[i];
     if (t.status !== "completed") {
       console.error(`[STEP-POLL-TRANSCRIPT] ${findingId}: ❌ Leg ${i + 1}/${results.length} (${transcriptIds[i]}) terminal status=${t.status} error=${t.error}`);
-      continue;
     }
-    const { text } = processTranscriptResult(t);
-    if (text && text.trim().length > 0) texts.push(text);
   }
+  const { text, kept, recordingLines } = joinRecordingTranscripts(
+    // rec -1 when the mapping is unknown, which drops the line pair.
+    results.map((transcript, i) => ({ rec: transcriptRecs?.[i] ?? -1, transcript })),
+  );
 
-  if (texts.length === 0) {
+  if (kept === 0) {
     finding.rawTranscript = "Genie Invalid";
     finding.findingStatus = "finished";
   } else {
-    finding.rawTranscript = texts.join("\n");
+    finding.rawTranscript = text;
+    if (recordingLines) Object.assign(finding, recordingLines);
   }
 
   await saveFinding(orgId, finding);
-  await enqueueStep("transcribe-complete", buildTranscribeCbPayload(findingId, orgId, finding.rawTranscript, undefined));
-  console.log(`[STEP-POLL-TRANSCRIPT] ${findingId}: ✅ Multi-genie complete${elapsedTag}, ${texts.length}/${transcriptIds.length} legs, transcript length=${finding.rawTranscript.length}`);
-  return json({ ok: true, completed: true, multiGenie: true, legs: texts.length });
+  await enqueueStep("transcribe-complete", buildTranscribeCbPayload(findingId, orgId, finding.rawTranscript, undefined, recordingLines));
+  console.log(`[STEP-POLL-TRANSCRIPT] ${findingId}: ✅ Multi-genie complete${elapsedTag}, ${kept}/${transcriptIds.length} legs, transcript length=${finding.rawTranscript.length}`);
+  return json({ ok: true, completed: true, multiGenie: true, legs: kept });
 }

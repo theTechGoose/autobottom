@@ -10,7 +10,9 @@
  *      This island doesn't care which — it follows `data-rem-line-idx`.)
  *
  *  Both paths dispatch `queue:jump-to-audio`, which the QueueAudioPlayer island
- *  on the same page consumes to move the playhead.
+ *  on the same page consumes to move the playhead. On a multi-recording audit
+ *  the line's `data-rec-idx` rides along as `rec`, so the player switches to
+ *  that recording first (REQ-015).
  *
  *  WHY THERE'S NO MATCHING LOGIC HERE ANYMORE: this island used to locate the
  *  evidence itself at click time, scanning the whole transcript for a line that
@@ -32,7 +34,8 @@ export default function RemediationInteractive() {
       const ms = line.dataset.tsMs ?? line.querySelector<HTMLElement>(".t-timestamp")?.dataset.seekMs;
       const n = Number(ms);
       if (ms && !isNaN(n)) {
-        document.dispatchEvent(new CustomEvent("queue:jump-to-audio", { detail: { ms: n } }));
+        const rec = line.dataset.recIdx != null ? Number(line.dataset.recIdx) : undefined;
+        document.dispatchEvent(new CustomEvent("queue:jump-to-audio", { detail: { ms: n, rec } }));
       }
     }
 

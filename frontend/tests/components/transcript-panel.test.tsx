@@ -103,3 +103,35 @@ Deno.test("findEvidenceLine index resolves to the right rendered line", () => {
   assertEquals(idx, 2);
   assert(lines[idx!].includes("refundable deposit"));
 });
+
+// ── REQ-015: multi-recording transcripts ─────────────────────────────────────
+// Each recording restarts at 0:00, so a line needs its recording as well as its
+// time, or a click can't say where it plays.
+
+const MULTI = {
+  raw: ["[AGENT]: Hi there.", "[CUSTOMER]: Hello.", "[AGENT]: Calling you back.", "[CUSTOMER]: Sure."].join("\n"),
+  diarized: "",
+  utteranceTimes: [0, 2000, 0, 3000],
+  lineRecordings: [0, 0, 1, 1],
+};
+
+Deno.test("REQ-015: emitTranscriptLines tags every line with its recording", () => {
+  const lines = emitTranscriptLines(MULTI);
+  assertEquals(lines.map((l) => l.rec), [0, 0, 1, 1]);
+  assertEquals(lines.map((l) => l.ts), [0, 2000, 0, 3000]);
+});
+
+Deno.test("REQ-015: TranscriptPanel marks each line's recording and labels where recording 2 starts", () => {
+  const html = renderHTML(<TranscriptPanel transcript={MULTI} />);
+  assertContains(html, 'data-rec-idx="1"');
+  assertContains(html, "Recording 1");
+  assertContains(html, "Recording 2");
+  // The divider is not a line, so line indices stay the ones questions point at.
+  assertEquals((html.match(/class="t-line/g) ?? []).length, 4);
+});
+
+Deno.test("REQ-015: a single-recording transcript has no recording labels", () => {
+  const html = renderHTML(<TranscriptPanel transcript={{ ...MULTI, lineRecordings: undefined }} />);
+  assertNotContains(html, "data-rec-idx");
+  assertNotContains(html, "Recording 1");
+});

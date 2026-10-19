@@ -111,6 +111,7 @@ export function invalidateFindingCache(orgId?: OrgId, id?: string): void {
 const RUN_STATE_FIELDS = [
   "assemblyAiTranscriptIds",
   "rawTranscript", "diarizedTranscript", "utteranceTimes",
+  "assemblyAiTranscriptRecs", "recordingLineTimes", "recordingLineIdx",
   "populatedQuestions", "unpopulatedQuestions", "answeredQuestions",
   "feedback", "completedAt", "reviewScore",
   "assemblyAiUploadUrl", "assemblyAiTranscriptId", "assemblyAiSubmittedAt",
@@ -257,14 +258,35 @@ export interface TranscriptData {
   raw: string;
   diarized: string;
   utteranceTimes?: number[];
+  /** Multi-recording audits only, a matched pair indexed to `raw`'s non-empty
+   *  lines: each line's start (ms) on ITS OWN recording's clock, and which
+   *  recording (the /audit/recording `idx`) it came from. Kept apart from
+   *  `utteranceTimes` on purpose — the review/judge players stream recording 1
+   *  only, so handing them these times would seek leg-2 lines into leg 1. */
+  recordingLineTimes?: number[];
+  recordingLineIdx?: number[];
 }
 
-export async function saveTranscript(orgId: OrgId, findingId: string, raw: string, diarized?: string, utteranceTimes?: number[]): Promise<void> {
+export interface RecordingLines {
+  recordingLineTimes: number[];
+  recordingLineIdx: number[];
+}
+
+export async function saveTranscript(
+  orgId: OrgId,
+  findingId: string,
+  raw: string,
+  diarized?: string,
+  utteranceTimes?: number[],
+  recordingLines?: RecordingLines,
+): Promise<void> {
   const existing = await getStoredChunked<TranscriptData>("audit-transcript", orgId, findingId);
   await setStoredChunked("audit-transcript", orgId, [findingId], {
     raw,
     diarized: diarized ?? existing?.diarized ?? raw,
     utteranceTimes: utteranceTimes ?? existing?.utteranceTimes,
+    recordingLineTimes: recordingLines?.recordingLineTimes ?? existing?.recordingLineTimes,
+    recordingLineIdx: recordingLines?.recordingLineIdx ?? existing?.recordingLineIdx,
   });
 }
 

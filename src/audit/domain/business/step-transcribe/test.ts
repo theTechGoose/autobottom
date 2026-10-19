@@ -298,3 +298,31 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "REQ-015: multi-genie records which recording each submitted transcript is, skipping a missing one",
+  ...kvOpts,
+  fn: async () => {
+    setupEnv();
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    const keys = [`recordings/${findingId}/gone.mp3`, `recordings/${findingId}/leg2.mp3`, `recordings/${findingId}/leg3.mp3`];
+    await seedRecordings(keys.slice(1)); // recording 0 is not in S3
+    await saveFinding(orgId, {
+      id: findingId, auditJobId: "job-multi-recs", findingStatus: "getting-recording",
+      record: { RecordId: 1 }, s3RecordingKeys: keys, s3RecordingKey: keys[0],
+    });
+    const stub: Stub = { enqueueBodies: new Map() };
+    const undo = installMultiStub(stub, ["tid-B", "tid-C"]);
+    try {
+      await stepTranscribe(reqWith({ findingId, orgId, s3RecordingKeys: keys, s3RecordingKey: keys[0] }));
+      const poll = [...stub.enqueueBodies.entries()].find(([url]) => url.includes("poll-transcript"))!;
+      assertEquals(poll[1].transcriptIds, ["tid-B", "tid-C"]);
+      assertEquals(poll[1].transcriptRecs, [1, 2], "recording 0 was skipped — the others keep their own index");
+      const fresh = await getFinding(orgId, findingId) as Record<string, unknown>;
+      assertEquals(fresh.assemblyAiTranscriptRecs, [1, 2], "persisted for the doc-fallback path");
+    } finally {
+      undo();
+    }
+  },
+});

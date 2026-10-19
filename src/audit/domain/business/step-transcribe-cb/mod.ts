@@ -1,5 +1,5 @@
 /** STEP 2b: Post-transcription router — saves raw transcript, fires prepare + diarize-async in parallel. */
-import { getFinding, saveFinding, saveTranscript } from "@audit/domain/data/audit-repository/mod.ts";
+import { getFinding, saveFinding, saveTranscript, type RecordingLines } from "@audit/domain/data/audit-repository/mod.ts";
 import { trackActive } from "@audit/domain/data/stats-repository/mod.ts";
 import { enqueueStep } from "@core/data/qstash/mod.ts";
 
@@ -18,6 +18,12 @@ export async function stepTranscribeCb(req: Request): Promise<Response> {
   // Fall back to the finding doc only for messages enqueued before this
   // payload shape deployed. See plan file for the rationale.
   const { findingId, orgId, rawTranscript: payloadRaw, utteranceTimes: payloadTimes } = body;
+  // Multi-recording audits: each line's time on its own recording + which
+  // recording (REQ-015). Rides with rawTranscript — they index its lines.
+  const recordingLines: RecordingLines | undefined =
+    Array.isArray(body.recordingLineTimes) && Array.isArray(body.recordingLineIdx)
+      ? { recordingLineTimes: body.recordingLineTimes, recordingLineIdx: body.recordingLineIdx }
+      : undefined;
 
   console.log(`[STEP-TRANSCRIBE-CB] ${findingId}: Starting... payloadRawLength=${typeof payloadRaw === "string" ? payloadRaw.length : 0}`);
   // Tracking owned by step dispatcher (main.ts) — see step-ask-all for context.
@@ -79,9 +85,10 @@ export async function stepTranscribeCb(req: Request): Promise<Response> {
   // from poll-transcript hasn't fully propagated yet.
   finding.rawTranscript = rawTranscript;
   if (utteranceTimes) (finding as Record<string, any>).utteranceTimes = utteranceTimes;
+  if (recordingLines) Object.assign(finding, recordingLines);
 
   // Persist raw transcript to its own KV key immediately (diarized will be filled in later)
-  await saveTranscript(orgId, findingId, rawTranscript, undefined, utteranceTimes);
+  await saveTranscript(orgId, findingId, rawTranscript, undefined, utteranceTimes, recordingLines);
   await saveFinding(orgId, finding);
 
   // Fire prepare (critical path) + diarize-async (parallel, non-blocking) concurrently.

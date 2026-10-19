@@ -70,10 +70,15 @@ export async function readFullFinding(orgId: OrgId, id: string): Promise<Finding
  *  line is dead. The times index the STORE's raw lines, so when we take them we
  *  take that raw text with them — mixing the finding doc's raw with the store's
  *  times slides every timestamp onto the wrong line. Same matched-pair rule as
- *  /manager/api/finding. */
+ *  /manager/api/finding.
+ *
+ *  A multi-recording audit's recordingLineTimes/recordingLineIdx (REQ-015) are
+ *  the same kind of pair: they index the store's raw lines, so they come over
+ *  with that raw text or not at all. */
 async function backfillTranscript(orgId: OrgId, id: string, rec: Record<string, unknown>): Promise<void> {
   const hasTimes = Array.isArray(rec.utteranceTimes) && (rec.utteranceTimes as unknown[]).length > 0;
-  if (rec.rawTranscript && rec.diarizedTranscript && hasTimes) return;
+  const hasLines = Array.isArray(rec.recordingLineTimes) && (rec.recordingLineTimes as unknown[]).length > 0;
+  if (rec.rawTranscript && rec.diarizedTranscript && (hasTimes || hasLines)) return;
   try {
     const t = await getTranscript(orgId, id);
     if (!t) return;
@@ -81,6 +86,10 @@ async function backfillTranscript(orgId: OrgId, id: string, rec: Record<string, 
     if (!hasTimes && t.utteranceTimes?.length && t.raw) {
       rec.rawTranscript = t.raw;
       rec.utteranceTimes = t.utteranceTimes;
+    } else if (!hasTimes && !hasLines && t.recordingLineTimes?.length && t.recordingLineIdx?.length && t.raw) {
+      rec.rawTranscript = t.raw;
+      rec.recordingLineTimes = t.recordingLineTimes;
+      rec.recordingLineIdx = t.recordingLineIdx;
     } else {
       rec.rawTranscript ??= t.raw;
       rec.utteranceTimes ??= t.utteranceTimes;

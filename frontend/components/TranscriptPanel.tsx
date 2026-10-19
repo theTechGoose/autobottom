@@ -2,12 +2,17 @@
  *  timestamp chips. Multi-column layout matches prod's `.transcript-body`.
  *  Plain SSR output; interactivity (click-to-seek, search, evidence highlight)
  *  is hydrated by a later TranscriptInteractive island. */
+import { Fragment } from "preact";
 import { safeDiarized } from "@core/business/diarization-validation/mod.ts";
 
 export interface TranscriptData {
   raw: string;
   diarized: string;
   utteranceTimes?: number[];
+  /** Multi-recording audits: which recording (the /audit/recording `idx`) each
+   *  utteranceTimes entry is on. Every recording restarts at 0:00, so a time
+   *  alone can't say where a line plays (REQ-015). */
+  lineRecordings?: number[];
 }
 
 interface TranscriptPanelProps {
@@ -37,6 +42,8 @@ function parseLine(line: string): { speaker: "team" | "guest" | null; content: s
 export interface EmittedLine {
   line: string;
   ts: number | null;
+  /** The recording this line plays on; null unless lineRecordings was given. */
+  rec: number | null;
 }
 
 /** The exact line list this panel renders, in render order: non-empty lines
@@ -79,7 +86,8 @@ export function emitTranscriptLines(
   // Non-empty lines WITH consecutive-duplicate suppression. Prod skips any
   // line that exactly matches the previously-emitted line to cut repeats
   // like "Perfect." / "Perfect." in rapid succession.
-  const emitted: Array<{ line: string; ts: number | null }> = [];
+  const lineRecordings = transcript?.lineRecordings;
+  const emitted: EmittedLine[] = [];
   let lastTrim = "";
   let timeIdx = 0;
   for (const l of rawLines) {
@@ -88,10 +96,11 @@ export function emitTranscriptLines(
     // Advance the time index even for duplicates so timestamps stay aligned
     // to the raw transcript position.
     const ts = utteranceTimes[timeIdx] ?? null;
+    const rec = lineRecordings?.[timeIdx] ?? null;
     timeIdx++;
     if (trimmed === lastTrim) continue;
     lastTrim = trimmed;
-    emitted.push({ line: l, ts });
+    emitted.push({ line: l, ts, rec });
   }
   return emitted;
 }
@@ -125,25 +134,31 @@ export function TranscriptPanel({ transcript, snippet }: TranscriptPanelProps) {
         <button type="button" class="transcript-search-btn" data-search-action="close">×</button>
       </div>
       <div class="transcript-body transcript-multicol" id="transcript-body" data-utterance-times={JSON.stringify(utteranceTimes)}>
-        {emitted.map(({ line, ts }, idx) => {
+        {emitted.map(({ line, ts, rec }, idx) => {
           const { speaker, content } = parseLine(line);
           const tsLabel = formatTime(ts ?? undefined);
           const label = speaker === "team" ? "TEAM MEMBER" : speaker === "guest" ? "GUEST" : null;
+          // A label where each recording starts — its own clock restarts at 0:00.
+          // Not a .t-line, so data-line-idx stays the index questions point at.
+          const recStart = rec != null && (idx === 0 || emitted[idx - 1].rec !== rec);
           return (
-            <div
-              key={idx}
-              class={`t-line ${speaker ? `t-line-${speaker}` : ""}`}
-              data-line-idx={idx}
-              data-ts-ms={ts != null ? String(ts) : undefined}
-            >
-              {tsLabel != null && (
-                <span class="t-timestamp" data-seek-ms={ts != null ? String(ts) : undefined}>
-                  {tsLabel}
-                </span>
-              )}
-              {label && <span class={`t-speaker t-speaker-${speaker}`}>{label}</span>}
-              <span class="t-text">{content}</span>
-            </div>
+            <Fragment key={idx}>
+              {recStart && <div class="t-rec-divider">Recording {rec + 1}</div>}
+              <div
+                class={`t-line ${speaker ? `t-line-${speaker}` : ""}`}
+                data-line-idx={idx}
+                data-ts-ms={ts != null ? String(ts) : undefined}
+                data-rec-idx={rec != null ? String(rec) : undefined}
+              >
+                {tsLabel != null && (
+                  <span class="t-timestamp" data-seek-ms={ts != null ? String(ts) : undefined}>
+                    {tsLabel}
+                  </span>
+                )}
+                {label && <span class={`t-speaker t-speaker-${speaker}`}>{label}</span>}
+                <span class="t-text">{content}</span>
+              </div>
+            </Fragment>
           );
         })}
       </div>

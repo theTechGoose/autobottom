@@ -30,3 +30,14 @@ Deno.test("QueueAudioPlayer — speed readout is visible at 1x", () => {
   // −/+ buttons unlabeled and the current rate unknowable.
   assert(!html.slice(at, at + 120).includes("visibility:hidden"), "speed readout must not be hidden");
 });
+
+Deno.test("REQ-014: QueueAudioPlayer offers a tab per recording on a multi-recording audit", () => {
+  const html = renderHTML(<QueueAudioPlayer initialFindingId="fid-1" recordingCount={2} />);
+  assert(html.includes(">REC 1<"), "REC 1 tab");
+  assert(html.includes(">REC 2<"), "REC 2 tab");
+});
+
+Deno.test("REQ-014: QueueAudioPlayer shows no recording tabs for a single recording", () => {
+  const html = renderHTML(<QueueAudioPlayer initialFindingId="fid-1" />);
+  assert(!html.includes("REC 1"), "no tabs when there's one recording");
+});

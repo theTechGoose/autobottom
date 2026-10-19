@@ -2040,4 +2040,4 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 /* Tap targets on the audio bar + scrub topbar: at least 24px, kept at 28px. */
 .qap-back, .qap-fwd { min-height: 28px; }
 .rem-topbar .btn-sm { min-height: 28px; display: inline-flex; align-items: center; }
-.rem-record-link { display: inline-flex; align-items: center; min-height: 24px; }
+.tap-link { display: inline-flex; align-items: center; min-height: 24px; }

@@ -288,7 +288,7 @@ export default define.page(async function AuditScrubPage(ctx) {
               : <>Couldn't load this audit: {errorMsg}</>}
           </div>
           <div style="margin-top:16px;text-align:center;">
-            <a href={reportUrl} class="tbl-link">&larr; Back to report</a>
+            <a href={reportUrl} class="tbl-link tap-link">&larr; Back to report</a>
           </div>
         </div>
       </Layout>
@@ -340,7 +340,7 @@ export default define.page(async function AuditScrubPage(ctx) {
                     <div class="rem-meta-label">Record</div>
                     <div class="mono">
                       {crmUrl
-                        ? <a href={crmUrl} target="_blank" rel="noopener" class="rem-record-link" style="color:var(--accent);text-decoration:none;">{recordId} &#8599;</a>
+                        ? <a href={crmUrl} target="_blank" rel="noopener" class="tap-link" style="color:var(--accent);text-decoration:none;">{recordId} &#8599;</a>
                         : (recordId || "—")}
                     </div>
                   </div>

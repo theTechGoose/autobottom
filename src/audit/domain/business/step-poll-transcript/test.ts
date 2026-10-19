@@ -441,3 +441,64 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "REQ-015: multi-genie keeps each line's time on its own recording and which recording it is",
+  ...kvOpts,
+  fn: async () => {
+    setupEnv();
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    await saveFinding(orgId, {
+      id: findingId, auditJobId: "job-mg6", findingStatus: "transcribing",
+      record: { RecordId: 1 }, assemblyAiTranscriptIds: ["tid-A", "tid-B"],
+    });
+    const stub = freshStub({});
+    const undo = installPerIdStub(stub, {
+      "tid-A": { status: "completed", text: "x", utterances: [utt("A", "hi", 0), utt("B", "hello", 2000), utt("A", "bye", 5000)] },
+      "tid-B": { status: "completed", text: "y", utterances: [utt("A", "back again", 0), utt("B", "ok", 3000)] },
+    });
+    try {
+      await stepPollTranscript(reqWith({ findingId, orgId, transcriptIds: ["tid-A", "tid-B"] }));
+      const fresh = await getFinding(orgId, findingId) as Record<string, unknown>;
+      assertEquals((fresh.rawTranscript as string).split("\n").length, 5, "joined text, one line per utterance");
+      assertEquals(fresh.recordingLineTimes, [0, 2000, 5000, 0, 3000], "recording 2 restarts at 0:00");
+      assertEquals(fresh.recordingLineIdx, [0, 0, 0, 1, 1]);
+      assert(!fresh.utteranceTimes, "still no flat utteranceTimes — the queue players play recording 1 only");
+
+      const cb = [...stub.enqueueBodies.entries()].find(([u]) => u.includes("transcribe-complete"))![1];
+      assertEquals(cb.recordingLineTimes, [0, 2000, 5000, 0, 3000], "carried across the hop like rawTranscript");
+      assertEquals(cb.recordingLineIdx, [0, 0, 0, 1, 1]);
+    } finally {
+      undo();
+    }
+  },
+});
+
+Deno.test({
+  name: "REQ-015: a recording that was never submitted doesn't shift the later ones' index",
+  ...kvOpts,
+  fn: async () => {
+    setupEnv();
+    resetFirestoreCredentials();
+    const { orgId, findingId } = uniqueIds();
+    // Recording 0 was missing from S3, so only recordings 1 and 2 were submitted.
+    await saveFinding(orgId, {
+      id: findingId, auditJobId: "job-mg7", findingStatus: "transcribing",
+      record: { RecordId: 1 }, assemblyAiTranscriptIds: ["tid-B", "tid-C"],
+    });
+    const stub = freshStub({});
+    const undo = installPerIdStub(stub, {
+      "tid-B": { status: "completed", text: "x", utterances: [utt("A", "one", 1000)] },
+      "tid-C": { status: "completed", text: "y", utterances: [utt("A", "two", 4000)] },
+    });
+    try {
+      await stepPollTranscript(reqWith({ findingId, orgId, transcriptIds: ["tid-B", "tid-C"], transcriptRecs: [1, 2] }));
+      const fresh = await getFinding(orgId, findingId) as Record<string, unknown>;
+      assertEquals(fresh.recordingLineIdx, [1, 2]);
+      assertEquals(fresh.recordingLineTimes, [1000, 4000]);
+    } finally {
+      undo();
+    }
+  },
+});

@@ -6,12 +6,17 @@
  *    - queue:play-toggle  (P / Space)
  *    - queue:seek  (←/→, skip by 5s)
  *    - queue:speed (↑/↓, ±0.5×)
- *    - queue:jump-to-audio (Jump to Audio chip click)
+ *    - queue:jump-to-audio (Jump to Audio chip click; `rec` switches recording)
+ *
+ *  `recordingCount` > 1 (the scrub view on a multi-recording audit) adds a REC
+ *  tab per recording (REQ-014). The queues don't pass it and stay on recording
+ *  1, which is why their transcripts never carry multi-recording times.
  */
 import { useEffect, useRef, useState } from "preact/hooks";
 
 interface Props {
   initialFindingId: string | null;
+  recordingCount?: number;
 }
 
 const WF_BARS = 120;
@@ -27,7 +32,7 @@ function fmt(s: number): string {
   return `${m}:${sec < 10 ? "0" : ""}${sec}`;
 }
 
-export default function QueueAudioPlayer({ initialFindingId }: Props) {
+export default function QueueAudioPlayer({ initialFindingId, recordingCount = 1 }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -44,6 +49,10 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
   // and reset closure-local state, causing audio to jump to 00:00 on every
   // parent re-render that changed `initialFindingId`).
   const loadFindingRef = useRef<((fid: string | null) => void) | null>(null);
+  // Which recording is loaded. State for the tabs; the setup closure keeps its
+  // own copy so its listeners never go stale.
+  const [activeRec, setActiveRec] = useState(0);
+  const loadRecRef = useRef<((rec: number) => void) | null>(null);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -55,6 +64,7 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
     let wfData: number[] | null = null;
     let wfProgress = 0;
     let currentLoadFid: string | null = null;
+    let currentRec = 0;
 
     function sizeCanvas() {
       // Measure the canvas itself — CSS (`flex:1`) already sized it against the
@@ -92,11 +102,11 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
       ctx2d.fillRect(cx - 1, 0, 2, H);
     }
 
-    async function loadWaveform(fid: string) {
+    async function loadWaveform(fid: string, rec: number) {
       wfData = null;
       draw();
       try {
-        const r = await fetch(`/audit/recording?id=${encodeURIComponent(fid)}`);
+        const r = await fetch(`/audit/recording?id=${encodeURIComponent(fid)}&idx=${rec}`);
         if (!r.ok) throw new Error("HTTP " + r.status);
         const buf = await r.arrayBuffer();
         const AC = (globalThis as unknown as { AudioContext: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext ||
@@ -113,22 +123,34 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
         }
         const mx = Math.max(...data) || 1;
         for (let k = 0; k < data.length; k++) data[k] /= mx;
+        // A tab switch mid-decode must not paint the old recording's shape.
+        if (fid !== currentLoadFid || rec !== currentRec) return;
         wfData = data;
         draw();
       } catch { /* leave waveform placeholder */ }
     }
 
+    function loadRecording(fid: string, rec: number) {
+      currentLoadFid = fid;
+      currentRec = rec;
+      setActiveRec(rec);
+      audio!.src = `/audit/recording?id=${encodeURIComponent(fid)}&idx=${rec}`;
+      audio!.playbackRate = speedRef.current;
+      loadWaveform(fid, rec);
+    }
     function loadFinding(fid: string | null) {
       if (!fid) return;
       if (fid === currentLoadFid) return;
-      currentLoadFid = fid;
-      audio!.src = `/audit/recording?id=${encodeURIComponent(fid)}&idx=0`;
-      audio!.playbackRate = speedRef.current;
-      loadWaveform(fid);
+      loadRecording(fid, 0);
     }
-    // Expose to the per-finding useEffect so it can request loads without
-    // triggering this setup effect to re-run.
+    function switchRecording(rec: number) {
+      if (!currentLoadFid || rec === currentRec) return;
+      loadRecording(currentLoadFid, rec);
+    }
+    // Expose to the per-finding useEffect / REC tabs so they can request loads
+    // without triggering this setup effect to re-run.
     loadFindingRef.current = loadFinding;
+    loadRecRef.current = switchRecording;
 
     function updateTime() {
       if (!audio || !timeRef.current) return;
@@ -178,7 +200,17 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
 
     // Public events from other islands / components
     const onJumpToAudio = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { ms?: number } | undefined;
+      const detail = (e as CustomEvent).detail as { ms?: number; rec?: number } | undefined;
+      // A line on another recording: load it, then seek once it can be seeked.
+      if (detail?.ms != null && detail.rec != null && detail.rec !== currentRec) {
+        const ms = detail.ms;
+        switchRecording(detail.rec);
+        audio!.addEventListener("loadedmetadata", () => {
+          audio!.currentTime = ms / 1000;
+          audio!.play().catch(() => {});
+        }, { once: true });
+        return;
+      }
       if (detail?.ms != null && audio!.duration) {
         audio!.currentTime = detail.ms / 1000;
         audio!.play().catch(() => {});
@@ -258,6 +290,7 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
       document.removeEventListener("click", onChipClick);
       globalThis.removeEventListener("resize", onResize);
       loadFindingRef.current = null;
+      loadRecRef.current = null;
     };
   }, []);
 
@@ -276,6 +309,19 @@ export default function QueueAudioPlayer({ initialFindingId }: Props) {
   return (
     <div class="queue-audio-bar" ref={containerRef} style={hasFinding ? "" : "visibility:hidden"}>
       <audio ref={audioRef} preload="metadata" style="display:none" />
+      {recordingCount > 1 && (
+        <div class="ap-rec-tabs" role="tablist">
+          {Array.from({ length: recordingCount }, (_, i) => (
+            <button
+              key={i}
+              type="button"
+              class={`ap-rec-tab ${i === activeRec ? "active" : ""}`}
+              onClick={() => loadRecRef.current?.(i)}
+              aria-pressed={i === activeRec}
+            >REC {i + 1}</button>
+          ))}
+        </div>
+      )}
       <button class="qap-back" type="button" title="Back 5s (←)" onClick={() => document.dispatchEvent(new CustomEvent("queue:seek", { detail: { delta: -SEEK_STEP } }))}>
         ⏮ 5s
       </button>

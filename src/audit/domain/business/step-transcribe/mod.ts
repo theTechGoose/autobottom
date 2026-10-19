@@ -75,7 +75,10 @@ export async function stepTranscribe(req: Request): Promise<Response> {
     // reconstruct the call chronologically, so this stays a sequential loop
     // over multiKeys and a failed leg does NOT shift the others.
     const transcriptIds: string[] = [];
-    for (const key of multiKeys) {
+    // Which recording each id transcribes — a skipped leg leaves a gap, and the
+    // scrub view needs the real index to play the right recording (REQ-015).
+    const transcriptRecs: number[] = [];
+    for (const [rec, key] of multiKeys.entries()) {
       const ref = new S3Ref(Deno.env.get("S3_BUCKET") ?? "", key);
       const bytes = await ref.get();
       if (!bytes) {
@@ -85,6 +88,7 @@ export async function stepTranscribe(req: Request): Promise<Response> {
       try {
         const uploadUrl = await uploadAudio(bytes);
         transcriptIds.push(await submitTranscription(uploadUrl, findingId));
+        transcriptRecs.push(rec);
       } catch (err) {
         // Same tolerance as before: one bad leg must not sink the whole audit.
         console.error(`[STEP-TRANSCRIBE] ${findingId}: Failed to submit ${key}:`, err);
@@ -107,9 +111,10 @@ export async function stepTranscribe(req: Request): Promise<Response> {
     // single-genie path does — poll-transcript must not depend on this
     // saveFinding being visible to a fresh isolate 15s later.
     finding.assemblyAiTranscriptIds = transcriptIds;
+    (finding as Record<string, any>).assemblyAiTranscriptRecs = transcriptRecs;
     (finding as Record<string, any>).assemblyAiSubmittedAt = Date.now();
     await saveFinding(orgId, finding);
-    await enqueueStep("poll-transcript", { findingId, orgId, transcriptIds }, POLL_DELAY_SECONDS);
+    await enqueueStep("poll-transcript", { findingId, orgId, transcriptIds, transcriptRecs }, POLL_DELAY_SECONDS);
     console.log(`[STEP-TRANSCRIBE] ${findingId}: 🚀 Submitted ${transcriptIds.length}/${multiKeys.length} recordings [${transcriptIds.join(",")}], polling in ${POLL_DELAY_SECONDS}s`);
     return json({ ok: true, multiGenie: true, submitted: transcriptIds.length });
   }

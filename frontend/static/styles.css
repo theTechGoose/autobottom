@@ -790,8 +790,8 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   flex-shrink: 0;
 }
 .qap-speed-btn {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   line-height: 1;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1560,12 +1560,13 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .ap-play svg { width: 10px; height: 10px; fill: #fff; }
 #ap-waveform { display: block; }
 .ap-time { font-family: var(--mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
-.ap-rec-tabs { display: flex; gap: 4px; flex-shrink: 0; }
+.ap-rec-tabs { display: flex; gap: 8px; flex-shrink: 0; }
 .ap-rec-tab {
   padding: 4px 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
   background: transparent; border: 1px solid var(--border); border-radius: 4px;
   color: var(--text-dim); cursor: pointer; transition: all 0.15s;
   font-family: var(--mono);
+  min-height: 28px;
 }
 .ap-rec-tab:hover { color: var(--text-bright); border-color: var(--text-muted); }
 .ap-rec-tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
@@ -2033,3 +2034,10 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   .rem-split { grid-template-columns: minmax(0, 1fr); gap: 24px; }
   .rem-split-pane:last-child { border-left: 0; padding-left: 0; border-top: 1px solid var(--border); padding-top: 18px; }
 }
+/* Multi-recording transcript: where each recording starts (REQ-015). Spans
+   every column so recording 2 doesn't begin mid-column under recording 1. */
+.t-rec-divider { column-span: all; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--blue); border-bottom: 1px solid var(--border); padding: 10px 0 4px; margin-bottom: 6px; }
+/* Tap targets on the audio bar + scrub topbar: at least 24px, kept at 28px. */
+.qap-back, .qap-fwd { min-height: 28px; }
+.rem-topbar .btn-sm { min-height: 28px; display: inline-flex; align-items: center; }
+.tap-link { display: inline-flex; align-items: center; min-height: 24px; }

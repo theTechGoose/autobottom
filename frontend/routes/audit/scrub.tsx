@@ -20,11 +20,13 @@
  *  (remediation is about failures only) and carries no queue close-out, because
  *  an audit reached from its report may not be in anyone's queue.
  *
- *  MULTI-RECORDING AUDITS DON'T JUMP, and that's correct rather than missing:
- *  step-transcribe's multi-genie branch concatenates plain `transcribe()` text
- *  with no utterances, so those audits have no utteranceTimes at all. The page
- *  detects that, says so, and still plays REC 1 — which beats offering jumps
- *  that would land on the wrong recording's clock.
+ *  MULTI-RECORDING AUDITS: the transcript is every recording's text joined, and
+ *  each recording restarts at 0:00. Their per-line times come from
+ *  recordingLineTimes + recordingLineIdx (REQ-015) — never utteranceTimes —
+ *  and every line says which recording it's on, so a click switches the audio
+ *  bar to that recording before seeking. The bar has a REC tab per recording
+ *  (REQ-014). Audits transcribed before those fields existed have no times: the
+ *  page says so and still plays every recording from its tabs.
  *
  *  Public, like /audit/report. It shows nothing the report doesn't already show
  *  to the same anonymous visitor (transcript and recording are both on the
@@ -70,6 +72,11 @@ interface Finding {
   rawTranscript?: string;
   diarizedTranscript?: string;
   utteranceTimes?: number[];
+  /** Multi-recording audits: per-line time on its own recording + which one. */
+  recordingLineTimes?: number[];
+  recordingLineIdx?: number[];
+  s3RecordingKeys?: string[];
+  genieIds?: string[];
   answeredQuestions?: AnsweredQuestion[];
   record?: Record<string, unknown>;
   error?: string;
@@ -99,6 +106,35 @@ function teamMemberOf(f: Finding): string {
   if (parsed) return parsed;
   if (f.owner && f.owner !== "api") return f.owner;
   return "—";
+}
+
+/** The transcript the page renders and seeks by.
+ *
+ *  A multi-recording audit seeks by recordingLineTimes/recordingLineIdx, which
+ *  index rawTranscript's non-empty lines — the same lines TranscriptPanel walks
+ *  when it has times. If the counts disagree (the raw text changed after the
+ *  times were taken) every time would land on the wrong line, so they're dropped
+ *  and the page falls back to "no per-line timestamps". */
+export function scrubTranscript(
+  f: Pick<Finding, "rawTranscript" | "diarizedTranscript" | "utteranceTimes" | "recordingLineTimes" | "recordingLineIdx" | "s3RecordingKeys">,
+): TranscriptData {
+  const raw = f.rawTranscript ?? "";
+  const base = {
+    raw,
+    // Sanitized on read so a stored refusal/commentary can never render as the
+    // call — see @core/business/diarization-validation.
+    diarized: safeDiarized(f.diarizedTranscript, f.rawTranscript),
+  };
+  if ((f.s3RecordingKeys?.length ?? 0) > 1) {
+    const times = f.recordingLineTimes ?? [];
+    const recs = f.recordingLineIdx ?? [];
+    const lineCount = raw.split(/\r?\n/).filter((l) => l.trim()).length;
+    if (times.length > 0 && times.length === recs.length && times.length === lineCount) {
+      return { ...base, utteranceTimes: times, lineRecordings: recs };
+    }
+    return { ...base, utteranceTimes: [] };
+  }
+  return { ...base, utteranceTimes: f.utteranceTimes ?? [] };
 }
 
 /** Every question on the audit, each carrying the transcript line its evidence
@@ -252,7 +288,7 @@ export default define.page(async function AuditScrubPage(ctx) {
               : <>Couldn't load this audit: {errorMsg}</>}
           </div>
           <div style="margin-top:16px;text-align:center;">
-            <a href={reportUrl} class="tbl-link">&larr; Back to report</a>
+            <a href={reportUrl} class="tbl-link tap-link">&larr; Back to report</a>
           </div>
         </div>
       </Layout>
@@ -271,13 +307,9 @@ export default define.page(async function AuditScrubPage(ctx) {
   const teamMember = teamMemberOf(f);
   const recordMeta = buildRecordMeta(f.record, f.recordingIdField);
 
-  const transcript: TranscriptData = {
-    raw: f.rawTranscript ?? "",
-    // Sanitized on read so a stored refusal/commentary can never render as the
-    // call — see @core/business/diarization-validation.
-    diarized: safeDiarized(f.diarizedTranscript, f.rawTranscript),
-    utteranceTimes: f.utteranceTimes ?? [],
-  };
+  const transcript = scrubTranscript(f);
+  const recordingCount = Math.max(1, f.s3RecordingKeys?.length ?? 1);
+  const recordingIds = f.genieIds && f.genieIds.length > 1 ? f.genieIds : null;
 
   return (
     <Layout title={`Scrub ${id}`} section="admin" user={user} pathname={url.pathname} hideSidebar>
@@ -308,13 +340,13 @@ export default define.page(async function AuditScrubPage(ctx) {
                     <div class="rem-meta-label">Record</div>
                     <div class="mono">
                       {crmUrl
-                        ? <a href={crmUrl} target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">{recordId} &#8599;</a>
+                        ? <a href={crmUrl} target="_blank" rel="noopener" class="tap-link" style="color:var(--accent);text-decoration:none;">{recordId} &#8599;</a>
                         : (recordId || "—")}
                     </div>
                   </div>
                   <div>
                     <div class="rem-meta-label">Recording</div>
-                    <div class="mono">{f.recordingId ?? String(record.VoGenie ?? "—")}</div>
+                    <div class="mono">{recordingIds ? recordingIds.join(", ") : (f.recordingId ?? String(record.VoGenie ?? "—"))}</div>
                   </div>
                   <div>
                     <div class="rem-meta-label">Type</div>
@@ -343,7 +375,7 @@ export default define.page(async function AuditScrubPage(ctx) {
           </div>
         </div>
 
-        <QueueAudioPlayer initialFindingId={id} />
+        <QueueAudioPlayer initialFindingId={id} recordingCount={recordingCount} />
         <RemediationInteractive />
         {/* Transport keys only (Space/P, ←/→, ↑/↓) — no queue to decide on here. */}
         <HotkeyHandler mode="audio" />

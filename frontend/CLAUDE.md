@@ -263,7 +263,7 @@ Two review/queue traps that ship wrong audit scores or a dead scrubber:
 | Question Lab config | `/question-lab/config/[id]` | Done — Settings + Run Test Audit (HTMX polling) + Questions inline-edit |
 | Question Lab editor | `/question-lab/question/[id]` | Done — full editor + version history + simulator |
 | Store | `/store` | Done — item grid, buy flow |
-| Audit Report | `/audit/report` | Done — multi-recording REC tabs, File Appeal, Different Recording reaudit, **Scrub Transcript** button (→ `/audit/scrub`). Public page; admin-only extras (gated by `isAdmin`): per-question flip, failure-source override, reviewer handle-time (`⏱`) badges. |
+| Audit Report | `/audit/report` | Done — multi-recording REC tabs, appeal buttons (Add Genie / Direct Upload / Appeal Decision, REQ-017), **Scrub Transcript** button (→ `/audit/scrub`). Public page; admin-only extras (gated by `isAdmin`): per-question flip, failure-source override, reviewer handle-time (`⏱`) badges. |
 | Audit Scrub | `/audit/scrub` | Done — the report made playable: every question + record details on the left, click-to-seek transcript on the right, audio bar below (Space/P, ←/→, ↑/↓). Clicking a question jumps to the transcript line its evidence cites. Same parts as the manager remediation view; **public** like the report, and registered in `FRONTEND_EXACT_PAGES` + `PUBLIC_PATHS`. Multi-recording audits get a REC tab per recording and seek by `recordingLineTimes` + `recordingLineIdx` (REQ-014/015): a clicked line switches to its own recording first. Ones transcribed before those fields existed play every recording but have no jumps until `tools/backfill-recording-lines.ts` fills them in (REQ-016). |
 | Super Admin | `/super-admin` | Done (gated to `ai@monsterrg.com`) |
 | Gamification | `/gamification` | Done |
@@ -271,7 +271,7 @@ Two review/queue traps that ship wrong audit scores or a dead scrubber:
 | 500 | error | Done |
 
 ## Islands (Client JS — keep this list short)
-- `AppealModal.tsx` — multi-step appeal/different-recording flow on the audit-report page
+- `AppealModal.tsx` — the three appeal buttons (Add Genie / Direct Upload / Appeal Decision) and their modals, on the audit report and the manager remediation topbar
 - `AudioPlayer.tsx` — waveform `<audio>` player with REC 1 / REC 2 tabs for multi-recording audits
 - `BulkAuditRunner.tsx` — bulk-audit panel with sequential POST + per-row progress
 - `ChargebacksToolbar.tsx` — chargebacks/wire-deductions toolbar (date range, CSV/XLSX download, post-to-sheet)

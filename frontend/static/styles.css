@@ -1571,14 +1571,14 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .ap-rec-tab:hover { color: var(--text-bright); border-color: var(--text-muted); }
 .ap-rec-tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
 
-/* ===== File Appeal — prod-matching modal (Commit W) ===== */
+/* ===== Appeal buttons + modals (REQ-017) ===== */
 @keyframes appealIn { from { opacity:0;transform:scale(0.95) translateY(6px); } to { opacity:1;transform:none; } }
 
-/* Trigger placement. "block" is the audit report's centred button; "inline"
-   drops it into a toolbar row (manager remediation topbar) at btn-sm size.
-   Only the trigger changes — every overlay is identical in both. */
-.appeal-trigger { margin: 14px 0 6px; text-align: center; }
-.appeal-trigger--inline { margin: 0; text-align: left; }
+/* Trigger placement. "block" is the audit report's centred row of three;
+   "inline" drops them into a toolbar row (manager remediation topbar) at
+   btn-sm size. Only the triggers change — every overlay is identical in both. */
+.appeal-trigger { margin: 14px 0 6px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.appeal-trigger--inline { margin: 0; gap: 6px; justify-content: flex-start; }
 .appeal-trigger--inline .appeal-btn { padding: 4px 10px; font-size: 11px; border-radius: 6px; }
 .appeal-btn {
   background: var(--red-dim); color: #fff; border: none;
@@ -1588,6 +1588,10 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 }
 .appeal-btn:hover:not(:disabled) { background: var(--red); box-shadow: 0 0 20px var(--red-glow); }
 .appeal-btn:disabled { opacity: 0.4; cursor: default; box-shadow: none; }
+/* The two new-audio paths are teal so they don't read as the same red
+   "appeal" as the judge path beside them. */
+.appeal-btn--audio { background: var(--teal-dim); }
+.appeal-btn--audio:hover:not(:disabled) { background: var(--teal); box-shadow: 0 0 20px var(--teal-glow); }
 .appeal-btn.filed { background: var(--teal-dim); opacity: 1; }
 .appeal-btn.filed:hover { box-shadow: none; }
 
@@ -1608,32 +1612,10 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   animation: appealIn 0.16s ease;
   color: var(--text);
 }
-.appeal-overlay-box--choice    { padding: 28px 28px 22px; max-width: 520px; width: 90vw; }
 .appeal-overlay-box--confirm   { padding: 28px 32px 22px; max-width: 480px; width: 90vw; }
 .appeal-overlay-box--reaudit   { width: 90vw; max-width: 560px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
 .appeal-overlay-box--success   { padding: 36px 32px; max-width: 380px; width: 90vw; text-align: center; }
 
-.appeal-choice-title { font-size: 17px; font-weight: 700; color: var(--text-bright); margin-bottom: 6px; }
-.appeal-choice-sub   { font-size: 12px; color: var(--text-muted); margin-bottom: 20px; }
-.appeal-choice-row {
-  display: flex; gap: 12px; margin-bottom: 20px;
-}
-.appeal-choice-card {
-  flex: 1; text-align: left; padding: 18px; border-radius: 10px;
-  border: 1px solid #30363d; background: #0d1117;
-  color: var(--text-bright); cursor: pointer;
-  transition: border-color 0.15s;
-  font-family: inherit;
-}
-.appeal-choice-card.is-reaudit:hover { border-color: var(--teal); }
-.appeal-choice-card.is-appeal:hover  { border-color: var(--blue); }
-.appeal-choice-label {
-  font-weight: 700; font-size: 13px; margin-bottom: 6px;
-}
-.appeal-choice-label.is-reaudit { color: var(--teal); }
-.appeal-choice-label.is-appeal  { color: var(--blue); }
-.appeal-choice-desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
-.appeal-cancel-row { text-align: center; }
 .appeal-cancel-btn {
   padding: 6px 22px; border-radius: 7px;
   border: 1px solid #30363d; background: transparent;
@@ -1707,17 +1689,30 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 }
 .appeal-reaudit-scroll { overflow-y: auto; flex: 1; }
 .appeal-panel { text-align: left; background: #161c28; }
-.appeal-tabs { display: flex; border-bottom: 1px solid var(--border); }
-.appeal-tab {
-  flex: 1; padding: 10px 0; background: none; border: none;
-  color: var(--text-muted); font-size: 12px; font-weight: 700;
-  cursor: pointer; text-align: center;
-  border-bottom: 2px solid transparent; transition: all 0.15s;
-  font-family: inherit;
-}
-.appeal-tab:hover { color: var(--text); }
-.appeal-tab.active { color: var(--teal); border-bottom-color: var(--teal); }
 .appeal-fork { padding: 16px 20px; }
+
+/* What this path does, at the top of each modal (REQ-018). */
+.appeal-explain { font-size: 12px; color: var(--text-muted); line-height: 1.55; margin-bottom: 14px; }
+.appeal-explain p { margin: 0 0 8px; }
+.appeal-explain ul { margin: 0; padding-left: 18px; }
+.appeal-explain li { margin-bottom: 4px; }
+.appeal-explain strong { color: var(--text-bright); }
+.appeal-note { font-size: 11px; color: var(--text-dim); margin: 8px 0 4px; }
+
+/* Appeal Decision's missing-audio callout with hops to the other modals (REQ-019). */
+.appeal-redirect {
+  background: var(--teal-bg); border: 1px solid rgba(20,184,166,0.3); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 14px;
+}
+.appeal-redirect-text { font-size: 12px; color: var(--text); line-height: 1.5; }
+.appeal-redirect-text strong { color: var(--text-bright); }
+.appeal-redirect-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.appeal-redirect-btn {
+  background: var(--teal-dim); color: #fff; border: none; border-radius: 6px;
+  padding: 6px 12px; min-height: 28px; font-size: 11px; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+}
+.appeal-redirect-btn:hover { background: var(--teal); }
 .fork-label { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
 .recording-inputs { display: flex; flex-direction: column; gap: 6px; }
 .recording-row { display: flex; gap: 6px; align-items: center; }

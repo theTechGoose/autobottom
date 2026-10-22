@@ -21,9 +21,12 @@ interface LayoutProps {
   gameState?: GameStateLite;
   /** Department cards that replace the sidebar nav (Operations Portal only). */
   depts?: SbDept[];
+  /** "light" swaps the dark palette for the light one (body.theme-light in
+   *  styles.css). The audit report uses it (REQ-022); everything else is dark. */
+  theme?: "light";
 }
 
-export function Layout({ title, section, user, children, hideSidebar, pathname, gameState, depts }: LayoutProps) {
+export function Layout({ title, section, user, children, hideSidebar, pathname, gameState, depts, theme: palette }: LayoutProps) {
   const theme = getTheme(section ?? "admin");
   const pageTitle = title ? `${title} — Auto-Bot` : "Auto-Bot";
 
@@ -39,6 +42,7 @@ export function Layout({ title, section, user, children, hideSidebar, pathname, 
         <style dangerouslySetInnerHTML={{ __html: `:root { --accent: ${theme.accent}; --accent-bg: ${theme.accentBg}; }` }} />
       </head>
       <body
+        class={palette === "light" ? "theme-light" : undefined}
         hx-on--after-request="if(event.detail.xhr && event.detail.xhr.status===401) window.location='/login'"
         data-user-email={user?.email ?? ""}
       >

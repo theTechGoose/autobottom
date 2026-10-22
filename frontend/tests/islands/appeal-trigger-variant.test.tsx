@@ -75,3 +75,10 @@ Deno.test("REQ-003: an audit awaiting review shows a locked button, not the appe
     for (const l of LABELS) assert(!html.includes(l), `${variant}: ${l} must not render`);
   }
 });
+
+Deno.test("REQ-021: each appeal button carries its own colour class", () => {
+  const html = renderHTML(<AppealModal {...ARGS} />);
+  for (const cls of ["appeal-btn--genie", "appeal-btn--upload", "appeal-btn--decision"]) {
+    assert(html.includes(cls), `${cls} must be on its button`);
+  }
+});

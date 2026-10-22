@@ -330,3 +330,28 @@ Filed**; while the audit waits for review they are **Awaiting Review**
 
 Tests: `frontend/tests/islands/appeal-trigger-variant.test.tsx` — "REQ-020 …"
 (unit); `e2e/appeal-actions/appeal-actions.e2e.test.ts` — "REQ-020 …" (e2e).
+
+## REQ-021 — The three appeal buttons are equal size, each its own colour
+
+> "make the fucking buttons equal size please. make them all a different color that fits the theme."
+
+Add Genie, Direct Upload and Appeal Decision share one width (168px on the
+report, 112px in the remediation topbar) and each has its own colour from the
+theme: teal, blue, purple. Appeal Decision's "Add Genie instead" / "Direct
+Upload instead" switches wear the colour of the button they open.
+
+Tests: `frontend/tests/islands/appeal-trigger-variant.test.tsx` — "REQ-021 …"
+(unit); `e2e/appeal-actions/appeal-actions.e2e.test.ts` — "REQ-021 …" (e2e).
+
+## REQ-022 — The audit report is light mode
+
+> "also make reports lightmode in general, is that possible?"
+
+`Layout` takes `theme="light"`, which puts `theme-light` on `<body>`; that
+class redefines the palette variables. `/audit/report` (the report, its
+not-found and error states, and the appeal modals on it) uses it; every other
+page, including the manager remediation view and `/audit/scrub`, stays dark.
+The waveform reads its bar colours from the palette so it shows on light.
+
+Tests: `frontend/tests/components/layout.test.tsx` — "REQ-022 …" (unit);
+`e2e/report-light/report-light.e2e.test.ts` — "REQ-022 …" (e2e).

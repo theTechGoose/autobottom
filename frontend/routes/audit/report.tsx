@@ -36,7 +36,7 @@ export default define.page(async function AuditReportPage(ctx) {
 
   if (!id) {
     return (
-      <Layout title="Audit Report" section="admin" user={user} hideSidebar>
+      <Layout title="Audit Report" section="admin" user={user} hideSidebar theme="light">
         <div style="padding:60px;text-align:center;color:var(--text-dim);">
           <h1 style="font-size:18px;color:var(--text-bright);margin-bottom:12px;">Missing finding ID</h1>
           <p>Open with <code>/audit/report?id=&lt;findingId&gt;</code></p>
@@ -67,7 +67,7 @@ export default define.page(async function AuditReportPage(ctx) {
 
   if (errorMsg || !finding) {
     return (
-      <Layout title={`Report ${id}`} section="admin" user={user} hideSidebar>
+      <Layout title={`Report ${id}`} section="admin" user={user} hideSidebar theme="light">
         <div style="max-width:720px;margin:60px auto;padding:0 24px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
             <div>
@@ -115,7 +115,7 @@ export default define.page(async function AuditReportPage(ctx) {
     "appeal-from-public-report@autobottom.local";
 
   return (
-    <Layout title={`Report ${id}`} section="admin" user={user} hideSidebar>
+    <Layout title={`Report ${id}`} section="admin" user={user} hideSidebar theme="light">
       <AuditReport finding={finding} id={id} auditorEmail={appealAuditorEmail} isAdmin={isAdmin} />
       <script
         // deno-lint-ignore react-no-danger

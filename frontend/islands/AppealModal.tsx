@@ -344,9 +344,9 @@ export default function AppealModal(props: Props) {
           >{lockedLabel}</button>
         ) : (
           <>
-            <button type="button" class="appeal-btn appeal-btn--audio" onClick={() => open("genie")}>Add Genie</button>
-            <button type="button" class="appeal-btn appeal-btn--audio" onClick={() => open("upload")}>Direct Upload</button>
-            <button type="button" class="appeal-btn" onClick={() => open("appeal")}>Appeal Decision</button>
+            <button type="button" class="appeal-btn appeal-btn--genie" onClick={() => open("genie")}>Add Genie</button>
+            <button type="button" class="appeal-btn appeal-btn--upload" onClick={() => open("upload")}>Direct Upload</button>
+            <button type="button" class="appeal-btn appeal-btn--decision" onClick={() => open("appeal")}>Appeal Decision</button>
           </>
         )}
       </div>
@@ -368,8 +368,8 @@ export default function AppealModal(props: Props) {
                 that runs a new audit with the full call.
               </div>
               <div class="appeal-redirect-actions">
-                <button type="button" class="appeal-redirect-btn" onClick={() => switchTo("genie")}>Add Genie instead</button>
-                <button type="button" class="appeal-redirect-btn" onClick={() => switchTo("upload")}>Direct Upload instead</button>
+                <button type="button" class="appeal-redirect-btn appeal-btn--genie" onClick={() => switchTo("genie")}>Add Genie instead</button>
+                <button type="button" class="appeal-redirect-btn appeal-btn--upload" onClick={() => switchTo("upload")}>Direct Upload instead</button>
               </div>
             </div>
             <div class="appeal-confirm-count">

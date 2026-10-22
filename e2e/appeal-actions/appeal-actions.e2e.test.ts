@@ -209,3 +209,34 @@ Deno.test("REQ-020: a submitted Add Genie or Direct Upload replaces all three bu
       await page.unroute("**/api/audit/appeal/*-recording");
     }
   }));
+
+Deno.test("REQ-021: the three appeal buttons are the same size and each a different colour, on the report and the remediation topbar", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = await failedAudit();
+    const email = `e2e-admin-${crypto.randomUUID().slice(0, 8)}@monsterrg.com`;
+    await createUser(ORG, email, "e2e-pass-123", "admin");
+
+    // deno-lint-ignore no-explicit-any
+    const measure = async (): Promise<any[]> => await page.locator(".appeal-trigger button").evaluateAll((els: any[]) =>
+      els.map((el) => {
+        const r = el.getBoundingClientRect();
+        return { w: Math.round(r.width), h: Math.round(r.height), bg: (globalThis as any).getComputedStyle(el).backgroundColor };
+      }));
+
+    await page.goto(`/audit/report?id=${id}`);
+    const report = await measure();
+    expect.eq(report.length, 3, "report: three buttons");
+    expect.eq(new Set(report.map((b) => `${b.w}x${b.h}`)).size, 1, `report: one size for all three (${JSON.stringify(report)})`);
+    expect.eq(new Set(report.map((b) => b.bg)).size, 3, `report: three different colours (${JSON.stringify(report)})`);
+
+    await page.goto("/login");
+    await page.fill("input[name=email]", email);
+    await page.fill("input[name=password]", "e2e-pass-123");
+    await page.click("button[type=submit]");
+    await page.waitForURL("**/admin/dashboard");
+    await page.goto(`/manager/remediate/${id}`);
+    const topbar = await measure();
+    expect.eq(topbar.length, 3, "topbar: three buttons");
+    expect.eq(new Set(topbar.map((b) => `${b.w}x${b.h}`)).size, 1, `topbar: one size for all three (${JSON.stringify(topbar)})`);
+    expect.eq(new Set(topbar.map((b) => b.bg)).size, 3, `topbar: three different colours (${JSON.stringify(topbar)})`);
+  }));

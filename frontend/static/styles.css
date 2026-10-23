@@ -2064,3 +2064,51 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .qap-back, .qap-fwd { min-height: 28px; }
 .rem-topbar .btn-sm { min-height: 28px; display: inline-flex; align-items: center; }
 .tap-link { display: inline-flex; align-items: center; min-height: 24px; }
+
+/* ===== Light scrub view (REQ-023) =====
+   /audit/scrub is built from the review/judge queue parts (queue-layout,
+   verdict-*, transcript, audio bar), whose dark colours are mostly literal
+   hexes rather than palette variables. These overrides apply only under
+   body.theme-light, so the manager remediation, review and judge pages that
+   share these parts stay exactly as they are. */
+.theme-light .verdict-panel, .theme-light .verdict-footer,
+.theme-light .verdict-audit-header { background: var(--bg-raised); border-color: var(--border); }
+.theme-light .verdict-scroll, .theme-light .transcript-body { scrollbar-color: var(--border) transparent; }
+.theme-light .verdict-scroll::-webkit-scrollbar-thumb,
+.theme-light .transcript-body::-webkit-scrollbar-thumb { background: var(--border); }
+.theme-light .verdict-scroll::-webkit-scrollbar-thumb:hover,
+.theme-light .transcript-body::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+.theme-light .verdict-question-header, .theme-light .verdict-audit-value,
+.theme-light .verdict-record-value, .theme-light .verdict-meta-chip strong { color: var(--text-bright); }
+.theme-light .verdict-section-label, .theme-light .verdict-question .verdict-section-label,
+.theme-light .verdict-audit-label, .theme-light .verdict-failed-counter,
+.theme-light .verdict-accordion > summary, .theme-light .verdict-accordion > summary::before,
+.theme-light .verdict-record-cell, .theme-light .verdict-record-label { color: var(--text-muted); }
+.theme-light .verdict-accordion > summary:hover { color: var(--text); }
+.theme-light .verdict-defense-block .verdict-section-label, .theme-light .verdict-chip-record { color: var(--blue); }
+.theme-light .verdict-chip-finding { color: var(--purple); }
+.theme-light .verdict-defense-quote, .theme-light .verdict-accordion-body,
+.theme-light .verdict-record-grid, .theme-light .verdict-meta-chip,
+.theme-light .verdict-hotkey, .theme-light .transcript-multicol {
+  background: var(--bg); border-color: var(--border); color: var(--text);
+}
+.theme-light .verdict-meta-row { border-color: var(--border); }
+.theme-light .verdict-meta-chip:hover { border-color: var(--border-hover); color: var(--text-bright); }
+.theme-light .verdict-meta-chip.pulse, .theme-light .verdict-meta-chip.pulse strong { color: var(--yellow); }
+
+.theme-light .t-line:hover { background: rgba(31,35,40,0.04); }
+.theme-light .t-line-team  { border-left-color: var(--blue); color: var(--blue); }
+.theme-light .t-line-guest { border-left-color: var(--purple); color: var(--purple); }
+.theme-light .t-speaker-team  { color: var(--blue); }
+.theme-light .t-speaker-guest { color: var(--purple); }
+.theme-light .t-line.t-evidence { border-left-color: var(--yellow); background: var(--yellow-bg); }
+.theme-light .t-line.t-evidence .t-speaker { color: var(--yellow); }
+.theme-light .t-text { color: var(--text); }
+
+.theme-light .rem-q-failed { border-left-color: var(--red); background: var(--red-bg); }
+.theme-light .rem-q-passed { border-left-color: var(--green); background: var(--green-bg); }
+.theme-light .rem-q-error  { border-left-color: var(--yellow); background: var(--yellow-bg); }
+.theme-light .rem-q-active { outline-color: var(--yellow); background: var(--yellow-bg); }
+
+.theme-light .queue-overlay-box, .theme-light .queue-cheat-box { background: var(--bg-surface); border-color: var(--border); }
+.theme-light .queue-overlay, .theme-light .queue-cheat-sheet { background: rgba(31,35,40,0.35); }

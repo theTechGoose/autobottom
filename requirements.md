@@ -355,3 +355,16 @@ The waveform reads its bar colours from the palette so it shows on light.
 
 Tests: `frontend/tests/components/layout.test.tsx` — "REQ-022 …" (unit);
 `e2e/report-light/report-light.e2e.test.ts` — "REQ-022 …" (e2e).
+
+## REQ-023 — The scrub view is light mode too; the remediation view stays dark
+
+> "make scrub transcript light mode too homie don't forgetti. However - will this affect the manager remediation queue?"
+
+`/audit/scrub` (and its missing-id / not-found states) uses `theme="light"`.
+It is built from the review/judge queue parts, whose dark colours are literal
+hexes, so their light versions live under `body.theme-light` only: the manager
+remediation, review and judge pages that share those parts keep their dark
+colours. The queue audio bar's waveform reads its bar colours from the palette,
+with the same white as before on dark pages.
+
+Tests: `e2e/report-light/report-light.e2e.test.ts` — "REQ-023 …" (e2e).

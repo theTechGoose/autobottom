@@ -259,7 +259,7 @@ export default define.page(async function AuditScrubPage(ctx) {
 
   if (!id) {
     return (
-      <Layout title="Audit Scrub" section="admin" user={user} hideSidebar>
+      <Layout title="Audit Scrub" section="admin" user={user} hideSidebar theme="light">
         <div style="padding:60px;text-align:center;color:var(--text-dim);">
           <h1 style="font-size:18px;color:var(--text-bright);margin-bottom:12px;">Missing finding ID</h1>
           <p>Open with <code>/audit/scrub?id=&lt;findingId&gt;</code></p>
@@ -280,7 +280,7 @@ export default define.page(async function AuditScrubPage(ctx) {
 
   if (errorMsg || !f) {
     return (
-      <Layout title="Audit Scrub" section="admin" user={user} hideSidebar>
+      <Layout title="Audit Scrub" section="admin" user={user} hideSidebar theme="light">
         <div style="max-width:720px;margin:60px auto;padding:0 24px;">
           <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:16px 20px;color:var(--red);font-size:13px;">
             {errorMsg === "not found"
@@ -312,7 +312,7 @@ export default define.page(async function AuditScrubPage(ctx) {
   const recordingIds = f.genieIds && f.genieIds.length > 1 ? f.genieIds : null;
 
   return (
-    <Layout title={`Scrub ${id}`} section="admin" user={user} pathname={url.pathname} hideSidebar>
+    <Layout title={`Scrub ${id}`} section="admin" user={user} pathname={url.pathname} hideSidebar theme="light">
       <div id="rem-detail">
         <div class="rem-topbar">
           {/* A real Back when there's history (the report we came from), a plain

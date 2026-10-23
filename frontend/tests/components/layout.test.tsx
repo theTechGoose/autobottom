@@ -27,3 +27,10 @@ Deno.test("Layout — uses main-full class when sidebar hidden", () => {
   const html = renderHTML(<Layout hideSidebar>content</Layout>);
   assertContains(html, "main-full");
 });
+
+Deno.test("REQ-022: theme=\"light\" puts the page in light mode; the default stays dark", () => {
+  const light = renderHTML(<Layout hideSidebar theme="light">content</Layout>);
+  assertContains(light, `class="theme-light"`);
+  const dark = renderHTML(<Layout hideSidebar>content</Layout>);
+  assertNotContains(dark, "theme-light");
+});

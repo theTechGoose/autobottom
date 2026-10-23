@@ -362,10 +362,11 @@ Admin destination for browsing + mutating per-user gamification state without im
 
 Three new endpoints in [admin/mod.ts](src/admin/entrypoints/admin/mod.ts): `gamification/users-list` (10s in-isolate cache, joins listUsers + listGameStates + earned-badge counts), `gamification/grant-xp`, `gamification/award-badge`. Every action reuses existing gamification-repository helpers; no new business modules.
 
-### File Appeal (3 paths)
-1. **Judge Appeal** — failed-question checkboxes → judge queue + `appeal` webhook. [src/audit/domain/business/file-appeal/mod.ts](src/audit/domain/business/file-appeal/mod.ts), [frontend/islands/AppealModal.tsx](frontend/islands/AppealModal.tsx).
-2. **Re-audit with new genies** — soft-deletes original, creates new finding with `appealSourceFindingId`. [src/audit/domain/business/reaudit/mod.ts](src/audit/domain/business/reaudit/mod.ts).
-3. **Upload recording with snip** — multipart upload to S3, snipStart/snipEnd → AssemblyAI's `audio_start_from`/`audio_end_at`. [src/audit/domain/business/upload-reaudit/mod.ts](src/audit/domain/business/upload-reaudit/mod.ts). Direct-dispatched in `main.ts` because @Req can't read multipart.
+### Appeal buttons (3 paths)
+Three buttons, each opening its own modal: **Add Genie**, **Direct Upload**, **Appeal Decision** (REQ-017..020). Using one locks all three.
+1. **Appeal Decision** — failed-question checkboxes → judge queue + `appeal` webhook. [src/audit/domain/business/file-appeal/mod.ts](src/audit/domain/business/file-appeal/mod.ts), [frontend/islands/AppealModal.tsx](frontend/islands/AppealModal.tsx).
+2. **Add Genie** — soft-deletes original, creates new finding with `appealSourceFindingId`. [src/audit/domain/business/reaudit/mod.ts](src/audit/domain/business/reaudit/mod.ts).
+3. **Direct Upload** (with snip) — multipart upload to S3, snipStart/snipEnd → AssemblyAI's `audio_start_from`/`audio_end_at`. [src/audit/domain/business/upload-reaudit/mod.ts](src/audit/domain/business/upload-reaudit/mod.ts). Direct-dispatched in `main.ts` because @Req can't read multipart.
 
 ### Audit report transcript fallback
 

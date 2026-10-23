@@ -14,6 +14,24 @@
   --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   --sidebar-w: 280px;
   --accent: #58a6ff; --accent-bg: rgba(31,111,235,0.10);
+  --wave-idle: rgba(255,255,255,0.18); --wave-head: rgba(255,255,255,0.7);
+}
+
+/* Light palette (REQ-022) — Layout's theme="light" puts this on <body>. Only
+   the audit report uses it. Rules that read the variables follow for free;
+   the few that need something other than a variable are under the report and
+   appeal sections, prefixed .theme-light. */
+body.theme-light {
+  --bg: #f6f8fa; --bg-raised: #ffffff; --bg-surface: #ffffff;
+  --border: #d0d7de; --border-hover: #afb8c1;
+  --text: #24292f; --text-muted: #57606a; --text-dim: #6e7781; --text-bright: #1f2328;
+  --blue: #0969da; --green: #1a7f37; --red: #cf222e; --yellow: #9a6700; --purple: #8250df; --cyan: #1b7c83;
+  --red-dim: #cf222e; --red-glow: rgba(207,34,46,0.25);
+  --teal: #0f766e; --teal-dim: #0f766e; --teal-bg: rgba(15,118,110,0.08); --teal-glow: rgba(15,118,110,0.25);
+  --blue-bg: rgba(9,105,218,0.08); --green-bg: rgba(26,127,55,0.08);
+  --red-bg: rgba(207,34,46,0.07); --yellow-bg: rgba(154,103,0,0.08);
+  --purple-bg: rgba(130,80,223,0.08); --cyan-bg: rgba(27,124,131,0.08);
+  --wave-idle: rgba(31,35,40,0.18); --wave-head: rgba(31,35,40,0.7);
 }
 
 body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
@@ -1571,15 +1589,19 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .ap-rec-tab:hover { color: var(--text-bright); border-color: var(--text-muted); }
 .ap-rec-tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
 
-/* ===== File Appeal — prod-matching modal (Commit W) ===== */
+/* ===== Appeal buttons + modals (REQ-017) ===== */
 @keyframes appealIn { from { opacity:0;transform:scale(0.95) translateY(6px); } to { opacity:1;transform:none; } }
 
-/* Trigger placement. "block" is the audit report's centred button; "inline"
-   drops it into a toolbar row (manager remediation topbar) at btn-sm size.
-   Only the trigger changes — every overlay is identical in both. */
-.appeal-trigger { margin: 14px 0 6px; text-align: center; }
-.appeal-trigger--inline { margin: 0; text-align: left; }
+/* Trigger placement. "block" is the audit report's centred row of three;
+   "inline" drops them into a toolbar row (manager remediation topbar) at
+   btn-sm size. Only the triggers change — every overlay is identical in both. */
+.appeal-trigger { margin: 14px 0 6px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.appeal-trigger--inline { margin: 0; gap: 6px; justify-content: flex-start; }
 .appeal-trigger--inline .appeal-btn { padding: 4px 10px; font-size: 11px; border-radius: 6px; }
+/* The three buttons share one width so none reads as the "main" one (REQ-021);
+   the single locked pill that replaces them keeps its natural width. */
+.appeal-trigger > .appeal-btn--genie, .appeal-trigger > .appeal-btn--upload, .appeal-trigger > .appeal-btn--decision { width: 168px; padding-left: 0; padding-right: 0; }
+.appeal-trigger--inline > .appeal-btn--genie, .appeal-trigger--inline > .appeal-btn--upload, .appeal-trigger--inline > .appeal-btn--decision { width: 112px; }
 .appeal-btn {
   background: var(--red-dim); color: #fff; border: none;
   padding: 9px 28px; border-radius: 8px; font-weight: 700; font-size: 12px;
@@ -1588,6 +1610,16 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 }
 .appeal-btn:hover:not(:disabled) { background: var(--red); box-shadow: 0 0 20px var(--red-glow); }
 .appeal-btn:disabled { opacity: 0.4; cursor: default; box-shadow: none; }
+/* One colour per path, from the theme's teal / blue / purple (REQ-021). Same
+   shades in light and dark — each keeps white text readable on both. */
+.appeal-btn--genie    { background: #0f766e; }
+.appeal-btn--upload   { background: #1f6feb; }
+.appeal-btn--decision { background: #8250df; }
+.appeal-btn--genie:hover:not(:disabled)    { background: #14b8a6; box-shadow: 0 0 20px rgba(20,184,166,0.45); }
+.appeal-btn--upload:hover:not(:disabled)   { background: #388bfd; box-shadow: 0 0 20px rgba(56,139,253,0.45); }
+.appeal-btn--decision:hover:not(:disabled) { background: #a371f7; box-shadow: 0 0 20px rgba(163,113,247,0.45); }
+.theme-light .appeal-overlay, .theme-light .appeal-overlay.appeal-overlay--confirm { background: rgba(31,35,40,0.35); }
+.theme-light .appeal-overlay-box { box-shadow: 0 16px 48px rgba(31,35,40,0.25); }
 .appeal-btn.filed { background: var(--teal-dim); opacity: 1; }
 .appeal-btn.filed:hover { box-shadow: none; }
 
@@ -1602,41 +1634,19 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .appeal-overlay.appeal-overlay--confirm { background: rgba(0,0,0,0.55); }
 
 .appeal-overlay-box {
-  background: #161c28;
-  border: 1px solid #1c2333;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 14px;
   animation: appealIn 0.16s ease;
   color: var(--text);
 }
-.appeal-overlay-box--choice    { padding: 28px 28px 22px; max-width: 520px; width: 90vw; }
 .appeal-overlay-box--confirm   { padding: 28px 32px 22px; max-width: 480px; width: 90vw; }
 .appeal-overlay-box--reaudit   { width: 90vw; max-width: 560px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
 .appeal-overlay-box--success   { padding: 36px 32px; max-width: 380px; width: 90vw; text-align: center; }
 
-.appeal-choice-title { font-size: 17px; font-weight: 700; color: var(--text-bright); margin-bottom: 6px; }
-.appeal-choice-sub   { font-size: 12px; color: var(--text-muted); margin-bottom: 20px; }
-.appeal-choice-row {
-  display: flex; gap: 12px; margin-bottom: 20px;
-}
-.appeal-choice-card {
-  flex: 1; text-align: left; padding: 18px; border-radius: 10px;
-  border: 1px solid #30363d; background: #0d1117;
-  color: var(--text-bright); cursor: pointer;
-  transition: border-color 0.15s;
-  font-family: inherit;
-}
-.appeal-choice-card.is-reaudit:hover { border-color: var(--teal); }
-.appeal-choice-card.is-appeal:hover  { border-color: var(--blue); }
-.appeal-choice-label {
-  font-weight: 700; font-size: 13px; margin-bottom: 6px;
-}
-.appeal-choice-label.is-reaudit { color: var(--teal); }
-.appeal-choice-label.is-appeal  { color: var(--blue); }
-.appeal-choice-desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
-.appeal-cancel-row { text-align: center; }
 .appeal-cancel-btn {
   padding: 6px 22px; border-radius: 7px;
-  border: 1px solid #30363d; background: transparent;
+  border: 1px solid var(--border-hover); background: transparent;
   color: var(--text-muted); font-size: 12px; cursor: pointer;
   font-family: inherit;
 }
@@ -1654,7 +1664,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   padding: 8px 10px; border-radius: 6px; cursor: pointer;
   border: 1px solid transparent; transition: background 0.12s, border-color 0.12s;
 }
-.appeal-confirm-row:hover { background: rgba(255,255,255,0.02); border-color: #1c2333; }
+.appeal-confirm-row:hover { background: var(--bg-raised); border-color: var(--border); }
 .appeal-confirm-row input[type="checkbox"] { accent-color: var(--blue); flex-shrink: 0; }
 .appeal-confirm-num {
   font-family: var(--mono); font-size: 10px; color: var(--text-dim);
@@ -1669,7 +1679,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .appeal-link-btn:hover { text-decoration: underline; }
 .appeal-comment {
   width: 100%; box-sizing: border-box;
-  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border-hover); border-radius: 6px;
   color: var(--text-bright); padding: 10px 12px; font-size: 12px;
   font-family: inherit; resize: vertical; min-height: 60px; outline: none;
   margin-bottom: 14px;
@@ -1678,7 +1688,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .appeal-confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .appeal-confirm-cancel {
   padding: 8px 18px; border-radius: 7px;
-  border: 1px solid #1c2333; background: transparent;
+  border: 1px solid var(--border); background: transparent;
   color: var(--text-muted); font-size: 12px; font-weight: 600;
   cursor: pointer; font-family: inherit;
 }
@@ -1697,7 +1707,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 /* Re-audit modal (tabs + forks) */
 .appeal-reaudit-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px 14px; border-bottom: 1px solid #1c2333;
+  padding: 16px 20px 14px; border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .appeal-reaudit-title { font-size: 15px; font-weight: 700; color: var(--text-bright); }
@@ -1706,18 +1716,31 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   font-size: 22px; cursor: pointer; line-height: 1; padding: 0 4px;
 }
 .appeal-reaudit-scroll { overflow-y: auto; flex: 1; }
-.appeal-panel { text-align: left; background: #161c28; }
-.appeal-tabs { display: flex; border-bottom: 1px solid var(--border); }
-.appeal-tab {
-  flex: 1; padding: 10px 0; background: none; border: none;
-  color: var(--text-muted); font-size: 12px; font-weight: 700;
-  cursor: pointer; text-align: center;
-  border-bottom: 2px solid transparent; transition: all 0.15s;
-  font-family: inherit;
-}
-.appeal-tab:hover { color: var(--text); }
-.appeal-tab.active { color: var(--teal); border-bottom-color: var(--teal); }
+.appeal-panel { text-align: left; background: var(--bg-surface); }
 .appeal-fork { padding: 16px 20px; }
+
+/* What this path does, at the top of each modal (REQ-018). */
+.appeal-explain { font-size: 12px; color: var(--text-muted); line-height: 1.55; margin-bottom: 14px; }
+.appeal-explain p { margin: 0 0 8px; }
+.appeal-explain ul { margin: 0; padding-left: 18px; }
+.appeal-explain li { margin-bottom: 4px; }
+.appeal-explain strong { color: var(--text-bright); }
+.appeal-note { font-size: 11px; color: var(--text-dim); margin: 8px 0 4px; }
+
+/* Appeal Decision's missing-audio callout with hops to the other modals (REQ-019). */
+.appeal-redirect {
+  background: var(--teal-bg); border: 1px solid rgba(20,184,166,0.3); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 14px;
+}
+.appeal-redirect-text { font-size: 12px; color: var(--text); line-height: 1.5; }
+.appeal-redirect-text strong { color: var(--text-bright); }
+.appeal-redirect-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.appeal-redirect-btn {
+  color: #fff; border: none; border-radius: 6px;
+  padding: 6px 12px; min-height: 28px; font-size: 11px; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+}
+/* Each hop wears the colour of the button it opens (.appeal-btn--genie / --upload). */
 .fork-label { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
 .recording-inputs { display: flex; flex-direction: column; gap: 6px; }
 .recording-row { display: flex; gap: 6px; align-items: center; }
@@ -2041,3 +2064,51 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .qap-back, .qap-fwd { min-height: 28px; }
 .rem-topbar .btn-sm { min-height: 28px; display: inline-flex; align-items: center; }
 .tap-link { display: inline-flex; align-items: center; min-height: 24px; }
+
+/* ===== Light scrub view (REQ-023) =====
+   /audit/scrub is built from the review/judge queue parts (queue-layout,
+   verdict-*, transcript, audio bar), whose dark colours are mostly literal
+   hexes rather than palette variables. These overrides apply only under
+   body.theme-light, so the manager remediation, review and judge pages that
+   share these parts stay exactly as they are. */
+.theme-light .verdict-panel, .theme-light .verdict-footer,
+.theme-light .verdict-audit-header { background: var(--bg-raised); border-color: var(--border); }
+.theme-light .verdict-scroll, .theme-light .transcript-body { scrollbar-color: var(--border) transparent; }
+.theme-light .verdict-scroll::-webkit-scrollbar-thumb,
+.theme-light .transcript-body::-webkit-scrollbar-thumb { background: var(--border); }
+.theme-light .verdict-scroll::-webkit-scrollbar-thumb:hover,
+.theme-light .transcript-body::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+.theme-light .verdict-question-header, .theme-light .verdict-audit-value,
+.theme-light .verdict-record-value, .theme-light .verdict-meta-chip strong { color: var(--text-bright); }
+.theme-light .verdict-section-label, .theme-light .verdict-question .verdict-section-label,
+.theme-light .verdict-audit-label, .theme-light .verdict-failed-counter,
+.theme-light .verdict-accordion > summary, .theme-light .verdict-accordion > summary::before,
+.theme-light .verdict-record-cell, .theme-light .verdict-record-label { color: var(--text-muted); }
+.theme-light .verdict-accordion > summary:hover { color: var(--text); }
+.theme-light .verdict-defense-block .verdict-section-label, .theme-light .verdict-chip-record { color: var(--blue); }
+.theme-light .verdict-chip-finding { color: var(--purple); }
+.theme-light .verdict-defense-quote, .theme-light .verdict-accordion-body,
+.theme-light .verdict-record-grid, .theme-light .verdict-meta-chip,
+.theme-light .verdict-hotkey, .theme-light .transcript-multicol {
+  background: var(--bg); border-color: var(--border); color: var(--text);
+}
+.theme-light .verdict-meta-row { border-color: var(--border); }
+.theme-light .verdict-meta-chip:hover { border-color: var(--border-hover); color: var(--text-bright); }
+.theme-light .verdict-meta-chip.pulse, .theme-light .verdict-meta-chip.pulse strong { color: var(--yellow); }
+
+.theme-light .t-line:hover { background: rgba(31,35,40,0.04); }
+.theme-light .t-line-team  { border-left-color: var(--blue); color: var(--blue); }
+.theme-light .t-line-guest { border-left-color: var(--purple); color: var(--purple); }
+.theme-light .t-speaker-team  { color: var(--blue); }
+.theme-light .t-speaker-guest { color: var(--purple); }
+.theme-light .t-line.t-evidence { border-left-color: var(--yellow); background: var(--yellow-bg); }
+.theme-light .t-line.t-evidence .t-speaker { color: var(--yellow); }
+.theme-light .t-text { color: var(--text); }
+
+.theme-light .rem-q-failed { border-left-color: var(--red); background: var(--red-bg); }
+.theme-light .rem-q-passed { border-left-color: var(--green); background: var(--green-bg); }
+.theme-light .rem-q-error  { border-left-color: var(--yellow); background: var(--yellow-bg); }
+.theme-light .rem-q-active { outline-color: var(--yellow); background: var(--yellow-bg); }
+
+.theme-light .queue-overlay-box, .theme-light .queue-cheat-box { background: var(--bg-surface); border-color: var(--border); }
+.theme-light .queue-overlay, .theme-light .queue-cheat-sheet { background: rgba(31,35,40,0.35); }

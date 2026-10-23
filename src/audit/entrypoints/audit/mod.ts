@@ -141,7 +141,7 @@ export class AuditController {
     if (read.kind === "busy") return { error: "Server busy, please retry", retry: true, detail: read.detail };
     if (read.kind === "failed") return { error: "lookup failed", detail: read.detail };
     if (read.kind === "found") {
-      // The report locks File Appeal while this is true. Display only — the
+      // The report locks the appeal buttons while this is true. Display only — the
       // appeal endpoints enforce it themselves — so a failed lookup shows the
       // button rather than failing the whole report.
       const awaitingReview = await isAwaitingReview(orgId, id).catch(() => false);

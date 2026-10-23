@@ -1734,7 +1734,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 }
 .appeal-redirect-text { font-size: 12px; color: var(--text); line-height: 1.5; }
 .appeal-redirect-text strong { color: var(--text-bright); }
-.appeal-redirect-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.appeal-redirect-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
 .appeal-redirect-btn {
   color: #fff; border: none; border-radius: 6px;
   padding: 6px 12px; min-height: 28px; font-size: 11px; font-weight: 700;
@@ -1756,7 +1756,6 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   font-family: inherit;
 }
 .recording-remove:hover:not(:disabled) { background: var(--red-bg); }
-.recording-remove:disabled { visibility: hidden; }
 .fork-add-btn {
   background: none; border: 1px dashed var(--border); color: var(--text-muted);
   padding: 6px 14px; border-radius: 6px; font-size: 11px; font-weight: 600;
@@ -1781,6 +1780,16 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 }
 .upload-area:hover, .upload-area.drag-over { border-color: var(--teal); background: rgba(20,184,166,0.05); }
 .upload-area.has-file { display: none; }
+/* A file dragged anywhere over the Direct Upload modal (REQ-027). */
+.appeal-overlay-box.drag-over { outline: 2px dashed var(--teal); outline-offset: -6px; }
+/* Trim warning on Direct Upload (REQ-026). */
+.appeal-warn {
+  display: flex; gap: 8px; align-items: flex-start;
+  background: var(--yellow-bg); border: 1px solid var(--yellow);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;
+  font-size: 12px; line-height: 1.5; color: var(--text-bright);
+}
+.appeal-warn-icon { color: var(--yellow); font-size: 15px; line-height: 1.2; }
 .upload-icon { font-size: 28px; color: var(--text-dim); margin-bottom: 6px; }
 .upload-text { font-size: 12px; color: var(--text-muted); }
 

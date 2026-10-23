@@ -279,3 +279,92 @@ on 2026-10-19 (`--days=2`): 9 would update; Pxsca8VF5NlibMlX7xP8Q is skipped —
 it has no AssemblyAI transcript ids stored.
 
 Tests: `src/audit/domain/business/recording-lines-backfill/int.test.ts` — "REQ-016 …" (int).
+
+## REQ-017 — Three appeal buttons instead of one "File Appeal"
+
+> "Instead of having it hidden behind the single button, we need three buttons up top. An 'Appeal Decision' button An 'Add Genie' button An 'Direct Upload' button" / "where it is now, centered under the score. yes give the remediation queue three buttons up top with the same labelling. sure add the otehr ones first."
+
+Agents filed judge appeals to say the audio cut out or the second genie was in
+the notes, because the one "File Appeal" button led to a choice card whose
+"Appeal Decision" side read like what they had just clicked. The single
+button, the choice card and the recording/upload tabs are gone: the audit
+report (centred under the score) and the manager remediation topbar both show
+**Add Genie**, **Direct Upload** and **Appeal Decision**, in that order, each
+opening its own modal.
+
+Tests: `frontend/tests/islands/appeal-trigger-variant.test.tsx`,
+`frontend/tests/components/audit-report.test.tsx` — "REQ-017 …" (unit);
+`e2e/appeal-actions/appeal-actions.e2e.test.ts` — "REQ-017 …" (e2e).
+
+## REQ-018 — Every appeal modal explains what its path does
+
+> "behaves the way it does today, but this modal and all modals will explain more in-depth, so it'll explain that the original genie can be overwritten, and you can add more."
+
+Add Genie still starts with every genie the audit used and can add, replace or
+remove them (REQ-007/008). Each modal now says when to use it and what
+submitting does: Add Genie explains that added genies are joined and audited as
+one call and that overwriting the original audits a different recording;
+Direct Upload explains it is for audio that isn't in Genie; Appeal Decision
+explains a judge re-hears only this audit's recording.
+
+Tests: `e2e/appeal-actions/appeal-actions.e2e.test.ts` — "REQ-018 …" (e2e).
+
+## REQ-019 — Appeal Decision points missing-audio cases at the other modals
+
+> "Yes add that line. AGain, these modals need to explain a bit more. If the person hits appeal decision, and sees it, there should be a button that just switches to the other modal it selected"
+
+The Appeal Decision modal says a judge can't hear audio that isn't there, with a
+button that switches straight to Add Genie (and one to Direct Upload).
+
+Tests: `e2e/appeal-actions/appeal-actions.e2e.test.ts` — "REQ-019 …" (e2e).
+
+## REQ-020 — One path used locks all three
+
+> "all three lock. So with the add and upload ones, the new report gets made. if those are used and submitted, the 'view new report' button replaces all three. if they appeal decision, all 3 are replaced with 'appeal filed' etc etc"
+
+After a submitted Add Genie or Direct Upload the three buttons become one
+**View New Report** link to the new audit (a re-audit with no new id on record
+stays a "Re-Audited" pill); after an Appeal Decision they become **Appeal
+Filed**; while the audit waits for review they are **Awaiting Review**
+(REQ-003). Same right after submitting, without a refresh.
+
+Tests: `frontend/tests/islands/appeal-trigger-variant.test.tsx` — "REQ-020 …"
+(unit); `e2e/appeal-actions/appeal-actions.e2e.test.ts` — "REQ-020 …" (e2e).
+
+## REQ-021 — The three appeal buttons are equal size, each its own colour
+
+> "make the fucking buttons equal size please. make them all a different color that fits the theme."
+
+Add Genie, Direct Upload and Appeal Decision share one width (168px on the
+report, 112px in the remediation topbar) and each has its own colour from the
+theme: teal, blue, purple. Appeal Decision's "Add Genie instead" / "Direct
+Upload instead" switches wear the colour of the button they open.
+
+Tests: `frontend/tests/islands/appeal-trigger-variant.test.tsx` — "REQ-021 …"
+(unit); `e2e/appeal-actions/appeal-actions.e2e.test.ts` — "REQ-021 …" (e2e).
+
+## REQ-022 — The audit report is light mode
+
+> "also make reports lightmode in general, is that possible?"
+
+`Layout` takes `theme="light"`, which puts `theme-light` on `<body>`; that
+class redefines the palette variables. `/audit/report` (the report, its
+not-found and error states, and the appeal modals on it) uses it; every other
+page, including the manager remediation view and `/audit/scrub`, stays dark.
+The waveform reads its bar colours from the palette so it shows on light.
+
+Tests: `frontend/tests/components/layout.test.tsx` — "REQ-022 …" (unit);
+`e2e/report-light/report-light.e2e.test.ts` — "REQ-022 …" (e2e).
+
+## REQ-023 — The scrub view is light mode too; the remediation view stays dark
+
+> "make scrub transcript light mode too homie don't forgetti. However - will this affect the manager remediation queue?"
+
+`/audit/scrub` (and its missing-id / not-found states) uses `theme="light"`.
+It is built from the review/judge queue parts, whose dark colours are literal
+hexes, so their light versions live under `body.theme-light` only: the manager
+remediation, review and judge pages that share those parts keep their dark
+colours. The queue audio bar's waveform reads its bar colours from the palette,
+with the same white as before on dark pages.
+
+Tests: `e2e/report-light/report-light.e2e.test.ts` — "REQ-023 …" (e2e).

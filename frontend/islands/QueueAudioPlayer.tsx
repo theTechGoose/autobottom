@@ -81,9 +81,15 @@ export default function QueueAudioPlayer({ initialFindingId, recordingCount = 1 
       if (!ctx2d || !canvas) return;
       const W = canvas.width;
       const H = canvas.height;
+      // Unplayed bars and the playhead follow the page's palette so the
+      // waveform shows on the light scrub view (REQ-023); dark pages read the
+      // same white they always drew.
+      const css = getComputedStyle(canvas);
+      const idle = css.getPropertyValue("--wave-idle").trim() || "rgba(255,255,255,0.18)";
+      const head = css.getPropertyValue("--wave-head").trim() || "rgba(255,255,255,0.7)";
       ctx2d.clearRect(0, 0, W, H);
       if (!wfData) {
-        ctx2d.fillStyle = "rgba(255,255,255,0.08)";
+        ctx2d.fillStyle = idle;
         ctx2d.fillRect(0, H / 2 - 1, W, 2);
         return;
       }
@@ -94,11 +100,11 @@ export default function QueueAudioPlayer({ initialFindingId, recordingCount = 1 
         const amp = Math.max(2, wfData[i] * H * 0.88);
         const y = (H - amp) / 2;
         const played = (i / BARS) <= wfProgress;
-        ctx2d.fillStyle = played ? "#8b5cf6" : "rgba(255,255,255,0.18)";
+        ctx2d.fillStyle = played ? "#8b5cf6" : idle;
         ctx2d.fillRect(x + 0.5, y, Math.max(1, barW - 1.5), amp);
       }
       const cx = wfProgress * W;
-      ctx2d.fillStyle = "rgba(255,255,255,0.7)";
+      ctx2d.fillStyle = head;
       ctx2d.fillRect(cx - 1, 0, 2, H);
     }
 

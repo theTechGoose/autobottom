@@ -1,9 +1,12 @@
-/** File Appeal — mirrors prod's controller.ts appeal UX exactly:
- *    appeal-btn (red glow) → choice overlay with 2 side-by-side cards:
- *      [Add 2nd Genie / Different Recording]  [Appeal Decision]
- *    · "Appeal Decision"  → appeal-confirm-overlay (checkbox list + comment + File Appeal)
- *    · "Different Recording" → reaudit-overlay (tabs: Different Recording / Upload Recording)
- *    · success overlays for each path */
+/** Appeal buttons — three side-by-side triggers, each opening its own modal
+ *  (REQ-017). The single "File Appeal" button + choice card hid the new-audio
+ *  paths, and agents filed judge appeals to say the audio cut out:
+ *    · "Add Genie"       → genie modal (the audit's genies, add / replace / remove)
+ *    · "Direct Upload"   → upload modal (file + optional trim)
+ *    · "Appeal Decision" → judge modal (checkbox list + comment), which points
+ *      missing-audio cases back at the other two (REQ-019)
+ *  Using any path locks all three (REQ-020): a re-audit leaves one "View New
+ *  Report" link, a judge appeal one "Appeal Filed" pill. */
 import { useEffect, useRef, useState } from "preact/hooks";
 
 export interface FailedQuestion {
@@ -16,39 +19,37 @@ interface Props {
   findingId: string;
   auditorEmail: string;
   failedQuestions: FailedQuestion[];
-  /** Every recording the audit used — the "Different Recording" tab starts
+  /** Every recording the audit used — the Add Genie modal starts
    *  with all of them so adding one appends instead of swapping (REQ-007). */
   originalGenieIds?: string[];
   /** Set when an appeal has already been filed for this finding —
-   *  disables the trigger button and changes its label to "Appeal Filed". */
+   *  replaces the three buttons with a disabled "Appeal Filed" pill. */
   appealedAt?: number;
   /** Set when this finding has been re-audited (different / additional /
-   *  upload recording) — disables the trigger button with "Re-Audited" label. */
+   *  upload recording) — replaces the three buttons with "Re-Audited". */
   reAuditedAt?: number;
-  /** New finding ID that superseded this one. When present, the disabled
-   *  "Re-Audited" pill becomes a link to the new audit's report so anyone
+  /** New finding ID that superseded this one. When present, the re-audited
+   *  state is a "View New Report" link instead of a dead pill, so anyone
    *  landing on a stale report URL can jump to the live one in a click. */
   reAuditedTo?: string;
   /** The audit is queued for review and the review isn't finished — nothing
    *  can be appealed until a reviewer has decided every failed question. */
   awaitingReview?: boolean;
-  /** How the TRIGGER sits on the page — the overlays are unaffected.
+  /** How the TRIGGERS sit on the page — the overlays are unaffected.
    *  "block" (default) is the audit report's centred, vertically-spaced
-   *  button. "inline" strips the spacing and shrinks it to btn-sm, for a
+   *  row. "inline" strips the spacing and shrinks them to btn-sm, for a
    *  toolbar row like the manager remediation topbar. */
   variant?: "block" | "inline";
 }
 
 type View =
   | "closed"
-  | "choice"
+  | "genie"
+  | "upload"
   | "appeal"
-  | "reaudit"
   | "submitting"
   | "appeal-done"
   | "reaudit-done";
-
-type ReauditTab = "recording" | "upload";
 
 function fmtTime(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
@@ -72,18 +73,17 @@ export default function AppealModal(props: Props) {
         : null;
 
   const [view, setView] = useState<View>("closed");
-  const [tab, setTab] = useState<ReauditTab>("recording");
   const [err, setErr] = useState<string | null>(null);
 
   // Appeal (judge) form
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [appealComment, setAppealComment] = useState("");
 
-  // Re-audit — different recording tab
+  // Add Genie
   const [genies, setGenies] = useState<string[]>(originalGenieIds.length ? [...originalGenieIds] : [""]);
   const [reauditComment, setReauditComment] = useState("");
 
-  // Re-audit — upload tab
+  // Direct Upload
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadUrl, setUploadUrl] = useState<string | null>(null);
   const [audioDuration, setAudioDuration] = useState(0);
@@ -126,12 +126,18 @@ export default function AppealModal(props: Props) {
     setSnipEndSec(null);
     setUploadComment("");
     setReauditResult(null);
-    setTab("recording");
   }
 
-  function openChoice() {
+  function open(next: "genie" | "upload" | "appeal") {
     resetAll();
-    setView("choice");
+    setView(next);
+  }
+
+  /** Hop from one modal to another without closing first — the Appeal
+   *  Decision modal's "Add Genie instead" / "Direct Upload instead". */
+  function switchTo(next: "genie" | "upload" | "appeal") {
+    setErr(null);
+    setView(next);
   }
 
   // ── Appeal Decision (judge) ──
@@ -184,7 +190,7 @@ export default function AppealModal(props: Props) {
     }
   }
 
-  // ── Re-audit — Different Recording tab ──
+  // ── Add Genie ──
   function setGenie(i: number, v: string) {
     const next = [...genies];
     next[i] = v.replace(/\D/g, "").slice(0, 8);
@@ -221,7 +227,7 @@ export default function AppealModal(props: Props) {
         console.error("[REAUDIT-SUBMIT] unexpected response", { status: res.status, body: rawText });
         const bodyHint = d.error ?? `HTTP ${res.status} — body: ${rawText.slice(0, 200) || "<empty>"}`;
         setErr(String(bodyHint));
-        setView("reaudit");
+        setView("genie");
         return;
       }
       setReauditResult({
@@ -233,11 +239,11 @@ export default function AppealModal(props: Props) {
       setView("reaudit-done");
     } catch (e) {
       setErr((e as Error).message);
-      setView("reaudit");
+      setView("genie");
     }
   }
 
-  // ── Re-audit — Upload Recording tab ──
+  // ── Direct Upload ──
   const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 
   function pickFile(f: File | null) {
@@ -287,7 +293,7 @@ export default function AppealModal(props: Props) {
       const d = data as { error?: string; newFindingId?: string; reportUrl?: string; appealType?: string };
       if (d.error || !d.newFindingId) {
         setErr(String(d.error ?? `HTTP ${res.status}`));
-        setView("reaudit");
+        setView("upload");
         return;
       }
       setReauditResult({
@@ -299,22 +305,36 @@ export default function AppealModal(props: Props) {
       setView("reaudit-done");
     } catch (e) {
       setErr((e as Error).message);
-      setView("reaudit");
+      setView("upload");
     }
   }
+
+  /** The re-audit's report once one exists — from the finding after a refresh,
+   *  or from the submit's answer right after it. */
+  const newReportUrl = reAuditedTo
+    ? `/audit/report?id=${reAuditedTo}`
+    : localLock === "reaudit" ? reauditResult?.reportUrl ?? null : null;
+
+  /** Header shared by the three modals: title + close. */
+  const modalHead = (title: string) => (
+    <div class="appeal-reaudit-head">
+      <div class="appeal-reaudit-title">{title}</div>
+      <button type="button" class="appeal-reaudit-close" onClick={() => setView("closed")}>&times;</button>
+    </div>
+  );
 
   return (
     <>
       <div class={`appeal-trigger${variant === "inline" ? " appeal-trigger--inline" : ""}`}>
-        {lockedLabel === "Re-Audited" && reAuditedTo ? (
+        {lockedLabel === "Re-Audited" && newReportUrl ? (
           // Stale-report shortcut: anyone landing on a re-audited finding gets
           // a one-click jump to the live new audit instead of a dead pill.
           <a
-            href={`/audit/report?id=${reAuditedTo}`}
+            href={newReportUrl}
             class="appeal-btn filed"
             style="text-decoration:none;display:inline-block;"
             title="View the re-audit that superseded this one"
-          >{lockedLabel} → View new audit</a>
+          >View New Report</a>
         ) : lockedLabel ? (
           <button
             type="button"
@@ -323,41 +343,34 @@ export default function AppealModal(props: Props) {
             title={lockedLabel === "Awaiting Review" ? "An appeal can be filed once a reviewer has finished every failed question" : undefined}
           >{lockedLabel}</button>
         ) : (
-          <button type="button" class="appeal-btn" onClick={openChoice}>File Appeal</button>
+          <>
+            <button type="button" class="appeal-btn appeal-btn--genie" onClick={() => open("genie")}>Add Genie</button>
+            <button type="button" class="appeal-btn appeal-btn--upload" onClick={() => open("upload")}>Direct Upload</button>
+            <button type="button" class="appeal-btn appeal-btn--decision" onClick={() => open("appeal")}>Appeal Decision</button>
+          </>
         )}
       </div>
 
-      {/* ── Choice overlay ── */}
-      {view === "choice" && (
-        <div class="appeal-overlay" onClick={() => setView("closed")}>
-          <div class="appeal-overlay-box appeal-overlay-box--choice" onClick={(e) => e.stopPropagation()}>
-            <div class="appeal-choice-title">What would you like to do?</div>
-            <div class="appeal-choice-sub">Choose how you'd like to address this audit result.</div>
-            <div class="appeal-choice-row">
-              <button type="button" class="appeal-choice-card is-reaudit" onClick={() => setView("reaudit")}>
-                <div class="appeal-choice-label is-reaudit">Add 2nd Genie / Different Recording</div>
-                <div class="appeal-choice-desc">Run the audit again using a different or additional recording</div>
-              </button>
-              <button type="button" class="appeal-choice-card is-appeal" onClick={() => setView("appeal")}>
-                <div class="appeal-choice-label is-appeal">Appeal Decision</div>
-                <div class="appeal-choice-desc">Submit for a human to review the flagged questions</div>
-              </button>
-            </div>
-            <div class="appeal-cancel-row">
-              <button type="button" class="appeal-cancel-btn" onClick={() => setView("closed")}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Appeal Decision (judge) overlay ── */}
+      {/* ── Appeal Decision (judge) ── */}
       {view === "appeal" && (
         <div class="appeal-overlay appeal-overlay--confirm" onClick={() => setView("closed")}>
           <div class="appeal-overlay-box appeal-overlay-box--confirm" onClick={(e) => e.stopPropagation()}>
-            <div class="appeal-confirm-title">File an Appeal?</div>
+            <div class="appeal-confirm-title">Appeal Decision</div>
             <div class="appeal-confirm-body">
-              Select the questions you believe were incorrectly assessed. A judge will review those decisions.
-              Only one appeal can be filed per record.
+              Use this when you think the audit answered a question wrong. A judge re-listens to
+              this audit's recording and decides each question you select. The judge hears only
+              the audio already on this audit — nothing new is added.
+            </div>
+            <div class="appeal-redirect">
+              <div class="appeal-redirect-text">
+                <strong>Audio cut out, or the call continued on another Genie?</strong>{" "}
+                A judge can't hear audio that isn't there. Add the missing recording instead —
+                that runs a new audit with the full call.
+              </div>
+              <div class="appeal-redirect-actions">
+                <button type="button" class="appeal-redirect-btn appeal-btn--genie" onClick={() => switchTo("genie")}>Add Genie instead</button>
+                <button type="button" class="appeal-redirect-btn appeal-btn--upload" onClick={() => switchTo("upload")}>Direct Upload instead</button>
+              </div>
             </div>
             <div class="appeal-confirm-count">
               <span>{checked.size} of {failedQuestions.length} selected</span>
@@ -376,130 +389,171 @@ export default function AppealModal(props: Props) {
             </div>
             <textarea
               class="appeal-comment"
-              placeholder="Additional context for the judge (optional)..."
+              placeholder="Why the answer is wrong — what the judge should listen for (optional)..."
               value={appealComment}
               onInput={(e) => setAppealComment((e.target as HTMLTextAreaElement).value)}
             />
+            <div class="appeal-note">
+              One appeal per audit: filing this locks Add Genie and Direct Upload too.
+            </div>
             {err && <div class="appeal-error">{err}</div>}
             <div class="appeal-confirm-actions">
-              <button type="button" class="appeal-confirm-cancel" onClick={() => setView("choice")}>Cancel</button>
+              <button type="button" class="appeal-confirm-cancel" onClick={() => setView("closed")}>Cancel</button>
               <button type="button" class="appeal-confirm-submit" onClick={submitAppeal} disabled={!checked.size}>File Appeal</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Re-audit overlay (tabs) ── */}
-      {view === "reaudit" && (
+      {/* ── Add Genie ── */}
+      {view === "genie" && (
         <div class="appeal-overlay" onClick={() => setView("closed")}>
           <div class="appeal-overlay-box appeal-overlay-box--reaudit" onClick={(e) => e.stopPropagation()}>
-            <div class="appeal-reaudit-head">
-              <div class="appeal-reaudit-title">Re-Audit Recording</div>
-              <button type="button" class="appeal-reaudit-close" onClick={() => setView("closed")}>&times;</button>
-            </div>
+            {modalHead("Add Genie")}
             <div class="appeal-reaudit-scroll">
               <div class="appeal-panel">
-                <div class="appeal-tabs">
-                  <button type="button" class={`appeal-tab ${tab === "recording" ? "active" : ""}`} onClick={() => { setErr(null); setTab("recording"); }}>Different Recording</button>
-                  <button type="button" class={`appeal-tab ${tab === "upload" ? "active" : ""}`} onClick={() => { setErr(null); setTab("upload"); }}>Upload Recording</button>
-                </div>
-
-                {tab === "recording" && (
-                  <div class="appeal-fork">
-                    <div class="fork-label">Provide corrected or additional Recording IDs</div>
-                    <div class="recording-inputs">
-                      {genies.map((g, i) => (
-                        <div class="recording-row" key={i}>
-                          <input
-                            type="text"
-                            class="recording-input"
-                            placeholder="8-digit Genie ID"
-                            maxLength={8}
-                            value={g}
-                            inputMode="numeric"
-                            onInput={(e) => setGenie(i, (e.target as HTMLInputElement).value)}
-                          />
-                          <button
-                            type="button"
-                            class="recording-remove"
-                            onClick={() => removeGenie(i)}
-                            disabled={genies.length <= 1}
-                          >&times;</button>
-                        </div>
-                      ))}
-                    </div>
-                    <button type="button" class="fork-add-btn" onClick={addGenie} disabled={genies.length >= 5}>+ Add Another</button>
-                    <textarea
-                      class="appeal-comment"
-                      placeholder="Optional comment for the judge..."
-                      value={reauditComment}
-                      onInput={(e) => setReauditComment((e.target as HTMLTextAreaElement).value)}
-                    />
-                    {err && <div class="appeal-error">{err}</div>}
-                    <button type="button" class="fork-submit" onClick={submitDifferentRecording}>Submit Re-Audit</button>
+                <div class="appeal-fork">
+                  <div class="appeal-explain">
+                    <p>
+                      Use this when the audio cut out, the call continued on a second Genie, or the
+                      wrong Genie was audited. Submitting runs a <strong>new audit</strong> on the
+                      Genies listed below, and this report is replaced by the new one.
+                    </p>
+                    <ul>
+                      <li>
+                        <strong>Add more:</strong> keep this audit's Genie and press{" "}
+                        <strong>+ Add Another</strong>. Every Genie listed is joined, in order, and
+                        audited as one call.
+                      </li>
+                      <li>
+                        <strong>Wrong recording:</strong> overwrite the original Genie (or remove
+                        it with &times;) to audit a different recording instead.
+                      </li>
+                    </ul>
                   </div>
-                )}
-
-                {tab === "upload" && (
-                  <div class="appeal-fork">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="audio/mpeg,audio/*,video/mp4"
-                      style="display:none"
-                      onChange={(e) => pickFile((e.target as HTMLInputElement).files?.[0] ?? null)}
-                    />
-                    {!uploadFile && (
-                      <div class="upload-area" onClick={() => fileInputRef.current?.click()}>
-                        <div class="upload-icon">⤒</div>
-                        <div class="upload-text">Click to select an audio file</div>
-                      </div>
-                    )}
-                    {uploadFile && uploadUrl && (
-                      <>
-                        <div class="file-info visible">
-                          <div class="file-info-icon">🎵</div>
-                          <span class="file-info-name">{uploadFile.name}</span>
-                          <span class="file-info-size">{(uploadFile.size / 1024 / 1024).toFixed(1)}MB</span>
-                          <button type="button" class="file-info-change" onClick={() => fileInputRef.current?.click()}>Change</button>
-                        </div>
-                        <audio
-                          ref={audioRef}
-                          src={uploadUrl}
-                          controls
-                          style="width:100%;margin:6px 0 4px;"
-                          onLoadedMetadata={(e) => setAudioDuration((e.target as HTMLAudioElement).duration || 0)}
-                          onTimeUpdate={(e) => setAudioCurrent((e.target as HTMLAudioElement).currentTime || 0)}
+                  <div class="fork-label">Genie IDs for the new audit — this audit's are filled in</div>
+                  <div class="recording-inputs">
+                    {genies.map((g, i) => (
+                      <div class="recording-row" key={i}>
+                        <input
+                          type="text"
+                          class="recording-input"
+                          placeholder="8-digit Genie ID"
+                          maxLength={8}
+                          value={g}
+                          inputMode="numeric"
+                          onInput={(e) => setGenie(i, (e.target as HTMLInputElement).value)}
                         />
-                        <div class="snip-editor visible">
-                          <div class="snip-editor-label">Trim recording (optional)</div>
-                          <div class="snip-actions">
-                            <button type="button" class="snip-btn snip-btn--start" onClick={markStart}>Set Start @ {fmtTime(audioCurrent)}</button>
-                            <button type="button" class="snip-btn snip-btn--end" onClick={markEnd}>Set End @ {fmtTime(audioCurrent)}</button>
-                            <button type="button" class="snip-btn snip-btn--clear" onClick={clearSnip}>Clear</button>
-                            <div class="snip-window">
-                              <span class="snip-window-val snip-window-val--start">{snipStartSec !== null ? fmtTime(snipStartSec) : "--:--"}</span>
-                              <span>→</span>
-                              <span class="snip-window-val snip-window-val--end">{snipEndSec !== null ? fmtTime(snipEndSec) : "--:--"}</span>
-                            </div>
-                          </div>
-                          <div class="snip-hint">
-                            Seek to a position then click Set Start / Set End to define the window.
-                            Total: {fmtTime(audioDuration)}. Leave unset to audit the full file.
+                        <button
+                          type="button"
+                          class="recording-remove"
+                          onClick={() => removeGenie(i)}
+                          disabled={genies.length <= 1}
+                        >&times;</button>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" class="fork-add-btn" onClick={addGenie} disabled={genies.length >= 5}>+ Add Another</button>
+                  <textarea
+                    class="appeal-comment"
+                    placeholder="Optional comment for the judge..."
+                    value={reauditComment}
+                    onInput={(e) => setReauditComment((e.target as HTMLTextAreaElement).value)}
+                  />
+                  <div class="appeal-note">
+                    Recording only exists as a file?{" "}
+                    <button type="button" class="appeal-link-btn" onClick={() => switchTo("upload")}>Use Direct Upload</button>
+                  </div>
+                  {err && <div class="appeal-error">{err}</div>}
+                  <button type="button" class="fork-submit" onClick={submitDifferentRecording}>Submit Re-Audit</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Direct Upload ── */}
+      {view === "upload" && (
+        <div class="appeal-overlay" onClick={() => setView("closed")}>
+          <div class="appeal-overlay-box appeal-overlay-box--reaudit" onClick={(e) => e.stopPropagation()}>
+            {modalHead("Direct Upload")}
+            <div class="appeal-reaudit-scroll">
+              <div class="appeal-panel">
+                <div class="appeal-fork">
+                  <div class="appeal-explain">
+                    <p>
+                      Use this when the recording isn't in Genie — upload the audio file yourself
+                      (MP3 or other audio, up to 60MB). Submitting runs a <strong>new audit</strong> on
+                      the uploaded file in place of this audit's recording, and this report is
+                      replaced by the new one.
+                    </p>
+                    <p>
+                      Optional: trim the file to just this call by setting a start and end below.
+                      Leave it untrimmed to audit the whole file.
+                    </p>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="audio/mpeg,audio/*,video/mp4"
+                    style="display:none"
+                    onChange={(e) => pickFile((e.target as HTMLInputElement).files?.[0] ?? null)}
+                  />
+                  {!uploadFile && (
+                    <div class="upload-area" onClick={() => fileInputRef.current?.click()}>
+                      <div class="upload-icon">⤒</div>
+                      <div class="upload-text">Click to select an audio file</div>
+                    </div>
+                  )}
+                  {uploadFile && uploadUrl && (
+                    <>
+                      <div class="file-info visible">
+                        <div class="file-info-icon">🎵</div>
+                        <span class="file-info-name">{uploadFile.name}</span>
+                        <span class="file-info-size">{(uploadFile.size / 1024 / 1024).toFixed(1)}MB</span>
+                        <button type="button" class="file-info-change" onClick={() => fileInputRef.current?.click()}>Change</button>
+                      </div>
+                      <audio
+                        ref={audioRef}
+                        src={uploadUrl}
+                        controls
+                        style="width:100%;margin:6px 0 4px;"
+                        onLoadedMetadata={(e) => setAudioDuration((e.target as HTMLAudioElement).duration || 0)}
+                        onTimeUpdate={(e) => setAudioCurrent((e.target as HTMLAudioElement).currentTime || 0)}
+                      />
+                      <div class="snip-editor visible">
+                        <div class="snip-editor-label">Trim recording (optional)</div>
+                        <div class="snip-actions">
+                          <button type="button" class="snip-btn snip-btn--start" onClick={markStart}>Set Start @ {fmtTime(audioCurrent)}</button>
+                          <button type="button" class="snip-btn snip-btn--end" onClick={markEnd}>Set End @ {fmtTime(audioCurrent)}</button>
+                          <button type="button" class="snip-btn snip-btn--clear" onClick={clearSnip}>Clear</button>
+                          <div class="snip-window">
+                            <span class="snip-window-val snip-window-val--start">{snipStartSec !== null ? fmtTime(snipStartSec) : "--:--"}</span>
+                            <span>→</span>
+                            <span class="snip-window-val snip-window-val--end">{snipEndSec !== null ? fmtTime(snipEndSec) : "--:--"}</span>
                           </div>
                         </div>
-                      </>
-                    )}
-                    <textarea
-                      class="appeal-comment"
-                      placeholder="Optional comment for the judge..."
-                      value={uploadComment}
-                      onInput={(e) => setUploadComment((e.target as HTMLTextAreaElement).value)}
-                    />
-                    {err && <div class="appeal-error">{err}</div>}
-                    <button type="button" class="fork-submit" onClick={submitUpload} disabled={!uploadFile}>Submit Re-Audit</button>
+                        <div class="snip-hint">
+                          Seek to a position then click Set Start / Set End to define the window.
+                          Total: {fmtTime(audioDuration)}. Leave unset to audit the full file.
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  <textarea
+                    class="appeal-comment"
+                    placeholder="Optional comment for the judge..."
+                    value={uploadComment}
+                    onInput={(e) => setUploadComment((e.target as HTMLTextAreaElement).value)}
+                  />
+                  <div class="appeal-note">
+                    Recording is in Genie?{" "}
+                    <button type="button" class="appeal-link-btn" onClick={() => switchTo("genie")}>Use Add Genie</button>
                   </div>
-                )}
+                  {err && <div class="appeal-error">{err}</div>}
+                  <button type="button" class="fork-submit" onClick={submitUpload} disabled={!uploadFile}>Submit Re-Audit</button>
+                </div>
               </div>
             </div>
           </div>

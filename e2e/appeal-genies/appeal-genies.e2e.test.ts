@@ -4,7 +4,7 @@
  *  only the first one filled in; an agent adding a callback swapped out the
  *  main sales call without knowing it was ever there. This story seeds a
  *  two-genie audit into the emulator project `serve` reads and opens the form
- *  from the public report the way an agent does. */
+ *  (Add Genie) from the public report the way an agent does. */
 import { story } from "#shots";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 
@@ -38,8 +38,7 @@ Deno.test("REQ-007: the appeal form lists every recording of a multi-recording a
     });
 
     await page.goto(`/audit/report?id=${id}`);
-    await page.getByRole("button", { name: "File Appeal" }).click();
-    await page.locator(".appeal-choice-card.is-reaudit").click();
+    await page.getByRole("button", { name: "Add Genie" }).click();
 
     const inputs = page.locator(".recording-input");
     await inputs.first().waitFor();

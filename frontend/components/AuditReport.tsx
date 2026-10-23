@@ -277,8 +277,8 @@ export function AuditReport({ finding, id, auditorEmail = "", isAdmin = false }:
         </div>
       )}
 
-      {/* File Appeal — show on any finished, non-perfect audit. Sits below the
-          score block to match prod's layout. */}
+      {/* Appeal buttons (Add Genie / Direct Upload / Appeal Decision) — show on
+          any finished, non-perfect audit. Centred below the score block. */}
       {finished && passRate < 100 && (
         <div style="display:flex;justify-content:center;margin:8px 0 24px;">
           <AppealModal

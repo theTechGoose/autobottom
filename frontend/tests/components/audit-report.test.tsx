@@ -240,13 +240,23 @@ Deno.test("AuditReport — questions render under their display name, not the ra
   assertNotContains(html, "Preview 15 Months");
 });
 
-Deno.test("REQ-003: the report locks File Appeal while the audit awaits review", () => {
+Deno.test("REQ-003: the report locks the appeal buttons while the audit awaits review", () => {
   const failing = { answeredQuestions: [{ header: "Q1", answer: "No" }, { header: "Q2", answer: "Yes" }] };
   const waiting = renderHTML(<AuditReport finding={baseFinding({ ...failing, awaitingReview: true })} id="fid-test" />);
   assertContains(waiting, "Awaiting Review");
-  assertNotContains(waiting, ">File Appeal<");
+  assertNotContains(waiting, ">Appeal Decision<");
 
   const reviewed = renderHTML(<AuditReport finding={baseFinding({ ...failing, awaitingReview: false })} id="fid-test" />);
-  assertContains(reviewed, ">File Appeal<");
+  assertContains(reviewed, ">Appeal Decision<");
   assertNotContains(reviewed, "Awaiting Review");
+});
+
+Deno.test("REQ-017: the report shows the three appeal buttons centred under the score", () => {
+  const failing = { answeredQuestions: [{ header: "Q1", answer: "No" }, { header: "Q2", answer: "Yes" }] };
+  const html = renderHTML(<AuditReport finding={baseFinding(failing)} id="fid-test" />);
+  const score = html.indexOf("rpt-score");
+  const at = [">Add Genie<", ">Direct Upload<", ">Appeal Decision<"].map((l) => html.indexOf(l));
+  assert(score >= 0 && at.every((i) => i > score), `all three sit below the score block (${score}, ${at})`);
+  assert(at[0] < at[1] && at[1] < at[2], "in the order Add Genie, Direct Upload, Appeal Decision");
+  assertNotContains(html, "File Appeal");
 });

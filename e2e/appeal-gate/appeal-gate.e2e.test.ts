@@ -3,8 +3,8 @@
  *
  *  Each story seeds its own finding into the emulator project `serve` reads
  *  (`deno task test:e2e` points FIREBASE_PROJECT_ID at it), then reads the
- *  public report page and calls the appeal endpoints the File Appeal button
- *  uses, the way an agent following the terminate email would. */
+ *  public report page and calls the appeal endpoints the appeal buttons
+ *  use, the way an agent following the terminate email would. */
 import { http } from "#shots";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import {
@@ -50,7 +50,7 @@ Deno.test("REQ-003: a report awaiting review shows Awaiting Review and refuses e
 
     const page = await (await http(`/audit/report?id=${id}`)).text();
     expect(page.includes("Awaiting Review"), "the report shows the locked Awaiting Review button");
-    expect(!page.includes(">File Appeal<"), "the report offers no live File Appeal button");
+    expect(!page.includes(">Appeal Decision<"), "the report offers no live appeal buttons");
 
     const appeal = await (await http("/api/audit/appeal", appealBody(id))).json();
     expect.eq(appeal.ok, false, "a judge appeal is refused");
@@ -65,7 +65,7 @@ Deno.test("REQ-003: a report awaiting review shows Awaiting Review and refuses e
     expect(String(reaudit.error).includes("awaiting review"), "that refusal says the audit is awaiting review");
   }));
 
-Deno.test("REQ-004: File Appeal opens only after a reviewer finishes ALL the failed questions", (t) =>
+Deno.test("REQ-004: the appeal buttons open only after a reviewer finishes ALL the failed questions", (t) =>
   http(t, async ({ http, expect }) => {
     const id = await queuedAudit();
 
@@ -76,7 +76,7 @@ Deno.test("REQ-004: File Appeal opens only after a reviewer finishes ALL the fai
     await recordDecision(ORG, id, 2, "confirm", "reviewer@monsterrg.com");
     await finalizeReviewedAudit(ORG, id, "reviewer@monsterrg.com");
     const reviewed = await (await http(`/audit/report?id=${id}`)).text();
-    expect(reviewed.includes(">File Appeal<"), "the finished review shows the live File Appeal button");
+    expect(reviewed.includes(">Appeal Decision<"), "the finished review shows the live appeal buttons");
     expect(!reviewed.includes("Awaiting Review"), "and no Awaiting Review lock");
 
     const appeal = await (await http("/api/audit/appeal", appealBody(id))).json();

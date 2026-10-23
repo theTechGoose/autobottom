@@ -160,3 +160,34 @@ Deno.test("REQ-028: Appeal Decision's Add Genie instead / Direct Upload instead 
     const pairMid = (a.x + (b.x + b.width)) / 2;
     expect(Math.abs(cardMid - pairMid) < 4, `the pair is centred on the card (card ${cardMid}, pair ${pairMid})`);
   }));
+
+/** Computed font size in px of the first element matching `sel` in the open modal. */
+// deno-lint-ignore no-explicit-any
+async function fontPx(page: any, sel: string): Promise<number> {
+  return await page.locator(`.appeal-overlay-box ${sel}`).first().evaluate(
+    // deno-lint-ignore no-explicit-any
+    (el: any) => parseFloat((globalThis as any).getComputedStyle(el).fontSize),
+  );
+}
+
+Deno.test("REQ-029: the explainer text in all three modals is 14px, two up from 12", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = await failedAudit();
+    await page.goto(`/audit/report?id=${id}`);
+
+    await page.getByRole("button", { name: "Add Genie" }).click();
+    await showModal(page);
+    expect.eq(await fontPx(page, ".appeal-explain"), 14, "Add Genie's explainer");
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Direct Upload" }).click();
+    await showModal(page);
+    expect.eq(await fontPx(page, ".appeal-explain"), 14, "Direct Upload's explainer");
+    expect.eq(await fontPx(page, ".appeal-warn"), 14, "the trim warning");
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Appeal Decision" }).click();
+    await showModal(page);
+    expect.eq(await fontPx(page, ".appeal-confirm-body"), 14, "Appeal Decision's explainer");
+    expect.eq(await fontPx(page, ".appeal-redirect-text"), 14, "the missing-audio callout");
+  }));

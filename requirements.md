@@ -419,3 +419,12 @@ Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-027 …" (e2e).
 > "Center these on card"
 
 Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-028 …" (e2e).
+
+## REQ-029 — The appeal modals' explainer text is two points bigger
+
+> "up the font size for the explainers by like 2 points"
+
+The explainer copy in Add Genie, Direct Upload and Appeal Decision (the intro,
+the missing-audio callout and the trim warning) goes from 12px to 14px.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-029 …" (e2e).

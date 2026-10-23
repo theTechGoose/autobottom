@@ -1653,7 +1653,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .appeal-cancel-btn:hover { color: var(--text-bright); border-color: var(--border-hover); }
 
 .appeal-confirm-title { font-size: 16px; font-weight: 700; color: var(--text-bright); margin-bottom: 6px; }
-.appeal-confirm-body  { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; }
+.appeal-confirm-body  { font-size: 14px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; }
 .appeal-confirm-list {
   margin-bottom: 12px; max-height: 200px; overflow-y: auto;
   display: flex; flex-direction: column; gap: 4px;
@@ -1720,7 +1720,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .appeal-fork { padding: 16px 20px; }
 
 /* What this path does, at the top of each modal (REQ-018). */
-.appeal-explain { font-size: 12px; color: var(--text-muted); line-height: 1.55; margin-bottom: 14px; }
+.appeal-explain { font-size: 14px; color: var(--text-muted); line-height: 1.55; margin-bottom: 14px; }
 .appeal-explain p { margin: 0 0 8px; }
 .appeal-explain ul { margin: 0; padding-left: 18px; }
 .appeal-explain li { margin-bottom: 4px; }
@@ -1732,7 +1732,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   background: var(--teal-bg); border: 1px solid rgba(20,184,166,0.3); border-radius: 8px;
   padding: 10px 12px; margin-bottom: 14px;
 }
-.appeal-redirect-text { font-size: 12px; color: var(--text); line-height: 1.5; }
+.appeal-redirect-text { font-size: 14px; color: var(--text); line-height: 1.5; }
 .appeal-redirect-text strong { color: var(--text-bright); }
 .appeal-redirect-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
 .appeal-redirect-btn {
@@ -1787,7 +1787,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   display: flex; gap: 8px; align-items: flex-start;
   background: var(--yellow-bg); border: 1px solid var(--yellow);
   border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;
-  font-size: 12px; line-height: 1.5; color: var(--text-bright);
+  font-size: 14px; line-height: 1.5; color: var(--text-bright);
 }
 .appeal-warn-icon { color: var(--yellow); font-size: 15px; line-height: 1.2; }
 .upload-icon { font-size: 28px; color: var(--text-dim); margin-bottom: 6px; }

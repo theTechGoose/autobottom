@@ -93,6 +93,7 @@ export default function AppealModal(props: Props) {
   const [uploadComment, setUploadComment] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   // Success-screen state
   const [reauditResult, setReauditResult] = useState<{ newFindingId: string; reportUrl: string; appealType: string } | null>(null);
@@ -178,7 +179,7 @@ export default function AppealModal(props: Props) {
       }
       if (!res.ok) {
         console.error("[APPEAL-SUBMIT] non-ok response", { status: res.status, body: rawText });
-        setErr(`HTTP ${res.status} — body: ${rawText.slice(0, 200) || "<empty>"}`);
+        setErr(`HTTP ${res.status}, body: ${rawText.slice(0, 200) || "<empty>"}`);
         setView("appeal");
         return;
       }
@@ -197,7 +198,8 @@ export default function AppealModal(props: Props) {
     setGenies(next);
   }
   function addGenie() { if (genies.length < 5) setGenies([...genies, ""]); }
-  function removeGenie(i: number) { if (genies.length > 1) setGenies(genies.filter((_, idx) => idx !== i)); }
+  /** The last row can't go (the form needs one), so its × clears it instead. */
+  function removeGenie(i: number) { setGenies(genies.length > 1 ? genies.filter((_, idx) => idx !== i) : [""]); }
 
   async function submitDifferentRecording() {
     const ids = genies.map((g) => g.trim()).filter(Boolean);
@@ -225,7 +227,7 @@ export default function AppealModal(props: Props) {
       const d = data as { error?: string; newFindingId?: string; reportUrl?: string; appealType?: string };
       if (d.error || !d.newFindingId) {
         console.error("[REAUDIT-SUBMIT] unexpected response", { status: res.status, body: rawText });
-        const bodyHint = d.error ?? `HTTP ${res.status} — body: ${rawText.slice(0, 200) || "<empty>"}`;
+        const bodyHint = d.error ?? `HTTP ${res.status}, body: ${rawText.slice(0, 200) || "<empty>"}`;
         setErr(String(bodyHint));
         setView("genie");
         return;
@@ -245,6 +247,24 @@ export default function AppealModal(props: Props) {
 
   // ── Direct Upload ──
   const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
+
+  /** Drag-and-drop anywhere on the Direct Upload modal, as well as the picker. */
+  function onDragOver(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setDragOver(true);
+  }
+  function onDragLeave(e: DragEvent) {
+    const to = e.relatedTarget as Node | null;
+    if (!to || !(e.currentTarget as Node).contains(to)) setDragOver(false);
+  }
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer?.files?.[0];
+    if (f) pickFile(f);
+  }
 
   function pickFile(f: File | null) {
     setErr(null);
@@ -357,15 +377,15 @@ export default function AppealModal(props: Props) {
           <div class="appeal-overlay-box appeal-overlay-box--confirm" onClick={(e) => e.stopPropagation()}>
             <div class="appeal-confirm-title">Appeal Decision</div>
             <div class="appeal-confirm-body">
-              Use this when you think the audit answered a question wrong. A judge re-listens to
-              this audit's recording and decides each question you select. The judge hears only
-              the audio already on this audit — nothing new is added.
+              Use this when you think the verification was graded incorrectly. A judge re-listens
+              to this audit's recording and decides each question you select. The judge hears only
+              the audio already on this audit, so nothing new is added.
             </div>
             <div class="appeal-redirect">
               <div class="appeal-redirect-text">
                 <strong>Audio cut out, or the call continued on another Genie?</strong>{" "}
-                A judge can't hear audio that isn't there. Add the missing recording instead —
-                that runs a new audit with the full call.
+                A judge can't hear audio that isn't there. Add the missing recording instead.
+                That runs a new audit with the full call.
               </div>
               <div class="appeal-redirect-actions">
                 <button type="button" class="appeal-redirect-btn appeal-btn--genie" onClick={() => switchTo("genie")}>Add Genie instead</button>
@@ -389,7 +409,7 @@ export default function AppealModal(props: Props) {
             </div>
             <textarea
               class="appeal-comment"
-              placeholder="Why the answer is wrong — what the judge should listen for (optional)..."
+              placeholder="Why the answer is wrong, and what the judge should listen for (optional)..."
               value={appealComment}
               onInput={(e) => setAppealComment((e.target as HTMLTextAreaElement).value)}
             />
@@ -415,9 +435,9 @@ export default function AppealModal(props: Props) {
                 <div class="appeal-fork">
                   <div class="appeal-explain">
                     <p>
-                      Use this when the audio cut out, the call continued on a second Genie, or the
-                      wrong Genie was audited. Submitting runs a <strong>new audit</strong> on the
-                      Genies listed below, and this report is replaced by the new one.
+                      Use this when multiple Genies were used for the verification, or the wrong
+                      Genie was audited. Submitting runs a <strong>new audit</strong> on the Genies
+                      listed below, and this report is replaced by the new one.
                     </p>
                     <ul>
                       <li>
@@ -426,12 +446,12 @@ export default function AppealModal(props: Props) {
                         audited as one call.
                       </li>
                       <li>
-                        <strong>Wrong recording:</strong> overwrite the original Genie (or remove
+                        <strong>Wrong Genie:</strong> overwrite the original Genie (or remove
                         it with &times;) to audit a different recording instead.
                       </li>
                     </ul>
                   </div>
-                  <div class="fork-label">Genie IDs for the new audit — this audit's are filled in</div>
+                  <div class="fork-label">Genie IDs for the new audit (this audit's are filled in)</div>
                   <div class="recording-inputs">
                     {genies.map((g, i) => (
                       <div class="recording-row" key={i}>
@@ -448,7 +468,8 @@ export default function AppealModal(props: Props) {
                           type="button"
                           class="recording-remove"
                           onClick={() => removeGenie(i)}
-                          disabled={genies.length <= 1}
+                          aria-label={genies.length > 1 ? "Remove this Genie" : "Clear this Genie"}
+                          title={genies.length > 1 ? "Remove this Genie" : "Clear this Genie"}
                         >&times;</button>
                       </div>
                     ))}
@@ -461,7 +482,7 @@ export default function AppealModal(props: Props) {
                     onInput={(e) => setReauditComment((e.target as HTMLTextAreaElement).value)}
                   />
                   <div class="appeal-note">
-                    Recording only exists as a file?{" "}
+                    Verification wasn't captured on a Genie?{" "}
                     <button type="button" class="appeal-link-btn" onClick={() => switchTo("upload")}>Use Direct Upload</button>
                   </div>
                   {err && <div class="appeal-error">{err}</div>}
@@ -476,22 +497,32 @@ export default function AppealModal(props: Props) {
       {/* ── Direct Upload ── */}
       {view === "upload" && (
         <div class="appeal-overlay" onClick={() => setView("closed")}>
-          <div class="appeal-overlay-box appeal-overlay-box--reaudit" onClick={(e) => e.stopPropagation()}>
+          <div
+            class={`appeal-overlay-box appeal-overlay-box--reaudit${dragOver ? " drag-over" : ""}`}
+            onClick={(e) => e.stopPropagation()}
+            onDragEnter={onDragOver}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+          >
             {modalHead("Direct Upload")}
             <div class="appeal-reaudit-scroll">
               <div class="appeal-panel">
                 <div class="appeal-fork">
                   <div class="appeal-explain">
                     <p>
-                      Use this when the recording isn't in Genie — upload the audio file yourself
-                      (MP3 or other audio, up to 60MB). Submitting runs a <strong>new audit</strong> on
-                      the uploaded file in place of this audit's recording, and this report is
-                      replaced by the new one.
+                      Use this when the verification was not captured on a Genie. Upload the audio
+                      file yourself (MP3 or other audio, up to 60MB). Submitting runs a{" "}
+                      <strong>new audit</strong> on the uploaded file in place of this audit's
+                      recording, and this report is replaced by the new one.
                     </p>
-                    <p>
-                      Optional: trim the file to just this call by setting a start and end below.
-                      Leave it untrimmed to audit the whole file.
-                    </p>
+                  </div>
+                  <div class="appeal-warn" role="note">
+                    <span class="appeal-warn-icon" aria-hidden="true">⚠</span>
+                    <span>
+                      Please trim the audio to the correct start and end times of the verification.
+                      Not doing this will result in AI errors.
+                    </span>
                   </div>
                   <input
                     ref={fileInputRef}
@@ -501,9 +532,9 @@ export default function AppealModal(props: Props) {
                     onChange={(e) => pickFile((e.target as HTMLInputElement).files?.[0] ?? null)}
                   />
                   {!uploadFile && (
-                    <div class="upload-area" onClick={() => fileInputRef.current?.click()}>
+                    <div class={`upload-area${dragOver ? " drag-over" : ""}`} onClick={() => fileInputRef.current?.click()}>
                       <div class="upload-icon">⤒</div>
-                      <div class="upload-text">Click to select an audio file</div>
+                      <div class="upload-text">Drag an audio file here, or click to choose one</div>
                     </div>
                   )}
                   {uploadFile && uploadUrl && (
@@ -523,7 +554,7 @@ export default function AppealModal(props: Props) {
                         onTimeUpdate={(e) => setAudioCurrent((e.target as HTMLAudioElement).currentTime || 0)}
                       />
                       <div class="snip-editor visible">
-                        <div class="snip-editor-label">Trim recording (optional)</div>
+                        <div class="snip-editor-label">Trim to the verification</div>
                         <div class="snip-actions">
                           <button type="button" class="snip-btn snip-btn--start" onClick={markStart}>Set Start @ {fmtTime(audioCurrent)}</button>
                           <button type="button" class="snip-btn snip-btn--end" onClick={markEnd}>Set End @ {fmtTime(audioCurrent)}</button>
@@ -536,7 +567,7 @@ export default function AppealModal(props: Props) {
                         </div>
                         <div class="snip-hint">
                           Seek to a position then click Set Start / Set End to define the window.
-                          Total: {fmtTime(audioDuration)}. Leave unset to audit the full file.
+                          Total: {fmtTime(audioDuration)}.
                         </div>
                       </div>
                     </>
@@ -548,7 +579,7 @@ export default function AppealModal(props: Props) {
                     onInput={(e) => setUploadComment((e.target as HTMLTextAreaElement).value)}
                   />
                   <div class="appeal-note">
-                    Recording is in Genie?{" "}
+                    Verification is captured on a Genie?{" "}
                     <button type="button" class="appeal-link-btn" onClick={() => switchTo("genie")}>Use Add Genie</button>
                   </div>
                   {err && <div class="appeal-error">{err}</div>}

@@ -112,7 +112,7 @@ Deno.test("REQ-018: each modal explains what its path does — Add Genie says th
     await page.getByRole("button", { name: "Add Genie" }).click();
     await showModal(page);
     const genie = await page.locator(".appeal-overlay-box").innerText();
-    expect(/audio cut out/i.test(genie), "Add Genie says when to use it");
+    expect(/multiple Genies/i.test(genie), "Add Genie says when to use it");
     expect(/\+ Add Another/.test(genie) && /joined/i.test(genie), "it explains adding more genies joins them into one call");
     expect(/overwrit/i.test(genie) && /different recording/i.test(genie), "it explains the original genie can be overwritten");
     expect(/new audit/i.test(genie), "it says submitting makes a new audit");
@@ -122,7 +122,7 @@ Deno.test("REQ-018: each modal explains what its path does — Add Genie says th
     await page.getByRole("button", { name: "Direct Upload" }).click();
     await showModal(page);
     const upload = await page.locator(".appeal-overlay-box").innerText();
-    expect(/isn.t in Genie/i.test(upload), "Direct Upload says it is for audio that isn't in Genie");
+    expect(/not captured on a Genie/i.test(upload), "Direct Upload says it is for a verification that isn't on a Genie");
     expect(/trim/i.test(upload) && /new audit/i.test(upload), "it explains trimming and that a new audit runs");
     await page.keyboard.press("Escape");
 

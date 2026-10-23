@@ -368,3 +368,63 @@ colours. The queue audio bar's waveform reads its bar colours from the palette,
 with the same white as before on dark pages.
 
 Tests: `e2e/report-light/report-light.e2e.test.ts` — "REQ-023 …" (e2e).
+
+## REQ-024 — Each appeal modal opens with the user's own "use this when" line, with no em dashes
+
+> "use this when mulitple genies were used for the verification, or the wrong genie was audited." /
+> "use this when the verification was not captured on a Genie" /
+> "use this when you think the verificaton was graded incorrectly" /
+> "say 'Wrong Genie'" / "Verificaiton is captured on a Genie? Use Add Genie" /
+> "get rid of em dash" / "no fucking em dashes"
+
+Add Genie, Direct Upload and Appeal Decision each lead with that line. The Add
+Genie bullet reads **Wrong Genie:**; the Direct Upload hop reads "Verification
+is captured on a Genie? Use Add Genie". No text a user sees in the three modals
+(copy, labels, placeholders) carries an em dash.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-024 …" (e2e);
+`frontend/tests/islands/appeal-modal-copy.test.tsx` — "REQ-024 …" (unit).
+
+## REQ-025 — Every Genie row in Add Genie shows its × remove button
+
+> "where is the X?"
+
+The × was hidden while only one Genie was listed, so the help text pointed at
+nothing. It now shows on every row: with several Genies it removes that row,
+and on the last one it clears the input so a different Genie can be typed.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-025 …" (e2e).
+
+## REQ-026 — Direct Upload warns to trim the audio to the verification
+
+> "leave out optional say 'please trim the audio to the correct start and end times of the verification. not doing this will result in AI errors.' with ike a little warning sign."
+
+The "Optional: trim…" paragraph is replaced by a warning callout (⚠) with that
+sentence, and the trim editor no longer calls itself optional.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-026 …" (e2e).
+
+## REQ-027 — Direct Upload takes a dropped file as well as a picked one
+
+> "Make this a draggable thing. Peoeple should be able to drag+drop on this window as well as clicking and going thru their finder/explorer"
+
+Dropping an audio file anywhere on the Direct Upload modal selects it, the same
+as choosing it in the file picker; the drop area highlights while a file is
+dragged over it. Clicking still opens the picker.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-027 …" (e2e).
+
+## REQ-028 — Appeal Decision's switch buttons sit centred on their card
+
+> "Center these on card"
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-028 …" (e2e).
+
+## REQ-029 — The appeal modals' explainer text is two points bigger
+
+> "up the font size for the explainers by like 2 points"
+
+The explainer copy in Add Genie, Direct Upload and Appeal Decision (the intro,
+the missing-audio callout and the trim warning) goes from 12px to 14px.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-029 …" (e2e).

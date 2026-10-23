@@ -114,3 +114,14 @@ Deno.test("REQ-023: the scrub view is light mode, and the manager remediation vi
     expect(luminance(rem.bg) < 0.1, `remediation: the page background stays dark (${rem.bg})`);
     expect.eq(await page.locator("body.theme-light").count(), 0, "remediation: no light theme on the body");
   }));
+
+Deno.test("REQ-022: the report's not-found and missing-id pages have a Dashboard link tall enough to tap", (t) =>
+  story(t, async ({ page, expect }) => {
+    await page.goto(`/audit/report?id=e2e-missing-${crypto.randomUUID().slice(0, 8)}`);
+    const notFound = await page.getByRole("link", { name: "← Dashboard" }).boundingBox();
+    expect(notFound && notFound.height >= 24, `not-found page: link is ${notFound?.height}px tall`);
+
+    await page.goto("/audit/report");
+    const missing = await page.getByRole("link", { name: "← Dashboard" }).boundingBox();
+    expect(missing && missing.height >= 24, `missing-id page: link is ${missing?.height}px tall`);
+  }));

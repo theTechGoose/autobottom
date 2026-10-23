@@ -40,7 +40,7 @@ export default define.page(async function AuditReportPage(ctx) {
         <div style="padding:60px;text-align:center;color:var(--text-dim);">
           <h1 style="font-size:18px;color:var(--text-bright);margin-bottom:12px;">Missing finding ID</h1>
           <p>Open with <code>/audit/report?id=&lt;findingId&gt;</code></p>
-          <p style="margin-top:16px;"><a href="/admin/dashboard" class="tbl-link">&larr; Dashboard</a></p>
+          <p style="margin-top:16px;"><a href="/admin/dashboard" class="tbl-link" style="display:inline-flex;align-items:center;min-height:28px;">&larr; Dashboard</a></p>
         </div>
       </Layout>
     );
@@ -74,7 +74,7 @@ export default define.page(async function AuditReportPage(ctx) {
               <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1.5px;font-weight:700;">Audit Report</div>
               <h1 style="font-size:18px;color:var(--text-bright);font-family:var(--mono);margin-top:2px;">{id}</h1>
             </div>
-            <a href="/admin/dashboard" class="sf-btn ghost" style="text-decoration:none;">&larr; Dashboard</a>
+            <a href="/admin/dashboard" class="sf-btn ghost" style="text-decoration:none;min-height:28px;">&larr; Dashboard</a>
           </div>
           <div style="background:var(--red-bg);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:16px 20px;color:var(--red);font-size:13px;">
             {errorMsg === "not found"

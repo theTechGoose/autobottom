@@ -21,6 +21,8 @@ export const handler = define.handlers({
     // Email template fields
     if (form.get("emailTemplateId")) payload.emailTemplateId = form.get("emailTemplateId");
     if (form.get("dismissalTemplateId")) payload.dismissalTemplateId = form.get("dismissalTemplateId");
+    if (form.get("packageEmailTemplateId")) payload.packageEmailTemplateId = form.get("packageEmailTemplateId");
+    if (form.get("packageDismissalTemplateId")) payload.packageDismissalTemplateId = form.get("packageDismissalTemplateId");
 
     try {
       await apiPost(`/admin/settings/${kind}`, ctx.req, payload);

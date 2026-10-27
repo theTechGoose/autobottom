@@ -441,3 +441,53 @@ the audit's `record` as `ReservationId`, the same key package audits already
 carry. A leg with no reservation reads 0 in QuickBase and becomes "".
 
 Tests: `src/audit/domain/data/quickbase/test.ts` — "REQ-030 …" (int).
+
+## REQ-031 — Package audits get their own email templates
+
+> "A makes sense." (separate package templates per email type, picked in the
+> webhook config next to the existing template)
+
+Every email kind's webhook config takes an optional package template
+(`packageEmailTemplateId`), and the judge kind a package dismissal template
+(`packageDismissalTemplateId`). A package audit's email uses its package
+template; a date-leg audit's uses the existing one. A package template left
+unset falls back to the existing one, so nothing changes until it is picked.
+
+Tests: `src/reporting/domain/business/webhook-handlers/res-id.test.ts` —
+"REQ-031 …" (int); `e2e/webhook-templates/webhook-templates.e2e.test.ts` —
+"REQ-031 …" (e2e).
+
+## REQ-032 — Internal emails name the reservation ID, linked to QuickBase
+
+> "1. Audit report — dateleg interal: Audit for {{reservation ID}}
+> {{passedOrFailed}} / package partner: Audit for {{subjectGuest}}
+> {{passedOrFailed}}. 2. Appeal decision — dateleg internal: Your Appeal for
+> {{reservation ID}}: {{finalScore}} / package partner: Your Appeal Result:
+> {{finalScore}}. 3. Appeal dismissal — dateleg interanl: Your Appeal for
+> {{reservation ID}}: Dismissed / package partner: Your Appeal was Dismissed"
+> "if no res id, fallback to guest." "no I didn't mean to drop that [the
+> colon]. bare number. yes add it for the email body too, make it clickable
+> with this link:
+> https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bmhvhc72c/action/dr?rid={{resID}}"
+
+Every email gets `{{resId}}` (the bare reservation number on a date leg; the
+guest when the leg has none, and always the guest on a package), `{{resUrl}}`
+(the QuickBase reservation link) and `{{resLink}}` (that number as a clickable
+link for bodies, or the plain guest). `{{resNoun}}` reads "reservation" or
+"guest" to match. The subjects themselves live in the prod templates.
+
+Tests: `src/reporting/domain/business/webhook-handlers/res-id.test.ts` —
+"REQ-032 …" (int).
+
+## REQ-033 — No guest names in internal emails unless there is no res ID
+
+> "no more guest names, just record numbers for internals unless the res ID
+> isn't there. capiche??" — "record numbers" being the reservation ID.
+
+Date-leg (internal) emails show the reservation ID wherever they showed the
+guest name: the code-built pieces and the bundled default templates use
+`{{resLink}}` / `{{resId}}`, not `{{guestName}}`. Package emails keep guest
+names.
+
+Tests: `src/reporting/domain/business/webhook-handlers/res-id.test.ts` —
+"REQ-033 …" (int).

@@ -428,3 +428,16 @@ The explainer copy in Add Genie, Direct Upload and Appeal Decision (the intro,
 the missing-audio callout and the trim warning) goes from 12px to 14px.
 
 Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-029 …" (e2e).
+
+## REQ-030 — Date-leg audits carry the reservation id from QuickBase
+
+> "can you look at a dateleg and look for that field, it should be field 148 -
+> 'Reservation ID#' - can we get that on the poll and add it to the audit
+> obejct?"
+
+The date-leg poll (`getDateLegByRid`) selects field 148 ("Reservation ID#", a
+lookup of the related reservation's record id through field 31) and puts it on
+the audit's `record` as `ReservationId`, the same key package audits already
+carry. A leg with no reservation reads 0 in QuickBase and becomes "".
+
+Tests: `src/audit/domain/data/quickbase/test.ts` — "REQ-030 …" (int).

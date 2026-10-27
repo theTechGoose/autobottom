@@ -121,7 +121,10 @@ const DATE_LEGS_TABLE = "bpb28qsnn";
 // listed on several employee records, and both Mariah records share
 // mariahb@monsterrg.com. Carried on the finding so a per-person view can
 // key on the ID instead of guessing from name + office.
-const DL = { RECORD_ID: 3, VO_GENIE: 145, RELATED_DEST: 292, GUEST_NAME: 32, VO_NAME: 144, VO_EMAIL: 839, SUPERVISOR_EMAIL: 851, DEST_DISPLAY: 566, ACTIVATING_OFFICE: 140, SHIFT: 834, RELATED_EMPLOYEE: 143 };
+// RESERVATION_ID (148, "Reservation ID#") is a lookup of the related
+// reservation's record id through Related Reservation (31). Blank-is-zero, so a
+// leg with no reservation reads 0 — cleanRefId turns that into "".
+const DL = { RECORD_ID: 3, VO_GENIE: 145, RELATED_DEST: 292, GUEST_NAME: 32, VO_NAME: 144, VO_EMAIL: 839, SUPERVISOR_EMAIL: 851, DEST_DISPLAY: 566, ACTIVATING_OFFICE: 140, SHIFT: 834, RELATED_EMPLOYEE: 143, RESERVATION_ID: 148 };
 // The only fields a question template can reach via a `{{fid}}` placeholder —
 // they land on the finding's record under their bare numeric key. A placeholder
 // for a fid that isn't here resolves to "" with no error, so adding a field to a
@@ -137,7 +140,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     const records = await queryRecords({
     tableId: DATE_LEGS_TABLE,
     where: `{${DL.RECORD_ID}.EX.'${rid}'}`,
-    select: [DL.RECORD_ID, DL.VO_GENIE, DL.RELATED_DEST, DL.DEST_DISPLAY, DL.GUEST_NAME, DL.VO_NAME, DL.VO_EMAIL, DL.SUPERVISOR_EMAIL, DL.ACTIVATING_OFFICE, DL.SHIFT, DL.RELATED_EMPLOYEE, ...DATE_LEG_AUTOYES_FIELDS],
+    select: [DL.RECORD_ID, DL.VO_GENIE, DL.RELATED_DEST, DL.DEST_DISPLAY, DL.GUEST_NAME, DL.VO_NAME, DL.VO_EMAIL, DL.SUPERVISOR_EMAIL, DL.ACTIVATING_OFFICE, DL.SHIFT, DL.RELATED_EMPLOYEE, DL.RESERVATION_ID, ...DATE_LEG_AUTOYES_FIELDS],
   });
   if (records.length === 0) return null;
   const r = records[0];
@@ -149,6 +152,7 @@ export async function getDateLegByRid(rid: string): Promise<Record<string, any> 
     GuestName: r[DL.GUEST_NAME]?.value ?? "", VoName: r[DL.VO_NAME]?.value ?? "",
     VoEmail: r[DL.VO_EMAIL]?.value ?? "", SupervisorEmail: r[DL.SUPERVISOR_EMAIL]?.value ?? "",
     RelatedEmployeeId: cleanRefId(r[DL.RELATED_EMPLOYEE]?.value),
+    ReservationId: cleanRefId(r[DL.RESERVATION_ID]?.value),
     ActivatingOffice: String(r[DL.ACTIVATING_OFFICE]?.value ?? ""), Shift: String(r[DL.SHIFT]?.value ?? ""),
     ...autoYes,
   };

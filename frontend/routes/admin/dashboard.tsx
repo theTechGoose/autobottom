@@ -149,7 +149,7 @@ export default define.page(async function AdminDashboard(ctx) {
       {[
         { id: "qlab-modal", title: "Question Lab", sub: "Assign configs to destinations and offices", endpoint: "/api/admin/modal/qlab", className: "qlab-modal", noHeader: true },
         { id: "users-modal", title: "Users", sub: "Manage user accounts and roles", endpoint: "/api/admin/modal/users", className: "um-modal", noHeader: true },
-        { id: "webhook-modal", title: "Webhook Configuration", sub: "Configure outbound webhooks for pipeline events", endpoint: "/api/admin/modal/webhook", noHeader: true },
+        { id: "webhook-modal", title: "Webhook Configuration", sub: "Configure outbound webhooks for pipeline events", endpoint: "/api/admin/modal/webhook", className: "wh-modal", noHeader: true },
         { id: "email-templates-modal", title: "Email Templates", sub: "Manage email notification templates", endpoint: "/api/admin/modal/email-templates", className: "et-modal", noHeader: true },
         // Chargebacks intentionally NOT in this lazy-loaded array — its content
         // (with the ChargebacksToolbar island) is rendered inline below so Fresh

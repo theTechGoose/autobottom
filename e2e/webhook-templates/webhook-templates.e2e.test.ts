@@ -53,4 +53,6 @@ Deno.test("REQ-031: the webhook config picks a package template, and a package d
     await modal.getByRole("button", { name: "Audit Complete" }).click();
     await modal.getByText("Package Email Template").waitFor();
     expect(await modal.locator("select[name=packageEmailTemplateId]").inputValue() === partner.id, "the saved package template is selected on reopen");
+    // Stamp a closing frame on the picker itself, showing the saved package template.
+    await modal.getByText("Package Email Template").click();
   }));

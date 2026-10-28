@@ -113,7 +113,7 @@ export function renderTemplate(str: string, vars: Record<string, string>): strin
  *  they take the package template when one is picked; anything unset falls
  *  through to the next, ending at the date-leg template. A dismissal tries its
  *  dismissal templates before the verdict ones. Null when none is configured. */
-export function templateIdsFor(
+function templateIdsFor(
   cfg: WebhookConfig | null,
   opts: { isPackage: boolean; isDismissal?: boolean },
 ): string[] {
@@ -144,7 +144,7 @@ const QB_RESERVATION_URL = "https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/ta
  *  to its QuickBase record for bodies — and fall back to the guest when the leg
  *  has no reservation. Package emails go to partners and always name the guest,
  *  even though package records carry a ReservationId too. */
-export function reservationVars(
+function reservationVars(
   record: Record<string, any> | undefined,
   isPackage: boolean,
 ): { resId: string; resUrl: string; resLink: string; resNoun: string } {

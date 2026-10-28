@@ -352,6 +352,7 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 
 /* Modal-specific size variants */
 .bw-modal { width: 680px; max-width: 95vw; }
+.wh-modal { max-height: 90vh; overflow-y: auto; }
 .um-modal { width: min(900px, 96vw); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; }
 .er-modal { width: 780px; max-height: 88vh; overflow-y: auto; }
 .maint-modal { width: 780px; max-width: 92vw; max-height: 88vh; overflow-y: auto; }

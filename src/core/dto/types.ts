@@ -189,6 +189,9 @@ export interface WebhookConfig {
   testEmail?: string;
   emailTemplateId?: string;
   dismissalTemplateId?: string;
+  /** Package audits' templates (REQ-031). Unset → the date-leg ones above. */
+  packageEmailTemplateId?: string;
+  packageDismissalTemplateId?: string;
   bcc?: string;
 }
 

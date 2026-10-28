@@ -109,9 +109,56 @@ export function renderTemplate(str: string, vars: Record<string, string>): strin
   return str.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? "");
 }
 
-async function resolveTemplate(orgId: OrgId, cfg: WebhookConfig | null): Promise<EmailTemplate | null> {
-  if (!cfg?.emailTemplateId) return null;
-  return getEmailTemplate(orgId, cfg.emailTemplateId);
+/** The template an email uses (REQ-031). Package audits go to the partner, so
+ *  they take the package template when one is picked; anything unset falls
+ *  through to the next, ending at the date-leg template. A dismissal tries its
+ *  dismissal templates before the verdict ones. Null when none is configured. */
+function templateIdsFor(
+  cfg: WebhookConfig | null,
+  opts: { isPackage: boolean; isDismissal?: boolean },
+): string[] {
+  if (!cfg) return [];
+  const verdict = [opts.isPackage ? cfg.packageEmailTemplateId : undefined, cfg.emailTemplateId];
+  const dismissal = opts.isDismissal
+    ? [opts.isPackage ? cfg.packageDismissalTemplateId : undefined, cfg.dismissalTemplateId]
+    : [];
+  return [...dismissal, ...verdict].filter((id): id is string => !!id);
+}
+
+async function resolveTemplate(
+  orgId: OrgId,
+  cfg: WebhookConfig | null,
+  opts: { isPackage: boolean; isDismissal?: boolean },
+): Promise<EmailTemplate | null> {
+  for (const id of templateIdsFor(cfg, opts)) {
+    const template = await getEmailTemplate(orgId, id);
+    if (template) return template;
+  }
+  return null;
+}
+
+const QB_RESERVATION_URL = "https://monsterrg.quickbase.com/nav/app/bmhvhc7sk/table/bmhvhc72c/action/dr?rid=";
+
+/** How an email names the audit (REQ-032/033). Internal (date-leg) emails use
+ *  the reservation number — `{{resId}}` bare for subjects, `{{resLink}}` linked
+ *  to its QuickBase record for bodies — and fall back to the guest when the leg
+ *  has no reservation. Package emails go to partners and always name the guest,
+ *  even though package records carry a ReservationId too. */
+function reservationVars(
+  record: Record<string, any> | undefined,
+  isPackage: boolean,
+): { resId: string; resUrl: string; resLink: string; resNoun: string } {
+  const recordId = String(record?.RecordId ?? "");
+  const guest = String(record?.GuestName ?? "") || (isPackage ? `Package #${recordId}` : `#${recordId}`);
+  const resNum = isPackage ? "" : String(record?.ReservationId ?? "").trim();
+  if (!resNum) return { resId: guest, resUrl: "", resLink: escHtml(guest), resNoun: "guest" };
+  const resUrl = QB_RESERVATION_URL + encodeURIComponent(resNum);
+  return {
+    resId: resNum,
+    resUrl,
+    resLink: `<a href="${resUrl}" style="color:#3b82f6;text-decoration:none;">${escHtml(resNum)}</a>`,
+    resNoun: "reservation",
+  };
 }
 
 interface AuditCompletePayload {
@@ -204,7 +251,8 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
     return;
   }
 
-  const template = await resolveTemplate(orgId, cfg);
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const template = await resolveTemplate(orgId, cfg, { isPackage });
   if (!template) {
     console.log(`📧 [WEBHOOK:terminate] skipped fid=${findingId} — no emailTemplateId configured`);
     return;
@@ -217,7 +265,6 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
   const { full: teamMemberFull, first: teamMemberFirstRaw } = parseVoName(String(finding.record?.VoName ?? ""), agentEmail);
   const teamMemberFirst = teamMemberFirstRaw || "there";
   const recordId = String(finding.record?.RecordId ?? "");
-  const isPackage = finding.recordingIdField === "GenieNumber";
   const qbTableId = isPackage ? "bttffb64u" : "bpb28qsnn";
   const crmUrl = recordId && QB_REALM() ? `https://${QB_REALM()}.quickbase.com/db/${qbTableId}?a=dr&rid=${recordId}` : "";
 
@@ -256,9 +303,10 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
 
   const auditTypeLabel = isPackage ? "package verification" : "date leg";
   const guestNameVal = String(finding.record?.GuestName ?? "");
+  const res = reservationVars(finding.record, isPackage);
   const greeting = isPackage ? "Hi," : `Hi ${teamMemberFirst},`;
   const guestContext = (!isPackage && guestNameVal)
-    ? ` for <strong style="color:#c9d1d9;">${guestNameVal}</strong>`
+    ? ` for ${res.resNoun} <strong style="color:#c9d1d9;">${res.resLink}</strong>`
     : "";
   const supportTeamName = isPackage ? "AI Team" : "Excellence Audit Team";
   const recordTypeLabel = isPackage ? "Package ID" : "Date Leg ID";
@@ -286,6 +334,7 @@ async function sendAuditCompleteEmail(orgId: OrgId, payload: AuditCompletePayloa
     recordId,
     guestName: guestNameVal,
     subjectGuest: guestNameVal || (isPackage ? `Package #${recordId}` : `#${recordId}`),
+    ...res,
     greeting,
     auditTypeLabel,
     guestContext,
@@ -382,10 +431,10 @@ interface AppealFiledPayload {
 const DEFAULT_APPEAL_TEMPLATE: EmailTemplate = {
   id: "__default_appeal__",
   name: "Appeal Filed (default)",
-  subject: "Appeal Filed: {{guestName}} - Record: {{recordId}}",
+  subject: "Appeal Filed: {{resId}} - Record: {{recordId}}",
   createdAt: 0,
   updatedAt: 0,
-  html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Appeal Filed</title></head><body style="margin:0;padding:0;background:#0d1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;min-height:100vh;"><tr><td align="center" style="padding:32px 16px;"><table width="560" cellpadding="0" cellspacing="0" style="max-width:100%;width:560px;border:1px solid #3d2b00;border-radius:12px;overflow:hidden;"><tr><td style="background:#1c1600;padding:24px 28px 20px;border-bottom:1px solid #3d2b00;"><p style="margin:0 0 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#d29922;">Action Required</p><h1 style="margin:0;font-size:20px;font-weight:700;color:#f0c842;">Appeal Filed</h1><p style="margin:6px 0 0;font-size:12px;color:#9e8300;">A team member has submitted an appeal for review.</p></td></tr><tr><td style="padding:22px 28px 0;"><table width="100%" cellpadding="0" cellspacing="0"><tr><td style="width:50%;padding-right:8px;vertical-align:top;"><div style="background:#161b22;border:1px solid #3d2b00;border-radius:8px;padding:14px 16px;"><p style="margin:0 0 2px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#d29922;">Team Member</p><p style="margin:0;font-size:14px;font-weight:600;color:#f0f6fc;">{{agentName}}</p><p style="margin:2px 0 0;font-size:11px;color:#8b949e;">{{agentEmail}}</p></div></td><td style="width:50%;padding-left:8px;vertical-align:top;"><div style="background:#161b22;border:1px solid #3d2b00;border-radius:8px;padding:14px 16px;"><p style="margin:0 0 2px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#d29922;">Guest / Record</p><p style="margin:0;font-size:14px;font-weight:600;color:#f0f6fc;">{{guestName}}</p><p style="margin:2px 0 0;font-size:11px;color:#8b949e;">Record #{{recordId}}</p></div></td></tr></table></td></tr><tr><td style="padding:14px 28px 0;"><div style="border-left:3px solid #d29922;padding:12px 16px;background:#161b22;border-radius:0 8px 8px 0;"><p style="margin:0 0 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#d29922;">Agent Comment</p><p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.6;">{{comment}}</p></div></td></tr><tr><td style="padding:22px 28px 24px;text-align:center;"><table cellpadding="0" cellspacing="0" style="margin:0 auto;"><tr><td style="padding-right:10px;"><a href="{{judgeUrl}}" style="display:inline-block;background:#9e6a03;color:#ffffff;font-size:13px;font-weight:700;text-decoration:none;padding:10px 22px;border-radius:6px;border:1px solid #d29922;">Open Judge Panel</a></td><td><a href="{{reportUrl}}" style="display:inline-block;background:#161b22;color:#c9d1d9;font-size:13px;font-weight:600;text-decoration:none;padding:10px 22px;border-radius:6px;border:1px solid #30363d;">View Report</a></td></tr></table></td></tr><tr><td style="background:#0d1117;border-top:1px solid #3d2b00;padding:14px 28px;text-align:center;"><p style="margin:0;font-size:11px;color:#6e7681;">Filed {{appealedAt}} &nbsp;·&nbsp; Audit ID: {{findingId}}</p></td></tr></table></td></tr></table></body></html>`,
+  html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Appeal Filed</title></head><body style="margin:0;padding:0;background:#0d1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;min-height:100vh;"><tr><td align="center" style="padding:32px 16px;"><table width="560" cellpadding="0" cellspacing="0" style="max-width:100%;width:560px;border:1px solid #3d2b00;border-radius:12px;overflow:hidden;"><tr><td style="background:#1c1600;padding:24px 28px 20px;border-bottom:1px solid #3d2b00;"><p style="margin:0 0 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#d29922;">Action Required</p><h1 style="margin:0;font-size:20px;font-weight:700;color:#f0c842;">Appeal Filed</h1><p style="margin:6px 0 0;font-size:12px;color:#9e8300;">A team member has submitted an appeal for review.</p></td></tr><tr><td style="padding:22px 28px 0;"><table width="100%" cellpadding="0" cellspacing="0"><tr><td style="width:50%;padding-right:8px;vertical-align:top;"><div style="background:#161b22;border:1px solid #3d2b00;border-radius:8px;padding:14px 16px;"><p style="margin:0 0 2px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#d29922;">Team Member</p><p style="margin:0;font-size:14px;font-weight:600;color:#f0f6fc;">{{agentName}}</p><p style="margin:2px 0 0;font-size:11px;color:#8b949e;">{{agentEmail}}</p></div></td><td style="width:50%;padding-left:8px;vertical-align:top;"><div style="background:#161b22;border:1px solid #3d2b00;border-radius:8px;padding:14px 16px;"><p style="margin:0 0 2px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#d29922;">{{resNoun}} / Record</p><p style="margin:0;font-size:14px;font-weight:600;color:#f0f6fc;">{{resLink}}</p><p style="margin:2px 0 0;font-size:11px;color:#8b949e;">Record #{{recordId}}</p></div></td></tr></table></td></tr><tr><td style="padding:14px 28px 0;"><div style="border-left:3px solid #d29922;padding:12px 16px;background:#161b22;border-radius:0 8px 8px 0;"><p style="margin:0 0 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#d29922;">Agent Comment</p><p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.6;">{{comment}}</p></div></td></tr><tr><td style="padding:22px 28px 24px;text-align:center;"><table cellpadding="0" cellspacing="0" style="margin:0 auto;"><tr><td style="padding-right:10px;"><a href="{{judgeUrl}}" style="display:inline-block;background:#9e6a03;color:#ffffff;font-size:13px;font-weight:700;text-decoration:none;padding:10px 22px;border-radius:6px;border:1px solid #d29922;">Open Judge Panel</a></td><td><a href="{{reportUrl}}" style="display:inline-block;background:#161b22;color:#c9d1d9;font-size:13px;font-weight:600;text-decoration:none;padding:10px 22px;border-radius:6px;border:1px solid #30363d;">View Report</a></td></tr></table></td></tr><tr><td style="background:#0d1117;border-top:1px solid #3d2b00;padding:14px 28px;text-align:center;"><p style="margin:0;font-size:11px;color:#6e7681;">Filed {{appealedAt}} &nbsp;·&nbsp; Audit ID: {{findingId}}</p></td></tr></table></td></tr></table></body></html>`,
 };
 
 async function sendAppealFiledEmail(orgId: OrgId, payload: AppealFiledPayload): Promise<void> {
@@ -400,13 +449,13 @@ async function sendAppealFiledEmail(orgId: OrgId, payload: AppealFiledPayload): 
     return;
   }
 
+  const isPackage = finding.recordingIdField === "GenieNumber";
   // Template lookup: configured id → fall back to prod's default HTML.
-  const template = (await resolveTemplate(orgId, cfg)) ?? DEFAULT_APPEAL_TEMPLATE;
+  const template = (await resolveTemplate(orgId, cfg, { isPackage })) ?? DEFAULT_APPEAL_TEMPLATE;
 
   const agentEmail = String(finding.owner ?? "");
   const voEmail = String(finding.record?.VoEmail ?? "");
   const gmEmail = String(finding.record?.GmEmail ?? "");
-  const isPackage = finding.recordingIdField === "GenieNumber";
   const recipientEmail = isPackage ? gmEmail : (voEmail || agentEmail);
   const { full: agentName } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
 
@@ -423,6 +472,7 @@ async function sendAppealFiledEmail(orgId: OrgId, payload: AppealFiledPayload): 
     gmEmail,
     recordId: String(finding.record?.RecordId ?? ""),
     guestName: String(finding.record?.GuestName ?? ""),
+    ...reservationVars(finding.record, isPackage),
     reportUrl: `${SELF_URL()}/audit/report?id=${findingId}`,
     judgeUrl: `${SELF_URL()}/judge`,
     comment: payload.comment ?? "",
@@ -507,12 +557,12 @@ async function sendReAuditReceiptEmail(orgId: OrgId, payload: ReAuditReceiptPayl
     return;
   }
 
-  const template = (await resolveTemplate(orgId, cfg)) ?? DEFAULT_REAUDIT_RECEIPT_TEMPLATE;
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const template = (await resolveTemplate(orgId, cfg, { isPackage })) ?? DEFAULT_REAUDIT_RECEIPT_TEMPLATE;
 
   const agentEmail = String(finding.owner ?? "");
   const voEmail = String(finding.record?.VoEmail ?? "");
   const gmEmail = String(finding.record?.GmEmail ?? "");
-  const isPackage = finding.recordingIdField === "GenieNumber";
   const recipientEmail = isPackage ? gmEmail : (voEmail || (agentEmail !== "api" ? agentEmail : ""));
   const { full: teamMemberFull, first: teamMemberFirstRaw } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
   // Fall back to "there" in the rendered greeting when no name is available
@@ -541,6 +591,7 @@ async function sendReAuditReceiptEmail(orgId: OrgId, payload: ReAuditReceiptPayl
     originalFindingId: payload.originalFindingId ?? "",
     recordId,
     guestName: String(finding.record?.GuestName ?? ""),
+    ...reservationVars(finding.record, isPackage),
     reportUrl: payload.reportUrl ?? `${SELF_URL()}/audit/report?id=${findingId}`,
     originalReportUrl: payload.originalReportUrl ?? (payload.originalFindingId ? `${SELF_URL()}/audit/report?id=${payload.originalFindingId}` : ""),
     appealType,
@@ -602,7 +653,7 @@ const DEFAULT_APPEAL_RESULT_TEMPLATE: EmailTemplate = {
   subject: "Your Appeal Result: {{finalScore}}",
   createdAt: 0,
   updatedAt: 0,
-  html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Appeal Result</title></head><body style="margin:0;padding:0;background:#070d18;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#070d18;min-height:100vh;"><tr><td align="center" style="padding:40px 16px;"><table width="580" cellpadding="0" cellspacing="0" style="max-width:100%;width:580px;background:#0d1520;border:1px solid #1e2d45;border-radius:16px;overflow:hidden;"><tr><td style="padding:24px 28px 22px;border-bottom:1px solid #1a2840;"><div style="margin-bottom:8px;"><span style="display:inline-block;background:#d29922;color:#0a0a0a;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;padding:2px 6px;border-radius:3px;">Appeal</span><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#8b949e;margin-left:5px;">Complete</span></div><h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#e6edf3;line-height:1.2;">Your Appeal Has Been Reviewed</h1><p style="margin:0;font-size:13px;color:#8b949e;line-height:1.6;">Hi <strong style="color:#c9d1d9;">{{teamMemberFirst}}</strong>, here are the results for guest <strong style="color:#c9d1d9;">{{guestName}}</strong>.</p></td></tr><tr><td style="padding:24px 28px 0;"><table width="100%" cellpadding="0" cellspacing="0"><tr><td width="44%" style="vertical-align:middle;"><div style="background:#111d2e;border:1px solid #1e2d45;border-radius:10px;padding:20px;text-align:center;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:10px;">Original Score</div><div style="font-size:44px;font-weight:800;color:#4a6080;line-height:1;font-variant-numeric:tabular-nums;">{{originalScore}}</div></div></td><td width="12%" style="text-align:center;vertical-align:middle;"><span style="font-size:20px;color:#3b82f6;">&#8594;</span></td><td width="44%" style="vertical-align:middle;"><div style="background:#111d2e;border:2px solid #3b82f6;border-radius:10px;padding:20px;text-align:center;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#3b82f6;margin-bottom:10px;">Final Score</div><div style="font-size:44px;font-weight:800;color:#e6edf3;line-height:1;font-variant-numeric:tabular-nums;">{{finalScore}}</div></div></td></tr></table></td></tr><tr><td style="padding:12px 28px 0;"><div style="background:#111d2e;border:1px solid #1e2d45;border-radius:10px;padding:16px 20px;text-align:center;"><span style="font-size:13px;color:#8b949e;"><strong style="color:#e6edf3;">{{overturns}}</strong> of <strong style="color:#e6edf3;">{{totalQuestions}}</strong> {{overturnPhrase}} &nbsp;&#183;&nbsp; Reviewed by <a href="mailto:{{judgedBy}}" style="color:#3b82f6;text-decoration:none;">{{judgedBy}}</a></span></div></td></tr>{{failedQuestions}}<tr><td style="padding:24px 28px 28px;text-align:center;"><a href="{{reportUrl}}" style="display:inline-block;padding:12px 32px;background:#3b82f6;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;border:1px solid #2563eb;">View Updated Report</a></td></tr><tr><td style="background:#080f1a;border-top:1px solid #1a2840;padding:14px 28px;text-align:center;"><p style="margin:0 0 4px;font-size:11px;color:#4a6080;">Questions? Contact your supervisor.</p><p style="margin:0;font-size:10px;color:#3a5070;font-family:monospace;">Audit ID: {{findingId}}</p></td></tr></table></td></tr></table></body></html>`,
+  html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Appeal Result</title></head><body style="margin:0;padding:0;background:#070d18;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#070d18;min-height:100vh;"><tr><td align="center" style="padding:40px 16px;"><table width="580" cellpadding="0" cellspacing="0" style="max-width:100%;width:580px;background:#0d1520;border:1px solid #1e2d45;border-radius:16px;overflow:hidden;"><tr><td style="padding:24px 28px 22px;border-bottom:1px solid #1a2840;"><div style="margin-bottom:8px;"><span style="display:inline-block;background:#d29922;color:#0a0a0a;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;padding:2px 6px;border-radius:3px;">Appeal</span><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#8b949e;margin-left:5px;">Complete</span></div><h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#e6edf3;line-height:1.2;">Your Appeal Has Been Reviewed</h1><p style="margin:0;font-size:13px;color:#8b949e;line-height:1.6;">Hi <strong style="color:#c9d1d9;">{{teamMemberFirst}}</strong>, here are the results for {{resNoun}} <strong style="color:#c9d1d9;">{{resLink}}</strong>.</p></td></tr><tr><td style="padding:24px 28px 0;"><table width="100%" cellpadding="0" cellspacing="0"><tr><td width="44%" style="vertical-align:middle;"><div style="background:#111d2e;border:1px solid #1e2d45;border-radius:10px;padding:20px;text-align:center;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:10px;">Original Score</div><div style="font-size:44px;font-weight:800;color:#4a6080;line-height:1;font-variant-numeric:tabular-nums;">{{originalScore}}</div></div></td><td width="12%" style="text-align:center;vertical-align:middle;"><span style="font-size:20px;color:#3b82f6;">&#8594;</span></td><td width="44%" style="vertical-align:middle;"><div style="background:#111d2e;border:2px solid #3b82f6;border-radius:10px;padding:20px;text-align:center;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#3b82f6;margin-bottom:10px;">Final Score</div><div style="font-size:44px;font-weight:800;color:#e6edf3;line-height:1;font-variant-numeric:tabular-nums;">{{finalScore}}</div></div></td></tr></table></td></tr><tr><td style="padding:12px 28px 0;"><div style="background:#111d2e;border:1px solid #1e2d45;border-radius:10px;padding:16px 20px;text-align:center;"><span style="font-size:13px;color:#8b949e;"><strong style="color:#e6edf3;">{{overturns}}</strong> of <strong style="color:#e6edf3;">{{totalQuestions}}</strong> {{overturnPhrase}} &nbsp;&#183;&nbsp; Reviewed by <a href="mailto:{{judgedBy}}" style="color:#3b82f6;text-decoration:none;">{{judgedBy}}</a></span></div></td></tr>{{failedQuestions}}<tr><td style="padding:24px 28px 28px;text-align:center;"><a href="{{reportUrl}}" style="display:inline-block;padding:12px 32px;background:#3b82f6;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;border:1px solid #2563eb;">View Updated Report</a></td></tr><tr><td style="background:#080f1a;border-top:1px solid #1a2840;padding:14px 28px;text-align:center;"><p style="margin:0 0 4px;font-size:11px;color:#4a6080;">Questions? Contact your supervisor.</p><p style="margin:0;font-size:10px;color:#3a5070;font-family:monospace;">Audit ID: {{findingId}}</p></td></tr></table></td></tr></table></body></html>`,
 };
 
 /** Minimal HTML escape for judge-typed reasons + question names going into the
@@ -722,28 +773,16 @@ async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayloa
   }
 
   const isDismissal = !!payload.dismissalReason;
+  const isPackage = finding.recordingIdField === "GenieNumber";
   // Dismissal uses a dedicated template id when configured, but falls back to
-  // the standard verdict template (emailTemplateId) — and finally the bundled
-  // "Appeal Result" default — so a dismissal always sends even with no dedicated
-  // template set. (Matches the pre-rewrite behavior: dismissalTemplateId || emailTemplateId.)
-  const dismissalTemplateId = (cfg as Record<string, unknown> | null)?.dismissalTemplateId as string | undefined;
-  let template: EmailTemplate | null = null;
-  if (isDismissal && dismissalTemplateId) {
-    template = await getEmailTemplate(orgId, dismissalTemplateId);
-  }
-  if (!template) {
-    template = (await resolveTemplate(orgId, cfg)) ?? DEFAULT_APPEAL_RESULT_TEMPLATE;
-  }
-  if (!template) {
-    console.log(`📧 [WEBHOOK:judge] skipped fid=${findingId} — no ${isDismissal ? "dismissal" : "result"} template configured`);
-    return;
-  }
+  // the standard verdict template — and finally the bundled "Appeal Result"
+  // default — so a dismissal always sends even with no dedicated template set.
+  const template = (await resolveTemplate(orgId, cfg, { isPackage, isDismissal })) ?? DEFAULT_APPEAL_RESULT_TEMPLATE;
 
   const agentEmail = String(finding.owner ?? "");
   const voEmail = String(finding.record?.VoEmail ?? "");
   const gmEmail = String(finding.record?.GmEmail ?? "");
   const supervisorEmail = String(finding.record?.SupervisorEmail ?? "");
-  const isPackage = finding.recordingIdField === "GenieNumber";
   const recipientEmail = isPackage ? gmEmail : (voEmail || agentEmail);
   const { full: teamMemberFull, first: teamMemberFirstRaw } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
   // Fall back to "there" in the rendered greeting when no name is available
@@ -773,6 +812,7 @@ async function sendAppealDecidedEmail(orgId: OrgId, payload: JudgeDecisionPayloa
     gmEmail,
     recordId,
     guestName: String(finding.record?.GuestName ?? ""),
+    ...reservationVars(finding.record, isPackage),
     originalScore: payload.originalScore != null ? `${payload.originalScore}%` : "",
     finalScore: payload.finalScore != null ? `${payload.finalScore}%` : "",
     overturns: String(payload.overturns ?? 0),
@@ -828,7 +868,7 @@ const DEFAULT_MANAGER_REVIEW_TEMPLATE: EmailTemplate = {
   subject: "Manager Review Notes — Record {{recordId}}",
   createdAt: 0,
   updatedAt: 0,
-  html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Manager Review Notes</title></head><body style="margin:0;padding:0;background:#070d18;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#070d18;min-height:100vh;"><tr><td align="center" style="padding:40px 16px;"><table width="580" cellpadding="0" cellspacing="0" style="max-width:100%;width:580px;background:#0d1520;border:1px solid #1e2d45;border-radius:16px;overflow:hidden;"><tr><td style="padding:24px 28px 22px;border-bottom:1px solid #1a2840;"><div style="margin-bottom:8px;"><span style="display:inline-block;background:#bc8cff;color:#0a0a0a;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;padding:2px 6px;border-radius:3px;">Manager</span><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#8b949e;margin-left:5px;">Review</span></div><h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#e6edf3;line-height:1.2;">Your Manager Has Reviewed Your Audit</h1><p style="margin:0;font-size:13px;color:#8b949e;line-height:1.6;">Hi <strong style="color:#c9d1d9;">{{teamMemberFirst}}</strong>, here are the notes from <strong style="color:#c9d1d9;">{{addressedBy}}</strong>.</p></td></tr><tr><td style="padding:24px 28px 0;"><div style="border-left:3px solid #bc8cff;padding:14px 18px;background:#161b22;border-radius:0 8px 8px 0;"><p style="margin:0 0 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#bc8cff;">Manager Notes</p><p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.7;white-space:pre-wrap;">{{managerNotes}}</p></div></td></tr><tr><td style="padding:18px 28px 0;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#111d2e;border:1px solid #1e2d45;border-radius:10px;overflow:hidden;"><tr><td style="padding:14px 18px;border-bottom:1px solid #1a2840;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:4px;">Record</div><div style="font-size:16px;font-weight:600;color:#e6edf3;">{{recordId}} &nbsp;·&nbsp; {{guestName}}</div></td></tr><tr><td style="padding:14px 18px;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:4px;">Reviewed By</div><div style="font-size:13px;color:#c9d1d9;font-family:monospace;">{{addressedBy}}</div></td></tr></table></td></tr><tr><td style="padding:22px 28px 28px;text-align:center;"><a href="{{reportUrl}}" style="display:inline-block;padding:12px 32px;background:#bc8cff;color:#0a0a0a;text-decoration:none;border-radius:8px;font-size:14px;font-weight:700;border:1px solid #a370ff;">View Audit Report</a></td></tr><tr><td style="background:#080f1a;border-top:1px solid #1a2840;padding:14px 28px;text-align:center;"><p style="margin:0;font-size:10px;color:#3a5070;font-family:monospace;">Audit ID: {{findingId}}</p></td></tr></table></td></tr></table></body></html>`,
+  html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Manager Review Notes</title></head><body style="margin:0;padding:0;background:#070d18;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#070d18;min-height:100vh;"><tr><td align="center" style="padding:40px 16px;"><table width="580" cellpadding="0" cellspacing="0" style="max-width:100%;width:580px;background:#0d1520;border:1px solid #1e2d45;border-radius:16px;overflow:hidden;"><tr><td style="padding:24px 28px 22px;border-bottom:1px solid #1a2840;"><div style="margin-bottom:8px;"><span style="display:inline-block;background:#bc8cff;color:#0a0a0a;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;padding:2px 6px;border-radius:3px;">Manager</span><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#8b949e;margin-left:5px;">Review</span></div><h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#e6edf3;line-height:1.2;">Your Manager Has Reviewed Your Audit</h1><p style="margin:0;font-size:13px;color:#8b949e;line-height:1.6;">Hi <strong style="color:#c9d1d9;">{{teamMemberFirst}}</strong>, here are the notes from <strong style="color:#c9d1d9;">{{addressedBy}}</strong>.</p></td></tr><tr><td style="padding:24px 28px 0;"><div style="border-left:3px solid #bc8cff;padding:14px 18px;background:#161b22;border-radius:0 8px 8px 0;"><p style="margin:0 0 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#bc8cff;">Manager Notes</p><p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.7;white-space:pre-wrap;">{{managerNotes}}</p></div></td></tr><tr><td style="padding:18px 28px 0;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#111d2e;border:1px solid #1e2d45;border-radius:10px;overflow:hidden;"><tr><td style="padding:14px 18px;border-bottom:1px solid #1a2840;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:4px;">Record</div><div style="font-size:16px;font-weight:600;color:#e6edf3;">{{recordId}} &nbsp;·&nbsp; {{resLink}}</div></td></tr><tr><td style="padding:14px 18px;"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#4a6080;margin-bottom:4px;">Reviewed By</div><div style="font-size:13px;color:#c9d1d9;font-family:monospace;">{{addressedBy}}</div></td></tr></table></td></tr><tr><td style="padding:22px 28px 28px;text-align:center;"><a href="{{reportUrl}}" style="display:inline-block;padding:12px 32px;background:#bc8cff;color:#0a0a0a;text-decoration:none;border-radius:8px;font-size:14px;font-weight:700;border:1px solid #a370ff;">View Audit Report</a></td></tr><tr><td style="background:#080f1a;border-top:1px solid #1a2840;padding:14px 28px;text-align:center;"><p style="margin:0;font-size:10px;color:#3a5070;font-family:monospace;">Audit ID: {{findingId}}</p></td></tr></table></td></tr></table></body></html>`,
 };
 
 /** Env var that turns remediation emails ON. Absent ⇒ OFF.
@@ -876,13 +916,13 @@ async function sendManagerReviewEmail(orgId: OrgId, payload: ManagerReviewPayloa
     return;
   }
 
-  const template = (await resolveTemplate(orgId, cfg)) ?? DEFAULT_MANAGER_REVIEW_TEMPLATE;
+  const isPackage = finding.recordingIdField === "GenieNumber";
+  const template = (await resolveTemplate(orgId, cfg, { isPackage })) ?? DEFAULT_MANAGER_REVIEW_TEMPLATE;
 
   const agentEmail = String(finding.owner ?? "");
   const voEmail = String(finding.record?.VoEmail ?? "");
   const gmEmail = String(finding.record?.GmEmail ?? "");
   const supervisorEmail = String(finding.record?.SupervisorEmail ?? "");
-  const isPackage = finding.recordingIdField === "GenieNumber";
   const recipientEmail = isPackage ? gmEmail : (voEmail || agentEmail);
   const { full: teamMemberFull, first: teamMemberFirstRaw } = parseVoName(String(finding.record?.VoName ?? ""), recipientEmail);
   // Fall back to "there" in the rendered greeting when no name is available
@@ -902,6 +942,7 @@ async function sendManagerReviewEmail(orgId: OrgId, payload: ManagerReviewPayloa
     gmEmail,
     recordId,
     guestName: String(finding.record?.GuestName ?? ""),
+    ...reservationVars(finding.record, isPackage),
     managerNotes: payload.remediation?.notes ?? "",
     addressedBy: payload.remediation?.addressedBy ?? "",
     remediatedAt: payload.remediatedAt ?? new Date(payload.remediation?.addressedAt ?? Date.now()).toISOString(),

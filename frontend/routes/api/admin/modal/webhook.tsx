@@ -100,6 +100,18 @@ export const handler = define.handlers({
             </div>
           )}
 
+          {/* Package template — package audits mail the partner, so they can
+              take their own template (REQ-031). Unset falls back to above. */}
+          {isEmailKind && (
+            <div class="sf">
+              <label class="sf-label">Package Email Template <span style="color:var(--text-dim);font-weight:400;">(used for package audits — falls back to above if not set)</span></label>
+              <select class="sf-input" name="packageEmailTemplateId" style="font-family:inherit;">
+                <option value="">— Use template above —</option>
+                {templates.map(t => <option key={t.id} value={t.id} selected={t.id === (config.packageEmailTemplateId as string)}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
+
           {/* Dismissal template — judge only. Gated on "judge-finish" until the
               tab above was renamed to kind="judge"; the picker then became
               unreachable, so dismissals silently fell back to the verdict
@@ -110,6 +122,15 @@ export const handler = define.handlers({
               <select class="sf-input" name="dismissalTemplateId" style="font-family:inherit;">
                 <option value="">— Use verdict template above —</option>
                 {templates.map(t => <option key={t.id} value={t.id} selected={t.id === (config.dismissalTemplateId as string)}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
+          {activeKind === "judge" && (
+            <div class="sf">
+              <label class="sf-label">Package Dismissal Email Template <span style="color:var(--text-dim);font-weight:400;">(used when a judge dismisses a package audit — falls back to the dismissal template above if not set)</span></label>
+              <select class="sf-input" name="packageDismissalTemplateId" style="font-family:inherit;">
+                <option value="">— Use dismissal template above —</option>
+                {templates.map(t => <option key={t.id} value={t.id} selected={t.id === (config.packageDismissalTemplateId as string)}>{t.name}</option>)}
               </select>
             </div>
           )}

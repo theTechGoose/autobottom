@@ -79,7 +79,7 @@ export default define.page(async function VoDashboard(ctx) {
           hx-swap="innerHTML"
           hx-trigger="change, submit"
         >
-          <div class="form-group" style="margin-bottom:0;">
+          <div class="form-group vo-window" style="margin-bottom:0;">
             <label class="vo-filter-label">Window</label>
             <DateRangePicker
               since={params.since}
@@ -96,7 +96,7 @@ export default define.page(async function VoDashboard(ctx) {
           <input type="hidden" name="until" id="vo-until" value={String(params.until)} />
           {/* The team-member buttons below write the choice into this. */}
           <input type="hidden" name="member" id="vo-member" value={params.member} />
-          <div class="form-group" style="margin-bottom:0;">
+          <div class="form-group vo-sale" style="margin-bottom:0;">
             <label class="vo-filter-label">Sale</label>
             <div style="display:flex;gap:12px;align-items:center;height:34px;">
               <label style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;">
@@ -131,7 +131,7 @@ export default define.page(async function VoDashboard(ctx) {
         </div>
       </div>
 
-      {renderVoReviewModal({ asEmail })}
+      {renderVoReviewModal({ asEmail, inPlace: true })}
     </Layout>
   );
 });

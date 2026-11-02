@@ -2122,3 +2122,15 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 
 .theme-light .queue-overlay-box, .theme-light .queue-cheat-box { background: var(--bg-surface); border-color: var(--border); }
 .theme-light .queue-overlay, .theme-light .queue-cheat-sheet { background: rgba(31,35,40,0.35); }
+
+/* ── VO dashboard filter bar (REQ-040) ─────────────────────────────────────
+   One row across the card: the date presets and the range sit side by side
+   and fill the width, with Sale pushed to the right edge. */
+#vo-filters { justify-content: space-between; }
+#vo-filters .vo-window { flex: 1 1 auto; }
+#vo-filters .vo-window .drp { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 12px; }
+#vo-filters .vo-window .drp-trigger { min-width: 280px; }
+
+/* The review write-up grows downward only — dragged sideways it ran out of
+   the modal (REQ-035). */
+.vo-review-note { resize: vertical; max-width: 100%; box-sizing: border-box; }

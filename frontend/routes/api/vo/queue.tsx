@@ -186,7 +186,7 @@ export function renderVoReviewAction(opts: { item: VoQueueItem | null; findingId
 
 /** The review form. On the dashboard the Review button fills in the id; on an
  *  audit page it is baked in. */
-export function renderVoReviewModal(opts: { findingId?: string; returnTo?: string; asEmail?: string; teamMember?: string }) {
+export function renderVoReviewModal(opts: { findingId?: string; returnTo?: string; asEmail?: string; teamMember?: string; inPlace?: boolean }) {
   return (
     <div id="vo-review-modal" class="modal-overlay">
       <div class="modal" style="width:min(520px,92vw);">
@@ -194,13 +194,26 @@ export function renderVoReviewModal(opts: { findingId?: string; returnTo?: strin
         <div class="modal-sub" style="margin-bottom:14px;">
           Write up what you reviewed{opts.teamMember && opts.teamMember !== "—" ? ` with ${opts.teamMember}` : ""}. Once submitted it is final for everyone on this login.
         </div>
-        <form hx-post="/api/vo/review" hx-target="#vo-review-error" hx-swap="innerHTML">
+        {/* On the dashboard (`inPlace`) a saved review re-renders the two
+            tables where they are — the filter bar rides along so the view
+            keeps its filters — and the modal closes. On an audit page it goes
+            back to the queue instead. */}
+        <form
+          hx-post="/api/vo/review"
+          hx-target="#vo-review-error"
+          hx-swap="innerHTML"
+          {...(opts.inPlace ? {
+            "hx-include": "#vo-filters",
+            "hx-on::after-request": "if(event.detail.successful&&event.detail.xhr.getResponseHeader('HX-Trigger')==='vo-reviewed'){this.reset();this.closest('.modal-overlay').classList.remove('open')}",
+          } : {})}
+        >
+          {opts.inPlace && <input type="hidden" name="inplace" value="1" />}
           <input type="hidden" id="vo-rev-findingId" name="findingId" value={opts.findingId ?? ""} />
           <input type="hidden" id="vo-rev-returnTo" name="returnTo" value={opts.returnTo ?? ""} />
           {opts.asEmail && <input type="hidden" name="as" value={opts.asEmail} />}
           <div class="form-group">
             <label>What you reviewed</label>
-            <textarea name="note" rows={5} required placeholder="What you went over from this audit…"></textarea>
+            <textarea name="note" class="vo-review-note" rows={5} required placeholder="What you went over from this audit…"></textarea>
           </div>
           <div id="vo-review-error" class="auth-error"></div>
           <div class="modal-actions">
@@ -242,20 +255,26 @@ export function renderVoMemberButtons(items: VoQueueItem[], p: VoFilterParams): 
   return renderMemberButtons(splitVoQueue(items).pending, asQueueParams(p), VO_MEMBER_TARGET);
 }
 
+/** The refresh fragment: To Review into #vo-queue-table, with the member
+ *  buttons and the Reviewed side as out-of-band swaps. Shared by the filter
+ *  refresh and an in-place review submit. */
+export async function renderVoFragment(req: Request, sp: URLSearchParams): Promise<string> {
+  const asEmail = sp.get("as");
+  const { items } = await apiFetch<{ items: VoQueueItem[] }>(`/vo/api/queue${asEmail ? `?as=${encodeURIComponent(asEmail)}` : ""}`, req);
+  const p = readVoFilterParams(sp);
+  return renderToString(
+    <>
+      {renderVoQueueResults(filterVoPending(items ?? [], p))}
+      <div id="vo-member-buttons" hx-swap-oob="true">{renderVoMemberButtons(items ?? [], p)}</div>
+      <div id="vo-reviewed-table" hx-swap-oob="true">{renderVoReviewedResults(filterVoReviewed(items ?? [], p))}</div>
+    </>,
+  );
+}
+
 export const handler = define.handlers({
   async GET(ctx) {
     try {
-      const url = new URL(ctx.req.url);
-      const asEmail = url.searchParams.get("as");
-      const { items } = await apiFetch<{ items: VoQueueItem[] }>(`/vo/api/queue${asEmail ? `?as=${encodeURIComponent(asEmail)}` : ""}`, ctx.req);
-      const p = readVoFilterParams(url.searchParams);
-      const html = renderToString(
-        <>
-          {renderVoQueueResults(filterVoPending(items ?? [], p))}
-          <div id="vo-member-buttons" hx-swap-oob="true">{renderVoMemberButtons(items ?? [], p)}</div>
-          <div id="vo-reviewed-table" hx-swap-oob="true">{renderVoReviewedResults(filterVoReviewed(items ?? [], p))}</div>
-        </>,
-      );
+      const html = await renderVoFragment(ctx.req, new URL(ctx.req.url).searchParams);
       return new Response(html, { headers: { "content-type": "text/html" } });
     } catch {
       return new Response(`<div class="placeholder-card">Failed to load the queue</div>`, { headers: { "content-type": "text/html" } });

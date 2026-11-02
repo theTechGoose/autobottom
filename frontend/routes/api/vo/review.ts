@@ -1,9 +1,10 @@
-/** Submit a TM review (REQ-035). On success HTMX reloads the view the review
- *  started from. A refusal says why in the modal, and keeps its real status
+/** Submit a TM review (REQ-035). On success the dashboard's tables refresh in
+ *  place; from an audit page HTMX goes back to the queue it came from. A refusal says why in the modal, and keeps its real status
  *  (409 already reviewed, 403 not this login's audit, 400 no write-up) for
  *  anything that isn't HTMX. */
 import { define } from "../../../lib/define.ts";
 import { apiPost } from "../../../lib/api.ts";
+import { renderVoFragment } from "./queue.tsx";
 
 const REASONS: Record<string, string> = {
   "already-reviewed": "This audit has already been reviewed.",
@@ -23,6 +24,19 @@ export const handler = define.handlers({
     const safeReturn = returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : fallback;
     try {
       await apiPost(`/vo/api/review${asEmail ? `?as=${encodeURIComponent(asEmail)}` : ""}`, ctx.req, { findingId, note });
+      if (form.get("inplace") === "1") {
+        // Dashboard: re-render the tables in place with the filters the form
+        // carried, and tell the modal to close (see renderVoReviewModal).
+        const sp = new URLSearchParams();
+        for (const k of ["since", "until", "member", "wgs", "mcc", "as"]) {
+          const v = form.get(k)?.toString();
+          if (v) sp.set(k, v);
+        }
+        return new Response(await renderVoFragment(ctx.req, sp), {
+          status: 200,
+          headers: { "content-type": "text/html", "HX-Retarget": "#vo-queue-table", "HX-Reswap": "innerHTML", "HX-Trigger": "vo-reviewed" },
+        });
+      }
       return new Response(null, { status: 200, headers: { "HX-Redirect": safeReturn } });
     } catch (e) {
       const status = (e as { status?: number }).status ?? 500;

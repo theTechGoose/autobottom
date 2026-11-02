@@ -587,3 +587,26 @@ Tests: `frontend/tests/lib/tm-review.test.ts` — "REQ-040 …" (unit);
 
 Tests: `frontend/tests/routes/vo-dashboard.test.tsx` — "REQ-041 …" (unit);
 `e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-041 …" (e2e).
+
+## REQ-040 AMENDMENT — The VO filter bar spreads across the top
+
+> "can we make this a bit more spread out across the top" (the Window presets,
+> date range and WGS/MCC boxes, bunched up on the left)
+
+The date presets and range share one row and fill the width; Sale sits at the
+right edge.
+
+Tests: `e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-040 AMENDMENT …" (e2e).
+
+## REQ-035 AMENDMENT — The review box can't be stretched past the modal
+
+> "also this, when I click on an audit and go to 'review', I can stretch the
+> window out past the modal?"
+
+The write-up box resizes downward only and never gets wider than the modal,
+and letting go of a resize drag outside the modal no longer closes it (any
+modal: the backdrop closes one only when the press starts on the backdrop).
+On the dashboard a saved review now refreshes the two tables in place (filters
+kept) instead of reloading the page.
+
+Tests: `e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-035 AMENDMENT …" (e2e).

@@ -233,3 +233,48 @@ Deno.test("REQ-041: the VO dashboard and audit page never say 'agent'", (t) =>
     await page.goto(`/vo/audit/${id}`);
     expect(!/agent/i.test(await page.locator("body").innerText()), "audit page text");
   }));
+
+Deno.test("REQ-040 AMENDMENT: the filter bar spreads across the top — date presets and range on one row, Sale at the right edge", (t) =>
+  story(t, async ({ page, expect }) => {
+    const dept = `VBA PM ${tag()}`;
+    await failedAudit(dept, "Dana Lee");
+    const vo = await login("vo", dept);
+
+    await signIn(page, vo, "/vo");
+    const presets = await page.locator("#vo-filters .drp-presets").boundingBox();
+    const range = await page.locator("#vo-filters .drp-trigger").boundingBox();
+    const sale = await page.locator("#vo-filters .vo-sale").boundingBox();
+    const bar = await page.locator("#vo-filters").boundingBox();
+    expect(presets && range && Math.abs((presets.y + presets.height / 2) - (range.y + range.height / 2)) < 12,
+      `presets and date range share a row (${JSON.stringify({ presets, range })})`);
+    expect(range && presets && range.x > presets.x + presets.width, "the date range sits beside the presets");
+    expect(sale && bar && (bar.x + bar.width) - (sale.x + sale.width) < 24,
+      `Sale is pushed to the right edge (${JSON.stringify({ sale, bar })})`);
+  }));
+
+Deno.test("REQ-035 AMENDMENT: the review box only stretches downward, never past the modal", (t) =>
+  story(t, async ({ page, expect }) => {
+    const dept = `VBA PM ${tag()}`;
+    const id = await failedAudit(dept, "Dana Lee");
+    const vo = await login("vo", dept);
+
+    await signIn(page, vo, "/vo");
+    await page.locator(`#vo-queue-table tr[data-finding-id="${id}"] button.vo-review-btn`).click();
+    const box = page.locator("#vo-review-modal.open textarea[name=note]");
+    await box.waitFor();
+    expect.eq(await box.evaluate((el: { ownerDocument: { defaultView: { getComputedStyle(e: unknown): { resize: string } } } }) =>
+      el.ownerDocument.defaultView.getComputedStyle(el).resize), "vertical", "resizes vertically only");
+
+    // Drag the corner handle 400px right and 120px down.
+    const b = (await box.boundingBox())!;
+    await page.mouse.move(b.x + b.width - 3, b.y + b.height - 3);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width + 400, b.y + b.height + 120, { steps: 8 });
+    await page.mouse.up();
+    await box.click();
+
+    const after = (await box.boundingBox())!;
+    const modal = (await page.locator("#vo-review-modal.open .modal").boundingBox())!;
+    expect(after.x + after.width <= modal.x + modal.width, `the box stays inside the modal (${JSON.stringify({ after, modal })})`);
+    expect(after.height > b.height, "but it can still be made taller");
+  }));

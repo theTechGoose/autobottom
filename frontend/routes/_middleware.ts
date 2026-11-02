@@ -1,7 +1,7 @@
 /** Auth middleware — resolves user from session cookie via direct in-process authenticate().
  *  Does NOT make HTTP self-requests — Deno Deploy isolates can't fetch their own localhost. */
 import { define } from "../lib/define.ts";
-import { isPublicPath, roleRedirect, type GameStateLite } from "../lib/auth.ts";
+import { isPublicPath, roleRedirect, type GameStateLite, type Role } from "../lib/auth.ts";
 import { authenticate } from "@core/business/auth/mod.ts";
 import { listUsers } from "@core/business/auth/mod.ts";
 
@@ -81,7 +81,7 @@ export default define.middleware(async (ctx) => {
     ctx.state.user = {
       email: auth.email,
       orgId: auth.orgId,
-      role: auth.role as "admin" | "super-manager" | "operations-manager" | "judge" | "manager" | "reviewer" | "user",
+      role: auth.role as Role,
     };
 
     // /super-admin/* is gated to a single email. Super Admin bypasses the org
@@ -106,7 +106,7 @@ export default define.middleware(async (ctx) => {
           ctx.state.user = {
             email: target.email,
             orgId: auth.orgId,
-            role: target.role as "admin" | "super-manager" | "operations-manager" | "judge" | "manager" | "reviewer" | "user",
+            role: target.role as Role,
           };
         }
       } catch (e) {
@@ -138,6 +138,17 @@ export default define.middleware(async (ctx) => {
       if (opsRole !== "operations-manager" && opsRole !== "admin") {
         return authRedirect(ctx.req, roleRedirect(opsRole));
       }
+    }
+
+    // The VO dashboard (REQ-034/039): a VO login's one page, and an admin's
+    // "VO View". A VO login reaches nothing else; nobody else reaches it.
+    const isVoPath = path === "/vo" || path.startsWith("/vo/") || path.startsWith("/api/vo/");
+    const voCanReach = isVoPath || path === "/api/logout";
+    if (ctx.state.user.role === "vo" && !voCanReach) {
+      return authRedirect(ctx.req, "/vo");
+    }
+    if (isVoPath && ctx.state.user.role !== "vo" && ctx.state.user.role !== "admin") {
+      return authRedirect(ctx.req, roleRedirect(ctx.state.user.role));
     }
 
     // An operations manager's bare Manager Portal is the org-wide merge of

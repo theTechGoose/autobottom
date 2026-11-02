@@ -32,6 +32,10 @@ export default function ModalController() {
     }
 
     // Sidebar items with data-modal attribute open modals
+    // Where the current press began — see the backdrop check below.
+    let pressStartedOn: EventTarget | null = null;
+    document.addEventListener("mousedown", (e) => { pressStartedOn = e.target; }, true);
+
     document.addEventListener("click", (e) => {
       const target = e.target as HTMLElement;
       const trigger = target.closest("[data-modal]");
@@ -69,9 +73,12 @@ export default function ModalController() {
         closeAllFlyouts();
       }
 
-      // Backdrop click closes modal
+      // Backdrop click closes modal — but only when the press STARTED on the
+      // backdrop. A drag that begins inside the modal (resizing a textarea,
+      // selecting text) and is released outside it fires its click on the
+      // backdrop too, and used to throw away whatever was being written.
       const overlay = target;
-      if (overlay.classList.contains("modal-overlay") && overlay.classList.contains("open")) {
+      if (overlay.classList.contains("modal-overlay") && overlay.classList.contains("open") && pressStartedOn === overlay) {
         overlay.classList.remove("open");
         return;
       }

@@ -237,8 +237,7 @@ async function computeManagerQueueView(req: Request): Promise<
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   const {
-    getManagerQueue, getManagerQueueForDepartments, deriveManagerQueue,
-    enrichManagerQueueBatch, filterQueueToManagerScope, dropResolvedQueueItems,
+    getManagerQueue, enrichManagerQueueBatch, dropResolvedQueueItems,
   } = await import("@manager/domain/data/manager-repository/mod.ts");
 
   // Bounded lazy enrichment (10 findings/call) so legacy items converge —
@@ -260,41 +259,15 @@ async function computeManagerQueueView(req: Request): Promise<
   const isImpersonating = Boolean(asEmail) && auth.role === "admin";
   if (auth.role === "manager" || auth.role === "operations-manager" || isImpersonating) {
     const { getManagerScope } = await import("@admin/domain/data/admin-repository/mod.ts");
+    const { loadScopedManagerQueue } = await import("@manager/domain/data/manager-repository/mod.ts");
+    const { attachReviewsForManager } = await import("@manager/domain/business/vo-portal/mod.ts");
     const scope = await getManagerScope(auth.orgId, isImpersonating ? asEmail! : auth.email);
-    // Ask the DATABASE for this manager's departments rather than reading the
-    // whole org and filtering after. The old whole-org read was capped at
-    // 1000 rows by listStored's default while the queue held 1,518, so 518
-    // rows — the same ones every time, since the query has no sort — were
-    // permanently invisible: five departments were over half hidden and three
-    // saw nothing at all. Narrowing the query fixes that AND cuts reads (29
-    // docs for a one-department manager, against 1000 before).
-    //
-    // null = this scope can't be expressed as a query (no departments, which
-    // means "unrestricted", or more than Firestore's IN limit). Those fall
-    // back to the full paged scan, which is uncapped and therefore still
-    // correct — just heavier.
-    // DERIVED_MANAGER_QUEUE=true reads the queue from audit-done-idx instead
-    // of the stored snapshot (deriveManagerQueue). It needs a composite index
-    // on (_org, _type, completed, department, score) — until that exists in
-    // Firestore the query 400s, so this stays opt-in and falls back rather
-    // than emptying every manager's queue on a bad deploy.
-    let rows: Awaited<ReturnType<typeof getManagerQueue>> | null = null;
-    if (Deno.env.get("DERIVED_MANAGER_QUEUE") === "true") {
-      try {
-        rows = await deriveManagerQueue(auth.orgId, scope.departments);
-      } catch (err) {
-        console.error("❌ [MANAGER] derived queue failed — falling back to the stored queue:", err);
-        rows = null;
-      }
-    }
-    rows ??= await getManagerQueueForDepartments(auth.orgId, scope.departments)
-      ?? await getManagerQueue(auth.orgId);
-    await enrich(rows);
-    // Still run the in-memory scope filter: it applies the SHIFT axis, which
-    // is deliberately not in the query (packages carry no shift and must skip
-    // that check), and it re-checks department as a backstop.
-    const scopedItems = filterQueueToManagerScope(rows, scope);
-    await drainResolved(scopedItems);
+    // Each row carries its TM review (REQ-038) — information only, so a read
+    // failure just leaves the Reviewed by TM boxes empty.
+    const scoped = await loadScopedManagerQueue(auth.orgId, scope);
+    let scopedItems: QueueViewItem[] = scoped as QueueViewItem[];
+    try { scopedItems = await attachReviewsForManager(auth.orgId, scoped) as QueueViewItem[]; }
+    catch (err) { console.warn("⚠️ [MANAGER] TM reviews skipped:", err); }
     // allItems is only read for org-wide stat totals, which this caller is
     // not — handing back the same scoped list keeps it from being mistaken
     // for a whole-org list it no longer is.
@@ -363,6 +336,43 @@ async function handleManagerScope(req: Request): Promise<Response> {
     console.warn(`⚠️ [MANAGER-SCOPE] failed for ${scopeEmail} — soft fallback:`, err);
     return Response.json({ departments: [], shifts: [], retry: true });
   }
+}
+
+/** Whose VO dashboard this request is for (REQ-034/039): a VO login's own, or
+ *  — for an admin's "VO View" — the VO login named by `?as=`. `actor` is the
+ *  person really signed in, so an admin's review is credited to the admin. */
+async function resolveVoCaller(req: Request): Promise<Response | { orgId: string; voEmail: string; actor: string }> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (auth.role === "vo") return { orgId: auth.orgId, voEmail: auth.email, actor: auth.email };
+  const asEmail = new URL(req.url).searchParams.get("as");
+  if (auth.role === "admin" && asEmail) {
+    const { getUser } = await import("@core/business/auth/mod.ts");
+    const target = await getUser(auth.orgId as Parameters<typeof getUser>[0], asEmail);
+    if (target?.role === "vo") return { orgId: auth.orgId, voEmail: asEmail, actor: auth.email };
+  }
+  return Response.json({ error: "forbidden" }, { status: 403 });
+}
+
+async function handleVoQueue(req: Request): Promise<Response> {
+  const caller = await resolveVoCaller(req);
+  if (caller instanceof Response) return caller;
+  const { loadVoView } = await import("@manager/domain/business/vo-portal/mod.ts");
+  return Response.json({ items: await loadVoView(caller.orgId as Parameters<typeof loadVoView>[0], caller.voEmail) });
+}
+
+async function handleVoReview(req: Request): Promise<Response> {
+  if (req.method !== "POST") return Response.json({ error: "method not allowed" }, { status: 405 });
+  const caller = await resolveVoCaller(req);
+  if (caller instanceof Response) return caller;
+  const body = await req.json().catch(() => ({})) as { findingId?: string; note?: string };
+  const { submitTmReview } = await import("@manager/domain/business/vo-portal/mod.ts");
+  const res = await submitTmReview(caller.orgId as Parameters<typeof submitTmReview>[0], {
+    voEmail: caller.voEmail, reviewedBy: caller.actor, findingId: String(body.findingId ?? ""), note: String(body.note ?? ""),
+  });
+  if (res.ok) return Response.json({ ok: true });
+  const status = res.error === "already-reviewed" ? 409 : res.error === "not-in-scope" ? 403 : 400;
+  return Response.json({ error: res.error }, { status });
 }
 
 async function handleAgentDashboard(req: Request): Promise<Response> {
@@ -869,6 +879,8 @@ const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>>
   "/manager/api/stats": handleManagerStats,
   "/manager/api/scope": handleManagerScope,
   "/manager/api/queue/clear": handleManagerQueueClear,
+  "/vo/api/queue": handleVoQueue,
+  "/vo/api/review": handleVoReview,
   "/agent/api/game-state": handleGameState,
   "/agent/api/dashboard": handleAgentDashboard,
   "/api/badges": handleGetBadges,
@@ -987,6 +999,7 @@ const FRONTEND_EXACT_PAGES = new Set([
   "/review", "/review/dashboard",
   "/judge", "/judge/dashboard",
   "/manager", "/agent", "/chat", "/store", "/question-lab",
+  "/vo",
   "/audit/report",
   // Scrub view — a Fresh page under the /audit BACKEND_PREFIX, so without this
   // entry it dispatches to danet and 404s.
@@ -1014,6 +1027,7 @@ const FRONTEND_PREFIX_PATHS = [
   "/api/login", "/api/register", "/api/logout",
   "/api/admin/", "/api/review/", "/api/judge/",
   "/api/manager/", "/api/agent/", "/api/chat/",
+  "/api/vo/",
   "/api/super-admin/",
   "/api/gamification/",
   "/api/store/buy",
@@ -1046,7 +1060,7 @@ const FRONTEND_PREFIX_PATHS = [
 // Backend API routes — everything under these prefixes goes to danet
 const BACKEND_PREFIXES = [
   "/admin", "/audit", "/review/api", "/judge/api", "/manager/api",
-  "/agent/api", "/api/qlab", "/api/messages", "/api/users", "/api/events",
+  "/agent/api", "/vo/api", "/api/qlab", "/api/messages", "/api/users", "/api/events",
   "/api/store", "/api/equip", "/api/badges", "/gamification", "/cron",
   "/webhooks", "/docs",
 ];

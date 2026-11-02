@@ -8,6 +8,7 @@ import type { JSX } from "preact";
 // Shared with the audit-history table so both surfaces agree on what a ticked
 // box means — and so the "no email sent yet" state can't drift apart.
 import { emailOpenedCell } from "./audit-history.tsx";
+import type { TmReview } from "@core/business/tm-review/mod.ts";
 
 /** Mirrors the backend `ManagerQueueItem` shape (manager-repository/mod.ts):
  *  the queue carries `owner` + `failedCount`/`totalQuestions`, NOT a precomputed
@@ -62,6 +63,10 @@ export interface QueueItem {
   score?: number;
   skippedBy?: string;
   skippedAt?: number;
+  /** The VO dashboard's write-up on this audit, attached by the backend
+   *  (REQ-038). Information for the manager only — it changes nothing about
+   *  what they can do with the row. */
+  tmReview?: TmReview;
 }
 
 /** Open work — still needs a manager. Mirrors isOpenQueueItem in
@@ -100,13 +105,13 @@ export function closedOutAt(it: QueueItem): number {
 
 /** Team member display name: enriched voName first, then a real owner email's
  *  local-part — never the "api" placeholder the pipeline writes for API audits. */
-function teamMemberLabel(item: QueueItem): string {
+export function teamMemberLabel(item: QueueItem): string {
   if (item.voName) return item.voName;
   if (item.owner && item.owner !== "api") return item.owner.split("@")[0];
   return "—";
 }
 
-function pillColor(score: number | null) {
+export function pillColor(score: number | null) {
   if (score == null) return "blue";
   if (score >= 90) return "green";
   if (score >= 70) return "yellow";
@@ -115,7 +120,7 @@ function pillColor(score: number | null) {
 
 /** Pass-rate from failed/total. Returns null when total is unknown so the
  *  cell falls back to a "N failed" label instead of a misleading 0%/100%. */
-function scoreOf(item: QueueItem): number | null {
+export function scoreOf(item: QueueItem): number | null {
   // An explicit score wins: it is the audit's real, judged score off the
   // index, whereas the fallback below only re-derives one from counts.
   if (typeof item.score === "number") return Math.max(0, Math.min(100, Math.round(item.score)));
@@ -126,7 +131,7 @@ function scoreOf(item: QueueItem): number | null {
   return Math.max(0, Math.min(100, Math.round((1 - failed / item.totalQuestions) * 100)));
 }
 
-const fmtWhen = (ms?: number) =>
+export const fmtWhen = (ms?: number) =>
   ms ? new Date(ms).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
 
 /** Best available "audit time" for a queue row: the audit's review-completion
@@ -141,7 +146,7 @@ export function queueTimestamp(it: QueueItem): number {
  *  year and the ET suffix: the filter bar already states the window, both
  *  panes are the same timezone, and the full form was the widest low-value
  *  column — it pushed the Action buttons off the edge of the pane. */
-const fmtTsEasternShort = (ms?: number) =>
+export const fmtTsEasternShort = (ms?: number) =>
   ms
     ? new Date(ms).toLocaleString("en-US", {
       timeZone: "America/New_York", month: "short", day: "numeric",
@@ -182,6 +187,23 @@ function closedOutBy(item: QueueItem): string {
   return item.remediatedBy || item.skippedBy || item.appealedBy || "—";
 }
 
+/** "Reviewed by TM" (REQ-038): a read-only box, ticked once the VO dashboard
+ *  reviewed the audit, with the write-up in the same hover popout the
+ *  Completed notes use. Clicks on it must not open the row. */
+function tmReviewCell(item: QueueItem): JSX.Element {
+  const r = item.tmReview;
+  return (
+    <td class="tm-review-cell rem-note-cell" {...{ "hx-on:click": "event.stopPropagation()" }}>
+      <input type="checkbox" disabled checked={!!r} aria-label="Reviewed by TM" />
+      {r && (
+        <span class="rem-note-pop" role="tooltip">
+          {`Reviewed by ${r.reviewedBy} · ${fmtWhen(r.reviewedAt)}\n\n${r.note}`}
+        </span>
+      )}
+    </td>
+  );
+}
+
 /** Pure render of the queue table. Team Member = enriched voName (never the
  *  raw "api" owner token); Failed Questions = first two + a "+N more" hint;
  *  Score = derived pass-rate (or a "N failed" fallback when totals are unknown).
@@ -203,7 +225,7 @@ export function renderQueueTable(
   const compact = !!opts.compact;
   const showFails = !(compact && completed);
   const showScore = !(compact && completed);
-  const colCount = compact ? 5 : (completed ? 11 : 10);
+  const colCount = compact ? 6 : (completed ? 12 : 11);
   return (
     // Compact tables sit two-to-a-row in the Manager Portal split, so they get
     // tighter cell padding (see .data-table-compact) — at full padding the
@@ -219,6 +241,7 @@ export function renderQueueTable(
           {!compact && <th>Sale</th>}
           {showScore && <th>Score</th>}
           {!compact && <th>Email Opened</th>}
+          <th>Reviewed by TM</th>
           {completed
             ? <><th>Outcome</th><th>By</th><th>When</th><th>Notes</th></>
             : <><th>Timestamp</th>{!compact && <th>Status</th>}<th>Action</th></>}
@@ -343,6 +366,7 @@ export function renderQueueTable(
             {!compact && <td>{saleCell}</td>}
             {showScore && <td>{scoreCell}</td>}
             {!compact && <td>{emailOpenedCell(item)}</td>}
+            {tmReviewCell(item)}
             {completed ? <>
               {/* How this audit left the queue. A row can carry BOTH marks —
                   appealing does not stop a manager coaching it as well — so
@@ -554,6 +578,11 @@ export function filterAndSortQueue(items: QueueItem[], params: QueueFilterParams
 export function renderMemberButtons(
   items: QueueItem[],
   params: QueueFilterParams,
+  /** Where a click sends the filter form. Defaults to the Manager Portal's;
+   *  the VO dashboard points it at its own form, fragment and table. */
+  target: { endpoint: string; form: string; table: string; memberInput: string } = {
+    endpoint: "/api/manager/queue", form: "#queue-filters", table: "#manager-queue-table", memberInput: "q-member",
+  },
 ): JSX.Element {
   // Everything except the member filter, so the buttons don't filter themselves
   // down to the one person already selected.
@@ -577,8 +606,8 @@ export function renderMemberButtons(
   // refresh the table. `source` makes htmx serialize the whole filter form, so
   // the window / question / sale / sort selections all survive.
   const setMemberJs = (expr: string) =>
-    `(()=>{const m=document.getElementById('q-member');if(!m)return;m.value=${expr};`
-    + `htmx.ajax('GET','/api/manager/queue',{source:'#queue-filters',target:'#manager-queue-table',swap:'innerHTML'});})()`;
+    `(()=>{const m=document.getElementById('${target.memberInput}');if(!m)return;m.value=${expr};`
+    + `htmx.ajax('GET','${target.endpoint}',{source:'${target.form}',target:'${target.table}',swap:'innerHTML'});})()`;
 
   return (
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">

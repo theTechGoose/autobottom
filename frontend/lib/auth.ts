@@ -1,6 +1,6 @@
 /** Auth types, role-based routing, user resolution. */
 
-export type Role = "admin" | "super-manager" | "operations-manager" | "judge" | "manager" | "reviewer" | "user";
+export type Role = "admin" | "super-manager" | "operations-manager" | "judge" | "manager" | "reviewer" | "user" | "vo";
 
 export interface User {
   email: string;
@@ -42,6 +42,8 @@ export const ROLE_REDIRECTS: Record<Role, string> = {
   manager: "/manager",
   reviewer: "/review/dashboard",
   user: "/agent",
+  // A VO login has one page: its department's review queue (REQ-034).
+  vo: "/vo",
 };
 
 // Audit report + appeal flow is intentionally public. Recipients of the

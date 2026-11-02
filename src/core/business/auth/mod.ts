@@ -11,7 +11,8 @@ const GLOBAL = "" as OrgId;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type Role = "admin" | "super-manager" | "operations-manager" | "judge" | "manager" | "reviewer" | "user";
+/** `vo` — a VO login: one department's failed audits to review (REQ-034). */
+export type Role = "admin" | "super-manager" | "operations-manager" | "judge" | "manager" | "reviewer" | "user" | "vo";
 
 export interface OrgRecord {
   name: string;
@@ -278,6 +279,9 @@ export async function resolveEffectiveAuth(req: Request): Promise<AuthContext | 
 
 const ROLE_HIERARCHY: Record<Role, number> = {
   user: 0,
+  // A VO login reviews one department's audits and nothing else — no more
+  // reach than a team member's own login.
+  vo: 0,
   reviewer: 1,
   manager: 2,
   judge: 3,

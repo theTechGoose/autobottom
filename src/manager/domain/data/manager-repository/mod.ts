@@ -863,3 +863,45 @@ export async function backfillManagerQueue(orgId: OrgId): Promise<{ added: numbe
 }
 
 export const backfillManagerQueueLegacy = backfillManagerQueue;
+
+/** One department+shift scope's queue — what a manager (and a VO login, which
+ *  is scoped the same way) sees. Moved here from main.ts so both portals load
+ *  it identically.
+ *
+ *  Asks the DATABASE for the scope's departments rather than reading the whole
+ *  org and filtering after: the old whole-org read was capped at 1000 rows
+ *  while the queue held 1,518, so the same 518 rows were permanently invisible.
+ *  `getManagerQueueForDepartments` returns null when the scope can't be a query
+ *  (no departments = unrestricted, or over Firestore's IN limit); those fall
+ *  back to the full paged scan, which is uncapped and still correct.
+ *
+ *  DERIVED_MANAGER_QUEUE=true reads from audit-done-idx instead
+ *  (deriveManagerQueue). It needs a composite index that may not exist, so it
+ *  falls back rather than emptying every queue on a bad deploy.
+ *
+ *  Then: bounded lazy enrichment (10 findings per call — NEVER unbounded
+ *  hydration on an auto-polling path), the in-memory scope filter (it applies
+ *  the SHIFT axis, which is deliberately not in the query — packages carry no
+ *  shift), and the bounded read-time drain of audits a judge or flip took back
+ *  to 100%. Enrichment and drain are best-effort: the queue still renders. */
+export async function loadScopedManagerQueue(
+  orgId: OrgId,
+  scope: { departments: string[]; shifts: string[] },
+): Promise<ManagerQueueItem[]> {
+  let rows: ManagerQueueItem[] | null = null;
+  if (Deno.env.get("DERIVED_MANAGER_QUEUE") === "true") {
+    try {
+      rows = await deriveManagerQueue(orgId, scope.departments);
+    } catch (err) {
+      console.error("❌ [MANAGER] derived queue failed — falling back to the stored queue:", err);
+      rows = null;
+    }
+  }
+  rows ??= await getManagerQueueForDepartments(orgId, scope.departments) ?? await getManagerQueue(orgId);
+  try { await enrichManagerQueueBatch(orgId, rows, 10); }
+  catch (err) { console.warn("⚠️ [MANAGER] queue enrichment skipped:", err); }
+  const scoped = filterQueueToManagerScope(rows, scope);
+  try { await dropResolvedQueueItems(orgId, scoped); }
+  catch (err) { console.warn("⚠️ [MANAGER] queue drain skipped:", err); }
+  return scoped;
+}

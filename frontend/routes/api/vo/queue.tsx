@@ -249,7 +249,7 @@ export function renderVoReviewedResults(rows: VoQueueItem[]): JSX.Element {
   );
 }
 
-export const VO_MEMBER_TARGET = { endpoint: "/api/vo/queue", form: "#vo-filters", table: "#vo-queue-table", memberInput: "vo-member" };
+const VO_MEMBER_TARGET = { endpoint: "/api/vo/queue", form: "#vo-filters", table: "#vo-queue-table", memberInput: "vo-member" };
 
 export function renderVoMemberButtons(items: VoQueueItem[], p: VoFilterParams): JSX.Element {
   return renderMemberButtons(splitVoQueue(items).pending, asQueueParams(p), VO_MEMBER_TARGET);

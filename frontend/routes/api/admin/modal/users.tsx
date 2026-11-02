@@ -4,9 +4,9 @@ import { apiFetch } from "../../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import { Icon } from "../../../../components/Icons.tsx";
 
-const ROLE_COLORS: Record<string, string> = { admin: "blue", "super-manager": "red", "operations-manager": "purple", judge: "purple", manager: "yellow", reviewer: "green", user: "cyan" };
-const ROLE_BG: Record<string, string> = { admin: "var(--blue-bg)", "super-manager": "var(--red-bg)", "operations-manager": "var(--purple-bg)", judge: "var(--purple-bg)", manager: "var(--yellow-bg)", reviewer: "var(--green-bg)", user: "var(--cyan-bg)" };
-const ROLE_FG: Record<string, string> = { admin: "var(--blue)", "super-manager": "var(--red)", "operations-manager": "var(--purple)", judge: "var(--purple)", manager: "var(--yellow)", reviewer: "var(--green)", user: "var(--cyan)" };
+const ROLE_COLORS: Record<string, string> = { admin: "blue", "super-manager": "red", "operations-manager": "purple", judge: "purple", manager: "yellow", reviewer: "green", user: "cyan", vo: "purple" };
+const ROLE_BG: Record<string, string> = { admin: "var(--blue-bg)", "super-manager": "var(--red-bg)", "operations-manager": "var(--purple-bg)", judge: "var(--purple-bg)", manager: "var(--yellow-bg)", reviewer: "var(--green-bg)", user: "var(--cyan-bg)", vo: "var(--purple-bg)" };
+const ROLE_FG: Record<string, string> = { admin: "var(--blue)", "super-manager": "var(--red)", "operations-manager": "var(--purple)", judge: "var(--purple)", manager: "var(--yellow)", reviewer: "var(--green)", user: "var(--cyan)", vo: "var(--purple)" };
 
 const ROLES = [
   { role: "admin", name: "Admin", desc: "Full access. Manages judges & managers.", icon: Icon.users, bg: "var(--blue-bg)", fg: "var(--blue)" },
@@ -16,6 +16,7 @@ const ROLES = [
   { role: "manager", name: "Manager", desc: "Remediates failures. Scoped by dept+shift.", icon: Icon.clipboardList, bg: "var(--yellow-bg)", fg: "var(--yellow)" },
   { role: "reviewer", name: "Reviewer", desc: "Verifies audit findings.", icon: Icon.playCircle, bg: "var(--green-bg)", fg: "var(--green)" },
   { role: "user", name: "Team Member", desc: "Call center team member.", icon: Icon.barChart, bg: "var(--cyan-bg)", fg: "var(--cyan)" },
+  { role: "vo", name: "VO Login", desc: "Reviews one department's failed audits. Set its department under Scopes.", icon: Icon.clipboardList, bg: "var(--purple-bg)", fg: "var(--purple)" },
 ];
 
 export async function renderUsersModal(
@@ -28,7 +29,9 @@ export async function renderUsersModal(
   let users: { email: string; role: string; supervisor?: string }[] = [];
   try { const d = await apiFetch<{ users: typeof users }>("/admin/users", req); users = d.users ?? []; } catch {}
 
-  const managers = users.filter(u => u.role === "manager" || u.role === "operations-manager");
+  // VO logins are scoped the same way as managers — the department is what
+  // ties a login to its audits (REQ-034).
+  const managers = users.filter(u => u.role === "manager" || u.role === "operations-manager" || u.role === "vo");
   const judges = users.filter(u => u.role === "judge");
   const supervisors = [...judges, ...users.filter(u => u.role === "admin")];
 
@@ -40,7 +43,7 @@ export async function renderUsersModal(
           <div style="display:flex;gap:4px;">
             <button class={`sf-btn ghost um-tab ${tab === "list" ? "active" : ""}`} hx-get="/api/admin/modal/users?tab=list" hx-target="#users-modal-content" hx-swap="innerHTML">Members</button>
             <button class={`sf-btn ghost um-tab ${tab === "add" ? "active" : ""}`} hx-get="/api/admin/modal/users?tab=add" hx-target="#users-modal-content" hx-swap="innerHTML">+ Add</button>
-            <button class={`sf-btn ghost um-tab ${tab === "scopes" ? "active" : ""}`} hx-get="/api/admin/modal/users?tab=scopes" hx-target="#users-modal-content" hx-swap="innerHTML">Manager Scopes</button>
+            <button class={`sf-btn ghost um-tab ${tab === "scopes" ? "active" : ""}`} hx-get="/api/admin/modal/users?tab=scopes" hx-target="#users-modal-content" hx-swap="innerHTML">Scopes</button>
           </div>
         </div>
         <div class="modal-sub" style="flex-shrink:0;">Manage your organization's users, roles, and manager access scopes</div>
@@ -136,7 +139,7 @@ export async function renderUsersModal(
             <div style="display:flex;gap:16px;height:380px;">
               {/* Manager list (left) */}
               <div style="width:220px;flex-shrink:0;border:1px solid var(--border);border-radius:8px;overflow-y:auto;">
-                <div style="padding:8px 12px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-raised);z-index:1;">Managers</div>
+                <div style="padding:8px 12px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-raised);z-index:1;">Managers &amp; VO logins</div>
                 {managers.length === 0 ? (
                   <div style="padding:20px 12px;text-align:center;color:var(--text-dim);font-size:11px;">No managers</div>
                 ) : managers.map(m => (

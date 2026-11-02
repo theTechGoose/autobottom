@@ -36,7 +36,7 @@ import RemediationInteractive from "../../../islands/RemediationInteractive.tsx"
 import HotkeyHandler from "../../../islands/HotkeyHandler.tsx";
 import AppealModal from "../../../islands/AppealModal.tsx";
 
-interface AnsweredQuestion {
+export interface AnsweredQuestion {
   header?: string;
   populated?: string;
   answer?: string;
@@ -46,7 +46,7 @@ interface AnsweredQuestion {
    *  stores it). Narrows the evidence-line lookup on a RAG-chunked long call. */
   snippet?: string;
 }
-interface Finding {
+export interface Finding {
   findingId?: string;
   owner?: string;
   recordingId?: string;
@@ -70,14 +70,14 @@ interface Finding {
 }
 
 // Same QuickBase deep-links the audit report + finding modal use.
-const QB_DATE_URL = "https://monsterrg.quickbase.com/db/bpb28qsnn?a=dr&rid=";
-const QB_PKG_URL = "https://monsterrg.quickbase.com/db/bttffb64u?a=dr&rid=";
+export const QB_DATE_URL = "https://monsterrg.quickbase.com/db/bpb28qsnn?a=dr&rid=";
+export const QB_PKG_URL = "https://monsterrg.quickbase.com/db/bttffb64u?a=dr&rid=";
 
-function isYes(a: string | undefined): boolean {
+export function isYes(a: string | undefined): boolean {
   const s = String(a ?? "").trim().toLowerCase();
   return s.startsWith("yes") || s === "true" || s === "y" || s === "1";
 }
-function isErrorAnswer(a: string | undefined): boolean {
+export function isErrorAnswer(a: string | undefined): boolean {
   return String(a ?? "").trim().toLowerCase() === "error";
 }
 function stripVoNamePrefix(raw: string): string {
@@ -85,7 +85,7 @@ function stripVoNamePrefix(raw: string): string {
 }
 /** Team member display name: VoName (minus the "DEST - " prefix), else a real
  *  owner email — never the "api" token. Mirrors finding.tsx / the backend. */
-function teamMemberOf(f: Finding): string {
+export function teamMemberOf(f: Finding): string {
   const raw = (f.record as Record<string, unknown> | undefined)?.VoName;
   const parsed = raw ? stripVoNamePrefix(String(raw)) : "";
   if (parsed) return parsed;
@@ -93,7 +93,7 @@ function teamMemberOf(f: Finding): string {
   return "—";
 }
 /** WGS/MCC sale flags — same semantic as the backend's saleFlagsFromFinding. */
-function saleFlagsOf(f: Finding): { wgs: boolean; mcc: boolean } {
+export function saleFlagsOf(f: Finding): { wgs: boolean; mcc: boolean } {
   const rec = (f.record ?? {}) as Record<string, unknown>;
   const sold = (v: unknown): boolean => {
     const s = String(v ?? "").trim().toLowerCase();
@@ -103,7 +103,7 @@ function saleFlagsOf(f: Finding): { wgs: boolean; mcc: boolean } {
     ? { wgs: false, mcc: sold(rec["345"]) }
     : { wgs: sold(rec["460"]), mcc: sold(rec["594"]) };
 }
-function score(qs: AnsweredQuestion[]): number {
+export function score(qs: AnsweredQuestion[]): number {
   if (qs.length === 0) return 0;
   const yes = qs.filter((q) => isYes(q.answer)).length;
   return Math.round((yes / qs.length) * 100);

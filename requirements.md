@@ -491,3 +491,99 @@ names.
 
 Tests: `src/reporting/domain/business/webhook-handlers/res-id.test.ts` —
 "REQ-033 …" (int).
+
+## REQ-034 — A VO login is tied to one department's failed audits
+
+> "can we make a worktree so we can build a team member portal? similar to a
+> manager portal, there is a queue of failed audits per department/shift."
+> "anyone who logs in should be able to see the department's failed audits"
+> "let's start with this for now: all audits marked with VBA PM get sent to the
+> 'vbapmvo@monsterrg.com' login so a login is attached to a very specific set of
+> audits." "this is a new type of dashboard, so it doesn't replace anything.
+> it's just the vbapmvo login/dashboard for that specific user."
+
+A new `vo` role. A VO login's audits are set the same way as a manager's
+(Users → Scopes, departments + optional shifts); `vbapmvo@monsterrg.com` gets
+`VBA PM`. It lands on `/vo`, which looks like the Manager Portal and lists that
+department's failed audits. A VO with no department sees nothing.
+
+Tests: `src/manager/domain/business/vo-portal/int.test.ts` — "REQ-034 …" (int);
+`e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-034 …" (e2e).
+
+## REQ-035 — Review with a write-up instead of Remediate; once reviewed, always reviewed
+
+> "there is no button to remediate, there is a button to 'review' and write a
+> portion about what the team member was able to review from the audit."
+> "it leaves their queue and goes to the 'reviewed' side." "if a single audit is
+> marked reviewed, it gets checked off for the whole department, meaning nobody
+> else with that log in can 're-review' the audit or take it off the reviewed
+> side. once reviewed, always reviewed."
+
+One write-once `tm-review` record per audit (first review wins, never edited
+or removed). A reviewed audit moves from To Review to Reviewed for everyone.
+A manager remediating or skipping an audit does not take it off the VO queue.
+
+Tests: `frontend/tests/lib/tm-review.test.ts`,
+`frontend/tests/routes/vo-dashboard.test.tsx` — "REQ-035 …" (unit);
+`src/manager/domain/business/vo-portal/int.test.ts` — "REQ-035 …" (int);
+`e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-035 …" (e2e).
+
+## REQ-036 — The Reviewed side shows whether the manager remediated
+
+> "then a checkbox exists for if it was remediated or not." / "yes" (the box is
+> display-only for the VO, ticked when the manager remediates).
+
+Tests: `frontend/tests/routes/vo-dashboard.test.tsx` — "REQ-036 …" (unit);
+`e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-036 …" (e2e).
+
+## REQ-037 — Appeal / new recording from the VO side leaves both queues
+
+> "can file appeal/send new recording/etc." "filing an appeal/sending new
+> recording will take that audit off of the TM review queue and also the
+> manager's remediation queue of course"
+
+Tests: `frontend/tests/lib/tm-review.test.ts`,
+`frontend/tests/routes/vo-dashboard.test.tsx` — "REQ-037 …" (unit);
+`e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-037 …" (e2e).
+
+## REQ-038 — The manager's queue shows "Reviewed by TM" and the write-up
+
+> "a new column pops up for the manager on the audits, a checkbox for 'reviewed
+> by TM' and allows a manager ot read the blurb the TM wrote. All this does is
+> add info for the manager, it doesn't change aynthing about what the manager
+> can do, meaning a manager can still file appeal/upload recording/remediate
+> from there."
+
+Tests: `frontend/tests/lib/tm-review.test.ts`,
+`frontend/tests/routes/vo-dashboard.test.tsx` — "REQ-038 …" (unit);
+`src/manager/domain/business/vo-portal/int.test.ts` — "REQ-038 …" (int);
+`e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-038 …" (e2e).
+
+## REQ-039 — Admins always reach the VO dashboards under "VO View"
+
+> "anyone with a log in can enter it, but we can make it to where an admin has
+> access always under the 'VO view'"
+
+Tests: `e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-039 …" (e2e).
+
+## REQ-040 — VO filters: dates, team member, WGS/MCC; dates default to the most recent Monday
+
+> "also no audit history on the VO's side. just a datepicker and TM picker and
+> WGS/MCC checkboxes. The date defaults to the msot recent monday. So if
+> someone is opening the dash on tuesday, they're seeing monday to tuesday. if
+> tehy're opening it on sunday, they're seeing m, t, w, th, f, s and sunday. On
+> monday, the default is m-sunday from the previous week as well. they can
+> still change this of course." / "A." (on a Monday: last week's Mon–Sun only)
+
+Eastern time.
+
+Tests: `frontend/tests/lib/tm-review.test.ts` — "REQ-040 …" (unit);
+`e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-040 …" (e2e).
+
+## REQ-041 — Never say "agent" in anything new
+
+> "so agent = team member, we aren't supposed to use the term 'agent' at all...
+> ever..." / "keep it out of everything new only"
+
+Tests: `frontend/tests/routes/vo-dashboard.test.tsx` — "REQ-041 …" (unit);
+`e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-041 …" (e2e).

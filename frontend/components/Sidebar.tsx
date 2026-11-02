@@ -155,6 +155,8 @@ const ROLE_VIEWS = [
   { label: "Review Dashboard", href: "/review/dashboard", icon: Icon.playCircle, color: "var(--purple-bg)", iconColor: "var(--purple)" },
   { label: "Manager Portal", href: "/manager", icon: Icon.clipboardList, color: "var(--cyan-bg)", iconColor: "var(--cyan)" },
   { label: "Team Member Dashboard", href: "/agent", icon: Icon.barChart, color: "rgba(249,115,22,0.10)", iconColor: "#f97316" },
+  // Every VO login's dashboard, picked from a list (REQ-039).
+  { label: "VO View", href: "/vo", icon: Icon.clipboardList, color: "var(--purple-bg)", iconColor: "var(--purple)" },
 ];
 
 // Other roles — simpler navigation
@@ -197,6 +199,11 @@ const USER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
   { label: "Chat", icon: Icon.messageCircle, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/chat" },
 ]}];
 
+// A VO login has one page (REQ-034).
+const VO_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
+  { label: "VO Dashboard", icon: Icon.clipboardList, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/vo" },
+]}];
+
 const ROLE_SECTION_MAP: Record<Role, SbSection[]> = {
   admin: ADMIN_SECTIONS,
   reviewer: REVIEWER_SECTIONS,
@@ -206,6 +213,7 @@ const ROLE_SECTION_MAP: Record<Role, SbSection[]> = {
   // Super-manager gets a queue-less nav (Audit History only).
   "super-manager": SUPER_MANAGER_SECTIONS,
   user: USER_SECTIONS,
+  vo: VO_SECTIONS,
 };
 
 // Section prop → view role. Lets an admin visiting /review/dashboard see the

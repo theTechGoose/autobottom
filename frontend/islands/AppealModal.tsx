@@ -81,7 +81,6 @@ export default function AppealModal(props: Props) {
 
   // Add Genie
   const [genies, setGenies] = useState<string[]>(originalGenieIds.length ? [...originalGenieIds] : [""]);
-  const [reauditComment, setReauditComment] = useState("");
 
   // Direct Upload
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -90,7 +89,6 @@ export default function AppealModal(props: Props) {
   const [audioCurrent, setAudioCurrent] = useState(0);
   const [snipStartSec, setSnipStartSec] = useState<number | null>(null);
   const [snipEndSec, setSnipEndSec] = useState<number | null>(null);
-  const [uploadComment, setUploadComment] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -117,7 +115,6 @@ export default function AppealModal(props: Props) {
     setChecked(new Set());
     setAppealComment("");
     setGenies(originalGenieIds.length ? [...originalGenieIds] : [""]);
-    setReauditComment("");
     if (uploadUrl) URL.revokeObjectURL(uploadUrl);
     setUploadFile(null);
     setUploadUrl(null);
@@ -125,7 +122,6 @@ export default function AppealModal(props: Props) {
     setAudioCurrent(0);
     setSnipStartSec(null);
     setSnipEndSec(null);
-    setUploadComment("");
     setReauditResult(null);
   }
 
@@ -217,7 +213,6 @@ export default function AppealModal(props: Props) {
         body: JSON.stringify({
           findingId,
           recordingIds: ids,
-          comment: reauditComment.trim() || undefined,
           agentEmail: auditorEmail,
         }),
       });
@@ -304,7 +299,6 @@ export default function AppealModal(props: Props) {
       fd.append("file", uploadFile, uploadFile.name || "upload.mp3");
       if (snipStartSec !== null) fd.append("snipStart", String(Math.floor(snipStartSec * 1000)));
       if (snipEndSec !== null) fd.append("snipEnd", String(Math.floor(snipEndSec * 1000)));
-      if (uploadComment.trim()) fd.append("comment", uploadComment.trim());
       fd.append("agentEmail", auditorEmail);
       const res = await fetch("/api/audit/appeal/upload-recording", {
         method: "POST", credentials: "include", body: fd,
@@ -475,12 +469,6 @@ export default function AppealModal(props: Props) {
                     ))}
                   </div>
                   <button type="button" class="fork-add-btn" onClick={addGenie} disabled={genies.length >= 5}>+ Add Another</button>
-                  <textarea
-                    class="appeal-comment"
-                    placeholder="Optional comment for the judge..."
-                    value={reauditComment}
-                    onInput={(e) => setReauditComment((e.target as HTMLTextAreaElement).value)}
-                  />
                   <div class="appeal-note">
                     Verification wasn't captured on a Genie?{" "}
                     <button type="button" class="appeal-link-btn" onClick={() => switchTo("upload")}>Use Direct Upload</button>
@@ -572,12 +560,6 @@ export default function AppealModal(props: Props) {
                       </div>
                     </>
                   )}
-                  <textarea
-                    class="appeal-comment"
-                    placeholder="Optional comment for the judge..."
-                    value={uploadComment}
-                    onInput={(e) => setUploadComment((e.target as HTMLTextAreaElement).value)}
-                  />
                   <div class="appeal-note">
                     Verification is captured on a Genie?{" "}
                     <button type="button" class="appeal-link-btn" onClick={() => switchTo("genie")}>Use Add Genie</button>

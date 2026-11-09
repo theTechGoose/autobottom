@@ -191,3 +191,24 @@ Deno.test("REQ-029: the explainer text in all three modals is 14px, two up from 
     expect.eq(await fontPx(page, ".appeal-confirm-body"), 14, "Appeal Decision's explainer");
     expect.eq(await fontPx(page, ".appeal-redirect-text"), 14, "the missing-audio callout");
   }));
+
+Deno.test("REQ-042: Add Genie and Direct Upload have no comment field, and Appeal Decision keeps its own", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = await failedAudit();
+    await page.goto(`/audit/report?id=${id}`);
+    const comments = page.locator(".appeal-overlay-box textarea");
+
+    await page.getByRole("button", { name: "Add Genie" }).click();
+    await showModal(page);
+    expect.eq(await comments.count(), 0, "Add Genie has no comment field");
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Direct Upload" }).click();
+    await showModal(page);
+    expect.eq(await comments.count(), 0, "Direct Upload has no comment field");
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Appeal Decision" }).click();
+    await showModal(page);
+    expect.eq(await comments.count(), 1, "Appeal Decision keeps its comment field");
+  }));

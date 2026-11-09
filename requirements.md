@@ -610,3 +610,16 @@ On the dashboard a saved review now refreshes the two tables in place (filters
 kept) instead of reloading the page.
 
 Tests: `e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-035 AMENDMENT …" (e2e).
+
+## REQ-042 — No judge comment box on Add Genie or Direct Upload
+
+> "take the 'optional comment for judge' text fields off of the 'add genie' and
+> 'direct upload' options on an audit report"
+
+The Add Genie and Direct Upload modals have no comment field and submit no
+comment. Appeal Decision keeps its comment box, and the admin "Re-run with
+genies" tool keeps sending its own.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-042: …" (e2e). Unit
+and integration n/a — the modals render only after a click, and no server
+behaviour changes.

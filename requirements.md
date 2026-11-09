@@ -633,3 +633,15 @@ that names the button says the same.
 
 Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-043: …" (e2e). Unit
 and integration n/a — the modal renders only after a click, and this is copy.
+
+## REQ-044 — The Genie list's label says the original is pre-filled and can be erased
+
+> "Genie IDs for the new audit (this audit's are filled in) Change this to make
+> sense? Say 'Original Genie is pre-filled below, erase if you want to remove
+> the original genie': or osmething like that"
+
+The label above the Genie rows in the Add Genie modal reads "The original Genie
+is pre-filled below. Erase it if you don't want it in the new audit."
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-044: …" (e2e). Unit
+and integration n/a — the modal renders only after a click, and this is copy.

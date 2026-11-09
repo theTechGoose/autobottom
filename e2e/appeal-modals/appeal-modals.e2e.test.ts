@@ -227,3 +227,18 @@ Deno.test("REQ-043: the Add Genie modal's button and explainer say + Add Genie, 
     await page.getByRole("button", { name: "+ Add Genie" }).click();
     expect.eq(await page.locator(".recording-row").count(), 2, "the renamed button still adds a row");
   }));
+
+Deno.test("REQ-044: the Genie list's label says the original Genie is pre-filled and can be erased", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = await failedAudit();
+    await page.goto(`/audit/report?id=${id}`);
+
+    await page.getByRole("button", { name: "Add Genie" }).click();
+    await showModal(page);
+    expect.eq(
+      await page.locator(".appeal-overlay-box .fork-label").innerText(),
+      "The original Genie is pre-filled below. Erase it if you don't want it in the new audit.",
+      "the label explains the pre-filled Genie",
+    );
+    expect.eq(await page.locator(".recording-input").first().inputValue(), "27694351", "the original Genie is pre-filled");
+  }));

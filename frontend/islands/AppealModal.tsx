@@ -445,7 +445,7 @@ export default function AppealModal(props: Props) {
                       </li>
                     </ul>
                   </div>
-                  <div class="fork-label">Genie IDs for the new audit (this audit's are filled in)</div>
+                  <div class="fork-label">The original Genie is pre-filled below. Erase it if you don't want it in the new audit.</div>
                   <div class="recording-inputs">
                     {genies.map((g, i) => (
                       <div class="recording-row" key={i}>

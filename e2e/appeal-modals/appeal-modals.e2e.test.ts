@@ -84,7 +84,7 @@ Deno.test("REQ-025: every Genie row shows its × and it works on the last one to
 
     const x = page.locator(".recording-remove");
     expect(await x.first().isVisible(), "the × shows next to the audit's only Genie");
-    await page.getByRole("button", { name: "+ Add Another" }).click();
+    await page.getByRole("button", { name: "+ Add Genie" }).click();
     expect.eq(await x.count(), 2, "each row has its own ×");
     expect(await x.nth(1).isVisible(), "and the new row's × is visible too");
     await x.nth(1).click();
@@ -190,4 +190,55 @@ Deno.test("REQ-029: the explainer text in all three modals is 14px, two up from 
     await showModal(page);
     expect.eq(await fontPx(page, ".appeal-confirm-body"), 14, "Appeal Decision's explainer");
     expect.eq(await fontPx(page, ".appeal-redirect-text"), 14, "the missing-audio callout");
+  }));
+
+Deno.test("REQ-042: Add Genie and Direct Upload have no comment field, and Appeal Decision keeps its own", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = await failedAudit();
+    await page.goto(`/audit/report?id=${id}`);
+    const comments = page.locator(".appeal-overlay-box textarea");
+
+    await page.getByRole("button", { name: "Add Genie" }).click();
+    await showModal(page);
+    expect.eq(await comments.count(), 0, "Add Genie has no comment field");
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Direct Upload" }).click();
+    await showModal(page);
+    expect.eq(await comments.count(), 0, "Direct Upload has no comment field");
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Appeal Decision" }).click();
+    await showModal(page);
+    expect.eq(await comments.count(), 1, "Appeal Decision keeps its comment field");
+  }));
+
+Deno.test("REQ-043: the Add Genie modal's button and explainer say + Add Genie, not + Add Another", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = await failedAudit();
+    await page.goto(`/audit/report?id=${id}`);
+
+    await page.getByRole("button", { name: "Add Genie" }).click();
+    await showModal(page);
+    const text = await modalText(page);
+    expect(!text.includes("Add Another"), "nothing in the modal says Add Another");
+    expect(/press \+ Add Genie\./.test(text), "the explainer names the button");
+
+    await page.getByRole("button", { name: "+ Add Genie" }).click();
+    expect.eq(await page.locator(".recording-row").count(), 2, "the renamed button still adds a row");
+  }));
+
+Deno.test("REQ-044: the Genie list's label says the original Genie is pre-filled and can be erased", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = await failedAudit();
+    await page.goto(`/audit/report?id=${id}`);
+
+    await page.getByRole("button", { name: "Add Genie" }).click();
+    await showModal(page);
+    expect.eq(
+      await page.locator(".appeal-overlay-box .fork-label").innerText(),
+      "The original Genie is pre-filled below. Erase it if you don't want it in the new audit.",
+      "the label explains the pre-filled Genie",
+    );
+    expect.eq(await page.locator(".recording-input").first().inputValue(), "27694351", "the original Genie is pre-filled");
   }));

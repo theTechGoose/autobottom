@@ -45,7 +45,7 @@ Deno.test("REQ-007: the appeal form lists every recording of a multi-recording a
     const values = await genieRows(inputs);
     expect.eq(JSON.stringify(values), JSON.stringify(["27694351", "27694359"]), "both of the audit's genies are filled in");
 
-    await page.getByRole("button", { name: "+ Add Another" }).click();
+    await page.getByRole("button", { name: "+ Add Genie" }).click();
     await inputs.nth(2).fill("27694459");
     const after = await genieRows(inputs);
     expect.eq(JSON.stringify(after), JSON.stringify(["27694351", "27694359", "27694459"]), "adding a callback appends it after the originals");

@@ -610,3 +610,38 @@ On the dashboard a saved review now refreshes the two tables in place (filters
 kept) instead of reloading the page.
 
 Tests: `e2e/vo-portal/vo-portal.e2e.test.ts` — "REQ-035 AMENDMENT …" (e2e).
+
+## REQ-042 — No judge comment box on Add Genie or Direct Upload
+
+> "take the 'optional comment for judge' text fields off of the 'add genie' and
+> 'direct upload' options on an audit report"
+
+The Add Genie and Direct Upload modals have no comment field and submit no
+comment. Appeal Decision keeps its comment box, and the admin "Re-run with
+genies" tool keeps sending its own.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-042: …" (e2e). Unit
+and integration n/a — the modals render only after a click, and no server
+behaviour changes.
+
+## REQ-043 — The Add Genie modal's add button says "+ Add Genie"
+
+> "can we change '+ Add Another' to '+ Add Genie' ?"
+
+The button in the Add Genie modal reads "+ Add Genie", and the explainer line
+that names the button says the same.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-043: …" (e2e). Unit
+and integration n/a — the modal renders only after a click, and this is copy.
+
+## REQ-044 — The Genie list's label says the original is pre-filled and can be erased
+
+> "Genie IDs for the new audit (this audit's are filled in) Change this to make
+> sense? Say 'Original Genie is pre-filled below, erase if you want to remove
+> the original genie': or osmething like that"
+
+The label above the Genie rows in the Add Genie modal reads "The original Genie
+is pre-filled below. Erase it if you don't want it in the new audit."
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-044: …" (e2e). Unit
+and integration n/a — the modal renders only after a click, and this is copy.

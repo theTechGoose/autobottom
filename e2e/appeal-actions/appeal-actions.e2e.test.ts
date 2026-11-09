@@ -113,7 +113,7 @@ Deno.test("REQ-018: each modal explains what its path does — Add Genie says th
     await showModal(page);
     const genie = await page.locator(".appeal-overlay-box").innerText();
     expect(/multiple Genies/i.test(genie), "Add Genie says when to use it");
-    expect(/\+ Add Another/.test(genie) && /joined/i.test(genie), "it explains adding more genies joins them into one call");
+    expect(/\+ Add Genie/.test(genie) && /joined/i.test(genie), "it explains adding more genies joins them into one call");
     expect(/overwrit/i.test(genie) && /different recording/i.test(genie), "it explains the original genie can be overwritten");
     expect(/new audit/i.test(genie), "it says submitting makes a new audit");
     expect.eq(await page.locator(".recording-input").first().inputValue(), "27694351", "the form still starts with the audit's genie");
@@ -190,7 +190,7 @@ Deno.test("REQ-020: a submitted Add Genie or Direct Upload replaces all three bu
       await page.getByRole("button", { name: path }).click();
       await showModal(page);
       if (path === "Add Genie") {
-        await page.getByRole("button", { name: "+ Add Another" }).click();
+        await page.getByRole("button", { name: "+ Add Genie" }).click();
         await page.locator(".recording-input").nth(1).fill("27694459");
       } else {
         const file = await Deno.makeTempFile({ suffix: ".mp3" });

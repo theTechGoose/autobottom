@@ -623,3 +623,13 @@ genies" tool keeps sending its own.
 Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-042: …" (e2e). Unit
 and integration n/a — the modals render only after a click, and no server
 behaviour changes.
+
+## REQ-043 — The Add Genie modal's add button says "+ Add Genie"
+
+> "can we change '+ Add Another' to '+ Add Genie' ?"
+
+The button in the Add Genie modal reads "+ Add Genie", and the explainer line
+that names the button says the same.
+
+Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-043: …" (e2e). Unit
+and integration n/a — the modal renders only after a click, and this is copy.

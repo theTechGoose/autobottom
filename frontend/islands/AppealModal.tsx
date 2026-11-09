@@ -436,7 +436,7 @@ export default function AppealModal(props: Props) {
                     <ul>
                       <li>
                         <strong>Add more:</strong> keep this audit's Genie and press{" "}
-                        <strong>+ Add Another</strong>. Every Genie listed is joined, in order, and
+                        <strong>+ Add Genie</strong>. Every Genie listed is joined, in order, and
                         audited as one call.
                       </li>
                       <li>
@@ -468,7 +468,7 @@ export default function AppealModal(props: Props) {
                       </div>
                     ))}
                   </div>
-                  <button type="button" class="fork-add-btn" onClick={addGenie} disabled={genies.length >= 5}>+ Add Another</button>
+                  <button type="button" class="fork-add-btn" onClick={addGenie} disabled={genies.length >= 5}>+ Add Genie</button>
                   <div class="appeal-note">
                     Verification wasn't captured on a Genie?{" "}
                     <button type="button" class="appeal-link-btn" onClick={() => switchTo("upload")}>Use Direct Upload</button>

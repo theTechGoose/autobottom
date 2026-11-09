@@ -84,7 +84,7 @@ Deno.test("REQ-025: every Genie row shows its × and it works on the last one to
 
     const x = page.locator(".recording-remove");
     expect(await x.first().isVisible(), "the × shows next to the audit's only Genie");
-    await page.getByRole("button", { name: "+ Add Another" }).click();
+    await page.getByRole("button", { name: "+ Add Genie" }).click();
     expect.eq(await x.count(), 2, "each row has its own ×");
     expect(await x.nth(1).isVisible(), "and the new row's × is visible too");
     await x.nth(1).click();
@@ -211,4 +211,19 @@ Deno.test("REQ-042: Add Genie and Direct Upload have no comment field, and Appea
     await page.getByRole("button", { name: "Appeal Decision" }).click();
     await showModal(page);
     expect.eq(await comments.count(), 1, "Appeal Decision keeps its comment field");
+  }));
+
+Deno.test("REQ-043: the Add Genie modal's button and explainer say + Add Genie, not + Add Another", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = await failedAudit();
+    await page.goto(`/audit/report?id=${id}`);
+
+    await page.getByRole("button", { name: "Add Genie" }).click();
+    await showModal(page);
+    const text = await modalText(page);
+    expect(!text.includes("Add Another"), "nothing in the modal says Add Another");
+    expect(/press \+ Add Genie\./.test(text), "the explainer names the button");
+
+    await page.getByRole("button", { name: "+ Add Genie" }).click();
+    expect.eq(await page.locator(".recording-row").count(), 2, "the renamed button still adds a row");
   }));

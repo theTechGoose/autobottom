@@ -13,6 +13,7 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import type { AppealRecord, JudgeDecision } from "@core/dto/types.ts";
 import { deleteStored, getStored, listStoredWithKeysAll, setStored } from "@core/data/firestore/mod.ts";
 import { getFinding, getTranscript } from "@audit/domain/data/audit-repository/mod.ts";
+import { buildRecordMeta } from "@core/business/record-meta/mod.ts";
 
 export type OverturnVerdict = "confirm" | "reverse";
 
@@ -42,7 +43,6 @@ export interface OverturnReviewQuestion {
   botAnswer: string;
   decision: "overturn" | "uphold";
   judge: string;
-  judgeReason?: string;
   /** The reviewer who confirmed the fail. */
   reviewer?: string;
   verdict?: OverturnVerdictRecord;
@@ -57,6 +57,9 @@ export interface OverturnReviewItem {
   appealComment?: string;
   appealedAt?: number;
   recordId?: string;
+  recordingIdField?: string;
+  recordMeta?: Record<string, string | undefined>;
+  /** Overturned questions first (the ones that take a call), then upheld. */
   questions: OverturnReviewQuestion[];
   transcript: { raw: string; diarized: string; utteranceTimes?: number[] } | null;
 }
@@ -137,7 +140,9 @@ async function hydrate(orgId: OrgId, row: OverturnReviewRow): Promise<OverturnRe
   const answered = (f.answeredQuestions ?? []) as Array<Record<string, unknown>>;
   const questions = await Promise.all(
     decisions
-      .sort((a, b) => a.questionIndex - b.questionIndex)
+      .sort((a, b) =>
+        Number(b.decision === "overturn") - Number(a.decision === "overturn") || a.questionIndex - b.questionIndex
+      )
       .map(async (d): Promise<OverturnReviewQuestion> => ({
         questionIndex: d.questionIndex,
         header: String(d.header ?? answered[d.questionIndex]?.header ?? `Question ${d.questionIndex + 1}`),
@@ -147,7 +152,6 @@ async function hydrate(orgId: OrgId, row: OverturnReviewRow): Promise<OverturnRe
         botAnswer: String(d.answer ?? answered[d.questionIndex]?.answer ?? "No"),
         decision: d.decision,
         judge: d.judge,
-        judgeReason: d.reason,
         reviewer: await reviewerFor(orgId, row.findingId, d.questionIndex, answered, done?.reviewedBy),
         verdict: row.verdicts[String(d.questionIndex)],
       })),
@@ -161,6 +165,8 @@ async function hydrate(orgId: OrgId, row: OverturnReviewRow): Promise<OverturnRe
     appealComment: (f.appealComment as string | undefined) || appeal?.comment,
     appealedAt: appeal?.appealedAt,
     recordId: String(rec.RecordId ?? "") || undefined,
+    recordingIdField: f.recordingIdField as string | undefined,
+    recordMeta: buildRecordMeta(rec, f.recordingIdField as string | undefined),
     questions,
     transcript,
   };

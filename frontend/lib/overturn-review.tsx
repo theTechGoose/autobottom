@@ -1,5 +1,5 @@
-/** Shared by the Overturn Review page and its HTMX routes (REQ-047..051):
- *  load one held appeal from the backend and render the panel + transcript. */
+/** Shared by the Overturn Review page and its HTMX routes (REQ-047..049):
+ *  load one held appeal from the backend and render the queue's two columns. */
 import { apiFetch } from "./api.ts";
 import { OverturnReviewPanel, type OverturnReviewItem, type OverturnReviewWaiting } from "../components/OverturnReviewPanel.tsx";
 import { TranscriptPanel } from "../components/TranscriptPanel.tsx";
@@ -12,7 +12,7 @@ export interface OverturnReviewData {
   waiting: OverturnReviewWaiting[];
 }
 
-/** Judges make the team's call; admins may too (and own the off switch). */
+/** Judges make the team's call; admins may too. */
 export const canReviewOverturns = (user: User | undefined) => user?.role === "judge" || user?.role === "admin";
 
 export async function loadOverturnReview(req: Request, findingId?: string): Promise<OverturnReviewData> {
@@ -26,17 +26,22 @@ export async function loadOverturnReview(req: Request, findingId?: string): Prom
   }
 }
 
-/** The two queue columns. The HTMX routes swap the left one (#ovr-panel) and
- *  send the right one out-of-band so the transcript follows the appeal shown. */
+/** The inside of #ovr-content: the verdict panel left, the transcript right —
+ *  the same split as the review and judge queues. */
 export function OverturnReviewColumns(
-  { data, user, error, finalizedId, oob }: { data: OverturnReviewData; user: User; error?: string; finalizedId?: string; oob?: boolean },
+  { data, questionIndex, error, finalizedId }: { data: OverturnReviewData; questionIndex?: number; error?: string; finalizedId?: string },
 ) {
   return (
     <>
-      <OverturnReviewPanel {...data} isAdmin={user.role === "admin"} error={error} finalizedId={finalizedId} />
-      <div id="ovr-transcript" class="queue-right" {...(oob ? { "hx-swap-oob": "true" } : {})}>
+      <div class="queue-left">
+        <OverturnReviewPanel {...data} questionIndex={questionIndex} error={error} finalizedId={finalizedId} />
+      </div>
+      <div class="queue-right">
         <TranscriptPanel transcript={data.item?.transcript ?? null} />
       </div>
     </>
   );
 }
+
+export const htmlResponse = (s: string, status = 200) =>
+  new Response(s, { status, headers: { "content-type": "text/html" } });

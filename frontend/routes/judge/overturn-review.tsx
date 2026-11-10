@@ -1,12 +1,11 @@
 /** Overturn Review page (REQ-048) — appeals a judge overturned anything on,
- *  waiting for the team's final call. Laid out like the judge queue: the
- *  appeal's questions on the left, the transcript on the right. */
+ *  waiting for the team's final call. Laid out like the reviewer queue: the
+ *  verdict panel on the left, the transcript on the right. */
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
-import { OverturnReviewPanel } from "../../components/OverturnReviewPanel.tsx";
-import { TranscriptPanel } from "../../components/TranscriptPanel.tsx";
 import TranscriptInteractive from "../../islands/TranscriptInteractive.tsx";
-import { canReviewOverturns, loadOverturnReview } from "../../lib/overturn-review.tsx";
+import OverturnReverseModal from "../../islands/OverturnReverseModal.tsx";
+import { canReviewOverturns, loadOverturnReview, OverturnReviewColumns } from "../../lib/overturn-review.tsx";
 import { roleRedirect } from "../../lib/auth.ts";
 
 export default define.page(async function OverturnReview(ctx) {
@@ -20,16 +19,10 @@ export default define.page(async function OverturnReview(ctx) {
   return (
     <Layout title="Overturn Review" section="judge" user={user} hideSidebar>
       <TranscriptInteractive />
-      <div class="queue-layout" data-mode="judge">
-        <div class="queue-left">
-          <a href="/judge/dashboard" class="ovr-back">← Judge Dashboard</a>
-          <OverturnReviewPanel {...data} isAdmin={user.role === "admin"} />
-        </div>
-        <div id="ovr-transcript" class="queue-right">
-          <TranscriptPanel transcript={data.item?.transcript ?? null} />
-        </div>
+      <OverturnReverseModal />
+      <div class="queue-layout" id="ovr-content" data-mode="judge">
+        <OverturnReviewColumns data={data} />
       </div>
-      <style>{`.ovr-back{display:inline-block;margin:12px 18px 0;font-size:12px;color:var(--text-muted);text-decoration:none}.ovr-back:hover{color:#14b8a6}`}</style>
     </Layout>
   );
 });

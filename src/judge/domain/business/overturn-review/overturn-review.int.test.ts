@@ -129,10 +129,10 @@ Deno.test({ name: "REQ-047: the stuck-appeal backfill never closes a held appeal
   assertEquals((await getAppeal(org, "held"))?.status, "pending");
 }});
 
-Deno.test({ name: "REQ-048: the queue shows each question with the reviewer who failed it, the judge's call, and the appeal comment", ...kvOpts, fn: async () => {
+Deno.test({ name: "REQ-048: the queue shows each question with the reviewer who failed it, the judge's call (overturned first, no reason), and the appeal comment", ...kvOpts, fn: async () => {
   const org = newOrg();
   await seedAppeal(org, "shown");
-  await judge(org, "shown", ["overturn", "uphold", "overturn"]);
+  await judge(org, "shown", ["uphold", "overturn", "overturn"]);
 
   const { item, remaining } = await getOverturnReviewItem(org);
   assertEquals(remaining, 1);
@@ -142,11 +142,11 @@ Deno.test({ name: "REQ-048: the queue shows each question with the reviewer who 
   assertEquals(item?.appealComment, "The guest said yes at 2:10");
   assertEquals(item?.recordId, "900200");
   assertEquals(item?.questions.map((q) => [q.questionIndex, q.header, q.decision, q.reviewer, q.botAnswer]), [
-    [0, "Q0", "overturn", "reviewer0@x.com", "No"],
-    [1, "Q1", "uphold", "reviewer1@x.com", "No"],
+    [1, "Q1", "overturn", "reviewer1@x.com", "No"],
     [2, "Q2", "overturn", "reviewer2@x.com", "No"],
-  ]);
-  assertEquals(item?.questions[0].judgeReason, "error");
+    [0, "Q0", "uphold", "reviewer0@x.com", "No"],
+  ], "overturned questions first, then the upheld ones");
+  assertEquals("judgeReason" in (item?.questions[0] ?? {}), false, "the judge's overturn reason is not shown");
 }});
 
 Deno.test({ name: "REQ-048: held appeals list oldest first", ...kvOpts, fn: async () => {

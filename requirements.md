@@ -718,3 +718,45 @@ before. Appeals already held stay held until a judge decides them.
 
 Tests: `src/judge/domain/business/overturn-review/overturn-review.int.test.ts`,
 `e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-051: …".
+
+## REQ-048 AMENDMENT — Overturned questions first, no judge reason, reviewer-queue look
+
+> "IGNORE THE REASON GIVEN BY THE JUDGE, THIS IS IRRELEVANT FOR THE TIME BEING."
+> "overturned questions should exist at the top."
+> "also I hate this view, can we make this look more like the reviewer's queue please?"
+
+The Overturn Review page is the reviewer queue's verdict panel: audit header
+(guest, TM, record, type, overturned count), the question, defense and
+accordions, an Appealed Questions list, meta chips (audit, reviewer, judge,
+held), and pinned decision buttons, with the transcript on the right. The
+Appealed Questions list puts overturned questions at the top, upheld after. The
+judge's overturn reason is not shown anywhere on the page.
+
+Tests: `frontend/tests/components/overturn-review-panel.test.tsx`,
+`src/judge/domain/business/overturn-review/overturn-review.int.test.ts`,
+`e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-048 AMENDMENT: …".
+
+## REQ-049 AMENDMENT — Two options: Keep Overturn or Reverse Overturn (comment modal)
+
+> "this should just be two options: keep the overturn or 'reverse overturn',
+> when you hit reverse overturn the judge comment modal pops up."
+
+Each open overturn shows exactly two buttons, Keep Overturn and Reverse
+Overturn. Reverse Overturn opens the judge comment modal (same as the judge
+queue's uphold modal); Submit stays disabled until a comment is typed.
+
+Tests: `frontend/tests/components/overturn-review-panel.test.tsx`,
+`e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-049 AMENDMENT: …".
+
+## REQ-051 AMENDMENT — The on/off switch lives in Data Maintenance
+
+> "this turn off button shouldn't exist here. You shouldn't have to open the
+> queue and get into an audit for this to be an option. This button should
+> exist under a tab in data maintenance."
+
+The switch is an "Overturn Review" tab in the admin Data Maintenance modal,
+showing the current state and how many appeals wait. The queue page has no
+switch (it still shows a notice while the queue is off).
+
+Tests: `frontend/tests/components/overturn-review-panel.test.tsx`,
+`e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-051 AMENDMENT: …".

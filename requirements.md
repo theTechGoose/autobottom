@@ -645,3 +645,21 @@ is pre-filled below. Erase it if you don't want it in the new audit."
 
 Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-044: …" (e2e). Unit
 and integration n/a — the modal renders only after a click, and this is copy.
+
+## REQ-045 — A hidden audit is off the manager queue and its counts, without being deleted
+
+> "can we remove it off ODR audits. don't delete the audit but remove it from
+> department reports/department numbers. is this possible?" … "go ahead and do
+> that then."
+
+An audit in the hidden set (`audit-hidden`) no longer shows on a manager's
+queue — stored or derived (`DERIVED_MANAGER_QUEUE`) — and is not counted in the
+manager stats, scoped or org-wide. The reports and dashboards already skipped
+hidden audits through `queryAuditDoneIndex`; the manager queue read the queue
+and the index directly and did not. Nothing is deleted: the finding, its index
+row and its manager-queue row stay, so un-hiding brings it back.
+
+Tests: `src/manager/domain/data/manager-repository/int.test.ts` — "REQ-045: …"
+(integration); `e2e/manager-hidden/manager-hidden.e2e.test.ts` — "REQ-045: …"
+(e2e). Unit n/a — the filter is a read over stored rows; there is no pure
+function worth testing apart from it.

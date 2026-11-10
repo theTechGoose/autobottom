@@ -242,3 +242,30 @@ Deno.test("REQ-044: the Genie list's label says the original Genie is pre-filled
     );
     expect.eq(await page.locator(".recording-input").first().inputValue(), "27694351", "the original Genie is pre-filled");
   }));
+
+Deno.test("REQ-046: an Invalid Genie audit shows Add Genie and Direct Upload but no Appeal Decision", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = "e2e-invalid-genie-" + crypto.randomUUID().slice(0, 8);
+    await saveFinding(ORG, {
+      id,
+      findingStatus: "finished",
+      rawTranscript: "Invalid Genie",
+      completedAt: Date.now(),
+      record: { RecordId: "900005", VoName: "DS MB - Demo Agent" },
+      recordingId: "27694352",
+      genieIds: ["27694352"],
+      recordingIdField: "VoGenie",
+      owner: "api",
+    });
+    await page.goto(`/audit/report?id=${id}`);
+
+    await page.getByRole("button", { name: "Add Genie" }).waitFor();
+    expect.eq(await page.getByRole("button", { name: "Add Genie" }).count(), 1, "Add Genie shows");
+    expect.eq(await page.getByRole("button", { name: "Direct Upload" }).count(), 1, "Direct Upload shows");
+    expect.eq(await page.getByRole("button", { name: "Appeal Decision" }).count(), 0, "no Appeal Decision on an Invalid Genie audit");
+
+    const ok = await failedAudit();
+    await page.goto(`/audit/report?id=${ok}`);
+    await page.getByRole("button", { name: "Appeal Decision" }).waitFor();
+    expect.eq(await page.getByRole("button", { name: "Appeal Decision" }).count(), 1, "an audit with a failed question still offers it");
+  }));

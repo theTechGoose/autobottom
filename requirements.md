@@ -645,3 +645,18 @@ is pre-filled below. Erase it if you don't want it in the new audit."
 
 Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-044: …" (e2e). Unit
 and integration n/a — the modal renders only after a click, and this is copy.
+
+## REQ-046 — No Appeal Decision button when there is nothing to appeal
+
+> "why are we still displaying 'appeal decision' on invalid genie audits?" —
+> "lets do that." (hide Appeal Decision when the audit has no failed questions)
+
+An audit with no failed questions to appeal (an Invalid Genie audit has no
+questions at all) shows only Add Genie and Direct Upload — on the audit report,
+the manager remediation topbar and the VO audit page, which all use the same
+buttons. The server already refuses such an appeal (file-appeal: "Invalid Genie
+audits can only be re-audited, not appealed").
+
+Tests: `frontend/tests/islands/appeal-trigger-variant.test.tsx` — "REQ-046: …"
+(unit); `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-046: …" (e2e).
+Integration n/a — no server behaviour changes.

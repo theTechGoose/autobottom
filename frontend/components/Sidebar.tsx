@@ -152,6 +152,7 @@ const SUPER_ADMIN_EMAIL = "ai@monsterrg.com";
 // Role view links for the flyout
 const ROLE_VIEWS = [
   { label: "Judge Dashboard", href: "/judge/dashboard", icon: Icon.scale, color: "rgba(210,153,34,0.10)", iconColor: "var(--yellow)" },
+  { label: "Overturn Review", href: "/judge/overturn-review", icon: Icon.scale, color: "rgba(20,184,166,0.10)", iconColor: "#14b8a6" },
   { label: "Review Dashboard", href: "/review/dashboard", icon: Icon.playCircle, color: "var(--purple-bg)", iconColor: "var(--purple)" },
   { label: "Manager Portal", href: "/manager", icon: Icon.clipboardList, color: "var(--cyan-bg)", iconColor: "var(--cyan)" },
   { label: "Team Member Dashboard", href: "/agent", icon: Icon.barChart, color: "rgba(249,115,22,0.10)", iconColor: "#f97316" },
@@ -169,6 +170,8 @@ const REVIEWER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
 
 const JUDGE_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
   { label: "Judge Queue", icon: Icon.scale, color: "rgba(20,184,166,0.10)", iconColor: "#14b8a6", href: "/judge" },
+  // Overturned appeals waiting on the team's final call (REQ-048).
+  { label: "Overturn Review", icon: Icon.scale, color: "rgba(20,184,166,0.10)", iconColor: "#14b8a6", href: "/judge/overturn-review" },
   { label: "Dashboard", icon: Icon.layoutDashboard, color: "rgba(20,184,166,0.10)", iconColor: "#14b8a6", href: "/judge/dashboard" },
   { label: "Store", icon: Icon.trophy, color: "var(--yellow-bg)", iconColor: "var(--yellow)", href: "/store" },
   { label: "Chat", icon: Icon.messageCircle, color: "var(--cyan-bg)", iconColor: "var(--cyan)", href: "/chat" },

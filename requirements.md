@@ -645,3 +645,76 @@ is pre-filled below. Erase it if you don't want it in the new audit."
 
 Tests: `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-044: …" (e2e). Unit
 and integration n/a — the modal renders only after a click, and this is copy.
+
+## REQ-047 — An overturned appeal waits for the team before it is final
+
+> "if the appeal decision is to overturn, we actually have to sit there and
+> review that as a team before the decision is final"
+> "if the audits land in this queue, the appeal decision email isn't sent out.
+> instead, the decision email awaits the final decision from this queue."
+> "Mixed appeals that have ANY diff are still shelved, hold the whole appeal."
+
+When a judge finishes an appeal and overturned ANY question (all-overturn or
+mixed), the whole appeal goes to the Overturn Review queue instead of closing:
+no appeal-result email, no score change, no payroll or manager-queue change, and
+the appeal stays pending. An all-uphold appeal closes and emails as before. The
+stuck-appeal backfill (REQ-011) never closes a held appeal.
+
+Tests: `src/judge/domain/business/overturn-review/overturn-review.int.test.ts` —
+"REQ-047: …" (integration); `e2e/overturn-review/overturn-review.e2e.test.ts` —
+"REQ-047: …" (e2e); `frontend/tests/components/overturn-review-panel.test.tsx` —
+"REQ-047: …" (unit).
+
+## REQ-048 — An Overturn Review queue page, like the judge queue
+
+> "I need a queue that is built, somewhere for me to view it, just like the
+> review/judge queue view, that files only appeals that are overturned. so a
+> reviewer fails it, and a judge passes it, I want to see those and be able to
+> go over them with the reviewers."
+
+Judges get an Overturn Review page (`/judge/overturn-review`, in the judge
+sidebar) that shows the held appeals one at a time, oldest first, beside the
+transcript: each overturned question with the bot's answer, the reviewer who
+confirmed the fail, the judge who overturned it and why, and the auditor's
+appeal comment. Upheld questions of a mixed appeal show as context.
+
+Tests: `src/judge/domain/business/overturn-review/overturn-review.int.test.ts`,
+`frontend/tests/components/overturn-review-panel.test.tsx`,
+`e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-048: …".
+
+## REQ-049 — Judges make the final call; reversing an overturn needs a note
+
+> "Judges." (who finalizes) "If we reverse an overturn, that means we uphold the
+> original fail, which means a note would be required yes."
+
+On each overturned question a judge either confirms the overturn or reverses it
+to an uphold; reversing requires a note, which becomes that question's uphold
+reason (so it reads in the appeal-result email like any uphold). Once every
+overturned question has a call, the appeal closes on the final decisions and the
+appeal-result email goes out — once.
+
+Tests: `src/judge/domain/business/overturn-review/overturn-review.int.test.ts`,
+`frontend/tests/components/overturn-review-panel.test.tsx`,
+`e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-049: …".
+
+## REQ-050 — Only appeals going forward
+
+> "only appeals going forward"
+
+Nothing already closed is pulled into the queue; only appeals a judge finishes
+after this ships can be held.
+
+Tests: `src/judge/domain/business/overturn-review/overturn-review.int.test.ts` —
+"REQ-050: …" (integration). Unit and e2e n/a — no screen shows an absence of
+back-filled rows beyond what REQ-048's story already shows.
+
+## REQ-051 — An admin off switch for the Overturn Review queue
+
+> "sure." (to: an admin setting to bypass the queue if it backs up)
+
+The queue is on by default. An admin can turn it off from the Overturn Review
+page; while off, a judge's overturn closes the appeal and emails right away as
+before. Appeals already held stay held until a judge decides them.
+
+Tests: `src/judge/domain/business/overturn-review/overturn-review.int.test.ts`,
+`e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-051: …".

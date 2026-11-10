@@ -19,7 +19,8 @@ export async function backfillStuckAppeals(
 ): Promise<StuckAppeal[]> {
   const appeals = (await listStoredWithKeysAll<AppealRecord>("appeal", orgId))
     .map(({ value }) => value)
-    .filter((a) => a?.status === "pending" && a.appealedAt >= opts.sinceMs && a.appealedQuestions?.length)
+    // A held appeal is waiting on the team's Overturn Review (REQ-047), not stuck.
+    .filter((a) => a?.status === "pending" && !a.overturnReviewHeldAt && a.appealedAt >= opts.sinceMs && a.appealedQuestions?.length)
     .sort((a, b) => a.appealedAt - b.appealedAt);
 
   const stuck: StuckAppeal[] = [];

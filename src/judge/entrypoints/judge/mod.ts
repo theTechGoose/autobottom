@@ -170,6 +170,51 @@ export class JudgeController {
     }
   }
 
+  // ── Overturn Review (REQ-047..051) ──────────────────────────────────────
+  // Appeals the judge overturned anything on, waiting for the team's call.
+
+  @Get("overturn-review") @ReturnedType(OkResponse) @Description("The held appeal to review (oldest, or ?findingId=), how many wait, and whether the queue is on")
+  async overturnReview(@Query("findingId") findingId: string) {
+    try {
+      const m = await import("@judge/domain/business/overturn-review/mod.ts");
+      const [{ item, remaining }, enabled, rows] = await Promise.all([
+        m.getOverturnReviewItem(ORG(), findingId || undefined),
+        m.isOverturnReviewEnabled(ORG()),
+        m.listOverturnReviewRows(ORG()),
+      ]);
+      return { item, remaining, enabled, waiting: rows.map((r) => ({ findingId: r.findingId, heldAt: r.heldAt, judge: r.judge })) };
+    } catch (err) {
+      return softFail("overturnReview", err, { item: null, remaining: 0, enabled: true, waiting: [], retry: true });
+    }
+  }
+
+  @Post("overturn-review/decide") @ReturnedType(OkResponse) @Description("Confirm or reverse one overturned question; reversing needs a note. The last call closes the appeal and sends its email.") @BodyType(GenericBodyRequest)
+  async overturnReviewDecide(@Body() body: { findingId?: string; questionIndex?: number | string; verdict?: string; by?: string; note?: string }) {
+    const qi = Number(body.questionIndex);
+    if (!body.findingId || !Number.isInteger(qi) || (body.verdict !== "confirm" && body.verdict !== "reverse") || !body.by) {
+      return { ok: false, error: "findingId, questionIndex, verdict (confirm|reverse), by required" };
+    }
+    const m = await import("@judge/domain/business/overturn-review/mod.ts");
+    try {
+      return { ok: true, ...await m.decideOverturnReview(ORG(), body.findingId, qi, body.verdict, body.by, body.note) };
+    } catch (err) {
+      if (err instanceof m.OverturnReviewError) return { ok: false, error: err.message };
+      return softFail(`overturnReviewDecide ${body.findingId}/${qi}`, err, { ok: false, retry: true, error: "Server busy, please retry" });
+    }
+  }
+
+  @Post("overturn-review/config") @ReturnedType(OkResponse) @Description("Turn the Overturn Review queue on or off (admin)") @BodyType(GenericBodyRequest)
+  async overturnReviewConfig(@Body() body: { enabled?: boolean | string }) {
+    const enabled = body.enabled === true || body.enabled === "true";
+    try {
+      const m = await import("@judge/domain/business/overturn-review/mod.ts");
+      await m.setOverturnReviewEnabled(ORG(), enabled);
+      return { ok: true, enabled };
+    } catch (err) {
+      return softFail("overturnReviewConfig", err, { ok: false, retry: true, error: "Server busy, please retry" });
+    }
+  }
+
   @Get("dashboard") @ReturnedType(JudgeStatsResponse) @Description("Judge dashboard data")
   async dashboardData() {
     try { return await getJudgeStats(ORG()); }

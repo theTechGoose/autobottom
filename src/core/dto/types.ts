@@ -280,6 +280,9 @@ export interface JudgeDecision {
    *  in the appeal-result email's "Failed Questions" block. */
   screenshotKeys?: string[];
   decidedAt: number;
+  /** Set when the team reversed this question's overturn in Overturn Review
+   *  (REQ-049): `decision` is now "uphold" and `reason` the team's note. */
+  teamReversal?: { by: string; at: number; overturnedBy: string; overturnReason: string | null };
 }
 
 export interface AppealRecord {
@@ -290,6 +293,9 @@ export interface AppealRecord {
   auditor?: string;
   comment?: string;
   appealedQuestions?: string[];
+  /** Set while the judge's overturn waits in Overturn Review (REQ-047); the
+   *  appeal stays "pending" until the team's final call clears it. */
+  overturnReviewHeldAt?: number;
   /** How the appeal went, stamped when the judge finishes (postJudgedAudit) so
    *  every screen can say WHICH WAY it went without hydrating the finding.
    *  Absent on appeals decided before this shipped — the admin audit-history

@@ -31,12 +31,15 @@ async function failedAudit(dept: string, name: string): Promise<string> {
   return id;
 }
 
+/** The server caches the hidden set for 30s per isolate (getHiddenFindingIds),
+ *  so a hide made after a page has been read shows up within that window. */
+const HIDDEN_CACHE_MS = 31_000;
+
 Deno.test("REQ-045: a hidden audit is off the manager's queue page and out of its counts", (t) =>
   story(t, async ({ page, expect }) => {
     const dept = `ODR ${tag()}`;
     const kept = await failedAudit(dept, "Real Person");
     const hidden = await failedAudit(dept, "Test other");
-    await markFindingHidden(ORG, hidden, "e2e");
 
     const email = `e2e-manager-${tag()}@monsterrg.com`;
     await createUser(ORG, email, PASS, "manager");
@@ -47,13 +50,22 @@ Deno.test("REQ-045: a hidden audit is off the manager's queue page and out of it
     await page.fill("input[name=password]", PASS);
     await page.click("button[type=submit]");
     await page.waitForURL("**/manager");
+
+    // Before: both audits are on the queue, and the Total card counts both.
     await page.goto("/manager?since=0");
+    expect.eq(await page.locator(`#manager-queue-table tr[data-finding-id="${kept}"]`).count(), 1, "before: Real Person is on the queue");
+    expect.eq(await page.locator(`#manager-queue-table tr[data-finding-id="${hidden}"]`).count(), 1, "before: Test other is on the queue");
+    await page.goto("/api/manager/stats");
+    expect.eq(await page.locator(".stat-card", { hasText: "Total" }).locator(".stat-value").innerText(), "2", "before: Total counts both");
 
-    await page.locator(`#manager-queue-table tr[data-finding-id="${kept}"]`).waitFor();
-    expect.eq(await page.locator(`#manager-queue-table tr[data-finding-id="${kept}"]`).count(), 1, "the other audit is still on the queue");
-    expect.eq(await page.locator(`tr[data-finding-id="${hidden}"]`).count(), 0, "the hidden audit is not on the queue");
+    // Take Test other out of the department numbers.
+    await markFindingHidden(ORG, hidden, "e2e");
+    await page.waitForTimeout(HIDDEN_CACHE_MS);
 
-    const res = await page.request.get(new URL("/manager/api/stats", page.url()).href);
-    const stats = await res.json();
-    expect.eq(stats.total, 1, "the counts leave the hidden audit out");
+    // After: Test other is gone from the queue and the counts; Real Person stays.
+    await page.goto("/manager?since=0");
+    expect.eq(await page.locator(`#manager-queue-table tr[data-finding-id="${kept}"]`).count(), 1, "after: Real Person is still on the queue");
+    expect.eq(await page.locator(`tr[data-finding-id="${hidden}"]`).count(), 0, "after: Test other is off the queue");
+    await page.goto("/api/manager/stats");
+    expect.eq(await page.locator(".stat-card", { hasText: "Total" }).locator(".stat-value").innerText(), "1", "after: Total leaves Test other out");
   }));

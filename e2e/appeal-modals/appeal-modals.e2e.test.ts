@@ -264,8 +264,18 @@ Deno.test("REQ-046: an Invalid Genie audit shows Add Genie and Direct Upload but
     expect.eq(await page.getByRole("button", { name: "Direct Upload" }).count(), 1, "Direct Upload shows");
     expect.eq(await page.getByRole("button", { name: "Appeal Decision" }).count(), 0, "no Appeal Decision on an Invalid Genie audit");
 
-    const ok = await failedAudit();
-    await page.goto(`/audit/report?id=${ok}`);
+    // The re-audit path still works from here: Add Genie opens its modal.
+    await page.getByRole("button", { name: "Add Genie" }).click();
+    await showModal(page);
+    expect.eq(await page.locator(".appeal-overlay-box .appeal-reaudit-title").innerText(), "Add Genie", "Add Genie opens on an Invalid Genie audit");
+  }));
+
+Deno.test("REQ-046: an audit with a failed question still shows all three buttons, Appeal Decision included", (t) =>
+  story(t, async ({ page, expect }) => {
+    const id = await failedAudit();
+    await page.goto(`/audit/report?id=${id}`);
     await page.getByRole("button", { name: "Appeal Decision" }).waitFor();
-    expect.eq(await page.getByRole("button", { name: "Appeal Decision" }).count(), 1, "an audit with a failed question still offers it");
+    for (const name of ["Add Genie", "Direct Upload", "Appeal Decision"]) {
+      expect.eq(await page.getByRole("button", { name }).count(), 1, `${name} shows`);
+    }
   }));

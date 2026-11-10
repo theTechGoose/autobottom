@@ -8,7 +8,7 @@ import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { questionLabel } from "@core/business/question-labels/mod.ts";
 import type { ReviewDecision, AuditDoneIndexEntry } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
-import { buildIndexMeta, readDoneIdxEntry, saleFlagsFromFinding } from "@audit/domain/data/stats-repository/mod.ts";
+import { buildIndexMeta, getHiddenFindingIds, readDoneIdxEntry, saleFlagsFromFinding } from "@audit/domain/data/stats-repository/mod.ts";
 import { appealOutcomeFromFinding } from "@judge/domain/business/appeal-tracking/mod.ts";
 
 export interface ManagerQueueItem {
@@ -799,10 +799,20 @@ export async function skipRemediation(
   return { ok: true };
 }
 
+/** Drop audits in the hidden set (REQ-045). A hidden audit is out of the
+ *  department numbers everywhere: the reports already skip it through
+ *  queryAuditDoneIndex, and the manager queue — stored or derived — reads its
+ *  rows directly, so it filters here. Read-side only: the queue row stays
+ *  stored, so un-hiding brings the audit straight back. */
+export async function withoutHidden<T extends { findingId: string }>(orgId: OrgId, rows: T[]): Promise<T[]> {
+  const hidden = await getHiddenFindingIds(orgId);
+  return hidden.size === 0 ? rows : rows.filter((r) => !hidden.has(r.findingId));
+}
+
 export async function getManagerStats(
   orgId: OrgId,
 ): Promise<{ total: number; pending: number; remediated: number; appealed: number }> {
-  const items = await getManagerQueue(orgId);
+  const items = await withoutHidden(orgId, await getManagerQueue(orgId));
   return {
     total: items.length,
     // Pending is open work only, so an audit out for appeal no longer counts
@@ -898,6 +908,7 @@ export async function loadScopedManagerQueue(
     }
   }
   rows ??= await getManagerQueueForDepartments(orgId, scope.departments) ?? await getManagerQueue(orgId);
+  rows = await withoutHidden(orgId, rows);
   try { await enrichManagerQueueBatch(orgId, rows, 10); }
   catch (err) { console.warn("⚠️ [MANAGER] queue enrichment skipped:", err); }
   const scoped = filterQueueToManagerScope(rows, scope);

@@ -32,6 +32,7 @@ Deno.test("REQ-048: shows the reviewer who failed each question, the judge's cal
   assertContains(html, "900200");
   assertContains(html, "2 waiting");
   assertContains(html, 'href="/judge/overturn-review?findingId=fid-2"');
+  assertContains(html, "fid-2 ·");
 });
 
 Deno.test("REQ-047: a mixed appeal's upheld questions show as context with no team call to make", () => {

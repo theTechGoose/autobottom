@@ -61,7 +61,7 @@ export function OverturnReviewPanel({ item, remaining, enabled, waiting, isAdmin
               href={`/judge/overturn-review?findingId=${encodeURIComponent(w.findingId)}`}
               class={`ovr-chip${w.findingId === item?.findingId ? " active" : ""}`}
             >
-              {w.findingId.slice(0, 8)} · {fmt(w.heldAt)}
+              {w.findingId} · {fmt(w.heldAt)}
             </a>
           ))}
         </div>

@@ -237,7 +237,7 @@ async function computeManagerQueueView(req: Request): Promise<
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   const {
-    getManagerQueue, enrichManagerQueueBatch, dropResolvedQueueItems,
+    getManagerQueue, enrichManagerQueueBatch, dropResolvedQueueItems, withoutHidden,
   } = await import("@manager/domain/data/manager-repository/mod.ts");
 
   // Bounded lazy enrichment (10 findings/call) so legacy items converge —
@@ -277,7 +277,7 @@ async function computeManagerQueueView(req: Request): Promise<
   // their stats count the whole org — so this one genuinely needs every row,
   // and it is also the only path that can still reach a row missing its
   // department stamp (the narrowed query above can't match one) to enrich it.
-  const allItems = await getManagerQueue(auth.orgId);
+  const allItems = await withoutHidden(auth.orgId, await getManagerQueue(auth.orgId));
   await enrich(allItems);
   await drainResolved(allItems);
   return { allItems, scopedItems: [], orgWide: true };

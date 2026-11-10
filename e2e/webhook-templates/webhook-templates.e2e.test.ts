@@ -55,7 +55,8 @@ Deno.test("REQ-031: the webhook config picks a package template, and a package d
     // The tab's saved values load after its label renders — wait for them
     // instead of reading the select the instant the label appears.
     await page.waitForFunction(
-      (id: string) => (document.querySelector("select[name=packageEmailTemplateId]") as HTMLSelectElement | null)?.value === id,
+      // deno-lint-ignore no-explicit-any
+      (id: string) => (globalThis as any).document.querySelector("select[name=packageEmailTemplateId]")?.value === id,
       partner.id,
       { timeout: 5000 },
     ).catch(() => {});

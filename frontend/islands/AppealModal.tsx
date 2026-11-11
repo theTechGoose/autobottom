@@ -360,7 +360,11 @@ export default function AppealModal(props: Props) {
           <>
             <button type="button" class="appeal-btn appeal-btn--genie" onClick={() => open("genie")}>Add Genie</button>
             <button type="button" class="appeal-btn appeal-btn--upload" onClick={() => open("upload")}>Direct Upload</button>
-            <button type="button" class="appeal-btn appeal-btn--decision" onClick={() => open("appeal")}>Appeal Decision</button>
+            {/* Nothing failed to appeal (an Invalid Genie audit has no questions):
+                the judge has nothing to decide, and file-appeal refuses it (REQ-046). */}
+            {failedQuestions.length > 0 && (
+              <button type="button" class="appeal-btn appeal-btn--decision" onClick={() => open("appeal")}>Appeal Decision</button>
+            )}
           </>
         )}
       </div>

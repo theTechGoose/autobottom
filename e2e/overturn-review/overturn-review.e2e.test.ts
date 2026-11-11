@@ -136,8 +136,8 @@ Deno.test("REQ-049: a judge reverses an overturn only with a note; the last call
 
     await modal.locator("textarea").fill("Guest only said they were thinking about one");
     await modal.getByRole("button", { name: "Submit & Reverse" }).click();
-    await page.getByText(`Appeal ${id} is final`).waitFor();
-    expect(true, "the banner says the appeal is final");
+    await page.locator("#ovr-toast .toast").getByText(`Appeal ${id} is final`).waitFor();
+    expect.eq(await page.locator("#ovr-panel").getByText(`Appeal ${id} is final`).count(), 0, "the confirmation is a toast, not in the info panel");
 
     const appeal = await getAppeal(ORG, id);
     expect.eq(appeal?.status, "complete", "the appeal closed");
@@ -154,7 +154,8 @@ Deno.test("REQ-049 AMENDMENT: Keep Overturn makes the overturn final", (t) =>
     await page.goto(`/judge/overturn-review?findingId=${id}`);
 
     await page.locator("#ovr-panel .verdict-footer").getByRole("button", { name: "Keep Overturn" }).click();
-    await page.getByText(`Appeal ${id} is final`).waitFor();
+    await page.locator("#ovr-toast .toast").getByText(`Appeal ${id} is final`).waitFor();
+    expect.eq(await page.locator("#ovr-panel").getByText(`Appeal ${id} is final`).count(), 0, "the confirmation is a toast, not in the info panel");
     expect.eq((await getAppeal(ORG, id))?.overturnedCount, 1, "the overturn stands");
   }));
 

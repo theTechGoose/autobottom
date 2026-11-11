@@ -20,8 +20,6 @@ interface Props {
   questionIndex?: number;
   /** A refused call, shown above the question. */
   error?: string;
-  /** Set after the team's last call closed an appeal. */
-  finalizedId?: string;
 }
 
 const fmt = (ms?: number) =>
@@ -30,7 +28,7 @@ const fmt = (ms?: number) =>
 const panelHref = (findingId: string, q?: number) =>
   `/api/judge/overturn-review/show?findingId=${encodeURIComponent(findingId)}${q === undefined ? "" : `&q=${q}`}`;
 
-export function OverturnReviewPanel({ item, remaining, enabled, waiting, questionIndex, error, finalizedId }: Props) {
+export function OverturnReviewPanel({ item, remaining, enabled, waiting, questionIndex, error }: Props) {
   const banners = (
     <>
       {!enabled && (
@@ -38,7 +36,6 @@ export function OverturnReviewPanel({ item, remaining, enabled, waiting, questio
           Overturn Review is off — a judge's overturn closes the appeal and emails right away. Appeals already here still wait for a call.
         </div>
       )}
-      {finalizedId && <div class="ovr-banner ok">Appeal {finalizedId} is final — the appeal result email has been sent.</div>}
       {error && <div class="ovr-banner err">{error}</div>}
     </>
   );
@@ -246,7 +243,6 @@ export function OverturnReviewPanel({ item, remaining, enabled, waiting, questio
 const CSS = `
 .ovr-banner { padding:8px 12px; border-radius:6px; font-size:12px; margin:8px 0; }
 .ovr-banner.warn { background:var(--yellow-bg); color:var(--yellow); }
-.ovr-banner.ok { background:var(--green-bg); color:var(--green); }
 .ovr-banner.err { background:var(--red-bg); color:var(--red); }
 .ovr-pill-tag { margin-left:auto; font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:1px 6px; border-radius:4px; }
 .ovr-pill-tag.overturn { color:#14b8a6; background:rgba(20,184,166,0.12); }

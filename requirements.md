@@ -781,3 +781,18 @@ The Overturn Review panel shows no verdict badge above the question.
 Tests: `frontend/tests/components/overturn-review-panel.test.tsx` — "REQ-048
 AMENDMENT 3: …" (unit). Integration and e2e n/a — layout only; the panel's e2e
 stories still drive the page.
+
+## REQ-049 AMENDMENT 2 — The appeal-sent confirmation is a bottom-right toast
+
+> "the confirmation for the appeal we just sent out shouldn't exist on this page
+> at all? ... have a pop up in the bottom right corner about it, not on the
+> actual info panel"
+
+When the team's last call closes an appeal, "Appeal <id> is final — appeal
+result email sent." pops up as a toast in the bottom-right corner and fades
+after a few seconds. The info panel never shows it.
+
+Tests: `frontend/tests/components/overturn-review-panel.test.tsx` — "REQ-049
+AMENDMENT 2: …" (unit); `e2e/overturn-review/overturn-review.e2e.test.ts` —
+"REQ-049: …" and "REQ-049 AMENDMENT: …" assert the toast and its absence from
+the panel (e2e). Integration n/a — no backend change.

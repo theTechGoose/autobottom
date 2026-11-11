@@ -5,7 +5,7 @@ import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import TranscriptInteractive from "../../islands/TranscriptInteractive.tsx";
 import OverturnReverseModal from "../../islands/OverturnReverseModal.tsx";
-import { canReviewOverturns, loadOverturnReview, OverturnReviewColumns } from "../../lib/overturn-review.tsx";
+import { canReviewOverturns, loadOverturnReview, OverturnReviewColumns, OverturnReviewToastSlot } from "../../lib/overturn-review.tsx";
 import { roleRedirect } from "../../lib/auth.ts";
 
 export default define.page(async function OverturnReview(ctx) {
@@ -23,6 +23,7 @@ export default define.page(async function OverturnReview(ctx) {
       <div class="queue-layout" id="ovr-content" data-mode="judge">
         <OverturnReviewColumns data={data} />
       </div>
+      <OverturnReviewToastSlot />
     </Layout>
   );
 });

@@ -4,6 +4,7 @@ import { assertEquals } from "@std/assert";
 import { renderHTML, assertContains, assertNotContains } from "../helpers/render.ts";
 import { OverturnReviewPanel, type OverturnReviewItem } from "../../components/OverturnReviewPanel.tsx";
 import { OverturnReviewSwitch } from "../../routes/api/admin/modal/maintenance/overturn-review.tsx";
+import { OverturnReviewColumns } from "../../lib/overturn-review.tsx";
 
 /** As the backend sends it: overturned questions first, then upheld. */
 const item: OverturnReviewItem = {
@@ -113,4 +114,16 @@ Deno.test("REQ-048 AMENDMENT 3: no Bot No / Judge Overturned badge", () => {
     assertNotContains(html, "JUDGE OVERTURNED");
     assertNotContains(html, "JUDGE UPHELD");
   }
+});
+
+Deno.test("REQ-049 AMENDMENT 2: the appeal-sent confirmation is a bottom-right toast, never in the info panel", () => {
+  const data = { item, remaining: 1, enabled: true, waiting };
+  const html = renderHTML(<OverturnReviewColumns data={data} finalizedId="fid-0" />);
+  const panel = html.slice(html.indexOf('id="ovr-panel"'), html.indexOf('class="queue-right"'));
+  assertNotContains(panel, "fid-0");
+  const toast = html.slice(html.indexOf('id="ovr-toast"'));
+  assertContains(toast, 'hx-swap-oob="true"');
+  assertContains(toast, "toast");
+  assertContains(toast, "fid-0");
+  assertNotContains(renderHTML(<OverturnReviewColumns data={data} />), "fid-0 ");
 });

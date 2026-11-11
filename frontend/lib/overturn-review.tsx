@@ -27,18 +27,35 @@ export async function loadOverturnReview(req: Request, findingId?: string): Prom
 }
 
 /** The inside of #ovr-content: the verdict panel left, the transcript right —
- *  the same split as the review and judge queues. */
+ *  the same split as the review and judge queues. After the team's last call
+ *  closes an appeal, the confirmation goes out-of-band into the page's
+ *  bottom-right toast slot (#ovr-toast), never into the info panel. */
 export function OverturnReviewColumns(
   { data, questionIndex, error, finalizedId }: { data: OverturnReviewData; questionIndex?: number; error?: string; finalizedId?: string },
 ) {
   return (
     <>
       <div class="queue-left">
-        <OverturnReviewPanel {...data} questionIndex={questionIndex} error={error} finalizedId={finalizedId} />
+        <OverturnReviewPanel {...data} questionIndex={questionIndex} error={error} />
       </div>
       <div class="queue-right">
         <TranscriptPanel transcript={data.item?.transcript ?? null} />
       </div>
+      {finalizedId && (
+        <div id="ovr-toast" hx-swap-oob="true">
+          <div class="toast toast-success ovr-toast">Appeal {finalizedId} is final — appeal result email sent.</div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** The page's empty toast slot, outside #ovr-content. */
+export function OverturnReviewToastSlot() {
+  return (
+    <>
+      <div id="ovr-toast"></div>
+      <style>{`.ovr-toast{animation:toastIn .2s ease, ovrToastOut .3s ease 5s forwards}@keyframes ovrToastOut{to{opacity:0;visibility:hidden}}`}</style>
     </>
   );
 }

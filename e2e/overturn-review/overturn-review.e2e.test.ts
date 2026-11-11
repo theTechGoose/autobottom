@@ -114,6 +114,10 @@ Deno.test("REQ-048 AMENDMENT: overturned questions sit at the top, and the judge
     expect.eq(names[0], "Correct Dates", "the overturned question is first even though it is Q2");
     expect.eq(await page.getByText("Bot error").count(), 0, "no judge reason anywhere");
     expect(await page.locator(".verdict-question-header").getByText("Correct Dates").isVisible(), "and it is the question shown");
+
+    await page.locator("#ovr-panel .failed-q-pill").nth(1).locator("button").click();
+    await page.locator(".verdict-question-header", { hasText: "TimeShare Owner" }).waitFor();
+    expect(await page.locator("#ovr-panel .verdict-footer").getByText("Upheld by the judge").isVisible(), "picking the upheld question shows it, with no call to make");
   }));
 
 Deno.test("REQ-049: a judge reverses an overturn only with a note; the last call makes the appeal final", (t) =>

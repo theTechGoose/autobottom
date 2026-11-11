@@ -90,10 +90,6 @@ async function decisionsFor(orgId: OrgId, findingId: string): Promise<JudgeDecis
   return rows.filter((d): d is JudgeDecision => d !== null);
 }
 
-export async function isHeldForOverturnReview(orgId: OrgId, findingId: string): Promise<boolean> {
-  return (await getStored<OverturnReviewRow>(ROW, orgId, findingId)) !== null;
-}
-
 /** Called when a judge decides the last question of an appeal. Holds the
  *  appeal when the judge overturned anything and the queue is on; otherwise
  *  closes it as it always has. Returns which way it went. */

@@ -8,7 +8,7 @@ import { define } from "../../../../lib/define.ts";
 import { renderToString } from "preact-render-to-string";
 import type { VNode } from "preact";
 
-type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp" | "manager-queue" | "transcript-repair" | "genie-retry";
+type TabKey = "backfill" | "wire" | "dedupe" | "purge" | "flip" | "cleanup" | "counts" | "qfailures" | "parallelism" | "index-tests" | "migration" | "reset-xp" | "manager-queue" | "transcript-repair" | "genie-retry" | "overturn-review";
 
 const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "backfill", label: "Backfill Scores" },
@@ -26,6 +26,7 @@ const TABS: Array<{ key: TabKey; label: string; danger?: boolean }> = [
   { key: "migration", label: "Migration" },
   { key: "reset-xp", label: "Reset XP", danger: true },
   { key: "manager-queue", label: "Manager Queue", danger: true },
+  { key: "overturn-review", label: "Overturn Review" },
 ];
 
 export const handler = define.handlers({
@@ -61,6 +62,7 @@ export const handler = define.handlers({
           {active === "migration" && <MigrationPanel />}
           {active === "reset-xp" && <ResetXpPanel />}
           {active === "manager-queue" && <ManagerQueuePanel />}
+          {active === "overturn-review" && <OverturnReviewPanel />}
         </div>
 
         <div id="maint-msg" style="margin-top:12px;"></div>
@@ -177,6 +179,23 @@ function BackfillPanel() {
         </div>
       </PanelCard>
     </div>
+  );
+}
+
+// ── Overturn Review tab (REQ-051) ────────────────────────────────────────────
+// The on/off switch for the Overturn Review queue. Its state lives on the
+// backend, so the panel loads the switch from its own route.
+
+function OverturnReviewPanel() {
+  return (
+    <PanelCard
+      title="Overturn Review"
+      subtitle="When on, an appeal a judge overturned anything on waits on the Overturn Review page for the team's call before it is final and the appeal result email goes out. When off, overturns close the appeal and email right away."
+    >
+      <div hx-get="/api/admin/modal/maintenance/overturn-review" hx-trigger="load" hx-swap="outerHTML">
+        <span style="font-size:11px;color:var(--text-dim);">Loading…</span>
+      </div>
+    </PanelCard>
   );
 }
 

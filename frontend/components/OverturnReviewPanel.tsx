@@ -70,6 +70,12 @@ export function OverturnReviewPanel({ item, remaining, enabled, waiting, questio
   return (
     <div class="verdict-panel" id="ovr-panel">
       <div class="verdict-scroll">
+        <div class="verdict-header">
+          <span class="verdict-remaining">
+            <span class="verdict-remaining-count">{remaining}</span> {remaining === 1 ? "appeal" : "appeals"} waiting for the team
+          </span>
+        </div>
+
         <div class="verdict-audit-header">
           <div class="verdict-audit-row">
             <span class="verdict-audit-label">Guest</span>
@@ -87,12 +93,6 @@ export function OverturnReviewPanel({ item, remaining, enabled, waiting, questio
             <span class={`verdict-type-pill ${isPackage ? "pkg" : "intl"}`}>{isPackage ? "PARTNER" : "INTERNAL"}</span>
             <span class="verdict-failed-count">{overturns.length} OVERTURNED</span>
           </div>
-        </div>
-
-        <div class="verdict-header">
-          <span class="verdict-remaining">
-            <span class="verdict-remaining-count">{remaining}</span> {remaining === 1 ? "appeal" : "appeals"} waiting for the team
-          </span>
         </div>
 
         {banners}

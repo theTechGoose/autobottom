@@ -99,3 +99,10 @@ Deno.test("REQ-051 AMENDMENT: the Data Maintenance switch shows the state and th
   assertContains(on, 'hx-post="/api/admin/modal/maintenance/overturn-review"');
   assertContains(renderHTML(<OverturnReviewSwitch enabled={false} waiting={1} />), "Turn on");
 });
+
+Deno.test("REQ-048 AMENDMENT 2: the waiting count sits above the record info", () => {
+  const html = render();
+  const count = html.indexOf("appeals waiting");
+  const record = html.indexOf("verdict-audit-header");
+  assertEquals(count > -1 && count < record, true, "count before the Guest / TM / Record block");
+});

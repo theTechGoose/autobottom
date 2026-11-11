@@ -760,3 +760,14 @@ switch (it still shows a notice while the queue is off).
 
 Tests: `frontend/tests/components/overturn-review-panel.test.tsx`,
 `e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-051 AMENDMENT: …".
+
+## REQ-048 AMENDMENT 2 — The waiting count sits above the record info
+
+> "move the total count to somewhere above the record info?"
+
+On the Overturn Review page, "N appeals waiting for the team" is the first line
+of the panel, above the Guest / TM / Record block.
+
+Tests: `frontend/tests/components/overturn-review-panel.test.tsx` — "REQ-048
+AMENDMENT 2: …" (unit). Integration and e2e n/a — layout only, no data or flow
+change; the panel's e2e stories still drive the page.

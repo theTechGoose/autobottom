@@ -771,3 +771,13 @@ of the panel, above the Guest / TM / Record block.
 Tests: `frontend/tests/components/overturn-review-panel.test.tsx` — "REQ-048
 AMENDMENT 2: …" (unit). Integration and e2e n/a — layout only, no data or flow
 change; the panel's e2e stories still drive the page.
+
+## REQ-048 AMENDMENT 3 — No "Bot No · Judge Overturned" badge
+
+> "we do not need to know this info at all" (the BOT NO · JUDGE OVERTURNED badge)
+
+The Overturn Review panel shows no verdict badge above the question.
+
+Tests: `frontend/tests/components/overturn-review-panel.test.tsx` — "REQ-048
+AMENDMENT 3: …" (unit). Integration and e2e n/a — layout only; the panel's e2e
+stories still drive the page.

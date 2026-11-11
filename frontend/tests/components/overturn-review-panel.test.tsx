@@ -106,3 +106,11 @@ Deno.test("REQ-048 AMENDMENT 2: the waiting count sits above the record info", (
   const record = html.indexOf("verdict-audit-header");
   assertEquals(count > -1 && count < record, true, "count before the Guest / TM / Record block");
 });
+
+Deno.test("REQ-048 AMENDMENT 3: no Bot No / Judge Overturned badge", () => {
+  for (const html of [render(), render({ questionIndex: 1 })]) {
+    assertNotContains(html, "verdict-badge");
+    assertNotContains(html, "JUDGE OVERTURNED");
+    assertNotContains(html, "JUDGE UPHELD");
+  }
+});

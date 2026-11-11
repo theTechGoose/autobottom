@@ -104,10 +104,6 @@ export function OverturnReviewPanel({ item, remaining, enabled, waiting, questio
           </div>
         )}
 
-        <div class={`verdict-badge ${q.decision === "overturn" ? "badge-yes" : "badge-no"}`}>
-          {q.decision === "overturn" ? "BOT NO · JUDGE OVERTURNED" : "BOT NO · JUDGE UPHELD"}
-        </div>
-
         <div class="verdict-question">
           <div class="verdict-section-label">Question</div>
           <div class="verdict-question-header">{questionLabel({ header: q.header })}</div>

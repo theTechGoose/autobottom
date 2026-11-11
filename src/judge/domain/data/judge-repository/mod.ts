@@ -179,9 +179,12 @@ export async function recordJudgeDecision(
   // Fire on the TRANSITION to zero only. `counter > 0` is what stops a stray
   // decision recorded after the audit already completed from re-running the
   // post-judge write + re-sending the appeal-result email.
+  // Any overturn holds the whole appeal for the team's Overturn Review
+  // (REQ-047) instead of closing it; an all-uphold appeal closes as before.
   if (counter > 0 && newCount === 0) {
-    postJudgedAudit(orgId, findingId, judge).catch((err) =>
-      console.error(`[JUDGE] ${findingId}: postJudgedAudit failed:`, err));
+    import("@judge/domain/business/overturn-review/mod.ts")
+      .then(({ finishJudgedAppeal }) => finishJudgedAppeal(orgId, findingId, judge))
+      .catch((err) => console.error(`[JUDGE] ${findingId}: finishing the appeal failed:`, err));
   }
 
   // Judge gamification — fire-and-forget. Same pattern as reviewer/manager

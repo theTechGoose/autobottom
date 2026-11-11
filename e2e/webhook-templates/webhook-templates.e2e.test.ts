@@ -52,6 +52,14 @@ Deno.test("REQ-031: the webhook config picks a package template, and a package d
     // Reopening the tab shows what was saved.
     await modal.getByRole("button", { name: "Audit Complete" }).click();
     await modal.getByText("Package Email Template").waitFor();
+    // The tab's saved values load after its label renders — wait for them
+    // instead of reading the select the instant the label appears.
+    await page.waitForFunction(
+      // deno-lint-ignore no-explicit-any
+      (id: string) => (globalThis as any).document.querySelector("select[name=packageEmailTemplateId]")?.value === id,
+      partner.id,
+      { timeout: 5000 },
+    ).catch(() => {});
     expect(await modal.locator("select[name=packageEmailTemplateId]").inputValue() === partner.id, "the saved package template is selected on reopen");
     // Stamp a closing frame on the picker itself, showing the saved package template.
     await modal.getByText("Package Email Template").click();

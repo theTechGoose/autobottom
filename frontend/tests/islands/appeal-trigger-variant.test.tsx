@@ -82,3 +82,14 @@ Deno.test("REQ-021: each appeal button carries its own colour class", () => {
     assert(html.includes(cls), `${cls} must be on its button`);
   }
 });
+
+Deno.test("REQ-046: no failed questions to appeal → no Appeal Decision button, the other two stay", () => {
+  const html = renderHTML(<AppealModal {...ARGS} failedQuestions={[]} />);
+  assert(!html.includes(">Appeal Decision<"), "nothing to appeal, so no Appeal Decision");
+  assert(html.includes(">Add Genie<") && html.includes(">Direct Upload<"), "the re-audit paths stay");
+});
+
+Deno.test("REQ-046: with a failed question all three buttons show", () => {
+  const html = renderHTML(<AppealModal {...ARGS} />);
+  for (const l of LABELS) assert(html.includes(l), `${l} must show`);
+});

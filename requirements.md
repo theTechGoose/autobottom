@@ -663,3 +663,17 @@ Tests: `src/manager/domain/data/manager-repository/int.test.ts` — "REQ-045: �
 (integration); `e2e/manager-hidden/manager-hidden.e2e.test.ts` — "REQ-045: …"
 (e2e). Unit n/a — the filter is a read over stored rows; there is no pure
 function worth testing apart from it.
+## REQ-046 — No Appeal Decision button when there is nothing to appeal
+
+> "why are we still displaying 'appeal decision' on invalid genie audits?" —
+> "lets do that." (hide Appeal Decision when the audit has no failed questions)
+
+An audit with no failed questions to appeal (an Invalid Genie audit has no
+questions at all) shows only Add Genie and Direct Upload — on the audit report,
+the manager remediation topbar and the VO audit page, which all use the same
+buttons. The server already refuses such an appeal (file-appeal: "Invalid Genie
+audits can only be re-audited, not appealed").
+
+Tests: `frontend/tests/islands/appeal-trigger-variant.test.tsx` — "REQ-046: …"
+(unit); `e2e/appeal-modals/appeal-modals.e2e.test.ts` — "REQ-046: …" (e2e).
+Integration n/a — no server behaviour changes.

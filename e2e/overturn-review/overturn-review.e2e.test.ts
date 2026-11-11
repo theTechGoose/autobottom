@@ -158,7 +158,12 @@ Deno.test("REQ-049 AMENDMENT: Keep Overturn makes the overturn final", (t) =>
     await page.goto(`/judge/overturn-review?findingId=${id}`);
 
     await page.locator("#ovr-panel .verdict-footer").getByRole("button", { name: "Keep Overturn" }).click();
-    await page.locator("#ovr-toast .toast").getByText(`Appeal ${id} is final`).waitFor();
+    const toast = page.locator("#ovr-toast .toast");
+    await toast.getByText(`Appeal ${id} is final`).waitFor();
+    await toast.hover(); // a frame with the toast on screen
+    const box = await toast.boundingBox();
+    const vp = page.viewportSize();
+    expect(!!box && !!vp && box.x + box.width > vp.width * 0.75 && box.y + box.height > vp.height * 0.75, "the confirmation pops up in the bottom-right corner");
     expect.eq(await page.locator("#ovr-panel").getByText(`Appeal ${id} is final`).count(), 0, "the confirmation is a toast, not in the info panel");
     expect.eq((await getAppeal(ORG, id))?.overturnedCount, 1, "the overturn stands");
   }));

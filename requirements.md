@@ -929,3 +929,16 @@ listed worst-first and each carries its color from the department's gradient.
 
 Tests: `frontend/tests/routes/api/manager-queue.test.tsx` — "REQ-056 …"
 (unit); `e2e/question-order/question-order.e2e.test.ts` — "REQ-056 …" (e2e).
+
+## REQ-056 AMENDMENT — Questions match by their display label too
+
+Queue rows carry each failed question's display label (`MCC Egregious` for
+`MCC Not Egregious?`, `Pet Policy` for `No Pets`, … — see
+`src/core/business/question-labels/mod.ts`), so the ranking and the colors
+match a question by its header or its label, and the Configure list shows the
+labels, with the full question on hover.
+
+Tests: `frontend/tests/lib/question-order.test.ts` — "REQ-054: a queue row
+that carries a question's display label …", "REQ-056: labels sort …", "REQ-056:
+a label's position …" (unit); `e2e/question-order/question-order.e2e.test.ts` —
+"REQ-056: …" and "REQ-053: …" (e2e).

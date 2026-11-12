@@ -10,6 +10,7 @@
  *  who changed it last, because managers sharing a department share it. */
 import { useRef, useState } from "preact/hooks";
 import { severityColor } from "@core/business/question-order/mod.ts";
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 interface Props {
   department: string;
@@ -125,14 +126,15 @@ export default function QuestionOrderEditor(props: Props) {
             }}
           >
             <span class="qo-arrows">
-              <button type="button" class="qo-up" aria-label={`Move ${q} up`} disabled={i === 0}
+              <button type="button" class="qo-up" aria-label={`Move ${shortQuestionLabel(q)} up`} disabled={i === 0}
                 onClick={() => save(move(order, i, i - 1))}>▲</button>
-              <button type="button" class="qo-down" aria-label={`Move ${q} down`} disabled={i === n - 1}
+              <button type="button" class="qo-down" aria-label={`Move ${shortQuestionLabel(q)} down`} disabled={i === n - 1}
                 onClick={() => save(move(order, i, i + 1))}>▼</button>
             </span>
             <span class="qo-rank">{i + 1}</span>
             <span class="qo-swatch"></span>
-            <span class="qo-name">{q}</span>
+            {/* The name people see everywhere else; the full question on hover. */}
+            <span class="qo-name" title={q}>{shortQuestionLabel(q)}</span>
           </li>
         ))}
       </ol>

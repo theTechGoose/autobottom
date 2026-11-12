@@ -5,7 +5,10 @@
  *  queue rows by their worst failed question. Shared by the backend (which
  *  stores one list per department) and the frontend (which sorts and colors).
  *
- *  Questions are matched by their header text, exactly. */
+ *  The list stores question HEADERS (their identity). Queue rows carry each
+ *  failed question's display LABEL ("MCC Egregious" for "MCC Not Egregious?",
+ *  see question-labels), so a question matches by either. */
+import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 /** Position 0 is the worst. */
 export const DEFAULT_QUESTION_ORDER: readonly string[] = [
@@ -74,18 +77,36 @@ export function severityColor(index: number, n: number): string {
   return "#" + [0, 1, 2].map((k) => hex2(a[k] + (b[k] - a[k]) * f)).join("");
 }
 
-/** Position of each failed question on `order`, worst first. A question the
- *  list doesn't know ranks just below the list. */
+/** Header and display label → position on `order`. */
+function positions(order: readonly string[]): Map<string, number> {
+  const pos = new Map<string, number>();
+  order.forEach((q, i) => {
+    if (!pos.has(q)) pos.set(q, i);
+    const label = shortQuestionLabel(q);
+    if (!pos.has(label)) pos.set(label, i);
+  });
+  return pos;
+}
+
+const lookup = (pos: Map<string, number>, q: string, n: number) => pos.get(String(q ?? "").trim()) ?? n;
+
+/** Where a question (by header or label) sits on `order`; a question the list
+ *  doesn't know sits just below it. */
+export function questionPosition(question: string, order: readonly string[]): number {
+  return lookup(positions(order), question, order.length);
+}
+
+/** Position of each failed question on `order`, worst first. */
 function ranks(failed: readonly string[] | undefined, order: readonly string[]): number[] {
-  const pos = new Map(order.map((q, i) => [q, i]));
-  return (failed ?? []).map((q) => pos.get(q) ?? order.length).sort((a, b) => a - b);
+  const pos = positions(order);
+  return (failed ?? []).map((q) => lookup(pos, q, order.length)).sort((a, b) => a - b);
 }
 
 /** A row's failed questions, worst first; unknown ones keep their order at the end. */
 export function sortFailsBySeverity(failed: readonly string[], order: readonly string[]): string[] {
-  const pos = new Map(order.map((q, i) => [q, i]));
+  const pos = positions(order);
   return failed
-    .map((q, i) => ({ q, i, r: pos.get(q) ?? order.length }))
+    .map((q, i) => ({ q, i, r: lookup(pos, q, order.length) }))
     .sort((a, b) => a.r - b.r || a.i - b.i)
     .map((x) => x.q);
 }

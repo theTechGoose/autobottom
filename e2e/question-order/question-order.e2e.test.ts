@@ -63,7 +63,9 @@ async function signIn(page: any, email: string, landing: string): Promise<void> 
 // deno-lint-ignore no-explicit-any
 const boxes = (page: any) => page.locator(".qo-item");
 // deno-lint-ignore no-explicit-any
-const names = async (page: any): Promise<string[]> => await page.locator(".qo-item .qo-name").allInnerTexts();
+const names = async (page: any): Promise<string[]> =>
+  // deno-lint-ignore no-explicit-any
+  await page.locator(".qo-item").evaluateAll((els: any[]) => els.map((e) => e.getAttribute("data-question") ?? ""));
 // deno-lint-ignore no-explicit-any
 const queueIds = async (page: any): Promise<string[]> =>
   await page.locator("#manager-queue-table tr[data-finding-id]").evaluateAll(
@@ -98,6 +100,7 @@ Deno.test("REQ-053: a manager opens Configure, drags a question up the red-to-gr
     await boxes(page).first().waitFor();
     eq(expect, await names(page), [...DEFAULT_QUESTION_ORDER], "all 25 questions, in the default order");
     eq(expect, await boxes(page).first().getAttribute("data-color"), severityColor(0, N), "top is dark red");
+    eq(expect, await page.locator(".qo-item[data-question='MCC Not Egregious?'] .qo-name").innerText(), "MCC Egregious", "boxes show the names used across the app");
     eq(expect, await boxes(page).nth(8).getAttribute("data-color"), severityColor(8, N), "orange a third of the way");
     eq(expect, await boxes(page).nth(16).getAttribute("data-color"), severityColor(16, N), "yellow two thirds of the way");
     eq(expect, await boxes(page).last().getAttribute("data-color"), severityColor(N - 1, N), "bottom is green");
@@ -207,12 +210,13 @@ Deno.test("REQ-055: the list is the department's — a second manager and the VO
 Deno.test("REQ-056: a queue row's failed questions show worst-first in their severity colors", (t) =>
   story(t, async ({ page, expect }) => {
     const dept = `VBA AM ${tag()}`;
-    const id = await failedAudit(dept, "Dana Lee", ["Guest Name", "Income"], 1);
+    const id = await failedAudit(dept, "Dana Lee", ["Guest Name", "No Pets", "Income"], 1);
     const mgr = await login("manager", [dept]);
     await signIn(page, mgr, "/manager");
 
     const fails = page.locator(`#manager-queue-table tr[data-finding-id="${id}"] .sev-fail`);
-    eq(expect, await fails.allInnerTexts(), ["Income", "Guest Name"], "worst first");
+    // The row shows two; "No Pets" is stored on the row as its label "Pet Policy".
+    eq(expect, await fails.allInnerTexts(), ["Income", "Pet Policy"], "worst first, labels matched to their questions");
     eq(expect, await fails.first().getAttribute("data-sev-color"), severityColor(0, N), "Income in dark red");
-    eq(expect, await fails.last().getAttribute("data-sev-color"), severityColor(N - 1, N), "Guest Name in green");
+    eq(expect, await fails.last().getAttribute("data-sev-color"), severityColor(DEFAULT_QUESTION_ORDER.indexOf("No Pets"), N), "Pet Policy in No Pets' color");
   }));

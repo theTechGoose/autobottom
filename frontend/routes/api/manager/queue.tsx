@@ -10,7 +10,7 @@ import type { JSX } from "preact";
 import { emailOpenedCell } from "./audit-history.tsx";
 import type { TmReview } from "@core/business/tm-review/mod.ts";
 import {
-  compareBySeverity, DEFAULT_QUESTION_ORDER, severityColor, sortFailsBySeverity,
+  compareBySeverity, DEFAULT_QUESTION_ORDER, questionPosition, severityColor, sortFailsBySeverity,
 } from "@core/business/question-order/mod.ts";
 
 /** Each department's question order, keyed by department name (REQ-055) — what
@@ -25,12 +25,11 @@ const orderOf = (orders: QuestionOrders | undefined, it: { department?: string }
  *  department's gradient (REQ-056). `max` caps how many lines show; the rest
  *  collapse to "+N more". */
 export function renderSeverityFails(fails: string[], order: readonly string[], max: number): JSX.Element {
-  const pos = new Map(order.map((q, i) => [q, i]));
   const sorted = sortFailsBySeverity(fails, order);
   return (
     <>
       {sorted.slice(0, max).map((q) => {
-        const color = severityColor(pos.get(q) ?? order.length, order.length);
+        const color = severityColor(questionPosition(q, order), order.length);
         return (
           <div class="sev-fail" data-sev-color={color} style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
             <span class="sev-dot" style={`background:${color};`}></span>{q}

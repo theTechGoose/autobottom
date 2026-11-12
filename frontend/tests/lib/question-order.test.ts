@@ -3,7 +3,7 @@
  *  how a queue ranks audits by their worst failed question. */
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import {
-  compareBySeverity, DEFAULT_QUESTION_ORDER, effectiveOrder, severityColor, sortFailsBySeverity,
+  compareBySeverity, DEFAULT_QUESTION_ORDER, effectiveOrder, questionPosition, severityColor, sortFailsBySeverity,
 } from "@core/business/question-order/mod.ts";
 
 Deno.test("REQ-053: the default order is the 25 agreed questions, Income worst and Guest Name last", () => {
@@ -111,4 +111,22 @@ Deno.test("REQ-055: each audit is ranked by its own department's list", () => {
 
 Deno.test("REQ-056: a row's failed questions list worst-first", () => {
   assertEquals(sortFailsBySeverity(["Guest Name", "Mystery", "Income", "Taxes"], ORDER), ["Income", "Taxes", "Guest Name", "Mystery"]);
+});
+
+Deno.test("REQ-054: a queue row that carries a question's display label ranks as that question", () => {
+  // Queue rows store labels ("MCC Egregious", "Pet Policy"), the list stores headers.
+  const order = [...DEFAULT_QUESTION_ORDER];
+  const rows = [item(["Pet Policy"], 3), item(["MCC Egregious"], 1), item(["Guest Name"], 2)];
+  rows.sort(compareBySeverity(() => order));
+  assertEquals(rows.map((r) => r.failedQuestions[0]), ["MCC Egregious", "Pet Policy", "Guest Name"]);
+});
+
+Deno.test("REQ-056: labels sort worst-first like their headers do", () => {
+  assertEquals(sortFailsBySeverity(["Conf Email", "Income", "WGS Disclosure"], DEFAULT_QUESTION_ORDER), ["Income", "WGS Disclosure", "Conf Email"]);
+});
+
+Deno.test("REQ-056: a label's position on the list is its header's", () => {
+  assertEquals(questionPosition("MCC Egregious", DEFAULT_QUESTION_ORDER), 2);
+  assertEquals(questionPosition("MCC Not Egregious?", DEFAULT_QUESTION_ORDER), 2);
+  assertEquals(questionPosition("Mystery", DEFAULT_QUESTION_ORDER), DEFAULT_QUESTION_ORDER.length);
 });

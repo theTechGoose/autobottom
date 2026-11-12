@@ -9,6 +9,7 @@ import { getFinding, saveFinding, saveTranscript } from "@audit/domain/data/audi
 import { getAppeal, recordJudgeDecision, saveAppeal } from "@judge/domain/data/judge-repository/mod.ts";
 import { getStored, setStored } from "@core/data/firestore/mod.ts";
 import { setOverturnReviewEnabled } from "@judge/domain/business/overturn-review/mod.ts";
+import { S3Ref } from "@core/data/s3/mod.ts";
 
 const ORG = Deno.env.get("DEFAULT_ORG_ID") as unknown as Parameters<typeof saveFinding>[0];
 const PASS = "e2e-pass-123";
@@ -202,4 +203,77 @@ Deno.test("REQ-051 AMENDMENT: the on/off switch lives in Data Maintenance, not o
     } finally {
       await setOverturnReviewEnabled(ORG, true);
     }
+  }));
+
+/** A 3-second 440 Hz mono WAV — a real clip for the player to decode, draw and play. */
+function toneWav(seconds = 3, rate = 8000): Uint8Array {
+  const n = seconds * rate;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o: number, s: string) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 8000), true);
+  return new Uint8Array(buf);
+}
+
+/** Puts a recording in the emulator's S3 and points the finding at it, so the
+ *  real /audit/recording endpoint serves it. */
+async function withRecording(id: string): Promise<void> {
+  const key = `e2e/recordings/${id}.wav`;
+  await new S3Ref(Deno.env.get("S3_BUCKET")!, key).save(toneWav());
+  const f = await getFinding(ORG, id);
+  await saveFinding(ORG, { ...f, recordingPath: key } as unknown as Parameters<typeof saveFinding>[1]);
+}
+
+Deno.test("REQ-052: the Overturn Review queue has the same audio player as every other queue, playing the appeal on screen", (t) =>
+  story(t, async ({ page, expect }) => {
+    const judge = await login("judge");
+    const id = await judgedAppeal(judge);
+    await withRecording(id);
+    await signIn(page, judge, "/judge");
+    await page.goto(`/judge/overturn-review?findingId=${id}`);
+
+    const bar = page.locator(".bottom-bar");
+    await bar.waitFor();
+    expect(await bar.locator(".bb-waveform").isVisible(), "the queue's waveform scrubber");
+    expect(await bar.getByRole("button", { name: "⏮ 5s" }).isVisible(), "the back-5s button");
+    expect(await bar.getByRole("button", { name: "5s ⏭" }).isVisible(), "the forward-5s button");
+    const src = await page.locator(".bottom-bar audio").getAttribute("src");
+    expect.eq(src, `/audit/recording?id=${encodeURIComponent(id)}&idx=0`, "it loads the recording of the appeal on screen");
+
+    await bar.locator(".bb-play").click();
+    await page.waitForFunction(`(() => { const a = document.querySelector(".bottom-bar audio"); return !!a && !a.paused && a.currentTime > 0; })()`);
+    expect(true, "Play plays it");
+
+    await page.keyboard.press("p");
+    await page.waitForFunction(`document.querySelector(".bottom-bar audio")?.paused === true`);
+    expect(true, "the queue's P hotkey pauses it");
+    await page.keyboard.press("ArrowUp");
+    await bar.locator(".bb-speed").getByText("1.5×").waitFor();
+    expect(true, "the queue's ↑ hotkey speeds it up");
+    await bar.locator(".bb-time").hover(); // a frame: paused partway through, at 1.5×
+  }));
+
+Deno.test("REQ-052: when the queue moves to the next appeal, the player loads that appeal's recording", (t) =>
+  story(t, async ({ page, expect }) => {
+    const judge = await login("judge");
+    await withRecording(await judgedAppeal(judge)); // another appeal waiting, for the queue to move on to
+    const id = await judgedAppeal(judge);
+    await withRecording(id);
+    await signIn(page, judge, "/judge");
+    await page.goto(`/judge/overturn-review?findingId=${id}`);
+    await page.locator(".bottom-bar").waitFor();
+    expect.eq(await page.locator(".bottom-bar audio").getAttribute("src"), `/audit/recording?id=${encodeURIComponent(id)}&idx=0`, "first appeal's recording");
+
+    await page.locator("#ovr-panel .verdict-footer").getByRole("button", { name: "Keep Overturn" }).click();
+    await page.locator("#ovr-toast .toast").getByText(`Appeal ${id} is final`).waitFor();
+    const next = await page.locator("#hx-findingId").inputValue();
+    expect(next !== id, "the queue moved on to another appeal");
+    const want = `/audit/recording?id=${encodeURIComponent(next)}&idx=0`;
+    await page.waitForFunction(`document.querySelector(".bottom-bar audio")?.getAttribute("src") === ${JSON.stringify(want)}`);
+    expect(true, "the player switched to the next appeal's recording");
+    await page.locator(".bottom-bar .bb-play").hover(); // a frame: the next appeal, its recording loaded
   }));

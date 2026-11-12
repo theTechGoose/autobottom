@@ -15,6 +15,10 @@ interface Props {
   mode: "review" | "judge";
   email: string;
   initialFindingId: string | null;
+  /** The id of the element the queue's HTMX swaps land in. After a swap there
+   *  the bar loads the finding in #hx-findingId. The review and judge queues
+   *  swap into #queue-content; Overturn Review swaps into #ovr-content. */
+  swapTarget?: string;
 }
 
 interface GameState {
@@ -52,7 +56,7 @@ function xpForLevel(level: number): number {
   return 100 * (level + 1);
 }
 
-export default function BottomBar({ mode, email, initialFindingId }: Props) {
+export default function BottomBar({ mode, email, initialFindingId, swapTarget = "queue-content" }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const timeRef = useRef<HTMLSpanElement>(null);
@@ -281,7 +285,7 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
     };
     const onHtmxSwap = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail?.target?.id !== "queue-content") return;
+      if (detail?.target?.id !== swapTarget) return;
       const fidInput = document.getElementById("hx-findingId") as HTMLInputElement | null;
       const nextFid = fidInput?.value || null;
       if (nextFid) loadFinding(nextFid);
@@ -357,7 +361,7 @@ export default function BottomBar({ mode, email, initialFindingId }: Props) {
       if (skipDecayTimer != null) clearTimeout(skipDecayTimer);
       if (skipHideTimer != null) clearTimeout(skipHideTimer);
     };
-  }, [initialFindingId, mode]);
+  }, [initialFindingId, mode, swapTarget]);
 
   // Gamification derived
   const level = game.level ?? 1;

@@ -827,3 +827,21 @@ Tests: `frontend/tests/components/overturn-review-panel.test.tsx` — "REQ-049
 AMENDMENT 2: …" (unit); `e2e/overturn-review/overturn-review.e2e.test.ts` —
 "REQ-049: …" and "REQ-049 AMENDMENT: …" assert the toast and its absence from
 the panel (e2e). Integration n/a — no backend change.
+
+## REQ-052 — The Overturn Review queue has the audio player every queue has
+
+> "Why is there not an audio player on it?"
+> "put the fucking audio player that is available on every fucking queue onto
+> this queue"
+
+The Overturn Review page carries the same bottom-bar audio player as the review
+and judge queues: play/pause, ±5s skip, waveform scrubbing, speed, REC tabs for
+multi-recording calls, and the queue's audio hotkeys (Space/P, ←/→, ↑/↓). It
+plays the recording of the appeal on screen and switches to the next appeal's
+recording when the queue moves on. The bar's decision hotkeys are not bound on
+this page.
+
+Tests: `frontend/tests/components/overturn-review-panel.test.tsx` — "REQ-052: …"
+(unit); `e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-052: …" (e2e).
+Integration n/a — no backend change; the page reads the existing
+`/audit/recording` endpoint.

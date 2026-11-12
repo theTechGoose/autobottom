@@ -66,6 +66,8 @@ export function OverturnReviewPanel({ item, remaining, enabled, waiting, questio
 
   return (
     <div class="verdict-panel" id="ovr-panel">
+      {/* Read by the bottom-bar audio player after each swap (REQ-052). */}
+      <input type="hidden" id="hx-findingId" value={item.findingId} />
       <div class="verdict-scroll">
         <div class="verdict-header">
           <span class="verdict-remaining">

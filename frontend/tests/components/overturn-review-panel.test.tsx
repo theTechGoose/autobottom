@@ -4,7 +4,7 @@ import { assertEquals } from "@std/assert";
 import { renderHTML, assertContains, assertNotContains } from "../helpers/render.ts";
 import { OverturnReviewPanel, type OverturnReviewItem } from "../../components/OverturnReviewPanel.tsx";
 import { OverturnReviewSwitch } from "../../routes/api/admin/modal/maintenance/overturn-review.tsx";
-import { OverturnReviewColumns } from "../../lib/overturn-review.tsx";
+import { OverturnReviewColumns, OverturnReviewView } from "../../lib/overturn-review.tsx";
 
 /** As the backend sends it: overturned questions first, then upheld. */
 const item: OverturnReviewItem = {
@@ -126,4 +126,17 @@ Deno.test("REQ-049 AMENDMENT 2: the appeal-sent confirmation is a bottom-right t
   assertContains(toast, "toast");
   assertContains(toast, "fid-0");
   assertNotContains(renderHTML(<OverturnReviewColumns data={data} />), "fid-0 ");
+});
+
+Deno.test("REQ-052: the Overturn Review page mounts the queue's bottom-bar audio player and its audio hotkeys", () => {
+  const html = renderHTML(
+    <OverturnReviewView data={{ item, remaining: 2, enabled: true, waiting }} email="judge@x.com" />,
+  );
+  assertContains(html, 'class="bottom-bar"');
+  assertContains(html, "bb-play");
+  assertContains(html, "bb-waveform");
+  assertContains(html, 'data-hotkeys="audio"');
+  assertNotContains(html, 'data-hotkeys="judge"');
+  // The bar reads the appeal on screen from #hx-findingId after every swap.
+  assertContains(html, 'id="hx-findingId" value="fid-1"');
 });

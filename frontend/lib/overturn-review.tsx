@@ -3,6 +3,10 @@
 import { apiFetch } from "./api.ts";
 import { OverturnReviewPanel, type OverturnReviewItem, type OverturnReviewWaiting } from "../components/OverturnReviewPanel.tsx";
 import { TranscriptPanel } from "../components/TranscriptPanel.tsx";
+import TranscriptInteractive from "../islands/TranscriptInteractive.tsx";
+import OverturnReverseModal from "../islands/OverturnReverseModal.tsx";
+import HotkeyHandler from "../islands/HotkeyHandler.tsx";
+import BottomBar from "../islands/BottomBar.tsx";
 import type { User } from "./auth.ts";
 
 export interface OverturnReviewData {
@@ -24,6 +28,24 @@ export async function loadOverturnReview(req: Request, findingId?: string): Prom
     console.error("Failed to load overturn review:", e);
     return { item: null, remaining: 0, enabled: true, waiting: [] };
   }
+}
+
+/** The whole Overturn Review page body: the two columns in #ovr-content, the
+ *  toast slot, and the bottom-bar audio player every queue has (REQ-052) —
+ *  audio hotkeys only; the judge queue's decision keys don't apply here. */
+export function OverturnReviewView({ data, email }: { data: OverturnReviewData; email: string }) {
+  return (
+    <>
+      <HotkeyHandler mode="audio" />
+      <TranscriptInteractive />
+      <OverturnReverseModal />
+      <div class="queue-layout" id="ovr-content" data-mode="judge">
+        <OverturnReviewColumns data={data} />
+      </div>
+      <OverturnReviewToastSlot />
+      <BottomBar mode="judge" email={email} initialFindingId={data.item?.findingId ?? null} swapTarget="ovr-content" />
+    </>
+  );
 }
 
 /** The inside of #ovr-content: the verdict panel left, the transcript right —

@@ -955,3 +955,26 @@ card included. Letting go saves the order.
 Tests: `e2e/question-order/question-order.e2e.test.ts` — "REQ-053 AMENDMENT: …"
 (e2e). Unit/integration n/a — drag behavior in the browser only; the saved
 order's storage is covered by REQ-053's integration tests.
+
+## REQ-053 AMENDMENT 2 — Save button, "most severe" wording, ask before leaving unsaved
+
+> "I change the order and it says it saved, then I go to the queue, and the MCC
+> disclosed question failing audit should now be at the top but it isn't. I
+> think it would be better if we force a user to hit 'save' on the config."
+> "change the wording to 'top is the most severe'" "if someone tries to click
+> off the config without saving, a modal pops asking."
+
+Dragging, the arrows and Reset to default only change the list on screen; the
+order is kept only when the manager clicks Save (this replaces REQ-053
+AMENDMENT's save-on-drop). The page reads "Top is the most severe" and names
+the department being edited. Clicking a link off the page with unsaved changes
+opens a modal — Save and leave / Leave without saving / Stay; closing or
+reloading the tab gets the browser's own warning.
+
+(The reported queue miss: the save had gone to VBA AM — the first of the demo
+login's two departments, which the page opened on — while the audit was in VBA
+PM. Naming the department being edited addresses that.)
+
+Tests: `e2e/question-order/question-order.e2e.test.ts` — "REQ-053 AMENDMENT 2:
+…" (e2e). Unit/integration n/a — browser behavior only; the saved order's
+storage is covered by REQ-053's integration tests.

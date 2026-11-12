@@ -1,16 +1,20 @@
 /** QuestionOrderEditor — the Configure tab's "worst fails" list (REQ-053/055).
  *
- *  One box per question, top = worst. A box is dragged up or down, or moved one
- *  step with its ↑/↓ arrows (keyboard and trackpad users). While a box is
- *  carried the list re-sorts live — the other boxes slide out of its way and
- *  its slot follows the cursor — and letting go saves (REQ-053 AMENDMENT). Each box takes its
+ *  One box per question, top = most severe. A box is dragged up or down, or
+ *  moved one step with its ↑/↓ arrows (keyboard and trackpad users). While a
+ *  box is carried the list re-sorts live — the other boxes slide out of its way
+ *  and its slot follows the cursor (REQ-053 AMENDMENT). Each box takes its
  *  color from its POSITION on the dark red → orange → yellow → green gradient,
- *  so moving a question recolors it. Every move saves the department's list
- *  straight away; "Reset to default" puts back the default order.
+ *  so moving a question recolors it.
+ *
+ *  Nothing is kept until Save (REQ-053 AMENDMENT 2): moves and "Reset to
+ *  default" only change the list on screen. Leaving by a link with unsaved
+ *  changes opens a modal (Save and leave / Leave without saving / Stay);
+ *  closing or reloading the tab gets the browser's own warning.
  *
  *  The list belongs to the department, not to this manager — the footer says
  *  who changed it last, because managers sharing a department share it. */
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { severityColor } from "@core/business/question-order/mod.ts";
 import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
@@ -25,6 +29,8 @@ interface Props {
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
+
+const same = (a: string[], b: string[]) => a.length === b.length && a.every((q, i) => q === b[i]);
 
 const fmtWhen = (ms?: number) =>
   ms
@@ -42,7 +48,13 @@ function move<T>(list: T[], from: number, to: number): T[] {
 
 export default function QuestionOrderEditor(props: Props) {
   const [order, setOrder] = useState<string[]>(props.order);
+  // The order as last saved — what "unsaved changes" is measured against.
+  const [saved, setSaved] = useState<string[]>(props.order);
   const [state, setState] = useState<SaveState>("idle");
+  const dirty = !same(order, saved);
+  // Where a link click was headed when the leave modal stopped it.
+  const [leavingTo, setLeavingTo] = useState<string | null>(null);
+  const leaving = useRef(false);
   const [changed, setChanged] = useState<{ by?: string; at?: number }>({ by: props.updatedBy, at: props.updatedAt });
   // The question being carried, and the order when it was picked up.
   const [dragging, setDragging] = useState<string | null>(null);
@@ -85,14 +97,47 @@ export default function QuestionOrderEditor(props: Props) {
   }
 
   function endDrag() {
-    const before = startOrder.current;
     startOrder.current = null;
     setDragging(null);
-    if (before && before.join("\n") !== order.join("\n")) save(order);
   }
 
-  async function save(next: string[]) {
+  /** Any change on screen drops the last "Saved" note — it no longer applies. */
+  function change(next: string[]) {
     setOrder(next);
+    if (state !== "saving") setState("idle");
+  }
+
+  // Ask before leaving with unsaved changes: links get the modal, closing or
+  // reloading the tab gets the browser's own prompt.
+  useEffect(() => {
+    if (!dirty) return;
+    const onClick = (e: MouseEvent) => {
+      if (leaving.current || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a || a.target === "_blank" || a.closest("#qo-leave-modal")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setLeavingTo(a.href);
+    };
+    const onUnload = (e: BeforeUnloadEvent) => {
+      if (leaving.current) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    document.addEventListener("click", onClick, true);
+    globalThis.addEventListener("beforeunload", onUnload);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      globalThis.removeEventListener("beforeunload", onUnload);
+    };
+  }, [dirty]);
+
+  function leave(href: string) {
+    leaving.current = true;
+    location.href = href;
+  }
+
+  async function save(next: string[]): Promise<boolean> {
     setState("saving");
     try {
       const qs = props.asEmail ? `?as=${encodeURIComponent(props.asEmail)}` : "";
@@ -102,14 +147,19 @@ export default function QuestionOrderEditor(props: Props) {
         body: JSON.stringify({ dept: props.department, order: next }),
       });
       if (!res.ok) throw new Error(String(res.status));
-      const saved = await res.json() as { order: string[]; updatedBy?: string; updatedAt?: number };
-      setOrder(saved.order);
-      setChanged({ by: saved.updatedBy, at: saved.updatedAt });
+      const body = await res.json() as { order: string[]; updatedBy?: string; updatedAt?: number };
+      setOrder(body.order);
+      setSaved(body.order);
+      setChanged({ by: body.updatedBy, at: body.updatedAt });
       setState("saved");
+      return true;
     } catch {
       setState("error");
+      return false;
     }
   }
+
+  const status = state === "saving" || state === "error" ? state : dirty ? "dirty" : state;
 
   const n = order.length;
   return (
@@ -129,19 +179,28 @@ export default function QuestionOrderEditor(props: Props) {
           color:var(--text-muted, #666); }
         .qo-arrows button:disabled { opacity:.25; cursor:default; }
         .qo-bar { display:flex; align-items:center; gap:12px; margin:0 0 12px; flex-wrap:wrap; font-size:12px; color:var(--text-muted); }
+        .qo-status[data-state="dirty"] { color:var(--yellow, #e0b400); font-weight:600; }
+        .qo-status[data-state="saved"] { color:var(--green, #2b8a3e); font-weight:600; }
       `}</style>
 
       <div class="qo-bar">
-        <span>Drag a question, or use its arrows. Top is the worst.</span>
+        <span>Drag a question, or use its arrows. Top is the most severe.</span>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm qo-save"
+          disabled={!dirty || state === "saving"}
+          onClick={() => save(order)}
+        >Save</button>
         <button
           type="button"
           class="btn btn-ghost btn-sm qo-reset"
-          onClick={() => save([...props.defaultOrder])}
+          onClick={() => change([...props.defaultOrder])}
         >Reset to default</button>
-        <span class="qo-status" data-state={state}>
-          {state === "saving" && "Saving…"}
-          {state === "saved" && "Saved"}
-          {state === "error" && <span style="color:var(--red);">Couldn't save — try again</span>}
+        <span class="qo-status" data-state={status}>
+          {status === "dirty" && "Unsaved changes"}
+          {status === "saving" && "Saving…"}
+          {status === "saved" && "Saved"}
+          {status === "error" && <span style="color:var(--red);">Couldn't save — try again</span>}
         </span>
       </div>
 
@@ -157,6 +216,7 @@ export default function QuestionOrderEditor(props: Props) {
             draggable
             onDragStart={(e) => {
               startOrder.current = order;
+              if (state !== "saving") setState("idle");
               setDragging(q);
               e.dataTransfer?.setData("text/plain", q);
               if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
@@ -167,9 +227,9 @@ export default function QuestionOrderEditor(props: Props) {
           >
             <span class="qo-arrows">
               <button type="button" class="qo-up" aria-label={`Move ${shortQuestionLabel(q)} up`} disabled={i === 0}
-                onClick={() => save(move(order, i, i - 1))}>▲</button>
+                onClick={() => change(move(order, i, i - 1))}>▲</button>
               <button type="button" class="qo-down" aria-label={`Move ${shortQuestionLabel(q)} down`} disabled={i === n - 1}
-                onClick={() => save(move(order, i, i + 1))}>▼</button>
+                onClick={() => change(move(order, i, i + 1))}>▼</button>
             </span>
             <span class="qo-rank">{i + 1}</span>
             <span class="qo-swatch"></span>
@@ -184,6 +244,30 @@ export default function QuestionOrderEditor(props: Props) {
           ? <>Last changed by <strong>{changed.by}</strong> on {fmtWhen(changed.at)}</>
           : "Using the default order — nobody has changed it yet."}
       </p>
+
+      {/* Leaving with unsaved changes (REQ-053 AMENDMENT 2). */}
+      <div id="qo-leave-modal" class={`modal-overlay${leavingTo ? " open" : ""}`} role="dialog" aria-modal="true">
+        <div class="modal" style="width:min(460px,92vw);">
+          <div class="modal-title">Save your changes?</div>
+          <div class="modal-sub" style="margin-bottom:14px;">
+            You changed the question order for {props.department} but haven't saved it.
+          </div>
+          {state === "error" && <div style="color:var(--red);font-size:12px;margin-bottom:10px;">Couldn't save — try again.</div>}
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost qo-leave-stay" onClick={() => setLeavingTo(null)}>Stay</button>
+            <button type="button" class="btn btn-ghost qo-leave-discard" onClick={() => leavingTo && leave(leavingTo)}>Leave without saving</button>
+            <button
+              type="button"
+              class="btn btn-primary qo-leave-save"
+              disabled={state === "saving"}
+              onClick={async () => {
+                const to = leavingTo;
+                if (to && await save(order)) leave(to);
+              }}
+            >Save and leave</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

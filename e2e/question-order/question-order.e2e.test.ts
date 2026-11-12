@@ -77,6 +77,13 @@ const queueIds = async (page: any): Promise<string[]> =>
 // deno-lint-ignore no-explicit-any
 const eq = (expect: any, got: unknown, want: unknown, msg: string) => expect.eq(JSON.stringify(got), JSON.stringify(want), msg);
 
+/** Click Save and wait for the server to confirm it (REQ-053 AMENDMENT 2). */
+// deno-lint-ignore no-explicit-any
+async function saveList(page: any): Promise<void> {
+  await page.click(".qo-save");
+  await page.locator(".qo-status[data-state='saved']").waitFor();
+}
+
 /** Wait until the queue's top row is `id` (after an htmx refresh). */
 // deno-lint-ignore no-explicit-any
 async function firstRowIs(page: any, id: string): Promise<void> {
@@ -107,14 +114,13 @@ Deno.test("REQ-053: a manager opens Configure, drags a question up the red-to-gr
 
     // Drag Taxes (#14) onto the top box.
     await page.dragAndDrop(".qo-item[data-question='Taxes']", ".qo-item[data-question='Income']");
-    await page.locator(".qo-status[data-state='saved']").waitFor();
     eq(expect, (await names(page))[0], "Taxes", "dragged to the top");
     eq(expect, await page.locator(".qo-item[data-question='Taxes']").getAttribute("data-color"), severityColor(0, N), "and it turns dark red");
 
     // The arrows move a box one step.
     await page.click(".qo-item[data-question='Guest Name'] .qo-up");
-    await page.locator(".qo-status[data-state='saved']").waitFor();
     eq(expect, (await names(page)).slice(-2), ["Guest Name", "Phone Number"], "the up arrow moved Guest Name one step");
+    await saveList(page);
 
     await page.reload();
     await boxes(page).first().waitFor();
@@ -122,11 +128,14 @@ Deno.test("REQ-053: a manager opens Configure, drags a question up the red-to-gr
     expect((await page.locator(".qo-changed").innerText()).includes(mgr), "it says who changed it last");
 
     await page.click(".qo-reset");
-    await page.locator(".qo-status[data-state='saved']").waitFor();
     eq(expect, await names(page), [...DEFAULT_QUESTION_ORDER], "Reset to default puts the default back");
+    await saveList(page);
+    await page.reload();
+    await boxes(page).first().waitFor();
+    eq(expect, await names(page), [...DEFAULT_QUESTION_ORDER], "and Save keeps the default");
   }));
 
-Deno.test("REQ-053 AMENDMENT: while dragging, the cards move out of the way — the top card included — and the drop saves", (t) =>
+Deno.test("REQ-053 AMENDMENT: while dragging, the cards move out of the way — the top card included — and Save keeps where it was dropped", (t) =>
   story(t, async ({ page, expect }) => {
     const dept = `VBA PM ${tag()}`;
     const mgr = await login("manager", [dept]);
@@ -157,12 +166,65 @@ Deno.test("REQ-053 AMENDMENT: while dragging, the cards move out of the way — 
     await page.locator(".qo-item.qo-dragging").hover();
     await page.mouse.up();
 
-    await page.locator(".qo-status[data-state='saved']").waitFor();
     const after = await names(page);
+    await saveList(page);
     expect(after.indexOf("Income") >= 2, "dropped where the cursor left it");
     await page.reload();
     await boxes(page).first().waitFor();
     eq(expect, await names(page), after, "and that order was saved");
+  }));
+
+Deno.test("REQ-053 AMENDMENT 2: nothing is kept until Save; leaving with unsaved changes asks first, and a saved list reorders the queue", (t) =>
+  story(t, async ({ page, expect }) => {
+    const dept = `VBA PM ${tag()}`;
+    const income = await failedAudit(dept, "Sam Ortiz", ["Income"], 1);
+    const mccDisclosed = await failedAudit(dept, "Dana Lee", ["MCC Recurring Charges Disclosed?"], 5);
+    const mgr = await login("manager", [dept]);
+    await page.setViewportSize({ width: 1400, height: 1700 });
+    await signIn(page, mgr, "/manager");
+    eq(expect, (await queueIds(page)).slice(0, 2), [income, mccDisclosed], "default list: Income outranks MCC Disclosed");
+
+    await page.goto("/manager/configure");
+    await boxes(page).first().waitFor();
+    expect((await page.locator(".qo-bar").innerText()).includes("Top is the most severe"), "the wording says top is the most severe");
+    expect((await page.locator(".qo-editing").innerText()).includes(dept), "the page names the department being edited");
+    expect(await page.locator(".qo-save").isDisabled(), "Save is off until something changes");
+
+    // Move MCC Disclosed above Income, but don't save.
+    await page.click(".qo-item[data-question='MCC Recurring Charges Disclosed?'] .qo-up");
+    await page.locator(".qo-status[data-state='dirty']").waitFor();
+    eq(expect, (await names(page))[0], "MCC Recurring Charges Disclosed?", "moved on screen");
+
+    // Clicking off asks first. Stay keeps the change on screen.
+    await page.click("a[href='/manager']");
+    await page.locator("#qo-leave-modal.open").waitFor();
+    // Frame the dialog once its fade-in has settled (hover waits for it to stop moving).
+    await page.locator("#qo-leave-modal .modal-title").hover();
+    expect((await page.locator("#qo-leave-modal .modal-title").innerText()).includes("Save your changes?"), "the modal asks");
+    await page.click("#qo-leave-modal .qo-leave-stay");
+    expect(page.url().includes("/manager/configure"), "Stay keeps you on Configure");
+    eq(expect, (await names(page))[0], "MCC Recurring Charges Disclosed?", "with your change still there");
+
+    // Leave without saving throws it away.
+    await page.click("a[href='/manager']");
+    await page.locator("#qo-leave-modal.open").waitFor();
+    await page.click("#qo-leave-modal .qo-leave-discard");
+    await page.waitForURL("**/manager");
+    eq(expect, (await queueIds(page)).slice(0, 2), [income, mccDisclosed], "nothing was saved, so the queue is unchanged");
+    await page.goto("/manager/configure");
+    await boxes(page).first().waitFor();
+    eq(expect, (await names(page))[0], "Income", "and Configure still shows the saved order");
+
+    // Save and leave keeps it, and the queue follows.
+    await page.click(".qo-item[data-question='MCC Recurring Charges Disclosed?'] .qo-up");
+    await page.click("a[href='/manager']");
+    await page.locator("#qo-leave-modal.open").waitFor();
+    // dispatchEvent, not click: this button saves and THEN navigates, and the
+    // automatic after-click frame would be taken while the page unloads.
+    await page.locator("#qo-leave-modal .qo-leave-save").dispatchEvent("click");
+    await page.waitForURL("**/manager");
+    await page.locator("#manager-queue-table").hover();
+    eq(expect, (await queueIds(page)).slice(0, 2), [mccDisclosed, income], "saved: the MCC Disclosed failure is now on top");
   }));
 
 Deno.test("REQ-054: the queue lists the worst failed question first; unchecking orders by most recent; the Sort dropdown releases the box", (t) =>
@@ -213,7 +275,7 @@ Deno.test("REQ-055: the list is the department's — a second manager and the VO
     await page.click(`.qo-depts a:text-is("${dept}")`);
     await page.waitForURL(`**dept=${encodeURIComponent(dept).replace(/%20/g, "+")}*`);
     await page.dragAndDrop(".qo-item[data-question='Age']", ".qo-item[data-question='Income']");
-    await page.locator(".qo-status[data-state='saved']").waitFor();
+    await saveList(page);
     eq(expect, (await names(page))[0], "Age", `${dept} now ranks Age worst`);
     await page.click(`.qo-depts a:text-is("${otherDept}")`);
     await boxes(page).first().waitFor();

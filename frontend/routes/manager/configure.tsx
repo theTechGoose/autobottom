@@ -45,7 +45,7 @@ export default define.page(async function ManagerConfigurePage(ctx) {
     <Layout title="Configure" section="manager" user={user} gameState={ctx.state.gameState} pathname={url.pathname}>
       <div class="page-header">
         <h1>Configure question order</h1>
-        <p class="page-sub">Your queue lists audits with the worst failed questions first. Top of this list is the worst.</p>
+        <p class="page-sub">Your queue lists audits with the most severe failed questions first. Top of this list is the most severe.</p>
       </div>
 
       <div class="card" style="padding:14px 18px;">
@@ -61,13 +61,15 @@ export default define.page(async function ManagerConfigurePage(ctx) {
                     <a
                       key={d}
                       href={deptHref(d)}
-                      class={`btn btn-sm ${d === data!.department ? "" : "btn-ghost"}`}
+                      class={`btn btn-sm ${d === data!.department ? "btn-primary" : "btn-ghost"}`}
                       aria-current={d === data!.department ? "page" : undefined}
                     >{d}</a>
                   ))}
                 </div>
               )}
-              <div class="tbl-title" style="margin-bottom:10px;">{data.department}</div>
+              <div class="qo-editing" style="margin-bottom:10px;font-size:14px;">
+                Editing the order for <strong>{data.department}</strong>
+              </div>
               <QuestionOrderEditor
                 key={data.department}
                 department={data.department}

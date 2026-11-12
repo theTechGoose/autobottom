@@ -942,3 +942,16 @@ Tests: `frontend/tests/lib/question-order.test.ts` — "REQ-054: a queue row
 that carries a question's display label …", "REQ-056: labels sort …", "REQ-056:
 a label's position …" (unit); `e2e/question-order/question-order.e2e.test.ts` —
 "REQ-056: …" and "REQ-053: …" (e2e).
+
+## REQ-053 AMENDMENT — Cards move while you drag
+
+> "when dragging, can't the top one move? … I have income dragged, but nothing
+> is moving, just the line. Can we have the cards actually move."
+
+While a question is being dragged the list re-sorts live: the other cards
+slide out of the way and the carried card's slot follows the cursor, the top
+card included. Letting go saves the order.
+
+Tests: `e2e/question-order/question-order.e2e.test.ts` — "REQ-053 AMENDMENT: …"
+(e2e). Unit/integration n/a — drag behavior in the browser only; the saved
+order's storage is covered by REQ-053's integration tests.

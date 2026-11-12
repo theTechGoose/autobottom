@@ -126,6 +126,45 @@ Deno.test("REQ-053: a manager opens Configure, drags a question up the red-to-gr
     eq(expect, await names(page), [...DEFAULT_QUESTION_ORDER], "Reset to default puts the default back");
   }));
 
+Deno.test("REQ-053 AMENDMENT: while dragging, the cards move out of the way — the top card included — and the drop saves", (t) =>
+  story(t, async ({ page, expect }) => {
+    const dept = `VBA PM ${tag()}`;
+    const mgr = await login("manager", [dept]);
+    await page.setViewportSize({ width: 1400, height: 1700 });
+    await signIn(page, mgr, "/manager");
+    await page.goto("/manager/configure");
+    await boxes(page).first().waitFor();
+
+    // Pick up the TOP card (Income) and carry it down over the 4th card, without letting go.
+    const center = async (sel: string) => {
+      const b = await page.locator(sel).boundingBox();
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    };
+    const from = await center(".qo-item[data-question='Income']");
+    const over = await center(".qo-item[data-question='Married/Cohab Qualifier Question']");
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x, from.y + 20, { steps: 4 });
+    await page.mouse.move(over.x, over.y, { steps: 12 });
+    await page.waitForFunction(
+      `document.querySelectorAll(".qo-item")[0]?.getAttribute("data-question") !== "Income"`,
+    );
+    const mid = await names(page);
+    eq(expect, mid[0], "MCC Recurring Charges Disclosed?", "mid-drag, the card below Income has moved up into its slot");
+    expect(mid.indexOf("Income") >= 2, `mid-drag, Income's slot has moved down with the cursor (at ${mid.indexOf("Income")})`);
+    expect(await page.locator(".qo-item.qo-dragging[data-question='Income']").count() === 1, "the carried card is marked as the one moving");
+    // Frame the list mid-drag: hovering the carried card keeps the cursor where it is.
+    await page.locator(".qo-item.qo-dragging").hover();
+    await page.mouse.up();
+
+    await page.locator(".qo-status[data-state='saved']").waitFor();
+    const after = await names(page);
+    expect(after.indexOf("Income") >= 2, "dropped where the cursor left it");
+    await page.reload();
+    await boxes(page).first().waitFor();
+    eq(expect, await names(page), after, "and that order was saved");
+  }));
+
 Deno.test("REQ-054: the queue lists the worst failed question first; unchecking orders by most recent; the Sort dropdown releases the box", (t) =>
   story(t, async ({ page, expect }) => {
     const dept = `VBA PM ${tag()}`;

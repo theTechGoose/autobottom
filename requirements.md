@@ -845,3 +845,87 @@ Tests: `frontend/tests/components/overturn-review-panel.test.tsx` — "REQ-052: 
 (unit); `e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-052: …" (e2e).
 Integration n/a — no backend change; the page reads the existing
 `/audit/recording` endpoint.
+
+## REQ-053 — Managers configure their "worst fails" question order on a Configure tab
+
+> "for the manager view, I want them to configure their own list of 'worst
+> fails'." "I want the manager to have a 'configure' tab that lets them drag
+> each question on the list." "Where the top of the list is the worst one.
+> They can click and drag the question object box and move it up and down in
+> the interactive list" "I want a gradient that runs for all 25 internal audit
+> questions from dark red to orange to yellow to green" "Don't change anything
+> other than adding this configure tab and how its behavior lists the
+> remediation items."
+
+The manager sidebar gains a Configure tab (`/manager/configure`) with a
+"Configure question order" list of all 25 internal audit questions. Each
+question is a box that can be dragged up or down, or moved with its ↑/↓
+arrows; the top is the worst. Boxes are colored by position on one gradient —
+dark red at the top, then orange, yellow, green at the bottom. The order saves
+when a box is dropped; "Reset to default" restores the default order.
+Questions are matched by name; one the list doesn't know yet sits at the
+bottom.
+
+Default order (1 = worst): Income; MCC Recurring Charges Disclosed?; MCC Not
+Egregious?; Married/Cohab Qualifier Question; Single Qualifier Question;
+Understand Reschedule Process; Major CC; US or Canadian Citizen?; Age;
+Attending Presentation Together?; Matching IDs; Active Bankruptcy; 9% Service
+Fee; Taxes; TimeShare Owner; No Group Travel; Preview 15 Months; # in Room;
+Correct Location; Correct Days & Nights; No Pets; Credit Card Number is Not
+Read on VO?; Confirmation Expectations; Phone Number; Guest Name.
+
+Tests: `frontend/tests/lib/question-order.test.ts` — "REQ-053 …" (unit);
+`src/manager/domain/business/question-order/int.test.ts` — "REQ-053 …" (int);
+`e2e/question-order/question-order.e2e.test.ts` — "REQ-053 …" (e2e).
+
+## REQ-054 — The remediation queue lists the worst failed questions first
+
+> "this order that they configure, by default the audits with the worst failed
+> questions go to the top" "the checkmark box for 'order by question failed'
+> is checked, when they uncheck it, it orders by most recent" "[the sort
+> dropdown] stay[s] and only applies when the box is unchecked (or if a user
+> hits the drop down and clicks something, the checkbox releases)"
+
+The Manager Portal's queue has an "Order by question failed" checkbox, checked
+by default. Checked, an audit ranks by its worst failed question on its
+department's list; ties go to the next-worst failed question, then the most
+recent audit. Unchecked, the queue orders by most recent, and the existing
+Sort dropdown applies; picking anything from the dropdown unchecks the box.
+
+Tests: `frontend/tests/lib/question-order.test.ts` — "REQ-054 …" (unit);
+`frontend/tests/routes/api/manager-queue.test.tsx` — "REQ-054 …" (unit);
+`e2e/question-order/question-order.e2e.test.ts` — "REQ-054 …" (e2e).
+
+## REQ-055 — The question order belongs to the department; VO dashboards follow it
+
+> "the VO dashboard should follow the same, however the VOs cannot make their
+> own order. Only a manager can. So a department needs to have a 'question
+> order' list or something like that on the department object itself so any
+> dashboard for that department has the ability to follow the master list
+> created by the manager."
+
+The order is stored per department, not per manager. Every audit is ranked by
+its own department's list, so a queue spanning several departments mixes
+lists correctly. A manager edits the list of any department in their scope
+(a department picker shows when they have more than one); managers sharing a
+department share its list, the last save wins, and the tab shows who changed
+it last and when. An admin can edit any department's list, and edits a
+manager's departments when viewing as that manager. The VO dashboard orders
+its To Review side the same way, with the same checkbox, but a VO login can
+never change the list.
+
+Tests: `src/manager/domain/business/question-order/int.test.ts` — "REQ-055 …"
+(int); `frontend/tests/routes/vo-dashboard.test.tsx` — "REQ-055 …" (unit);
+`e2e/question-order/question-order.e2e.test.ts` — "REQ-055 …" (e2e).
+
+## REQ-056 — Failed questions on a queue row show their severity color
+
+> (agreed in discussion: "Colors belong to the position, not the question …
+> The same colors appear on the failed-question chips in the queue, so a
+> manager can see why an audit is near the top." — "Yes")
+
+On the manager queue and the VO To Review side, a row's failed questions are
+listed worst-first and each carries its color from the department's gradient.
+
+Tests: `frontend/tests/routes/api/manager-queue.test.tsx` — "REQ-056 …"
+(unit); `e2e/question-order/question-order.e2e.test.ts` — "REQ-056 …" (e2e).

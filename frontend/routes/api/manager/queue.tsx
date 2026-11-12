@@ -9,6 +9,38 @@ import type { JSX } from "preact";
 // box means — and so the "no email sent yet" state can't drift apart.
 import { emailOpenedCell } from "./audit-history.tsx";
 import type { TmReview } from "@core/business/tm-review/mod.ts";
+import {
+  compareBySeverity, DEFAULT_QUESTION_ORDER, severityColor, sortFailsBySeverity,
+} from "@core/business/question-order/mod.ts";
+
+/** Each department's question order, keyed by department name (REQ-055) — what
+ *  the backend returns beside the queue rows as `questionOrders`. A department
+ *  missing here uses the default list. */
+export type QuestionOrders = Record<string, string[]>;
+
+const orderOf = (orders: QuestionOrders | undefined, it: { department?: string }): readonly string[] =>
+  orders?.[it.department ?? ""] ?? DEFAULT_QUESTION_ORDER;
+
+/** A row's failed questions, worst first, each with a dot in its color on the
+ *  department's gradient (REQ-056). `max` caps how many lines show; the rest
+ *  collapse to "+N more". */
+export function renderSeverityFails(fails: string[], order: readonly string[], max: number): JSX.Element {
+  const pos = new Map(order.map((q, i) => [q, i]));
+  const sorted = sortFailsBySeverity(fails, order);
+  return (
+    <>
+      {sorted.slice(0, max).map((q) => {
+        const color = severityColor(pos.get(q) ?? order.length, order.length);
+        return (
+          <div class="sev-fail" data-sev-color={color} style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            <span class="sev-dot" style={`background:${color};`}></span>{q}
+          </div>
+        );
+      })}
+      {sorted.length > max && <div style="color:var(--text-dim);">+{sorted.length - max} more</div>}
+    </>
+  );
+}
 
 /** Mirrors the backend `ManagerQueueItem` shape (manager-repository/mod.ts):
  *  the queue carries `owner` + `failedCount`/`totalQuestions`, NOT a precomputed
@@ -219,7 +251,7 @@ function tmReviewCell(item: QueueItem): JSX.Element {
  *  they pass no `compact` and still get all ten columns. */
 export function renderQueueTable(
   items: QueueItem[],
-  opts: { completed?: boolean; compact?: boolean } = {},
+  opts: { completed?: boolean; compact?: boolean; orders?: QuestionOrders } = {},
 ): JSX.Element {
   const completed = !!opts.completed;
   const compact = !!opts.compact;
@@ -271,10 +303,7 @@ export function renderQueueTable(
             ? <span style="color:var(--text-dim);font-size:11px;">—</span>
             : (
               <div style={`font-size:11px;color:var(--text-muted);max-width:${compact ? "140px" : "420px"};`}>
-                {fails.slice(0, 2).map((q) => (
-                  <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{q}</div>
-                ))}
-                {fails.length > 2 && <div style="color:var(--text-dim);">+{fails.length - 2} more</div>}
+                {renderSeverityFails(fails, orderOf(opts.orders, item), 2)}
               </div>
             );
           // WGS/MCC sale tags; dim dash for none-sold or not-yet-enriched rows.
@@ -464,6 +493,9 @@ export interface QueueFilterParams {
   wgs?: boolean;
   mcc?: boolean;
   sort?: string; // "recent" (default) | "oldest" | "failpct"
+  /** "Order by question failed" (REQ-054): rank by the worst failed question
+   *  on the department's list. When on, it overrides `sort`. */
+  byq?: boolean;
   since?: number; // window start (ms); rows are kept by queueTimestamp()
   until?: number; // window end (ms)
   /** Single-department narrowing for the Operations Portal's department rail.
@@ -478,7 +510,14 @@ export interface QueueFilterParams {
  *  page (initial render) and this fragment (filter refresh) so both parse
  *  identically. The date window defaults to the last 7 days when absent;
  *  since=0 means "all time" (the All button). */
-export function readQueueFilterParams(sp: URLSearchParams): QueueFilterParams {
+export function readQueueFilterParams(
+  sp: URLSearchParams,
+  /** What "Order by question failed" is when the request doesn't say. The
+   *  Manager Portal's first load says nothing and means ON; its form always
+   *  sends a hidden byq=0 (plus byq=1 when checked), so a fragment refresh
+   *  always says. /operations never sends it and keeps its newest-first. */
+  opts: { byqDefault?: boolean } = {},
+): QueueFilterParams {
   const now = Date.now();
   const ms = (v: string | null): number | undefined => {
     if (v == null || v === "") return undefined;
@@ -491,6 +530,7 @@ export function readQueueFilterParams(sp: URLSearchParams): QueueFilterParams {
     wgs: sp.get("wgs") === "1",
     mcc: sp.get("mcc") === "1",
     sort: sp.get("sort") ?? "recent",
+    byq: sp.has("byq") ? sp.getAll("byq").includes("1") : !!opts.byqDefault,
     since: ms(sp.get("since")) ?? (now - DEFAULT_WINDOW_DAYS * DAY_MS),
     until: ms(sp.get("until")) ?? now,
     dept: sp.get("dept") ?? "",
@@ -522,7 +562,12 @@ function failPct(it: QueueItem): number {
   return (it.failedCount ?? 0) / it.totalQuestions;
 }
 
-export function filterAndSortQueue(items: QueueItem[], params: QueueFilterParams): QueueItem[] {
+export function filterAndSortQueue(
+  items: QueueItem[],
+  params: QueueFilterParams,
+  /** Department lists for "Order by question failed" (REQ-054/055). */
+  orders: QuestionOrders = {},
+): QueueItem[] {
   const member = (params.member ?? "").trim().toLowerCase();
   const q = (params.q ?? "").trim();
   const wgs = !!params.wgs;
@@ -550,7 +595,8 @@ export function filterAndSortQueue(items: QueueItem[], params: QueueFilterParams
     return true;
   });
 
-  if (sort === "failpct") out.sort((a, b) => failPct(b) - failPct(a));
+  if (params.byq) out.sort(compareBySeverity((it) => orderOf(orders, it)));
+  else if (sort === "failpct") out.sort((a, b) => failPct(b) - failPct(a));
   else if (sort === "oldest") out.sort((a, b) => queueTimestamp(a) - queueTimestamp(b));
   else out.sort((a, b) => queueTimestamp(b) - queueTimestamp(a)); // recent (default)
   return out;
@@ -644,10 +690,44 @@ export function renderMemberButtons(
   );
 }
 
+/** The "Order by question failed" checkbox (REQ-054). A hidden byq=0 always
+ *  rides with the form so an unchecked box is a stated choice rather than
+ *  "nothing said" — see readQueueFilterParams. */
+export function renderByQuestionToggle(byq: boolean, id: string): JSX.Element {
+  return (
+    <div class="form-group" style="margin-bottom:0;">
+      <label>&nbsp;</label>
+      <label class="byq-toggle" style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;height:34px;white-space:nowrap;">
+        <input type="hidden" name="byq" value="0" />
+        <input type="checkbox" id={id} name="byq" value="1" checked={byq} /> Order by question failed
+      </label>
+    </div>
+  );
+}
+
+/** The Sort dropdown next to the checkbox. It only applies while the box is
+ *  off, so picking anything from it turns the box off (REQ-054). The handler
+ *  runs on the select before the change bubbles to the form's htmx trigger. */
+export function renderSortControls(params: QueueFilterParams, byqId: string): JSX.Element {
+  return (
+    <>
+      {renderByQuestionToggle(!!params.byq, byqId)}
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Sort</label>
+        <select name="sort" {...{ "hx-on:change": `document.getElementById('${byqId}').checked=false` }}>
+          <option value="recent" selected={params.sort === "recent"}>Newest first</option>
+          <option value="oldest" selected={params.sort === "oldest"}>Oldest first</option>
+          <option value="failpct" selected={params.sort === "failpct"}>Highest % failed</option>
+        </select>
+      </div>
+    </>
+  );
+}
+
 /** The queue table plus a small "window total" caption above it. Rendered by
  *  both the page (initial) and the fragment (filter refresh) so the count and
  *  table always swap together and agree. */
-export function renderQueueResults(rows: QueueItem[], opts: { compact?: boolean } = {}): JSX.Element {
+export function renderQueueResults(rows: QueueItem[], opts: { compact?: boolean; orders?: QuestionOrders } = {}): JSX.Element {
   return (
     <>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">
@@ -660,8 +740,8 @@ export function renderQueueResults(rows: QueueItem[], opts: { compact?: boolean 
           to fit the pane already, and an overflow container clips both axes —
           which hides the appeal-note popout that escapes the cell. */}
       {opts.compact
-        ? renderQueueTable(rows, { compact: true })
-        : <div style="overflow-x:auto;">{renderQueueTable(rows, {})}</div>}
+        ? renderQueueTable(rows, { compact: true, orders: opts.orders })
+        : <div style="overflow-x:auto;">{renderQueueTable(rows, { orders: opts.orders })}</div>}
     </>
   );
 }
@@ -743,14 +823,14 @@ export const handler = define.handlers({
       // that manager's scoped queue — same convention as audit-history.
       const asEmail = url.searchParams.get("as");
       const qs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
-      const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${qs}`, ctx.req);
+      const { items, questionOrders } = await apiFetch<{ items: QueueItem[]; questionOrders?: QuestionOrders }>(`/manager/api/queue${qs}`, ctx.req);
       // The queue side shows open work only. Anything closed out — remediated,
       // or taken off the table by an appeal — goes to the Completed side of the
       // split (below), or on /operations and the standalone /manager/completed
       // page, to their own tab.
       const pending = (items ?? []).filter(isOpenItem);
       const params = readQueueFilterParams(url.searchParams);
-      const rows = filterAndSortQueue(pending, params);
+      const rows = filterAndSortQueue(pending, params, questionOrders);
       // Manager Portal only: the two states sit side by side on one page, so a
       // filter change has to refresh BOTH. Gated on `split=1` (only that form
       // sends it) for the same reason `members=1` is — /operations posts to
@@ -769,7 +849,7 @@ export const handler = define.handlers({
       const withMembers = url.searchParams.get("members") === "1";
       const html = renderToString(
         <>
-          {renderQueueResults(rows, { compact: withSplit })}
+          {renderQueueResults(rows, { compact: withSplit, orders: questionOrders })}
           {withMembers && (
             <div id="queue-member-buttons" hx-swap-oob="true">
               {renderMemberButtons(pending, params)}

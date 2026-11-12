@@ -181,6 +181,8 @@ const MANAGER_SECTIONS: SbSection[] = [{ label: "Navigation", items: [
   { label: "Queue", icon: Icon.clipboardList, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager", badgeUrl: "/api/manager/queue-badge" },
   { label: "Completed", icon: Icon.checkCircle, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/completed" },
   { label: "Audit History", icon: Icon.barChart, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/audits" },
+  // The department's worst-fails question order (REQ-053).
+  { label: "Configure", icon: Icon.settings, color: "var(--purple-bg)", iconColor: "var(--purple)", href: "/manager/configure" },
 ]}];
 
 // Fallback nav for an operations manager on a page that doesn't supply the

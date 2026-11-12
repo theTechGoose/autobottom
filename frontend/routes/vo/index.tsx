@@ -18,6 +18,7 @@ import {
   filterVoPending, filterVoReviewed, readVoFilterParams, renderVoMemberButtons, renderVoQueueResults,
   renderVoReviewedResults, renderVoReviewModal, type VoQueueItem,
 } from "../api/vo/queue.tsx";
+import { renderByQuestionToggle, type QuestionOrders } from "../api/manager/queue.tsx";
 import { splitVoQueue } from "@core/business/tm-review/mod.ts";
 
 export default define.page(async function VoDashboard(ctx) {
@@ -47,12 +48,15 @@ export default define.page(async function VoDashboard(ctx) {
   const asEmail = url.searchParams.get("as") ?? "";
   const asQs = asEmail ? `?as=${encodeURIComponent(asEmail)}` : "";
   let items: VoQueueItem[] = [];
+  let questionOrders: QuestionOrders = {};
   try {
-    items = (await apiFetch<{ items: VoQueueItem[] }>(`/vo/api/queue${asQs}`, ctx.req)).items ?? [];
+    const res = await apiFetch<{ items: VoQueueItem[]; questionOrders?: QuestionOrders }>(`/vo/api/queue${asQs}`, ctx.req);
+    items = res.items ?? [];
+    questionOrders = res.questionOrders ?? {};
   } catch (e) { console.error("VO queue load error:", e); }
 
   const params = readVoFilterParams(url.searchParams);
-  const pendingRows = filterVoPending(items, params);
+  const pendingRows = filterVoPending(items, params, questionOrders);
   const reviewedRows = filterVoReviewed(items, params);
   const { pending, reviewed } = splitVoQueue(items);
   const appealed = reviewed.filter((i) => i.appealState && !i.tmReview).length;
@@ -107,6 +111,9 @@ export default define.page(async function VoDashboard(ctx) {
               </label>
             </div>
           </div>
+          {/* Follows the department's question order (REQ-055); only a
+              manager can change that order. */}
+          {renderByQuestionToggle(params.byq, "vo-byq")}
           {asEmail && <input type="hidden" name="as" value={asEmail} />}
         </form>
 
@@ -121,7 +128,7 @@ export default define.page(async function VoDashboard(ctx) {
               id="vo-queue-table"
               {...{ "hx-on::after-swap": "history.replaceState(null,'','/vo?'+new URLSearchParams(new FormData(document.getElementById('vo-filters'))).toString())" }}
             >
-              {renderVoQueueResults(pendingRows)}
+              {renderVoQueueResults(pendingRows, questionOrders)}
             </div>
           </section>
           <section class="rem-split-pane">

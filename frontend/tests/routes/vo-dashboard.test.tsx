@@ -81,3 +81,27 @@ Deno.test("REQ-041: nothing on the VO tables says 'agent'", () => {
     + renderHTML(renderVoReviewAction({ item: item(), findingId: "fid-1", returnTo: "/vo" }).modal);
   assert(!/agent/i.test(html), "found 'agent' in VO markup");
 });
+
+// ── The VO dashboard follows the department's question order (REQ-055/056) ───
+
+import { filterVoPending, readVoFilterParams } from "../../routes/api/vo/queue.tsx";
+import { severityColor } from "@core/business/question-order/mod.ts";
+
+Deno.test("REQ-055: the VO To Review side ranks by the department's list when the box is on (the default)", () => {
+  const p = readVoFilterParams(new URLSearchParams("since=0"));
+  assert(p.byq);
+  const rows = [
+    item({ findingId: "a", failedQuestions: ["Guest Name"], completedAt: 3 }),
+    item({ findingId: "b", failedQuestions: ["Age"], completedAt: 1 }),
+  ];
+  const out = filterVoPending(rows, p, { "VBA PM": ["Age", "Guest Name"] });
+  assert(out[0].findingId === "b", JSON.stringify(out.map((r) => r.findingId)));
+  const recent = filterVoPending(rows, readVoFilterParams(new URLSearchParams("since=0&byq=0")), { "VBA PM": ["Age", "Guest Name"] });
+  assert(recent[0].findingId === "a");
+});
+
+Deno.test("REQ-056: VO rows color their failed questions from the department's list", () => {
+  const html = renderHTML(renderVoQueueTable([item({ failedQuestions: ["Taxes", "Age"] })], { "VBA PM": ["Age", "Taxes"] }));
+  assert(html.indexOf(">Age<") < html.indexOf(">Taxes<"), html);
+  assertContains(html, severityColor(0, 2));
+});

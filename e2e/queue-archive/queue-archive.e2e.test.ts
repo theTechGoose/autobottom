@@ -2,8 +2,9 @@
  *  cutoff are off the manager queue and the VO dashboard; newer ones stay;
  *  nothing is deleted; clearing the archive brings them back.
  *
- *  The archive is org-wide and the emulator org is shared, so the cutoff here
- *  sits 30 days back — every other story's audits are minutes or hours old. */
+ *  Uses the real cutoff, Monday 2026-11-09 00:00 ET. The archive is org-wide
+ *  and the emulator org is shared; every other story's audits are minutes or
+ *  hours old, so they all land after it. */
 import { story } from "#shots";
 import { createUser } from "@core/business/auth/mod.ts";
 import { saveFinding } from "@audit/domain/data/audit-repository/mod.ts";
@@ -13,9 +14,11 @@ import {
   clearQueueArchive, populateManagerQueue, setQueueArchive,
 } from "@manager/domain/data/manager-repository/mod.ts";
 
+/** Monday 2026-11-09 00:00 ET (EST, UTC-5). */
+const CUTOFF = Date.parse("2026-11-09T00:00:00-05:00");
+
 const ORG = Deno.env.get("DEFAULT_ORG_ID") as unknown as Parameters<typeof saveFinding>[0];
 const PASS = "e2e-pass-123";
-const DAY = 86_400_000;
 const tag = () => crypto.randomUUID().slice(0, 6);
 
 async function failedAudit(dept: string, name: string, landedAt: number): Promise<string> {
@@ -53,35 +56,38 @@ async function signIn(page: any, email: string, landing: string): Promise<void> 
 // deno-lint-ignore no-explicit-any
 const rowCount = async (page: any, table: string, id: string) => await page.locator(`${table} tr[data-finding-id="${id}"]`).count();
 
-Deno.test("REQ-057: open items that landed before the cutoff are off the manager queue and the VO dashboard; newer ones stay; nothing is deleted", (t) =>
+Deno.test("REQ-057: audits that landed before Monday Nov 9 come off the manager queue and the VO dashboard; ones that landed on/after stay; nothing is deleted", (t) =>
   story(t, async ({ page, expect }) => {
     const dept = `VBA PM ${tag()}`;
-    const cutoff = Date.now() - 30 * DAY;
-    const old = await failedAudit(dept, "Dana Lee", cutoff - 10 * DAY);
+    const beforeMonday = await failedAudit(dept, "Dana Lee", CUTOFF - 3_600_000); // Sun Nov 8, 11 PM ET
+    const atMonday = await failedAudit(dept, "Kim Park", CUTOFF); // Mon Nov 9, 00:00 ET
     const recent = await failedAudit(dept, "Sam Ortiz", Date.now() - 3_600_000);
     const mgr = await login("manager", dept);
     const vo = await login("vo", dept);
 
-    await setQueueArchive(ORG, cutoff, "e2e-admin@monsterrg.com");
     try {
-      // "All time" window, so only the archive can take the old one off.
+      // Before the archive: all three are on the manager's "All time" queue.
       await signIn(page, mgr, "/manager");
-      await page.goto("/manager?since=0");
-      expect.eq(await rowCount(page, "#manager-queue-table", recent), 1, "the recent audit is on the manager queue");
-      expect.eq(await rowCount(page, "#manager-queue-table", old), 0, "the old one is off it");
-      expect.eq(await rowCount(page, "#manager-completed-table", old), 0, "and not on the Completed side either");
+      await page.goto("/manager?since=0&byq=0");
+      expect.eq(await rowCount(page, "#manager-queue-table", beforeMonday), 1, "before: the Nov 8 audit is on the queue");
+      expect.eq(await rowCount(page, "#manager-queue-table", atMonday), 1, "before: the Nov 9 00:00 audit is on the queue");
+      expect.eq(await rowCount(page, "#manager-queue-table", recent), 1, "before: the recent audit is on the queue");
+
+      // Archive everything that landed before Monday Nov 9 00:00 ET.
+      await setQueueArchive(ORG, CUTOFF, "e2e-admin@monsterrg.com");
+      await page.goto("/manager?since=0&byq=0");
+      expect.eq(await rowCount(page, "#manager-queue-table", beforeMonday), 0, "after: the Nov 8 audit is off the manager queue");
+      expect.eq(await rowCount(page, "#manager-completed-table", beforeMonday), 0, "and not moved to Completed");
+      expect.eq(await rowCount(page, "#manager-queue-table", atMonday), 1, "after: the Nov 9 00:00 audit stays");
+      expect.eq(await rowCount(page, "#manager-queue-table", recent), 1, "after: the recent audit stays");
 
       await page.goto("/api/logout");
       await signIn(page, vo, "/vo");
       await page.goto("/vo?since=0");
-      expect.eq(await rowCount(page, "#vo-queue-table", recent), 1, "the recent audit is on the VO dashboard");
-      expect.eq(await rowCount(page, "#vo-queue-table", old), 0, "the old one is off it");
-      expect(!!(await getStored("manager-queue", ORG, old)), "the old audit's queue row is not deleted");
-
-      // Clearing the archive brings it back.
-      await clearQueueArchive(ORG);
-      await page.goto("/vo?since=0");
-      expect.eq(await rowCount(page, "#vo-queue-table", old), 1, "cleared: the old audit is back");
+      expect.eq(await rowCount(page, "#vo-queue-table", beforeMonday), 0, "after: the Nov 8 audit is off the VO dashboard");
+      expect.eq(await rowCount(page, "#vo-queue-table", atMonday), 1, "after: the Nov 9 00:00 audit stays on the VO dashboard");
+      expect.eq(await rowCount(page, "#vo-queue-table", recent), 1, "after: the recent audit stays on the VO dashboard");
+      expect(!!(await getStored("manager-queue", ORG, beforeMonday)), "the Nov 8 audit's queue row is not deleted");
     } finally {
       await clearQueueArchive(ORG);
     }

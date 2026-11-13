@@ -6,6 +6,7 @@ import {
 } from "@core/data/firestore/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { questionLabel } from "@core/business/question-labels/mod.ts";
+import { isArchivedFromQueue, type QueueArchive } from "@core/business/queue-archive/mod.ts";
 import type { ReviewDecision, AuditDoneIndexEntry } from "@core/dto/types.ts";
 import { getFinding } from "@audit/domain/data/audit-repository/mod.ts";
 import { buildIndexMeta, getHiddenFindingIds, readDoneIdxEntry, saleFlagsFromFinding } from "@audit/domain/data/stats-repository/mod.ts";
@@ -416,6 +417,9 @@ function mergeIndexRowWithStored(
     ...(stored?.appealedAt ? { appealedAt: stored.appealedAt } : {}),
     ...(stored?.appealedBy ? { appealedBy: stored.appealedBy } : {}),
     ...(stored?.appealNote ? { appealNote: stored.appealNote } : {}),
+    // Carried so the queue archive (REQ-057) can tell an old audit that a
+    // denied appeal sent back AFTER the archive from one it covers.
+    ...(stored?.appealDeniedAt ? { appealDeniedAt: stored.appealDeniedAt } : {}),
   } as ManagerQueueItem;
 }
 
@@ -809,10 +813,38 @@ export async function withoutHidden<T extends { findingId: string }>(orgId: OrgI
   return hidden.size === 0 ? rows : rows.filter((r) => !hidden.has(r.findingId));
 }
 
+// ── Queue archive (REQ-057) ──────────────────────────────────────────────────
+// One org-level record: open items that landed before `before` are off every
+// manager / VO queue and its counts. Read-side only, like the hidden set —
+// nothing is deleted, and clearing the record brings them all back.
+
+const QUEUE_ARCHIVE_TYPE = "manager-queue-archive";
+
+export async function getQueueArchive(orgId: OrgId): Promise<QueueArchive | null> {
+  return await getStored<QueueArchive>(QUEUE_ARCHIVE_TYPE, orgId);
+}
+
+export async function setQueueArchive(orgId: OrgId, before: number, by: string): Promise<QueueArchive> {
+  const archive: QueueArchive = { before, at: Date.now(), by };
+  await setStored(QUEUE_ARCHIVE_TYPE, orgId, [], archive);
+  console.log(`🗄️ [MANAGER-QUEUE] archive set by ${by}: open items before ${new Date(before).toISOString()}`);
+  return archive;
+}
+
+export async function clearQueueArchive(orgId: OrgId): Promise<void> {
+  await deleteStored(QUEUE_ARCHIVE_TYPE, orgId);
+}
+
+/** Drop open items the queue archive covers (REQ-057). */
+export async function withoutArchived<T extends ManagerQueueItem>(orgId: OrgId, rows: T[]): Promise<T[]> {
+  const archive = await getQueueArchive(orgId);
+  return archive ? rows.filter((r) => !isArchivedFromQueue(r, archive)) : rows;
+}
+
 export async function getManagerStats(
   orgId: OrgId,
 ): Promise<{ total: number; pending: number; remediated: number; appealed: number }> {
-  const items = await withoutHidden(orgId, await getManagerQueue(orgId));
+  const items = await withoutArchived(orgId, await withoutHidden(orgId, await getManagerQueue(orgId)));
   return {
     total: items.length,
     // Pending is open work only, so an audit out for appeal no longer counts
@@ -908,7 +940,7 @@ export async function loadScopedManagerQueue(
     }
   }
   rows ??= await getManagerQueueForDepartments(orgId, scope.departments) ?? await getManagerQueue(orgId);
-  rows = await withoutHidden(orgId, rows);
+  rows = await withoutArchived(orgId, await withoutHidden(orgId, rows));
   try { await enrichManagerQueueBatch(orgId, rows, 10); }
   catch (err) { console.warn("⚠️ [MANAGER] queue enrichment skipped:", err); }
   const scoped = filterQueueToManagerScope(rows, scope);

@@ -16,8 +16,8 @@ import { apiFetch } from "../../lib/api.ts";
 import DateRangePicker from "../../islands/DateRangePicker.tsx";
 import {
   renderQueueResults, renderCompletedResults, renderMemberButtons, queueFacets,
-  filterAndSortQueue, filterCompleted, readQueueFilterParams, isOpenItem,
-  type QueueItem,
+  filterAndSortQueue, filterCompleted, readQueueFilterParams, isOpenItem, renderSortControls,
+  type QueueItem, type QuestionOrders,
 } from "../api/manager/queue.tsx";
 
 export default define.page(async function ManagerPortalPage(ctx) {
@@ -30,15 +30,18 @@ export default define.page(async function ManagerPortalPage(ctx) {
   // Load the queue once here (single read — same cost as the old lazy load) so
   // we can build the filter bar's autosuggest lists and server-render the first
   // (sorted) table. Filter changes re-fetch only the table via /api/manager/queue.
-  const params = readQueueFilterParams(url.searchParams);
+  // "Order by question failed" is on until the manager says otherwise (REQ-054).
+  const params = readQueueFilterParams(url.searchParams, { byqDefault: true });
   // ONE read feeds both sides of the split — /manager/api/queue returns pending
   // AND remediated items, so putting Completed next to the queue costs no extra
   // Firestore reads (frontend/CLAUDE.md: never add per-request hydration to an
   // auto-loading dashboard path).
   let allItems: QueueItem[] = [];
+  let questionOrders: QuestionOrders = {};
   try {
-    const { items } = await apiFetch<{ items: QueueItem[] }>(`/manager/api/queue${asQs}`, ctx.req);
-    allItems = items ?? [];
+    const res = await apiFetch<{ items: QueueItem[]; questionOrders?: QuestionOrders }>(`/manager/api/queue${asQs}`, ctx.req);
+    allItems = res.items ?? [];
+    questionOrders = res.questionOrders ?? {};
   } catch (e) {
     console.error("Manager queue load error:", e);
   }
@@ -47,7 +50,7 @@ export default define.page(async function ManagerPortalPage(ctx) {
   // tool, and offering a question with no open work left would filter the queue
   // side down to nothing.
   const facets = queueFacets(pending);
-  const rows = filterAndSortQueue(pending, params);
+  const rows = filterAndSortQueue(pending, params, questionOrders);
   const completedRows = filterCompleted(allItems, params);
 
   return (
@@ -130,14 +133,7 @@ export default define.page(async function ManagerPortalPage(ctx) {
               </label>
             </div>
           </div>
-          <div class="form-group" style="margin-bottom:0;">
-            <label>Sort</label>
-            <select name="sort">
-              <option value="recent" selected={params.sort === "recent"}>Newest first</option>
-              <option value="oldest" selected={params.sort === "oldest"}>Oldest first</option>
-              <option value="failpct" selected={params.sort === "failpct"}>Highest % failed</option>
-            </select>
-          </div>
+          {renderSortControls(params, "q-byq")}
           {asEmail && <input type="hidden" name="as" value={asEmail} />}
           <a href={`/manager${asQs}`} class="btn btn-ghost btn-sm">Clear</a>
         </form>
@@ -174,7 +170,7 @@ export default define.page(async function ManagerPortalPage(ctx) {
               id="manager-queue-table"
               {...{ "hx-on::after-swap": "history.replaceState(null,'','/manager?'+new URLSearchParams(new FormData(document.getElementById('queue-filters'))).toString())" }}
             >
-              {renderQueueResults(rows, { compact: true })}
+              {renderQueueResults(rows, { compact: true, orders: questionOrders })}
             </div>
           </section>
 

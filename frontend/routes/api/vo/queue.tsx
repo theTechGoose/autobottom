@@ -9,10 +9,11 @@ import { apiFetch } from "../../../lib/api.ts";
 import { renderToString } from "preact-render-to-string";
 import type { JSX } from "preact";
 import {
-  filterAndSortQueue, fmtTsEasternShort, fmtWhen, pillColor, renderMemberButtons, scoreOf, teamMemberLabel,
-  type QueueFilterParams, type QueueItem,
+  filterAndSortQueue, fmtTsEasternShort, fmtWhen, pillColor, renderMemberButtons, renderSeverityFails, scoreOf,
+  teamMemberLabel, type QueueFilterParams, type QueueItem, type QuestionOrders,
 } from "../manager/queue.tsx";
 import { splitVoQueue, voClosedAt, voDefaultWindow } from "@core/business/tm-review/mod.ts";
+import { DEFAULT_QUESTION_ORDER } from "@core/business/question-order/mod.ts";
 
 export type VoQueueItem = QueueItem;
 
@@ -20,6 +21,8 @@ export interface VoFilterParams {
   member: string;
   wgs: boolean;
   mcc: boolean;
+  /** "Order by question failed" (REQ-055) — on unless the form says off. */
+  byq: boolean;
   since: number;
   until: number;
 }
@@ -33,6 +36,7 @@ export function readVoFilterParams(sp: URLSearchParams, now = Date.now()): VoFil
     member: sp.get("member") ?? "",
     wgs: sp.get("wgs") === "1",
     mcc: sp.get("mcc") === "1",
+    byq: sp.has("byq") ? sp.getAll("byq").includes("1") : true,
     since: ms(sp.get("since")) ?? def.since,
     until: ms(sp.get("until")) ?? def.until,
   };
@@ -40,9 +44,11 @@ export function readVoFilterParams(sp: URLSearchParams, now = Date.now()): VoFil
 
 const asQueueParams = (p: VoFilterParams): QueueFilterParams => ({ ...p, q: "", sort: "recent", dept: "" });
 
-/** To Review rows in the window, newest first. */
-export function filterVoPending(items: VoQueueItem[], p: VoFilterParams): VoQueueItem[] {
-  return filterAndSortQueue(splitVoQueue(items).pending, asQueueParams(p));
+/** To Review rows in the window — worst failed question first on the
+ *  department's list while the box is on (REQ-055), otherwise newest first.
+ *  The VO follows the list; only a manager can change it. */
+export function filterVoPending(items: VoQueueItem[], p: VoFilterParams, orders: QuestionOrders = {}): VoQueueItem[] {
+  return filterAndSortQueue(splitVoQueue(items).pending, asQueueParams(p), orders);
 }
 
 /** Reviewed rows, newest review first. Like the manager's Completed side, the
@@ -76,13 +82,12 @@ const REVIEW_OPEN_JS =
 
 const dim = (text: string) => <span style="color:var(--text-dim);font-size:11px;">{text}</span>;
 
-function failsCell(item: VoQueueItem): JSX.Element {
+function failsCell(item: VoQueueItem, orders: QuestionOrders): JSX.Element {
   const fails = item.failedQuestions ?? [];
   if (fails.length === 0) return dim(item.invalidGenie ? "no audio to grade" : "—");
   return (
     <div style="font-size:11px;color:var(--text-muted);max-width:160px;">
-      {fails.slice(0, 2).map((q) => <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{q}</div>)}
-      {fails.length > 2 && <div style="color:var(--text-dim);">+{fails.length - 2} more</div>}
+      {renderSeverityFails(fails, orders[item.department ?? ""] ?? DEFAULT_QUESTION_ORDER, 2)}
     </div>
   );
 }
@@ -95,7 +100,7 @@ function scoreCell(item: VoQueueItem): JSX.Element | string {
 }
 
 /** To Review — open audits with a Review button (never Remediate / Skip). */
-export function renderVoQueueTable(rows: VoQueueItem[]): JSX.Element {
+export function renderVoQueueTable(rows: VoQueueItem[], orders: QuestionOrders = {}): JSX.Element {
   return (
     <table class="data-table data-table-compact">
       <thead><tr><th>Team Member</th><th>Failed Questions</th><th>Score</th><th>Timestamp</th><th>Action</th></tr></thead>
@@ -107,7 +112,7 @@ export function renderVoQueueTable(rows: VoQueueItem[]): JSX.Element {
               <td><div class="tm-cell"><span>{teamMemberLabel(item)}</span>
                 {item.invalidGenie && <span class="pill pill-purple" style="font-size:9px;">Invalid genie</span>}
               </div></td>
-              <td>{failsCell(item)}</td>
+              <td>{failsCell(item, orders)}</td>
               <td>{scoreCell(item)}</td>
               <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">{fmtTsEasternShort(item.completedAt ?? item.addedAt)}</td>
               <td {...{ "hx-on:click": "event.stopPropagation()" }}>
@@ -227,13 +232,13 @@ export function renderVoReviewModal(opts: { findingId?: string; returnTo?: strin
 }
 
 /** Caption + To Review table — rendered by the page and the fragment alike. */
-export function renderVoQueueResults(rows: VoQueueItem[]): JSX.Element {
+export function renderVoQueueResults(rows: VoQueueItem[], orders: QuestionOrders = {}): JSX.Element {
   return (
     <>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">
         <strong style="color:var(--text-muted);">{rows.length}</strong> {rows.length === 1 ? "audit" : "audits"} to review in the selected range
       </div>
-      {renderVoQueueTable(rows)}
+      {renderVoQueueTable(rows, orders)}
     </>
   );
 }
@@ -260,11 +265,13 @@ export function renderVoMemberButtons(items: VoQueueItem[], p: VoFilterParams): 
  *  refresh and an in-place review submit. */
 export async function renderVoFragment(req: Request, sp: URLSearchParams): Promise<string> {
   const asEmail = sp.get("as");
-  const { items } = await apiFetch<{ items: VoQueueItem[] }>(`/vo/api/queue${asEmail ? `?as=${encodeURIComponent(asEmail)}` : ""}`, req);
+  const { items, questionOrders = {} } = await apiFetch<{ items: VoQueueItem[]; questionOrders?: QuestionOrders }>(
+    `/vo/api/queue${asEmail ? `?as=${encodeURIComponent(asEmail)}` : ""}`, req,
+  );
   const p = readVoFilterParams(sp);
   return renderToString(
     <>
-      {renderVoQueueResults(filterVoPending(items ?? [], p))}
+      {renderVoQueueResults(filterVoPending(items ?? [], p, questionOrders), questionOrders)}
       <div id="vo-member-buttons" hx-swap-oob="true">{renderVoMemberButtons(items ?? [], p)}</div>
       <div id="vo-reviewed-table" hx-swap-oob="true">{renderVoReviewedResults(filterVoReviewed(items ?? [], p))}</div>
     </>,

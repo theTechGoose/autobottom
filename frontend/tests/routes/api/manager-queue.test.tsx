@@ -267,7 +267,7 @@ Deno.test("filterAndSortQueue — dept drops rows with no stamped department", (
 Deno.test("readQueueFilterParams — parses fields + an explicit window", () => {
   assertEquals(
     readQueueFilterParams(new URLSearchParams("member=jane&q=Age&wgs=1&since=1000&until=2000")),
-    { member: "jane", q: "Age", wgs: true, mcc: false, sort: "recent", since: 1000, until: 2000, dept: "" },
+    { member: "jane", q: "Age", wgs: true, mcc: false, sort: "recent", byq: false, since: 1000, until: 2000, dept: "" },
   );
 });
 
@@ -874,4 +874,70 @@ Deno.test("ManagerQueue — the split view uses a short timestamp so Action stay
   assertNotContains(compact, "2026,");
   assertNotContains(compact, " ET");
   assertContains(compact, "Sep 2");
+});
+
+// ── Order by question failed (REQ-054) + severity colors (REQ-056) ───────────
+
+import { renderSortControls } from "../../../routes/api/manager/queue.tsx";
+import { DEFAULT_QUESTION_ORDER, severityColor } from "@core/business/question-order/mod.ts";
+
+Deno.test("REQ-054: 'Order by question failed' is on when the page opens with no choice made", () => {
+  assertEquals(readQueueFilterParams(new URLSearchParams(""), { byqDefault: true }).byq, true);
+});
+
+Deno.test("REQ-054: the form's checked box reads as on, unchecked as off", () => {
+  assertEquals(readQueueFilterParams(new URLSearchParams("byq=0&byq=1")).byq, true);
+  assertEquals(readQueueFilterParams(new URLSearchParams("byq=0"), { byqDefault: true }).byq, false);
+});
+
+Deno.test("REQ-054: a request that never carries the box (Operations) keeps its old newest-first order", () => {
+  assertEquals(readQueueFilterParams(new URLSearchParams("sort=recent")).byq, false);
+});
+
+const sevRows = (): QueueItem[] => [
+  item({ findingId: "new-guest", department: "VBA PM", failedQuestions: ["Guest Name"], completedAt: 300 }),
+  item({ findingId: "old-income", department: "VBA PM", failedQuestions: ["Taxes", "Income"], completedAt: 100 }),
+  item({ findingId: "mid-age", department: "VBA PM", failedQuestions: ["Age"], completedAt: 200 }),
+];
+
+Deno.test("REQ-054: checked, the worst failed question goes to the top", () => {
+  const out = filterAndSortQueue(sevRows(), { byq: true, sort: "recent" }, {});
+  assertEquals(out.map((r) => r.findingId), ["old-income", "mid-age", "new-guest"]);
+});
+
+Deno.test("REQ-054: unchecked, the queue is newest first", () => {
+  const out = filterAndSortQueue(sevRows(), { byq: false, sort: "recent" }, {});
+  assertEquals(out.map((r) => r.findingId), ["new-guest", "mid-age", "old-income"]);
+});
+
+Deno.test("REQ-054: unchecked, the Sort dropdown applies", () => {
+  const out = filterAndSortQueue(sevRows(), { byq: false, sort: "oldest" }, {});
+  assertEquals(out.map((r) => r.findingId), ["old-income", "mid-age", "new-guest"]);
+});
+
+Deno.test("REQ-055: the ranking follows the row's own department list", () => {
+  const out = filterAndSortQueue(sevRows(), { byq: true }, { "VBA PM": ["Guest Name", "Age", "Income"] });
+  assertEquals(out.map((r) => r.findingId), ["new-guest", "mid-age", "old-income"]);
+});
+
+Deno.test("REQ-054: the filter bar has the checkbox, checked, and the Sort dropdown releases it", () => {
+  const on = renderHTML(renderSortControls({ byq: true, sort: "recent" }, "q-byq"));
+  assertContains(on, "Order by question failed");
+  assert(/<input[^>]*type="checkbox"[^>]*name="byq"[^>]*checked/.test(on) || /<input[^>]*checked[^>]*name="byq"/.test(on), on);
+  // A hidden byq=0 rides along so an unchecked box is still a stated choice.
+  assert(/<input[^>]*type="hidden"[^>]*name="byq"[^>]*value="0"/.test(on), on);
+  assertContains(on, "getElementById('q-byq').checked=false");
+  const off = renderHTML(renderSortControls({ byq: false, sort: "oldest" }, "q-byq"));
+  assert(!/name="byq"[^>]*value="1"[^>]*checked/.test(off) && !/checked[^>]*name="byq"[^>]*value="1"/.test(off), off);
+});
+
+Deno.test("REQ-056: a row's failed questions are listed worst-first, each in its severity color", () => {
+  const order = [...DEFAULT_QUESTION_ORDER];
+  const html = renderHTML(renderQueueTable(
+    [item({ department: "VBA PM", failedQuestions: ["Guest Name", "Income"] })],
+    { compact: true, orders: { "VBA PM": order } },
+  ));
+  assert(html.indexOf(">Income<") < html.indexOf(">Guest Name<"), html);
+  assertContains(html, severityColor(0, order.length));
+  assertContains(html, severityColor(order.length - 1, order.length));
 });

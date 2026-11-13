@@ -229,7 +229,7 @@ async function handleManagerQueueClear(req: Request): Promise<Response> {
  *  item list plus the caller's scoped view. */
 type QueueViewItem = { status: string; appealState?: string };
 async function computeManagerQueueView(req: Request): Promise<
-  Response | { allItems: QueueViewItem[]; scopedItems: QueueViewItem[]; orgWide: boolean }
+  Response | { allItems: QueueViewItem[]; scopedItems: QueueViewItem[]; orgWide: boolean; orgId: string }
 > {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -271,7 +271,7 @@ async function computeManagerQueueView(req: Request): Promise<
     // allItems is only read for org-wide stat totals, which this caller is
     // not — handing back the same scoped list keeps it from being mistaken
     // for a whole-org list it no longer is.
-    return { allItems: scopedItems, scopedItems, orgWide: false };
+    return { allItems: scopedItems, scopedItems, orgWide: false, orgId: auth.orgId };
   }
   // Admin / super-manager without impersonation: no queue of their own, but
   // their stats count the whole org — so this one genuinely needs every row,
@@ -280,13 +280,74 @@ async function computeManagerQueueView(req: Request): Promise<
   const allItems = await withoutHidden(auth.orgId, await getManagerQueue(auth.orgId));
   await enrich(allItems);
   await drainResolved(allItems);
-  return { allItems, scopedItems: [], orgWide: true };
+  return { allItems, scopedItems: [], orgWide: true, orgId: auth.orgId };
+}
+
+/** Each department's question order for these rows (REQ-055) — one read per
+ *  department. A failure only costs the ordering: the queue falls back to the
+ *  default list rather than failing to load. */
+async function questionOrdersFor(orgId: string, items: Array<{ department?: string }>): Promise<Record<string, string[]>> {
+  try {
+    const { loadQuestionOrders } = await import("@manager/domain/business/question-order/mod.ts");
+    return await loadQuestionOrders(orgId as Parameters<typeof loadQuestionOrders>[0], items.map((i) => i.department ?? ""));
+  } catch (err) {
+    console.warn("⚠️ [QUESTION-ORDER] lists skipped — default order:", err);
+    return {};
+  }
 }
 
 async function handleManagerQueue(req: Request): Promise<Response> {
   const view = await computeManagerQueueView(req);
   if (view instanceof Response) return view;
-  return Response.json({ items: view.scopedItems });
+  return Response.json({
+    items: view.scopedItems,
+    questionOrders: await questionOrdersFor(view.orgId, view.scopedItems as Array<{ department?: string }>),
+  });
+}
+
+/** The Configure tab's list (REQ-053/055). A manager — or an admin viewing as
+ *  one (`?as=`) — edits ONE list that Save writes to every department in
+ *  their scope (REQ-055 AMENDMENT). An admin with no `?as=` edits one
+ *  department at a time (GET ?dept=, POST {dept, order}). Nobody else — a VO
+ *  login included — reads or writes it here. */
+async function handleQuestionOrder(req: Request): Promise<Response> {
+  const auth = await authenticate(req);
+  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (auth.role !== "manager" && auth.role !== "admin") return Response.json({ error: "forbidden" }, { status: 403 });
+  const url = new URL(req.url);
+  const asEmail = url.searchParams.get("as");
+  const who = (auth.role === "admin" && asEmail) ? { role: "manager", email: asEmail } : { role: auth.role, email: auth.email };
+  const {
+    editableDepartments, getDepartmentQuestionOrder, getManagerQuestionOrder,
+    saveDepartmentQuestionOrder, saveQuestionOrderForDepartments,
+  } = await import("@manager/domain/business/question-order/mod.ts");
+  const orgId = auth.orgId as Parameters<typeof editableDepartments>[0];
+  const departments = await editableDepartments(orgId, who);
+  const perManager = who.role === "manager";
+
+  if (req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { dept?: string; order?: unknown };
+    if (perManager) {
+      if (departments.length === 0) return Response.json({ error: "not-in-scope" }, { status: 403 });
+      const res = await saveQuestionOrderForDepartments(orgId, departments, body.order, auth.email);
+      return res.ok
+        ? Response.json({ ...res.saved, department: "", departments })
+        : Response.json({ error: res.error }, { status: 400 });
+    }
+    const dept = String(body.dept ?? "");
+    if (!departments.includes(dept)) return Response.json({ error: "not-in-scope" }, { status: 403 });
+    const res = await saveDepartmentQuestionOrder(orgId, dept, body.order, auth.email);
+    return res.ok ? Response.json(res.saved) : Response.json({ error: res.error }, { status: 400 });
+  }
+
+  if (perManager) {
+    if (departments.length === 0) return Response.json({ scope: "manager", departments, department: "", order: [] });
+    return Response.json({ scope: "manager", department: "", ...await getManagerQuestionOrder(orgId, departments) });
+  }
+  const asked = url.searchParams.get("dept") ?? "";
+  const dept = departments.includes(asked) ? asked : (departments[0] ?? "");
+  if (!dept) return Response.json({ scope: "department", departments, department: "", order: [] });
+  return Response.json({ scope: "department", departments, ...await getDepartmentQuestionOrder(orgId, dept) });
 }
 
 async function handleManagerStats(req: Request): Promise<Response> {
@@ -358,7 +419,9 @@ async function handleVoQueue(req: Request): Promise<Response> {
   const caller = await resolveVoCaller(req);
   if (caller instanceof Response) return caller;
   const { loadVoView } = await import("@manager/domain/business/vo-portal/mod.ts");
-  return Response.json({ items: await loadVoView(caller.orgId as Parameters<typeof loadVoView>[0], caller.voEmail) });
+  const items = await loadVoView(caller.orgId as Parameters<typeof loadVoView>[0], caller.voEmail);
+  // The VO dashboard follows its departments' lists but never edits them (REQ-055).
+  return Response.json({ items, questionOrders: await questionOrdersFor(caller.orgId, items) });
 }
 
 async function handleVoReview(req: Request): Promise<Response> {
@@ -878,6 +941,7 @@ const AUTH_CONTEXT_HANDLERS: Record<string, (req: Request) => Promise<Response>>
   "/manager/api/queue": handleManagerQueue,
   "/manager/api/stats": handleManagerStats,
   "/manager/api/scope": handleManagerScope,
+  "/manager/api/question-order": handleQuestionOrder,
   "/manager/api/queue/clear": handleManagerQueueClear,
   "/vo/api/queue": handleVoQueue,
   "/vo/api/review": handleVoReview,

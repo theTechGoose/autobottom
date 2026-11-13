@@ -1001,3 +1001,27 @@ viewing as a manager edits that manager's list the same way; an admin with no
 Tests: `src/manager/domain/business/question-order/int.test.ts` — "REQ-055
 AMENDMENT …" (int); `e2e/question-order/question-order.e2e.test.ts` — "REQ-055
 AMENDMENT …" and "REQ-055: …" (e2e). Unit n/a — storage and page behavior.
+
+## REQ-057 — Old open items come off the manager and VO queues without being deleted
+
+> "go on prod and delete all unreviewed/unremediated items from the manager and
+> VO team queues … Do not delete the audits, just hide them from the view. ONLY
+> for audits prior to this week. So any audits that landed before monday
+> November 9th, 2026 should be taken out of the queue. All audits that landed ON
+> and AFTER November 9th, 2026 should still be there." — asked how: "New
+> 'archived' flag".
+
+One org-level queue archive (`manager-queue-archive`: a cutoff, who set it,
+when). An OPEN queue item (not remediated, skipped or out for appeal) whose
+audit landed (completedAt, else addedAt) before the cutoff is off the manager
+queue, the VO dashboard, the Operations Portal and the queue counts/badge. Items
+on or after the cutoff stay; closed items stay on the Completed side; reports,
+dashboards, audit history and team-member pages are untouched; nothing is
+deleted. An old audit that comes back to the queue from a denied appeal AFTER
+the archive was set shows again — that is new work. Clearing the archive brings
+everything back. Prod is set to Monday 2026-11-09 00:00 ET.
+
+Tests: `frontend/tests/lib/queue-archive.test.ts` — "REQ-057 …" (unit);
+`src/manager/domain/data/manager-repository/queue-archive.int.test.ts` —
+"REQ-057 …" (int); `e2e/queue-archive/queue-archive.e2e.test.ts` — "REQ-057 …"
+(e2e).

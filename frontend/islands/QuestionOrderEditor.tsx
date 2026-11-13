@@ -19,7 +19,11 @@ import { severityColor } from "@core/business/question-order/mod.ts";
 import { shortQuestionLabel } from "@core/business/question-labels/mod.ts";
 
 interface Props {
+  /** The one department an admin is editing; empty for a manager, whose Save
+   *  goes to every department in their scope (REQ-055 AMENDMENT). */
   department: string;
+  /** What the list applies to, for the leave modal. */
+  label: string;
   order: string[];
   defaultOrder: string[];
   updatedBy?: string;
@@ -250,7 +254,7 @@ export default function QuestionOrderEditor(props: Props) {
         <div class="modal" style="width:min(460px,92vw);">
           <div class="modal-title">Save your changes?</div>
           <div class="modal-sub" style="margin-bottom:14px;">
-            You changed the question order for {props.department} but haven't saved it.
+            You changed the question order for {props.label} but haven't saved it.
           </div>
           {state === "error" && <div style="color:var(--red);font-size:12px;margin-bottom:10px;">Couldn't save — try again.</div>}
           <div class="modal-actions">

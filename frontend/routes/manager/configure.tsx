@@ -1,9 +1,10 @@
 /** Manager Configure tab (REQ-053/055) — "Configure question order".
  *
- *  The department's worst-fails list: the manager queue and the VO dashboard
- *  for that department rank audits by it. A manager with several departments
- *  picks one at the top; managers sharing a department share its list. An
- *  admin sees every department, or — with `?as=<manager>` — that manager's. */
+ *  The worst-fails list the manager queue and the VO dashboard rank audits by.
+ *  A manager edits ONE list and Save writes it to every department in their
+ *  scope (REQ-055 AMENDMENT); managers sharing a department share its list.
+ *  An admin with no `?as=` picks one department at a time; with
+ *  `?as=<manager>` they edit that manager's list. */
 import { define } from "../../lib/define.ts";
 import { Layout } from "../../components/Layout.tsx";
 import { apiFetch } from "../../lib/api.ts";
@@ -11,6 +12,9 @@ import QuestionOrderEditor from "../../islands/QuestionOrderEditor.tsx";
 import { DEFAULT_QUESTION_ORDER } from "@core/business/question-order/mod.ts";
 
 interface OrderResponse {
+  /** "manager": one list for all `departments`; "department": one department (admin). */
+  scope?: "manager" | "department";
+  mixed?: boolean;
   departments: string[];
   department: string;
   order: string[];
@@ -55,7 +59,7 @@ export default define.page(async function ManagerConfigurePage(ctx) {
           ? <div class="placeholder-card">No departments are assigned to you yet.</div>
           : (
             <>
-              {data.departments.length > 1 && (
+              {data.scope !== "manager" && data.departments.length > 1 && (
                 <div class="qo-depts" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
                   {data.departments.map((d) => (
                     <a
@@ -67,12 +71,30 @@ export default define.page(async function ManagerConfigurePage(ctx) {
                   ))}
                 </div>
               )}
-              <div class="qo-editing" style="margin-bottom:10px;font-size:14px;">
-                Editing the order for <strong>{data.department}</strong>
-              </div>
+              {data.scope === "manager"
+                ? (
+                  <div class="qo-editing" style="margin-bottom:10px;font-size:14px;">
+                    {data.departments.length === 1 ? "Applies to " : "Applies to all your departments: "}
+                    {data.departments.map((d, i) => <>{i > 0 && ", "}<strong>{d}</strong></>)}
+                    <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">
+                      Managers who share one of these departments share its order — saving changes it for them too.
+                    </div>
+                    {data.mixed && (
+                      <div class="qo-mixed" style="font-size:12px;color:var(--yellow);margin-top:6px;">
+                        Your departments have different orders right now — this is the most recently saved one. Save sets them all to it.
+                      </div>
+                    )}
+                  </div>
+                )
+                : (
+                  <div class="qo-editing" style="margin-bottom:10px;font-size:14px;">
+                    Editing the order for <strong>{data.department}</strong>
+                  </div>
+                )}
               <QuestionOrderEditor
                 key={data.department}
                 department={data.department}
+                label={data.scope === "manager" ? data.departments.join(", ") : data.department}
                 order={data.order}
                 defaultOrder={[...DEFAULT_QUESTION_ORDER]}
                 updatedBy={data.updatedBy}

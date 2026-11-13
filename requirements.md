@@ -978,3 +978,26 @@ PM. Naming the department being edited addresses that.)
 Tests: `e2e/question-order/question-order.e2e.test.ts` — "REQ-053 AMENDMENT 2:
 …" (e2e). Unit/integration n/a — browser behavior only; the saved order's
 storage is covered by REQ-053's integration tests.
+
+## REQ-055 AMENDMENT — A manager's Save applies to all their departments
+
+> "it's still not persisting to the queue … I went back and changed income back
+> to 1, and saved, and the queue still has mcc disclosed at the top. this should
+> instantly reflect." — asked what one Save should change for a manager with
+> several departments: "All my departments".
+
+(Cause of the report: the second save went to VBA AM — the Configure link
+reopened on the first department — while the audits were in VBA PM.)
+
+A manager edits ONE list: Save writes that order to every department in their
+scope, so their whole queue follows it at once, and there is no department
+picker. The page names the departments it applies to and that managers sharing
+one of them share its list. Opened, it shows the most recently saved list among
+those departments. Lists are still stored per department, so the VO dashboard
+and other managers of those departments follow the same order. An admin
+viewing as a manager edits that manager's list the same way; an admin with no
+`?as=` still picks one department at a time.
+
+Tests: `src/manager/domain/business/question-order/int.test.ts` — "REQ-055
+AMENDMENT …" (int); `e2e/question-order/question-order.e2e.test.ts` — "REQ-055
+AMENDMENT …" and "REQ-055: …" (e2e). Unit n/a — storage and page behavior.

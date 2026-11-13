@@ -6,7 +6,8 @@ import { saveManagerScope } from "@admin/domain/data/admin-repository/mod.ts";
 import type { OrgId } from "@core/data/deno-kv/mod.ts";
 import { DEFAULT_QUESTION_ORDER } from "@core/business/question-order/mod.ts";
 import {
-  editableDepartments, getDepartmentQuestionOrder, loadQuestionOrders, saveDepartmentQuestionOrder,
+  editableDepartments, getDepartmentQuestionOrder, getManagerQuestionOrder, loadQuestionOrders,
+  saveDepartmentQuestionOrder, saveQuestionOrderForDepartments,
 } from "./mod.ts";
 
 function uniqueOrg(tag: string): OrgId {
@@ -66,4 +67,40 @@ Deno.test("REQ-055: a manager edits the departments in their scope; a VO login e
   assertEquals(await editableDepartments(org, { role: "manager", email: "garrettc@monsterrg.com" }), ["GS WST", "WST DS"]);
   assertEquals(await editableDepartments(org, { role: "vo", email: "vbapmvo@monsterrg.com" }), []);
   assertEquals(await editableDepartments(org, { role: "admin", email: "admin@monsterrg.com" }), ["GS WST", "VBA PM", "WST DS"]);
+});
+
+Deno.test("REQ-055 AMENDMENT: one save writes the order to every department given", async () => {
+  const org = uniqueOrg("multi");
+  const order = ["MCC Recurring Charges Disclosed?", ...DEFAULT_QUESTION_ORDER.filter((q) => q !== "MCC Recurring Charges Disclosed?")];
+  const res = await saveQuestionOrderForDepartments(org, ["VBA AM", "VBA PM"], order, "demo@monsterrg.com");
+  assert(res.ok);
+  const lists = await loadQuestionOrders(org, ["VBA AM", "VBA PM"]);
+  assertEquals(lists["VBA AM"], order);
+  assertEquals(lists["VBA PM"], order);
+  // …and saving again replaces it in both, at once.
+  await saveQuestionOrderForDepartments(org, ["VBA AM", "VBA PM"], [...DEFAULT_QUESTION_ORDER], "demo@monsterrg.com");
+  const again = await loadQuestionOrders(org, ["VBA AM", "VBA PM"]);
+  assertEquals(again["VBA AM"][0], "Income");
+  assertEquals(again["VBA PM"][0], "Income");
+});
+
+Deno.test("REQ-055 AMENDMENT: a manager's list is the most recently saved one among their departments, flagged when they differ", async () => {
+  const org = uniqueOrg("newest");
+  const none = await getManagerQuestionOrder(org, ["VBA AM", "VBA PM"]);
+  assertEquals(none.order, [...DEFAULT_QUESTION_ORDER]);
+  assertEquals(none.isDefault, true);
+  assertEquals(none.mixed, false);
+
+  await saveDepartmentQuestionOrder(org, "VBA AM", ["Age"], "a@monsterrg.com");
+  await new Promise((r) => setTimeout(r, 5));
+  await saveDepartmentQuestionOrder(org, "VBA PM", ["Taxes"], "b@monsterrg.com");
+  const got = await getManagerQuestionOrder(org, ["VBA AM", "VBA PM"]);
+  assertEquals(got.order[0], "Taxes");
+  assertEquals(got.updatedBy, "b@monsterrg.com");
+  assertEquals(got.mixed, true);
+});
+
+Deno.test("REQ-055 AMENDMENT: a save for no departments is refused", async () => {
+  const org = uniqueOrg("nodepts");
+  assertEquals(await saveQuestionOrderForDepartments(org, [], ["Age"], "x@monsterrg.com"), { ok: false, error: "department-required" });
 });

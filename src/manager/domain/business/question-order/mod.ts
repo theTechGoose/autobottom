@@ -83,3 +83,39 @@ export async function editableDepartments(orgId: OrgId, who: { role: string; ema
   }
   return [];
 }
+
+/** What a manager edits (REQ-055 AMENDMENT): one list for all their
+ *  departments. Shown as the most recently saved list among them (the default
+ *  when none is saved); `mixed` says their departments currently differ, so
+ *  the page can warn that Save will line them all up. */
+export interface ManagerQuestionOrder {
+  departments: string[];
+  order: string[];
+  isDefault: boolean;
+  mixed: boolean;
+  updatedBy?: string;
+  updatedAt?: number;
+}
+
+export async function getManagerQuestionOrder(orgId: OrgId, departments: string[]): Promise<ManagerQuestionOrder> {
+  const lists = await Promise.all([...new Set(departments)].map((d) => getDepartmentQuestionOrder(orgId, d)));
+  const saved = lists.filter((l) => !l.isDefault).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const newest = saved[0];
+  const mixed = new Set(lists.map((l) => l.order.join("\n"))).size > 1;
+  if (!newest) return { departments, order: effectiveOrder(null), isDefault: true, mixed };
+  return { departments, order: newest.order, isDefault: false, mixed, updatedBy: newest.updatedBy, updatedAt: newest.updatedAt };
+}
+
+/** One Save for several departments — every one gets the same order. */
+export async function saveQuestionOrderForDepartments(
+  orgId: OrgId,
+  departments: string[],
+  order: unknown,
+  by: string,
+): Promise<SaveQuestionOrderResult> {
+  const depts = [...new Set(departments.map((d) => (d ?? "").trim()).filter(Boolean))];
+  if (depts.length === 0) return { ok: false, error: "department-required" };
+  const results = await Promise.all(depts.map((d) => saveDepartmentQuestionOrder(orgId, d, order, by)));
+  const failed = results.find((r) => !r.ok);
+  return failed ?? results[0];
+}

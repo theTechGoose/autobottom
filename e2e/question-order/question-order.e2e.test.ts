@@ -227,6 +227,38 @@ Deno.test("REQ-053 AMENDMENT 2: nothing is kept until Save; leaving with unsaved
     eq(expect, (await queueIds(page)).slice(0, 2), [mccDisclosed, income], "saved: the MCC Disclosed failure is now on top");
   }));
 
+Deno.test("REQ-055 AMENDMENT: a manager with two departments changes the order twice, and the queue follows each save at once", (t) =>
+  story(t, async ({ page, expect }) => {
+    const pm = `VBA PM ${tag()}`;
+    const am = `VBA AM ${tag()}`;
+    const income = await failedAudit(pm, "Sam Ortiz", ["Income"], 1);
+    const mcc = await failedAudit(pm, "Rae Hunt", ["MCC Recurring Charges Disclosed?"], 3);
+    const amIncome = await failedAudit(am, "Tom Reed", ["Income"], 2);
+    const mgr = await login("manager", [am, pm]);
+    await page.setViewportSize({ width: 1400, height: 1700 });
+    await signIn(page, mgr, "/manager");
+    eq(expect, (await queueIds(page)).slice(0, 3), [income, amIncome, mcc], "default: both Income failures above MCC Disclosed");
+
+    // MCC Disclosed to #1, save, back to the queue.
+    await page.click("a[href='/manager/configure']");
+    await boxes(page).first().waitFor();
+    await page.click(".qo-item[data-question='MCC Recurring Charges Disclosed?'] .qo-up");
+    await saveList(page);
+    await page.click("a[href='/manager']");
+    await page.waitForURL("**/manager");
+    eq(expect, (await queueIds(page))[0], mcc, "MCC Disclosed failure on top");
+
+    // Back to Configure through the sidebar: the same list, then Income back to #1.
+    await page.click("a[href='/manager/configure']");
+    await boxes(page).first().waitFor();
+    eq(expect, (await names(page)).slice(0, 2), ["MCC Recurring Charges Disclosed?", "Income"], "Configure shows the list just saved");
+    await page.click(".qo-item[data-question='Income'] .qo-up");
+    await saveList(page);
+    await page.click("a[href='/manager']");
+    await page.waitForURL("**/manager");
+    eq(expect, (await queueIds(page)).slice(0, 3), [income, amIncome, mcc], "Income failures back on top, in both departments");
+  }));
+
 Deno.test("REQ-054: the queue lists the worst failed question first; unchecking orders by most recent; the Sort dropdown releases the box", (t) =>
   story(t, async ({ page, expect }) => {
     const dept = `VBA PM ${tag()}`;
@@ -257,7 +289,7 @@ Deno.test("REQ-054: the queue lists the worst failed question first; unchecking 
     eq(expect, await queueIds(page), [newestMinor, midAge, oldIncome], "newest first from the dropdown");
   }));
 
-Deno.test("REQ-055: the list is the department's — a second manager and the VO dashboard follow it, and the VO can't change it", (t) =>
+Deno.test("REQ-055: the list is the department's — a manager's save sets all their departments, another manager and the VO dashboard follow it, the VO can't change it, an admin picks a department", (t) =>
   story(t, async ({ page, expect }) => {
     const dept = `GS MB ${tag()}`;
     const otherDept = `VO MB ${tag()}`;
@@ -265,21 +297,27 @@ Deno.test("REQ-055: the list is the department's — a second manager and the VO
     const incomeFail = await failedAudit(dept, "Sam Ortiz", ["Income"], 1);
     const first = await login("manager", [dept, otherDept]);
     const second = await login("manager", [dept]);
+    const otherOnly = await login("manager", [otherDept]);
     const vo = await login("vo", [dept]);
+    const admin = await login("admin");
 
-    // The first manager covers two departments, so the tab asks which one.
+    // The first manager covers two departments and edits ONE list for both.
     await page.setViewportSize({ width: 1400, height: 1700 });
     await signIn(page, first, "/manager");
     await page.goto("/manager/configure");
-    eq(expect, await page.locator(".qo-depts a").allInnerTexts(), [dept, otherDept].sort(), "a picker of the manager's departments");
-    await page.click(`.qo-depts a:text-is("${dept}")`);
-    await page.waitForURL(`**dept=${encodeURIComponent(dept).replace(/%20/g, "+")}*`);
+    eq(expect, await page.locator(".qo-depts").count(), 0, "a manager gets no department picker");
+    const appliesTo = await page.locator(".qo-editing").innerText();
+    expect(appliesTo.includes(dept) && appliesTo.includes(otherDept), `the page says it applies to both departments (${appliesTo})`);
     await page.dragAndDrop(".qo-item[data-question='Age']", ".qo-item[data-question='Income']");
     await saveList(page);
-    eq(expect, (await names(page))[0], "Age", `${dept} now ranks Age worst`);
-    await page.click(`.qo-depts a:text-is("${otherDept}")`);
+    eq(expect, (await names(page))[0], "Age", "Age now ranks most severe");
+
+    // The manager of only the other department sees it too — it was set there as well.
+    await page.goto("/api/logout");
+    await signIn(page, otherOnly, "/manager");
+    await page.goto("/manager/configure");
     await boxes(page).first().waitFor();
-    eq(expect, (await names(page))[0], "Income", "the other department keeps its own list");
+    eq(expect, (await names(page))[0], "Age", "the save set the other department's list too");
 
     // A second manager in the same department sees the same list, and who set it.
     await page.goto("/api/logout");
@@ -306,6 +344,14 @@ Deno.test("REQ-055: the list is the department's — a second manager and the VO
       data: { dept, order: ["Guest Name"] }, headers: { accept: "application/json" },
     });
     eq(expect, res.status(), 403, "a VO can't save a list");
+
+    // An admin (not viewing as anyone) picks one department at a time.
+    await page.goto("/api/logout");
+    await signIn(page, admin, "/admin/dashboard");
+    await page.goto(`/manager/configure?dept=${encodeURIComponent(dept)}`);
+    await boxes(page).first().waitFor();
+    expect((await page.locator(".qo-depts a").allInnerTexts()).includes(dept), "an admin gets a department picker");
+    eq(expect, (await names(page))[0], "Age", "showing that department's list");
   }));
 
 Deno.test("REQ-056: a queue row's failed questions show worst-first in their severity colors", (t) =>

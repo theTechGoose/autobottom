@@ -305,11 +305,11 @@ async function handleManagerQueue(req: Request): Promise<Response> {
   });
 }
 
-/** The Configure tab's list (REQ-053/055). GET ?dept= reads a department's
- *  order plus the departments the caller may edit; POST {dept, order} saves.
- *  Managers edit their own scope's departments; an admin edits every scoped
- *  department, or — viewing as a manager (`?as=`) — that manager's. Nobody
- *  else (a VO login included) reads or writes it here. */
+/** The Configure tab's list (REQ-053/055). A manager — or an admin viewing as
+ *  one (`?as=`) — edits ONE list that Save writes to every department in
+ *  their scope (REQ-055 AMENDMENT). An admin with no `?as=` edits one
+ *  department at a time (GET ?dept=, POST {dept, order}). Nobody else — a VO
+ *  login included — reads or writes it here. */
 async function handleQuestionOrder(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -317,21 +317,37 @@ async function handleQuestionOrder(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const asEmail = url.searchParams.get("as");
   const who = (auth.role === "admin" && asEmail) ? { role: "manager", email: asEmail } : { role: auth.role, email: auth.email };
-  const { editableDepartments, getDepartmentQuestionOrder, saveDepartmentQuestionOrder } =
-    await import("@manager/domain/business/question-order/mod.ts");
+  const {
+    editableDepartments, getDepartmentQuestionOrder, getManagerQuestionOrder,
+    saveDepartmentQuestionOrder, saveQuestionOrderForDepartments,
+  } = await import("@manager/domain/business/question-order/mod.ts");
   const orgId = auth.orgId as Parameters<typeof editableDepartments>[0];
   const departments = await editableDepartments(orgId, who);
+  const perManager = who.role === "manager";
+
   if (req.method === "POST") {
     const body = await req.json().catch(() => ({})) as { dept?: string; order?: unknown };
+    if (perManager) {
+      if (departments.length === 0) return Response.json({ error: "not-in-scope" }, { status: 403 });
+      const res = await saveQuestionOrderForDepartments(orgId, departments, body.order, auth.email);
+      return res.ok
+        ? Response.json({ ...res.saved, department: "", departments })
+        : Response.json({ error: res.error }, { status: 400 });
+    }
     const dept = String(body.dept ?? "");
     if (!departments.includes(dept)) return Response.json({ error: "not-in-scope" }, { status: 403 });
     const res = await saveDepartmentQuestionOrder(orgId, dept, body.order, auth.email);
     return res.ok ? Response.json(res.saved) : Response.json({ error: res.error }, { status: 400 });
   }
+
+  if (perManager) {
+    if (departments.length === 0) return Response.json({ scope: "manager", departments, department: "", order: [] });
+    return Response.json({ scope: "manager", department: "", ...await getManagerQuestionOrder(orgId, departments) });
+  }
   const asked = url.searchParams.get("dept") ?? "";
   const dept = departments.includes(asked) ? asked : (departments[0] ?? "");
-  if (!dept) return Response.json({ departments, department: "", order: [] });
-  return Response.json({ departments, ...await getDepartmentQuestionOrder(orgId, dept) });
+  if (!dept) return Response.json({ scope: "department", departments, department: "", order: [] });
+  return Response.json({ scope: "department", departments, ...await getDepartmentQuestionOrder(orgId, dept) });
 }
 
 async function handleManagerStats(req: Request): Promise<Response> {

@@ -845,3 +845,159 @@ Tests: `frontend/tests/components/overturn-review-panel.test.tsx` — "REQ-052: 
 (unit); `e2e/overturn-review/overturn-review.e2e.test.ts` — "REQ-052: …" (e2e).
 Integration n/a — no backend change; the page reads the existing
 `/audit/recording` endpoint.
+
+## REQ-053 — Managers configure their "worst fails" question order on a Configure tab
+
+> "for the manager view, I want them to configure their own list of 'worst
+> fails'." "I want the manager to have a 'configure' tab that lets them drag
+> each question on the list." "Where the top of the list is the worst one.
+> They can click and drag the question object box and move it up and down in
+> the interactive list" "I want a gradient that runs for all 25 internal audit
+> questions from dark red to orange to yellow to green" "Don't change anything
+> other than adding this configure tab and how its behavior lists the
+> remediation items."
+
+The manager sidebar gains a Configure tab (`/manager/configure`) with a
+"Configure question order" list of all 25 internal audit questions. Each
+question is a box that can be dragged up or down, or moved with its ↑/↓
+arrows; the top is the worst. Boxes are colored by position on one gradient —
+dark red at the top, then orange, yellow, green at the bottom. The order saves
+when a box is dropped; "Reset to default" restores the default order.
+Questions are matched by name; one the list doesn't know yet sits at the
+bottom.
+
+Default order (1 = worst): Income; MCC Recurring Charges Disclosed?; MCC Not
+Egregious?; Married/Cohab Qualifier Question; Single Qualifier Question;
+Understand Reschedule Process; Major CC; US or Canadian Citizen?; Age;
+Attending Presentation Together?; Matching IDs; Active Bankruptcy; 9% Service
+Fee; Taxes; TimeShare Owner; No Group Travel; Preview 15 Months; # in Room;
+Correct Location; Correct Days & Nights; No Pets; Credit Card Number is Not
+Read on VO?; Confirmation Expectations; Phone Number; Guest Name.
+
+Tests: `frontend/tests/lib/question-order.test.ts` — "REQ-053 …" (unit);
+`src/manager/domain/business/question-order/int.test.ts` — "REQ-053 …" (int);
+`e2e/question-order/question-order.e2e.test.ts` — "REQ-053 …" (e2e).
+
+## REQ-054 — The remediation queue lists the worst failed questions first
+
+> "this order that they configure, by default the audits with the worst failed
+> questions go to the top" "the checkmark box for 'order by question failed'
+> is checked, when they uncheck it, it orders by most recent" "[the sort
+> dropdown] stay[s] and only applies when the box is unchecked (or if a user
+> hits the drop down and clicks something, the checkbox releases)"
+
+The Manager Portal's queue has an "Order by question failed" checkbox, checked
+by default. Checked, an audit ranks by its worst failed question on its
+department's list; ties go to the next-worst failed question, then the most
+recent audit. Unchecked, the queue orders by most recent, and the existing
+Sort dropdown applies; picking anything from the dropdown unchecks the box.
+
+Tests: `frontend/tests/lib/question-order.test.ts` — "REQ-054 …" (unit);
+`frontend/tests/routes/api/manager-queue.test.tsx` — "REQ-054 …" (unit);
+`e2e/question-order/question-order.e2e.test.ts` — "REQ-054 …" (e2e).
+
+## REQ-055 — The question order belongs to the department; VO dashboards follow it
+
+> "the VO dashboard should follow the same, however the VOs cannot make their
+> own order. Only a manager can. So a department needs to have a 'question
+> order' list or something like that on the department object itself so any
+> dashboard for that department has the ability to follow the master list
+> created by the manager."
+
+The order is stored per department, not per manager. Every audit is ranked by
+its own department's list, so a queue spanning several departments mixes
+lists correctly. A manager edits the list of any department in their scope
+(a department picker shows when they have more than one); managers sharing a
+department share its list, the last save wins, and the tab shows who changed
+it last and when. An admin can edit any department's list, and edits a
+manager's departments when viewing as that manager. The VO dashboard orders
+its To Review side the same way, with the same checkbox, but a VO login can
+never change the list.
+
+Tests: `src/manager/domain/business/question-order/int.test.ts` — "REQ-055 …"
+(int); `frontend/tests/routes/vo-dashboard.test.tsx` — "REQ-055 …" (unit);
+`e2e/question-order/question-order.e2e.test.ts` — "REQ-055 …" (e2e).
+
+## REQ-056 — Failed questions on a queue row show their severity color
+
+> (agreed in discussion: "Colors belong to the position, not the question …
+> The same colors appear on the failed-question chips in the queue, so a
+> manager can see why an audit is near the top." — "Yes")
+
+On the manager queue and the VO To Review side, a row's failed questions are
+listed worst-first and each carries its color from the department's gradient.
+
+Tests: `frontend/tests/routes/api/manager-queue.test.tsx` — "REQ-056 …"
+(unit); `e2e/question-order/question-order.e2e.test.ts` — "REQ-056 …" (e2e).
+
+## REQ-056 AMENDMENT — Questions match by their display label too
+
+Queue rows carry each failed question's display label (`MCC Egregious` for
+`MCC Not Egregious?`, `Pet Policy` for `No Pets`, … — see
+`src/core/business/question-labels/mod.ts`), so the ranking and the colors
+match a question by its header or its label, and the Configure list shows the
+labels, with the full question on hover.
+
+Tests: `frontend/tests/lib/question-order.test.ts` — "REQ-054: a queue row
+that carries a question's display label …", "REQ-056: labels sort …", "REQ-056:
+a label's position …" (unit); `e2e/question-order/question-order.e2e.test.ts` —
+"REQ-056: …" and "REQ-053: …" (e2e).
+
+## REQ-053 AMENDMENT — Cards move while you drag
+
+> "when dragging, can't the top one move? … I have income dragged, but nothing
+> is moving, just the line. Can we have the cards actually move."
+
+While a question is being dragged the list re-sorts live: the other cards
+slide out of the way and the carried card's slot follows the cursor, the top
+card included. Letting go saves the order.
+
+Tests: `e2e/question-order/question-order.e2e.test.ts` — "REQ-053 AMENDMENT: …"
+(e2e). Unit/integration n/a — drag behavior in the browser only; the saved
+order's storage is covered by REQ-053's integration tests.
+
+## REQ-053 AMENDMENT 2 — Save button, "most severe" wording, ask before leaving unsaved
+
+> "I change the order and it says it saved, then I go to the queue, and the MCC
+> disclosed question failing audit should now be at the top but it isn't. I
+> think it would be better if we force a user to hit 'save' on the config."
+> "change the wording to 'top is the most severe'" "if someone tries to click
+> off the config without saving, a modal pops asking."
+
+Dragging, the arrows and Reset to default only change the list on screen; the
+order is kept only when the manager clicks Save (this replaces REQ-053
+AMENDMENT's save-on-drop). The page reads "Top is the most severe" and names
+the department being edited. Clicking a link off the page with unsaved changes
+opens a modal — Save and leave / Leave without saving / Stay; closing or
+reloading the tab gets the browser's own warning.
+
+(The reported queue miss: the save had gone to VBA AM — the first of the demo
+login's two departments, which the page opened on — while the audit was in VBA
+PM. Naming the department being edited addresses that.)
+
+Tests: `e2e/question-order/question-order.e2e.test.ts` — "REQ-053 AMENDMENT 2:
+…" (e2e). Unit/integration n/a — browser behavior only; the saved order's
+storage is covered by REQ-053's integration tests.
+
+## REQ-055 AMENDMENT — A manager's Save applies to all their departments
+
+> "it's still not persisting to the queue … I went back and changed income back
+> to 1, and saved, and the queue still has mcc disclosed at the top. this should
+> instantly reflect." — asked what one Save should change for a manager with
+> several departments: "All my departments".
+
+(Cause of the report: the second save went to VBA AM — the Configure link
+reopened on the first department — while the audits were in VBA PM.)
+
+A manager edits ONE list: Save writes that order to every department in their
+scope, so their whole queue follows it at once, and there is no department
+picker. The page names the departments it applies to and that managers sharing
+one of them share its list. Opened, it shows the most recently saved list among
+those departments. Lists are still stored per department, so the VO dashboard
+and other managers of those departments follow the same order. An admin
+viewing as a manager edits that manager's list the same way; an admin with no
+`?as=` still picks one department at a time.
+
+Tests: `src/manager/domain/business/question-order/int.test.ts` — "REQ-055
+AMENDMENT …" (int); `e2e/question-order/question-order.e2e.test.ts` — "REQ-055
+AMENDMENT …" and "REQ-055: …" (e2e). Unit n/a — storage and page behavior.

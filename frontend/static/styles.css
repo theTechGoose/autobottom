@@ -308,6 +308,8 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
    being shrunk below what the badge actually needs. */
 .tm-cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .tm-cell .pill { flex: 0 0 auto; }
+/* Failed question on a queue row, with its severity color (REQ-056). */
+.sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; flex: 0 0 auto; }
 
 /* Row actions side by side with real breathing room. Relying on the buttons'
    own margins let them stack edge-to-edge once the column narrowed. */

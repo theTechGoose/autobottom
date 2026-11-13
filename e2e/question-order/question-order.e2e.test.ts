@@ -354,16 +354,28 @@ Deno.test("REQ-055: the list is the department's — a manager's save sets all t
     eq(expect, (await names(page))[0], "Age", "showing that department's list");
   }));
 
-Deno.test("REQ-056: a queue row's failed questions show worst-first in their severity colors", (t) =>
+Deno.test("REQ-056: a queue row's failed questions show worst-first in their severity colors, short names ranked as their questions", (t) =>
   story(t, async ({ page, expect }) => {
     const dept = `VBA AM ${tag()}`;
     const id = await failedAudit(dept, "Dana Lee", ["Guest Name", "No Pets", "Income"], 1);
+    // Queue rows carry SHORT names: "MCC Not Egregious?" shows as "MCC Egregious"
+    // (#3 on the list), "No Pets" as "Pet Policy" (#21).
+    const mccEgregious = await failedAudit(dept, "Kim Park", ["MCC Not Egregious?"], 6);
+    const petPolicy = await failedAudit(dept, "Lee Chan", ["No Pets"], 2);
     const mgr = await login("manager", [dept]);
     await signIn(page, mgr, "/manager");
 
     const fails = page.locator(`#manager-queue-table tr[data-finding-id="${id}"] .sev-fail`);
-    // The row shows two; "No Pets" is stored on the row as its label "Pet Policy".
     eq(expect, await fails.allInnerTexts(), ["Income", "Pet Policy"], "worst first, labels matched to their questions");
     eq(expect, await fails.first().getAttribute("data-sev-color"), severityColor(0, N), "Income in dark red");
     eq(expect, await fails.last().getAttribute("data-sev-color"), severityColor(DEFAULT_QUESTION_ORDER.indexOf("No Pets"), N), "Pet Policy in No Pets' color");
+
+    // The older "MCC Egregious" audit outranks the newer "Pet Policy" one, in MCC Not Egregious?'s color.
+    const ids = await queueIds(page);
+    expect(ids.indexOf(mccEgregious) < ids.indexOf(petPolicy), `"MCC Egregious" ranks above "Pet Policy" (${ids.join(", ")})`);
+    const mcc = page.locator(`#manager-queue-table tr[data-finding-id="${mccEgregious}"] .sev-fail`);
+    eq(expect, await mcc.allInnerTexts(), ["MCC Egregious"], "the row shows the short name");
+    eq(expect, await mcc.first().getAttribute("data-sev-color"), severityColor(DEFAULT_QUESTION_ORDER.indexOf("MCC Not Egregious?"), N), "in MCC Not Egregious?'s (#3) dark-red color");
+    // Frame the queue with both rows on screen.
+    await page.locator(`#manager-queue-table tr[data-finding-id="${mccEgregious}"]`).hover();
   }));
